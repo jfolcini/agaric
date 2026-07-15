@@ -80,6 +80,8 @@ pub async fn add_tag_inner(
     // And the actual mutation. CommandTx couples commit +
     //    post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "add_tag").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
@@ -384,6 +386,8 @@ pub async fn remove_tag_inner(
     // And the actual mutation. CommandTx couples commit +
     //    post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "remove_tag").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate block exists and is not deleted (TOCTOU-safe)
     let exists = sqlx::query!(
@@ -765,6 +769,8 @@ pub async fn add_tags_by_ids_inner(
     // One IMMEDIATE tx covers the whole batch: tag validation + every
     // per-block op_log append + block_tags insert + inheritance propagation.
     let mut tx = CommandTx::begin_immediate(pool, "add_tags_by_ids").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate `tag_id` ONCE: live block with block_type = 'tag' (TOCTOU-safe
     // inside the tx). Mirrors `add_tag_inner`.

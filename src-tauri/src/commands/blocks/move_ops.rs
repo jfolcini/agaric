@@ -50,6 +50,8 @@ pub async fn move_block_inner(
     // `move_blocks_batch_inner` can run N moves inside ONE tx with identical
     // slot/cycle/depth semantics — this wrapper is the single-move arity of it.
     let mut tx = CommandTx::begin_immediate(pool, "move_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
     let response = move_block_in_tx(
         &mut tx,
         materializer.loro_state(),
@@ -411,6 +413,8 @@ pub async fn move_blocks_batch_inner(
     let start_index = new_index.max(0);
 
     let mut tx = CommandTx::begin_immediate(pool, "move_blocks_batch").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // PRE-VALIDATE every move against the CURRENT in-tx state BEFORE the
     // first engine apply. `move_block_in_tx` mutates the SHARED in-memory

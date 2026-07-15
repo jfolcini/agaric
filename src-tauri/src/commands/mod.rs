@@ -711,6 +711,8 @@ async fn delete_property_core(
     //    commit + post-commit dispatch so a failed commit never leaks
     //    an op_record to the materializer).
     let mut tx = CommandTx::begin_immediate(pool, "delete_property_core").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // 2. Validate block exists and is not deleted (TOCTOU-safe).
     //    #1627: authoritative activeness gate now that the redundant

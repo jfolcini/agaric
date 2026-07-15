@@ -422,3 +422,118 @@ async fn remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604() 
         "the re-applied block keeps its parent linkage"
     );
 }
+
+/// #2604 LOCAL path — a `CommandTx` armed with `arm_engine_rollback` that is
+/// DROPPED without committing (the `?`-early-return / panic abort) rewinds the
+/// in-place engine apply via `CommandTx::Drop`, so the engine never gets ahead
+/// of the rolled-back SQL. This is the LOCAL-command counterpart of the REMOTE
+/// `apply_op` wiring; unlike REMOTE, the LOCAL path also self-heals via boot
+/// replay, but the rewind eliminates the divergence window entirely.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_command_tx_abort_rewinds_engine_no_divergence_2604() {
+    let (pool, _dir, state) = seed_space_and_page().await;
+    let state = std::sync::Arc::new(state);
+    let record = remote_create_record();
+    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+
+    // ── Abort injection: armed CommandTx, in-place apply, drop before commit ──
+    {
+        let mut tx = crate::db::CommandTx::begin_immediate(&pool, "test_local_abort_2604")
+            .await
+            .expect("begin CommandTx");
+        // Arm rollback for this tx (what every engine-driving LOCAL command does).
+        tx.arm_engine_rollback(&state);
+        // LOCAL apply path: `advance_cursor = false`. Mutates the per-space engine
+        // in place and stages the SQL projection in the tx.
+        super::apply_op_projected(&mut tx, &record, &state, /* advance_cursor */ false)
+            .await
+            .expect("apply_op_projected (LOCAL, in-tx engine apply)");
+        // The op is applied in place BEFORE the commit decision.
+        {
+            let mut guard = state
+                .registry
+                .for_space(&space, DEVICE_ID)
+                .expect("for_space (pre-abort read)");
+            assert!(
+                guard
+                    .engine_mut()
+                    .read_block(REMOTE_B)
+                    .expect("read")
+                    .is_some(),
+                "the LOCAL op is applied in place before the abort"
+            );
+            drop(guard);
+        }
+        drop(tx); // ← abort: CommandTx::Drop rolls back SQL AND rewinds the engine
+    }
+
+    // ── Assert NO divergence: the engine rewound in lock-step with SQL ───────
+    let engine_has_block = {
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space (post-abort read)");
+        let present = guard
+            .engine_mut()
+            .read_block(REMOTE_B)
+            .expect("engine read")
+            .is_some();
+        drop(guard);
+        present
+    };
+    assert!(
+        !engine_has_block,
+        "a dropped (uncommitted) armed CommandTx must rewind the in-place engine apply — no divergence"
+    );
+    assert_eq!(
+        sql_block_count(&pool, REMOTE_B).await,
+        0,
+        "the SQL projection rolled back with the dropped tx"
+    );
+}
+
+/// #2604 LOCAL path — the COMMIT side: an armed `CommandTx` that commits keeps
+/// the in-place engine apply AND lands the SQL projection, so engine and SQL
+/// agree with no rewind. (`commit_without_dispatch` avoids needing a full
+/// `Materializer`; `commit_and_dispatch` takes the same detach-under-lock path.)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_command_tx_commit_keeps_engine_and_projects_sql_2604() {
+    let (pool, _dir, state) = seed_space_and_page().await;
+    let state = std::sync::Arc::new(state);
+    let record = remote_create_record();
+    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+
+    {
+        let mut tx = crate::db::CommandTx::begin_immediate(&pool, "test_local_commit_2604")
+            .await
+            .expect("begin CommandTx");
+        tx.arm_engine_rollback(&state);
+        super::apply_op_projected(&mut tx, &record, &state, /* advance_cursor */ false)
+            .await
+            .expect("apply_op_projected (LOCAL, in-tx engine apply)");
+        tx.commit_without_dispatch()
+            .await
+            .expect("commit the armed CommandTx");
+    }
+
+    // Engine keeps the op (commit disarmed the rollback, dropping the checkpoint).
+    let engine_final = {
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space (final read)");
+        let snap = guard
+            .engine_mut()
+            .read_block(REMOTE_B)
+            .expect("engine read")
+            .expect("engine holds the committed op");
+        drop(guard);
+        snap
+    };
+    assert_eq!(engine_final.content, REMOTE_CONTENT);
+    assert_eq!(
+        sql_block_count(&pool, REMOTE_B).await,
+        1,
+        "the committed op's SQL projection landed — engine and SQL agree"
+    );
+}

@@ -173,6 +173,9 @@ pub async fn import_bibliography_inner(
 
     // --- Chunked IMMEDIATE transactions (#662 pattern) ---
     let mut tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort). Re-armed per
+    // chunk at the re-open below.
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate `space_id` upfront inside the tx, identically to
     // `import_markdown_with_progress` / `create_page_in_space_inner`: the
@@ -298,6 +301,8 @@ pub async fn import_bibliography_inner(
             })?;
             chunks_committed += 1;
             tx = CommandTx::begin_immediate(pool, "import_bibliography").await?;
+            // #2604 — re-arm rollback for the new per-chunk tx.
+            tx.arm_engine_rollback(materializer.loro_state());
             chunk_entries = 0;
         }
 

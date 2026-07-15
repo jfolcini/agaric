@@ -298,7 +298,12 @@ async fn reverse_move_block(
     // to the SQL-only result with a breadcrumb — boot replay reconciles.
     let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
     if let Some(space_id) = space_id {
-        let mut guard = state.registry.for_space(&space_id, device_id)?;
+        // #2604 — record a rollback checkpoint (the reverse-move is the only
+        // engine mutation on the undo/redo path, which bypasses
+        // `apply_op_projected`) so an aborted undo tx rewinds it.
+        let mut guard = state
+            .registry
+            .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
         let block_in_engine = engine.read_block(move_block_id_str)?.is_some();
         let parent_in_engine = match new_parent_id_str {
@@ -729,6 +734,9 @@ pub async fn revert_ops_inner(
     // dispatch is structurally impossible (commit_and_dispatch drains
     // the pending queue in order).
     let mut tx = CommandTx::begin_immediate(pool, "revert_ops").await?;
+    // #2604 — rollback-safe engine apply: an aborted undo/revert tx rewinds the
+    // reverse-move engine mutation (see `reverse_move_block`).
+    tx.arm_engine_rollback(materializer.loro_state());
     // Interactive batch undo preserves the historical contract: a single
     // non-reversible op aborts the whole revert (skip_non_reversible =
     // false). The discarded skip count is irrelevant on this path.
@@ -1106,6 +1114,8 @@ pub async fn restore_page_to_op_inner(
     // landing between "which ops to revert" and "apply the reverses" would
     // keep its forward effect. See the `Snapshot semantics` doc-block above.
     let mut tx = CommandTx::begin_immediate(pool, "restore_page_to_op").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Query all ops after the target — executed on `tx` (the IMMEDIATE
     // transaction), not the bare pool.
@@ -1371,6 +1381,8 @@ pub async fn undo_page_op_inner(
     // makes the commit + dispatch pair atomic and impossible to
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "undo_page_op").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // #659: flag the reverse op as an undo op (`op_log.is_undo = 1`) so
     // `redo_page_op_inner` can verify that the ref it is asked to reverse
@@ -1491,6 +1503,8 @@ pub async fn redo_page_op_inner(
     // makes the commit + dispatch pair atomic and impossible to
     // desequence.
     let mut tx = CommandTx::begin_immediate(pool, "redo_page_op").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // ONE timestamp threads through BOTH the append and the apply
     // (`reverse_op_timestamp`): a redo that re-deletes stamps
@@ -1750,6 +1764,8 @@ pub async fn undo_page_group_inner(
     // SELECT below runs *inside* the same transaction that applies the
     // reverses (atomic read+revert — see the `Snapshot semantics` doc-block).
     let mut tx = CommandTx::begin_immediate(pool, "undo_page_group").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Resolve the page subtree ONCE and enumerate the group's op refs. The
     // `page_blocks` + `ordered_ops` CTEs are identical to
@@ -1928,6 +1944,8 @@ pub async fn undo_ops_inner(
     // Open the IMMEDIATE write transaction BEFORE the guard reads so guard
     // and revert are atomic (mirrors #1551 / `undo_page_group_inner`).
     let mut tx = CommandTx::begin_immediate(pool, "undo_ops").await?;
+    // #2604 — rollback-safe engine apply (rewind reverse-move on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     verify_undo_targets_in_tx(&mut tx, &ops).await?;
 

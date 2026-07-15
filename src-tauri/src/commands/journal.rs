@@ -137,6 +137,8 @@ async fn resolve_or_create_journal_page(
     // INSERT are atomic with respect to each other. CommandTx
     // couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "resolve_or_create_journal_page").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Look for an existing page whose content matches the date
     // exactly AND whose `space` ref property points at the requested

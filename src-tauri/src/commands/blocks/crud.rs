@@ -71,6 +71,8 @@ pub async fn create_block_inner(
     // CommandTx couples commit + post-commit dispatch.
     let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
     let (block, op_record) = create_block_in_tx(
         &mut tx,
         materializer.loro_state(),
@@ -253,6 +255,9 @@ pub async fn edit_block_inner(
     // + post-commit dispatch via `enqueue_edit_background` (the
     // block-type-aware variant that restricts the cache rebuild fan-out).
     let mut tx = CommandTx::begin_immediate(pool, "edit_block").await?;
+    // #2604 — arm rollback-safe engine apply: if this tx aborts after the
+    // in-place `apply_op_projected` engine mutation below, the engine is rewound.
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
@@ -395,6 +400,8 @@ pub async fn delete_block_inner(
     // slow-acquire tracing from `begin_immediate_logged` AND couples
     // commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_delete_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
     // `block_type` so the post-commit dispatch can narrow the cache-rebuild
@@ -616,6 +623,8 @@ pub async fn delete_blocks_by_ids_inner(
     let ids_json = serde_json::to_string(&block_ids)?;
 
     let mut tx = CommandTx::begin_immediate(pool, "delete_blocks_by_ids").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Resolve the live root set INSIDE the tx so a row that was
     // soft-deleted between FE selection and this call drops out
@@ -893,6 +902,8 @@ pub async fn move_blocks_to_space_inner(
 
     // One IMMEDIATE tx covers space validation + every per-block move.
     let mut tx = CommandTx::begin_immediate(pool, "move_blocks_to_space").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate `space_id` ONCE inside the tx (TOCTOU-safe against a
     // concurrent space delete). Mirrors `create_page_in_space_inner`: the
@@ -1046,6 +1057,8 @@ pub async fn restore_block_inner(
     // + CommandTx inherits slow-acquire tracing from
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_restore_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
     // `block_type` so the post-commit dispatch can narrow the cache-rebuild
@@ -1313,6 +1326,8 @@ pub async fn purge_block_inner(
     // + CommandTx inherits slow-acquire tracing from
     // begin_immediate_logged AND couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "cmd_purge_block").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Validate inside transaction (TOCTOU-safe). #2037 pt2: also read
     // `block_type` so the post-commit dispatch can narrow the cache-rebuild
@@ -1448,6 +1463,8 @@ pub async fn restore_all_deleted_inner(
 ) -> Result<BulkTrashResponse, AppError> {
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "bulk_restore_trash").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // C9 (#345) — derive cascade roots from the op-log when one exists,
     // falling back to the structural heuristic only for op-less tombstones.
@@ -1617,6 +1634,8 @@ pub async fn purge_all_deleted_inner(
 ) -> Result<BulkTrashResponse, AppError> {
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "purge_all_deleted").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // C9 (#345) — derive cascade roots from the op-log when one exists
     // (`op.created_at = blocks.deleted_at`), falling back to the structural
@@ -1767,6 +1786,8 @@ pub async fn restore_blocks_by_ids_inner(
 
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "restore_blocks_by_ids").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Resolve which input ids are actually soft-deleted "roots" — a
     // present, deleted block. Skips ids that are alive or missing
@@ -1950,6 +1971,8 @@ pub async fn purge_blocks_by_ids_inner(
 
     // CommandTx couples commit + post-commit dispatch.
     let mut tx = CommandTx::begin_immediate(pool, "purge_blocks_by_ids").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // Audit Validator I11 note: the "all" variant's root-selection step
     // (`SELECT roots WHERE deleted_at IS NOT NULL AND parent NOT cascade`)
@@ -2430,6 +2453,8 @@ pub async fn create_blocks_batch_inner(
     }
 
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     let mut created: Vec<BlockRow> = Vec::with_capacity(specs.len());
 
