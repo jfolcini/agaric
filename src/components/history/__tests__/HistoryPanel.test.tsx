@@ -28,6 +28,7 @@ import { axe } from 'vitest-axe'
 
 import { makeBlock, makeHistoryEntry } from '@/__tests__/fixtures'
 import { HistoryPanel } from '@/components/history/HistoryPanel'
+import { queryClient } from '@/lib/query-client'
 import { getPageStore, PageBlockStoreProvider } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -71,6 +72,9 @@ function setupInvokeRouter(handlers: Record<string, (args: unknown) => unknown>)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Isolate the module-level TanStack singleton between tests (#2634): clear
+  // cached pages so each render refetches through the mocked IPC.
+  queryClient.clear()
   useUndoStore.setState({ pages: new Map() })
 })
 

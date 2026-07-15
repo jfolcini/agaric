@@ -15,6 +15,7 @@
  *     place — they don't route through this component.
  */
 
+import { useInfiniteQuery } from '@tanstack/react-query'
 import { Clock } from 'lucide-react'
 import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -31,11 +32,11 @@ import { HistoryFilterBar } from '@/components/history/HistoryFilterBar'
 import { BlockHistoryItem } from '@/components/HistoryListItem'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
-import { usePaginatedQuery } from '@/hooks/usePaginatedQuery'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { HistoryEntry, OpRef } from '@/lib/tauri'
+import { queryClient } from '@/lib/query-client'
+import type { HistoryEntry, OpRef, PageResponse } from '@/lib/tauri'
 import { editBlock, getBlock, getBlockHistory } from '@/lib/tauri'
 import { forEachPageStore, storeOwnsBlock } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -128,43 +129,77 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   // nowhere (no row receives it) and the user is silently stuck.
   const pendingKeyboardFocusRef = useRef(false)
 
-  // #2256 — the paginated data path now runs through the shared
-  // `usePaginatedQuery` hook (matching HistoryView / DonePanel) instead of a
-  // hand-rolled loadHistory/cursor/hasMore trio. This gives HistoryPanel the
-  // canonical stale-guard for free: when `blockId` / `opTypeFilter` change,
-  // `queryFn`'s identity changes, so the hook bumps its request id and aborts
-  // the in-flight request — a late response from a superseded block/filter can
-  // no longer repopulate the just-switched list. `opTypeFilter` is applied in
-  // SQL by the backend, so entries arrive pre-filtered.
-  const queryFn = useCallback(
-    async (cursor?: string) => {
-      // `enabled` below gates the fetch on a non-null blockId, so this guard is
-      // only a type-narrowing safety net — the hook never calls queryFn when
-      // disabled. Returning an empty page keeps the signature total.
-      if (!blockId) return { items: [], next_cursor: null, has_more: false }
-      try {
-        return await getBlockHistory({
-          blockId,
-          ...(opTypeFilter != null && { opTypeFilter }),
-          ...(cursor != null && { cursor }),
-          limit: PAGINATION_LIMIT,
-        })
-      } catch (err) {
-        logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
-        throw err
-      }
-    },
-    [blockId, opTypeFilter],
-  )
+  // #2634 — migrated off `usePaginatedQuery` onto TanStack `useInfiniteQuery`
+  // directly (staged retirement of the generic hook; matching the merged
+  // `useBacklinkGroups` / `useUnlinkedReferences` pattern). The query key is
+  // built from the real fetch inputs (blockId + opTypeFilter), so a block/filter
+  // change is a fresh query — reproducing the old hook's stale-guard: a late
+  // response for a superseded block/filter lands in that key's (now
+  // observer-less) cache entry and can no longer repopulate the visible list
+  // (#2256). `opTypeFilter` is applied in SQL by the backend, so entries arrive
+  // pre-filtered. The client is passed EXPLICITLY as the 2nd arg so no
+  // `QueryClientProvider` ancestor is required (bare `render()` tests need no
+  // wrapper). `getBlockHistory` takes no AbortSignal, so — as before migration —
+  // none is forwarded.
   const {
-    items: entries,
-    loading,
-    hasMore,
-    loadMore,
-  } = usePaginatedQuery<HistoryEntry>(queryFn, {
-    enabled: blockId != null,
-    onError: t('history.loadFailed'),
-  })
+    data,
+    isFetching,
+    isError,
+    errorUpdatedAt,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useInfiniteQuery(
+    {
+      queryKey: ['blockHistory', blockId, opTypeFilter],
+      queryFn: async ({ pageParam }): Promise<PageResponse<HistoryEntry>> => {
+        // `enabled` gates the fetch on a non-null blockId, so this guard is
+        // only a type-narrowing safety net — the query never runs when
+        // disabled. Returning an empty page keeps the signature total.
+        if (!blockId) return { items: [], next_cursor: null, has_more: false, total_count: null }
+        try {
+          return await getBlockHistory({
+            blockId,
+            ...(opTypeFilter != null && { opTypeFilter }),
+            ...(pageParam != null && { cursor: pageParam }),
+            limit: PAGINATION_LIMIT,
+          })
+        } catch (err) {
+          logger.error('HistoryPanel', 'Failed to load block history', { blockId }, err)
+          throw err
+        }
+      },
+      initialPageParam: undefined as string | undefined,
+      getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
+      enabled: blockId != null,
+      // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
+      refetchOnMount: 'always',
+    },
+    queryClient,
+  )
+
+  // Flatten the page list into the single entries array the panel renders.
+  const entries = useMemo<HistoryEntry[]>(() => data?.pages.flatMap((p) => p.items) ?? [], [data])
+  // usePaginatedQuery's `loading` was true during ANY in-flight fetch (initial
+  // AND load-more), which drove both the skeleton and the LoadMoreButton's busy
+  // state — `isFetching` reproduces that exactly (`isLoading` would be false
+  // during load-more).
+  const loading = isFetching
+  const hasMore = hasNextPage
+  const loadMore = useCallback(() => {
+    if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
+  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+
+  // Reproduce the old `onError: t('history.loadFailed')` toast. usePaginatedQuery
+  // called `notify.error` from its catch on EACH failed load (initial and every
+  // load-more). TanStack keeps `isError` latched `true` across consecutive
+  // same-key failures (a data-present refetch error doesn't re-transition it), so
+  // keying only on `isError` would toast just once. `errorUpdatedAt` advances on
+  // every error occurrence, so depending on it fires the toast once per failed
+  // load — matching the old behaviour (incl. a re-keyed query re-toasting).
+  useEffect(() => {
+    if (isError) notify.error(t('history.loadFailed'))
+  }, [isError, errorUpdatedAt, t])
 
   // Collapse any expanded row when the fetch identity changes (new block /
   // filter), matching the pre-migration reset that lived in the load effect.
