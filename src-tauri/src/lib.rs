@@ -22,7 +22,7 @@ pub use agaric_core::error;
 pub mod filters;
 pub mod foreground;
 pub mod fts;
-pub mod hash;
+pub use agaric_core::hash; // foundation crate (#2621)
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;

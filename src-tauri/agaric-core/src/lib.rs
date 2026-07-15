@@ -7,6 +7,7 @@
 //! existing `crate::error::…` path resolving unchanged.
 
 pub mod error;
+pub mod hash;
 pub mod sql_utils;
 pub mod tag_norm;
 pub mod text_utils;

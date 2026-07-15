@@ -119,27 +119,54 @@ pub fn compute_op_hash(
     hasher.finalize().to_hex().to_string()
 }
 
-/// Verify that an [`OpRecord`]'s stored hash matches its recomputed hash.
+/// The fields a record must expose for [`verify_op_record`] to recompute and
+/// check its stored hash.
+///
+/// #2621: this trait is the inversion that lets `hash` live in `agaric-core`
+/// without depending on `op_log`. The concrete `op_log::OpRecord` implements
+/// it up in the app/store layer (`impl HashableOpRecord for OpRecord` in
+/// `op_log/record.rs`), so the dependency points *down* into core rather than
+/// core reaching *up* into `op_log`.
+pub trait HashableOpRecord {
+    /// Originating device id (hash field 1).
+    fn device_id(&self) -> &str;
+    /// Per-device sequence number (hash field 2).
+    fn seq(&self) -> i64;
+    /// Canonical `parent_seqs` JSON, or `None` for the genesis op (field 3).
+    fn parent_seqs(&self) -> Option<&str>;
+    /// Op type discriminant (hash field 4).
+    fn op_type(&self) -> &str;
+    /// Canonical payload JSON (hash field 5).
+    fn payload(&self) -> &str;
+    /// The stored hash to check the recomputed value against.
+    fn stored_hash(&self) -> &str;
+}
+
+/// Verify that a record's stored hash matches its recomputed hash.
 ///
 /// Returns `Ok(())` if the hash is valid, or `Err` with a human-readable
 /// message describing the mismatch (device_id, seq, expected vs actual).
 ///
-/// Prefer this over [`verify_op_hash`] when you already have an `OpRecord`
-/// — it avoids having to destructure the fields at every call site.
-pub fn verify_op_record(record: &crate::op_log::OpRecord) -> Result<(), String> {
+/// Prefer this over [`verify_op_hash`] when you already have a
+/// [`HashableOpRecord`] (e.g. `op_log::OpRecord`) — it avoids having to
+/// destructure the fields at every call site.
+pub fn verify_op_record<R: HashableOpRecord>(record: &R) -> Result<(), String> {
     let expected = compute_op_hash(
-        &record.device_id,
-        record.seq,
-        record.parent_seqs.as_deref(),
-        &record.op_type,
-        &record.payload,
+        record.device_id(),
+        record.seq(),
+        record.parent_seqs(),
+        record.op_type(),
+        record.payload(),
     );
-    if constant_time_eq(expected.as_bytes(), record.hash.as_bytes()) {
+    if constant_time_eq(expected.as_bytes(), record.stored_hash().as_bytes()) {
         Ok(())
     } else {
         Err(format!(
             "hash mismatch for {}:{} — expected {}, got {}",
-            record.device_id, record.seq, expected, record.hash
+            record.device_id(),
+            record.seq(),
+            expected,
+            record.stored_hash()
         ))
     }
 }
@@ -178,8 +205,11 @@ pub fn verify_op_hash(
 /// relied upon to be constant-time. (It is, in any case, not constant-time
 /// across unequal lengths because of the early length check below.) Inputs
 /// here are always fixed-length 64-byte blake3 hex hashes.
+// Widened `pub(crate)` → `pub` when `hash` moved into `agaric-core` (#2621):
+// the #855 pairing-proof compare in `sync_daemon::server` (app crate) calls it
+// via `crate::hash::constant_time_eq` (a re-export of `agaric_core::hash::…`).
 #[inline]
-pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
     }
@@ -431,22 +461,51 @@ mod tests {
 
     // ── verify_op_record ─────────────────────────────────────────────
 
-    /// Helper: build a valid [`OpRecord`] with a correct hash.
-    fn make_valid_record() -> crate::op_log::OpRecord {
+    /// Minimal [`HashableOpRecord`] for the generic-path tests. The real
+    /// `op_log::OpRecord` impl is exercised end-to-end against a persisted
+    /// row in `op_log/tests/hash.rs` (app crate); here we only need the six
+    /// hash fields, decoupled from `op_log` so these tests live in core (#2621).
+    struct FakeOpRecord {
+        device_id: String,
+        seq: i64,
+        parent_seqs: Option<String>,
+        op_type: String,
+        payload: String,
+        hash: String,
+    }
+
+    impl super::HashableOpRecord for FakeOpRecord {
+        fn device_id(&self) -> &str {
+            &self.device_id
+        }
+        fn seq(&self) -> i64 {
+            self.seq
+        }
+        fn parent_seqs(&self) -> Option<&str> {
+            self.parent_seqs.as_deref()
+        }
+        fn op_type(&self) -> &str {
+            &self.op_type
+        }
+        fn payload(&self) -> &str {
+            &self.payload
+        }
+        fn stored_hash(&self) -> &str {
+            &self.hash
+        }
+    }
+
+    /// Helper: build a valid [`FakeOpRecord`] with a correct hash.
+    fn make_valid_record() -> FakeOpRecord {
         let payload = r#"{"block_id":"AB","text":"hello"}"#;
         let hash = compute_op_hash(DEV_1, 1, None, OP_CREATE, payload);
-        crate::op_log::OpRecord {
+        FakeOpRecord {
             device_id: DEV_1.to_string(),
             seq: 1,
             parent_seqs: None,
             hash,
             op_type: OP_CREATE.to_string(),
             payload: payload.to_string(),
-            created_at: 1_735_689_600_000,
-            // Hash tests don't care about the cached sidecar
-            // (it is intentionally excluded from the hash preimage),
-            // but the field is required for the struct literal.
-            block_id: Some("AB".to_string()),
         }
     }
 

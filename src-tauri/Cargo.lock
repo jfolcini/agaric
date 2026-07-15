@@ -90,6 +90,7 @@ dependencies = [
 name = "agaric-core"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "proptest",
  "serde",
  "serde_json",
@@ -98,6 +99,7 @@ dependencies = [
  "sqlx",
  "thiserror 2.0.18",
  "tokio",
+ "tracing",
  "unicode-normalization",
 ]
 
