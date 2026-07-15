@@ -11,5 +11,6 @@ pub mod hash;
 pub mod sql_utils;
 pub mod tag_norm;
 pub mod text_utils;
+pub mod time;
 pub mod ulid;
 pub mod word_diff;

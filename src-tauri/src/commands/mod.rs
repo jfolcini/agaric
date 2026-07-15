@@ -214,49 +214,13 @@ pub(crate) use crate::domain::block_ops::{is_valid_iso_date, validate_date_forma
 // glob-internal caller (`move_ops.rs`, `drafts.rs`) resolving unchanged.
 pub(crate) use crate::domain::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
 
-/// Upper bound on how many block ids a single `*_by_ids` / batch command
-/// will accept. Resolving in one `json_each(?1)` membership query under a
-/// single `BEGIN IMMEDIATE` transaction means the whole batch holds the
-/// writer lock for its duration; a runaway caller (or a malicious MCP tool)
-/// could otherwise hold the writer lock for an unbounded interval while
-/// writing thousands of op_log rows. 1000 covers every realistic UI
-/// multi-select gesture (TrashView caps its own table to a few hundred rows;
-/// the page editor's multi-select fans the same way). Callers exceeding the
-/// cap should chunk client-side — the FE wrappers in `src/lib/tauri.ts`
-/// deliberately pass the input through unchanged so the backend's cap is the
-/// single authority.
-///
-/// This is the single source of truth for the limit across the whole
-/// `*_by_ids` / batch family — both the write-batch commands
-/// (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`,
-/// `delete_blocks_by_ids_inner`, `add_tags_by_ids_inner`,
-/// `create_blocks_batch_inner`, `move_blocks_to_space_inner`) and the
-/// batch-read commands (`batch_resolve_inner`, `get_blocks_inner`,
-/// `first_child_for_blocks_inner`, `get_batch_properties_inner`,
-/// `list_attachments_batch_inner`, `count_backlinks_batch_inner`,
-/// `count_agenda_batch_inner`, `count_agenda_batch_by_source_inner`,
-/// `trash_descendant_counts_inner`, and any future `*_by_ids` siblings) so
-/// the limit is not silently inconsistent across the family. Every site
-/// enforces it via [`ensure_batch_within_cap`].
-pub(crate) const MAX_BATCH_BLOCK_IDS: usize = 1000;
-
-/// Reject an over-cap batch with the canonical
-/// `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"`
-/// [`AppError::Validation`] message, sharing the [`MAX_BATCH_BLOCK_IDS`]
-/// guard across the `*_by_ids` / batch family.
-///
-/// `subject` is the noun used in the message (e.g. `"block_ids"`, `"ids"`,
-/// `"specs"`) so each call site keeps its existing, verbatim error text.
-/// Callers still perform their own empty-list check separately; this helper
-/// only covers the upper-bound branch.
-pub(crate) fn ensure_batch_within_cap(subject: &str, len: usize) -> Result<(), AppError> {
-    if len > MAX_BATCH_BLOCK_IDS {
-        return Err(AppError::validation(format!(
-            "{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"
-        )));
-    }
-    Ok(())
-}
+// The `MAX_BATCH_BLOCK_IDS` cap and its shared `ensure_batch_within_cap`
+// guard moved down into `crate::pagination` (the store layer) so store-side
+// callers like `pagination::trash::list_trash` enforce the cap without
+// reaching *up* into `commands`. Re-export keeps
+// `crate::commands::MAX_BATCH_BLOCK_IDS` / `crate::commands::ensure_batch_within_cap`
+// and every `*_by_ids` call site resolving unchanged.
+pub(crate) use crate::pagination::{MAX_BATCH_BLOCK_IDS, ensure_batch_within_cap};
 
 /// Maximum allowed attachment size (50 MB).
 ///
