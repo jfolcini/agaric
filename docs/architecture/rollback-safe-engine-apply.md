@@ -172,11 +172,16 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
   making a single un-keyed in-flight log race-free (design-Q *Concurrency*
   resolved). `for_space` in production is exclusively a mutation chokepoint, so
   an armed log never records a concurrent reader.
-- **Commit / abort hooks.** The tx owner arms a `RevertScope` before the apply.
-  On COMMIT success it `disarm`s (the ops stay); on ANY abort — a `?`-propagated
-  error, a panic, or an early drop — the scope's `Drop` runs `revert_to_frontier`
-  for each recorded space. This covers the commit-failure, mid-apply-error, and
-  panic paths uniformly.
+- **Commit / abort hooks.** The tx owner arms a `RevertScope` after
+  `BEGIN IMMEDIATE`; once the apply has run it `detach`es the recorded
+  checkpoints out of the shared log — WHILE THE WRITE LOCK IS STILL HELD, so the
+  log is only ever armed under that lock (no concurrent writer can record into
+  another tx's log). On COMMIT success the detached checkpoints are dropped (the
+  ops stay); on an apply error or a failing `commit()` the owner calls
+  `DetachedRevert::revert`, which runs `revert_to_frontier` for each recorded
+  space. The `RevertScope`'s `Drop` is a panic-only safety-net for an unwind
+  between arming and detaching. Together these cover the commit-failure,
+  mid-apply-error, and panic paths.
 - **Cursor interaction (design-Q).** Unchanged: the apply cursor advances only
   inside the committed tx (`advance_apply_cursor`), so a reverted engine and a
   rolled-back cursor stay consistent by construction.
