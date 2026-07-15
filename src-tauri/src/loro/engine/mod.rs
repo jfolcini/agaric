@@ -578,6 +578,9 @@ pub(crate) use snapshot::TagScope;
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;
 
+/// #2604 — rollback-safe engine-apply staging primitives (`fork_staging`).
+mod staging;
+
 /// Process-global observability for cycle-rejected reparents (#1541).
 pub mod cycle_rejected_metrics;
 
