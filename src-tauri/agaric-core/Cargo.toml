@@ -18,6 +18,13 @@ rust-version = "1.95.0"
 license = "GPL-3.0-or-later"
 publish = false
 
+[features]
+# Exposes the `*::test_id` newtype constructors (otherwise `#[cfg(test)]`-only)
+# to *other* crates' test builds — `agaric`'s ~510 test call sites reach them
+# via this feature, enabled from `agaric`'s `[dev-dependencies]`. Not enabled
+# in normal builds, so the helpers stay out of the production API. (#2621)
+test-util = []
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` exactly so
 # cargo's feature unification keeps a single build of each crate across
@@ -25,10 +32,13 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2.0.18"
-# `error.rs` references `sqlx::Error` + `sqlx::migrate::MigrateError` (and
-# `is_unique_violation()`), but carries NO `query!` macros — so no
-# `.sqlx/` offline cache and no `macros` feature are needed here.
-sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "migrate"] }
+# `error.rs` references `sqlx::Error` + `sqlx::migrate::MigrateError`; the
+# `ulid` newtypes use `#[derive(sqlx::Type)]` + `#[sqlx(transparent)]`, which
+# need the `macros` feature (the DERIVE macros). Note: there are still NO
+# `query!`/`query_as!` macros here, so agaric-core has NO `.sqlx/` offline
+# cache and needs NO `sqlx prepare` CI lane — those are for compile-checked
+# queries, which stay up in the `agaric`/store layer (`verify_active_in_tx`).
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 similar = "3"
 # `tag_norm` (Unicode case-folding) + `text_utils::nfc_normalise` (the shared
@@ -38,6 +48,8 @@ unicode-normalization = "0.1.25"
 # match ../Cargo.toml.
 blake3 = "1.8.5"
 tracing = { version = "0.1.44", features = ["attributes"] }
+# `ulid` newtypes — ULID generation/parsing for `BlockId::new`/`from_str`.
+ulid = "1.2.1"
 
 [dev-dependencies]
 # Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,

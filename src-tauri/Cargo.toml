@@ -338,6 +338,10 @@ loro = "1.12"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
+# Re-declare agaric-core with `test-util` so the moved `*::test_id` newtype
+# constructors are available to this crate's ~510 test call sites (#2621).
+# Only enabled for test builds; the normal `[dependencies]` entry stays lean.
+agaric-core = { path = "agaric-core", version = "0.1.0", features = ["test-util"] }
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 # Test-only OTel feature: `InMemorySpanExporter` / `InMemoryLogExporter` /
 # `InMemoryMetricExporter` for the observability pipeline tests (#2110, M1a +
