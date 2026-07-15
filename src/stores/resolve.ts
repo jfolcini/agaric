@@ -145,6 +145,15 @@ interface ResolveStore {
   /** Resolve deleted status under the active space. */
   resolveStatus: (id: string) => 'active' | 'deleted'
   /**
+   * Whether a real entry for `id` exists under the active space. A pure
+   * existence probe — no LRU touch, no `version` bump, no re-render. Lets a
+   * delegating consumer (e.g. `useBacklinkResolution`, #2635) distinguish a
+   * genuine cached resolution from `resolveTitle`'s `[[ULID]]` fallback so it
+   * can apply its OWN fallback (broken-link placeholder / `#tag`) without
+   * writing that placeholder back into the shared cache.
+   */
+  has: (id: string) => boolean
+  /**
    * Flush every cache entry whose composite key starts with
    * `${prevSpaceId}::`. Other spaces' entries (and the
    * `__global__::*` namespace, if anything ever lands there) survive.
@@ -361,6 +370,8 @@ export const useResolveStore = create<ResolveStore>((set, get) => {
       }
       return 'active'
     },
+
+    has: (id) => get().cache.has(keyFor(activeSpaceId(), id)),
 
     clearAllForSpace: (prevSpaceId) =>
       set((state) => {

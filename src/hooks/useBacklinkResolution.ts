@@ -1,8 +1,20 @@
 /**
  * useBacklinkResolution -- resolve [[ULID]] and #[ULID] tokens in backlink content.
  *
- * Manages a TTL cache of resolved page titles and tag names, batch-resolving
- * unknown IDs via the backend and providing stable resolver callbacks for rendering.
+ * #2635 — real title/status resolution is DELEGATED to the shared
+ * `useResolveStore` (the single app-wide `[[ULID]]`/`#[ULID]` title cache).
+ * This hook no longer owns a private resolved-title Map (nor its TTL/LRU); it
+ * keeps ONLY the backlink-specific bookkeeping local:
+ *
+ *   - `attemptedRef` — a `Set` of "attempted-but-unresolved" ids: link TARGETS
+ *     the backend did not return (foreign-space / soft-deleted). These render
+ *     as broken links WITHOUT being written into the shared store, so the
+ *     app-wide cache is never polluted with backlink-only deleted placeholders.
+ *   - `forceReresolveRef` — a latch set by `clearCache()` so the next resolve
+ *     pass re-fetches the current content ids even when they are already cached
+ *     in the store. This preserves #2628: a renamed linked target RE-resolves
+ *     (its fresh title is written back to the store) instead of serving the
+ *     stale cached entry.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -10,17 +22,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { logger } from '../lib/logger'
 import type { BacklinkGroup, ResolvedBlock } from '../lib/tauri'
 import { batchResolve } from '../lib/tauri'
-import { keyFor } from '../stores/resolve'
+import { keyFor, useResolveStore } from '../stores/resolve'
 import { useSpaceStore } from '../stores/space'
-
-export interface ResolveCacheEntry {
-  title: string
-  deleted: boolean
-  cachedAt: number
-}
-
-export const TTL_MS = 5 * 60 * 1000
-export const MAX_CACHE_SIZE = 1000
 
 export interface UseBacklinkResolutionResult {
   resolveBlockTitle: (id: string) => string
@@ -29,79 +32,12 @@ export interface UseBacklinkResolutionResult {
   clearCache: () => void
 }
 
-type ResolveCache = Map<string, ResolveCacheEntry>
+const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
+const TAG_RE = /#\[([0-9A-Z]{26})\]/g
 
-// ---------------------------------------------------------------------------
-// Pure cache maintenance helpers (module-scope so the hook body stays simple).
-// ---------------------------------------------------------------------------
-
-/** Drop entries whose `cachedAt` is older than TTL_MS before `now`. */
-function evictExpiredEntries(cache: ResolveCache, now: number): void {
-  for (const [key, entry] of cache) {
-    if (now - entry.cachedAt > TTL_MS) cache.delete(key)
-  }
-}
-
-/**
- * Evict oldest entries (insertion order) to keep `cache.size + pendingCount`
- * under `MAX_CACHE_SIZE`. Map iteration order is insertion order in ES2015+.
- */
-function evictOverflow(cache: ResolveCache, pendingCount: number): void {
-  const overflow = cache.size + pendingCount - MAX_CACHE_SIZE
-  if (overflow <= 0) return
-  const keys = cache.keys()
-  for (let i = 0; i < overflow; i++) {
-    const next = keys.next()
-    if (next.done) break
-    cache.delete(next.value)
-  }
-}
-
-/** Compute the display title for a resolved entry, with tag/page fallbacks. */
-function computeTitle(r: ResolvedBlock): string {
-  if (r.title) {
-    const trimmed = r.title.slice(0, 60)
-    if (trimmed.length > 0) return trimmed
-  }
-  return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
-}
-
-/** Write resolved entries into the cache with the current timestamp. */
-function storeResolvedEntries(
-  cache: ResolveCache,
-  resolved: ResolvedBlock[],
-  spaceId: string | null,
-): void {
-  const now = Date.now()
-  for (const r of resolved) {
-    cache.set(keyFor(spaceId, r.id), { title: computeTitle(r), deleted: r.deleted, cachedAt: now })
-  }
-}
-
-/** For every requested id the backend did not return, store a deleted-placeholder. */
-function fillUnresolvedPlaceholders(
-  cache: ResolveCache,
-  requestedIds: Iterable<string>,
-  spaceId: string | null,
-): void {
-  const now = Date.now()
-  for (const id of requestedIds) {
-    const key = keyFor(spaceId, id)
-    if (cache.has(key)) continue
-    cache.set(key, { title: `[[${id.slice(0, 8)}...]]`, deleted: true, cachedAt: now })
-  }
-}
-
-/** Collect all [[ULID]] and #[ULID] token ids that aren't fresh in the cache. */
-function collectIdsToResolve(
-  groups: BacklinkGroup[],
-  cache: ResolveCache,
-  spaceId: string | null,
-): Set<string> {
-  const ULID_RE = /\[\[([0-9A-Z]{26})\]\]/g
-  const TAG_RE = /#\[([0-9A-Z]{26})\]/g
+/** Collect every [[ULID]] and #[ULID] token id present in the groups' content. */
+function collectContentIds(groups: BacklinkGroup[]): Set<string> {
   const ids = new Set<string>()
-  const now = Date.now()
   for (const g of groups) {
     for (const block of g.blocks) {
       if (!block.content) continue
@@ -109,73 +45,92 @@ function collectIdsToResolve(
       for (const m of block.content.matchAll(TAG_RE)) ids.add(m[1] as string)
     }
   }
-  for (const id of ids) {
-    const cached = cache.get(keyFor(spaceId, id))
-    if (cached && now - cached.cachedAt <= TTL_MS) ids.delete(id)
-  }
   return ids
 }
 
 /**
- * Merge a batch of resolved blocks into the cache, evicting stale + overflowed
- * entries, and backfilling placeholders for any id the backend did not return.
+ * Display title to persist in the shared store for a resolved row. A real
+ * (non-empty) backend title is stored verbatim, matching the store's own
+ * convention (preload writes raw page/tag titles). An empty/absent title falls
+ * back to the tag/page placeholder so the row still carries a stable label AND
+ * `has()` stays true for it — otherwise a name-less-but-real row would be
+ * re-fetched on every pass.
  */
-function mergeResolvedIntoCache(
-  cache: ResolveCache,
-  resolved: ResolvedBlock[],
-  requestedIds: Set<string>,
-  spaceId: string | null,
-): void {
-  evictExpiredEntries(cache, Date.now())
-  evictOverflow(cache, requestedIds.size)
-  storeResolvedEntries(cache, resolved, spaceId)
-  fillUnresolvedPlaceholders(cache, requestedIds, spaceId)
+function storeTitle(r: ResolvedBlock): string {
+  if (r.title && r.title.length > 0) return r.title
+  return r.block_type === 'tag' ? `#${r.id.slice(0, 8)}...` : `[[${r.id.slice(0, 8)}...]]`
 }
 
 export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResolutionResult {
-  const [resolveVersion, setResolveVersion] = useState(0)
-  const resolveCache = useRef<ResolveCache>(new Map())
-  // Include `currentSpaceId` in cache keys so two spaces with
-  // The same ULID (or — under the same backlink existing in
-  // both spaces with different titles) don't bleed across the 5-minute
-  // TTL. Matches the `${spaceId}::${ulid}` convention from
-  // `useResolveStore` (`stores/resolve.ts`).
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
+  // Re-render when the shared store lands new resolutions (replaces the old
+  // private `resolveVersion` counter).
+  const storeVersion = useResolveStore((s) => s.version)
+  // Bumped after a batchResolve settles so the memoised resolver callbacks
+  // recompute even when the store itself did not change — e.g. every requested
+  // id was unresolved, so `batchSet([])` is a no-op and never bumps
+  // `storeVersion`, yet `attemptedRef` (a ref) did change.
+  const [localVersion, setLocalVersion] = useState(0)
 
-  // Resolve [[ULID]] and #[ULID] tokens in block content
+  // Backlink-LOCAL "attempted-but-unresolved" ids, composite-keyed by space
+  // (`keyFor`) so two spaces don't share broken-link state. These are link
+  // TARGETS the backend did not return — the broken-link UX. Kept local so the
+  // app-wide store is never polluted with backlink-only deleted placeholders
+  // (#2635), mirroring `attemptedBreadcrumbIdsRef` in useSearchResults.
+  const attemptedRef = useRef<Set<string>>(new Set<string>())
+  // Latch set by `clearCache()`: forces the next resolve pass to re-fetch the
+  // current content ids even when already cached in the store, so a renamed
+  // target re-resolves (#2628) instead of serving the stale store entry.
+  const forceReresolveRef = useRef(false)
+
+  // Resolve [[ULID]] and #[ULID] tokens in block content against the store.
   useEffect(() => {
-    const allBlocks = groups.flatMap((g) => g.blocks)
-    if (allBlocks.length === 0) return
+    const contentIds = collectContentIds(groups)
+    if (contentIds.size === 0) return
 
-    const idsToResolve = collectIdsToResolve(groups, resolveCache.current, currentSpaceId)
+    const store = useResolveStore.getState()
+    // Consume the `clearCache()` latch: when set, re-resolve ALL current
+    // content ids (ignore the store cache) so a renamed target refreshes.
+    const force = forceReresolveRef.current
+    forceReresolveRef.current = false
 
-    if (idsToResolve.size === 0) {
-      setResolveVersion((v) => v + 1)
-      return
-    }
+    const idsToResolve = [...contentIds].filter((id) =>
+      force ? true : !store.has(id) && !attemptedRef.current.has(keyFor(currentSpaceId, id)),
+    )
+    if (idsToResolve.length === 0) return
 
     let cancelled = false
 
-    // #2543 — scope the resolve to the CURRENT space, mirroring
-    // useBlockLinkResolve.ts's `spaceId ?? 'global'`. These ids come from
-    // scanning arbitrary [[ULID]]/#[ULID] link TARGETS, not from anything
-    // already known to belong to this space — passing the literal 'global'
-    // opted every id INTO cross-space resolution, so a foreign-space target
-    // resolved to a live, correctly-titled chip here while the exact same
-    // token in the editor body rendered as broken (no live links between
-    // spaces, ever — see stores/resolve.ts). `fillUnresolvedPlaceholders`
-    // below already turns any id the backend filters out into a
-    // deleted-placeholder, so foreign targets fall into the broken-link UX
-    // automatically once resolution is properly space-scoped.
-    batchResolve([...idsToResolve], currentSpaceId ?? 'global')
+    // #2543 — scope resolution to the CURRENT space (foreign-space targets then
+    // fall into the broken-link UX via the attempted-unresolved set below),
+    // falling back to the literal 'global' only when no space is active
+    // (pre-bootstrap / trash-like surfaces), mirroring useBlockLinkResolve.ts.
+    batchResolve(idsToResolve, currentSpaceId ?? 'global')
       .then((resolved) => {
         if (cancelled) return
-        mergeResolvedIntoCache(resolveCache.current, resolved, idsToResolve, currentSpaceId)
-        setResolveVersion((v) => v + 1)
+        const returnedIds = new Set(resolved.map((r) => r.id))
+        // Real resolutions → shared store (verbatim titles + real deleted flag).
+        if (resolved.length > 0) {
+          useResolveStore
+            .getState()
+            .batchSet(resolved.map((r) => ({ id: r.id, title: storeTitle(r), deleted: r.deleted })))
+        }
+        // Requested but NOT returned → backlink-local broken-link set (never the
+        // shared store). A returned id is cleared from the set in case a prior
+        // pass had marked it unresolved.
+        for (const id of idsToResolve) {
+          const key = keyFor(currentSpaceId, id)
+          if (returnedIds.has(id)) attemptedRef.current.delete(key)
+          else attemptedRef.current.add(key)
+        }
+        setLocalVersion((v) => v + 1)
       })
       .catch((err) => {
         logger.warn('useBacklinkResolution', 'batch resolve failed', undefined, err)
-        if (!cancelled) setResolveVersion((v) => v + 1)
+        // Nothing is cached and nothing is marked unresolved on error, so the
+        // ids keep their plain (active) fallback and a later groups change
+        // re-attempts resolution.
+        if (!cancelled) setLocalVersion((v) => v + 1)
       })
 
     return () => {
@@ -184,28 +139,42 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
   }, [groups, currentSpaceId])
 
   const resolveBlockTitle = useCallback(
-    (id: string): string =>
-      resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `[[${id.slice(0, 8)}...]]`,
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved titles
-    [resolveVersion, currentSpaceId],
+    (id: string): string => {
+      const store = useResolveStore.getState()
+      return store.has(id) ? store.resolveTitle(id) : `[[${id.slice(0, 8)}...]]`
+    },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- storeVersion/localVersion (unused in the body) are listed to bust the memo when resolutions land in the store or the attempted set changes
+    [storeVersion, localVersion, currentSpaceId],
   )
 
   const resolveBlockStatus = useCallback(
-    (id: string): 'active' | 'deleted' =>
-      resolveCache.current.get(keyFor(currentSpaceId, id))?.deleted ? 'deleted' : 'active',
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved statuses
-    [resolveVersion, currentSpaceId],
+    (id: string): 'active' | 'deleted' => {
+      const store = useResolveStore.getState()
+      if (store.has(id)) return store.resolveStatus(id)
+      return attemptedRef.current.has(keyFor(currentSpaceId, id)) ? 'deleted' : 'active'
+    },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- storeVersion/localVersion (unused in the body) are listed to bust the memo when resolutions land in the store or the attempted set changes
+    [storeVersion, localVersion, currentSpaceId],
   )
 
   const resolveTagName = useCallback(
-    (id: string): string =>
-      resolveCache.current.get(keyFor(currentSpaceId, id))?.title ?? `#${id.slice(0, 8)}...`,
-    // oxlint-disable-next-line react-hooks/exhaustive-deps -- resolveVersion is intentionally listed (though unused in the body) to bust the memo when the ref cache mutates, so renders pick up resolved tag names
-    [resolveVersion, currentSpaceId],
+    (id: string): string => {
+      const store = useResolveStore.getState()
+      return store.has(id) ? store.resolveTitle(id) : `#${id.slice(0, 8)}...`
+    },
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- storeVersion/localVersion (unused in the body) are listed to bust the memo when resolutions land in the store or the attempted set changes
+    [storeVersion, localVersion, currentSpaceId],
   )
 
   const clearCache = useCallback(() => {
-    resolveCache.current.clear()
+    // #2635 — do NOT clear the shared store (that would nuke every other
+    // consumer's cache). Clear only the backlink-local attempted set and latch
+    // a forced re-resolve so the current content ids are re-fetched against the
+    // store — preserving #2628 (a renamed linked target re-resolves rather than
+    // staying stale) without a private TTL.
+    attemptedRef.current.clear()
+    forceReresolveRef.current = true
+    setLocalVersion((v) => v + 1)
   }, [])
 
   return {

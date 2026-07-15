@@ -854,6 +854,45 @@ describe('resolveStatus', () => {
 })
 
 // ---------------------------------------------------------------------------
+// has
+// ---------------------------------------------------------------------------
+describe('has', () => {
+  it('returns true only for a real cached entry under the active space', () => {
+    useResolveStore.getState().set('ID_KNOWN', 'Known Page', false)
+
+    expect(useResolveStore.getState().has('ID_KNOWN')).toBe(true)
+    // Unknown id — `resolveTitle` would return the `[[…]]` fallback, but `has`
+    // reports the entry is absent so a delegating consumer can apply its OWN
+    // fallback without writing a placeholder back.
+    expect(useResolveStore.getState().has('ID_UNKNOWN')).toBe(false)
+  })
+
+  it('is space-scoped — an entry from another space is not visible', () => {
+    // Cache only holds an entry under OTHER_SPACE_ID.
+    useResolveStore.setState({
+      cache: new Map([[keyFor(OTHER_SPACE_ID, 'FOREIGN'), { title: 'Foreign', deleted: false }]]),
+    })
+
+    // Active space is TEST_SPACE_ID (beforeEach) — the foreign entry is hidden.
+    expect(useResolveStore.getState().has('FOREIGN')).toBe(false)
+
+    useSpaceStore.setState({ currentSpaceId: OTHER_SPACE_ID })
+    expect(useResolveStore.getState().has('FOREIGN')).toBe(true)
+  })
+
+  it('does not bump version or touch LRU order (pure probe)', () => {
+    useResolveStore.getState().set('ID_HOT', 'Hot Page', false)
+    const versionBefore = useResolveStore.getState().version
+    const cacheBefore = useResolveStore.getState().cache
+
+    useResolveStore.getState().has('ID_HOT')
+
+    expect(useResolveStore.getState().version).toBe(versionBefore)
+    expect(useResolveStore.getState().cache).toBe(cacheBefore)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // Cross-space cache scoping
 // ---------------------------------------------------------------------------
 describe('cross-space cache scoping', () => {
