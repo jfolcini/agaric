@@ -73,7 +73,7 @@ fn materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runt
         "test precondition: thread must not be in a tokio runtime context",
     );
 
-    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let lifecycle = crate::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,

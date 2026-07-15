@@ -837,7 +837,7 @@ pub async fn project_remove_tag_to_sql(
 
 /// Project an engine-side block snapshot to SQL after a sync-pull
 /// import. Drives the `apply_remote` side of
-/// [`crate::sync_protocol::loro_sync`].
+/// `sync_protocol::loro_sync`.
 ///
 /// Behaviour:
 ///

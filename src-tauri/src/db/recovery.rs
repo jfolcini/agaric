@@ -284,7 +284,7 @@ async fn persisted_engine_snapshot_count(
 /// remote-authored content survives the rebuild.
 ///
 /// It reuses the SAME projection helpers the live inbound-sync path
-/// ([`crate::sync_protocol::loro_sync::import_and_project`]) runs — a throwaway
+/// (`sync_protocol::loro_sync::import_and_project`) runs — a throwaway
 /// [`crate::loro::engine::LoroEngine`] per space imports the persisted snapshot,
 /// its full live tree is enumerated parent-before-child, and each block is
 /// projected through Pass A (core columns + properties), Pass B (tags), Pass C

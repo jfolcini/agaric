@@ -7,7 +7,7 @@ use super::{
     QUEUE_PRESSURE_NUMERATOR,
 };
 use crate::error::AppError;
-use crate::lifecycle::LifecycleHooks;
+use crate::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};

@@ -4030,13 +4030,13 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
 // before running its body. We exercise the gate at two levels:
 //
 // 1. `LifecycleHooks` in isolation — the atomic flag is shared between
-//    clones (covered in `crate::lifecycle::tests`; smoke-asserted here
+//    clones (covered in `crate::foreground::tests`; smoke-asserted here
 //    too to catch integration drift).
 // 2. Full daemon startup — `start_with_lifecycle` completes and the
 //    daemon shuts down cleanly regardless of initial foreground state.
 //    We cannot wait 30 s for the resync tick in a unit test, but the
 //    gate is also exercised by the isolated lifecycle test and by
-//    dedicated unit tests in `crate::lifecycle` / `coordinator.rs`.
+//    dedicated unit tests in `crate::foreground` / `coordinator.rs`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
@@ -4048,7 +4048,7 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     let cancel = Arc::new(AtomicBool::new(false));
     let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_A").unwrap();
 
-    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let lifecycle = crate::foreground::LifecycleHooks::new();
     lifecycle.mark_backgrounded();
     assert!(
         lifecycle.is_backgrounded(),
@@ -4101,7 +4101,7 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     let cancel = Arc::new(AtomicBool::new(false));
     let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
 
-    let lifecycle = crate::lifecycle::LifecycleHooks::new();
+    let lifecycle = crate::foreground::LifecycleHooks::new();
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_B".into(),
@@ -4158,7 +4158,7 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
     // `LifecycleHooks::default()` internally. Assert the default
     // starts in foreground so legacy callers (tests, benches) observe
     // The same behaviour as before.
-    let hooks = crate::lifecycle::LifecycleHooks::default();
+    let hooks = crate::foreground::LifecycleHooks::default();
     assert!(
         !hooks.is_backgrounded(),
         "default lifecycle hooks must report foreground so the legacy `start` path runs tick bodies normally"
