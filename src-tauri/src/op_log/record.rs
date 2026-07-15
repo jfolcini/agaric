@@ -60,3 +60,27 @@ impl OpRecord {
         }
     }
 }
+
+/// #2621: exposes the six hash-preimage fields so `agaric_core::hash` can
+/// verify an `OpRecord` without depending on `op_log`. The dependency points
+/// *down* into core (`crate::hash` re-exports `agaric_core::hash`).
+impl agaric_core::hash::HashableOpRecord for OpRecord {
+    fn device_id(&self) -> &str {
+        &self.device_id
+    }
+    fn seq(&self) -> i64 {
+        self.seq
+    }
+    fn parent_seqs(&self) -> Option<&str> {
+        self.parent_seqs.as_deref()
+    }
+    fn op_type(&self) -> &str {
+        &self.op_type
+    }
+    fn payload(&self) -> &str {
+        &self.payload
+    }
+    fn stored_hash(&self) -> &str {
+        &self.hash
+    }
+}

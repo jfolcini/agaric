@@ -34,6 +34,10 @@ similar = "3"
 # `tag_norm` (Unicode case-folding) + `text_utils::nfc_normalise` (the shared
 # NFC boundary helper). Version pinned to match ../Cargo.toml.
 unicode-normalization = "0.1.25"
+# `hash` — blake3 op-log hashing + `#[tracing::instrument]` spans. Pinned to
+# match ../Cargo.toml.
+blake3 = "1.8.5"
+tracing = { version = "0.1.44", features = ["attributes"] }
 
 [dev-dependencies]
 # Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,
