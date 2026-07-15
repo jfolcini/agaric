@@ -19,7 +19,7 @@
 //! any control flow (the dispatch stays non-fatal, commit ordering is
 //! untouched). It mirrors the
 //! [`super::super::materializer::handlers::sql_only_fallback`] and
-//! [`crate::sync_protocol::snapshot_fallback_metrics`] precedents:
+//! `sync_protocol::snapshot_fallback_metrics` precedents:
 //!
 //! - a process-global monotonic [`AtomicU64`] counter, incremented on
 //!   every swallowed failure, readable via [`count`]; and

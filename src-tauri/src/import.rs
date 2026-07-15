@@ -119,7 +119,7 @@ const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
 /// Carried over a Tauri `Channel<ImportProgressUpdate>` so a long import
 /// can render a per-block progress bar instead of a bare spinner. The
 /// enum is `Serialize` + `Type` only (no `Deserialize`) — like
-/// [`crate::sync_events::SyncProgressUpdate`], it is a one-way
+/// `sync_events::SyncProgressUpdate`, it is a one-way
 /// backend→frontend payload. Frontend consumers switch on `kind` and read
 /// the variant-specific fields.
 ///
@@ -1175,7 +1175,7 @@ fn parse_block_scalar_indicator(value: &str) -> Option<BlockScalarSpec> {
 }
 
 /// Strip a single layer of matching surrounding quotes from a frontmatter
-/// scalar — defined in [`crate::commands::pages::markdown_yaml`] so the
+/// scalar — defined in `commands::pages::markdown_yaml` so the
 /// import-side parser and the export-side emitter share one definition (#1920,
 /// the symmetric counterpart of `yaml_flow_item`'s quoting).
 use crate::commands::pages::markdown_yaml::strip_yaml_quotes;

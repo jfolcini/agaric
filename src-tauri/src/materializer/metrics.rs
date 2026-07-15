@@ -474,14 +474,14 @@ pub struct StatusInfo {
     /// applying incremental updates — pair with `snapshot_fallback_last` (and
     /// the `target=sync_protocol::snapshot_fallback` debug lines) to see the
     /// offending peer / reason. Sourced from
-    /// [`crate::sync_protocol::snapshot_fallback_metrics::count`].
+    /// `sync_protocol::snapshot_fallback_metrics::count`.
     pub snapshot_fallback_count: u64,
     /// #1319: the most recent sync snapshot-fallback occurrence (peer id,
     /// space id, diagnostic reason, monotonic occurrence ordinal), or `None`
     /// if none has happened in this process. Lets an operator correlate a
     /// recurring fallback pattern without scraping per-session log lines.
     /// Sourced from
-    /// [`crate::sync_protocol::snapshot_fallback_metrics::last`].
+    /// `sync_protocol::snapshot_fallback_metrics::last`.
     pub snapshot_fallback_last:
         Option<crate::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
 }

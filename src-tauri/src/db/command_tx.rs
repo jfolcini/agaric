@@ -203,7 +203,7 @@ impl CommandTx {
     /// queued records are discarded.
     ///
     /// Multiple records may be enqueued from the same transaction —
-    /// typical for batch operations such as [`crate::commands::history::revert_ops_inner`].
+    /// typical for batch operations such as `commands::history::revert_ops_inner`.
     ///
     /// Accepts `impl Into<Arc<OpRecord>>` so callers can pass
     /// either a fresh `OpRecord` by value (Rust's blanket

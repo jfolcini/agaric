@@ -10,7 +10,7 @@
 //! 2. UPDATE to `status = 'complete'`.
 //!
 //! If a crash occurs between steps 1 and 2, boot recovery
-//! ([`crate::recovery::recover_at_boot`]) deletes all pending rows.
+//! (`recovery::recover_at_boot`) deletes all pending rows.
 //!
 //! # Compaction
 //!

@@ -64,7 +64,7 @@ fn sender_or_closed(
 /// — the next `delete_block` / `restore_block` / `purge_block` (or a
 /// snapshot restore) re-enqueues the full set and the dependent reads
 /// see the freshly-populated rows. The strictly dependency-correct
-/// order is in [`crate::cache::rebuild_all_caches`] (test-only); that
+/// order is in `cache::rebuild_all_caches` (test-only); that
 /// function is the canonical reference for which rebuild reads which
 /// upstream column/table. Keeping the array in this loose order keeps
 /// the test assertions stable; the dedup + eventual consistency
@@ -103,7 +103,7 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// #2037 pt2: the lifecycle rebuild set for a CONTENT block delete /
 /// restore / purge — [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildPagesCache`.
 ///
-/// `RebuildPagesCache` ([`crate::cache::rebuild_pages_cache`]) only rebuilds
+/// `RebuildPagesCache` (`cache::rebuild_pages_cache`) only rebuilds
 /// the page *rows* `(page_id, title)` from `block_type = 'page'` blocks and
 /// deletes orphaned rows — the `inbound_link_count` / `child_block_count`
 /// recompute was extracted out of it (#417) into the separate
@@ -397,7 +397,7 @@ impl Materializer {
     /// Enqueue the read-path derived-cache + FTS rebuild fan-out after an
     /// Inbound sync import (#4).
     ///
-    /// The loro-sync receiver ([`crate::sync_protocol::loro_sync::apply_remote`])
+    /// The loro-sync receiver (`sync_protocol::loro_sync::apply_remote`)
     /// writes each changed block's per-block SQL projection — core columns,
     /// properties incl. the reserved hot-path columns, and direct tag edges —
     /// and synchronously rebuilds `block_tag_inherited`. But the read-path

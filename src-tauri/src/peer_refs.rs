@@ -154,12 +154,12 @@ pub async fn upsert_peer_ref_with_cert(
 /// `last_sent_hash` accepts the empty string (`""`) as a "we sent
 /// nothing this session" sentinel. Two call sites use it:
 ///
-/// 1. The per-session [`crate::sync_protocol::session_state_machine`] propagates
+/// 1. The per-session `sync_protocol::session_state_machine` propagates
 ///    the empty-string default when no ops were sent this session
 ///    (typical for an initiator that has no new ops since the previous
 ///    sync) — see the `last_sent_hash.clone().unwrap_or_default()`
 ///    expression in `handle_message(SyncComplete)`.
-/// 2. [`crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`]
+/// 2. `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`
 ///    explicitly passes `""` after applying a snapshot, because the
 ///    snapshot apply path does not stream ops in either direction.
 ///
@@ -427,7 +427,7 @@ pub async fn update_loro_vv_bytes_in_tx(
 /// Set by `confirm_pairing` when the FE supplies no remote device_id (the QR
 /// carries only the passphrase; mDNS + TOFU establish the real peer on the
 /// first connection). Honored by
-/// [`crate::sync_daemon::SyncDaemon::should_start_active`] so the dormant
+/// `sync_daemon::SyncDaemon::should_start_active` so the dormant
 /// daemon wakes to *accept* that first inbound connection, and cleared once a
 /// real peer exists. This replaces the old hack of writing a junk
 /// empty-string `peer_id` row purely to trip the activation check.
@@ -440,7 +440,7 @@ const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
 /// established. Previously nothing else cleared it, so an *abandoned* pairing
 /// (the joining device never connects) left the daemon advertising and
 /// accepting pairing connections indefinitely. We bound it to the same
-/// window a pairing session lives ([`crate::pairing::PAIRING_TIMEOUT`], 5
+/// window a pairing session lives (`pairing::PAIRING_TIMEOUT`, 5
 /// minutes): the joiner is expected to connect within the interactive
 /// pairing window, so a marker older than that is stale and reads as
 /// "not pending".
@@ -450,7 +450,7 @@ const PENDING_PAIRING_TTL_MS: i64 = crate::pairing::PAIRING_TIMEOUT.as_millis() 
 
 /// Mark that a pairing just completed and a first peer connection is expected.
 ///
-/// #855: `expected_proof` is the [`crate::pairing::pairing_proof`] of the
+/// #855: `expected_proof` is the `pairing::pairing_proof` of the
 /// pairing passphrase — the value the responder compares against the
 /// initiator's advertised `HeadExchange.pairing_proof` before it TOFU-pins an
 /// unpaired device during the pairing window. Storing the proof (a

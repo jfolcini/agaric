@@ -104,7 +104,7 @@ pub enum MaterializeTask {
     /// `(block_id, tag_id)` edge, so only the affected tag's `usage_count`
     /// can change — neither its name nor the set of cached tags can move.
     /// Recomputing just this one row (via
-    /// [`crate::cache::refresh_tag_usage_count`]) avoids a full O(vault)
+    /// `cache::refresh_tag_usage_count`) avoids a full O(vault)
     /// `RebuildTagsCache` enqueue on every tag click.
     RefreshTagUsageCount {
         tag_id: Arc<str>,
