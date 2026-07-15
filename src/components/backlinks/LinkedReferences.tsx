@@ -7,7 +7,7 @@
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
@@ -18,6 +18,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { SourcePageFilter } from '@/components/filters/SourcePageFilter'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
+import { useBacklinkGroups } from '@/hooks/useBacklinkGroups'
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
 import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
@@ -25,11 +26,10 @@ import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { usePropertyKeysCache } from '@/hooks/usePropertyKeysCache'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { BacklinkFilter, BacklinkGroup, BacklinkSort } from '@/lib/tauri'
-import { listBacklinksGrouped, listTagsByPrefix } from '@/lib/tauri'
+import type { BacklinkFilter, BacklinkSort } from '@/lib/tauri'
+import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const BACKLINK_FOCUS_CLASSES = ['ring-2', 'ring-inset', 'ring-ring/50', 'bg-accent/30'] as const
@@ -51,11 +51,6 @@ export function LinkedReferences({
   const { t } = useTranslation()
   const { invalidationKey } = useBlockPropertyEvents()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
-  const [groups, setGroups] = useState<BacklinkGroup[]>([])
-  const [loading, setLoading] = useState(false)
-  const [nextCursor, setNextCursor] = useState<string | null>(null)
-  const [hasMore, setHasMore] = useState(false)
-  const [totalCount, setTotalCount] = useState(0)
   const [expanded, setExpanded] = useState(true)
   const [groupExpanded, setGroupExpanded] = useState<Record<string, boolean>>({})
   const [filters, setFilters] = useState<BacklinkFilter[]>([])
@@ -66,114 +61,107 @@ export function LinkedReferences({
   const propertyKeys = usePropertyKeysCache(currentSpaceId)
   const [tags, setTags] = useState<Array<{ id: string; name: string }>>([])
 
-  // Resolve [[ULID]] and #[ULID] tokens in block content
-  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
-    useBacklinkResolution(groups)
-
-  // invalidationKey is intentionally in the dep array even though the body
-  // doesn't read it: bumping it rebuilds `fetchGroups`, which the load effect
-  // depends on, forcing a refetch when block properties change (F-39).
-  /* oxlint-disable react-hooks/exhaustive-deps -- invalidationKey intentionally rebuilds fetchGroups to refetch on property changes (F-39); see comment above. */
-  const fetchGroups = useCallback(
-    async (cursor?: string) => {
-      setLoading(true)
-      try {
-        // Build combined filters: advanced filters + source page filter
-        const allFilters = [...filters]
-        if (sourcePageIncluded.length > 0 || sourcePageExcluded.length > 0) {
-          allFilters.push({
-            type: 'SourcePage',
-            included: sourcePageIncluded,
-            excluded: sourcePageExcluded,
-          })
-        }
-
-        const resp = await listBacklinksGrouped({
-          blockId: pageId,
-          ...(allFilters.length > 0 && { filters: allFilters }),
-          ...(sort != null && { sort }),
-          limit: PAGINATION_LIMIT,
-          ...(cursor != null && { cursor }),
-          spaceId: currentSpaceId,
-        })
-        if (cursor) {
-          // Append: merge groups with same page_id (Map<page_id, group>
-          // avoids the O(N×M) `.find()` per new group).
-          setGroups((prev) => {
-            const byPageId = new Map(prev.map((g) => [g.page_id, g]))
-            for (const newGroup of resp.groups) {
-              const existing = byPageId.get(newGroup.page_id)
-              if (existing) {
-                // Construct a fresh group object instead of mutating the
-                // prior-state object (#1529): in-place `existing.blocks = ...`
-                // violates React's immutable-state contract and is a latent
-                // footgun once a memoized child / equality check is added.
-                byPageId.set(newGroup.page_id, {
-                  ...existing,
-                  blocks: [...existing.blocks, ...newGroup.blocks],
-                })
-              } else {
-                byPageId.set(newGroup.page_id, newGroup)
-              }
-            }
-            return Array.from(byPageId.values())
-          })
-          // Expand newly added groups by default
-          setGroupExpanded((prev) => {
-            const next = { ...prev }
-            for (const newGroup of resp.groups) {
-              if (!(newGroup.page_id in next)) {
-                next[newGroup.page_id] = true
-              }
-            }
-            return next
-          })
-        } else {
-          setGroups(resp.groups)
-          // Set default expand state
-          const expandState: Record<string, boolean> = {}
-          for (let i = 0; i < resp.groups.length; i++) {
-            expandState[resp.groups[i]?.page_id as string] = resp.groups.length <= 5 || i < 3
-          }
-          setGroupExpanded(expandState)
-        }
-        setNextCursor(resp.next_cursor)
-        setHasMore(resp.has_more)
-        // #2201 item 1b: the "N references" header total is page-invariant, so
-        // keep the FIRST page's value and never overwrite it on load-more. The
-        // backend now skips the grouped COUNT queries on non-first pages and
-        // returns total_count: 0 there, so writing it on append would clobber
-        // the header to 0. Guard on the same `cursor` flag the append branch
-        // above uses (first page ⟺ no cursor).
-        if (!cursor) {
-          setTotalCount(resp.total_count)
-        }
-      } catch (err) {
-        logger.error(
-          'LinkedReferences',
-          'Failed to load grouped backlinks',
-          {
-            pageId,
-          },
-          err,
-        )
-        notify.error(t('references.loadFailed'), { id: 'references-load-failed' })
-      } finally {
-        setLoading(false)
-      }
-    },
-    [
+  // #2597 — the hand-rolled `fetchGroups` cursor state machine is now a
+  // TanStack `useInfiniteQuery` (see `useBacklinkGroups`). TanStack owns the
+  // page list, cursor, loading and error state; `invalidationKey` sits in the
+  // query key so a property-change event refetches (F-39).
+  const { groups, totalCount, loading, hasMore, isFetchingMore, loadMore, isError } =
+    useBacklinkGroups({
       pageId,
       filters,
       sort,
       sourcePageIncluded,
       sourcePageExcluded,
-      t,
+      spaceId: currentSpaceId,
       invalidationKey,
+    })
+
+  // Resolve [[ULID]] and #[ULID] tokens in block content
+  const { resolveBlockTitle, resolveBlockStatus, resolveTagName, clearCache } =
+    useBacklinkResolution(groups)
+
+  // Error toast parity: the old `fetchGroups` catch surfaced a single deduped
+  // toast on any fetch failure (initial OR load-more). The `{ id }` coalesces
+  // repeats. The observability `logger.error` now lives in the hook's queryFn.
+  useEffect(() => {
+    if (isError) {
+      notify.error(t('references.loadFailed'), { id: 'references-load-failed' })
+    }
+  }, [isError, t])
+
+  // Expand-state seeding parity. The old first-page branch REPLACED
+  // `groupExpanded` with `page_id => groups.length <= 5 || i < 3` (first 3 groups
+  // expanded, or ALL if ≤5); the append branch defaulted only newly-appearing
+  // `page_id`s to expanded without clobbering existing (user) toggles. A ref
+  // tracks the current query's identity: when it changes, the next non-empty
+  // `groups` is a fresh first page and re-seeds; growth within the same query is
+  // an append.
+  const queryIdentity = useMemo(
+    () =>
+      JSON.stringify([
+        currentSpaceId,
+        pageId,
+        invalidationKey,
+        filters,
+        sort,
+        sourcePageIncluded,
+        sourcePageExcluded,
+      ]),
+    [
       currentSpaceId,
+      pageId,
+      invalidationKey,
+      filters,
+      sort,
+      sourcePageIncluded,
+      sourcePageExcluded,
     ],
   )
-  /* oxlint-enable react-hooks/exhaustive-deps */
+  const seededIdentityRef = useRef<string | null>(null)
+  // useLayoutEffect (not useEffect) so the seed is applied after the DOM commit
+  // but BEFORE the browser paints — the pre-migration component set `groups` and
+  // `groupExpanded` in one synchronous `setState` batch, so groups never painted
+  // in their unseeded (collapsed) state. Running post-paint would flash
+  // collapsed→expanded on first load; useLayoutEffect keeps that atomic.
+  useLayoutEffect(() => {
+    if (groups.length === 0) return
+    if (seededIdentityRef.current !== queryIdentity) {
+      // Fresh first page: replace expand state with the ≤5 || i<3 rule.
+      const expandState: Record<string, boolean> = {}
+      for (let i = 0; i < groups.length; i++) {
+        expandState[groups[i]?.page_id as string] = groups.length <= 5 || i < 3
+      }
+      setGroupExpanded(expandState)
+      seededIdentityRef.current = queryIdentity
+    } else {
+      // Load-more append: default newly-appearing groups to expanded, never
+      // overwriting an already-present `page_id` (preserves user toggles).
+      setGroupExpanded((prev) => {
+        let changed = false
+        const next = { ...prev }
+        for (const g of groups) {
+          if (!(g.page_id in next)) {
+            next[g.page_id] = true
+            changed = true
+          }
+        }
+        return changed ? next : prev
+      })
+    }
+  }, [groups, queryIdentity])
+
+  // Clear the resolution cache on every fetch-identity change so stale resolved
+  // `[[ULID]]`/`#[ULID]` titles don't leak across pages OR survive a property
+  // change that renamed a linked target. The pre-migration load effect ran
+  // `clearCache()` before each refetch, and its `fetchGroups` dep set was
+  // exactly this identity (space/page/invalidationKey/filters/sort/sourcePage) —
+  // so keying on `queryIdentity` preserves that: an `invalidationKey` bump
+  // (F-39) re-resolves titles, matching old behaviour, rather than letting a
+  // renamed target stay stale for the 5-minute resolution TTL. `clearCache` is
+  // stable (useCallback []).
+  useEffect(() => {
+    clearCache()
+  }, [queryIdentity, clearCache])
 
   // Load tags on mount (B-6: cancellation flag avoids React 19
   // strict-mode "state update on unmounted component" warnings on rapid
@@ -195,19 +183,9 @@ export function LinkedReferences({
     }
   }, [t])
 
-  // Fetch on mount and when pageId/filters change
-  useEffect(() => {
-    setGroups([])
-    setNextCursor(null)
-    setHasMore(false)
-    setTotalCount(0)
-    clearCache()
-    fetchGroups()
-  }, [fetchGroups, clearCache])
-
   // Reset filter state when navigating to a different page
   // Uses functional updaters to avoid no-op state updates on initial mount
-  // (which would re-create fetchGroups and trigger a duplicate fetch).
+  // (which would needlessly change the query key and trigger a duplicate fetch).
   useEffect(() => {
     setFilters((prev) => (prev.length > 0 ? [] : prev))
     setSort((prev) => (prev !== null ? null : prev))
@@ -238,12 +216,6 @@ export function LinkedReferences({
     onNavigateToPage,
     pageTitles,
   })
-
-  const loadMore = useCallback(() => {
-    if (nextCursor) {
-      fetchGroups(nextCursor)
-    }
-  }, [nextCursor, fetchGroups])
 
   // Flatten visible blocks for keyboard navigation
   const flatVisibleBlocks = useMemo(() => {
@@ -427,7 +399,7 @@ export function LinkedReferences({
 
               <LoadMoreButton
                 hasMore={hasMore}
-                loading={loading}
+                loading={isFetchingMore}
                 onLoadMore={loadMore}
                 className="linked-references-load-more"
                 label={t('references.loadMore')}
