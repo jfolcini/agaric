@@ -1197,7 +1197,7 @@ impl Materializer {
     }
 }
 
-/// Abstraction over [`crate::sync_scheduler::SyncScheduler`] so
+/// Abstraction over `sync_scheduler::SyncScheduler` so
 /// [`Materializer::status_with_scheduler`] can be called from tests without
 /// pulling in the real scheduler or from command handlers that have a
 /// `State<Arc<SyncScheduler>>` on hand.

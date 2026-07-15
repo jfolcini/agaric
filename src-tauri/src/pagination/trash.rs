@@ -109,7 +109,7 @@ pub async fn list_trash(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `root_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`].
+///   `commands::MAX_BATCH_BLOCK_IDS`.
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 pub async fn trash_descendant_counts(

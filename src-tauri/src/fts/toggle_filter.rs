@@ -1,6 +1,6 @@
 //! toggle row pipeline for `Aa` / `Ab|` / `.*` search modes.
 //!
-//! Sits between [`crate::commands::search_blocks_inner`] and the two
+//! Sits between `commands::search_blocks_inner` and the two
 //! candidate-set sources (FTS5 for the literal/whole-word/case-sensitive
 //! path; recency-ordered SQL scan for the regex path). The default
 //! (all-toggles-off) value short-circuits to today's
