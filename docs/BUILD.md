@@ -332,10 +332,10 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 ## sqlx compile-time queries
 
 ```bash
-cd src-tauri && cargo sqlx prepare -- --tests
+just gen-sqlx
 ```
 
-Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the `.sqlx/` cache changes alongside the Rust changes; CI fails on stale cache (`sqlx-prepare-check` prek hook).
+Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the `.sqlx/` cache changes alongside the Rust changes; CI fails on stale cache (`sqlx-prepare-check` prek hook). `just gen-sqlx` runs the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` — the `--workspace` (to *cargo*, after the `--`) is required so leaf crates nothing depends on (e.g. the bin-only `agaric-diagnostics`) get their queries captured; a bare `cargo sqlx prepare` silently drops them and reddens the CI `lint` job's offline `clippy --workspace`.
 
 ## TypeScript bindings (specta)
 
@@ -349,7 +349,7 @@ Run after touching any `#[tauri::command]` signature or any `specta::Type` deriv
 
 - **Android: stale database crashes on launch.** Wipe and re-install: `adb shell pm clear com.agaric.app`.
 - **Android: release APK won't install.** Likely a signing mismatch — uninstall the previous build first (signatures from different keystores conflict).
-- **Rust compilation errors after SQL changes.** Run `cargo sqlx prepare -- --tests` and commit the cache.
+- **Rust compilation errors after SQL changes.** Run `just gen-sqlx` and commit the cache.
 - **TypeScript errors after Rust type changes.** Run `cargo test -- specta_tests --ignored` and commit `src/lib/bindings.ts`.
 - **WebView not found (Linux).** `libwebkit2gtk-4.1-dev` must be installed; older `4.0` won't work.
 - **Slow first build.** Cold compile of the Tauri + sqlx + Loro stack takes minutes. Subsequent incremental builds are seconds.
