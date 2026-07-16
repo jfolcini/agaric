@@ -4954,6 +4954,19 @@ let nextEventListenerId = 1
 export const PLUGIN_HANDLERS: Record<string, Handler> = {
   // Core event system — `listen()` / `emit()` from `@tauri-apps/api/event`
   // back every frontend event hook; the real runtime always has them.
+  //
+  // #2683 — DEAD in the actual app / e2e runtime: `setupMock()`
+  // (`index.ts`) now calls `mockIPC(cb, { shouldMockEvents: true })`, and
+  // `@tauri-apps/api/mocks` intercepts every `plugin:event|*` command
+  // (`listen`, `unlisten`, `emit`, AND `emit_to`) before `cb` — and
+  // therefore this `dispatch()` map — is ever reached. These four entries
+  // only still run when something calls `dispatch()` directly, bypassing
+  // `mockIPC` (as `dispatch-plugin-commands.test.ts` does, to unit-test
+  // this stub behavior in isolation) — never during `setupMock()`'s normal
+  // browser/e2e path. Kept rather than deleted so `dispatch()` still
+  // answers sanely if a future caller ever invokes it with
+  // `shouldMockEvents` off. The real event bus lives in `index.ts`'s
+  // `mockIPC(...)` call.
   'plugin:event|listen': () => nextEventListenerId++,
   'plugin:event|unlisten': returnNull,
   'plugin:event|emit': returnNull,
