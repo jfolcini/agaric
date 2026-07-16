@@ -998,7 +998,7 @@ export type ActiveBlockId = string;
  *  Row returned by paginated block queries that filter
  *  on `deleted_at IS NULL` in their SQL.
  * 
- *  Mirror of [`BlockRow`] except `id` is typed [`crate::ulid::ActiveBlockId`]
+ *  Mirror of [`BlockRow`] except `id` is typed [`agaric_core::ulid::ActiveBlockId`]
  *  — a strict subset of the raw block-id space that has been verified
  *  (by the helper's own SQL filter) to refer to a live block. Helpers
  *  that intentionally surface deleted rows (`list_trash`) keep returning
