@@ -19,7 +19,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +116,46 @@ describe('TrashView', () => {
     expect(
       await screen.findByText(/Nothing in trash\. Deleted items will appear here\./),
     ).toBeInTheDocument()
+  })
+
+  // #2639 — space switching is an in-place store update (no route remount), so
+  // `staleTime: 0` is what makes returning to a previously-visited space re-hit
+  // the backend rather than serving its (possibly stale) cached trash.
+  it('refetches trash on returning to a previously-visited space (staleTime: 0)', async () => {
+    const callsBySpace: Record<string, number> = {}
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_trash') {
+        const sid = (args as { scope: { space_id: string } }).scope.space_id
+        callsBySpace[sid] = (callsBySpace[sid] ?? 0) + 1
+        return { items: [], next_cursor: null, has_more: false }
+      }
+      if (cmd === 'batch_resolve') return []
+      if (cmd === 'trash_descendant_counts') return {}
+      return undefined
+    })
+    useSpaceStore.setState({
+      availableSpaces: [
+        { id: 'SPACE_A', name: 'A', accent_color: null },
+        { id: 'SPACE_B', name: 'B', accent_color: null },
+      ],
+      currentSpaceId: 'SPACE_A',
+      isReady: true,
+    })
+
+    render(<TrashView />)
+    await waitFor(() => expect(callsBySpace['SPACE_A']).toBe(1))
+
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+    })
+    await waitFor(() => expect(callsBySpace['SPACE_B']).toBe(1))
+
+    // Return to A: its cached entry is immediately stale, so a background refetch
+    // fires (the pre-#2639 cache-hit would have left this at 1).
+    await act(async () => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_A' })
+    })
+    await waitFor(() => expect(callsBySpace['SPACE_A']).toBe(2))
   })
 
   it('renders deleted blocks with restore and purge buttons', async () => {

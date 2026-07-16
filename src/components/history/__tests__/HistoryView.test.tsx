@@ -395,6 +395,35 @@ describe('HistoryView', () => {
     })
   })
 
+  // #2639 — the op-type filter switches in place (no remount), so `staleTime: 0`
+  // is what makes returning to a previously-viewed filter re-hit the backend
+  // rather than serving its (possibly stale, pre-mutation) cached page.
+  it('refetches history on returning to a previously-viewed op-type filter (staleTime: 0)', async () => {
+    const user = userEvent.setup()
+    const callsByFilter: Record<string, number> = {}
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_page_history') {
+        const f = (args as { opTypeFilter?: string | null }).opTypeFilter ?? '__null__'
+        callsByFilter[f] = (callsByFilter[f] ?? 0) + 1
+      }
+      return emptyPage
+    })
+
+    render(<HistoryView />)
+    const select = screen.getByRole('combobox', { name: /Filter by operation type/ })
+
+    await user.selectOptions(select, 'edit_block')
+    await waitFor(() => expect(callsByFilter['edit_block']).toBe(1))
+
+    await user.selectOptions(select, 'create_block')
+    await waitFor(() => expect(callsByFilter['create_block']).toBe(1))
+
+    // Return to edit_block: its cached entry is immediately stale, so a background
+    // refetch fires (the pre-#2639 cache-hit would have left this at 1).
+    await user.selectOptions(select, 'edit_block')
+    await waitFor(() => expect(callsByFilter['edit_block']).toBe(2))
+  })
+
   it('has no a11y violations with entries', async () => {
     const page = {
       items: [

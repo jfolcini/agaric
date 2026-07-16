@@ -107,6 +107,15 @@ export function TrashView(): React.ReactElement {
       getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
+      // #2639 — space switching is an in-place `setCurrentSpace` (no route
+      // remount), so `refetchOnMount` alone doesn't re-hit the backend on an
+      // A→B→A switch: TanStack would serve space A's cached, possibly-stale trash
+      // (a block deleted from another view / device sync landed in trash while we
+      // showed B). `staleTime: 0` marks each key immediately stale, so
+      // re-observing a cached space triggers a background refetch — restoring the
+      // old always-refetch-on-basis-change freshness. Window/reconnect refetch
+      // stay off (client defaults), so this adds no time-based churn.
+      staleTime: 0,
       // Stale-while-revalidate parity: usePaginatedQuery's deps-change path reset
       // the cursor but NEVER cleared `items` — only a successful response
       // overwrote them, so the trash list stayed visible during a refetch. With
@@ -157,16 +166,19 @@ export function TrashView(): React.ReactElement {
   // called `notify.error` from its catch on EACH failed load. TanStack keeps
   // `isError` latched across consecutive same-key failures, so keying on it alone
   // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
-  // once per failed load. Capturing the first-render value guards a cached error
-  // (gcTime Infinity) from re-toasting on remount before `refetchOnMount`
-  // resolves — only a fresh `errorUpdatedAt` toasts (mirrors `HistoryPanel`).
+  // once per failed load. The `!isFetching` gate is what makes a cached error
+  // (gcTime Infinity) safe on remount: `refetchOnMount:'always'` puts the query
+  // straight into `isFetching` while it re-validates, so a stale cached failure
+  // can't toast before the fresh fetch settles — only a genuinely settled error
+  // does (#2639). The first-render ref still de-dupes the same settled error
+  // across unrelated re-renders.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       notify.error(t('trash.loadFailed'))
     }
-  }, [isError, errorUpdatedAt, t])
+  }, [isError, isFetching, errorUpdatedAt, t])
 
   // ── Filter state (extracted hook) ────────────────────────────────
   const { filterText, setFilterText, debouncedFilter, filteredBlocks, clearFilter } =

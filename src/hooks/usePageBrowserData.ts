@@ -263,15 +263,18 @@ export function usePageBrowserData({
   // failures, so `errorUpdatedAt` (which advances per failure) is the
   // fire-once-per-load signal. A cancellation-shaped rejection (the suppressed
   // `InvalidFilter` re-throw) must NOT toast — the specific toast already fired.
-  // The ref captures the first-render value so a cached error on remount is
-  // treated as already-seen (no toast flash); only a fresh failure toasts.
+  // The `!isFetching` gate makes a cached error safe on remount:
+  // `refetchOnMount: 'always'` puts the query straight into `isFetching` while it
+  // re-validates, so a stale cached failure can't toast before the fresh fetch
+  // settles — only a genuinely settled error does (#2639). The first-render ref
+  // still de-dupes the same settled error across unrelated re-renders.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       if (!isCancellation(error)) notify.error(t('pageBrowser.loadFailed'))
     }
-  }, [isError, errorUpdatedAt, error, t])
+  }, [isError, isFetching, errorUpdatedAt, error, t])
 
   // Direct setter for optimistic list mutations (the old `setItems`). Reshapes
   // the cached `InfiniteData` in place of a flat `useState` array, WITHOUT

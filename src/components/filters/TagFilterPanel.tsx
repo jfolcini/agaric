@@ -292,6 +292,7 @@ export function TagFilterPanel(): React.ReactElement {
   const {
     data,
     isFetching,
+    isPlaceholderData,
     isError,
     errorUpdatedAt,
     hasNextPage,
@@ -342,7 +343,13 @@ export function TagFilterPanel(): React.ReactElement {
   // Guard on `hasQuery` for the same reason as `results`: a retained placeholder
   // could otherwise leave `hasNextPage` true after the query emptied, surfacing a
   // stray Load-more button the old hook (which reset `hasMore` when disabled) hid.
-  const hasMore = hasQuery && hasNextPage
+  // `!isPlaceholderData` extends that to a mode/tag/composer SWITCH (#2639): while
+  // the prior key's pages are shown as a placeholder mid-refetch, `hasNextPage` is
+  // derived from that stale last page, so a disabled Load-more would flash; the
+  // old hook reset `hasMore` on every deps change, hiding it until the new
+  // response arrived. Suppressing the button while `isPlaceholderData` reproduces
+  // that (it stays live during a plain load-more, which is not a placeholder).
+  const hasMore = hasQuery && hasNextPage && !isPlaceholderData
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
@@ -351,16 +358,20 @@ export function TagFilterPanel(): React.ReactElement {
   // called `notify.error` from its catch on EACH failed load. TanStack keeps
   // `isError` latched across consecutive same-key failures, so keying only on it
   // would toast once; `errorUpdatedAt` advances on every error occurrence, firing
-  // the toast once per failed load. The first-render value is captured as the
-  // baseline so a cached error (re-presented before `refetchOnMount` resolves)
-  // isn't re-toasted — only a fresh failure fires.
+  // the toast once per failed load. The `!isFetching` gate makes a cached error
+  // safe: re-selecting a previously-failed tag re-presents its cached
+  // `errorUpdatedAt`, but `refetchOnMount: 'always'` (and the enable transition)
+  // puts the query straight into `isFetching` while it re-validates, so a stale
+  // cached failure can't toast before the fresh fetch settles — only a genuinely
+  // settled error does (#2639). The first-render ref still de-dupes the same
+  // settled error across unrelated re-renders.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       notify.error(t('tags.loadFailed'))
     }
-  }, [isError, errorUpdatedAt, t])
+  }, [isError, isFetching, errorUpdatedAt, t])
 
   // Resolve page titles for breadcrumbs when results change
   useEffect(() => {
