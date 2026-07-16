@@ -68,7 +68,7 @@ App
 | View | What the user sees | Sidebar item |
 | --- | --- | --- |
 | **Journal** | Eager-mounted; daily / weekly / monthly / agenda sub-modes share one date cursor. | Calendar |
-| **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. Cmd/Ctrl+F also focuses it. | Search |
+| **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Search |
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. | FileText |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Tag |
 | **Query** | Advanced-query builder (`AdvancedQuery/AdvancedQueryView.tsx`); navigate to saved/ad-hoc queries. | SlidersHorizontal |
@@ -124,7 +124,10 @@ Composed from category sub-hooks under `src/hooks/useBlockSlashCommands/` plus a
 - **Sidebar** — header (logo + SpaceSwitcher), body (nav items), footer (action buttons). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
 - **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts` and are user-customisable in Settings → Keyboard. Picker-trigger characters (`/`, `@`, `[[`, `((`, `::`) are not rebindable.
-- **Search entry points**: `Ctrl/Cmd+F`, sidebar Search button. Both land in `SearchPanel`.
+- **Search surfaces**: three distinct entry points (mirrors README § Search):
+  - **In-page find toolbar** — `Ctrl+F`, with `F3` / `Shift+F3` to cycle matches (`findInPage` in `src/lib/keyboard-config/catalog.ts`). Browser-style find over the current page; state in `src/stores/useInPageFindStore.ts`, UI in `src/components/query/InPageFind.tsx`. Does **not** open the Search view.
+  - **Search view** — `Ctrl+Shift+F` (`focusSearch`) or the sidebar Search button. Lands in `SearchPanel`, the cross-page FTS view.
+  - **Command palette** — `Ctrl+K` (`paletteOpen`). Action / navigation palette; state in `src/stores/useCommandPaletteStore.ts`, UI in `src/components/common/CommandPalette.tsx`.
 - **Space switcher**: `Ctrl+1`-`Ctrl+9` map to the first nine spaces. `currentSpaceId` lives in `useSpaceStore`; each space has its own `currentView` slice, so switching spaces restores the last view that space was on.
 
 ## Dialogs, popovers, sheets
@@ -168,13 +171,11 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 
 Findings surfaced during the doc audit + codebase pass. Each is a real drift / gap / inconsistency the user can act on independently. Not in this doc as an action item — kept here so the surface map is the canonical place to find "what's wrong with the UI surface".
 
-- **Toast deduplication.** sonner doesn't dedupe by default, and `notify()` doesn't either. Rapid identical errors (e.g. sync failures in a loop) stack visibly. Worth either threading a dedup helper into `notify()` or using sonner's `id` field for known-recurring-error categories.
 - **Long-press constants moved out of `SortableBlock`.** Documentation that named `SortableBlock.tsx` as their home has rotted. Already corrected in `docs/UX.md`; verify other doc / comment references still point at `SortableBlock`.
 - **Sidebar resize on mobile is a no-op** but the toggle still appears clickable in some collapsed states. Consider hiding the toggle entirely on mobile, or making the affordance match behaviour.
-- **Toast action signature inconsistency.** Some callsites pass `toast.action`-style options, others wrap `notify()` with `t()`-keyed text. Standardising on `notify.error(msg, { action: { label, onClick } })` and adding a `notify.retry()` helper would tighten the API.
+- **Toast action signature inconsistency.** Some callsites pass `toast.action`-style options, others wrap `notify()` with `t()`-keyed text. Standardising callsites on `notify.error(msg, { action: { label, onClick } })` and the shipped `notify.retry()` helper (`src/lib/notify.ts`) would tighten the API.
 - **`max-sm:` vs `[@media(pointer:coarse)]` divergence is intentional** but invisible to first-time readers. The current convention (44 px touch floor for primary affordances, viewport-based hiding for inline indicators) is right; documenting the rule in a single place — `docs/UX.md` § Touch & responsive — and linking from comments would prevent future "unifications".
 - **`MenuPopoverContent` adoption is partial.** Some popovers still use plain `PopoverContent` for menu surfaces. A grep + sweep would tighten visual consistency.
-- **`KeyboardShortcuts` panel doesn't surface the deeplink `agaric://` scheme.** Power users don't know the scheme exists. A "Deep links" section in the panel — even just the three commands (`/block/<id>`, `/page/<id>`, `/settings/<tab>`) — would surface a hidden feature.
 - **Quick-capture hotkey is OS-global.** It's powerful but unannounced inside the app. Consider a one-time tooltip / welcome-modal mention.
 - **JSDoc i18n drift.** Several component JSDoc comments reference English strings that have since moved into `t()` calls. Not user-facing, but agents reading the JSDoc may infer wrong UI text. Low priority.
 - **No CI lint to catch doc-vs-code drift.** Many of the corrections in this doc audit could be caught automatically by a script that greps the docs' `src/...` paths against the filesystem and fails CI on a miss. Optional but high-leverage.

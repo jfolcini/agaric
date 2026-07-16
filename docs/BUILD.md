@@ -59,7 +59,7 @@ sudo apt install -y \
   build-essential curl wget file
 ```
 
-Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The Tauri CLI is already pinned as the `@tauri-apps/cli` devDependency (currently `2.11.2`) and installed by `npm ci` — invoke it with `npx tauri …` (e.g. `npx tauri dev`). Do **not** `cargo install tauri-cli`: an independently-installed Rust CLI drifts from the pinned JS one and violates the coupled-bump rule for the Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)).
+Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The Tauri CLI is already pinned as the `@tauri-apps/cli` devDependency (see `package.json` for the current pin) and installed by `npm ci` — invoke it with `npx tauri …` (e.g. `npx tauri dev`). Do **not** `cargo install tauri-cli`: an independently-installed Rust CLI drifts from the pinned JS one and violates the coupled-bump rule for the Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)).
 
 ### Windows
 
