@@ -59,7 +59,7 @@ sudo apt install -y \
   build-essential curl wget file
 ```
 
-Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The Tauri CLI is already pinned as the `@tauri-apps/cli` devDependency (see `package.json` for the current pin) and installed by `npm ci` — invoke it with `npx tauri …` (e.g. `npx tauri dev`). Do **not** `cargo install tauri-cli`: an independently-installed Rust CLI drifts from the pinned JS one and violates the coupled-bump rule for the Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)).
+Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The canonical quickstart used throughout this repo — `scripts/setup.sh`, the `justfile`, and CI (`_validate.yml` / `release.yml`) — invokes `cargo tauri dev` / `cargo tauri build`. That dispatches to a `cargo-tauri` binary, which `npm ci` does **not** provide, so install it with `cargo install tauri-cli --locked` (exactly what CI does). Keep it in step with the pinned `@tauri-apps/cli` devDependency (see `package.json` for the current pin) so the Rust and JS CLIs stay on the same Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)). The `npm ci`-installed `@tauri-apps/cli` also exposes an equivalent `npx tauri …` if you prefer to avoid the extra cargo install.
 
 ### Windows
 
