@@ -10,6 +10,7 @@
  */
 
 import { renderHook } from '@testing-library/react'
+import type { TFunction } from 'i18next'
 import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -61,7 +62,7 @@ function makeOptions(
     setDatePickerMode: vi.fn(),
     setDatePickerOpen: vi.fn(),
     pageStore: makePageStore([{ id: 'BLOCK_1' }]),
-    t: (key: string) => key,
+    t: ((key: string) => key) as unknown as TFunction,
     ...overrides,
   }
 }

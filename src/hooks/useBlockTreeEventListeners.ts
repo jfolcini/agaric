@@ -67,7 +67,7 @@ export interface UseBlockTreeEventListenersOptions {
   setDatePickerMode: (mode: DatePickerMode) => void
   setDatePickerOpen: (open: boolean) => void
   pageStore: StoreApi<PageBlockState>
-  t: (key: string) => string
+  t: TFunction
 }
 
 export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOptions): void {
@@ -179,7 +179,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       datePickerCursorPos,
       setDatePickerMode,
       setDatePickerOpen,
-      t: t as unknown as TFunction,
+      t,
       // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
       // never open the template picker, query builder, or emoji picker.
       openTemplatePicker: async () => {},
