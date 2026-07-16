@@ -55,6 +55,7 @@ jobs:
     timeout-minutes: 3
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      docs: ${{ steps.classify.outputs.docs }}
       frontend: ${{ steps.classify.outputs.frontend }}
       backend: ${{ steps.classify.outputs.backend }}
       ci: ${{ steps.classify.outputs.ci }}
@@ -87,6 +88,7 @@ jobs:
             echo "$1"
             {
               echo "docs_only=false"
+              echo "docs=true"
               echo "frontend=true"
               echo "backend=true"
               echo "ci=true"
@@ -178,17 +180,21 @@ jobs:
           # BOTH vitest and cargo-tests would skip and it could merge with no
           # heavy suite at all (a strictness regression vs the pre-#833 gate,
           # which ran EVERYTHING on any non-docs change). So we pin
-          # frontend=backend=true for such a path, restoring "anything we don't
-          # explicitly recognize runs the full suite". Recognized-but-unsuited
+          # frontend=backend=ci=true for such a path, genuinely restoring
+          # "anything we don't explicitly recognize runs the full suite" — ci
+          # too, so a build/toolchain script (e.g. scripts/*.sh) still runs the
+          # shell-lint + skip-ci-verify guards. Recognized-but-unsuited
           # categories (a pure `ci` change like a workflow/prek.toml edit) do
           # NOT trip this — `lint` (incl. zizmor) already covers them.
           docs_only=true
+          docs=false
           frontend=false
           backend=false
           ci=false
           for f in "${changed[@]}"; do
             # Did this path match ANY known non-docs category?
             matched_cat=false
+            if [[ "$f" =~ $docs_re ]]; then docs=true; fi
             if [[ "$f" =~ $frontend_re ]]; then frontend=true; matched_cat=true; fi
             if [[ "$f" =~ $backend_re ]]; then backend=true; matched_cat=true; fi
             if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
@@ -198,16 +204,18 @@ jobs:
               fi
               docs_only=false
               if [ "$matched_cat" = "false" ]; then
-                echo "Unrecognized non-docs path: $f → pinning frontend=backend=true (fail-closed full suite)."
+                echo "Unrecognized non-docs path: $f → pinning frontend=backend=ci=true (fail-closed full suite)."
                 frontend=true
                 backend=true
+                ci=true
               fi
             fi
           done
 
-          echo "docs_only=$docs_only frontend=$frontend backend=$backend ci=$ci"
+          echo "docs_only=$docs_only docs=$docs frontend=$frontend backend=$backend ci=$ci"
           {
             echo "docs_only=$docs_only"
+            echo "docs=$docs"
             echo "frontend=$frontend"
             echo "backend=$backend"
             echo "ci=$ci"
@@ -474,33 +482,104 @@ jobs:
           restore-keys: |
             lychee-${{ runner.os }}-
 
+      - name: Compute prek SKIP (per changed category)
+        # ci/path-conditional-jobs: build the prek SKIP list from the
+        # detect-changes category flags so each hook runs ONLY when its
+        # category is in the diff. A category is ABSENT when its output is not
+        # exactly 'true' (fail-closed: detect-changes pins frontend=backend=true
+        # on any unrecognized non-docs path, so those hooks stay ON in doubt).
+        # Security / hygiene hooks (gitleaks, typos, trailing-whitespace,
+        # detect-private-key, large-files, shebang/exec, line-ending,
+        # merge-conflict) are NEVER added — they run on every non-docs PR.
+        # The binding-boundary guards (tauri-*-parity, snapshot-redaction,
+        # no-retired-pending-doc-refs) skip ONLY when BOTH frontend and backend
+        # are absent, so any change to either side of the IPC surface re-runs
+        # them.
+        env:
+          FRONTEND: ${{ needs.detect-changes.outputs.frontend }}
+          BACKEND: ${{ needs.detect-changes.outputs.backend }}
+          CI: ${{ needs.detect-changes.outputs.ci }}
+          DOCS: ${{ needs.detect-changes.outputs.docs }}
+        run: |
+          set -euo pipefail
+
+          # Present-flags. `docs` is the ANY-docs-changed flag (not docs_only):
+          # a mixed code+docs PR reaches this job (docs_only != 'true') and must
+          # still lint its markdown, so the doc hooks are skipped only when NO
+          # doc file changed.
+          fe=false; be=false; ci=false; docs=false
+          if [ "$FRONTEND" = "true" ]; then fe=true; fi
+          if [ "$BACKEND" = "true" ]; then be=true; fi
+          if [ "$CI" = "true" ]; then ci=true; fi
+          if [ "$DOCS" = "true" ]; then docs=true; fi
+
+          # Base: pre-push-only / dedicated-sibling-job hooks. Always skipped.
+          skips=(no-commit-to-branch vitest cargo-test)
+
+          # Single-category: skip a category's hooks when it is ABSENT.
+          if [ "$fe" != true ]; then
+            skips+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
+              no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
+              check-elevation-tiers-self-test import-cycles store-layering \
+              axe-presence test-file-naming ipc-error-path-coverage \
+              ipc-error-path-coverage-selftest no-raw-invoke no-raw-invoke-selftest \
+              no-raw-local-storage no-raw-local-storage-selftest \
+              trace-interactions-named trace-interactions-named-selftest \
+              license-checker)
+          fi
+          if [ "$be" != true ]; then
+            skips+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
+              tauri-command-sanitize tauri-command-instrumented \
+              tauri-command-instrumented-selftest check-raw-tx \
+              check-raw-tx-self-test check-dynamic-sql check-dynamic-sql-self-test \
+              check-command-arity check-command-arity-self-test \
+              check-space-filter-drift unsafe-allowlist audit-toml-in-sync \
+              migrations-immutable migrations-strict-tables \
+              migrations-rebuild-cascade)
+          fi
+          if [ "$ci" != true ]; then
+            skips+=(actionlint zizmor shellcheck skip-ci-verify-guard)
+          fi
+          if [ "$docs" != true ]; then
+            skips+=(markdownlint md-link-targets doc-vs-code-paths \
+              session-log-numbering)
+          fi
+
+          # Compound (AND) rules: a shared hook is skipped only when EVERY
+          # category that can dirty its inputs is absent.
+          if [ "$ci" != true ] && [ "$be" != true ]; then
+            skips+=(taplo-fmt taplo-lint)
+          fi
+          if [ "$fe" != true ] && [ "$be" != true ]; then
+            skips+=(tauri-mock-parity tauri-bindings-parity snapshot-redaction \
+              no-retired-pending-doc-refs)
+          fi
+          if [ "$docs" != true ] && [ "$fe" != true ] && [ "$be" != true ]; then
+            skips+=(architecture-citations)
+          fi
+          if [ "$fe" != true ] && [ "$ci" != true ]; then
+            skips+=(check-json)
+          fi
+          if [ "$be" != true ] && [ "$ci" != true ]; then
+            skips+=(check-toml)
+          fi
+          if [ "$ci" != true ]; then
+            skips+=(check-yaml)
+          fi
+
+          skip_csv=$(IFS=,; printf '%s' "${skips[*]}")
+          printf 'Computed prek SKIP: %s\n' "$skip_csv"
+          printf 'SKIP=%s\n' "$skip_csv" >> "$GITHUB_ENV"
+
       - name: Run prek (same as `prek run --all-files` locally)
         env:
-          # `no-commit-to-branch` is a pre-push guard for local dev only.
-          # `vitest` and `cargo-test` here run only the related test subset
-          # (`scripts/test-related-*.sh`); the full suites run as dedicated
-          # sibling jobs (vitest, cargo-tests) so a CI run never silently
-          # misses tests outside the diff window.
-          #
-          # ci/path-conditional-jobs: on a backend-less PR (backend != 'true')
-          # the Rust toolchain + cargo plugins are NOT installed (the setup
-          # steps above are gated on backend == 'true'), so the cargo-invoking
-          # hooks (cargo-fmt/clippy/deny/machete) would fail here under
-          # `--all-files` with no toolchain. Append them to SKIP in that case so
-          # they don't run. Every NON-cargo hook still runs whole-tree — tsc,
-          # oxfmt, oxlint, zizmor, actionlint, taplo, typos, sqruff, gitleaks,
-          # markdownlint, and the node guards (sqruff/typos/taplo only *source*
-          # ~/.cargo/env for PATH; they invoke standalone binaries, not cargo).
-          # Fail-closed: any unrecognized path pins backend=true (see
-          # detect-changes), so a Rust diff keeps the cargo hooks ON.
-          #
-          # NOTE the condition is inverted (`!= 'true'`) so the appended list
-          # sits in the ternary's TRUE branch: GitHub Actions treats '' as falsy,
-          # so `cond && '' || LIST` would wrongly yield LIST even when cond holds.
-          # Keeping the non-empty value on the true side makes it evaluate right —
-          # backend PRs append nothing (cargo hooks run); backend-less PRs append
-          # the cargo ids (cargo hooks skipped).
-          SKIP: no-commit-to-branch,vitest,cargo-test${{ needs.detect-changes.outputs.backend != 'true' && ',cargo-fmt,cargo-clippy,cargo-deny,cargo-machete' || '' }}
+          # SKIP is computed by the preceding "Compute prek SKIP" step and
+          # exported via $GITHUB_ENV. It always carries the pre-push-only /
+          # sibling-job hooks (no-commit-to-branch, vitest, cargo-test) and
+          # appends a category's hooks only when that category is absent from
+          # the diff (see that step for the per-category + compound AND rules).
+          # Security / hygiene hooks are never in it, so they always run here.
+          SKIP: ${{ env.SKIP }}
           # Lychee reads GITHUB_TOKEN automatically. Without this, lychee
           # makes unauthenticated requests to github.com and gets rate-
           # limited (~60 req/hour) — bursty Dependabot PR runs blow the
@@ -509,7 +588,22 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: prek run --all-files
 
+      - name: Run cargo clippy (backend PRs)
+        # cargo-clippy is staged `pre-push` in prek.toml, so the pre-commit-stage
+        # `prek run --all-files` above never executes it — clippy would not gate
+        # PRs at all without this step. Invoke the hook explicitly (mirrors the
+        # npm-audit step) so its exact config runs: `cargo clippy --workspace
+        # --all-targets -- -D warnings`. Gated on backend == 'true' — the Rust
+        # toolchain is installed under the same condition; skipped on
+        # frontend/docs/ci-only PRs (fail-closed: unrecognized paths pin
+        # backend=true, so any Rust diff keeps clippy on).
+        if: needs.detect-changes.outputs.backend == 'true'
+        run: prek run --all-files --hook-stage pre-push cargo-clippy
+
       - name: Run npm-audit advisory scan (pre-push-staged hook)
+        # ci/path-conditional-jobs: npm-audit is a Node/frontend advisory scan,
+        # gated on frontend == 'true' — a backend/ci-only PR has no npm surface
+        # to audit (fail-closed: unrecognized paths pin frontend=true).
         # npm-audit is staged `pre-push` in prek.toml (#1087: it hits the
         # registry advisory endpoint over the network, which doesn't belong on
         # the commit path), so the `prek run --all-files` above — which runs
@@ -518,9 +612,12 @@ jobs:
         # the docs-lint job) so the advisory vulnerability scan stays in CI.
         # `npm audit signatures` above is a different, warn-only provenance
         # check and does not cover advisories.
+        if: needs.detect-changes.outputs.frontend == 'true'
         run: prek run --all-files --hook-stage pre-push npm-audit
 
       - name: Run knip (dead-code / unused-dependency analysis)
+        # ci/path-conditional-jobs: knip is a Node/frontend dead-code analysis,
+        # gated on frontend == 'true' — no npm surface on a backend/ci-only PR.
         # knip is staged `pre-push` in prek.toml (it is a whole-repo analysis
         # that goes red on stale branches for diffs unrelated to the commit, so
         # it doesn't belong on the commit path). Unlike npm-audit / lychee, the
@@ -531,6 +628,7 @@ jobs:
         # underlying command (the hook's own `entry`) directly instead — the
         # `npm ci` above provides node_modules. This closes the gap where knip
         # ran only on local pre-push and drifted red on main unnoticed.
+        if: needs.detect-changes.outputs.frontend == 'true'
         run: npx knip
 
       - name: Migrations append-only backstop (#806)
