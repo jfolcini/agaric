@@ -42,7 +42,7 @@ export const OUTLINE_NEWLINE_SENTINEL = '\u0000'
 /**
  * Inline reference-token regexes. These mirror the canonical patterns the
  * markdown serializer EMITS (`src/editor/markdown-serialize.ts`) and the Rust
- * page-export resolver consumes (`src-tauri/src/cache/mod.rs`:
+ * page-export resolver consumes (`src-tauri/agaric-store/src/cache/mod.rs`:
  * `TAG_REF_RE` / `PAGE_LINK_RE`, plus the `((ULID))` block-ref delimiter).
  * ULIDs are always 26 uppercase Crockford-base32 chars in canonical form, so
  * the character class is intentionally `[0-9A-Z]` (no lowercase).

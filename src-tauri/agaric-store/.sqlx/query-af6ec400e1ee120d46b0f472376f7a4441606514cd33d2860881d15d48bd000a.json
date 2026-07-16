@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET deleted_at = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "af6ec400e1ee120d46b0f472376f7a4441606514cd33d2860881d15d48bd000a"
+}
