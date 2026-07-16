@@ -85,6 +85,72 @@ describe('exportGraphAsZip', () => {
     expect(sameNameMd.some((f) => /_[0-9A-HJKMNP-TV-Z]{8}\.md$/.test(f))).toBe(true)
   })
 
+  it('re-checks the suffixed path so a 3-way same-millisecond collision never overwrites an entry (#2723)', async () => {
+    // Three pages sharing a title, with ULIDs whose first 8 chars (the
+    // timestamp component) are IDENTICAL — exactly what a bulk import's
+    // single chunk transaction produces. Before #2723 the 3rd page's
+    // id-suffixed candidate collided with the 2nd's and was never
+    // re-checked, so `zip.file()` silently overwrote the 2nd entry.
+    const ulid1 = '01HZA1B2C3AAAAAAAAAAAAAAAA'
+    const ulid2 = '01HZA1B2C3BBBBBBBBBBBBBBBB'
+    const ulid3 = '01HZA1B2C3CCCCCCCCCCCCCCCC'
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: ulid1, content: 'Same Name' },
+          { id: ulid2, content: 'Same Name' },
+          { id: ulid3, content: 'Same Name' },
+        ]
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        return `# ${id}`
+      }
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+    const sameNameMd = filenames.filter((f) => f.startsWith('Same Name') && f.endsWith('.md'))
+
+    // All three pages must land as distinct entries — none silently dropped.
+    expect(sameNameMd).toHaveLength(3)
+    expect(new Set(sameNameMd).size).toBe(3)
+
+    // Content round-trips correctly for every entry — proves no entry was
+    // overwritten by a colliding path (the failure mode #2723 fixes).
+    const contents = await Promise.all(sameNameMd.map((f) => unzipped.file(f)?.async('string')))
+    expect(new Set(contents)).toEqual(new Set([`# ${ulid1}`, `# ${ulid2}`, `# ${ulid3}`]))
+  })
+
+  it('tracks `seen` case-insensitively so `API` and `api` do not clash on extraction (#2723)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'API' },
+          { id: 'P2', content: 'api' },
+        ]
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        return `# ${id}`
+      }
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+    const mdFiles = filenames.filter((f) => f.endsWith('.md'))
+
+    // Two distinct entries whose lowercased names differ, so extraction on a
+    // case-insensitive filesystem (Windows/macOS) can't clash them.
+    expect(mdFiles).toHaveLength(2)
+    const lowered = mdFiles.map((f) => f.toLowerCase())
+    expect(new Set(lowered).size).toBe(2)
+  })
+
   it('splits a namespaced title into nested folders (#1446 Part A)', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_all_pages_in_space') {

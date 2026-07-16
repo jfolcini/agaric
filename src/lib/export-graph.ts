@@ -82,7 +82,10 @@ function relativePrefixForDepth(zipPath: string): string {
  * Each page becomes a `.md` file whose path mirrors its namespace: the title is
  * split on `/` into nested folders (`Project/Backend/API` → `Project/Backend/
  * API.md`), so the hierarchy round-trips (#1446 Part A). True filename
- * collisions (same full path) keep the existing ULID-suffix dedup.
+ * collisions (same full path, case-insensitively) are deduped with a
+ * ULID-derived suffix that is re-checked and, if still colliding, extended
+ * with an incrementing counter until unique (#2723) — no entry is ever
+ * silently overwritten in the output ZIP.
  *
  * Inline images (`attachment:<id>` refs, #1434) are not portable, so each
  * referenced attachment's bytes are emitted under `assets/` and the markdown
@@ -126,11 +129,27 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
 
     // Namespace `/` → nested folders, sanitizing per segment; dedup true
     // collisions (same full path) with a ULID suffix on the final segment.
+    // `seen` is tracked case-insensitively (#2723) so 'API' and 'api' don't
+    // emit distinct entries that clash at extraction on case-insensitive
+    // filesystems (Windows/macOS). The suffixed candidate is RE-CHECKED
+    // against `seen` (#2723): a ULID's first 8 chars are entirely within its
+    // 10-char timestamp component, so pages minted in the same ~256ms window
+    // (e.g. a bulk import's single chunk transaction) can share that prefix.
+    // When the id-suffixed candidate still collides, keep appending an
+    // incrementing counter until it's unique, so a 3rd+ same-path page is
+    // never silently dropped instead of overwriting the ZIP entry.
     let zipPath = titleToZipPath(page.content ?? 'Untitled')
-    if (seen.has(zipPath)) {
-      zipPath = `${zipPath}_${page.id.slice(0, 8)}`
+    if (seen.has(zipPath.toLowerCase())) {
+      const base = `${zipPath}_${page.id.slice(0, 8)}`
+      let candidate = base
+      let suffixCounter = 2
+      while (seen.has(candidate.toLowerCase())) {
+        candidate = `${base}-${suffixCounter}`
+        suffixCounter += 1
+      }
+      zipPath = candidate
     }
-    seen.add(zipPath)
+    seen.add(zipPath.toLowerCase())
 
     // #1490 — rewrite inline `attachment:<id>` image refs to portable asset
     // paths, emitting the bytes into `assets/`. Done per page because the
