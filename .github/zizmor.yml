@@ -35,10 +35,10 @@ rules:
     # them with none left over. If cache steps move, re-run with an empty
     # ignore list and re-anchor rather than editing line numbers blind.
     ignore:
-      - ci.yml:267
-      - ci.yml:290
-      - ci.yml:410
-      - ci.yml:442
+      - ci.yml:273
+      - ci.yml:296
+      - ci.yml:416
+      - ci.yml:448
       - release.yml:132
       - release.yml:177
       - release.yml:894

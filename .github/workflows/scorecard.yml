@@ -19,6 +19,15 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Collapse superseded scans: a rapid stack of merges to main otherwise starts
+# a full Scorecard analysis per commit. Keyed by ref (stable per-branch) so
+# only the latest main HEAD is scored — the public badge reflects the tip of
+# main regardless. cancel-in-progress frees the runner the moment a newer
+# commit lands.
+concurrency:
+  group: scorecard-${{ github.ref }}
+  cancel-in-progress: true
+
 # Workflow-level: read-only. The single job below escalates per-step with
 # the minimum scopes Scorecard needs (security-events for SARIF, id-token
 # for OIDC publish to the public Scorecard API).
