@@ -10,20 +10,20 @@
  * description are i18n'd; the body prose is i18n'd via t()/<Trans>
  *while monospace token identifiers (filter prefixes, regex
  * syntax) render verbatim as code.
+ *
+ * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — search is
+ * reachable from the mobile search panel too. Both paths share the same
+ * controlled `open` / `onOpenChange` API.
  */
 
 import { CaseSensitive, Regex, WholeWord } from 'lucide-react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Kbd } from '@/components/ui/kbd'
+import { SheetBody } from '@/components/ui/sheet'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 
 interface SearchHelpDialogProps {
   open: boolean
@@ -305,8 +305,17 @@ function TipsBody() {
 export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) {
   const { t } = useTranslation()
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description } = parts
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  // Mobile bottom-sheet path uses the Sheet body primitive so
+  // padding/scroll behaviour comes from the Sheet scaffolding rather than
+  // Dialog's — matches QuickCaptureDialog / BugReportDialog.
+  const Body = parts.isMobile ? SheetBody : DialogBody
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Root open={open} onOpenChange={onOpenChange}>
       {/* Radix `Dialog.Title` owns the label id: it renders the `<h2>` with
           its own generated `titleId` and points `Content`'s `aria-labelledby`
           at it automatically. Passing an explicit `id` to `DialogTitle`
@@ -314,12 +323,12 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
           `TitleWarning` (which looks up the generated id via
           `getElementById`) fired a "DialogContent requires a DialogTitle"
           console.error. Let Radix wire it — no manual id / aria-labelledby. */}
-      <DialogContent data-testid="search-help-dialog">
-        <DialogHeader>
-          <DialogTitle>{t('search.helpButtonLabel')}</DialogTitle>
-          <DialogDescription>{t('search.help.description')}</DialogDescription>
-        </DialogHeader>
-        <DialogBody>
+      <Content data-testid="search-help-dialog" {...contentSideProps}>
+        <Header>
+          <Title>{t('search.helpButtonLabel')}</Title>
+          <Description>{t('search.help.description')}</Description>
+        </Header>
+        <Body>
           {/* Filter syntax section (populated). */}
           <section aria-labelledby="search-help-filter-syntax">
             <h3 id="search-help-filter-syntax" className="text-base font-semibold leading-tight">
@@ -358,8 +367,8 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
             </h3>
             <TipsBody />
           </section>
-        </DialogBody>
-      </DialogContent>
-    </Dialog>
+        </Body>
+      </Content>
+    </Root>
   )
 }

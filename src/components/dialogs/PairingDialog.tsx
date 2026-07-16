@@ -7,6 +7,12 @@
  *  3. List of already-paired devices (PairingPeersList)
  *
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
+ *
+ * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * bottom Sheet via `useDialogOrSheet('dialog')` — pairing is a core
+ * phone-first flow (#2665), so this matters more here than for most
+ * dialogs. Both paths share the same controlled `open` / `onOpenChange`
+ * API.
  */
 
 import type React from 'react'
@@ -19,14 +25,10 @@ import { PairingEntryForm } from '@/components/peers/PairingEntryForm'
 import { PairingPeersList } from '@/components/peers/PairingPeersList'
 import { PairingQrDisplay } from '@/components/peers/PairingQrDisplay'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
+import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
@@ -457,17 +459,26 @@ export function PairingDialog({
     handleCancel()
   }, [pairLoading, handleCancel])
 
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title } = parts
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  // Mobile bottom-sheet path uses the Sheet body primitive so
+  // padding/scroll behaviour comes from the Sheet scaffolding rather than
+  // Dialog's — matches QuickCaptureDialog / BugReportDialog.
+  const Body = parts.isMobile ? SheetBody : DialogBody
+
   if (!open) return null
 
   return (
     <>
-      <Dialog
+      <Root
         open={open}
         onOpenChange={(o) => {
           if (!o) handleAttemptClose()
         }}
       >
-        <DialogContent
+        <Content
           className="pairing-dialog gap-0"
           aria-describedby={undefined}
           onCloseAutoFocus={(e) => {
@@ -476,13 +487,14 @@ export function PairingDialog({
               triggerRef.current.focus()
             }
           }}
+          {...contentSideProps}
         >
           {/* Header */}
-          <DialogHeader className="text-left mb-4">
-            <DialogTitle>{t('pairing.dialogTitle')}</DialogTitle>
-          </DialogHeader>
+          <Header className="text-left mb-4">
+            <Title>{t('pairing.dialogTitle')}</Title>
+          </Header>
 
-          <DialogBody>
+          <Body>
             <div ref={dialogRef}>
               {/* Error message with Retry button (#282) */}
               {error && (
@@ -558,9 +570,9 @@ export function PairingDialog({
                 {error}
               </div>
             </div>
-          </DialogBody>
-        </DialogContent>
-      </Dialog>
+          </Body>
+        </Content>
+      </Root>
 
       {/* #301: Use shared UnpairConfirmDialog */}
       <UnpairConfirmDialog

@@ -30,12 +30,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { decodeInlineQueryPayload, encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
+// The dialog swaps to a bottom Sheet via `useDialogOrSheet` (#2665) when
+// `useIsMobile()` is true. Mock the hook so each test can pin the
+// viewport-state boolean.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 describe('QueryBuilderModal', () => {
   const defaultProps = {
@@ -46,6 +55,8 @@ describe('QueryBuilderModal', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    // Default to the desktop path so existing test bodies keep their semantics.
+    mockedUseIsMobile.mockReturnValue(false)
     mockedInvoke.mockImplementation(async (cmd: string) => {
       // `list_property_defs` returns a paginated PageResponse envelope.
       if (cmd === 'list_property_defs')
@@ -780,6 +791,31 @@ describe('QueryBuilderModal', () => {
       expect(onSave).toHaveBeenCalledTimes(1)
       const saved = onSave.mock.calls[0]?.[0] as string
       expect(decodeInlineQueryPayload(saved)?.filter).toEqual(filter)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // #2665 — the dialog mounts under both the desktop Dialog path and the
+  // mobile Sheet path via useDialogOrSheet('dialog'). Assert on body
+  // content (the query type radios) being visible rather than the
+  // Dialog / Sheet DOM specifics so the test stays decoupled from the
+  // underlying primitive.
+  // -----------------------------------------------------------------------
+  describe('mobile / desktop responsive surfaces', () => {
+    it('renders the query builder form on the mobile Sheet path', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      expect(screen.getByRole('radiogroup', { name: /query type/i })).toBeInTheDocument()
+      expect(screen.getByLabelText(/tag prefix/i)).toBeInTheDocument()
+    })
+
+    it('renders the query builder form on the desktop Dialog path', () => {
+      mockedUseIsMobile.mockReturnValue(false)
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      expect(screen.getByRole('radiogroup', { name: /query type/i })).toBeInTheDocument()
+      expect(screen.getByLabelText(/tag prefix/i)).toBeInTheDocument()
     })
   })
 })
