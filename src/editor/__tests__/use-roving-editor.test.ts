@@ -21,6 +21,7 @@ import {
   CodeWithShortcut,
   computeContentDelta,
   dispatchPriorityEvent,
+  HeadingWithoutDefaultShortcuts,
   HighlightWithShortcut,
   PriorityShortcuts,
   replaceDocSilently,
@@ -487,6 +488,56 @@ describe('custom extension keyboard shortcuts', () => {
     const toggleStrike = vi.fn(() => true)
     const shortcuts = addKeyboardShortcuts?.call({ editor: { commands: { toggleStrike } } }) ?? {}
     expect(Object.keys(shortcuts).toSorted()).toEqual(['Mod-Shift-s', 'Mod-Shift-x'])
+  })
+
+  // #2679 — `@tiptap/extension-heading` ships hardcoded `Mod-Alt-1`…`Mod-Alt-6`
+  // keyboard shortcuts baked into its own `addKeyboardShortcuts()`. Once the
+  // `heading1`-`heading6` catalog defaults moved to that exact same
+  // `Ctrl+Alt+1`-`Ctrl+Alt+6` chord family (to stop colliding with
+  // `switchSpace1`-`switchSpace6`), TipTap's stock binding started
+  // double-handling the very same keystroke as
+  // `useBlockTreeKeyboardShortcuts`'s own `heading{level}` handler (see
+  // `HeadingWithoutDefaultShortcuts`'s doc comment in `use-roving-editor.ts`
+  // for the full propagation trace). Pin that TipTap's own shortcuts are
+  // stripped so only the app's single, live-rebindable handler ever fires.
+  it('HeadingWithoutDefaultShortcuts registers heading extension', () => {
+    editor = createEditor([
+      HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+    ])
+    expect(editor.extensionManager.extensions.some((e) => e.name === 'heading')).toBe(true)
+  })
+
+  it('#2679 — HeadingWithoutDefaultShortcuts strips the stock Mod-Alt-1..6 keymap', () => {
+    const addKeyboardShortcuts = HeadingWithoutDefaultShortcuts.config.addKeyboardShortcuts as
+      | (() => Record<string, unknown>)
+      | undefined
+    expect(addKeyboardShortcuts?.call({})).toEqual({})
+  })
+
+  it('#2679 — Ctrl+Alt+1 dispatched on the editor DOM no longer converts the block via TipTap (no double-handling with useBlockTreeKeyboardShortcuts)', () => {
+    editor = createEditor([
+      HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+    ])
+    editor.commands.setContent({
+      type: 'doc',
+      content: [{ type: 'paragraph', content: [{ type: 'text', text: 'hello' }] }],
+    })
+
+    const evt = new KeyboardEvent('keydown', {
+      key: '1',
+      ctrlKey: true,
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    editor.view.dom.dispatchEvent(evt)
+
+    // Stock `Heading` would have toggled the node to `heading` and called
+    // `preventDefault()` here (ProseMirror's keymap plugin never calls
+    // `stopPropagation()`, so the same keystroke would still reach
+    // `document` afterward and ALSO fire the app's own heading handler).
+    expect((editor.getJSON() as DocNode).content?.[0]?.type).toBe('paragraph')
+    expect(evt.defaultPrevented).toBe(false)
   })
 
   it('HighlightWithShortcut toggles highlight via command', () => {

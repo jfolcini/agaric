@@ -199,39 +199,46 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     category: 'keyboard.category.blockTree',
     description: 'keyboard.turnIntoBlock',
   },
+  // #2679 — these used to default to the bare `Ctrl + 1`-`Ctrl + 6` digit
+  // chords, which collided with `switchSpace1`-`switchSpace6` below: since
+  // the heading handler (`useBlockTreeKeyboardShortcuts`) fires whenever a
+  // block is focused — exactly when a user reaching for "switch to space N"
+  // has their caret — the chord silently converted the focused block to a
+  // heading instead of switching spaces. Moved to the dedicated
+  // `Ctrl + Alt + 1`-`Ctrl + Alt + 6` chord family so the two never collide.
   {
     id: 'heading1',
-    keys: 'Ctrl + 1',
+    keys: 'Ctrl + Alt + 1',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading1',
   },
   {
     id: 'heading2',
-    keys: 'Ctrl + 2',
+    keys: 'Ctrl + Alt + 2',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading2',
   },
   {
     id: 'heading3',
-    keys: 'Ctrl + 3',
+    keys: 'Ctrl + Alt + 3',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading3',
   },
   {
     id: 'heading4',
-    keys: 'Ctrl + 4',
+    keys: 'Ctrl + Alt + 4',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading4',
   },
   {
     id: 'heading5',
-    keys: 'Ctrl + 5',
+    keys: 'Ctrl + Alt + 5',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading5',
   },
   {
     id: 'heading6',
-    keys: 'Ctrl + 6',
+    keys: 'Ctrl + Alt + 6',
     category: 'keyboard.category.blockTree',
     description: 'keyboard.heading6',
   },
@@ -748,11 +755,11 @@ export const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
   // Nth space in the alphabetical `availableSpaces` order. Out-of-range
   // digits are silent no-ops; the handler short-circuits when typing in
   // an input/textarea/contenteditable so it never steals keystrokes.
-  // The `Ctrl + 1`-`Ctrl + 6` collision with `heading1`-`heading6` is
-  // benign: the heading handlers (#713, `useBlockTreeKeyboardShortcuts`)
-  // only fire while a block is focused — exactly when the space switcher
-  // bails out — and the entries live in a different category, so
-  // `findConflicts` does not flag them.
+  // #2679 — `heading1`-`heading6` used to default to this same
+  // `Ctrl + 1`-`Ctrl + 6` chord family, so a user reaching for "switch to
+  // space N" with the caret in a block got their block silently converted
+  // to a heading instead. `heading1`-`heading6` now default to
+  // `Ctrl + Alt + 1`-`Ctrl + Alt + 6`, so there is no longer a collision.
   {
     id: 'switchSpace1',
     keys: 'Ctrl + 1',

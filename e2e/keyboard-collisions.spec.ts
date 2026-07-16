@@ -22,16 +22,21 @@ import {
  * Collisions covered:
  *   1. Ctrl+K  — link popover (in editor) vs command palette (outside)
  *   2. Ctrl+B  — bold (in editor, sidebar must NOT toggle) vs sidebar toggle
- *   3. Ctrl+1/2 — heading level (in focused block) vs space switch (outside)
+ *   3. Ctrl+1/2 vs Ctrl+Alt+1/2 — space switch vs heading level (#2679)
  *   4. List-view keyboard selection (Trash) — arrow/Space/Ctrl+A/Escape
  *
+ * #2679 — Ctrl+1..6 used to ALSO be heading1-heading6's default binding, so
+ * a focused block silently turned into a heading instead of switching
+ * spaces. heading1-heading6 now default to Ctrl+Alt+1..6, so section 3
+ * below asserts (a) Ctrl+Alt+1/2 on a focused block still produces
+ * <h1>/<h2>, and (b) the bare Ctrl+1/2 chord no longer touches the block at
+ * all — it's a true no-op in the editor now, same as outside it.
+ *
  * The mock (`tauri-mock/handlers.ts` `list_spaces`) seeds a single space
- * ("Personal"), so the OUTSIDE-editor branch of Ctrl+1/2 (switch space) is a
- * deliberate no-op there: index 1 is the current space and index 2 is
+ * ("Personal"), so the switch-space branch of Ctrl+1/2 is a deliberate
+ * no-op in every context here: index 1 is the current space and index 2 is
  * out-of-range. That branch is asserted as covered-at-unit-level
- * (useAppKeyboardShortcuts.test.ts); here we assert (a) the in-editor heading
- * branch produces <h1>/<h2>, and (b) the chord does nothing harmful outside
- * the editor (no navigation away from the view, no crash).
+ * (useAppKeyboardShortcuts.test.ts).
  */
 
 // ===========================================================================
@@ -148,29 +153,34 @@ test.describe('Ctrl+B collision routing', () => {
 })
 
 // ===========================================================================
-// 3. Ctrl+1 / Ctrl+2 — heading level (focused block) vs space switch (outside)
+// 3. Ctrl+Alt+1 / Ctrl+Alt+2 — heading level (focused block); Ctrl+1 / Ctrl+2
+//    — space switch, and (#2679) NO LONGER a heading in a focused block.
 //
 // The mock seeds ONE space, so the space-switch branch is a no-op here (index
 // 1 == current, index 2 out-of-range). That branch is covered at unit level
 // (useAppKeyboardShortcuts.test.ts `switchSpaceN`). Below we assert the
-// in-editor heading branch (<h1>/<h2>) and that the chord is harmless outside.
+// in-editor heading branch fires on Ctrl+Alt+1/2 (<h1>/<h2>), and that the
+// bare Ctrl+1/2 chord is now harmless everywhere — including a focused block.
 // ===========================================================================
 
-test.describe('Ctrl+1 / Ctrl+2 collision routing', () => {
+test.describe('Ctrl+1 / Ctrl+2 vs Ctrl+Alt+1 / Ctrl+Alt+2 routing (#2679)', () => {
   test.beforeEach(async ({ page }) => {
     await waitForBoot(page)
   })
 
-  test('Ctrl+1 on a focused block sets heading level 1 (<h1>)', async ({ page }) => {
+  test('Ctrl+Alt+1 on a focused block sets heading level 1 (<h1>)', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
     await page.keyboard.down('Control')
+    await page.keyboard.down('Alt')
     await page.keyboard.press('1')
+    await page.keyboard.up('Alt')
     await page.keyboard.up('Control')
 
-    // Blur to static so the heading node renders. (Ctrl+1 prepends "# " to the
-    // block content via the slash `h1` handler; the static renderer emits <h1>.)
+    // Blur to static so the heading node renders. (Ctrl+Alt+1 prepends "# "
+    // to the block content via the slash `h1` handler; the static renderer
+    // emits <h1>.)
     await saveBlock(page)
 
     const staticBlock = page
@@ -180,12 +190,14 @@ test.describe('Ctrl+1 / Ctrl+2 collision routing', () => {
     await expect(staticBlock.locator('h1')).toBeVisible()
   })
 
-  test('Ctrl+2 on a focused block sets heading level 2 (<h2>)', async ({ page }) => {
+  test('Ctrl+Alt+2 on a focused block sets heading level 2 (<h2>)', async ({ page }) => {
     await openPage(page, 'Getting Started')
     await focusBlock(page)
 
     await page.keyboard.down('Control')
+    await page.keyboard.down('Alt')
     await page.keyboard.press('2')
+    await page.keyboard.up('Alt')
     await page.keyboard.up('Control')
 
     await saveBlock(page)
@@ -195,6 +207,26 @@ test.describe('Ctrl+1 / Ctrl+2 collision routing', () => {
       .first()
       .locator('[data-testid="block-static"]')
     await expect(staticBlock.locator('h2')).toBeVisible()
+  })
+
+  test('#2679 — Ctrl+1 (no Alt) on a focused block no longer converts it to a heading', async ({
+    page,
+  }) => {
+    await openPage(page, 'Getting Started')
+    await focusBlock(page)
+
+    await page.keyboard.down('Control')
+    await page.keyboard.press('1')
+    await page.keyboard.up('Control')
+
+    // Blur to static: the block must render unchanged, with no heading.
+    await saveBlock(page)
+
+    const staticBlock = page
+      .locator('[data-testid="sortable-block"]')
+      .first()
+      .locator('[data-testid="block-static"]')
+    await expect(staticBlock.locator('h1')).toHaveCount(0)
   })
 
   test('Ctrl+1 outside any editor is a harmless no-op (single seeded space)', async ({ page }) => {

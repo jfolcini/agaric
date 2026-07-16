@@ -215,6 +215,36 @@ export const HighlightWithShortcut = Highlight.extend({
   },
 })
 
+/**
+ * Heading with its own default keyboard shortcuts stripped. @internal Exported for testing.
+ *
+ * #2679 — `@tiptap/extension-heading` ships hardcoded `Mod-Alt-1`…`Mod-Alt-6`
+ * bindings (`toggleHeading`) baked into its own `addKeyboardShortcuts()`,
+ * registered as a ProseMirror keymap directly on the editor DOM. When the
+ * catalog's `heading1`-`heading6` defaults moved from `Ctrl+1`-`Ctrl+6` to
+ * `Ctrl+Alt+1`-`Ctrl+Alt+6` (to stop colliding with `switchSpace1`-`switchSpace6`),
+ * that chord became IDENTICAL to this stock TipTap binding. ProseMirror's
+ * keymap plugin only calls `preventDefault()`, not `stopPropagation()` (see
+ * `prosemirror-view`'s `editHandlers.keydown`), so the keydown still bubbles to
+ * `document` afterward — where `useBlockTreeKeyboardShortcuts`'s own
+ * `heading{level}` handler (routed through `matchesShortcutBinding`, so it
+ * honors a live Settings rebind) ALSO matches and calls `handleSlashCommand`,
+ * which converts the block via a completely separate markdown-text path
+ * (`applyContentEdit`). Left alone, a single Ctrl+Alt+1 would fire BOTH
+ * mechanisms back-to-back on the same keystroke. Stripping TipTap's own
+ * shortcuts here (rather than wrapping them with `tipTapShortcutMap`, like
+ * `CodeWithShortcut`/`StrikeWithShortcut`/`HighlightWithShortcut` do) keeps
+ * headings on the single, live-rebindable `useBlockTreeKeyboardShortcuts`
+ * path they already used before this collision existed — `tipTapShortcutMap`
+ * bindings are frozen at editor-creation time (see the NOTE above), which
+ * would silently regress "rebind heading1 in Settings" for existing editors.
+ */
+export const HeadingWithoutDefaultShortcuts = Heading.extend({
+  addKeyboardShortcuts() {
+    return {}
+  },
+})
+
 /** CodeBlockLowlight with configurable shortcut to toggle code blocks. @internal Exported for testing. */
 export const CodeBlockWithShortcut = CodeBlockLowlight.extend({
   addKeyboardShortcuts() {
@@ -483,7 +513,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       TableHeader,
       TableCell,
       CodeBlockWithShortcut.configure({ lowlight }),
-      Heading.configure({ levels: [1, 2, 3, 4, 5, 6] }),
+      HeadingWithoutDefaultShortcuts.configure({ levels: [1, 2, 3, 4, 5, 6] }),
       HardBreak,
       History,
       // #1439 — convert pasted clipboard HTML to Agaric markdown. MUST precede

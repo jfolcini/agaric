@@ -681,10 +681,13 @@ describe('keyboard-config', () => {
       expect(s?.keys).toBe('Ctrl + Shift + P')
     })
 
-    it('heading1-6 default to Ctrl + 1 through Ctrl + 6', () => {
+    // #2679 — heading1-6 used to default to Ctrl+1-Ctrl+6, colliding with
+    // switchSpace1-switchSpace6 (see below); moved to Ctrl+Alt+1-Ctrl+Alt+6
+    // so a block-focused Ctrl+1 no longer silently mutates the block.
+    it('heading1-6 default to Ctrl + Alt + 1 through Ctrl + Alt + 6', () => {
       for (let level = 1; level <= 6; level++) {
         const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === `heading${level}`)
-        expect(s?.keys).toBe(`Ctrl + ${level}`)
+        expect(s?.keys).toBe(`Ctrl + Alt + ${level}`)
       }
     })
   })
@@ -884,12 +887,22 @@ describe('keyboard-config', () => {
       )
     })
 
-    it('matches Ctrl+1 through Ctrl+6 for heading shortcuts', () => {
+    it('matches Ctrl+Alt+1 through Ctrl+Alt+6 for heading shortcuts', () => {
       for (let level = 1; level <= 6; level++) {
         expect(
-          matchesShortcutBinding(fakeEvent(String(level), { ctrlKey: true }), `heading${level}`),
+          matchesShortcutBinding(
+            fakeEvent(String(level), { ctrlKey: true, altKey: true }),
+            `heading${level}`,
+          ),
         ).toBe(true)
       }
+    })
+
+    // #2679 — the bare Ctrl+1 chord (no Alt) used to also match heading1,
+    // colliding with switchSpace1; it must no longer match now that
+    // heading1 lives on Ctrl+Alt+1.
+    it('does not match the bare Ctrl+1 (no Alt) for heading1', () => {
+      expect(matchesShortcutBinding(fakeEvent('1', { ctrlKey: true }), 'heading1')).toBe(false)
     })
 
     it('does not match Ctrl+Shift+1 for heading1 (shift not in binding)', () => {
@@ -1938,34 +1951,41 @@ describe('keyboard-config', () => {
       },
     )
 
-    // ── heading1..6 (#1172) — parametrize all six ─────────────────────────
+    // ── heading1..6 (#1172, moved off Ctrl+N by #2679) ────────────────────
     it.each([1, 2, 3, 4, 5, 6] as const)(
-      'heading%i resolves from Ctrl+%i but not the bare digit / Shift chord',
+      'heading%i resolves from Ctrl+Alt+%i but not the bare digit / Shift chord',
       (n) => {
         const digit = String(n)
         const id = `heading${n}`
-        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), id)).toBe(true)
         expect(matchesShortcutBinding(ev(digit), id)).toBe(false)
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true, shiftKey: true }), id)).toBe(false)
+        // #2679 — the bare Ctrl+N (no Alt) chord used to also resolve
+        // heading{n}, colliding with switchSpace{n}; it must not anymore.
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), id)).toBe(false)
       },
     )
 
-    // ── Collision routing is contextual, not matcher-level (#1172) ────────
-    // Ctrl+1..6 maps to BOTH `heading{n}` and `switchSpace{n}` in the catalog,
-    // and Ctrl+K maps to BOTH `paletteOpen` and `linkPopover`. The matcher is
-    // intentionally ambiguous: it returns true for either id on the shared
-    // chord. The disambiguation lives in the HANDLERS (focused-block ownership
-    // for headings vs the not-typing-in-field guard for space switching;
-    // isFocusInsideEditor for palette vs the editor's own link command), which
-    // are unit-tested in useBlockTreeKeyboardShortcuts / useAppKeyboardShortcuts.
-    // Pin the shared-resolution contract here so a future "dedupe" of the
-    // catalog can't silently break one branch.
+    // ── heading vs switchSpace no longer collide (#2679) ──────────────────
+    // Ctrl+1..6 used to map to BOTH `heading{n}` and `switchSpace{n}` in the
+    // catalog, so a block-focused Ctrl+N silently converted the block to a
+    // heading instead of switching spaces (the "collision is handler-gated"
+    // contract this test used to pin). `heading1`-`heading6` now default to
+    // Ctrl+Alt+1..6, so the bare Ctrl+N chord resolves to `switchSpace{n}`
+    // ONLY — assert that disjointness directly at the matcher level rather
+    // than relying on handler-side focus gating.
     it.each([1, 2, 3, 4, 5, 6] as const)(
-      'Ctrl+%i resolves to BOTH heading%i and switchSpace%i (collision is handler-gated)',
+      'Ctrl+%i resolves to switchSpace%i only — heading%i requires Alt',
       (n) => {
         const digit = String(n)
-        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `heading${n}`)).toBe(true)
         expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `switchSpace${n}`)).toBe(true)
+        expect(matchesShortcutBinding(ev(digit, { ctrlKey: true }), `heading${n}`)).toBe(false)
+        expect(
+          matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), `heading${n}`),
+        ).toBe(true)
+        expect(
+          matchesShortcutBinding(ev(digit, { ctrlKey: true, altKey: true }), `switchSpace${n}`),
+        ).toBe(false)
       },
     )
 

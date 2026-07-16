@@ -24,6 +24,7 @@ The five **picker triggers** — `[[`, `@`, `((`, `/`, `::` — are part of the 
 | `Ctrl+Shift+↓` | Move block down |
 | `Ctrl+.` | Collapse / expand block children |
 | `Alt+.` | Zoom in to the focused block |
+| `Ctrl+Alt+1` … `Ctrl+Alt+6` | Turn the focused block into a heading (level 1-6). Not `Ctrl+1`…`Ctrl+6` — those are reserved for switching spaces (see **Global navigation**) and are a no-op while a block is focused, same as any other digit chord typed into the editor |
 | `Ctrl+Enter` | Cycle the block's task state |
 | `Ctrl+Shift+P` | Open the **Property Drawer** for the block |
 | `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor) |
