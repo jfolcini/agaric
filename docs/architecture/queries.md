@@ -43,7 +43,7 @@ Two flavours:
 
 ### Filter dimensions
 
-`BacklinkFilter` (in `src-tauri/src/backlink/filters.rs`) is the full discriminator. Filters compose freely; the algorithm builds a leaf-set per filter, intersects them, applies a keyset cursor, and only then fetches the `BlockRow`s. This shape (filter → set → cursor → fetch) is the same pattern as the agenda filter.
+`BacklinkFilter` (in `src-tauri/agaric-store/src/backlink/filters.rs`) is the full discriminator. Filters compose freely; the algorithm builds a leaf-set per filter, intersects them, applies a keyset cursor, and only then fetches the `BlockRow`s. This shape (filter → set → cursor → fetch) is the same pattern as the agenda filter.
 
 Cursor pagination uses a block-id keyset (Created sort) or a `(value, id)` composite keyset (non-Created sorts). Since #2602 the non-Created (property) sorts paginate with a real keyset — a `(value_{text,num,date}, b.id)` composite with build-time NULLS-LAST handling — pushed into SQL, replacing the former O(n) `.position()` scan over a fully materialised, Rust-sorted page. The database now seeks straight to the cursor and returns one page (`LIMIT + 1`) per request instead of the whole filtered set.
 

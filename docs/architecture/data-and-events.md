@@ -179,7 +179,7 @@ The staleness **bound** for every cache above is engineered, not incidental: a t
 | Open / load a page, render blocks | `blocks`, `block_properties` (`src-tauri/src/commands/pages/listing.rs`) | primary | **No** — always current |
 | Read one block's content | `blocks`, `block_properties` (`src-tauri/src/commands/blocks/crud.rs`) | primary | **No** — always current |
 | Explicit tag membership on a block | `block_tags` (`src-tauri/src/commands/tags.rs`) | primary | **No** — written in-txn with the tag op |
-| Full-text search / FTS | `fts_blocks` (`src-tauri/src/fts/search/fetch.rs`) | cache | **Yes** — `UpdateFtsBlock` is a persisted per-block task |
+| Full-text search / FTS | `fts_blocks` (`src-tauri/agaric-store/src/fts/search/fetch.rs`) | cache | **Yes** — `UpdateFtsBlock` is a persisted per-block task |
 | Agenda (day / upcoming) | `agenda_cache` (`src-tauri/src/commands/agenda.rs`) | cache | **Yes** — `RebuildAgendaCache` |
 | Repeating-task projections | `projected_agenda_cache` (`src-tauri/src/commands/agenda.rs`) | cache | **Yes** — `RebuildProjectedAgendaCache` |
 | Tag-inheritance queries (`include_inherited`) | `block_tag_inherited` (`src-tauri/src/commands/pages/links.rs`) | cache | **Yes** — `RebuildTagInheritanceCache` |

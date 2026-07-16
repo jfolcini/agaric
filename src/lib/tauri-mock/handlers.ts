@@ -332,7 +332,7 @@ export interface PageMetaRow {
  * Does a page row satisfy one compound-filter primitive? The mock evaluates
  * `Stub` / `HasNoInboundLinks` / `Orphan` / `Tag` / `Priority` / `PathGlob` /
  * `HasProperty` / `LastEdited` faithfully (mirroring the REAL backend
- * semantics in `src-tauri/src/filters/primitive.rs`); any other primitive is
+ * semantics in `src-tauri/agaric-store/src/filters/primitive.rs`); any other primitive is
  * a permissive no-op (the backend owns those, and FE tests that need them
  * mock at the IPC boundary directly).
  */
@@ -361,7 +361,7 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
     case 'Priority': {
       // Multi-value membership over `blocks.priority`, mirroring the REAL
       // backend's `in_or_null("b.priority", values, is_null, exclude)`
-      // (src-tauri/src/filters/primitive.rs). INCLUDE: row matches if its
+      // (src-tauri/agaric-store/src/filters/primitive.rs). INCLUDE: row matches if its
       // priority is in `values` OR (is_null AND priority IS NULL). EXCLUDE:
       // NULL-inclusive inversion — a NULL priority counts as "not in the
       // excluded set", and `is_null` ADDS "priority IS NOT NULL". An empty,

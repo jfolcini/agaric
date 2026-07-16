@@ -19,10 +19,10 @@ CREATE VIRTUAL TABLE fts_blocks USING fts5(
 
 The `stripped` column carries the block content with markup boundaries removed (ULIDs, `[[…]]` link wrappers, `#[…]` tag wrappers, `(( … ))` block-ref wrappers) so a search for human-readable text matches what the user sees, not what's in the raw markdown. The `case_sensitive 0` flag is required for the trigram tokenizer to fold case; without it FTS5 falls back to exact-case matching on the trigram alphabet.
 
-Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/src/fts/search/constants.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
+Trigrams give substring matching for free — a query of `alp` matches `alpha`, `alphabet`, `cephalopod` — but they pay for it in index size (every overlapping three-character window of every block) and in worst-case match selectivity (short queries have many candidate trigrams). The pagination cap (the `MAX_SEARCH_RESULTS` `const` in `src-tauri/agaric-store/src/fts/search/constants.rs` — read the value from the code) and a 3-character floor keep that cost bounded. The floor is **two distinct measures**, not one shared rule:
 
 - **Frontend** (`src/components/SearchPanel.tsx`) — a soft hint. When the trimmed query is non-empty but its JavaScript-string length (UTF-16 code units, counted across the *whole* query) is below 3, the panel shows a "type more characters" notice. It does not block the request.
-- **Backend** (`sanitize_fts_query` in `src-tauri/src/fts/search/sanitizer.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
+- **Backend** (`sanitize_fts_query` in `src-tauri/agaric-store/src/fts/search/sanitizer.rs`) — the authoritative drop. Each word token shorter than `TRIGRAM_MIN_LEN` *Unicode scalars* (`word.chars().count()`, so a 2-character CJK word is measured as 2, not by byte length) is dropped from the FTS query; quoted phrases and the boolean operators bypass the floor.
 
 The synchronous primary-state writer does **not** maintain `fts_blocks`. The materializer rebuilds the FTS row asynchronously on every block insert / update / soft-delete, batched through the materializer's retry queue (`materializer_retry_queue`). The search query therefore sees results that lag the write log by one materializer flush — measured in milliseconds at the desk, but never zero. This is the same lag every materialized view in the app pays.
 
@@ -33,13 +33,13 @@ The search SQL projects `snippet(fts_blocks, 1, '<mark>', '</mark>', '…', N)` 
 - `1` is the index of the `stripped` column (the only indexed column).
 - `<mark>` / `</mark>` are the literal text boundaries SQLite emits around each hit. These are **not** HTML tags at the SQL layer — they are opaque marker strings the frontend parses. Choosing real HTML-looking tags trades a tiny amount of confusion (someone might assume FTS5 returns HTML) for a renderer that can ignore any other angle-bracket in the source content as ordinary text.
 - `'…'` is the ellipsis that flags a truncated window on either end.
-- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/src/fts/search/constants.rs`; consult the code rather than a number here, which would drift.
+- `N` is the window width measured in **trigrams**, not words — a tight context window (a few words of surrounding text), much tighter than the per-word windows most FTS5 deployments use. The exact value is a tunable inlined in the `snippet(...)` projection in `src-tauri/agaric-store/src/fts/search/constants.rs`; consult the code rather than a number here, which would drift.
 
 For page-title-only hits (block with no content body), `snippet()` may return `NULL` on the SQL side; the frontend treats `snippet: None` as "render the page title verbatim, no highlight" and the row still navigates correctly on click.
 
 ## IPC shapes
 
-The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes are defined in `src-tauri/src/domain/search_types.rs` (and re-exported from `src-tauri/src/commands/queries.rs`, which owns `search_blocks_inner`); they round-trip through `tauri-specta` into `src/lib/bindings.ts`:
+The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes are defined in `src-tauri/agaric-store/src/search_types.rs` (and re-exported from `src-tauri/src/commands/queries.rs`, which owns `search_blocks_inner`); they round-trip through `tauri-specta` into `src/lib/bindings.ts`:
 
 ```rust
 // Request — appended to, never re-shaped. Every field carries
@@ -140,7 +140,7 @@ The round-trip invariant — `parse(serialize(parse(s))) === parse(s)` for any `
 Validation errors come in two flavours:
 
 - **Frontend-cheap**: glob shape checks (unbalanced brackets, nested braces, escape sequences) live in `glob-validate.ts` (`validateGlob`), which `register.ts`'s `path:` / `not-path:` parsers call; failures surface as `invalid` chips with `InvalidGlob:`-prefixed error strings. The chip renders red with the typed message as the tooltip.
-- **Backend authoritative**: `src-tauri/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::validation_coded(ValidationCode::InvalidGlob, …)`; the frontend keys on the structured `code` (`ValidationCode.InvalidGlob`) regardless of which side caught the error. The `InvalidGlob:` label in the client-side chip copy (`glob-validate.ts`) is display text built via `prefixed()`, not a wire prefix.
+- **Backend authoritative**: `src-tauri/agaric-store/src/fts/glob_filter.rs` re-validates and brace-expands. Failures return `AppError::validation_coded(ValidationCode::InvalidGlob, …)`; the frontend keys on the structured `code` (`ValidationCode.InvalidGlob`) regardless of which side caught the error. The `InvalidGlob:` label in the client-side chip copy (`glob-validate.ts`) is display text built via `prefixed()`, not a wire prefix.
 
 ### AST → SQL projection
 
@@ -150,10 +150,10 @@ Brace expansion is hand-rolled (no `glob` crate dependency) and capped at 64 pat
 
 ## Toggle row pipeline
 
-The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. A blank free-text query that carries at least one structural filter is handled first (see *Filter-only search* below); otherwise the dispatch is binary:
+The three search toggles (`case_sensitive`, `whole_word`, `is_regex`) all land as `#[serde(default)] bool` fields on `SearchFilter`. They drive a single new module — `src-tauri/agaric-store/src/fts/toggle_filter.rs` — that sits between `search_blocks_inner` and the candidate-set sources. A blank free-text query that carries at least one structural filter is handled first (see *Filter-only search* below); otherwise the dispatch is binary:
 
 - **`is_regex == false`** → `search_fts` (today's FTS5 path) is called first; if `case_sensitive` or `whole_word` is on, the result rows are passed through `apply_post_filter` with a literal-escaped regex. The filter narrows matches and attaches `match_offsets`; rows without a match are dropped.
-- **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs and any structural metadata predicates) returns up to `REGEX_PRE_FILTER_CAP` candidates; each is matched against the user's regex. The numeric value of that cap lives only in the code constant — see `src-tauri/src/fts/toggle_filter.rs`.
+- **`is_regex == true`** → `search_fts` is **bypassed entirely** (FTS5 MATCH cannot accept a regex). A separate recency-ordered scan over `blocks` (filtered by tags / space / path globs and any structural metadata predicates) returns up to `REGEX_PRE_FILTER_CAP` candidates; each is matched against the user's regex. The numeric value of that cap lives only in the code constant — see `src-tauri/agaric-store/src/fts/toggle_filter.rs`.
 
 ### Filter-only search
 
@@ -168,7 +168,7 @@ A search whose free-text is blank/whitespace but which carries at least one stru
 The regex pipeline is bounded by a set of locked-in caps — pattern length, the
 `RegexBuilder` size / DFA-size limits, the per-row offset count, and the
 regex-mode pre-filter scan limit. The authoritative values and their rationale
-live as documented `pub const`s at the top of `src-tauri/src/fts/toggle_filter.rs`
+live as documented `pub const`s at the top of `src-tauri/agaric-store/src/fts/toggle_filter.rs`
 (`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
 `MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`). Read them from the code — a copy
 of the numbers here would silently drift.
@@ -189,7 +189,7 @@ The recency-ordered scan reuses the same parent / tag / space / path-glob filter
 
 ### Regex matches raw content, FTS matches the stripped index
 
-Regex mode and FTS mode see **different text for the same block**. FTS5 matches the `fts_blocks.stripped` column — markup-stripped, reference-resolved, NFC-normalised (written by `strip_for_fts_with_maps`). Regex mode runs the user's pattern against the **raw `blocks.content`** column instead. The authoritative contract is the comment block at the top of `regex_mode_query` in `src-tauri/src/fts/toggle_filter.rs`. Three concrete consequences:
+Regex mode and FTS mode see **different text for the same block**. FTS5 matches the `fts_blocks.stripped` column — markup-stripped, reference-resolved, NFC-normalised (written by `strip_for_fts_with_maps`). Regex mode runs the user's pattern against the **raw `blocks.content`** column instead. The authoritative contract is the comment block at the top of `regex_mode_query` in `src-tauri/agaric-store/src/fts/toggle_filter.rs`. Three concrete consequences:
 
 1. **Reference tokens are visible to regex, invisible to FTS.** A `#[ULID]` tag/page reference stays verbatim in `blocks.content` but is resolved to its target name in the stripped index. A regex on a tag or page *name* therefore MISSES a block that only references that name via `#[ULID]` — FTS would match it. (Use the `tag:` structural filter instead of a regex when you want reference-aware tag matching.)
 2. **Raw markdown/markup is matchable by regex only.** Link wrappers, formatting markers, and other syntax the strip pass removes are still present in `blocks.content`, so only a regex can match them.
@@ -254,11 +254,11 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
 - `src/stores/search-history.ts` — Zustand-persisted per-space history.
 - `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine.
-- `src-tauri/src/domain/search_types.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset` type definitions (re-exported from `commands/queries.rs`).
+- `src-tauri/agaric-store/src/search_types.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset` type definitions (re-exported from `commands/queries.rs`).
 - `src-tauri/src/commands/queries.rs` — `search_blocks_inner`.
-- `src-tauri/src/fts/search/` — FTS5 query construction (`fetch.rs`) + `snippet()` projection (`constants.rs`).
-- `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline.
-- `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion.
+- `src-tauri/agaric-store/src/fts/search/` — FTS5 query construction (`fetch.rs`) + `snippet()` projection (`constants.rs`).
+- `src-tauri/agaric-store/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline.
+- `src-tauri/agaric-store/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion.
 - `src-tauri/migrations/0006_fts5_trigram.sql` — index definition + tokenizer config.
 - `src/lib/search-query/` — inline filter syntax parser, AST, serialiser, autocomplete.
 - `src/components/search/FilterChipRow.tsx` — AST → chip projection.

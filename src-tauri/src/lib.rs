@@ -1,6 +1,10 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
-pub mod backlink;
+// `backlink` moved into `agaric-store` (#2621, wave S4d) as part of the
+// search/query SCC. Re-exported so every `crate::backlink::…` path resolves
+// unchanged. Its insta snapshots moved with it (`agaric-store/src/backlink/
+// snapshots/`, renamed to the `agaric_store__` crate prefix).
+pub use agaric_store::backlink;
 pub mod bibliography;
 // `block_descendants` moved into `agaric-store` (#2621, wave S4a). Re-exported
 // so every `crate::block_descendants::…` path resolves unchanged. Its
@@ -36,9 +40,19 @@ pub mod draft;
 // Foundation-crate re-export (#2621): `error` now lives in `agaric-core`.
 // The `pub use` keeps every `crate::error::…` path (142 files) resolving.
 pub use agaric_core::error;
-pub mod filters;
+// `filters` moved into `agaric-store` (#2621, wave S4d) as part of the
+// search/query SCC. Re-exported so every `crate::filters::…` path resolves
+// unchanged.
+pub use agaric_store::filters;
 pub mod foreground;
-pub mod fts;
+// `fts` moved into `agaric-store` (#2621, wave S4d) as part of the search/query
+// SCC. Re-exported so every `crate::fts::…` path resolves unchanged. The
+// partitioned / cursor tests that call app-only command inner functions
+// (`crate::commands::queries::search_blocks_*_inner`) relocated here as
+// `fts_app_tests`.
+pub use agaric_store::fts;
+#[cfg(test)]
+mod fts_app_tests;
 pub use agaric_core::hash; // foundation crate (#2621)
 pub mod import;
 pub mod lifecycle;
@@ -80,9 +94,10 @@ pub use agaric_store::peer_refs;
 #[cfg(test)]
 mod peer_refs_app_tests;
 // #1280 — the advanced-query engine (composable FilterExpr boolean-tree
-// queries). Structural-only; full-text / grouping / aggregation are
-// fast-follows.
-pub mod query;
+// queries). Moved into `agaric-store` (#2621, wave S4d) as part of the
+// search/query SCC. Re-exported so every `crate::query::…` path resolves
+// unchanged.
+pub use agaric_store::query;
 pub mod recovery;
 pub mod recurrence;
 // Pure recurrence date-math (interval shift + per-block projection), split out

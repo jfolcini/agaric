@@ -14,17 +14,17 @@ is no longer aspirational. The `FilterPrimitive` / `Projection` engine is the
 
 | Surface | Projection | Lives in |
 |---------|------------|----------|
-| Pages   | `PagesProjection` | [`src-tauri/src/filters/primitive.rs`](../../src-tauri/src/filters/primitive.rs) |
-| Search (FTS) | `SearchProjection` | [`src-tauri/src/filters/primitive.rs`](../../src-tauri/src/filters/primitive.rs) |
-| Backlinks | `BacklinkProjection` | [`src-tauri/src/backlink/projection.rs`](../../src-tauri/src/backlink/projection.rs) |
-| Advanced query | `QueryProjection` | [`src-tauri/src/query/projection.rs`](../../src-tauri/src/query/projection.rs) |
+| Pages   | `PagesProjection` | [`src-tauri/agaric-store/src/filters/primitive.rs`](../../src-tauri/agaric-store/src/filters/primitive.rs) |
+| Search (FTS) | `SearchProjection` | [`src-tauri/agaric-store/src/filters/primitive.rs`](../../src-tauri/agaric-store/src/filters/primitive.rs) |
+| Backlinks | `BacklinkProjection` | [`src-tauri/agaric-store/src/backlink/projection.rs`](../../src-tauri/agaric-store/src/backlink/projection.rs) |
+| Advanced query | `QueryProjection` | [`src-tauri/agaric-store/src/query/projection.rs`](../../src-tauri/agaric-store/src/query/projection.rs) |
 
 The primitive types live in
-[`src-tauri/src/filters/primitive.rs`](../../src-tauri/src/filters/primitive.rs)
+[`src-tauri/agaric-store/src/filters/primitive.rs`](../../src-tauri/agaric-store/src/filters/primitive.rs)
 and are re-exported from
-[`src-tauri/src/filters/mod.rs`](../../src-tauri/src/filters/mod.rs); the
+[`src-tauri/agaric-store/src/filters/mod.rs`](../../src-tauri/agaric-store/src/filters/mod.rs); the
 boolean-tree composition lives in
-[`src-tauri/src/filters/expr.rs`](../../src-tauri/src/filters/expr.rs).
+[`src-tauri/agaric-store/src/filters/expr.rs`](../../src-tauri/agaric-store/src/filters/expr.rs).
 
 This document is the architecture reference. For the user-facing facet guide,
 see [`docs/PAGES.md`](../PAGES.md). For the Pages view data flow, see
@@ -111,18 +111,18 @@ defence-in-depth.
   alias and `LEFT JOIN pages_cache pc`.
 - **`SearchProjection`** implements the shared leaves plus the Search-only
   specialties. Since #1320 it is **wired into the FTS query path**
-  ([`src-tauri/src/fts/filter_builder.rs`](../../src-tauri/src/fts/filter_builder.rs)):
+  ([`src-tauri/agaric-store/src/fts/filter_builder.rs`](../../src-tauri/agaric-store/src/fts/filter_builder.rs)):
   the structural side of a search — `space`, `tag`, page-name glob,
   `last-edited`, `state`, `block-type`, `due-date`, `scheduled` — is now routed
   through `SearchProjection` rather than a parallel hand-built SQL path. After
   #1320-A both surfaces share the `LOWER(title) GLOB ?` page-name dialect (only
   the alias differs: Pages keys on `b.id`, Search on `b.page_id`).
-- **`BacklinkProjection`** ([`backlink/projection.rs`](../../src-tauri/src/backlink/projection.rs))
+- **`BacklinkProjection`** ([`backlink/projection.rs`](../../src-tauri/agaric-store/src/backlink/projection.rs))
   compiles the correlated backlink leaf fragments: `has-property`, `priority`,
   and the #1280 metadata set (`state` / `block-type` / `due-date` / `scheduled`
   / `created`). Its `compile_expr` complement logic is the canonical source the
   shared boolean tree borrows (see below).
-- **`QueryProjection`** ([`query/projection.rs`](../../src-tauri/src/query/projection.rs))
+- **`QueryProjection`** ([`query/projection.rs`](../../src-tauri/agaric-store/src/query/projection.rs))
   is the advanced-query surface. It supports the shared leaves and the #1280
   metadata leaves, and **delegates every one to `PagesProjection`** (both run on
   `FROM blocks b`), so the advanced query's SQL is byte-shape-identical to the
@@ -158,7 +158,7 @@ surface's allow-list, so adding a primitive without registering its key (or its
 
 ## Boolean composition — `FilterExpr`
 
-[`FilterExpr`](../../src-tauri/src/filters/expr.rs) is the boolean tree over
+[`FilterExpr`](../../src-tauri/agaric-store/src/filters/expr.rs) is the boolean tree over
 `FilterPrimitive` leaves: `Leaf` / `And { children }` / `Or { children }` /
 `Not { child }`. A flat chip-row `Vec<FilterPrimitive>` is exactly
 `FilterExpr::And { children: [Leaf, …] }` (built by `FilterExpr::all`), so the
@@ -201,7 +201,7 @@ intersected with full-text, returned as a keyset-paginated page of blocks.
 - **Command:** `run_advanced_query`
   ([`src-tauri/src/commands/advanced_query.rs`](../../src-tauri/src/commands/advanced_query.rs))
   is a thin IPC wrapper over `query::compile_and_run`
-  ([`src-tauri/src/query/engine.rs`](../../src-tauri/src/query/engine.rs)).
+  ([`src-tauri/agaric-store/src/query/engine.rs`](../../src-tauri/agaric-store/src/query/engine.rs)).
 - **Request:** `AdvancedQueryRequest { space_id, filter, sort, cursor, limit, fulltext }`.
   `filter` is a `FilterExpr` defaulting to `And { children: [] }` (the TRUE
   expression → every block in the space). `fulltext` is optional.

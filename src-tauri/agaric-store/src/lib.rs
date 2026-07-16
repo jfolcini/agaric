@@ -82,6 +82,34 @@ pub mod recurrence_math;
 // (`cache_app_tests`).
 pub mod cache;
 
+// ── Wave S4d (#2621): the strongly-connected search/query cluster — `fts`,
+// `filters`, `backlink`, `query` — plus the shared `search_types` DTOs they
+// consume. These four modules form a dependency cycle (`fts ⇄ filters`,
+// `backlink ⇄ filters/fts`, `query → filters/fts`) so they move as one wave.
+// The app re-exports each so `crate::{fts,filters,backlink,query}::…` and
+// `crate::domain::search_types::…` paths resolve unchanged.
+//
+// `search_types` — shared search row / filter DTOs (specta-exported wire
+// shapes). A pure leaf consumed by `fts` / `filters`; declared first so the
+// cluster below can reference it.
+pub mod search_types;
+// `filters` — structural filter primitives + boolean `FilterExpr` assembly.
+pub mod filters;
+// `fts` — FTS5 full-text search backend (strip / index / search / toggles /
+// partitioned scan). Carries the bulk of the cluster's `sqlx::query!` sites.
+// External deps are `agaric_core::{error,ulid,sql_utils}`; `db`, `cache`,
+// `pagination`, `space`, `filters`, `search_types` are store siblings. The
+// partitioned / cursor tests that call app-only command inner functions
+// (`crate::commands::queries::search_blocks_*_inner`) relocated to the app
+// crate (`fts_app_tests`).
+pub mod fts;
+// `backlink` — backlink read/query (filters, grouping, projection, sort). Has
+// an insta snapshot suite (`backlink/snapshots/`).
+pub mod backlink;
+// `query` — #1280 composable advanced-query engine (FilterExpr boolean tree +
+// grouping / aggregation), built on `filters` + `fts`.
+pub mod query;
+
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4

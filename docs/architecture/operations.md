@@ -50,7 +50,7 @@ The sections above describe how individual paths *bound* memory; this one consol
 - **Loro engines (per-space, in process).** The CRDT state is a `LoroEngineRegistry` — a process-local `HashMap<SpaceId, LoroEngine>` rebuilt from persisted per-space snapshots on boot and held resident for the process lifetime (`src-tauri/src/loro/snapshot.rs:5`). Because partitioning is per-space, resident Loro memory scales with **total live block state across all open spaces**, and the spike paths below scale with the **largest single space**, not the whole vault.
 - **Snapshot create / restore.** Snapshot creation reads every row of every derived table into per-table `Vec`s before CBOR+zstd-encoding (`collect_tables`, `src-tauri/src/snapshot/create.rs:122`); restore decodes the full `SnapshotData` and op-log recovery `fetch_all`s the entire `op_log` before replaying (`src-tauri/src/db/recovery.rs:271`). The encode/decode wire path streams, but these row-source `Vec`s fully materialise — so peak RAM here is **O(vault), not O(chunk)**. This is the acknowledged OOM risk (#1624, #129).
 - **Cache rebuilds.** Bounded by design: rebuild jobs stream rows and batch-INSERT (see "Cache streaming on rebuilds" above), and the projected-agenda rebuild flushes a working buffer at a 10 000-entry chunk — peak ≈ 500 KB versus the ~18 MB the pre-M-19 full-buffer path peaked at on a 1000-block × 365-day vault, "larger on Android" (`src-tauri/agaric-store/src/cache/projected_agenda.rs:36`).
-- **FTS index.** `fts_blocks` is a standalone trigram FTS5 table that stores stripped text in a shadow content table *plus* a trigram index (~3×). A per-block cap of `FTS_MAX_INDEXED_BYTES = 128 KiB` keeps one pathological pasted multi-MB block from dominating the index on memory-constrained mobile (`src-tauri/src/fts/strip.rs:167`); it bounds the worst case per block, it is not a measured budget.
+- **FTS index.** `fts_blocks` is a standalone trigram FTS5 table that stores stripped text in a shadow content table *plus* a trigram index (~3×). A per-block cap of `FTS_MAX_INDEXED_BYTES = 128 KiB` keeps one pathological pasted multi-MB block from dominating the index on memory-constrained mobile (`src-tauri/agaric-store/src/fts/strip.rs:167`); it bounds the worst case per block, it is not a measured budget.
 
 ### Dominant scaling factors
 
@@ -98,7 +98,7 @@ Figures are from containerized CI-class hardware; treat the shapes (linear-ish g
 
 The FTS index is rebuilt incrementally on every block edit. A background optimize task runs after `max(500, block_count / 10_000)` writes — adaptive so small vaults don't optimize too often and large vaults do — with a 60-minute ceiling so an idle-but-recently-edited vault still gets maintenance.
 
-The strip pass (`src-tauri/src/fts/strip.rs`) resolves `[[ULID]]` / `#[ULID]` to target titles before indexing, so a search for a page name matches blocks that link to it (not just blocks that contain the literal ULID).
+The strip pass (`src-tauri/agaric-store/src/fts/strip.rs`) resolves `[[ULID]]` / `#[ULID]` to target titles before indexing, so a search for a page name matches blocks that link to it (not just blocks that contain the literal ULID).
 
 ## Engine format version & downgrade recovery
 

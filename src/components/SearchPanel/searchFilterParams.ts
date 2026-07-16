@@ -22,7 +22,7 @@ import type { AstFilterProjection } from '@/lib/search-query'
  * return every FTS match while the tag chip renders as active. Instead
  * the bundle carries this sentinel id: real tag ids are ULIDs, so it can
  * never collide, and the backend tag filter (ALL semantics — see
- * `add_tags_all` in `src-tauri/src/fts/search.rs`) matches no rows for
+ * `add_tags_all` in `src-tauri/agaric-store/src/fts/search.rs`) matches no rows for
  * an unknown id, yielding the correct empty result.
  */
 export const UNRESOLVED_TAG_SENTINEL = '__unresolved-tag__'

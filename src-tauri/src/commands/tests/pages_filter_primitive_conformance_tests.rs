@@ -7,7 +7,7 @@
 //! driving `metaRowMatchesFilter`). This side drives the REAL query path —
 //! `list_pages_with_metadata_inner` with an AND-composed `FilterPrimitive`
 //! list, which compiles each primitive to SQL in
-//! `src-tauri/src/filters/primitive.rs`. If backend semantics change,
+//! `src-tauri/agaric-store/src/filters/primitive.rs`. If backend semantics change,
 //! regenerate the fixture from THIS Rust side; the mock test then fails until
 //! `handlers.ts` is realigned. See `conformance/pages-metadata/README.md`.
 //!

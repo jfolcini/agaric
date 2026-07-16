@@ -6,7 +6,7 @@
  * each raw token to a `FilterToken` (or to free-text).
  *
  * Quoting / boolean operator behaviour started as a port of
- * `src-tauri/src/fts/search.rs::tokenize_query` (so the parser doesn't
+ * `src-tauri/agaric-store/src/fts/search.rs::tokenize_query` (so the parser doesn't
  * Accidentally pre-process FTS5 syntax), but deliberately diverges
  * on the closing-quote rule: this tokeniser is boundary-aware (a quote
  * only closes at a token boundary) because it drives chip projection +
