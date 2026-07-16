@@ -67,7 +67,7 @@ impl OpType {
     /// serde serialization:
     ///
     /// ```
-    /// use agaric_lib::op::OpType;
+    /// use agaric_store::op::OpType;
     ///
     /// assert_eq!(OpType::CreateBlock.as_str(), "create_block");
     /// assert_eq!(OpType::RenameAttachment.as_str(), "rename_attachment");
@@ -112,7 +112,7 @@ impl FromStr for OpType {
     /// string is an error rather than a silent default:
     ///
     /// ```
-    /// use agaric_lib::op::OpType;
+    /// use agaric_store::op::OpType;
     ///
     /// assert_eq!("set_property".parse::<OpType>(), Ok(OpType::SetProperty));
     /// assert_eq!(OpType::SetProperty.as_str().parse::<OpType>(), Ok(OpType::SetProperty));
