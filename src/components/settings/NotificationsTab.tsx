@@ -92,6 +92,19 @@ export function NotificationsTab(): React.ReactElement {
           <CardDescription>{t('notifications.description')}</CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          {/*
+           * #2676 — the toggle + test button are all that's implemented today
+           * (see the file header). Say so explicitly rather than letting the
+           * enable/description copy imply a scheduler that doesn't exist yet.
+           */}
+          <p
+            className="text-xs text-muted-foreground"
+            role="note"
+            data-testid="notifications-automatic-not-available-notice"
+          >
+            {t('notifications.automaticNotAvailable')}
+          </p>
+
           {/* Enable / disable preference */}
           <ToggleRow
             id="notifications-enabled"

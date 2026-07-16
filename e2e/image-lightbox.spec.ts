@@ -24,7 +24,7 @@
  * `inline-image-1434.spec.ts`) would clamp pan to ~0px and make the drag
  * assertion meaningless.
  */
-import { clearConsoleErrors, expect, openPage, test, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 const BLOCK_GS_1 = '0000000000000000000BLOCK01'
 
@@ -179,21 +179,6 @@ test.describe('ImageLightbox (zoom/pan viewer)', () => {
     await page.mouse.wheel(0, -100)
 
     await expect(page.getByTestId('lightbox-zoom-badge')).toContainText('125%')
-
-    // Finding (not a test bug): `handleWheel` is wired via JSX `onWheel` +
-    // `e.preventDefault()`. React registers root-level `wheel` listeners as
-    // PASSIVE by default, so `preventDefault()` inside a React `onWheel`
-    // handler both no-ops (the browser's default scroll is NOT actually
-    // suppressed) and logs "Unable to preventDefault inside passive event
-    // listener invocation." on every wheel-zoom in a real browser — this
-    // fires here even though the zoom state updates correctly. Contrast with
-    // GraphView's wheel-zoom (`src/lib/graph-sim-helpers.ts`'s
-    // `setupZoomBehavior`), which binds through d3-zoom's raw
-    // `addEventListener('wheel', ..., { passive: false })` and is silent.
-    // Opting out of the global console-error gate here (the sanctioned
-    // pattern — see `error-scenarios.spec.ts` / `search-toggles.spec.ts`)
-    // rather than papering over a real, user-visible console warning.
-    clearConsoleErrors(page)
   })
 
   test('dragging while zoomed pans the image, clamped to the overflow', async ({ page }) => {

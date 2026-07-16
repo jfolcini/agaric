@@ -83,7 +83,7 @@ Pages tagged as templates.
 A force-directed graph of pages and the links between them.
 
 - **Nodes** are pages; **edges** are `[[link]]` references.
-- **Filter bar** in the header: scope by tag, by property, by date range, by content match.
+- **Filter bar** in the header: filter by tag, task status, priority, presence of a due date, presence of a scheduled date, presence of backlinks, and exclude templates. Filters stack as removable pills; there is no date-range or content-match filter.
 - **Zoom / pan** with mouse / trackpad / touch.
 - **Click a node** to navigate to its page.
 - **Web Worker**: the simulation runs in a worker so the main thread stays responsive on large graphs. Falls back to the main thread if Web Workers are unavailable.
