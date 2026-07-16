@@ -74,7 +74,11 @@ issues. Where the work lives:
 
 **FIRST — at the start of a batch (and ONLY then), sweep the open-PR board once.**
 `gh pr list --author @me --state open`, then `gh pr checks <n>` for each: merge what's
-green, fix what's red. Do NOT re-poll PR CI between these checkpoints — not on every
+green, fix what's red. **Before merging a green PR, read its full `agaric-reviewer` review
+body + inline comments and address any findings (new commit if quick/in-scope, else a
+referenced GitHub issue) — an APPROVED verdict is not "nothing to address", and this holds
+for `--admin` merges too (§8 spells out the exact commands and the #2763/#2767 misses).**
+Do NOT re-poll PR CI between these checkpoints — not on every
 wake-up, not after every subagent completion (maintainer feedback 2026-06-10: "reconciling
 PRs all the time is not necessary"). Green PRs can sit until the next batch boundary or
 until the 5-PR cap needs a slot; nothing rots in an hour. **Any red is yours to fix** —
@@ -345,11 +349,28 @@ async over many minutes. Instead:
    next batch (same checkpoint as "END of the current batch"), or early only if the 5-PR
    cap blocks a new PR. One sweep, all PRs at once; never poll CI per-wake-up or
    per-subagent-completion (maintainer feedback 2026-06-10):
-   - `gh pr checks <prevPR>`. All green + mergeable → merge
-     (`gh pr merge <prevPR> --squash --delete-branch`); `Closes #NN` then fires.
+   - `gh pr checks <prevPR>`. All green + mergeable → **read the full review before
+     merging** (see below), then merge (`gh pr merge <prevPR> --squash --delete-branch`);
+     `Closes #NN` then fires.
    - Any failed → diagnose (`gh run view --log-failed`), fix on that branch (new commit,
      push), leave for the *next* checkpoint sweep. Don't merge red.
    - Still running → leave it; next checkpoint catches it. Never spin idle.
+
+   **ALWAYS read the full `agaric-reviewer` review body (and inline comments) before
+   merging — never merge on the approval STATE alone, and never on a green `--admin`
+   merge either** (2026-06-10/07-16: #2763 and #2767 were merged on "APPROVED + green"
+   and each had a real finding buried in the review body — a stranded-loading regression
+   and a self-contradicting doc bullet — that shipped unaddressed and needed follow-up
+   PRs #2766/#2768). `gh pr view <n> --json reviews --jq '.reviews[].body'` **plus**
+   `gh api repos/jfolcini/agaric/pulls/<n>/comments`. Note the reviewer routinely
+   **APPROVES while still listing findings/caveats/out-of-scope bugs** in the body — an
+   APPROVED verdict is NOT "nothing to address". For every actionable finding:
+   - quick + in-scope → fix it in a new commit on the branch, push, re-verify, THEN merge;
+   - larger / out-of-scope / latent-elsewhere → `gh issue create` and reference it (a PR
+     comment or the issue link), THEN merge — never merge and silently drop it.
+   - `CHANGES_REQUESTED` blocks the merge outright until the request is resolved.
+   This applies to **already-merged** PRs too: when sweeping recently-merged PRs, read
+   their review bodies and open follow-up commits/issues for anything left unaddressed.
 4. **Keep the pending-PR list bounded** (up to **5** open PRs — maintainer preference,
    2026-06-06). `gh pr list --author @me --state open` shows what's outstanding if you lose
    track. Merging is authorized (maintainer, 2026-06-10): approve+merge Dependabot PRs;

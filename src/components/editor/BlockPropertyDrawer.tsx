@@ -77,6 +77,9 @@ export function BlockPropertyDrawer({
   useEffect(() => {
     if (!blockId || !open) return
     setLoading(true)
+    // Drop any unsaved draft rows from a previous block/session so they can't
+    // leak into this block's drawer (drafts are transient, never persisted).
+    setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
     // `listPropertyDefs` is paginated. The drawer is single-page-by-design —
     // it shows the property-defs vocabulary picker, which fits well under one page.
     // FE-H-17: use `Promise.allSettled` so a single rejection no longer fails the
