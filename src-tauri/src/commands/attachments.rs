@@ -646,7 +646,7 @@ pub async fn list_attachments_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Database`] — on query failure
 #[instrument(skip(pool, block_ids), err)]
 pub async fn list_attachments_batch_inner(

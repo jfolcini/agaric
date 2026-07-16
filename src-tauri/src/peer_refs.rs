@@ -440,13 +440,24 @@ const PENDING_PAIRING_KEY: &str = "sync.pending_pairing";
 /// established. Previously nothing else cleared it, so an *abandoned* pairing
 /// (the joining device never connects) left the daemon advertising and
 /// accepting pairing connections indefinitely. We bound it to the same
-/// window a pairing session lives (`pairing::PAIRING_TIMEOUT`, 5
+/// window a pairing session lives ([`PAIRING_TIMEOUT`], 5
 /// minutes): the joiner is expected to connect within the interactive
 /// pairing window, so a marker older than that is stale and reads as
 /// "not pending".
 // PAIRING_TIMEOUT is 5 minutes; its millis fit i64 trivially.
 #[allow(clippy::cast_possible_truncation)]
-const PENDING_PAIRING_TTL_MS: i64 = crate::pairing::PAIRING_TIMEOUT.as_millis() as i64;
+const PENDING_PAIRING_TTL_MS: i64 = PAIRING_TIMEOUT.as_millis() as i64;
+
+/// The interactive pairing window (5 minutes).
+///
+/// Owned here in the store layer because [`PENDING_PAIRING_TTL_MS`] bounds
+/// the pending-pairing marker to the same clock, and the sync-layer
+/// `pairing` module re-exports it (`pub use crate::peer_refs::PAIRING_TIMEOUT;`)
+/// for [`crate::pairing::PairingSession::is_expired`]. Reusing one value
+/// keeps a pairing session and its pending marker on the same window: once
+/// the interactive window has elapsed, an abandoned pairing (the joining
+/// device never connects) must stop driving the daemon into pairing-mode.
+pub const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
 
 /// Mark that a pairing just completed and a first peer connection is expected.
 ///

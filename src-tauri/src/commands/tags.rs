@@ -27,7 +27,7 @@ use super::*;
 /// cap of 1000 is generous for any legitimate UI gesture while keeping the
 /// dynamic SQL placeholder + bind count — which scales 1:1 with this array —
 /// safely under SQLite's default parameter limit (999 / 32 766 depending on
-/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS)
+/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS)
 /// cap on the `*_by_ids` write family.
 pub(crate) const MAX_FILTER_TAG_IDS: usize = 1000;
 
@@ -742,7 +742,7 @@ pub async fn add_tag(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::commands::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]

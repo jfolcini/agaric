@@ -1306,7 +1306,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, block_ids), err)]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,

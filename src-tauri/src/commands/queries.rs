@@ -507,7 +507,7 @@ pub async fn list_unlinked_references_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `page_ids.len()` >
-///   [`crate::commands::MAX_BATCH_BLOCK_IDS`]
+///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - Database errors propagated from sqlx.
 #[instrument(skip(pool, page_ids), err)]
 pub async fn count_backlinks_batch_inner(

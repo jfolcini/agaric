@@ -175,12 +175,15 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 /// Lifetime of a pairing session / the pending-pairing activation marker.
 ///
 /// A pairing session is short-lived: the host shows a QR, the joiner scans
-/// and confirms within a few minutes. 5 minutes is the long-standing value
-/// used by [`PairingSession::is_expired`] and is reused here so the
+/// The interactive pairing window used by [`PairingSession::is_expired`].
+///
+/// Moved down into the store layer ([`crate::peer_refs`]) so the
 /// pending-pairing marker (see [`crate::peer_refs::is_pending_pairing`])
-/// expires on the same clock — once the interactive window has elapsed an
-/// abandoned pairing must stop driving the daemon into pairing-mode.
-pub const PAIRING_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300); // 5 minutes
+/// can bound itself to the same clock without reaching *up* into this sync
+/// module; re-exported here so `crate::pairing::PAIRING_TIMEOUT` and every
+/// in-module use resolve unchanged. Once the interactive window has elapsed
+/// an abandoned pairing must stop driving the daemon into pairing-mode.
+pub use crate::peer_refs::PAIRING_TIMEOUT;
 
 /// Maximum number of failed passphrase attempts permitted within a single
 /// pairing session before it is invalidated and the user must re-initiate

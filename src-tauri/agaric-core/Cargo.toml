@@ -50,6 +50,9 @@ blake3 = "1.8.5"
 tracing = { version = "0.1.44", features = ["attributes"] }
 # `ulid` newtypes — ULID generation/parsing for `BlockId::new`/`from_str`.
 ulid = "1.2.1"
+# `time::now_rfc3339` — RFC-3339 wall-clock timestamp formatting. Version +
+# features pinned to match ../Cargo.toml for feature unification.
+chrono = { version = "0.4.44", features = ["serde"] }
 
 [dev-dependencies]
 # Needed by the moved unit tests: `error.rs` uses `#[tokio::test]`,

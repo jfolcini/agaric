@@ -855,13 +855,13 @@ async fn batch_properties_empty_ids_returns_empty_map() {
 }
 
 /// #2542 — `get_batch_properties_inner` must share the
-/// [`crate::commands::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `block_ids`
+/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `block_ids`
 /// list rejects with Validation before the runaway `json_each(?1)` scan.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_batch_properties_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_batch_properties_inner(
@@ -6171,7 +6171,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_todo_state_batch_inner(
@@ -6545,7 +6545,7 @@ async fn set_property_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::commands::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_property_batch_inner(
