@@ -361,7 +361,11 @@ export function UnlinkedReferences({
   }
 
   return (
-    <section className="unlinked-references" aria-label={t('unlinkedRefs.panelLabel')}>
+    <section
+      className="unlinked-references"
+      aria-label={t('unlinkedRefs.panelLabel')}
+      data-testid="unlinked-references"
+    >
       {/* Main header — collapsible, collapsed by default */}
       <div className="flex flex-nowrap items-center gap-1 min-w-0">
         <CollapsiblePanelHeader

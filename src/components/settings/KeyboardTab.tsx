@@ -30,13 +30,29 @@ import { renderKeys } from '@/lib/render-keyboard-shortcut'
 
 export function KeyboardTab(): React.ReactElement {
   const { t } = useTranslation()
-  const [version, setVersion] = useState(0)
+  // Value itself is never read — `setVersion` only forces a re-render
+  // after a localStorage-backed mutation (see the `shortcuts`/`conflicts`
+  // comment below).
+  const [, setVersion] = useState(0)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
   const [confirmResetAll, setConfirmResetAll] = useState(false)
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- version counter triggers re-read from localStorage
-  const shortcuts = useMemo(() => getCurrentShortcuts(), [version])
+  // #2709 — `getCurrentShortcuts()` reads from `localStorage`, a mutable
+  // source outside React's reactive graph; `version` exists purely to force
+  // a re-render after a save/reset (which otherwise touches no React
+  // state). It was previously threaded through as a `useMemo` dependency
+  // the callback never actually reads — under this project's React
+  // Compiler, a memo whose callback doesn't read its listed dependency is
+  // treated as having no reactive inputs and never recomputes, so the tab's
+  // own display (kbd chips, "Customized" badge, conflict warnings, Reset
+  // button) silently went stale after every edit within the same mount —
+  // functionally the shortcut WAS saved and live (`matchesShortcutBinding`
+  // reads `localStorage` directly, unmemoized), but the Settings UI itself
+  // never reflected it without navigating away and back. Computing plainly
+  // on every render removes the mismatch; this list is ~30 catalog entries,
+  // not a hot path.
+  const shortcuts = getCurrentShortcuts()
 
   const grouped = useMemo(() => {
     const map = new Map<string, (ShortcutBinding & { isCustom: boolean })[]>()
@@ -48,8 +64,8 @@ export function KeyboardTab(): React.ReactElement {
     return map
   }, [shortcuts])
 
-  // oxlint-disable-next-line react-hooks/exhaustive-deps -- version counter triggers re-read from localStorage
-  const conflicts = useMemo(() => findConflicts(), [version])
+  // Same rationale as `shortcuts` above — computed plainly, not memoized.
+  const conflicts = findConflicts()
 
   // Validate the in-progress edit value (only meaningful while editing).
   const validationError = useMemo<'empty' | 'modifierOnly' | null>(() => {
