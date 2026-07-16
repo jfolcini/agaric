@@ -1296,9 +1296,9 @@ mod tests {
     /// literally a `tracing::` macro.
     #[test]
     fn stable_messages_pin_real_call_sites() {
-        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        // Collect every `.rs` file under src/.
+        // Collect every `.rs` file under a directory tree.
         fn collect_rs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
             for entry in std::fs::read_dir(dir).expect("read_dir src").flatten() {
                 let path = entry.path();
@@ -1309,9 +1309,31 @@ mod tests {
                 }
             }
         }
+
+        // Scan the app crate's `src/` PLUS every extracted workspace member
+        // crate sitting alongside it (`agaric-core`, `agaric-store`, …). The
+        // #700 drift guard predates the layered-workspace split (#2621); once
+        // modules like `fts` moved into `agaric-store`, their `tracing::*!`
+        // call sites — which the app still surfaces through its log capture —
+        // left this crate's `src/`. Discover sibling member `src/` dirs by
+        // structure (a subdir with both `Cargo.toml` and `src/`) so future
+        // extraction waves need no edit here.
+        let mut src_roots = vec![manifest_dir.join("src")];
+        for entry in std::fs::read_dir(manifest_dir)
+            .expect("read_dir manifest")
+            .flatten()
+        {
+            let dir = entry.path();
+            if dir.is_dir() && dir.join("Cargo.toml").is_file() && dir.join("src").is_dir() {
+                src_roots.push(dir.join("src"));
+            }
+        }
+
         let mut files = Vec::new();
-        collect_rs(&src_root, &mut files);
-        assert!(!files.is_empty(), "found no .rs files under {src_root:?}");
+        for root in &src_roots {
+            collect_rs(root, &mut files);
+        }
+        assert!(!files.is_empty(), "found no .rs files under {src_roots:?}");
 
         // Concatenate all source for substring scanning.
         let mut all_src = String::new();
