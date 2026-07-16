@@ -16,6 +16,16 @@ name: CodeQL
 #   * schedule (weekly): rescan against updated CodeQL query packs even when
 #     code is idle. Tuesday 06:00 UTC — staggered from scorecard.yml's Monday.
 #   * workflow_dispatch: manual re-run for debugging.
+#
+# Why ALL THREE languages every run (no PR-side "changed-language" gating):
+#   code scanning diffs a PR's results against the base branch PER CONFIGURATION
+#   (`/language:<lang>`). If a PR skips a language that `main` analyzes, the PR
+#   check reports "N configurations present on main were not found" — a neutral
+#   but noisy warning on every PR that doesn't touch that language. Skipping a
+#   language on PRs also under-scans a security tool, which this workflow's own
+#   fail-closed stance ("doubt always runs everything") rejects. build-mode:none
+#   makes each analysis cheap enough (5–10 min, no Tauri system deps) that
+#   always running all three is the right trade.
 on:
   push:
     branches: [main]
@@ -39,87 +49,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # detect — which languages does THIS event need to analyze?
-  #   * pull_request: only the languages whose files changed, so a docs-only or
-  #     single-language PR no longer spins all three analyses (rational CI, same
-  #     per-category philosophy as _validate.yml's lint gating).
-  #   * push / schedule / workflow_dispatch: ALWAYS all three — these feed the
-  #     Security tab authoritatively and the weekly cron is the whole-tree
-  #     backstop, so nothing rides on the PR-side gating being perfect.
-  # FAIL-CLOSED: any inability to compute the PR diff (unresolved sha, git
-  # error, empty diff) selects all languages. Under-scanning is the only failure
-  # that matters for a security tool, so doubt always runs everything.
-  detect:
-    name: Detect changed languages
-    runs-on: ubuntu-24.04
-    timeout-minutes: 5
-    outputs:
-      languages: ${{ steps.pick.outputs.languages }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
-        with:
-          # Need base+head to diff a PR; full history is the simplest robust way
-          # (a shallow clone lacks the merge base). Cheap for a repo this size.
-          fetch-depth: 0
-          persist-credentials: false
-
-      - name: Pick languages
-        id: pick
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          set -euo pipefail
-          all='["actions","javascript-typescript","rust"]'
-
-          emit() { echo "languages=$1" >> "$GITHUB_OUTPUT"; echo "→ languages=$1"; }
-
-          # Non-PR events always scan everything (see the job comment).
-          if [ "$EVENT_NAME" != "pull_request" ]; then
-            echo "Event '$EVENT_NAME' → all languages."
-            emit "$all"; exit 0
-          fi
-
-          # Fail-closed three-dot diff (merge-base..head → the PR's own changes).
-          if ! changed="$(git diff --name-only --diff-filter=ACMR \
-              "$PR_BASE_SHA...$PR_HEAD_SHA" 2>/dev/null)"; then
-            echo "Could not diff $PR_BASE_SHA...$PR_HEAD_SHA → all languages (fail-closed)."
-            emit "$all"; exit 0
-          fi
-          if [ -z "$changed" ]; then
-            echo "Empty diff → all languages (fail-closed)."
-            emit "$all"; exit 0
-          fi
-
-          echo "Changed files:"
-          while IFS= read -r f; do echo "  $f"; done <<<"$changed"
-
-          # Per-language path patterns (OR semantics: a language is selected if
-          # ANY changed file matches it):
-          #   rust                  : *.rs, the crate manifests/lockfile.
-          #   javascript-typescript : src/, e2e/, *.ts/tsx/js/jsx/mjs/cjs,
-          #                           package[-lock].json.
-          #   actions               : .github/workflows/ + .github/actions/
-          #                           (CodeQL's `actions` extractor scans those).
-          langs=()
-          grep -qE '(\.rs$|(^|/)Cargo\.(toml|lock)$)' <<<"$changed" && langs+=('"rust"')
-          grep -qE '(^src/|^e2e/|\.(ts|tsx|js|jsx|mjs|cjs)$|(^|/)package(-lock)?\.json$)' <<<"$changed" && langs+=('"javascript-typescript"')
-          grep -qE '^\.github/(workflows|actions)/' <<<"$changed" && langs+=('"actions"')
-
-          if [ "${#langs[@]}" -eq 0 ]; then
-            echo "No CodeQL-analyzable language changed → empty matrix (analyze skipped)."
-            emit "[]"; exit 0
-          fi
-
-          emit "[$(IFS=,; echo "${langs[*]}")]"
-
   analyze:
     name: Analyze ${{ matrix.language }}
-    needs: detect
-    # Skip the whole job (no runner) when no analyzable language changed.
-    if: ${{ needs.detect.outputs.languages != '[]' }}
     runs-on: ubuntu-24.04
     # CodeQL JS/TS + Actions analyses typically run in 5–10 min on a repo this
     # size; Rust (build-mode: none) is similar. +50% headroom + round up → 30
@@ -137,11 +68,18 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Only the languages `detect` selected. All use build-mode: none, which
-        # lets CodeQL analyze without invoking a build — avoids pulling Tauri's
-        # system deps (libwebkit2gtk-4.1-dev, etc.) just to satisfy the
-        # extractor. Rust GA'd build-mode:none in 2025.
-        language: ${{ fromJson(needs.detect.outputs.languages) }}
+        # All three languages, every run — see the header comment for why PRs
+        # do not gate on which files changed. build-mode: none lets CodeQL
+        # analyze without invoking a build — avoids pulling Tauri's system deps
+        # (libwebkit2gtk-4.1-dev, etc.) just to satisfy the extractor. Rust
+        # GA'd build-mode:none in 2025.
+        include:
+          - language: actions
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: rust
+            build-mode: none
 
     steps:
       - name: Checkout
@@ -153,7 +91,7 @@ jobs:
         uses: github/codeql-action/init@7188fc363630916deb702c7fdcf4e481b751f97a # v4.37.1
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
           # security-and-quality = security-extended + maintainability/reliability
           # queries. The marginal noise on a small repo is acceptable; flip to
           # security-extended if the maintainability queries become noisy.
