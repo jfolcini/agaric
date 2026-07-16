@@ -397,6 +397,55 @@ describe('useBatchAttachments', () => {
       })
     }
 
+    it('clears loading when a superseded fetch is followed by an all-cached window (stranded-loading regression)', async () => {
+      // First settle: [A] resolves normally and is cached.
+      mockBatchInvoke()
+      const loadingStates: boolean[] = []
+      function LoadingProbe() {
+        loadingStates.push(useBatchAttachmentsLoading())
+        return null
+      }
+      const { rerender } = render(
+        <BatchAttachmentsProvider blockIds={['A']}>
+          <LoadingProbe />
+        </BatchAttachmentsProvider>,
+      )
+      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
+
+      // Second settle: [A, B] — only B is fetched; hold its promise open so
+      // the fetch is still in flight when the window changes again.
+      let resolveB: ((v: Record<string, AttachmentRow[]>) => void) | undefined
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_attachments_batch') {
+          return new Promise((res) => {
+            resolveB = res
+          })
+        }
+        return Promise.resolve(undefined)
+      })
+      rerender(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <LoadingProbe />
+        </BatchAttachmentsProvider>,
+      )
+      await waitFor(() => expect(loadingStates.at(-1)).toBe(true))
+
+      // Third settle BEFORE B resolves: back to the fully-cached [A].
+      // idsToFetch is empty; loading must reset even though B's in-flight
+      // fetch will be stale-guarded and never call setLoading(false).
+      rerender(
+        <BatchAttachmentsProvider blockIds={['A']}>
+          <LoadingProbe />
+        </BatchAttachmentsProvider>,
+      )
+      await waitFor(() => expect(loadingStates.at(-1)).toBe(false))
+
+      // The superseded resolution must not flip loading back on.
+      resolveB?.({ B: [] })
+      await Promise.resolve()
+      expect(loadingStates.at(-1)).toBe(false)
+    })
+
     it('only fetches ids NOT already cached when the window overlaps', async () => {
       mockBatchInvoke()
 

@@ -177,16 +177,26 @@ export function BatchPropertiesProvider({
       // serving a value that may predate this invalidation (#2701
       // staleness fix).
       const windowed = new Set(blockIds)
-      for (const id of cacheRef.current.keys()) {
-        if (!windowed.has(id)) cacheRef.current.delete(id)
+      if ([...cacheRef.current.keys()].some((id) => !windowed.has(id))) {
+        // Copy before deleting: cacheRef.current may alias the Map held in
+        // rendered state, and purging must not mutate state in place.
+        const purged = new Map(cacheRef.current)
+        for (const id of purged.keys()) {
+          if (!windowed.has(id)) purged.delete(id)
+        }
+        cacheRef.current = purged
       }
     }
 
     const idsToFetch = forceRefetch ? blockIds : blockIds.filter((id) => !cacheRef.current.has(id))
     if (idsToFetch.length === 0) {
       // Every windowed id is already cached (scroll within already-visited
-      // territory, or a reorder within the same set) — no IPC, no state
-      // churn.
+      // territory, or a reorder within the same set) — no IPC, no map
+      // churn. A superseded in-flight fetch may still have left
+      // loading=true behind (its stale-guarded resolution never resets
+      // it), so clear it here or previews stay suppressed until the next
+      // genuinely-new fetch resolves.
+      setLoading(false)
       return
     }
 
