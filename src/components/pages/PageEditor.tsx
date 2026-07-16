@@ -23,6 +23,7 @@ import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { isDateFormattedPage } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
+import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import {
@@ -83,9 +84,8 @@ function PageEditorInner({
     const target = blocksById.get(selectedBlockId)
     if (target) {
       setFocused(selectedBlockId)
-      document
-        .querySelector(`[data-block-id="${selectedBlockId}"]`)
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const el = document.querySelector(`[data-block-id="${selectedBlockId}"]`)
+      if (el) scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
       clearSelection()
     }
   }, [selectedBlockId, blocks, blocksById, setFocused, clearSelection])
