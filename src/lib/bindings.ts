@@ -598,11 +598,6 @@ export const commands = {
 	 */
 	addAttachmentWithBytes: (blockId: BlockId, filename: string, mimeType: string, bytes: number[]) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment_with_bytes", { blockId, filename, mimeType, bytes })),
 	/**
-	 *  Tauri command: read an attachment's raw bytes. Delegates to
-	 *  [`read_attachment_inner`].
-	 */
-	readAttachment: (attachmentId: BlockId) => typedError<number[], AppError>(__TAURI_INVOKE("read_attachment", { attachmentId })),
-	/**
 	 *  Tauri command: read an attachment's metadata row (filename, mime, etc.).
 	 *  Delegates to [`read_attachment_meta_inner`]. Used by the graph-export ZIP
 	 *  builder (#1490) to resolve an inline-image `attachment:<id>` ref to a

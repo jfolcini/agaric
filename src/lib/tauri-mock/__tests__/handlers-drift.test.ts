@@ -58,6 +58,18 @@ const INTENTIONALLY_NOT_MOCKED: ReadonlySet<string> = new Set<string>()
  */
 const PENDING_BINDINGS: ReadonlySet<string> = new Set<string>()
 
+/**
+ * Commands that are handled by the mock but intentionally have NO entry in
+ * `bindings.ts` — permanently, by design (not pending a regen). A raw-byte
+ * command returns a `tauri::ipc::Response` (an ArrayBuffer on the wire, #2654),
+ * which cannot carry a `specta::Type`, so tauri-specta never emits a binding
+ * for it; the frontend calls it through the hand-written `readAttachment`
+ * wrapper's raw `invoke`. The mock still handles it (browser preview + e2e need
+ * the bytes), so it must be excused from the reverse "stale handler" drift
+ * check — but, unlike `INTENTIONALLY_NOT_MOCKED`, it MUST stay handled.
+ */
+const RAW_RESPONSE_COMMANDS: ReadonlySet<string> = new Set<string>(['read_attachment'])
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
@@ -115,7 +127,8 @@ describe('tauri-mock HANDLERS drift detection', () => {
       (cmd) =>
         !bindingsCommands.includes(cmd) &&
         !INTENTIONALLY_NOT_MOCKED.has(cmd) &&
-        !PENDING_BINDINGS.has(cmd),
+        !PENDING_BINDINGS.has(cmd) &&
+        !RAW_RESPONSE_COMMANDS.has(cmd),
     )
     expect(
       stale,

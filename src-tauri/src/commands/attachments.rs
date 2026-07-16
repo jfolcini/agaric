@@ -754,22 +754,38 @@ pub async fn add_attachment_with_bytes(
     .map_err(sanitize_internal_error)
 }
 
-/// Tauri command: read an attachment's raw bytes. Delegates to
+/// Tauri command: read an attachment's raw bytes as a zero-copy IPC
+/// [`Response`](tauri::ipc::Response).
+///
+/// Returns the file bytes wrapped in [`tauri::ipc::Response`] so the IPC
+/// bridge ships them as a raw octet-stream body — the frontend `invoke`
+/// resolves an `ArrayBuffer` with ZERO JSON encoding. The previous
+/// `Result<Vec<u8>, AppError>` shape serde-serialized every byte into a JSON
+/// number (`[137, 80, 78, …]`), roughly quadrupling a multi-MB image/PDF on
+/// the wire and forcing a main-thread `Uint8Array` rebuild exactly on
+/// scroll-into-view (#2654).
+///
+/// `tauri::ipc::Response` does NOT implement [`specta::Type`], so this command
+/// is deliberately not a `#[specta::specta]` command and is absent from
+/// `agaric_commands!` / the generated `bindings.ts`. It is registered on the
+/// Tauri invoke handler directly (see `run()` in `lib.rs`) and called from the
+/// hand-written `readAttachment` wrapper in `src/lib/tauri.ts` (the sanctioned
+/// raw-`invoke` seam). The byte fetch itself delegates to
 /// [`read_attachment_inner`].
 #[tauri::command]
-#[specta::specta]
 pub async fn read_attachment(
     app: tauri::AppHandle,
     pool: State<'_, ReadPool>,
     attachment_id: AttachmentId,
-) -> Result<Vec<u8>, AppError> {
+) -> Result<tauri::ipc::Response, AppError> {
     let app_data_dir = app
         .path()
         .app_data_dir()
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
+    let bytes = read_attachment_inner(&pool.0, &app_data_dir, attachment_id)
         .await
-        .map_err(sanitize_internal_error)
+        .map_err(sanitize_internal_error)?;
+    Ok(tauri::ipc::Response::new(bytes))
 }
 
 /// Tauri command: read an attachment's metadata row (filename, mime, etc.).

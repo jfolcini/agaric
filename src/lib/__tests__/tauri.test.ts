@@ -111,6 +111,7 @@ import {
   setScheduledDate,
   setTodoState,
   setTodoStateBatch,
+  readAttachment,
   startPairing,
   startSync,
   trashDescendantCounts,
@@ -3259,6 +3260,36 @@ describe('addAttachment', () => {
       fsPath: '/tmp/doc.pdf',
     })
     expect(result).toEqual(expected)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// readAttachment
+// ---------------------------------------------------------------------------
+
+describe('readAttachment', () => {
+  it('invokes read_attachment and decodes the ArrayBuffer response to a Uint8Array', async () => {
+    // #2654: read_attachment returns a raw-byte tauri::ipc::Response, so
+    // `invoke` resolves an ArrayBuffer (not a JSON number[]). The wrapper must
+    // wrap it with `new Uint8Array(buffer)` — NOT `Uint8Array.from`, which
+    // would yield an empty array for a non-iterable ArrayBuffer.
+    const source = new Uint8Array([137, 80, 78, 71, 0, 255])
+    mockedInvoke.mockResolvedValueOnce(source.buffer)
+
+    const result = await readAttachment('ATT1')
+
+    expect(mockedInvoke).toHaveBeenCalledOnce()
+    expect(mockedInvoke).toHaveBeenCalledWith('read_attachment', { attachmentId: 'ATT1' })
+    expect(result).toBeInstanceOf(Uint8Array)
+    expect(Array.from(result)).toEqual([137, 80, 78, 71, 0, 255])
+  })
+
+  it('propagates a backend rejection (missing attachment) to the caller', async () => {
+    const appError = { kind: 'NotFound', message: "attachment 'ATT404'" }
+    mockedInvoke.mockRejectedValueOnce(appError)
+
+    await expect(readAttachment('ATT404')).rejects.toEqual(appError)
+    expect(mockedInvoke).toHaveBeenCalledWith('read_attachment', { attachmentId: 'ATT404' })
   })
 })
 
