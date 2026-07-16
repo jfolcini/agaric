@@ -286,12 +286,21 @@ jobs:
       # `apt-get install` below resolves from the cached .debs instead of the
       # slow Ubuntu mirror. Bump the `-v1` suffix when the package list changes.
       - name: Cache apt archives (Tauri system deps)
+        # ci/path-conditional-jobs: these Tauri webkit/gtk/mold .debs exist
+        # solely to compile the Rust/Tauri crates, so caching them is gated with
+        # the install below — a backend-less PR skips both.
+        if: needs.detect-changes.outputs.backend == 'true'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: /var/cache/apt/archives/*.deb
           key: apt-tauri-${{ runner.os }}-v1
 
       - name: Install system dependencies
+        # ci/path-conditional-jobs: the webkit/gtk/ssl/rsvg/soup libs + mold are
+        # only needed to compile the Rust/Tauri crates, so this is skipped on a
+        # backend-less PR (the whole-tree non-Rust hooks below need none of them).
+        # Fail-closed: an unrecognized path pins backend=true, so Rust still runs.
+        if: needs.detect-changes.outputs.backend == 'true'
         # `mold` is added to speed up the linker step on the Rust builds
         # (clippy, cargo-deny, sqlx prepare's compile pass, etc).
         # Activated via the .cargo/config.toml under the linux runner.
@@ -307,6 +316,9 @@ jobs:
             mold
 
       - name: Enable mold linker (CI-only .cargo/config.toml)
+        # ci/path-conditional-jobs: mold is a Rust linker config, only meaningful
+        # when the cargo hooks compile — skipped on a backend-less PR.
+        if: needs.detect-changes.outputs.backend == 'true'
         # Project ships `.cargo/config.toml.example` staged so local builds
         # don't break if a contributor hasn't installed mold yet; CI always
         # has mold available (apt step above), so we materialise the
@@ -316,6 +328,12 @@ jobs:
           cp .cargo/config.toml.example .cargo/config.toml
 
       - name: Install Rust toolchain
+        # ci/path-conditional-jobs: the toolchain (rustc/cargo/clippy/rustfmt)
+        # is only needed by the cargo-invoking prek hooks + the cargo/sqlx steps
+        # below, all of which are skipped on a backend-less PR. Fail-closed:
+        # unrecognized paths pin backend=true (see detect-changes), so any Rust
+        # diff installs the toolchain and keeps the cargo hooks running.
+        if: needs.detect-changes.outputs.backend == 'true'
         uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
         with:
           # #640: exact toolchain pin — keep in lockstep with
@@ -334,6 +352,10 @@ jobs:
           components: clippy,rustfmt
 
       - name: Rust cache
+        # ci/path-conditional-jobs: the cargo build/target cache is only useful
+        # when the cargo hooks + cargo/sqlx steps compile, so it is gated with
+        # the toolchain — a backend-less PR skips it.
+        if: needs.detect-changes.outputs.backend == 'true'
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
@@ -379,11 +401,36 @@ jobs:
         run: npm audit signatures || echo "::warning::npm audit signatures had findings (warn-only mode); review the log above"
 
       - name: Prepare externalBin placeholder (FEAT-4f)
+        # ci/path-conditional-jobs: these placeholders exist only to satisfy
+        # Tauri's build.rs during cargo invocations, so they are gated with the
+        # toolchain — a backend-less PR runs no cargo and needs none of them.
+        if: needs.detect-changes.outputs.backend == 'true'
         # Tauri's build.rs validates externalBin paths on every cargo
         # invocation — clippy, cargo-deny, machete all trigger it.
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
-      - name: Install Rust-based dev tools via prebuilt binaries (PEND-39 C1)
+      # ci/path-conditional-jobs: this taiki-e step is SPLIT so a backend-less PR
+      # still gets the tools the whole-tree NON-Rust hooks and the prek runner
+      # itself need. This first (UNGATED) install carries prek (runs the whole
+      # suite), zizmor (workflow security audit), taplo-cli (TOML lint/fmt),
+      # typos-cli (typo check), and sqruff (SQL-migration lint). None invoke
+      # cargo (sqruff/typos/taplo run standalone binaries), and all must run on
+      # every non-docs PR — so they are installed regardless of the backend flag.
+      - name: Install prek + non-Rust lint tools via prebuilt binaries
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        with:
+          # sqruff pinned: unpinned resolves to latest via cargo-binstall's
+          # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
+          # this repo pins 1.95.0 (rust-toolchain.toml) — reds the whole lint
+          # job. 0.38.x supports rustc 1.94/1.95. Bump when the rustc pin moves.
+          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+
+      # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
+      # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
+      # so they are gated on backend == 'true'. A backend-less PR SKIPs those
+      # hooks (see the Run prek step) and never needs these installed.
+      - name: Install cargo plugins via prebuilt binaries (PEND-39 C1)
+        if: needs.detect-changes.outputs.backend == 'true'
         # taiki-e/install-action pulls prebuilt binaries from the upstream
         # GitHub Releases of each tool, side-stepping the per-binary
         # `cargo install` compile that previously dominated cold-cache
@@ -391,17 +438,16 @@ jobs:
         # invalidated by `Cargo.lock` changes — only by the explicit `@v2`
         # tag bump or a tool-version pin change. cargo-nextest lives on
         # the cargo-tests job (the only consumer); this job needs the
-        # lint/audit set. `prek` joined the manifest list upstream so it
-        # moved off the cargo-install fallback below.
+        # lint/audit set.
         uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
-          # sqruff pinned: unpinned resolves to latest via cargo-binstall's
-          # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
-          # this repo pins 1.95.0 (rust-toolchain.toml) — reds the whole lint
-          # job. 0.38.x supports rustc 1.94/1.95. Bump when the rustc pin moves.
-          tool: cargo-deny,cargo-machete,cargo-audit,sqruff@0.38.0,typos-cli,zizmor,taplo-cli,prek
+          tool: cargo-deny,cargo-machete,cargo-audit
 
       - name: Install sqlx-cli (custom features, cargo fallback)
+        # ci/path-conditional-jobs: sqlx-cli compiles from source and is used
+        # only by the sqlx offline-cache-check steps below, so it is gated on
+        # backend == 'true' — a backend-less PR skips those checks.
+        if: needs.detect-changes.outputs.backend == 'true'
         # sqlx-cli with the right features set isn't covered by
         # taiki-e/install-action's binary list — has to compile from source.
         # Cached across runs via Swatinem/rust-cache's cache-bin: 'true';
@@ -463,7 +509,26 @@ jobs:
           # (`scripts/test-related-*.sh`); the full suites run as dedicated
           # sibling jobs (vitest, cargo-tests) so a CI run never silently
           # misses tests outside the diff window.
-          SKIP: no-commit-to-branch,vitest,cargo-test
+          #
+          # ci/path-conditional-jobs: on a backend-less PR (backend != 'true')
+          # the Rust toolchain + cargo plugins are NOT installed (the setup
+          # steps above are gated on backend == 'true'), so the cargo-invoking
+          # hooks (cargo-fmt/clippy/deny/machete) would fail here under
+          # `--all-files` with no toolchain. Append them to SKIP in that case so
+          # they don't run. Every NON-cargo hook still runs whole-tree — tsc,
+          # oxfmt, oxlint, zizmor, actionlint, taplo, typos, sqruff, gitleaks,
+          # markdownlint, and the node guards (sqruff/typos/taplo only *source*
+          # ~/.cargo/env for PATH; they invoke standalone binaries, not cargo).
+          # Fail-closed: any unrecognized path pins backend=true (see
+          # detect-changes), so a Rust diff keeps the cargo hooks ON.
+          #
+          # NOTE the condition is inverted (`!= 'true'`) so the appended list
+          # sits in the ternary's TRUE branch: GitHub Actions treats '' as falsy,
+          # so `cond && '' || LIST` would wrongly yield LIST even when cond holds.
+          # Keeping the non-empty value on the true side makes it evaluate right —
+          # backend PRs append nothing (cargo hooks run); backend-less PRs append
+          # the cargo ids (cargo hooks skipped).
+          SKIP: no-commit-to-branch,vitest,cargo-test${{ needs.detect-changes.outputs.backend != 'true' && ',cargo-fmt,cargo-clippy,cargo-deny,cargo-machete' || '' }}
           # Lychee reads GITHUB_TOKEN automatically. Without this, lychee
           # makes unauthenticated requests to github.com and gets rate-
           # limited (~60 req/hour) — bursty Dependabot PR runs blow the
@@ -526,6 +591,11 @@ jobs:
           bash scripts/check-migrations-immutable.sh --range "$base...HEAD"
 
       - name: Cargo audit (RustSec advisory check, blocking)
+        # ci/path-conditional-jobs: `cargo audit` needs the toolchain + the
+        # cargo-audit plugin (both gated above), and only advises on the Rust
+        # dependency tree, so it is skipped on a backend-less PR. Fail-closed:
+        # any Cargo.lock/Rust change pins backend=true, so advisories still run.
+        if: needs.detect-changes.outputs.backend == 'true'
         # Complements `cargo deny check` (in the prek run above) by hitting
         # the upstream RustSec advisory DB directly — catches advisories
         # published since `deny.toml`'s ignore list was last triaged.
@@ -541,6 +611,10 @@ jobs:
         run: cargo audit
 
       - name: sqlx offline cache check
+        # ci/path-conditional-jobs: sqlx `prepare --check` compiles the crate
+        # against its committed .sqlx/ cache — Rust-only, and .sqlx/ changes pin
+        # backend=true — so it is skipped on a backend-less PR.
+        if: needs.detect-changes.outputs.backend == 'true'
         # Reusable composite action (#2621 layered-workspace split): each
         # workspace crate that carries `query!`/`query_as!` macros — and so
         # its own committed `.sqlx/` cache — gets its own lane by calling
@@ -556,6 +630,9 @@ jobs:
           database-url: 'sqlite:ci-sqlx-prepare.db'
 
       - name: sqlx offline cache check (agaric-store)
+        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
+        # sqlx compile, skipped on a backend-less PR (backend != 'true').
+        if: needs.detect-changes.outputs.backend == 'true'
         # #2621 wave S3b-ii: op_log's `query!`/`query_as!` macros moved into
         # agaric-store, which now carries its own committed `.sqlx/` cache.
         # A `../migrations` symlink under the crate lets both this action's
