@@ -7,6 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { mergeSlashHandlerTables, useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
+import { useSlashCommandDate } from '@/hooks/useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandMarks } from '@/hooks/useBlockSlashCommands/useSlashCommandMarks'
+import { useSlashCommandProperty } from '@/hooks/useBlockSlashCommands/useSlashCommandProperty'
+import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
+import { useSlashCommandTemplate } from '@/hooks/useBlockSlashCommands/useSlashCommandTemplate'
 import { logger } from '@/lib/logger'
 import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
 import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
@@ -16,18 +22,8 @@ import {
   searchPropertyKeys,
   searchSlashCommands,
 } from '@/lib/slash-commands'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '@/stores/page-blocks'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
-import { mergeSlashHandlerTables, useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
-import { useSlashCommandDate } from '@/hooks/useBlockSlashCommands/useSlashCommandDate'
-import { useSlashCommandMarks } from '@/hooks/useBlockSlashCommands/useSlashCommandMarks'
-import { useSlashCommandProperty } from '@/hooks/useBlockSlashCommands/useSlashCommandProperty'
-import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
-import { useSlashCommandTemplate } from '@/hooks/useBlockSlashCommands/useSlashCommandTemplate'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/lib/logger', () => ({
