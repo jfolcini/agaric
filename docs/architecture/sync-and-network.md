@@ -30,8 +30,8 @@ The required Android manifest permissions are `ACCESS_WIFI_STATE` + `CHANGE_WIFI
 5-minute timer (paused while either side is typing). The session establishes:
 
 1. EFF-wordlist 4-word passphrase displayed on Device A. QR code is the same passphrase encoded.
-2. Device B enters the passphrase (camera scan or manual). Both sides derive a shared symmetric key from the passphrase.
-3. Devices exchange self-signed ECDSA P-256 certificates over a brief mTLS session keyed by the passphrase. Each side pins the other's certificate by SHA-256 into `peer_refs.cert_hash` (TOFU — first contact wins).
+2. Device B enters the passphrase (camera scan or manual). Each side computes a domain-separated blake3 *proof* of the passphrase (`pairing::pairing_proof`, #855) — there is no derived symmetric key; the passphrase is never used to encrypt anything.
+3. Devices exchange self-signed ECDSA P-256 certificates as plaintext JSON over the WebSocket, whose confidentiality and authenticity come from the rustls mTLS + TOFU cert-pin layer (not from the passphrase). The responder pins the peer's certificate by SHA-256 into `peer_refs.cert_hash` (TOFU — first contact wins) only after the passphrase proof matches its own stored value, which closes the #855 CN-spoof window.
 4. After pairing, the passphrase is discarded. All subsequent connections use the pinned certs.
 
 **Rejected alternatives**: persistent shared passphrase (security: passphrase theft = forever access), SPAKE2 (no good Rust impl; complexity not worth it for the threat model).
@@ -40,7 +40,7 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 
 ## Transport
 
-- **TLS** with self-signed ECDSA P-256 (`CN=agaric-{device_id}`). `rcgen` generates the cert; private key in OS keychain via `keyring` crate.
+- **TLS** with self-signed ECDSA P-256 (`CN=agaric-{device_id}`). `rcgen` generates the cert; the cert and its private key are persisted together as a combined PEM file in the app data dir (`sync_cert.rs`, written owner-only `0600` — #1580). There is no OS keychain / `keyring` dependency; OS full-disk encryption is the confidentiality boundary.
 - **Certificate pinning.** `PinningCertVerifier` rejects any cert whose SHA-256 doesn't match `peer_refs.cert_hash`. Also enforces `CN=agaric-{expected_device_id}` so a cert swap with a matching hash but mismatched CN fails.
 - **Self-device guard.** Prevents talking to your own announced service in mDNS loopback scenarios.
 - **WebSocket framing.** `MAX_MSG_SIZE = 10_000_000` bytes per WS frame; `BINARY_FRAME_CHUNK_SIZE = 5_000_000` for snapshot + attachment transfer (the actual chunk unit).
