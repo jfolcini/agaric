@@ -19,6 +19,7 @@ name = "agaric"
 version = "0.7.2"
 dependencies = [
  "agaric-core",
+ "agaric-store",
  "aho-corasick",
  "base64 0.22.1",
  "blake3",
@@ -114,6 +115,13 @@ dependencies = [
  "rustc-hash",
  "sqlx",
  "tempfile",
+ "tokio",
+]
+
+[[package]]
+name = "agaric-store"
+version = "0.1.0"
+dependencies = [
  "tokio",
 ]
 
