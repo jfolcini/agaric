@@ -356,6 +356,115 @@ describe('useBlockMultiSelect handleBatchDelete', () => {
     expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.deletedMessageUndo')
   })
 
+  // #2653 — the backend recursive CTE soft-deletes every selected root AND its
+  // whole subtree, but the selection only ever carries the explicitly-clicked
+  // parent ids (never their collapsed/hidden children). The FE reconcile must
+  // therefore splice out the parents' non-selected descendants too, or they
+  // pop into view as ghost rows backed by tombstoned blocks. These tests pin
+  // the store shape (`blocks` + the derived `blocksById` map) after delete.
+  it('removes non-selected descendants of two deleted parents from the store (no ghost rows)', async () => {
+    // Two parents, each with a child + a grandchild; only the PARENTS are
+    // selected. `depth` mirrors the flat DFS order the store holds so
+    // getDragDescendants can walk each subtree.
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'P1', depth: 0 }),
+        makeBlock({ id: 'P1_C', parent_id: 'P1', depth: 1 }),
+        makeBlock({ id: 'P1_GC', parent_id: 'P1_C', depth: 2 }),
+        makeBlock({ id: 'P2', depth: 0 }),
+        makeBlock({ id: 'P2_C', parent_id: 'P2', depth: 1 }),
+        makeBlock({ id: 'KEEP', depth: 0 }),
+      ],
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['P1', 'P2'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    // Only the raw selection is sent — backend coalesces the descendants.
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['P1', 'P2'],
+    })
+    // The store keeps ONLY the untouched sibling — every deleted subtree is gone.
+    const remaining = pageStore.getState().blocks.map((b) => b.id)
+    expect(remaining).toEqual(['KEEP'])
+    // blocksById invariant: same keys as `blocks`, no stranded descendant rows.
+    const map = pageStore.getState().blocksById
+    expect([...map.keys()].toSorted()).toEqual(['KEEP'])
+    expect(map.size).toBe(pageStore.getState().blocks.length)
+  })
+
+  it('removes descendants whether the deleted parent was collapsed or expanded', async () => {
+    // Collapse state lives outside the page store (useBlockCollapse); the store
+    // holds the same flat array either way, so the reconcile is identical. This
+    // asserts a deeply-nested subtree under a single selected root is fully
+    // spliced out (the collapsed-parent ghost-row case from the issue).
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'ROOT', depth: 0 }),
+        makeBlock({ id: 'L1', parent_id: 'ROOT', depth: 1 }),
+        makeBlock({ id: 'L2', parent_id: 'L1', depth: 2 }),
+        makeBlock({ id: 'L3', parent_id: 'L2', depth: 3 }),
+        makeBlock({ id: 'OTHER', depth: 0 }),
+      ],
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['ROOT'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['OTHER'])
+    expect([...pageStore.getState().blocksById.keys()]).toEqual(['OTHER'])
+  })
+
+  it('preserves the store shape when the selection itself spans an ancestor and its descendant', async () => {
+    // Selecting BOTH a parent and one of its descendants must still leave the
+    // whole subtree removed exactly once (the removal set is a union — no
+    // double-splice, no leftover sibling of the selected descendant).
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'A', depth: 0 }),
+        makeBlock({ id: 'A_C1', parent_id: 'A', depth: 1 }),
+        makeBlock({ id: 'A_C2', parent_id: 'A', depth: 1 }),
+        makeBlock({ id: 'SURVIVOR', depth: 0 }),
+      ],
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['A', 'A_C1'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['SURVIVOR'])
+    expect(pageStore.getState().blocksById.size).toBe(1)
+  })
+
+  it('does not mutate the store when the batch delete IPC fails (no partial splice)', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'P', depth: 0 }),
+        makeBlock({ id: 'P_C', parent_id: 'P', depth: 1 }),
+      ],
+    })
+    const params = makeDefaultParams({ selectedBlockIds: ['P'] })
+    const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleBatchDelete()
+    })
+
+    // On failure the store is untouched — descendants are only spliced on the
+    // success path, so nothing is stranded either way.
+    expect(pageStore.getState().blocks.map((b) => b.id)).toEqual(['P', 'P_C'])
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.deleteFailedMessage')
+  })
+
   it('resets batchDeleteConfirm after delete', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })

@@ -4,6 +4,7 @@ import type { StoreApi } from 'zustand'
 
 import { notify } from '@/lib/notify'
 import { deleteBlocksByIds, setTodoStateBatch } from '@/lib/tauri'
+import { getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -140,7 +141,6 @@ export function useBlockMultiSelect({
       // recursive CTE seeded from every root simultaneously, so
       // duplicate descendant ids in the input set are coalesced
       // server-side. Send the raw selection unchanged.
-      const idsSet = new Set(ids)
       let successCount = 0
       let failCount = 0
       try {
@@ -162,10 +162,25 @@ export function useBlockMultiSelect({
         // descendants we did not explicitly select), but keeping
         // the local makes the intent explicit.
         void affected
-        // Splice the selected ids out of the page store in one go.
-        pageStore.setState((s) => ({
-          blocks: s.blocks.filter((b) => !idsSet.has(b.id)),
-        }))
+        // #2653 — the backend soft-deletes every selected root AND its whole
+        // subtree (recursive CTE), but the selection only ever holds the
+        // explicitly-clicked ids (never their hidden/collapsed descendants).
+        // Mirror the single-block remove() reducer: splice out the UNION of the
+        // selected ids plus each root's `getDragDescendants`, so a deleted
+        // parent's non-selected children don't linger as ghost rows backed by
+        // tombstoned blocks. The set is recomputed from `state.blocks` CURRENT
+        // AT COMMIT TIME (#714 discipline), and `pageStore.setState` is
+        // augmented to rebuild `blocksById` from the filtered array, so the
+        // id→block map is reconciled in the same write.
+        pageStore.setState((s) => {
+          const removed = new Set(ids)
+          for (const id of ids) {
+            for (const descendantId of getDragDescendants(s.blocks, id)) {
+              removed.add(descendantId)
+            }
+          }
+          return { blocks: s.blocks.filter((b) => !removed.has(b.id)) }
+        })
         // C4 (#217) — the batch delete appended DeleteBlock ops to the
         // page op-log (one per root), so Ctrl+Z genuinely reverses it
         // via undo_page_op. Mark a new action so the redo stack/depth
