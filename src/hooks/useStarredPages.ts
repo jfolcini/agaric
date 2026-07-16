@@ -1,29 +1,28 @@
 /**
  * useStarredPages — localStorage-backed starred pages with cross-instance sync.
  *
- * Replaces the per-component `starredRevision` counter pattern that
- * `PageBrowser` and `PageHeader` previously used to force re-renders
- * After a bare `toggleStarred()` lib call (sub-item b).
- *
  * The localStorage shape is owned by `src/lib/starred-pages.ts` (a JSON
- * array under the `starred-pages` key). The hook sits on top: it reads
- * the persisted set on mount and subscribes to a custom
- * `'starred-pages-changed'` window event so every mounted hook instance
- * re-reads after any `toggle()` call. The event-based broadcast keeps
- * two PageBrowser/PageHeader instances on the same page in sync without
- * a Zustand store — see AGENTS.md "Architectural Stability".
+ * array under the `starred-pages` key, registered as
+ * `PREFERENCES.starredPages`). The hook is a thin subscriber over the
+ * shared `usePreference` primitive (#2666): every registry write — this
+ * hook's own `toggle`/`setMany` (which delegate to the lib writers) or any
+ * other `writePreference` caller — broadcasts the change, so every mounted
+ * hook instance re-reads. This replaces the hand-rolled
+ * `'starred-pages-changed'` window event (itself a replacement for the
+ * per-component `starredRevision` counter pattern that desynced
+ * `PageBrowser`/`PageHeader` instances). Two PageBrowser/PageHeader
+ * instances on the same page stay in sync without a Zustand store — see
+ * AGENTS.md "Architectural Stability".
  *
- * Returned `starredIds` is referentially stable across renders when the
- * persisted contents have not changed (the refresh listener compares
- * old vs new and short-circuits the state update on equality), so
- * memos that depend on it stay quiet.
+ * Returned `starredIds` is referentially stable across renders while the
+ * persisted contents have not changed (the primitive caches the parsed
+ * snapshot against the raw stored string), so memos that depend on it stay
+ * quiet.
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 
-import { getStarredPages, setStarred, toggleStarred } from '@/lib/starred-pages'
-
-/** Window event name broadcast on every successful toggle. */
-const STARRED_PAGES_CHANGED_EVENT = 'starred-pages-changed'
+import { PREFERENCES, usePreference } from '@/lib/preferences'
+import { setStarred, toggleStarred } from '@/lib/starred-pages'
 
 export interface UseStarredPagesReturn {
   /** Current starred page IDs. Reference-stable while contents are unchanged. */
@@ -35,50 +34,29 @@ export interface UseStarredPagesReturn {
   /**
    * Bulk-set the starred state of many pages in one write, then broadcast the
    * change once so other instances re-read. Mirrors `toggle`'s
-   * write-before-dispatch ordering.
+   * write-before-broadcast ordering.
    */
   setMany: (ids: string[], starred: boolean) => void
 }
 
-function readStarredSet(): ReadonlySet<string> {
-  return new Set(getStarredPages())
-}
-
-function setsEqual(a: ReadonlySet<string>, b: ReadonlySet<string>): boolean {
-  if (a.size !== b.size) return false
-  for (const v of a) if (!b.has(v)) return false
-  return true
-}
-
 export function useStarredPages(): UseStarredPagesReturn {
-  const [starredIds, setStarredIds] = useState<ReadonlySet<string>>(readStarredSet)
+  const [starredArray] = usePreference(PREFERENCES.starredPages)
 
-  useEffect(() => {
-    function refresh() {
-      const next = readStarredSet()
-      setStarredIds((prev) => (setsEqual(prev, next) ? prev : next))
-    }
-    window.addEventListener(STARRED_PAGES_CHANGED_EVENT, refresh)
-    return () => window.removeEventListener(STARRED_PAGES_CHANGED_EVENT, refresh)
-  }, [])
+  // `starredArray` is reference-stable while the stored contents are
+  // unchanged (primitive snapshot cache), so the derived Set is too.
+  const starredIds = useMemo<ReadonlySet<string>>(() => new Set(starredArray), [starredArray])
 
   const isStarred = useCallback((pageId: string) => starredIds.has(pageId), [starredIds])
 
+  // The lib writers persist synchronously through `writePreference`, which
+  // writes BEFORE broadcasting — so every instance (including this one)
+  // re-reads fresh data. One broadcast per call, batches included.
   const toggle = useCallback((pageId: string) => {
-    // Write to localStorage BEFORE dispatching so other instances see fresh
-    // data when their refresh listener calls `getStarredPages()`. The lib's
-    // `toggleStarred` is fully synchronous, so this ordering is sufficient
-    // — no need to await anything before the broadcast.
     toggleStarred(pageId)
-    window.dispatchEvent(new CustomEvent(STARRED_PAGES_CHANGED_EVENT))
   }, [])
 
   const setMany = useCallback((ids: string[], starred: boolean) => {
-    // Same write-before-dispatch ordering as `toggle`: the lib write is fully
-    // synchronous, so a single broadcast after it lets other instances re-read
-    // the fresh set. One dispatch covers the whole batch.
     setStarred(ids, starred)
-    window.dispatchEvent(new CustomEvent(STARRED_PAGES_CHANGED_EVENT))
   }, [])
 
   return { starredIds, isStarred, toggle, setMany }

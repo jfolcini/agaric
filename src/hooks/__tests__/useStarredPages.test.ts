@@ -1,6 +1,6 @@
 /**
  * Tests for src/hooks/useStarredPages.ts — localStorage-backed starred pages
- * with cross-instance sync via the `starred-pages-changed` window event.
+ * with cross-instance sync via the shared preference broadcast (#2666).
  *
  * Focuses on the bulk `setMany` writer added for the Pages batch toolbar:
  *  - it updates `starredIds` for the calling instance, and

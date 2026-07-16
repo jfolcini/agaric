@@ -321,6 +321,85 @@ describe('removePreference', () => {
   })
 })
 
+describe('registry write broadcast (#2666)', () => {
+  it('writePreference updates a mounted usePreference hook on the same key (lib-writer sync)', () => {
+    const { result } = renderHook(() => usePreference(DEVICE_DEF))
+    expect(result.current[0]).toBe('a')
+
+    // Non-hook write — the path lib writers like starred-pages.ts use.
+    act(() => {
+      writePreference(DEVICE_DEF, 'c')
+    })
+    expect(result.current[0]).toBe('c')
+  })
+
+  it('removePreference resets a mounted usePreference hook to the default', () => {
+    writePreference(DEVICE_DEF, 'b')
+    const { result } = renderHook(() => usePreference(DEVICE_DEF))
+    expect(result.current[0]).toBe('b')
+
+    act(() => {
+      removePreference(DEVICE_DEF)
+    })
+    expect(result.current[0]).toBe('a')
+  })
+
+  it('writePreference dispatches a fully populated synthetic StorageEvent after the write', () => {
+    writePreference(DEVICE_DEF, 'b')
+    const events: StorageEvent[] = []
+    const listener = (e: StorageEvent) => {
+      // Listeners must observe the already-written value (write-before-broadcast).
+      expect(localStorage.getItem('test-flavor')).toBe('c')
+      events.push(e)
+    }
+    window.addEventListener('storage', listener)
+    try {
+      writePreference(DEVICE_DEF, 'c')
+    } finally {
+      window.removeEventListener('storage', listener)
+    }
+    expect(events).toHaveLength(1)
+    const e = events[0]
+    if (!e) throw new Error('no StorageEvent dispatched')
+    expect(e.key).toBe('test-flavor')
+    expect(e.oldValue).toBe('b')
+    expect(e.newValue).toBe('c')
+    expect(e.storageArea).toBe(window.localStorage)
+  })
+
+  it('a failed write does not broadcast', () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+    const setItem = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+      throw new Error('quota exceeded')
+    })
+    const events: StorageEvent[] = []
+    const listener = (e: StorageEvent) => events.push(e)
+    window.addEventListener('storage', listener)
+    try {
+      writePreference(DEVICE_DEF, 'c')
+    } finally {
+      window.removeEventListener('storage', listener)
+      setItem.mockRestore()
+    }
+    expect(events).toHaveLength(0)
+    expect(warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('space-scoped broadcasts carry the effective (namespaced) key', () => {
+    const { result } = renderHook(() => usePreference(SPACE_DEF, 'space-1'))
+    // A write to a DIFFERENT space must not leak into this instance.
+    act(() => {
+      writePreference(SPACE_DEF, 'c', 'space-2')
+    })
+    expect(result.current[0]).toBe('a')
+    // A write to the SAME space syncs.
+    act(() => {
+      writePreference(SPACE_DEF, 'b', 'space-1')
+    })
+    expect(result.current[0]).toBe('b')
+  })
+})
+
 describe('representative real preferences (#2466 migration)', () => {
   it('starredPages defaults to an empty array and drops non-string entries', () => {
     expect(readPreference(PREFERENCES.starredPages)).toEqual([])

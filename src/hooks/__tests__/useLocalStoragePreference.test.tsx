@@ -13,6 +13,12 @@
  *  - Persists writes via JSON.stringify (default).
  *  - Logs (does not throw) when localStorage.setItem throws.
  *  - Custom parse/serialize transformers work for legacy bare-string formats.
+ *  - Cross-instance sync (#2666): a write in one mounted instance updates
+ *    every other instance on the same key; the broadcast is a fully
+ *    populated synthetic StorageEvent; a cross-window (native) storage
+ *    event triggers a re-read; snapshots stay referentially stable while
+ *    the stored raw value is unchanged; a failed write degrades to
+ *    in-memory for the calling instance only, with no broadcast.
  */
 
 import { act, render } from '@testing-library/react'
@@ -286,6 +292,218 @@ describe('useLocalStoragePreference', () => {
       />,
     )
     expect(captured).toBe('default-value')
+  })
+
+  describe('cross-instance sync (#2666)', () => {
+    it('a write in one instance updates another instance on the same key', () => {
+      let capturedA: number | null = null
+      let capturedB: number | null = null
+      let setterA: ((next: number | ((prev: number) => number)) => void) | null = null
+      render(
+        <>
+          <Harness
+            storageKey="test:sync"
+            defaultValue={0}
+            onState={(v, s) => {
+              capturedA = v
+              setterA = s
+            }}
+          />
+          <Harness
+            storageKey="test:sync"
+            defaultValue={0}
+            onState={(v) => {
+              capturedB = v
+            }}
+          />
+        </>,
+      )
+      expect(capturedA).toBe(0)
+      expect(capturedB).toBe(0)
+
+      act(() => {
+        setterA?.(7)
+      })
+      expect(capturedA).toBe(7)
+      expect(capturedB).toBe(7)
+      expect(localStorage.getItem('test:sync')).toBe(JSON.stringify(7))
+    })
+
+    it('instances on DIFFERENT keys do not cross-talk', () => {
+      let capturedOther: string | null = null
+      let setter: ((next: string | ((prev: string) => string)) => void) | null = null
+      render(
+        <>
+          <Harness
+            storageKey="test:key-a"
+            defaultValue="a-default"
+            onState={(_v, s) => {
+              setter = s
+            }}
+          />
+          <Harness
+            storageKey="test:key-b"
+            defaultValue="b-default"
+            onState={(v) => {
+              capturedOther = v
+            }}
+          />
+        </>,
+      )
+      act(() => {
+        setter?.('changed')
+      })
+      expect(capturedOther).toBe('b-default')
+    })
+
+    it('broadcasts a fully populated synthetic StorageEvent after the write', () => {
+      localStorage.setItem('test:event-shape', JSON.stringify('before'))
+      const events: StorageEvent[] = []
+      const listener = (e: StorageEvent) => events.push(e)
+      window.addEventListener('storage', listener)
+      try {
+        let setter: ((next: string | ((prev: string) => string)) => void) | null = null
+        render(
+          <Harness
+            storageKey="test:event-shape"
+            defaultValue="d"
+            onState={(_v, s) => {
+              setter = s
+            }}
+          />,
+        )
+        // The mount write-back is silent — only the explicit set broadcasts.
+        expect(events).toHaveLength(0)
+        act(() => {
+          setter?.('after')
+        })
+        expect(events).toHaveLength(1)
+        const e = events[0]
+        if (!e) throw new Error('no StorageEvent dispatched')
+        expect(e.key).toBe('test:event-shape')
+        expect(e.oldValue).toBe(JSON.stringify('before'))
+        expect(e.newValue).toBe(JSON.stringify('after'))
+        expect(e.url).toBe(window.location.href)
+        expect(e.storageArea).toBe(window.localStorage)
+      } finally {
+        window.removeEventListener('storage', listener)
+      }
+    })
+
+    it('re-reads when another window writes (native storage event)', () => {
+      let captured: number | null = null
+      render(
+        <Harness
+          storageKey="test:cross-window"
+          defaultValue={1}
+          onState={(v) => {
+            captured = v
+          }}
+        />,
+      )
+      expect(captured).toBe(1)
+
+      // Simulate another window's write: the value lands in localStorage
+      // first, then the browser delivers a storage event for the key.
+      act(() => {
+        localStorage.setItem('test:cross-window', JSON.stringify(42))
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key: 'test:cross-window',
+            oldValue: JSON.stringify(1),
+            newValue: JSON.stringify(42),
+            storageArea: window.localStorage,
+          }),
+        )
+      })
+      expect(captured).toBe(42)
+    })
+
+    it('keeps a referentially stable object snapshot across no-op broadcasts', () => {
+      localStorage.setItem('test:stable-ref', JSON.stringify({ nested: true }))
+      const seen: Array<{ nested: boolean }> = []
+      render(
+        <Harness
+          storageKey="test:stable-ref"
+          defaultValue={{ nested: false }}
+          onState={(v) => {
+            seen.push(v)
+          }}
+        />,
+      )
+      const initial = seen.at(-1)
+      expect(initial).toEqual({ nested: true })
+
+      // A broadcast whose raw value is unchanged must not produce a new
+      // parsed reference (the snapshot is cached against the raw string).
+      const raw = localStorage.getItem('test:stable-ref')
+      act(() => {
+        window.dispatchEvent(
+          new StorageEvent('storage', {
+            key: 'test:stable-ref',
+            oldValue: raw,
+            newValue: raw,
+            storageArea: window.localStorage,
+          }),
+        )
+      })
+      expect(seen.at(-1)).toBe(initial)
+    })
+
+    it('a failed write degrades to in-memory for the caller only — no broadcast', () => {
+      let capturedA: string | null = null
+      let capturedB: string | null = null
+      let setterA: ((next: string | ((prev: string) => string)) => void) | null = null
+      render(
+        <>
+          <Harness
+            storageKey="test:write-fail-sync"
+            defaultValue="initial"
+            onState={(v, s) => {
+              capturedA = v
+              setterA = s
+            }}
+          />
+          <Harness
+            storageKey="test:write-fail-sync"
+            defaultValue="initial"
+            onState={(v) => {
+              capturedB = v
+            }}
+          />
+        </>,
+      )
+      // Break writes AFTER mount (the mount write-back already ran).
+      const setItemSpy = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => {
+        throw new Error('quota exceeded')
+      })
+      const warnSpy = vi.spyOn(logger, 'warn')
+      const events: StorageEvent[] = []
+      const listener = (e: StorageEvent) => events.push(e)
+      window.addEventListener('storage', listener)
+      try {
+        expect(() =>
+          act(() => {
+            setterA?.('unpersisted')
+          }),
+        ).not.toThrow()
+        // Caller keeps the value in memory for the session (legacy
+        // useState-based contract) …
+        expect(capturedA).toBe('unpersisted')
+        // … but nothing was persisted or broadcast for other instances.
+        expect(capturedB).toBe('initial')
+        expect(events).toHaveLength(0)
+        expect(warnSpy).toHaveBeenCalledWith(
+          'useLocalStoragePreference',
+          'Failed to write localStorage preference',
+          { key: 'test:write-fail-sync' },
+          expect.any(Error),
+        )
+      } finally {
+        window.removeEventListener('storage', listener)
+        setItemSpy.mockRestore()
+      }
+    })
   })
 
   it('supports updater function form (prev → next)', () => {

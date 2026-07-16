@@ -12,7 +12,9 @@
  *    bare-lib usage).
  *  - Pre-existing localStorage data is read on mount.
  *  - Cross-instance sync: two mounted hook instances stay in sync via
- *    the `starred-pages-changed` window-event broadcast.
+ *    the shared preference broadcast (#2666 — the registry write
+ *    dispatches a synthetic StorageEvent; previously a custom
+ *    `starred-pages-changed` window event).
  *  - Malformed localStorage values fall back to an empty set without
  *    throwing.
  */
@@ -72,11 +74,19 @@ describe('useStarredPages', () => {
     rerender()
     expect(result.current.starredIds).toBe(initialSet)
 
-    // After a no-op refresh broadcast (e.g. another instance toggled
-    // and immediately untoggled the same id), the set instance should
-    // still be the same — `setsEqual` short-circuits the state update.
+    // After a no-op refresh broadcast (the stored raw value is unchanged),
+    // the set instance should still be the same — the primitive's snapshot
+    // is cached against the raw string, so an equal raw short-circuits.
+    const raw = localStorage.getItem(STORAGE_KEY)
     act(() => {
-      window.dispatchEvent(new CustomEvent('starred-pages-changed'))
+      window.dispatchEvent(
+        new StorageEvent('storage', {
+          key: STORAGE_KEY,
+          oldValue: raw,
+          newValue: raw,
+          storageArea: window.localStorage,
+        }),
+      )
     })
     expect(result.current.starredIds).toBe(initialSet)
   })
@@ -117,8 +127,8 @@ describe('useStarredPages', () => {
       a.result.current.toggle('P1')
     })
 
-    // Both instances pick up the change via the
-    // `starred-pages-changed` broadcast.
+    // Both instances pick up the change via the shared preference
+    // broadcast (#2666).
     expect(a.result.current.isStarred('P1')).toBe(true)
     expect(b.result.current.isStarred('P1')).toBe(true)
 
