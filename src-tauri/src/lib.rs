@@ -4,7 +4,9 @@ pub mod backlink;
 pub mod bibliography;
 pub mod block_descendants;
 pub mod cache;
-pub mod cancellation;
+// `cancellation` moved into `agaric-store` (#2621, wave S1). Re-exported so
+// every `crate::cancellation::…` path (fts, commands) resolves unchanged.
+pub use agaric_store::cancellation;
 pub mod commands;
 pub mod dag;
 // #642: neutral domain layer — declared right after `commands` for

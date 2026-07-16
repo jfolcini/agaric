@@ -1,0 +1,44 @@
+# agaric-store — persistence + read/query layer for the layered-workspace split (#2621).
+#
+# Wave S1 establishes the crate with the pure-leaf `cancellation` module
+# (cooperative cancellation tokens; std + tokio only — no DB, no other app
+# module). Later waves add the DB core (`op`, `op_log`, `db`) with a
+# store-local `.sqlx` offline cache + a 2nd `sqlx prepare` CI lane, then the
+# query modules. The `agaric` crate depends on this via a path dep and
+# re-exports each module (`pub use agaric_store::cancellation;` …) so existing
+# `crate::cancellation::…` paths keep resolving unchanged during the transition.
+[package]
+name = "agaric-store"
+version = "0.1.0"
+edition = "2024"
+# Keep in lockstep with ../Cargo.toml (the app crate) + rust-toolchain.toml.
+rust-version = "1.95.0"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Versions/features mirror the app crate's `[dependencies]` so cargo's feature
+# unification keeps a single build of each crate across the workspace.
+# `cancellation` uses `tokio::sync::watch` only.
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+# The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,
+# the multi-thread flavor, and `tokio::time::timeout`.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+
+# Mirror the app crate's lint posture so clippy/rustc behave identically under
+# CI (same pattern as the `agaric-core` / `agaric-diagnostics` members).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+fallible_impl_from = "deny"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+large_futures = "warn"
+default_trait_access = "warn"

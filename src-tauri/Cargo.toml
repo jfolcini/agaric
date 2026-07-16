@@ -9,7 +9,7 @@
 # #645 — `diagnostics` holds the two read-only DB inspection bins
 # (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
 # crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
-members = [".", "agaric-core", "diagnostics"]
+members = [".", "agaric-core", "agaric-store", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -131,6 +131,10 @@ tauri-build = { version = "2", features = [] }
 # (`pub use agaric_core::…` in lib.rs) so `crate::error::…` paths are
 # unchanged. Lib target is `agaric_core`.
 agaric-core = { path = "agaric-core", version = "0.1.0" }
+# agaric-store — persistence + read/query layer (#2621). Path dep pinned with a
+# version so cargo-deny's wildcard ban is satisfied. Wave S1 exposes the
+# `cancellation` module, re-exported below via `crate::cancellation`.
+agaric-store = { path = "agaric-store", version = "0.1.0" }
 
 # `tracing` feature (#2110 M3): makes Tauri's async `#[command]` wrapper
 # instrument each command future with an `ipc::request::run` span created at
