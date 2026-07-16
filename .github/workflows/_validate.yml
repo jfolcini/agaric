@@ -465,6 +465,26 @@ jobs:
           working-directory: src-tauri
           database-url: 'sqlite:ci-sqlx-prepare.db'
 
+      - name: sqlx offline cache check (agaric-store)
+        # #2621 wave S3b-ii: op_log's `query!`/`query_as!` macros moved into
+        # agaric-store, which now carries its own committed `.sqlx/` cache.
+        # A `../migrations` symlink under the crate lets both this action's
+        # `cargo sqlx migrate run` and `sqlx::migrate!` resolve the shared
+        # workspace migrations.
+        #
+        # The `database-url` MUST be absolute for a NON-root workspace member.
+        # `cargo sqlx database create` runs in `working-directory`
+        # (src-tauri/agaric-store), but `sqlx::query!` resolves a *relative*
+        # sqlite path at compile time from rustc's CWD — the WORKSPACE ROOT
+        # (src-tauri), not the crate dir — so a relative url has the DB created
+        # under agaric-store/ yet looked for under src-tauri/, failing every
+        # query with "unable to open database file". The app lane above works
+        # with a relative url only because the app crate IS the workspace root.
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-store
+          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
+
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
   # provably docs-only diff (the full `lint` job is skipped then) and runs

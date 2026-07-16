@@ -40,7 +40,15 @@ pub mod observability;
 // `op` moved into `agaric-store` (#2621, wave S2). Re-exported so every
 // `crate::op::…` path (op_log, materializer, commands, …) resolves unchanged.
 pub use agaric_store::op;
-pub mod op_log;
+// `op_log` moved into `agaric-store` (#2621, wave S3b-ii). Re-exported so every
+// `crate::op_log::…` path (materializer, commands, dag, reverse, …) resolves
+// unchanged.
+pub use agaric_store::op_log;
+// The op_log tests that couple to app-only modules (`mcp::actor`, `dag`) could
+// not move down into the store with the rest of op_log's tests (#2621, wave
+// S3b-ii); they live here in the app crate instead.
+#[cfg(test)]
+mod op_log_app_tests;
 pub mod pagination;
 pub mod pairing;
 pub mod peer_refs;

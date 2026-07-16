@@ -24,3 +24,10 @@ pub mod task_locals;
 // The app re-exports it (`pub use agaric_store::db::*;`) so every existing
 // `crate::db::…` path resolves unchanged.
 pub mod db;
+// `op_log` — op-log writer / reader (append, bypass, payload, query, record).
+// Carries `sqlx::query!` macros, so the crate now stands up its own `.sqlx`
+// offline cache (prepared against `../dev.db`) + a 2nd `sqlx prepare` CI lane.
+// External deps are `agaric_core::{error,hash}`; `op`, `task_locals`, and `db`
+// are store siblings. The app re-exports it (`pub use agaric_store::op_log;`)
+// so every existing `crate::op_log::…` path resolves unchanged.
+pub mod op_log;

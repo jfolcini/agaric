@@ -11,7 +11,11 @@ mod record;
 
 pub use append::*;
 pub use bypass::*;
-pub(crate) use payload::*;
+// `payload` exports two `pub` production helpers (`serialize_inner_payload`,
+// `extract_indexed_ids_from_payload`) consumed cross-crate by the app's
+// `crate::dag` remote-ingest path (#2621, wave S3b-ii); the single-field
+// `extract_*_from_payload` oracles stay `#[cfg(test)]` for the store's own tests.
+pub use payload::*;
 pub use query::*;
 pub use record::*;
 

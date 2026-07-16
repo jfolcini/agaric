@@ -19,7 +19,7 @@
 # Only mutate the invariant core (#649: op, op_log, reverse, loro/engine).
 examine_globs = [
     "agaric-store/src/op.rs",
-    "src/op_log.rs",
+    "agaric-store/src/op_log/**",
     "src/reverse/**",
     "src/loro/engine.rs",
 ]

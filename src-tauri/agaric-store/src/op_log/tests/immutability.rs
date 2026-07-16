@@ -559,23 +559,8 @@ async fn op_log_attachment_id_column_and_index_exist() {
     );
 }
 
-/// SQL-review B-2: `dag.rs` must read the native indexed `block_id`
-/// column, not the legacy `json_extract(payload, '$.block_id')`
-/// expression. Migration 0030 added the native column (with the
-/// covering `idx_op_log_block_id` index) and every INSERT path
-/// populates it; migration 0048 dropped the legacy expression index,
-/// so any surviving `json_extract` lookup would degrade to a full
-/// `op_log` scan. This regression guard reads `src/dag.rs` from disk
-/// and asserts the expression has not been re-introduced.
-#[test]
-fn dag_queries_no_longer_use_json_extract_block_id() {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/src/dag.rs");
-    let contents =
-        std::fs::read_to_string(path).unwrap_or_else(|e| panic!("failed to read {path}: {e}"));
-    assert!(
-        !contents.contains("json_extract(payload, '$.block_id')"),
-        "src/dag.rs must not contain `json_extract(payload, '$.block_id')` — \
-             use the native indexed `block_id` column instead (see migration 0030 \
-             and SQL-review B-2)."
-    );
-}
+// NOTE (#2621, wave S3b-ii): `dag_queries_no_longer_use_json_extract_block_id`
+// reads the app crate's `src/dag.rs` from disk via `CARGO_MANIFEST_DIR`, which
+// resolves to a nonexistent path under `agaric-store`. It relocated to the app
+// crate at `src-tauri/src/op_log_app_tests.rs`, where `CARGO_MANIFEST_DIR/src/dag.rs`
+// resolves correctly.

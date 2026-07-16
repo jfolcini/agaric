@@ -35,7 +35,7 @@ async fn hash_verification_from_db_read() {
         let rec = get_op_by_seq(&ReadPool(pool.clone()), "dev-hash", seq)
             .await
             .unwrap();
-        let recomputed = crate::hash::compute_op_hash(
+        let recomputed = agaric_core::hash::compute_op_hash(
             &rec.device_id,
             rec.seq,
             rec.parent_seqs.as_deref(),
@@ -79,7 +79,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
 
     // (2) The pristine stored record must verify.
     assert!(
-        crate::hash::verify_op_record(&pristine).is_ok(),
+        agaric_core::hash::verify_op_record(&pristine).is_ok(),
         "pristine stored op must pass verification"
     );
 
@@ -88,7 +88,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
     {
         let mut tampered = pristine.clone();
         tampered.payload = r#"{"block_id":"BLK-TMP","tampered":true}"#.to_string();
-        let err = crate::hash::verify_op_record(&tampered)
+        let err = agaric_core::hash::verify_op_record(&tampered)
             .expect_err("tampered payload must fail verification");
         assert!(
             err.contains("hash mismatch"),
@@ -100,7 +100,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         let mut tampered = pristine.clone();
         tampered.device_id = "dev-evil".to_string();
         assert!(
-            crate::hash::verify_op_record(&tampered).is_err(),
+            agaric_core::hash::verify_op_record(&tampered).is_err(),
             "tampered device_id must fail verification"
         );
     }
@@ -109,7 +109,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         let mut tampered = pristine.clone();
         tampered.seq = 999;
         assert!(
-            crate::hash::verify_op_record(&tampered).is_err(),
+            agaric_core::hash::verify_op_record(&tampered).is_err(),
             "tampered seq must fail verification"
         );
     }
@@ -118,7 +118,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         let mut tampered = pristine.clone();
         tampered.op_type = "edit_block".to_string();
         assert!(
-            crate::hash::verify_op_record(&tampered).is_err(),
+            agaric_core::hash::verify_op_record(&tampered).is_err(),
             "tampered op_type must fail verification"
         );
     }
@@ -130,7 +130,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         let mut untouched = pristine.clone();
         untouched.created_at = pristine.created_at + 86_400_000;
         assert!(
-            crate::hash::verify_op_record(&untouched).is_ok(),
+            agaric_core::hash::verify_op_record(&untouched).is_ok(),
             "mutating created_at (outside the hash preimage) must NOT trip verification"
         );
     }
@@ -139,7 +139,7 @@ async fn verify_op_record_detects_tamper_on_stored_op() {
         let mut untouched = pristine.clone();
         untouched.block_id = Some("DIFFERENT".to_string());
         assert!(
-            crate::hash::verify_op_record(&untouched).is_ok(),
+            agaric_core::hash::verify_op_record(&untouched).is_ok(),
             "mutating the block_id sidecar (outside the hash preimage) must NOT trip verification"
         );
     }
