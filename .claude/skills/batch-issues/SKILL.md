@@ -24,6 +24,37 @@ Detailed material lives in `references/` — load it only when the trigger fires
   issue and one per pending-CI PR. This survives compaction — a "one-line log" doesn't,
   and a forgotten pending PR rots unmerged.
 
+## Parallelism & resource capacity
+
+**Parallelize aggressively; never idle-wait on CI or a slow build.** Idle wall-clock is
+the enemy — while one item's heavy step runs, advance another. But pick the second item to
+avoid **resource contention**, which in a capacity-limited env (cloud/agent sandbox) is the
+real cap on concurrency:
+
+- **Disk + memory are hard limits on HEAVY jobs.** A full Rust debug build is ~18–24 GB and
+  the writable disk is a fixed quota, so typically **only ONE cargo build / local gate fits
+  at a time** — a second concurrent Rust build (or a Rust worktree with its own `target/`)
+  ENOSPCs or gets OOM-killed. Check `df -h /` before a second heavy build; clear
+  `src-tauri/target` between gate runs when space is tight. The worktree-per-item pattern
+  (§2) assumes room for N `target/` dirs — in a disk-limited env, DON'T; keep heavy Rust
+  work serial through one tree.
+- **Fill idle windows with lighter-toolchain work instead.** Frontend-only (TS/React),
+  docs/markdown, and read-only/research items run a much lighter gate (vitest/tsc/oxlint, or
+  nothing) and don't contend for the cargo target or disk. Parallelize across *toolchains* —
+  one heavy Rust item + several light ones — not across multiple heavy Rust builds. Prefer
+  the almost-free ones (docs, read-only) to keep oversight cheap; on remote CI they also skip
+  the heavy jobs (`detect-docs-only`), so they merge fast.
+- **The local pre-push gate is still serial** (it always builds Rust). So the parallel
+  speedup is mostly in *preparation*: fan out subagents to edit files + run targeted tests
+  concurrently, then serialize the heavy gate pushes through the one tree.
+
+**Use subagents to preserve orchestrator context.** The main agent is the long-lived loop;
+run every per-issue builder, reviewer, and discovery/research sweep in a subagent so the
+orchestrator's context stays lean across a long session. The orchestrator holds only the
+plan, the task list, and the merge decisions — not the file-by-file work. When a subagent
+finishes, keep its *conclusion* (the diff landed, the finding, the PR number), not the
+transcript.
+
 ## Goal
 
 Work through planned tasks in manageable batches, fixing items already scoped on GitHub
