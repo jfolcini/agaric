@@ -93,7 +93,7 @@ The OS handler is registered on app install. From a terminal: `open agaric://...
 ## Pitfalls to know
 
 - **MCP listens locally only.** It's never exposed over the network. Two computers can't share one Agaric's MCP — pair them via [sync.md](sync.md) instead.
-- **An agent can only *write* to the space it asked for, but it can *read* across spaces.** The read-only surface is deliberately vault-wide — see [Space scoping](#space-scoping-reads-are-vault-wide-writes-are-space-scoped) above. Don't rely on the MCP space argument to hide one space's contents from an agent.
+- **The MCP `space_id` argument fences off neither reads nor writes.** The read-only surface is deliberately vault-wide, and the write-side `space_id` is a self-declared consistency check an adversarial agent can satisfy for any space — not an isolation boundary. See [Space scoping](#space-scoping-reads-are-vault-wide-writes-are-space-scoped) above. Don't rely on the MCP space argument to hide or protect one space's contents from an agent.
 - **Reverting a session reverts *everything* the agent did since connect.** It's coarse on purpose — if you want surgical reverts, use the History view to undo specific operations.
 - **The activity feed is bounded.** Old entries scroll out. For a long-term record, the History view is the source of truth (agent ops appear there with an agent badge).
 - **Quick Capture goes to the active space.** If you switch spaces and capture, it lands in the new space.
