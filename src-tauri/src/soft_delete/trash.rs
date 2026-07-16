@@ -1,4 +1,8 @@
-//! Soft-delete: `soft_delete_block`, `cascade_soft_delete`.
+//! Soft-delete: `cascade_soft_delete`.
+//!
+//! The pure single-block `soft_delete_block` helper moved to
+//! `agaric_store::soft_delete` in wave S4e (#2621); it is re-exported from the
+//! parent `mod.rs` so `crate::soft_delete::soft_delete_block` still resolves.
 
 use sqlx::SqlitePool;
 
@@ -6,25 +10,6 @@ use crate::db::CommandTx;
 use crate::error::AppError;
 use crate::materializer::Materializer;
 use crate::op_log::OpRecord;
-
-/// Soft-delete a single block (no cascade).
-pub async fn soft_delete_block(pool: &SqlitePool, block_id: &str) -> Result<Option<i64>, AppError> {
-    // #1549: monotonic-per-process delete clock so this primitive's
-    // `deleted_at` stamp never collides with another same-ms delete's cohort.
-    let now = crate::db::next_delete_ms();
-    let result = sqlx::query!(
-        "UPDATE blocks SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL",
-        now,
-        block_id
-    )
-    .execute(pool)
-    .await?;
-    if result.rows_affected() == 0 {
-        Ok(None)
-    } else {
-        Ok(Some(now))
-    }
-}
 
 /// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
 /// descendants via recursive CTE.

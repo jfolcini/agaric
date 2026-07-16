@@ -20,19 +20,13 @@ mod trash;
 mod proptest_b3;
 
 pub use restore::restore_block;
-pub use trash::{cascade_soft_delete, soft_delete_block};
+pub use trash::cascade_soft_delete;
 
-use sqlx::SqlitePool;
-
-use crate::error::AppError;
-
-/// Check whether a block is currently soft-deleted.
-pub async fn is_deleted(pool: &SqlitePool, block_id: &str) -> Result<Option<bool>, AppError> {
-    let row = sqlx::query!("SELECT deleted_at FROM blocks WHERE id = ?", block_id,)
-        .fetch_optional(pool)
-        .await?;
-    Ok(row.map(|r| r.deleted_at.is_some()))
-}
+// Wave S4e (#2621): the two pure query helpers now live in `agaric-store`;
+// re-exported here so `crate::soft_delete::{is_deleted,soft_delete_block}`
+// resolve unchanged. The materializer-coupled `cascade_soft_delete` /
+// `restore_block` orchestration (and the test module below) stay in this crate.
+pub use agaric_store::soft_delete::{is_deleted, soft_delete_block};
 
 // `get_descendants` removed (2026-05-02). It returned a
 // non-conflict-but-possibly-deleted descendant set (
