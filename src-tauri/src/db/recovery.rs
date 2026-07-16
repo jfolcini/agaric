@@ -1,6 +1,6 @@
 use sqlx::{Row, SqlitePool};
 
-use super::pool::now_ms;
+use super::now_ms;
 
 // ======================================================================
 // Recovery helpers for corrupted databases (missing blocks table)

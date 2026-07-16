@@ -3,6 +3,14 @@ mod pool;
 mod recovery;
 
 pub use command_tx::*;
+// #2621 wave S3b-i: the pure, sqlx-free pool primitives (`DbPools`,
+// `WritePool`, `ReadPool`, `base_connect_options`, the acquire/begin logging
+// helpers, the pragma consts, `now_ms` / `next_delete_ms`) now live in
+// `agaric-store`. Re-export them so every existing `crate::db::…` path resolves
+// unchanged. The local `pool` glob below carries only the app-side remainder
+// (`WriteCtx`, `init_pools`, `init_pool`) — the two export disjoint names, so
+// the globs don't collide.
+pub use agaric_store::db::*;
 pub use pool::*;
 // #1893: the reserved-key→`blocks`-column mapping (`reserved_key_blocks_column`)
 // is the single drift-tested source of truth and is reused by the op-log

@@ -123,12 +123,15 @@ name = "agaric-store"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "chrono",
  "insta",
  "proptest",
  "serde",
  "serde_json",
  "specta",
+ "sqlx",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
