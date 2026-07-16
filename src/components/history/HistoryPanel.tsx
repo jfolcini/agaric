@@ -207,16 +207,18 @@ export function HistoryPanel({ blockId }: HistoryPanelProps): React.ReactElement
   //
   // Guard against a STALE toast on remount: an errored blockHistory entry is
   // cached (gcTime Infinity), so on reopen the query presents its old
-  // `errorUpdatedAt` before `refetchOnMount: 'always'` resolves. Capturing the
-  // first-render value means a cached error is treated as already-seen (no toast
-  // flash); only a fresh failure (new `errorUpdatedAt`) toasts.
+  // `errorUpdatedAt`. The `!isFetching` gate is what makes this safe:
+  // `refetchOnMount: 'always'` puts the query straight into `isFetching` while it
+  // re-validates, so a stale cached failure can't toast before the fresh fetch
+  // settles — only a genuinely settled error does (#2639). The first-render ref
+  // still de-dupes the same settled error across unrelated re-renders.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       notify.error(t('history.loadFailed'))
     }
-  }, [isError, errorUpdatedAt, t])
+  }, [isError, isFetching, errorUpdatedAt, t])
 
   // Collapse any expanded row when the fetch identity changes (new block /
   // filter), matching the pre-migration reset that lived in the load effect.

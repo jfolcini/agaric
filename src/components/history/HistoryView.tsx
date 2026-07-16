@@ -70,9 +70,6 @@ export function HistoryView(): React.ReactElement {
   useRegisterPrimaryFocus(listRef)
 
   // ── Data loading ─────────────────────────────────────────────────
-  // Sub-fix 7: track the categorised failure so the error banner can
-  // show network/server/unknown-specific copy alongside the generic title.
-  const [errorCategory, setErrorCategory] = useState<HistoryErrorCategory | null>(null)
   // Phase 8 — when `t('history.allSpacesToggle')` is off, narrow the IPC to the
   // current space. When on (or when no current space exists yet), pass
   // `undefined` so the backend returns ops from every space.
@@ -96,6 +93,7 @@ export function HistoryView(): React.ReactElement {
     data,
     isFetching,
     isError,
+    error: queryError,
     errorUpdatedAt,
     hasNextPage,
     fetchNextPage,
@@ -113,11 +111,9 @@ export function HistoryView(): React.ReactElement {
             ...(pageParam != null && { cursor: pageParam }),
             limit: PAGINATION_LIMIT,
           })
-          setErrorCategory(null)
           return result
         } catch (err) {
           const category = categorizeHistoryError(err)
-          setErrorCategory(category)
           logger.error(
             'HistoryView',
             'Failed to load history page',
@@ -136,6 +132,15 @@ export function HistoryView(): React.ReactElement {
       getNextPageParam: (lastPage) => (lastPage.has_more ? lastPage.next_cursor : undefined),
       // usePaginatedQuery re-fetched page 1 on every mount; preserve that.
       refetchOnMount: 'always',
+      // #2639 — the op-type filter / space scope switch in place (no remount), so
+      // `refetchOnMount` alone doesn't re-hit the backend when returning to a
+      // previously-viewed filter/scope, and `reloadAfterMutation` only resets the
+      // CURRENT key — a cached other-filter view could show pre-mutation pages.
+      // `staleTime: 0` marks each key immediately stale, so re-observing a cached
+      // basis triggers a background refetch, restoring the old
+      // always-refetch-on-basis-change freshness (window/reconnect refetch stay
+      // off, so no time-based churn).
+      staleTime: 0,
       // Stale-while-revalidate parity: usePaginatedQuery never cleared `entries`
       // on a deps change (only a successful response overwrote them). With the
       // inputs now in the key, an op-type/scope change would otherwise blank the
@@ -160,6 +165,14 @@ export function HistoryView(): React.ReactElement {
   // (cleared on next success). `isError` latches on the same condition, so the
   // banner shows the same generic title exactly when the last fetch failed.
   const error = isError ? t('history.loadFailed') : null
+  // Sub-fix 7: the categorised failure drives the banner's network/server/unknown
+  // detail line. #2639 — DERIVED from the query error (not component state set
+  // inside the queryFn): the cached error survives across remount, so deriving it
+  // keeps the detail line correct immediately on reopen. The old component-state
+  // reset to `null` on remount, briefly showing the `unknown` fallback against a
+  // cached network/server failure until `refetchOnMount` re-ran the queryFn.
+  const errorCategory: HistoryErrorCategory | null =
+    isError && queryError != null ? categorizeHistoryError(queryError) : null
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
@@ -174,16 +187,19 @@ export function HistoryView(): React.ReactElement {
   // load-more). TanStack keeps `isError` latched across consecutive same-key
   // failures, so keying only on `isError` would toast just once; `errorUpdatedAt`
   // advances on every error occurrence, firing the toast once per failed load.
-  // The mount-ref treats any cached error (gcTime Infinity) as already-seen so a
-  // remount doesn't flash a stale toast before `refetchOnMount: 'always'`
-  // resolves. Mirrors HistoryPanel's shared toast.
+  // The `!isFetching` gate makes a cached error (gcTime Infinity) safe on
+  // remount: `refetchOnMount: 'always'` puts the query straight into `isFetching`
+  // while it re-validates, so a stale cached failure can't toast before the fresh
+  // fetch settles — only a genuinely settled error does (#2639). The first-render
+  // ref still de-dupes the same settled error across unrelated re-renders. Mirrors
+  // HistoryPanel's shared toast.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       notify.error(t('history.loadFailed'))
     }
-  }, [isError, errorUpdatedAt, t])
+  }, [isError, isFetching, errorUpdatedAt, t])
 
   // ── Selection (multi-select with shift-range) ────────────────────
   const {
