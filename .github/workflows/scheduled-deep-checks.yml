@@ -737,3 +737,219 @@ jobs:
             src-tauri/fuzz/corpus/
           if-no-files-found: ignore
           retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # full-suite — the WHOLE-TREE BACKSTOP that makes per-PR category gating safe.
+  #
+  # ci/path-conditional-jobs: the per-PR `_validate.yml` lint job and the local
+  # `scripts/verify-ci-equivalent.sh` Phase A now SKIP the prek hooks whose
+  # category (frontend/backend/ci/docs) a given push did not touch — trading
+  # whole-tree coverage of the ABSENT categories for a faster gate. This job is
+  # the counterweight: on the weekly schedule (and on demand) it runs the FULL,
+  # UNSKIPPED prek suite (both pre-commit and pre-push stages) plus the FULL
+  # vitest / playwright / nextest / doc-test suites over the entire tree, so a
+  # latent breach in an untouched, unchanged-category file is caught here even
+  # when no PR re-linted it. Nothing is category-gated: every hook and every
+  # test runs. Not a required check — a maintainer triages any failure.
+  # ---------------------------------------------------------------------------
+  full-suite:
+    runs-on: ubuntu-24.04
+    # The slow exhaustive lane: cold-ish compile + the full prek suite (both
+    # stages) + full vitest + full playwright + full nextest + doc-tests.
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          # gitleaks (run via prek) inspects git history; fetch the full graph.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Free disk space on runner
+        # The full test + coverage-free nextest tree plus the Playwright browser
+        # download are heavy; drop the unused preinstalled toolchains first
+        # (same rationale as the cargo-tests job in _validate.yml).
+        run: |
+          set -euo pipefail
+          echo "Before:" && df -h /
+          sudo rm -rf /usr/share/dotnet \
+                      /usr/local/lib/android \
+                      /opt/ghc \
+                      /usr/local/share/boost \
+                      /usr/local/share/powershell \
+                      /usr/share/swift \
+                      "$AGENT_TOOLSDIRECTORY"
+          echo "After:" && df -h /
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Cache apt archives (Tauri system deps)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
+
+      - name: Install system dependencies
+        # Same Tauri stack as the lint / cargo-tests / mcp-tests jobs in
+        # _validate.yml — webkit/gtk/ssl/rsvg/soup + mold for fast linking.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          # #640: exact toolchain pin — keep in lockstep with
+          # rust-toolchain.toml and src-tauri/Cargo.toml `rust-version`.
+          toolchain: 1.95.0
+          # The prek cargo hooks run `cargo clippy -- -D warnings` and
+          # `cargo fmt --check`; dtolnay installs `--profile minimal`, which
+          # ships neither component, so request them explicitly (mirrors lint).
+          components: clippy,rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          # Cache ~/.cargo/bin so the cargo-installed plugins (sqlx-cli) persist.
+          cache-bin: 'true'
+          # Own per-job-class key (issue #813): the full unskipped prek + plain
+          # nextest tree matches none of the lint/cov/mcp/bench trees.
+          shared-key: rust-full-suite
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation (clippy hook, nextest, doc-tests).
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install prek + non-Rust lint tools via prebuilt binaries
+        # Mirrors the lint job's first (ungated) tool install: prek runs the
+        # whole suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        with:
+          # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
+          # pins 1.95.0 (see the lint job in _validate.yml). Bump in lockstep.
+          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+
+      - name: Install cargo plugins via prebuilt binaries
+        # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest
+        # backs both the cargo-test hook and the explicit nextest step below.
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        with:
+          tool: cargo-deny,cargo-machete,cargo-audit,cargo-nextest
+
+      - name: Install sqlx-cli (custom features, cargo fallback)
+        # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's binary
+        # list, so compile from source (cached via rust-cache cache-bin).
+        run: |
+          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+
+      - name: Install lychee (prebuilt binary)
+        # The `lychee` prek hook is a `local` hook calling the system binary;
+        # install it the same pinned+checksummed way the lint job does.
+        run: |
+          set -euo pipefail
+          VERSION=lychee-v0.24.2
+          DIR=lychee-x86_64-unknown-linux-gnu
+          TARBALL="${DIR}.tar.gz"
+          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
+          curl -fsSL -o /tmp/lychee.tar.gz \
+            "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
+          mkdir -p "${HOME}/.local/bin"
+          tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
+          install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+          "${HOME}/.local/bin/lychee" --version
+
+      - name: Restore lychee link-check cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .lycheecache
+          key: lychee-${{ runner.os }}-${{ hashFiles('**/*.md', '!node_modules/**') }}
+          restore-keys: |
+            lychee-${{ runner.os }}-
+
+      - name: Restore Playwright browser cache
+        id: playwright-cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            playwright-${{ runner.os }}-
+
+      - name: Install Playwright system deps
+        run: npx playwright install-deps chromium
+
+      - name: Install Playwright browser binaries (on cache miss)
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium
+
+      - name: Run the FULL prek suite — pre-commit stage (no SKIP, whole tree)
+        # The whole-tree backstop for the per-PR category-gated Phase A: NO SKIP,
+        # so every category's hooks run against every file.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: prek run --all-files
+
+      - name: Run the FULL prek suite — pre-push stage (whole tree)
+        # Pre-push-staged hooks (knip, npm-audit, lychee, cargo-clippy) do NOT
+        # run in the pre-commit invocation above — run them whole-tree here so
+        # the backstop covers them too.
+        #
+        # SKIP carries only the pre-push hooks that are meaningless / broken in
+        # a whole-tree CI-on-main context, exactly like the `lint` job:
+        #   * no-commit-to-branch — the `--branch=main` protected-branch guard
+        #     is a LOCAL-dev push guard; this scheduled job runs ON main, so it
+        #     would HARD-FAIL the whole step every run.
+        #   * verify-ci-equivalent — the pre-push verifier itself; letting it
+        #     run here re-invokes the entire Phase A prek suite + range tests
+        #     NESTED inside this prek process (recursion / wasted wall-clock,
+        #     and it fail-exits when the on-main push range is empty).
+        #   * vitest / cargo-test — the range-scoped test hooks; the FULL
+        #     vitest + nextest suites run as their own explicit steps below, so
+        #     these would only re-read `--cached` (nothing staged) and add noise.
+        # Every REAL category hook still runs unskipped — the backstop holds.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SKIP: no-commit-to-branch,verify-ci-equivalent,vitest,cargo-test
+        run: prek run --all-files --hook-stage pre-push
+
+      - name: Vitest (full suite)
+        run: npx vitest run
+
+      - name: Playwright E2E tests (full suite)
+        run: npx playwright test
+
+      - name: Cargo nextest (full suite) + doc-tests
+        working-directory: src-tauri
+        # nextest does NOT run doc-tests (they compile as their own per-example
+        # binaries), so run both to keep executable doc examples honest (#2555).
+        run: |
+          cargo nextest run --profile ci
+          cargo test --doc

@@ -118,28 +118,149 @@ fi
 RANGE_COUNT="$(git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
 echo "→ Pre-push verifier: range '$RANGE' ($RANGE_COUNT commit(s))"
 
-CHANGED="$(git diff "$RANGE" --name-only --diff-filter=ACMR 2>/dev/null || true)"
+# Fail-closed change detection: keep the git-diff exit status so we can tell a
+# genuinely EMPTY diff apart from a diff that could not be computed. If the
+# command fails we cannot know what changed, so we run EVERY category below.
+if CHANGED="$(git diff "$RANGE" --name-only --diff-filter=ACMR 2>/dev/null)"; then
+    CHANGED_OK=1
+else
+    CHANGED_OK=0
+    CHANGED=""
+fi
 
 has_match() {
     [ -n "$CHANGED" ] && printf '%s\n' "$CHANGED" | grep -qE "$1"
 }
 
+# Per-category change flags. HAS_RS/HAS_MCP gate the Rust/MCP phases (unchanged);
+# HAS_TS/HAS_CI/HAS_DOCS join them to make Phase A's prek SKIP category-aware
+# (mirroring the CI `lint` job's per-category plan — see the SKIP build below).
 HAS_RS=0
+HAS_TS=0
+HAS_CI=0
+HAS_DOCS=0
 HAS_MCP=0
-has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
-# MCP gate: only the binary, its module, the Tauri command wrapper, and
-# the prebuilt-binary directory. Catches the surface that affects the
-# agaric-mcp release build + UDS smoke + externalBin pin verification.
-has_match '^src-tauri/src/mcp/|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/' && HAS_MCP=1
+if [ "$CHANGED_OK" = "0" ]; then
+    # Could not compute the changed-file set → fail closed: run everything.
+    echo "→ Could not compute changed-file set for '$RANGE'; failing closed (running every category)."
+    HAS_RS=1
+    HAS_TS=1
+    HAS_CI=1
+    HAS_DOCS=1
+    HAS_MCP=1
+else
+    # Backend: Rust sources, the crate manifests/lockfile, shipped migrations.
+    has_match '\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$' && HAS_RS=1
+    # Frontend: TS/JS/CSS sources, e2e specs, and the FE build/config surface.
+    has_match '^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$' && HAS_TS=1
+    # CI/tooling: workflows plus the lint-tool configs the CI lint job keys on.
+    has_match '^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$' && HAS_CI=1
+    # Docs: any Markdown file plus the docs/ tree.
+    has_match '\.md$|^docs/' && HAS_DOCS=1
+    # MCP gate: only the binary, its module, the Tauri command wrapper, and
+    # the prebuilt-binary directory. Catches the surface that affects the
+    # agaric-mcp release build + UDS smoke + externalBin pin verification.
+    has_match '^src-tauri/src/mcp/|^src-tauri/src/commands/mcp\.rs$|^src-tauri/src/bin/agaric-mcp\.rs$|^src-tauri/binaries/' && HAS_MCP=1
+
+    # Fail-closed for UNRECOGNIZED non-docs paths (mirrors _validate.yml's
+    # classifier): a changed file matching neither docs nor any known category
+    # (frontend/backend/ci) — e.g. rust-toolchain.toml, .cargo/config.toml, a
+    # root *.sh — is a build/toolchain change we cannot attribute to a suite.
+    # Without this the per-category SKIP below would drop nearly every hook for
+    # such a push. Pin frontend+backend+ci so their hooks still run — the ci
+    # hooks (shell lint + the skip-ci-verify guard) then cover *.sh. The
+    # recognizer regexes are the SAME patterns that set HAS_TS/HAS_RS/HAS_CI
+    # above (so "recognized" ⟺ "set some category flag"), plus a broad docs
+    # matcher (LICENSE/NOTICE/… beyond the HAS_DOCS *.md set) so a licence edit
+    # is NOT over-escalated to the full suite. A file matching none of these set
+    # no flag → fail closed.
+    unrec_docs='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
+    unrec_fe='^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|package(-lock)?\.json$|(vite|vitest|tailwind|postcss)\.config\.|tsconfig.*\.json$|index\.html$'
+    unrec_be='\.rs$|^src-tauri/Cargo\.(toml|lock)$|^src-tauri/migrations/.*\.sql$'
+    unrec_ci='^\.github/|prek\.toml$|\.taplo\.toml$|lychee\.toml$|\.gitleaks\.toml$'
+    while IFS= read -r f; do
+        [ -z "$f" ] && continue
+        if [[ "$f" =~ $unrec_docs || "$f" =~ $unrec_fe || "$f" =~ $unrec_be || "$f" =~ $unrec_ci ]]; then
+            continue
+        fi
+        echo "→ Unrecognized non-docs path: $f → failing closed (frontend+backend+ci)."
+        HAS_TS=1
+        HAS_RS=1
+        HAS_CI=1
+        break
+    done <<< "$CHANGED"
+fi
 
 # ── Phase A: prek run --all-files (pre-commit hooks against whole tree) ──
-# SKIP= silences the vitest/cargo-test hooks (they'd read `--cached` and
-# log "no staged files — skipping" — wasted log noise since Phase C/D run
-# them explicitly with --range below).
+# SKIP silences the vitest/cargo-test hooks (they'd read `--cached` and log
+# "no staged files — skipping" — wasted noise since Phase C/D run them with
+# --range below) AND, category-aware, the hooks whose category did NOT change.
+#
+# This mirrors the CI `lint` job's per-category plan (an audit produced the
+# exact lists): a hook is skipped only when the category it guards is absent
+# from this push. The nightly `full-suite` job in
+# .github/workflows/scheduled-deep-checks.yml runs the FULL unskipped prek
+# suite over the whole tree as the backstop, so this trades per-push
+# whole-tree coverage of the ABSENT categories for a faster push; a latent
+# breach in an untouched, unchanged-category file is caught nightly instead.
+#
+# NEVER skipped (run every push regardless of category): trailing-whitespace,
+# end-of-file-fixer, check-merge-conflict, check-added-large-files,
+# check-shebang-scripts-are-executable, check-executables-have-shebangs,
+# mixed-line-ending, detect-private-key, gitleaks, typos.
+
+# Base: the two test hooks (always scoped in Phases C/D, never here).
+skip_items=(vitest cargo-test)
+
+# Frontend absent → skip the FE lint/type/architecture hooks.
+if [ "$HAS_TS" = "0" ]; then
+    skip_items+=(oxlint oxfmt tsc no-hsl-rgb-var-wrap no-direct-sonner-import \
+        no-ui-store-imports no-legacy-react-apis check-elevation-tiers \
+        check-elevation-tiers-self-test import-cycles store-layering axe-presence \
+        test-file-naming ipc-error-path-coverage ipc-error-path-coverage-selftest \
+        no-raw-invoke no-raw-invoke-selftest no-raw-local-storage \
+        no-raw-local-storage-selftest trace-interactions-named \
+        trace-interactions-named-selftest license-checker)
+fi
+# Backend absent → skip the Rust/cargo/SQL/migration hooks.
+if [ "$HAS_RS" = "0" ]; then
+    skip_items+=(cargo-fmt cargo-clippy cargo-deny cargo-machete sqruff \
+        tauri-command-sanitize tauri-command-instrumented \
+        tauri-command-instrumented-selftest check-raw-tx check-raw-tx-self-test \
+        check-dynamic-sql check-dynamic-sql-self-test check-command-arity \
+        check-command-arity-self-test check-space-filter-drift unsafe-allowlist \
+        audit-toml-in-sync migrations-immutable migrations-strict-tables \
+        migrations-rebuild-cascade)
+fi
+# CI/tooling absent → skip the workflow/shell lint hooks.
+if [ "$HAS_CI" = "0" ]; then
+    skip_items+=(actionlint zizmor shellcheck skip-ci-verify-guard)
+fi
+# Docs absent → skip the Markdown/doc hooks.
+if [ "$HAS_DOCS" = "0" ]; then
+    skip_items+=(markdownlint md-link-targets doc-vs-code-paths session-log-numbering)
+fi
+
+# Compound guards: skip only when EVERY category they straddle is absent, so a
+# binding-boundary / cross-cutting hook still runs if ANY adjacent category
+# changed.
+[ "$HAS_CI" = "0" ] && [ "$HAS_RS" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
+# tauri-*-parity / snapshot-redaction / retired-pending guard the FE↔BE binding
+# boundary — they MUST run if frontend OR backend changed.
+[ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
+    skip_items+=(tauri-mock-parity tauri-bindings-parity snapshot-redaction no-retired-pending-doc-refs)
+[ "$HAS_DOCS" = "0" ] && [ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
+    skip_items+=(architecture-citations)
+[ "$HAS_TS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-json)
+[ "$HAS_RS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-toml)
+[ "$HAS_CI" = "0" ] && skip_items+=(check-yaml)
+
+PHASE_A_SKIP="$(IFS=,; printf '%s' "${skip_items[*]}")"
 
 echo ""
 echo "→ Phase A: prek run --all-files (pre-commit stage)"
-if ! SKIP="vitest,cargo-test" prek run --all-files --hook-stage pre-commit; then
+echo "  SKIP=$PHASE_A_SKIP"
+if ! SKIP="$PHASE_A_SKIP" prek run --all-files --hook-stage pre-commit; then
     echo ""
     echo "✗ Pre-push verification FAILED at Phase A (prek --all-files)."
     echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
