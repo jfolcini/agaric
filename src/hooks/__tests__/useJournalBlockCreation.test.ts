@@ -23,11 +23,11 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useBlockStore } from '../../stores/blocks'
-import { useSpaceStore } from '../../stores/space'
-import { useJournalBlockCreation } from '../useJournalBlockCreation'
+import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
+import { useBlockStore } from '@/stores/blocks'
+import { useSpaceStore } from '@/stores/space'
 
-vi.mock('../../lib/template-utils', () => ({
+vi.mock('@/lib/template-utils', () => ({
   loadJournalTemplate: vi.fn(async () => ({ template: null, duplicateWarning: null })),
   loadJournalTemplateForSpace: vi.fn(async () => null),
   insertTemplateBlocks: vi.fn(async () => []),
@@ -39,7 +39,7 @@ import {
   insertTemplateBlocksFromString,
   loadJournalTemplate,
   loadJournalTemplateForSpace,
-} from '../../lib/template-utils'
+} from '@/lib/template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedLoadJournalTemplate = vi.mocked(loadJournalTemplate)

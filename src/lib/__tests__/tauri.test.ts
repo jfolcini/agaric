@@ -117,7 +117,7 @@ import {
   undoPageOp,
   updatePeerName,
   updatePropertyDefOptions,
-} from '../tauri'
+} from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -3779,7 +3779,7 @@ describe('autostart wrappers', () => {
       }))
       mockIsEnabled.mockResolvedValueOnce(true)
 
-      const { isAutostartEnabled } = await import('../tauri')
+      const { isAutostartEnabled } = await import('@/lib/tauri')
       const result = await isAutostartEnabled()
 
       expect(mockIsEnabled).toHaveBeenCalledOnce()
@@ -3794,7 +3794,7 @@ describe('autostart wrappers', () => {
       }))
       mockIsEnabled.mockResolvedValueOnce(false)
 
-      const { isAutostartEnabled } = await import('../tauri')
+      const { isAutostartEnabled } = await import('@/lib/tauri')
       const result = await isAutostartEnabled()
 
       expect(result).toBe(false)
@@ -3808,7 +3808,7 @@ describe('autostart wrappers', () => {
       }))
       mockIsEnabled.mockRejectedValueOnce(new Error('plugin not registered'))
 
-      const { isAutostartEnabled } = await import('../tauri')
+      const { isAutostartEnabled } = await import('@/lib/tauri')
 
       await expect(isAutostartEnabled()).rejects.toThrow('plugin not registered')
     })
@@ -3823,7 +3823,7 @@ describe('autostart wrappers', () => {
       }))
       mockEnable.mockResolvedValueOnce(undefined)
 
-      const { enableAutostart } = await import('../tauri')
+      const { enableAutostart } = await import('@/lib/tauri')
       await enableAutostart()
 
       expect(mockEnable).toHaveBeenCalledOnce()
@@ -3842,7 +3842,7 @@ describe('autostart wrappers', () => {
       }))
       mockEnable.mockRejectedValueOnce(new Error('IPC denied'))
 
-      const { enableAutostart } = await import('../tauri')
+      const { enableAutostart } = await import('@/lib/tauri')
 
       await expect(enableAutostart()).rejects.toThrow('IPC denied')
       expect(mockEnable).toHaveBeenCalledOnce()
@@ -3858,7 +3858,7 @@ describe('autostart wrappers', () => {
       }))
       mockDisable.mockResolvedValueOnce(undefined)
 
-      const { disableAutostart } = await import('../tauri')
+      const { disableAutostart } = await import('@/lib/tauri')
       await disableAutostart()
 
       expect(mockDisable).toHaveBeenCalledOnce()
@@ -3877,7 +3877,7 @@ describe('autostart wrappers', () => {
       }))
       mockDisable.mockRejectedValueOnce(new Error('plugin unavailable'))
 
-      const { disableAutostart } = await import('../tauri')
+      const { disableAutostart } = await import('@/lib/tauri')
 
       await expect(disableAutostart()).rejects.toThrow('plugin unavailable')
       expect(mockDisable).toHaveBeenCalledOnce()
@@ -4050,7 +4050,7 @@ vi.mock('@tauri-apps/plugin-notification', () => ({
 // import at the top of each test keeps the wrapper references fresh across
 // `vi.clearAllMocks()` runs in `beforeEach`.
 async function importGlobalShortcutWrappers() {
-  return await import('../tauri')
+  return await import('@/lib/tauri')
 }
 
 describe('quickCaptureBlock', () => {

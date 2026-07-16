@@ -8,8 +8,8 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { useSlashCommandMarks } from '../useSlashCommandMarks'
-import { makeSyntheticCtx } from './test-utils'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandMarks } from '@/hooks/useBlockSlashCommands/useSlashCommandMarks'
 
 /**
  * Minimal chainable editor stub. `chain()` returns a proxy that records every

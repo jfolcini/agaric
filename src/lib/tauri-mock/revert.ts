@@ -12,7 +12,7 @@
  * effects matching what the real `revert_ops` command would produce.
  */
 
-import type { MockOpLogEntry } from './seed'
+import type { MockOpLogEntry } from '@/lib/tauri-mock/seed'
 
 type BlockRow = Record<string, unknown>
 type Blocks = Map<string, BlockRow>

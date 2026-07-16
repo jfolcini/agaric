@@ -1,10 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import type { BlockRow } from '../lib/tauri'
+import type { BlockRow } from '@/lib/tauri'
 import {
   addTag,
   createBlock,
@@ -12,11 +11,11 @@ import {
   listInheritedTagsForBlock,
   listTagsForBlock,
   removeTag,
-} from '../lib/tauri'
-import { usePageBlockStoreApi } from '../stores/page-blocks'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import { useUndoStore } from '../stores/undo'
+} from '@/lib/tauri'
+import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 export interface TagEntry {
   id: string

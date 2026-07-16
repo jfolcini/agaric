@@ -1,11 +1,11 @@
 import { Channel } from '@tauri-apps/api/core'
 
-import { commands } from './bindings'
-import { PAGINATION_LIMIT } from './constants'
-import { logger } from './logger'
-import { setLogBackendSink } from './logger-transport'
-import { isMobilePlatform } from './platform'
-import type { SafeLimit } from './safe-limit'
+import { commands } from '@/lib/bindings'
+import { PAGINATION_LIMIT } from '@/lib/constants'
+import { logger } from '@/lib/logger'
+import { setLogBackendSink } from '@/lib/logger-transport'
+import { isMobilePlatform } from '@/lib/platform'
+import type { SafeLimit } from '@/lib/safe-limit'
 
 export type {
   ActiveBlockRow,
@@ -73,8 +73,8 @@ export type {
   TaskNotification,
   VaultFile,
   WithOps,
-} from './bindings'
-export type { SafeLimit } from './safe-limit'
+} from '@/lib/bindings'
+export type { SafeLimit } from '@/lib/safe-limit'
 export {
   LIST_BLOCKS_MAX,
   LIST_PROJECTED_AGENDA_MAX,
@@ -85,7 +85,7 @@ export {
   SEARCH_BLOCKS_MAX,
   safeLimit,
   searchBlocksLimit,
-} from './safe-limit'
+} from '@/lib/safe-limit'
 
 import type {
   AdvancedQueryRequest,
@@ -130,7 +130,7 @@ import type {
   TaskNotification,
   VaultFile,
   WithOps,
-} from './bindings'
+} from '@/lib/bindings'
 
 /**
  * Phase 3 — translate the JS-side `spaceId: string | null` shape
@@ -216,7 +216,7 @@ export function unwrap<T>(
 // Without an orchestrator decomposition (equivalent).
 // ---------------------------------------------------------------------------
 
-import type { AppError } from './bindings'
+import type { AppError } from '@/lib/bindings'
 
 /**
  * Build the same `{ kind: 'cancelled', message }` shape the backend
@@ -1148,14 +1148,16 @@ export type DateFilterValueInput =
   | { kind: 'op'; op: '<' | '<=' | '=' | '>=' | '>'; date: string }
 
 /** Translate a frontend `DateFilterValueInput` to the wire shape. */
-function marshalDateFilter(v: DateFilterValueInput | null): import('./bindings').DateFilter | null {
+function marshalDateFilter(
+  v: DateFilterValueInput | null,
+): import('@/lib/bindings').DateFilter | null {
   if (v == null) return null
   if (v.kind === 'named') {
     // The wire shape uses kebab-case for the `NamedDateRange` enum;
     // the input shape already matches.
-    return { named: v.name as import('./bindings').NamedDateRange }
+    return { named: v.name as import('@/lib/bindings').NamedDateRange }
   }
-  const opMap: Record<'<' | '<=' | '=' | '>=' | '>', import('./bindings').DateOp> = {
+  const opMap: Record<'<' | '<=' | '=' | '>=' | '>', import('@/lib/bindings').DateOp> = {
     '<': 'lt',
     '<=': 'lte',
     '=': 'eq',
@@ -2430,7 +2432,7 @@ export async function importMarkdown(
 export type BibliographyFormat = 'bibtex' | 'csl-json'
 
 /** Result of a bibliography import (#1454) — the generated wire shape. */
-export type { ImportBibliographyResult } from './bindings'
+export type { ImportBibliographyResult } from '@/lib/bindings'
 
 /**
  * Import a BibTeX (`.bib`) or CSL-JSON (`.json`) bibliography (#1454).
@@ -2448,7 +2450,7 @@ export async function importBibliography(
   content: string,
   format: BibliographyFormat | null,
   spaceId: string,
-): Promise<import('./bindings').ImportBibliographyResult> {
+): Promise<import('@/lib/bindings').ImportBibliographyResult> {
   return unwrap(await commands.importBibliography(content, format, spaceId))
 }
 

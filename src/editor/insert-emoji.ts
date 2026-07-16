@@ -13,8 +13,8 @@
  * should not use this helper.
  */
 
-import { logger } from '../lib/logger'
-import { getActiveEditor } from './active-editor'
+import { getActiveEditor } from '@/editor/active-editor'
+import { logger } from '@/lib/logger'
 
 export function insertEmojiIntoActiveEditor(char: string): boolean {
   if (char.length === 0) return false

@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   createPageBlockStore,
   type FlatBlock,
@@ -16,8 +16,8 @@ import {
   PageBlockStoreProvider,
   storeOwnsBlock,
   usePageBlockStore,
-} from '../page-blocks'
-import { useSpaceStore } from '../space'
+} from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 

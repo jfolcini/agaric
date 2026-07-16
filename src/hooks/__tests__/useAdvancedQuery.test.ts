@@ -15,6 +15,7 @@ vi.mock('@/lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
+import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { queryClient } from '@/lib/query-client'
 import type {
   AdvancedQueryResponse,
@@ -26,8 +27,6 @@ import type {
 } from '@/lib/tauri'
 import { batchResolve, runAdvancedQuery } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-
-import { useAdvancedQuery } from '../useAdvancedQuery'
 
 const mockedRun = vi.mocked(runAdvancedQuery)
 const mockedResolve = vi.mocked(batchResolve)

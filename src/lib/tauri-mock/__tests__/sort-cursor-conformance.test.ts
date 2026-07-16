@@ -17,7 +17,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { compareMetaRows, encodeNextCursor, type PageMetaRow } from '../handlers'
+import { compareMetaRows, encodeNextCursor, type PageMetaRow } from '@/lib/tauri-mock/handlers'
 
 // ---------------------------------------------------------------------------
 // Fixture types (mirror the shape of sort-cursor.vectors.json)

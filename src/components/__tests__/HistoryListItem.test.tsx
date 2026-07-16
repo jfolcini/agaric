@@ -41,10 +41,10 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { BlockHistoryItemProps, HistoryListItemProps } from '../HistoryListItem'
-import { BlockHistoryItem, HistoryListItem, opIcon } from '../HistoryListItem'
+import type { BlockHistoryItemProps, HistoryListItemProps } from '@/components/HistoryListItem'
+import { BlockHistoryItem, HistoryListItem, opIcon } from '@/components/HistoryListItem'
 
-vi.mock('../../hooks/useRichContentCallbacks', () => ({
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
     resolveBlockTitle: vi.fn((id: string) => (id === 'PAGE1' ? 'My Page' : undefined)),
     resolveBlockStatus: vi.fn(() => 'active' as const),

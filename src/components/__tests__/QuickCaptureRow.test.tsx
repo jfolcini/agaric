@@ -22,11 +22,10 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { QuickCaptureRow } from '@/components/settings/QuickCaptureRow'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { registerGlobalShortcut } from '@/lib/tauri'
-
-import { QuickCaptureRow } from '../settings/QuickCaptureRow'
 
 // The row imports `registerGlobalShortcut`/`unregisterGlobalShortcut`
 // from `@/lib/tauri`; stub them so nothing reaches the real Tauri plugin.

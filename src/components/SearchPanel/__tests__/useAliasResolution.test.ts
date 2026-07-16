@@ -23,12 +23,12 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   resolvePageByAlias: vi.fn(),
   getBlock: vi.fn(),
 }))
 
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     warn: vi.fn(),
     info: vi.fn(),
@@ -37,9 +37,9 @@ vi.mock('../../../lib/logger', () => ({
   },
 }))
 
-import { logger } from '../../../lib/logger'
-import { type BlockRow, getBlock, resolvePageByAlias } from '../../../lib/tauri'
-import { useAliasResolution } from '../useAliasResolution'
+import { useAliasResolution } from '@/components/SearchPanel/useAliasResolution'
+import { logger } from '@/lib/logger'
+import { type BlockRow, getBlock, resolvePageByAlias } from '@/lib/tauri'
 
 const mockedResolveAlias = vi.mocked(resolvePageByAlias)
 const mockedGetBlock = vi.mocked(getBlock)

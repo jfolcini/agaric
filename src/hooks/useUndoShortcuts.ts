@@ -9,18 +9,17 @@
 import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { announce } from '@/lib/announcer'
 import { t as translate } from '@/lib/i18n'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
+import { getBlock } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
-
-import { announce } from '../lib/announcer'
-import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { getBlock } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
 
 /** Reload block store and refresh page title in nav store after undo/redo. */
 async function refreshAfterUndoRedo(pageId: string): Promise<void> {

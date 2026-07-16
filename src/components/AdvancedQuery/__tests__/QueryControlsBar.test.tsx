@@ -3,10 +3,9 @@ import type React from 'react'
 import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
+import type { QueryControlsBarProps } from '@/components/AdvancedQuery/QueryControlsBar'
+import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
 import type { SortKey } from '@/lib/tauri'
-
-import type { QueryControlsBarProps } from '../QueryControlsBar'
-import { QueryControlsBar } from '../QueryControlsBar'
 
 const noop = (): void => {}
 

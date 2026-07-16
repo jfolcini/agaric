@@ -43,7 +43,7 @@
 import type { RefObject } from 'react'
 import { useCallback, useLayoutEffect, useMemo, useRef } from 'react'
 
-import type { PickerItem } from './SuggestionList'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 /** Maps each editor event name to its handler signature. */
 export interface EditorEventHandlers {

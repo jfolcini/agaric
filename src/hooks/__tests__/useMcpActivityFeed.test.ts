@@ -41,7 +41,7 @@ import {
   MCP_ACTIVITY_EVENT,
   useMcpActivityFeed,
   type ActivityEntry,
-} from '../useMcpActivityFeed'
+} from '@/hooks/useMcpActivityFeed'
 
 beforeEach(() => {
   eventListeners = new Map()

@@ -13,19 +13,18 @@
 
 import { useCallback } from 'react'
 
+import { announce } from '@/lib/announcer'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { announce } from '../lib/announcer'
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import { getPriorityCycle } from '../lib/priority-levels'
+import { getPriorityCycle } from '@/lib/priority-levels'
 import {
   getProperty,
   setPriority as setPriorityCmd,
   setTodoState as setTodoStateCmd,
-} from '../lib/tauri'
-import { usePageBlockStoreApi } from '../stores/page-blocks'
-import { useUndoStore } from '../stores/undo'
+} from '@/lib/tauri'
+import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 /**
  * Locked task state cycle: none -> TODO -> DOING -> DONE -> CANCELLED -> none.

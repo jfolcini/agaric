@@ -25,23 +25,22 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import { INTERACTIONS, traceInteraction } from '../lib/observability'
-import { loadPageSubtree } from '../lib/tauri'
-import { buildFlatTree } from '../lib/tree-utils'
-import { useBlockStore } from './blocks'
-import { buildBlocksById } from './page-blocks-map'
-import { createReducers } from './page-blocks-reducers'
-import type { PageBlockState } from './page-blocks-types'
-import { useSpaceStore } from './space'
-import { useUndoStore } from './undo'
+import { INTERACTIONS, traceInteraction } from '@/lib/observability'
+import { loadPageSubtree } from '@/lib/tauri'
+import { buildFlatTree } from '@/lib/tree-utils'
+import { useBlockStore } from '@/stores/blocks'
+import { buildBlocksById } from '@/stores/page-blocks-map'
+import { createReducers } from '@/stores/page-blocks-reducers'
+import type { PageBlockState } from '@/stores/page-blocks-types'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 // #2254 — `PageBlockState` and `FlatBlock` now live in `page-blocks-types.ts`;
 // re-export them so every existing consumer keeps importing from `page-blocks`.
-export type { FlatBlock, PageBlockState } from './page-blocks-types'
+export type { FlatBlock, PageBlockState } from '@/stores/page-blocks-types'
 
 /**
  * Augment an external `setState` partial so that callers passing only

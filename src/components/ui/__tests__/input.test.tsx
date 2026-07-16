@@ -21,7 +21,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Input } from '../input'
+import { Input } from '@/components/ui/input'
 
 describe('Input', () => {
   // -- Default rendering ------------------------------------------------------

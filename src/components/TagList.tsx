@@ -22,6 +22,7 @@ import { Input } from '@/components/ui/input'
 import { ListItem } from '@/components/ui/list-item'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { isConflict } from '@/lib/app-error'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import {
   clearTagColor,
@@ -31,10 +32,7 @@ import {
   TAG_COLOR_PRESETS,
   tagColorForeground,
 } from '@/lib/tag-colors'
-import { cn } from '@/lib/utils'
-
-import { logger } from '../lib/logger'
-import type { TagCacheRow } from '../lib/tauri'
+import type { TagCacheRow } from '@/lib/tauri'
 import {
   createBlock,
   deleteBlock,
@@ -43,9 +41,10 @@ import {
   listAllTagsInSpace,
   purgeBlock,
   setProperty,
-} from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+} from '@/lib/tauri'
+import { cn } from '@/lib/utils'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 interface TagListProps {
   /** Called when a tag name is clicked. */

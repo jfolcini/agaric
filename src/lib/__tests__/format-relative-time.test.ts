@@ -11,7 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { formatRelativeTime } from '../format-relative-time'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 
 // Simple mock t() that returns the key with interpolated values
 function mockT(key: string, opts?: Record<string, unknown>): string {
@@ -131,7 +131,7 @@ describe('formatRelativeTime', () => {
 // key exists and resolves to a non-empty English string.
 describe('lastSyncedNever i18n key (replaces hardcoded "Never synced")', () => {
   it('is defined in the English common namespace', async () => {
-    const { common } = await import('../i18n/common')
+    const { common } = await import('@/lib/i18n/common')
     expect(common['sidebar.lastSyncedNever']).toBe('Never synced')
   })
 })

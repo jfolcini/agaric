@@ -16,24 +16,24 @@ import type { RefObject } from 'react'
 import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
-import { serializeBlockSubtree } from '../lib/block-clipboard'
-import { readText, writeText } from '../lib/clipboard'
-import { t } from '../lib/i18n'
-import { matchesShortcutBinding } from '../lib/keyboard-config'
+import type { DatePickerMode } from '@/hooks/useBlockDatePicker'
+import { serializeBlockSubtree } from '@/lib/block-clipboard'
+import { readText, writeText } from '@/lib/clipboard'
+import { t } from '@/lib/i18n'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import {
   clearTreeInteractionIfHolder,
   isLastInteractedTree,
   markTreeInteracted,
-} from '../lib/last-interacted-tree'
-import { logger } from '../lib/logger'
-import { notify } from '../lib/notify'
-import { computeSelectionRoots } from '../lib/tree-utils'
-import { useBlockStore } from '../stores/blocks'
-import type { PageBlockState } from '../stores/page-blocks'
-import { storeOwnsBlock } from '../stores/page-blocks'
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import type { DatePickerMode } from './useBlockDatePicker'
+} from '@/lib/last-interacted-tree'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import { computeSelectionRoots } from '@/lib/tree-utils'
+import { useBlockStore } from '@/stores/blocks'
+import type { PageBlockState } from '@/stores/page-blocks'
+import { storeOwnsBlock } from '@/stores/page-blocks'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export interface UseBlockTreeKeyboardShortcutsOptions {
   focusedBlockId: string | null

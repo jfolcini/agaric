@@ -19,7 +19,7 @@ import {
   BACK_PRIORITY_ZOOM,
   registerBackHandler,
   runBackChain,
-} from '../back-chain'
+} from '@/lib/back-chain'
 
 describe('back-chain registry', () => {
   beforeEach(() => {

@@ -34,11 +34,10 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
+import { ResultCountSummary } from '@/components/search/ResultCountSummary'
+import { SearchResultBlockRow } from '@/components/search/SearchResultBlockRow'
+import { VirtualizedResultListbox } from '@/components/search/VirtualizedResultListbox'
 import type { SearchBlockRow } from '@/lib/bindings'
-
-import { ResultCountSummary } from './ResultCountSummary'
-import { SearchResultBlockRow } from './SearchResultBlockRow'
-import { VirtualizedResultListbox } from './VirtualizedResultListbox'
 
 /** A page-bucketed group of matching block rows. */
 export interface SearchResultGroup {

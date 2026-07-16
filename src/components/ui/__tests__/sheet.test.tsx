@@ -12,7 +12,6 @@ import * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-
 import {
   Sheet,
   SheetBody,
@@ -23,7 +22,7 @@ import {
   SheetHeader,
   SheetTitle,
   SheetTrigger,
-} from '../sheet'
+} from '@/components/ui/sheet'
 
 // ---------------------------------------------------------------------------
 // displayName

@@ -22,9 +22,9 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { BlockLink } from '../block-link'
-import { resolveAndInsertPickerToken } from '../picker-plugin'
-import { TagRef } from '../tag-ref'
+import { BlockLink } from '@/editor/extensions/block-link'
+import { resolveAndInsertPickerToken } from '@/editor/extensions/picker-plugin'
+import { TagRef } from '@/editor/extensions/tag-ref'
 
 let editor: Editor | undefined
 
@@ -299,8 +299,11 @@ async function captureCommand(
   }))
   const ext =
     picker === 'at-tag'
-      ? (await import('../at-tag-picker')).AtTagPicker.configure({ items: () => [], onCreate })
-      : (await import('../block-link-picker')).BlockLinkPicker.configure({
+      ? (await import('@/editor/extensions/at-tag-picker')).AtTagPicker.configure({
+          items: () => [],
+          onCreate,
+        })
+      : (await import('@/editor/extensions/block-link-picker')).BlockLinkPicker.configure({
           items: () => [],
           onCreate,
         })

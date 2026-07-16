@@ -16,12 +16,11 @@
 
 import type React from 'react'
 
+import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { Button } from '@/components/ui/button'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { toolbarActiveClass } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
-
-import { Button } from '../ui/button'
-import { type RenderMode, Tip, toolbarPressHandlers } from './shared'
 
 interface CyclePriorityButtonProps {
   mode: RenderMode

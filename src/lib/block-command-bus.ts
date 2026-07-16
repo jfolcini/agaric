@@ -38,10 +38,10 @@
 
 import type { StoreApi } from 'zustand'
 
-import { useBlockStore } from '../stores/blocks'
-import type { PageBlockState } from '../stores/page-blocks'
-import { storeOwnsBlock } from '../stores/page-blocks'
-import type { BLOCK_EVENTS } from './block-event-names'
+import type { BLOCK_EVENTS } from '@/lib/block-event-names'
+import { useBlockStore } from '@/stores/blocks'
+import type { PageBlockState } from '@/stores/page-blocks'
+import { storeOwnsBlock } from '@/stores/page-blocks'
 
 /** Command name — reuses the typed `BLOCK_EVENTS` keys so producers/consumers stay in lockstep. */
 export type BlockCommandName = keyof typeof BLOCK_EVENTS

@@ -13,7 +13,7 @@ import {
   MAX_EMOJI_FREQUENCY,
   pushEmojiRecent,
   useEmojiRecents,
-} from '../useEmojiRecents'
+} from '@/hooks/useEmojiRecents'
 
 beforeEach(() => {
   localStorage.clear()

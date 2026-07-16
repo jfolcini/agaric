@@ -8,8 +8,8 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { BlockLink } from '../extensions/block-link'
-import { BlockLinkPicker } from '../extensions/block-link-picker'
+import { BlockLink } from '@/editor/extensions/block-link'
+import { BlockLinkPicker } from '@/editor/extensions/block-link-picker'
 
 /** Helper: create a chainProxy mock that tracks deleteRange and insertContentAt calls. */
 function createChainProxy() {
@@ -687,7 +687,7 @@ describe('BlockLinkPicker suggestion command chain', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/block-link-picker')
+    const mod = await import('@/editor/extensions/block-link-picker')
     const ext = mod.BlockLinkPicker.configure({ items: () => [] })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
@@ -749,7 +749,7 @@ describe('BlockLinkPicker suggestion command chain', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/block-link-picker')
+    const mod = await import('@/editor/extensions/block-link-picker')
     const onCreate = vi.fn().mockResolvedValue('CREATED_ULID')
     const ext = mod.BlockLinkPicker.configure({ items: () => [], onCreate })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({

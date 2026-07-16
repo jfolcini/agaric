@@ -19,9 +19,11 @@ import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  PageBrowserHeader,
+  type PageBrowserHeaderProps,
+} from '@/components/PageBrowser/PageBrowserHeader'
 import { t } from '@/lib/i18n'
-
-import { PageBrowserHeader, type PageBrowserHeaderProps } from '../PageBrowserHeader'
 
 function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowserHeaderProps {
   return {

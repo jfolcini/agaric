@@ -14,14 +14,14 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { DayEntry } from '../../../lib/date-utils'
+import type { DayEntry } from '@/lib/date-utils'
 
 // ── Mock DaySection ─────────────────────────────────────────────────
 const daySectionProps = vi.hoisted(() => ({
   captured: [] as Record<string, unknown>[],
 }))
 
-vi.mock('../DaySection', () => ({
+vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     daySectionProps.captured.push(props)
     const entry = props['entry'] as DayEntry
@@ -63,9 +63,9 @@ vi.mock('../DaySection', () => ({
 
 vi.mocked(invoke)
 
-import { useBlockStore } from '../../../stores/blocks'
-import { useNavigationStore } from '../../../stores/navigation'
-import { DailyView } from '../DailyView'
+import { DailyView } from '@/components/journal/DailyView'
+import { useBlockStore } from '@/stores/blocks'
+import { useNavigationStore } from '@/stores/navigation'
 
 const ENTRY: DayEntry = {
   date: new Date(2025, 0, 15),

@@ -37,6 +37,9 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
+import type { McpRwStatus, McpStatus } from '@/components/agent-access/McpStatusSection'
+import { McpStatusSection } from '@/components/agent-access/McpStatusSection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -48,10 +51,6 @@ import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { unwrap } from '@/lib/tauri'
-
-import { ActivityFeed } from '../agent-access/ActivityFeed'
-import type { McpRwStatus, McpStatus } from '../agent-access/McpStatusSection'
-import { McpStatusSection } from '../agent-access/McpStatusSection'
 
 export function AgentAccessTab(): React.ReactElement {
   const { t } = useTranslation()

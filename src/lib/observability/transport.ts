@@ -12,7 +12,7 @@
  * posture of the backend log bridge.
  */
 
-import type { FrontendSpan } from '../bindings'
+import type { FrontendSpan } from '@/lib/bindings'
 
 /**
  * A frontend-span sink. Mirrors `commands.ingestOtelSpans`. Must be

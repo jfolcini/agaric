@@ -11,8 +11,8 @@
 import { fireEvent, render } from '@testing-library/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { ImageNode } from '../../../../editor/types'
-import { renderImage } from '../image'
+import { renderImage } from '@/components/RichContentRenderer/marks/image'
+import type { ImageNode } from '@/editor/types'
 
 function imageNode(alt: string, src: string): ImageNode {
   return { type: 'image', attrs: { alt, src } }

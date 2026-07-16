@@ -30,9 +30,9 @@ import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { DocNode, ParagraphNode } from '../../types'
-import { convertAndInsert, HtmlPaste } from '../html-paste'
-import { TaskParagraph } from '../task-paragraph'
+import { convertAndInsert, HtmlPaste } from '@/editor/extensions/html-paste'
+import { TaskParagraph } from '@/editor/extensions/task-paragraph'
+import type { DocNode, ParagraphNode } from '@/editor/types'
 
 const lowlight = createLowlight(common)
 

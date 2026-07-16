@@ -9,7 +9,7 @@ import {
   clearTreeInteractionIfHolder,
   isLastInteractedTree,
   markTreeInteracted,
-} from '../last-interacted-tree'
+} from '@/lib/last-interacted-tree'
 
 beforeEach(() => {
   __resetLastInteractedTreeForTests()

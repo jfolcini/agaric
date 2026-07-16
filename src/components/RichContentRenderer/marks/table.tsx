@@ -1,5 +1,7 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
 import type {
   ParagraphNode,
   TableCellNode,
@@ -7,9 +9,6 @@ import type {
   TableNode,
   TableRowNode,
 } from '@/editor/types'
-
-import type { RenderContext } from '../context'
-import { renderInlineContent } from './inline'
 
 /**
  * Render a markdown table block in VIEW (read) mode.

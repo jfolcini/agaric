@@ -4,7 +4,7 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useUndoShortcuts } from '../useUndoShortcuts'
+import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
@@ -88,24 +88,23 @@ vi.mock('@/stores/page-blocks', () => ({
   getPageStore: mockGetPageStore,
 }))
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   getBlock: (...args: unknown[]) => mockGetBlock(...args),
 }))
 
-vi.mock('../../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
 import { toast } from 'sonner'
 
+import { announce } from '@/lib/announcer'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
-
-import { announce } from '../../lib/announcer'
 
 const mockedToast = vi.mocked(toast)
 const mockedToastError = vi.mocked(toast.error)

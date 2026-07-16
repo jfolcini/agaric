@@ -11,8 +11,8 @@ import { describe, expect, it } from 'vitest'
 import {
   type InlineQueryResolveDeps,
   resolveLegacyQueryToFilterExpr,
-} from '../inline-query-resolve'
-import { parseQueryExpression } from '../query-utils'
+} from '@/lib/inline-query-resolve'
+import { parseQueryExpression } from '@/lib/query-utils'
 
 /** Stub tag resolver: known prefixes → one id each, anything else → no tags. */
 const TAG_IDS: Record<string, string[]> = { work: ['TAG_WORK'], home: ['TAG_HOME'] }

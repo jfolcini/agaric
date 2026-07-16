@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import type { View } from '../navigation'
+import type { View } from '@/stores/navigation'
 import {
   defaultModeForView,
   type SearchSheetMode,
   useSearchSheetStore,
-} from '../useSearchSheetStore'
+} from '@/stores/useSearchSheetStore'
 
 describe('useSearchSheetStore', () => {
   beforeEach(() => {

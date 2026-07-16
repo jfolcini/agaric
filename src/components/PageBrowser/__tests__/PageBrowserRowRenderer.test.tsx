@@ -19,11 +19,13 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  PageBrowserRowRenderer,
+  type PageBrowserRowRendererProps,
+} from '@/components/PageBrowser/PageBrowserRowRenderer'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import type { PageTreeNode } from '@/lib/page-tree'
 import type { BlockRow } from '@/lib/tauri'
-
-import { PageBrowserRowRenderer, type PageBrowserRowRendererProps } from '../PageBrowserRowRenderer'
 
 /** Minimal `VirtualItem` — only `key`/`index`/`start` are read by the renderer. */
 function virtualRow(index = 0): PageBrowserRowRendererProps['virtualRow'] {

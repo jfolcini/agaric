@@ -1,11 +1,10 @@
 import { useCallback, useRef, useState } from 'react'
 
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import type { DiffSpan, HistoryEntry } from '../lib/tauri'
-import { computeEditDiff } from '../lib/tauri'
+import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
+import { computeEditDiff } from '@/lib/tauri'
 
 export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   expandedKeys: Set<K>

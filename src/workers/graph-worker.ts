@@ -15,12 +15,11 @@ import {
 } from 'd3-force'
 
 import { applyGraphForces, applyResizeForces, RESIZE_ALPHA } from '@/lib/graph-forces'
-
 import type {
   WorkerErrorMessage,
   WorkerInboundMessage,
   WorkerNodeUpdate,
-} from './graph-worker-types'
+} from '@/workers/graph-worker-types'
 
 // ── Internal node / edge types (d3-mutated) ──────────────────────────
 

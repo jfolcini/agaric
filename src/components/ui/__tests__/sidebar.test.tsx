@@ -12,8 +12,6 @@ import * as React from 'react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '@/lib/i18n'
-
 import {
   Sidebar,
   SidebarContent,
@@ -38,7 +36,8 @@ import {
   SidebarRail,
   SidebarSeparator,
   SidebarTrigger,
-} from '../sidebar'
+} from '@/components/ui/sidebar'
+import { t } from '@/lib/i18n'
 
 // ---------------------------------------------------------------------------
 // displayName

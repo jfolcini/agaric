@@ -28,8 +28,8 @@ import { Tooltip as RealTooltipPrimitive } from 'radix-ui'
 import type * as React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { IconButton } from '../icon-button'
-import { Tooltip, TooltipContent, TooltipTrigger } from '../tooltip'
+import { IconButton } from '@/components/ui/icon-button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 // Capture the props radix `Tooltip.Root` receives so override-forwarding is
 // assertable. Everything else stays the real radix implementation.

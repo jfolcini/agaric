@@ -15,8 +15,8 @@
  * by the M4 guard.
  */
 
-import type { FrontendSpan } from '../bindings'
-import { getSpanSink } from './transport'
+import type { FrontendSpan } from '@/lib/bindings'
+import { getSpanSink } from '@/lib/observability/transport'
 
 /** Flush when this many spans have accumulated (well under the 512 IPC cap). */
 const MAX_BATCH = 128

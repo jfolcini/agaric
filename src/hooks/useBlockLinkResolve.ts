@@ -12,10 +12,10 @@
 
 import { useEffect, useMemo } from 'react'
 
-import { logger } from '../lib/logger'
-import { batchResolve } from '../lib/tauri'
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+import { logger } from '@/lib/logger'
+import { batchResolve } from '@/lib/tauri'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 /** Matches the `[[ULID]]` block-link token. */
 const ULID_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g

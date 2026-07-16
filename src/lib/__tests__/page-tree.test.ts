@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { buildPageTree } from '../page-tree'
+import { buildPageTree } from '@/lib/page-tree'
 
 describe('buildPageTree', () => {
   it('returns empty array for empty input', () => {

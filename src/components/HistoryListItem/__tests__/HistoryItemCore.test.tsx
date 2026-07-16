@@ -16,9 +16,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { HistoryItemCore } from '../HistoryItemCore'
+import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 
-vi.mock('../../../hooks/useRichContentCallbacks', () => ({
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
     resolveBlockTitle: vi.fn(() => undefined),
     resolveBlockStatus: vi.fn(() => 'active' as const),

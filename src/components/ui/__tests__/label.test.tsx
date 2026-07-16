@@ -24,7 +24,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Label } from '../label'
+import { Label } from '@/components/ui/label'
 
 describe('Label', () => {
   // -- Default rendering ------------------------------------------------------

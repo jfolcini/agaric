@@ -18,7 +18,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { EMOJI_PICKER_ENABLED_KEY } from '../../lib/editor-preferences'
+import { EMOJI_PICKER_ENABLED_KEY } from '@/lib/editor-preferences'
 
 type CapturedOptions = Record<string, unknown>
 
@@ -32,7 +32,7 @@ async function loadWithCapturedOptions(): Promise<CapturedOptions> {
       return { spec: { key: opts['pluginKey'] } }
     },
   }))
-  const mod = await import('../extensions/emoji-picker')
+  const mod = await import('@/editor/extensions/emoji-picker')
   const ext = mod.EmojiPicker
   ;(ext.config.addProseMirrorPlugins as (this: unknown) => unknown).call({
     editor: {} as unknown,
@@ -64,7 +64,7 @@ afterEach(() => {
 
 describe('EmojiPicker — identity', () => {
   it('is an Extension named "emojiPicker"', async () => {
-    const mod = await import('../extensions/emoji-picker')
+    const mod = await import('@/editor/extensions/emoji-picker')
     expect(mod.EmojiPicker.type).toBe('extension')
     expect(mod.EmojiPicker.name).toBe('emojiPicker')
   })
@@ -222,7 +222,7 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
 
   /** Load a fresh copy of the extension and return its single input rule. */
   async function loadInputRule(): Promise<{ handler: InputRuleHandler }> {
-    const mod = await import('../extensions/emoji-picker')
+    const mod = await import('@/editor/extensions/emoji-picker')
     const rules = (
       mod.EmojiPicker.config.addInputRules as unknown as (this: unknown) => Array<{
         handler: InputRuleHandler
@@ -239,7 +239,7 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
     // so its own `peekEmojiDataset()` read sees an already-resolved dataset —
     // mirrors the common case where the suggestion popup (`allow`/`items`)
     // already triggered the load on an earlier keystroke.
-    const { loadEmojiDataset } = await import('../emoji-data')
+    const { loadEmojiDataset } = await import('@/editor/emoji-data')
     await loadEmojiDataset()
 
     const rule = await loadInputRule()
@@ -261,7 +261,7 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
   })
 
   it('returns null (leaves text untouched) for an unknown shortcode once the dataset is cached', async () => {
-    const { loadEmojiDataset } = await import('../emoji-data')
+    const { loadEmojiDataset } = await import('@/editor/emoji-data')
     await loadEmojiDataset()
 
     const rule = await loadInputRule()
@@ -287,7 +287,7 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
   })
 
   it('leaves the text untouched and kicks off the load when the dataset is not yet cached', async () => {
-    const dataMod = await import('../emoji-data')
+    const dataMod = await import('@/editor/emoji-data')
     // A genuinely cold module in this test's fresh registry epoch — nothing
     // has called `loadEmojiDataset()` yet.
     expect(dataMod.peekEmojiDataset()).toBeNull()

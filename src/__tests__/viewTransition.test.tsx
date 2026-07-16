@@ -10,12 +10,12 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { App } from '../App'
-import { useBootStore } from '../stores/boot'
-import { useNavigationStore } from '../stores/navigation'
-import { useTabsStore } from '../stores/tabs'
+import { App } from '@/App'
+import { useBootStore } from '@/stores/boot'
+import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 
-vi.mock('../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
@@ -31,7 +31,7 @@ vi.mock('@/components/pages/PagePropertyTable', () => ({
   PagePropertyTable: () => <div data-testid="page-property-table" />,
 }))
 
-vi.mock('../hooks/useSyncTrigger', () => ({
+vi.mock('@/hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),
 }))
 

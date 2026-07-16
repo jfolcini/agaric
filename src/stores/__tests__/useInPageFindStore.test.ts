@@ -11,7 +11,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { useInPageFindStore } from '../useInPageFindStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
 afterEach(() => {
   useInPageFindStore.setState({

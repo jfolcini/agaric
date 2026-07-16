@@ -10,22 +10,22 @@ import type { Dispatch, SetStateAction } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
-import { usePageCreation } from '../usePageCreation'
+import { usePageCreation } from '@/hooks/usePageCreation'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 // Partial tauri mock — only `createPageInSpace` is exercised here.
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   createPageInSpace: vi.fn(),
 }))
 
 // Primary-focus registration is a side effect unrelated to creation logic.
-vi.mock('../usePrimaryFocus', () => ({
+vi.mock('@/hooks/usePrimaryFocus', () => ({
   useRegisterPrimaryFocus: vi.fn(),
 }))
 
-import { isConflict } from '../../lib/app-error'
-import { createPageInSpace } from '../../lib/tauri'
+import { isConflict } from '@/lib/app-error'
+import { createPageInSpace } from '@/lib/tauri'
 
 const mockedCreate = vi.mocked(createPageInSpace)
 const mockedToastError = vi.mocked(toast.error)

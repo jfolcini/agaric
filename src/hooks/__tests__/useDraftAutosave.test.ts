@@ -15,9 +15,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
-
-import { useDraftAutosave } from '../useDraftAutosave'
 
 vi.mock('@/lib/tauri', () => ({
   saveDraft: vi.fn(() => Promise.resolve()),

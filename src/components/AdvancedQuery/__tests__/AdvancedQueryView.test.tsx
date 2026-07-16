@@ -5,14 +5,13 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { AdvancedQueryView } from '@/components/AdvancedQuery/AdvancedQueryView'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
 import type { ActiveBlockRow, AdvancedQueryResponse } from '@/lib/tauri'
 import { useAdvancedQueryStore } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-import { AdvancedQueryView } from '../AdvancedQueryView'
 
 const mockedInvoke = vi.mocked(invoke)
 

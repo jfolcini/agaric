@@ -11,13 +11,13 @@
  * (`to-search-filter.ts`) extend in lock-step.
  */
 
-import { TASK_STATES } from '../filter-dimension-metadata'
-import { getPriorityLevels } from '../priority-levels'
-import { validateGlob } from './glob-validate'
-import { isIsoDate } from './is-iso-date'
-import { registerTokenPrefix, type ValueParser } from './registry'
-import type { DateOp, FilterToken, NamedDateRange } from './types'
-import { prefixed, ValidationCode } from './validation-codes'
+import { TASK_STATES } from '@/lib/filter-dimension-metadata'
+import { getPriorityLevels } from '@/lib/priority-levels'
+import { validateGlob } from '@/lib/search-query/glob-validate'
+import { isIsoDate } from '@/lib/search-query/is-iso-date'
+import { registerTokenPrefix, type ValueParser } from '@/lib/search-query/registry'
+import type { DateOp, FilterToken, NamedDateRange } from '@/lib/search-query/types'
+import { prefixed, ValidationCode } from '@/lib/search-query/validation-codes'
 
 let registered = false
 

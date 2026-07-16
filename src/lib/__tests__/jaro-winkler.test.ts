@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { blendFtsFuzzy, jaroWinkler } from '../jaro-winkler'
+import { blendFtsFuzzy, jaroWinkler } from '@/lib/jaro-winkler'
 
 describe('jaroWinkler — boundaries', () => {
   it('returns 1 for identical strings', () => {

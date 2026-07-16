@@ -12,7 +12,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 
 /** Helper: querySelector that throws on null. */
 function q(container: HTMLElement, selector: string): Element {

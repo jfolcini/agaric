@@ -51,7 +51,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import type { FlatBlock } from '../lib/tree-utils'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 /**
  * Provisional per-page mount ceiling (#2467). Unmeasured — see file header.

@@ -22,7 +22,7 @@ import {
   parseEnex,
   sanitizeNoteTitleToFilename,
   UNTITLED_PLACEHOLDER,
-} from '../enex-import'
+} from '@/lib/enex-import'
 
 /** Index into a parsed-note array with a runtime guard (no non-null assertions). */
 function at(notes: EnexNote[], index = 0): EnexNote {

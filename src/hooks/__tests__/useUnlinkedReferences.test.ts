@@ -17,8 +17,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { queryClient } from '../../lib/query-client'
-import { useUnlinkedReferences, type UseUnlinkedReferencesParams } from '../useUnlinkedReferences'
+import {
+  useUnlinkedReferences,
+  type UseUnlinkedReferencesParams,
+} from '@/hooks/useUnlinkedReferences'
+import { queryClient } from '@/lib/query-client'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 

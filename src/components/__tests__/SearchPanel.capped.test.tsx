@@ -17,13 +17,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
-
-import { useNavigationStore } from '../../stores/navigation'
-import { useSearchHistoryStore } from '../../stores/search-history'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { SearchPanel } from '../SearchPanel'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSearchHistoryStore } from '@/stores/search-history'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 // Mirror the main SearchPanel.test.tsx virtualizer mock so
 // jsdom's zero-height scroll container doesn't collapse the virtual window.
@@ -31,15 +30,15 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     resolvePageByAlias: vi.fn().mockResolvedValue(null),
   }
 })
 
-import { resolvePageByAlias } from '../../lib/tauri'
+import { resolvePageByAlias } from '@/lib/tauri'
 
 // E2E-A4 — controlled `useSearchResults` so we drive `capped` directly. #2634 —
 // the panel migrated off `usePaginatedQuery` onto `useInfiniteQuery` inside
@@ -49,7 +48,7 @@ import { resolvePageByAlias } from '../../lib/tauri'
 // per-test before each render.
 let cappedValue = false
 let mockedItems: unknown[] = []
-vi.mock('../SearchPanel/useSearchResults', () => ({
+vi.mock('@/components/SearchPanel/useSearchResults', () => ({
   useSearchResults: () => ({
     results: mockedItems,
     searchLoading: false,

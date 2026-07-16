@@ -18,11 +18,10 @@ import type React from 'react'
 import { useId, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { IncludeExcludeToggle } from '@/components/search/filter-forms/IncludeExcludeToggle'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import type { FilterToken } from '@/lib/search-query'
-
-import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
 export interface SearchPropertyFilterFormProps {
   onAddFilter: (token: FilterToken) => void

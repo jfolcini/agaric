@@ -6,9 +6,8 @@
 
 import { useTranslation } from 'react-i18next'
 
+import type { DateEditorState } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Input } from '@/components/ui/input'
-
-import type { DateEditorState } from './usePropertyRowEditor'
 
 export interface DateEditorProps {
   state: DateEditorState

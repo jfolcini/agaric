@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { mapBackendState } from '@/hooks/useSyncEvents'
+import { announce } from '@/lib/announcer'
+import { i18n } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-
-import { announce } from '../lib/announcer'
-import { i18n } from '../lib/i18n'
-import type { PeerRefRow } from '../lib/tauri'
-import { flushAllDrafts, listPeerRefs, startSync } from '../lib/tauri'
-import type { PeerInfo } from '../stores/sync'
-import { useSyncStore } from '../stores/sync'
-import { mapBackendState } from './useSyncEvents'
+import type { PeerRefRow } from '@/lib/tauri'
+import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
+import type { PeerInfo } from '@/stores/sync'
+import { useSyncStore } from '@/stores/sync'
 
 /**
  * Maps a backend `PeerRefRow` to the store-facing `PeerInfo` shape (#1076).

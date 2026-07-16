@@ -16,9 +16,9 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { keyFor, useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { usePageDelete } from '../usePageDelete'
+import { usePageDelete } from '@/hooks/usePageDelete'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 

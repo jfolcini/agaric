@@ -30,6 +30,11 @@ import type { RefObject } from 'react'
 import { useEffect, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { DatePickerMode } from '@/hooks/useBlockDatePicker'
+import { applyContentEdit, readCurrentContent } from '@/hooks/useBlockSlashCommands/helpers'
+import type { SlashCommandContext } from '@/hooks/useBlockSlashCommands/types'
+import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
 import {
   type BlockTypeToken,
   convertBlockContent,
@@ -37,15 +42,9 @@ import {
 } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { type BlockCommandHandler, registerBlockCommandTarget } from '../lib/block-command-bus'
-import { setPriority as setPriorityCmd } from '../lib/tauri'
-import type { PageBlockState } from '../stores/page-blocks'
-import { useUndoStore } from '../stores/undo'
-import type { DatePickerMode } from './useBlockDatePicker'
-import { applyContentEdit, readCurrentContent } from './useBlockSlashCommands/helpers'
-import type { SlashCommandContext } from './useBlockSlashCommands/types'
+import { setPriority as setPriorityCmd } from '@/lib/tauri'
+import type { PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 /** Known callout variants (mirrors `CALLOUT_CONFIG` in RichContentRenderer). */
 const CALLOUT_TYPES = new Set(['info', 'warning', 'tip', 'error', 'note'])

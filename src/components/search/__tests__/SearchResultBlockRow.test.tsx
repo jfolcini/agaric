@@ -15,9 +15,8 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchResultBlockRow } from '@/components/search/SearchResultBlockRow'
 import type { SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
-
-import { SearchResultBlockRow } from '../SearchResultBlockRow'
 
 // #828 — the backend `snippet()` highlight sentinels (PUA U+E000 open /
 // U+E001 close) that `SnippetHighlight` parses into `<mark>` nodes.

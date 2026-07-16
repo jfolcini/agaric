@@ -21,14 +21,13 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { t } from '@/lib/i18n'
-
 import {
   ONBOARDING_STORAGE_KEY,
   readOnboardingSeen,
   resetOnboardingSeen,
   SpaceOnboardingHint,
-} from '../SpaceOnboardingHint'
+} from '@/components/SpaceManageDialog/SpaceOnboardingHint'
+import { t } from '@/lib/i18n'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

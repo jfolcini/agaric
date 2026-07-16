@@ -3,25 +3,25 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('../../lib/open-url', () => ({ openUrl: vi.fn() }))
+vi.mock('@/lib/open-url', () => ({ openUrl: vi.fn() }))
 
-const { openUrl } = await import('../../lib/open-url')
+const { openUrl } = await import('@/lib/open-url')
 const mockedOpenUrl = vi.mocked(openUrl)
 
-vi.mock('../../editor/markdown-serializer', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('../../editor/markdown-serializer')>()
+vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
+  const mod = await importOriginal<typeof import('@/editor/markdown-serializer')>()
   return { ...mod, parse: vi.fn(mod.parse) }
 })
 
-const { parse } = await import('../../editor/markdown-serializer')
+const { parse } = await import('@/editor/markdown-serializer')
 const mockedParse = vi.mocked(parse)
 
 import {
   CALLOUT_CONFIG,
   clearRichContentParseCache,
   renderRichContent,
-} from '../RichContentRenderer'
-import { TooltipProvider } from '../ui/tooltip'
+} from '@/components/RichContentRenderer'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 const BLOCK_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 const TAG_ID = '01CRZ3NDEKTSV4RRFFQ69G5FAV'

@@ -20,7 +20,7 @@ vi.mock('lucide-react', () => ({
   XCircle: (props: Record<string, unknown>) => <svg data-testid="icon-cancelled" {...props} />,
 }))
 
-import { StatusIcon } from '../status-icon'
+import { StatusIcon } from '@/components/ui/status-icon'
 
 describe('StatusIcon', () => {
   // 1. Renders correct icon for each todo state

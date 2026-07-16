@@ -25,8 +25,8 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-} from '../ui/alert-dialog'
-import { Button } from '../ui/button'
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 
 interface BlockBatchActionMenuProps {
   selectedBlockIds: string[]

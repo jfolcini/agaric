@@ -27,7 +27,7 @@ import {
   POPOVER_TRIGGER_VARIABLE_RESERVE_PX,
   type ToolbarItem,
   useToolbarOverflow,
-} from '../useToolbarOverflow'
+} from '@/hooks/useToolbarOverflow'
 
 // ── MockResizeObserver ────────────────────────────────────────────────
 // A minimal RO that captures observed elements + lets the test fire

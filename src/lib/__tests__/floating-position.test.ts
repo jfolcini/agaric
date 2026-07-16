@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { applySafePosition } from '../floating-position'
+import { applySafePosition } from '@/lib/floating-position'
 
 describe('applySafePosition', () => {
   it('applies x/y in px on success', () => {

@@ -30,10 +30,9 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { AgentAccessTab } from '@/components/settings/AgentAccessTab'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
-
-import { AgentAccessTab } from '../AgentAccessTab'
 
 // ---------------------------------------------------------------------------
 // Tauri event mock — every test registers its listener here and can fire

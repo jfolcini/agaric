@@ -29,8 +29,8 @@ import path from 'node:path'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { type PageMetaRow, metaRowMatchesFilter } from '../handlers'
-import { blockTags, properties } from '../seed'
+import { type PageMetaRow, metaRowMatchesFilter } from '@/lib/tauri-mock/handlers'
+import { blockTags, properties } from '@/lib/tauri-mock/seed'
 
 interface FixturePropValue {
   type: 'Text' | 'Ref' | 'Num' | 'Date'

@@ -18,7 +18,12 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { asciiLowercase, globToRegExp, pageGlobFilterMatches, prepareGlobs } from '../glob-validate'
+import {
+  asciiLowercase,
+  globToRegExp,
+  pageGlobFilterMatches,
+  prepareGlobs,
+} from '@/lib/search-query/glob-validate'
 
 interface Row {
   id: string

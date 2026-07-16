@@ -8,8 +8,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import type { HistoryEntry } from '../../lib/tauri'
-import { entryKey, isRevertible, useHistorySelection } from '../useHistorySelection'
+import { entryKey, isRevertible, useHistorySelection } from '@/hooks/useHistorySelection'
+import type { HistoryEntry } from '@/lib/tauri'
 
 function makeEntry(
   seq: number,

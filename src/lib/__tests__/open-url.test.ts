@@ -14,7 +14,7 @@ describe('openUrl', () => {
   it('calls open() from @tauri-apps/plugin-shell when available and resolves true', async () => {
     mockOpen.mockResolvedValueOnce(undefined)
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
-    const { openUrl } = await import('../open-url')
+    const { openUrl } = await import('@/lib/open-url')
 
     const result = await openUrl('https://example.com')
 
@@ -28,7 +28,7 @@ describe('openUrl', () => {
     })
     const fakeWindow = {} as Window
     const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => fakeWindow)
-    const { openUrl } = await import('../open-url')
+    const { openUrl } = await import('@/lib/open-url')
 
     const result = await openUrl('https://fallback.com')
 
@@ -45,7 +45,7 @@ describe('openUrl', () => {
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
     const fakeWindow = {} as Window
     const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => fakeWindow)
-    const { openUrl } = await import('../open-url')
+    const { openUrl } = await import('@/lib/open-url')
 
     const result = await openUrl('https://shell-fail.com')
 
@@ -62,7 +62,7 @@ describe('openUrl', () => {
     mockOpen.mockRejectedValueOnce(new Error('shell refused'))
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
     const windowOpenSpy = vi.spyOn(window, 'open').mockImplementation(() => null)
-    const { openUrl } = await import('../open-url')
+    const { openUrl } = await import('@/lib/open-url')
 
     const result = await openUrl('https://blocked.com')
 
@@ -78,7 +78,7 @@ describe('openUrl', () => {
     // (1) happy path
     mockOpen.mockResolvedValueOnce(undefined)
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
-    let mod = await import('../open-url')
+    let mod = await import('@/lib/open-url')
     await expect(mod.openUrl('https://ok.com')).resolves.not.toThrow()
 
     // (2) shell rejects, window.open returns handle
@@ -86,7 +86,7 @@ describe('openUrl', () => {
     mockOpen.mockRejectedValueOnce(new Error('boom'))
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
     vi.spyOn(window, 'open').mockImplementation(() => ({}) as Window)
-    mod = await import('../open-url')
+    mod = await import('@/lib/open-url')
     await expect(mod.openUrl('https://retry.com')).resolves.not.toThrow()
 
     // (3) shell rejects, window.open returns null
@@ -94,7 +94,7 @@ describe('openUrl', () => {
     mockOpen.mockRejectedValueOnce(new Error('boom'))
     vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
     vi.spyOn(window, 'open').mockImplementation(() => null)
-    mod = await import('../open-url')
+    mod = await import('@/lib/open-url')
     await expect(mod.openUrl('https://blocked.com')).resolves.not.toThrow()
   })
 })

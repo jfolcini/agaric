@@ -18,8 +18,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { hasPreference, PREFERENCES, readPreference, writePreference } from '../lib/preferences'
-import type { FlatBlock } from '../lib/tree-utils'
+import { hasPreference, PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 /**
  * Load persisted collapsed ids for a page. Scoped key first; falls back to

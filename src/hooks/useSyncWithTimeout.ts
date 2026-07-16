@@ -9,8 +9,7 @@
 import { useCallback, useState } from 'react'
 
 import { logger } from '@/lib/logger'
-
-import { cancelSync } from '../lib/tauri'
+import { cancelSync } from '@/lib/tauri'
 
 export function useSyncWithTimeout(timeoutMs = 60_000) {
   const [loading, setLoading] = useState(false)

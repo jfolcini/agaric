@@ -18,7 +18,7 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useScrollToFocus } from '../useScrollToFocus'
+import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 
 let scrollSpy: ReturnType<typeof vi.spyOn>
 const seededElements: HTMLElement[] = []

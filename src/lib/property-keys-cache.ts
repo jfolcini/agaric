@@ -19,16 +19,15 @@
  * present — otherwise the refetch is skipped entirely.
  */
 
-import { queryClient } from '@/lib/query-client'
-
-import { EVENT_PROPERTY_CHANGED } from './block-event-names'
-import { logger } from './logger'
+import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
+import { logger } from '@/lib/logger'
 import {
   _resetPropertyChangeDispatchForTest,
   ensurePropertyChangeDispatch,
   registerPropertyChangeTarget,
-} from './property-change-dispatch'
-import { listPropertyKeys } from './tauri'
+} from '@/lib/property-change-dispatch'
+import { queryClient } from '@/lib/query-client'
+import { listPropertyKeys } from '@/lib/tauri'
 
 export { EVENT_PROPERTY_CHANGED }
 

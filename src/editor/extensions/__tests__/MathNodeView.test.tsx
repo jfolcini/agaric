@@ -36,7 +36,7 @@ vi.mock('@/components/rendering/KatexMath', () => ({
   ),
 }))
 
-const { MathInlineNodeView, MathBlockNodeView } = await import('../MathNodeView')
+const { MathInlineNodeView, MathBlockNodeView } = await import('@/editor/extensions/MathNodeView')
 
 function makeProps(
   latex: string,

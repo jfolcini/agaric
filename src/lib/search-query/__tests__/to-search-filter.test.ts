@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '../classify'
-import { astToFilterProjection } from '../to-search-filter'
+import { parse } from '@/lib/search-query/classify'
+import { astToFilterProjection } from '@/lib/search-query/to-search-filter'
 
 function project(s: string) {
   return astToFilterProjection(parse(s))

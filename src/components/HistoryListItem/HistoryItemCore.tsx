@@ -29,6 +29,7 @@ import type * as React from 'react'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
@@ -41,8 +42,6 @@ import { formatPropertyName } from '@/lib/property-utils'
 import type { HistoryEntry } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
-
-import { renderRichContent } from '../RichContentRenderer'
 
 // ---------------------------------------------------------------------------
 // Badge colour mapping

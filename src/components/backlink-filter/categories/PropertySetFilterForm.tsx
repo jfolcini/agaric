@@ -8,6 +8,7 @@ import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -16,8 +17,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-
-import type { FilterFormHandle } from './types'
 
 export interface PropertySetFilterFormProps {
   propertyKeys: string[]

@@ -9,18 +9,18 @@ import { fireEvent, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { t } from '../../lib/i18n'
-import { __resetLastInteractedTreeForTests } from '../../lib/last-interacted-tree'
-import { useBlockStore } from '../../stores/blocks'
-import type { UseBlockTreeKeyboardShortcutsOptions } from '../useBlockTreeKeyboardShortcuts'
-import { useBlockTreeKeyboardShortcuts } from '../useBlockTreeKeyboardShortcuts'
+import type { UseBlockTreeKeyboardShortcutsOptions } from '@/hooks/useBlockTreeKeyboardShortcuts'
+import { useBlockTreeKeyboardShortcuts } from '@/hooks/useBlockTreeKeyboardShortcuts'
+import { t } from '@/lib/i18n'
+import { __resetLastInteractedTreeForTests } from '@/lib/last-interacted-tree'
+import { useBlockStore } from '@/stores/blocks'
 
 // #913 — block cut/copy/paste reads/writes the system clipboard via the
 // app's wrapper. Mock it so the tests assert the serialized markdown without
 // touching a real clipboard.
 const mockWriteText = vi.fn<(text: string) => Promise<void>>().mockResolvedValue(undefined)
 const mockReadText = vi.fn<() => Promise<string>>().mockResolvedValue('')
-vi.mock('../../lib/clipboard', () => ({
+vi.mock('@/lib/clipboard', () => ({
   writeText: (text: string) => mockWriteText(text),
   readText: () => mockReadText(),
 }))

@@ -36,7 +36,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { useLinkPreview } from '../useLinkPreview'
+import { useLinkPreview } from '@/hooks/useLinkPreview'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

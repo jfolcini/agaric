@@ -18,8 +18,8 @@
 import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { useBlockNavigation } from '../useBlockNavigation'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockNavigation } from '@/hooks/useBlockNavigation'
 
 function makeKeyboardEvent(key: string): {
   key: string

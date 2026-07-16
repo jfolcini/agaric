@@ -5,7 +5,7 @@ import {
   DEFAULT_JOURNAL_DATE_FORMAT,
   getJournalDateFormat,
   useJournalDateFormat,
-} from '../useJournalDateFormat'
+} from '@/hooks/useJournalDateFormat'
 
 const KEY = 'journal-date-format'
 

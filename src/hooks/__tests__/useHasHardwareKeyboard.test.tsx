@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   _resetHardwareKeyboardLatchForTests,
   useHasHardwareKeyboard,
-} from '../useHasHardwareKeyboard'
+} from '@/hooks/useHasHardwareKeyboard'
 
 beforeEach(() => {
   _resetHardwareKeyboardLatchForTests()

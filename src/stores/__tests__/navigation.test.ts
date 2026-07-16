@@ -1,16 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useJournalStore } from '../journal'
-import { selectCurrentViewForSpace, useNavigationStore } from '../navigation'
-import { useRecentPagesStore } from '../recent-pages'
-import { useSpaceStore } from '../space'
+import { useJournalStore } from '@/stores/journal'
+import { selectCurrentViewForSpace, useNavigationStore } from '@/stores/navigation'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import { useSpaceStore } from '@/stores/space'
 import {
   resetTabIdCounter,
   selectActiveTabIndexForSpace,
   selectPageStack,
   selectTabsForSpace,
   useTabsStore,
-} from '../tabs'
+} from '@/stores/tabs'
 
 /** Helper to reset the store to a clean initial state. */
 function resetStore() {

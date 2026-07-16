@@ -39,7 +39,7 @@ vi.mock('@tiptap/react', () => ({
 const mermaid = (await import('mermaid')).default
 const mockedRender = vi.mocked(mermaid.render)
 
-const { MermaidCodeBlockView } = await import('../MermaidCodeBlockView')
+const { MermaidCodeBlockView } = await import('@/editor/extensions/MermaidCodeBlockView')
 
 interface MockEditorOptions {
   /** Absolute PM position of the code block (what `getPos()` returns). */

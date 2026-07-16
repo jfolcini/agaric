@@ -12,7 +12,7 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { useSidebarEdgeSwipe } from '../use-sidebar-edge-swipe'
+import { useSidebarEdgeSwipe } from '@/components/ui/sidebar/use-sidebar-edge-swipe'
 
 /**
  * Builds a TouchEvent. jsdom does not implement TouchEvent constructor,

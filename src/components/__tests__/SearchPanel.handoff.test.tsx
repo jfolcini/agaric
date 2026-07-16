@@ -20,30 +20,29 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
 import { queryClient } from '@/lib/query-client'
-
-import { useNavigationStore } from '../../stores/navigation'
-import { useSearchHistoryStore } from '../../stores/search-history'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { useCommandPaletteStore } from '../../stores/useCommandPaletteStore'
-import { SearchPanel } from '../SearchPanel'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSearchHistoryStore } from '@/stores/search-history'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
 // Mirror the main SearchPanel.test.tsx virtualizer mock.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Mock resolvePageByAlias separately so alias-resolution calls don't
 // consume values from the FIFO invoke mock queue.
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     resolvePageByAlias: vi.fn().mockResolvedValue(null),
   }
 })
 
-import { resolvePageByAlias } from '../../lib/tauri'
+import { resolvePageByAlias } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 

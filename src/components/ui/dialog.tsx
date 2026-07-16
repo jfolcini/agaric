@@ -1,11 +1,10 @@
 import { Dialog as DialogPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
+import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
+import { DIALOG_CONTENT_BASE } from '@/components/ui/dialog-shared'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
-
-import { CloseButtonIcon, closeButtonClassName } from './close-button'
-import { DIALOG_CONTENT_BASE } from './dialog-shared'
-import { ScrollArea } from './scroll-area'
 
 function Dialog({ ...props }: React.ComponentProps<typeof DialogPrimitive.Root>) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />

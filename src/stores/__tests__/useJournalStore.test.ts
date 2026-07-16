@@ -15,8 +15,8 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useJournalStore } from '../journal'
-import { useSpaceStore } from '../space'
+import { useJournalStore } from '@/stores/journal'
+import { useSpaceStore } from '@/stores/space'
 
 const PERSONAL = 'SPACE_PERSONAL'
 const WORK = 'SPACE_WORK'

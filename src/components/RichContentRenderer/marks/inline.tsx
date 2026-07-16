@@ -1,15 +1,14 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderBlockLink } from '@/components/RichContentRenderer/marks/blockLink'
+import { renderBlockRef } from '@/components/RichContentRenderer/marks/blockRef'
+import { renderHardBreak } from '@/components/RichContentRenderer/marks/hardBreak'
+import { renderImage } from '@/components/RichContentRenderer/marks/image'
+import { renderMathInline } from '@/components/RichContentRenderer/marks/math'
+import { renderTagRef } from '@/components/RichContentRenderer/marks/tagRef'
+import { renderTextInline } from '@/components/RichContentRenderer/marks/text'
 import type { InlineNode } from '@/editor/types'
-
-import type { RenderContext } from '../context'
-import { renderBlockLink } from './blockLink'
-import { renderBlockRef } from './blockRef'
-import { renderHardBreak } from './hardBreak'
-import { renderImage } from './image'
-import { renderMathInline } from './math'
-import { renderTagRef } from './tagRef'
-import { renderTextInline } from './text'
 
 /**
  * Dispatch an inline node (text / tag_ref / block_link / block_ref / hardBreak)

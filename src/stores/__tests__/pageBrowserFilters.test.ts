@@ -1,9 +1,8 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { FilterPrimitive } from '@/lib/tauri'
-
-import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '../pageBrowserFilters'
-import { LEGACY_SPACE_KEY } from '../space'
+import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 const SPACE_A = 'SPACE_A'
 const SPACE_B = 'SPACE_B'

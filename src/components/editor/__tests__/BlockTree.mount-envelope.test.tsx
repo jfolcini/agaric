@@ -26,7 +26,7 @@ import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
     <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
   ),

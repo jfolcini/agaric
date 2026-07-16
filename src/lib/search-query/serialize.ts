@@ -13,7 +13,7 @@
  * chip-click handlers call it and re-serialise.
  */
 
-import type { FilterToken, SearchQueryAST } from './types'
+import type { FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
 /**
  * #152 / #718 — wrap a filter value in `"..."` when it contains any

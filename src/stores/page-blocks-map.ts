@@ -6,7 +6,7 @@
  * core — see the perf invariant documented on `buildBlocksById`.
  */
 
-import type { FlatBlock } from '../lib/tree-utils'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 // ── blocksById helpers (G) ───────────────────────────────────────
 

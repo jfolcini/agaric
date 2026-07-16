@@ -1,9 +1,8 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { TagRefNode } from '@/editor/types'
 import { cn } from '@/lib/utils'
-
-import type { RenderContext } from '../context'
 
 /**
  * Build the event-handler + role props bundle for a clickable tag chip.

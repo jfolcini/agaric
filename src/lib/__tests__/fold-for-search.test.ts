@@ -16,7 +16,7 @@ import {
   foldForSearch,
   indexOfFolded,
   matchesSearchFolded,
-} from '../fold-for-search'
+} from '@/lib/fold-for-search'
 
 describe('foldForSearch', () => {
   describe('ASCII fast path', () => {

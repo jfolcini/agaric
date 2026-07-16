@@ -23,10 +23,10 @@ import path from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../logger'
-import { dispatch, HANDLERS } from '../handlers'
+import { logger } from '@/lib/logger'
+import { dispatch, HANDLERS } from '@/lib/tauri-mock/handlers'
 
-vi.mock('../../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

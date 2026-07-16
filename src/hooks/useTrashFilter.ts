@@ -9,10 +9,9 @@
 
 import { useCallback, useMemo, useState } from 'react'
 
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
-
-import type { BlockRow } from '../lib/tauri'
-import { useDebouncedCallback } from './useDebouncedCallback'
+import type { BlockRow } from '@/lib/tauri'
 
 export interface UseTrashFilterOptions {
   blocks: BlockRow[]

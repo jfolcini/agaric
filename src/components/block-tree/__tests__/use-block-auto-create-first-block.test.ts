@@ -17,10 +17,10 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import { useBlockStore } from '../../../stores/blocks'
-import { createPageBlockStore, type PageBlockState } from '../../../stores/page-blocks'
-import { useBlockAutoCreateFirstBlock } from '../use-block-auto-create-first-block'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockAutoCreateFirstBlock } from '@/components/block-tree/use-block-auto-create-first-block'
+import { useBlockStore } from '@/stores/blocks'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 

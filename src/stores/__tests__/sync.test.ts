@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useSyncStore } from '../sync'
+import { useSyncStore } from '@/stores/sync'
 
 describe('useSyncStore', () => {
   beforeEach(() => {

@@ -12,7 +12,7 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Skeleton } from '../skeleton'
+import { Skeleton } from '@/components/ui/skeleton'
 
 describe('Skeleton', () => {
   it('renders with data-slot="skeleton"', () => {

@@ -11,7 +11,6 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-
 import {
   AlertDialog,
   AlertDialogAction,
@@ -25,7 +24,7 @@ import {
   AlertDialogPortal,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from '../alert-dialog'
+} from '@/components/ui/alert-dialog'
 
 // ---------------------------------------------------------------------------
 // displayName

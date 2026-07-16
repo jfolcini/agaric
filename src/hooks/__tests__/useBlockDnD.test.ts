@@ -38,7 +38,7 @@ vi.mock('@dnd-kit/sortable', () => ({
 // packages the structural args, and `projectDepth` replays them into
 // `getProjection(items, activeId, overId, dragOffset, indentWidth, rootParentId,
 // subtreeHeight)` — the exact pre-split signature and return value.
-vi.mock('../../lib/tree-utils', () => {
+vi.mock('@/lib/tree-utils', () => {
   const getProjection = vi.fn(() => null)
   return {
     getDragDescendants: vi.fn(() => new Set<string>()),
@@ -84,7 +84,7 @@ vi.mock('@/components/editor/SortableBlock', () => ({
   INDENT_WIDTH: 24,
 }))
 
-vi.mock('../useIsTouch', () => ({
+vi.mock('@/hooks/useIsTouch', () => ({
   useIsTouch: vi.fn(() => false),
 }))
 
@@ -99,18 +99,18 @@ vi.mock('@/lib/logger', () => ({
 
 // ── Imports ──────────────────────────────────────────────────────────────
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import { capturePreDragFocus, consumePreDragFocus } from '../../lib/pre-drag-focus'
-import type { Projection } from '../../lib/tree-utils'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockDnD } from '@/hooks/useBlockDnD'
+import { useIsTouch } from '@/hooks/useIsTouch'
+import { logger } from '@/lib/logger'
+import { capturePreDragFocus, consumePreDragFocus } from '@/lib/pre-drag-focus'
+import type { Projection } from '@/lib/tree-utils'
 import {
   computeDropIndex,
   computeSelectionRoots,
   getDragDescendants,
   getProjection,
-} from '../../lib/tree-utils'
-import { useBlockDnD } from '../useBlockDnD'
-import { useIsTouch } from '../useIsTouch'
+} from '@/lib/tree-utils'
 
 const mockedGetDragDescendants = vi.mocked(getDragDescendants)
 const mockedGetProjection = vi.mocked(getProjection)

@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { usePollingQuery } from '../usePollingQuery'
+import { usePollingQuery } from '@/hooks/usePollingQuery'
 
 describe('usePollingQuery', () => {
   beforeEach(() => {

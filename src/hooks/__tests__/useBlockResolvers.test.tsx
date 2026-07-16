@@ -14,7 +14,7 @@ import {
   type BlockResolvers,
   BlockResolversProvider,
   useBlockResolvers,
-} from '../useBlockResolvers'
+} from '@/hooks/useBlockResolvers'
 
 function Probe({ onResult }: { onResult: (resolvers: BlockResolvers | null) => void }) {
   const resolvers = useBlockResolvers()

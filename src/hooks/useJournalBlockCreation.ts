@@ -28,18 +28,17 @@ import { useTranslation } from 'react-i18next'
 
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { createBlock, createPageInSpace } from '../lib/tauri'
+import { createBlock, createPageInSpace } from '@/lib/tauri'
 import {
   insertTemplateBlocks,
   insertTemplateBlocksFromString,
   loadJournalTemplate,
   loadJournalTemplateForSpace,
-} from '../lib/template-utils'
-import { useBlockStore } from '../stores/blocks'
-import { getPageStore } from '../stores/page-blocks'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+} from '@/lib/template-utils'
+import { useBlockStore } from '@/stores/blocks'
+import { getPageStore } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 interface UseJournalBlockCreationOpts {
   pageMap: Map<string, string>

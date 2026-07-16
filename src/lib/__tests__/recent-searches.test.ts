@@ -5,8 +5,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { useSpaceStore } from '../../stores/space'
-import { addRecentSearch, clearRecentSearches, getRecentSearches } from '../recent-searches'
+import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
+import { useSpaceStore } from '@/stores/space'
 
 const initialSpace = useSpaceStore.getState()
 

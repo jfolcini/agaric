@@ -25,10 +25,9 @@
 
 import { useCallback } from 'react'
 
+import { PREFERENCES, type SortOption, usePreference } from '@/lib/preferences'
+import type { BlockRow, PageWithMetadataRow } from '@/lib/tauri'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
-
-import { PREFERENCES, type SortOption, usePreference } from '../lib/preferences'
-import type { BlockRow, PageWithMetadataRow } from '../lib/tauri'
 
 /**
  * Sort options. 3 legacy + 4 new.

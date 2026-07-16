@@ -32,8 +32,7 @@ vi.mock('@/components/RichContentRenderer', () => ({
 }))
 
 import { renderRichContent } from '@/components/RichContentRenderer'
-
-import { TrashRowItem } from '../TrashRowItem'
+import { TrashRowItem } from '@/components/TrashView/TrashRowItem'
 
 const callbacks: RichContentCallbacks = {
   resolveBlockTitle: () => undefined,

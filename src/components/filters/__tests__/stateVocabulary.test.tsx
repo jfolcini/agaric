@@ -16,10 +16,9 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { BacklinkStateFilterForm } from '@/components/backlink-filter/categories/BacklinkStateFilterForm'
+import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import { SearchStateFilterForm } from '@/components/search/filter-forms/SearchStateFilterForm'
 import { t } from '@/lib/i18n'
-
-import { STATE_FILTER_VALUES } from '../forms/stateVocabulary'
 
 function optionValuesOf(select: HTMLElement): string[] {
   return Array.from(select.querySelectorAll('option')).map((o) => (o as HTMLOptionElement).value)

@@ -11,13 +11,20 @@
  *    state) and never mount a BlockTree.
  * 5. Loading skeleton on first load; "reached start" footer at the horizon.
  * 6. No a11y violations.
+ * 7. Mount window (#2670): StreamView wires a `useDayMountWindow` LRU into
+ *    every `DaySection` — scrolling past `STREAM_MOUNT_WINDOW` days keeps
+ *    the mounted set bounded (oldest evicted first), a previously-evicted
+ *    day remounts when scrolled back to, and a day with focus inside it is
+ *    protected from eviction.
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { DayEntry } from '../../../lib/date-utils'
+import { STREAM_MOUNT_WINDOW } from '@/hooks/useDayMountWindow'
+import type { DayEntry } from '@/lib/date-utils'
+import { formatDate } from '@/lib/date-utils'
 
 // ── Mock the data hook so dates/loading/horizon are deterministic ────
 const mockStream = vi.hoisted(() => ({
@@ -45,19 +52,45 @@ vi.mock('@/hooks/useJournalBlockCreation', () => ({
 }))
 
 // ── Mock DaySection to a thin probe carrying its props ────────────────
-vi.mock('../DaySection', () => ({
+// Also surfaces the `mountWindow` prop StreamView wires in (#2670): an
+// "enter-{dateStr}" button simulates that day's own IntersectionObserver
+// firing (real `DaySection` reports every entry via `markVisible`), and
+// `data-mounted` reflects `mountWindow.isMounted(entry.dateStr)` so tests
+// can assert the bound without re-implementing DaySection's real observer
+// plumbing (that's covered by DaySection.test.tsx's own `mountWindow`
+// suite). The `id` mirrors real DaySection's `journal-${dateStr}` section id
+// — StreamView's focus-eviction guard looks elements up by that id.
+vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
+    const mountWindow = props['mountWindow'] as
+      | { isMounted: (key: string) => boolean; markVisible: (key: string) => void }
+      | undefined
+    const mounted = mountWindow ? mountWindow.isMounted(entry.dateStr) : true
     return (
       <section
+        id={`journal-${entry.dateStr}`}
         data-testid={`day-section-${entry.dateStr}`}
         data-heading-level={props['headingLevel'] as string}
         data-compact={String(!!props['compact'])}
         data-mode={props['mode'] as string}
         data-lazy-mount={String(!!props['lazyMount'])}
         data-has-page={String(entry.pageId != null)}
+        data-mounted={String(mounted)}
       >
         {entry.displayDate}
+        {mountWindow && (
+          <button
+            type="button"
+            data-testid={`enter-${entry.dateStr}`}
+            onClick={() => mountWindow.markVisible(entry.dateStr)}
+          >
+            enter
+          </button>
+        )}
+        {mounted && (
+          <input data-testid={`focusable-${entry.dateStr}`} aria-label={`edit ${entry.dateStr}`} />
+        )}
       </section>
     )
   },
@@ -93,7 +126,7 @@ function fireIntersection(isIntersecting: boolean): void {
   )
 }
 
-import { StreamView } from '../StreamView'
+import { StreamView } from '@/components/journal/StreamView'
 
 const TODAY = new Date(2026, 5, 20) // Sat, Jun 20, 2026
 function d(year: number, month1: number, day: number): Date {
@@ -189,5 +222,110 @@ describe('StreamView', () => {
   it('has no a11y violations', async () => {
     const { container } = render(<StreamView />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+
+  // ── Mount window (#2670) ─────────────────────────────────────────────
+  describe('mount window bound', () => {
+    /** `n` consecutive days, most-recent (today) first — mirrors useStreamDates' order. */
+    function nDaysBack(n: number): Date[] {
+      return Array.from({ length: n }, (_, i) => d(2026, 6, 20 - i))
+    }
+
+    function setupDays(n: number): Date[] {
+      const dates = nDaysBack(n)
+      mockStream.dates = dates
+      mockStream.pageMap = new Map(dates.map((dt) => [formatDate(dt), `page-${formatDate(dt)}`]))
+      return dates
+    }
+
+    /** Simulate every listed day's own IntersectionObserver firing, in order. */
+    function enterAll(dates: Date[]): void {
+      for (const dt of dates) {
+        act(() => {
+          fireEvent.click(screen.getByTestId(`enter-${formatDate(dt)}`))
+        })
+      }
+    }
+
+    function isMountedDay(dt: Date): boolean {
+      return (
+        screen.getByTestId(`day-section-${formatDate(dt)}`).getAttribute('data-mounted') === 'true'
+      )
+    }
+
+    it('passes a mountWindow controller to every DaySection', () => {
+      setupDays(3)
+      render(<StreamView />)
+      for (const dt of mockStream.dates) {
+        expect(screen.getByTestId(`enter-${formatDate(dt)}`)).toBeInTheDocument()
+      }
+    })
+
+    it('bounds the mounted day count at STREAM_MOUNT_WINDOW after scrolling past many more days', () => {
+      const dates = setupDays(STREAM_MOUNT_WINDOW + 5)
+      render(<StreamView />)
+
+      enterAll(dates)
+
+      const mountedCount = dates.filter(isMountedDay).length
+      expect(mountedCount).toBe(STREAM_MOUNT_WINDOW)
+    })
+
+    it('evicts the oldest-visited days first, keeping the most-recently-visited window mounted', () => {
+      const dates = setupDays(STREAM_MOUNT_WINDOW + 5)
+      render(<StreamView />)
+
+      enterAll(dates)
+
+      const expectedMounted = new Set(dates.slice(-STREAM_MOUNT_WINDOW).map((dt) => formatDate(dt)))
+      for (const dt of dates) {
+        expect(isMountedDay(dt)).toBe(expectedMounted.has(formatDate(dt)))
+      }
+    })
+
+    it('re-mounts a previously-evicted day when scrolled back to', () => {
+      const dates = setupDays(STREAM_MOUNT_WINDOW + 2)
+      render(<StreamView />)
+
+      enterAll(dates)
+      const firstDay = dates[0]
+      expect(firstDay).toBeDefined()
+      if (!firstDay) return
+      expect(isMountedDay(firstDay)).toBe(false) // evicted — it was visited first
+
+      // Scroll back up to the first day.
+      act(() => {
+        fireEvent.click(screen.getByTestId(`enter-${formatDate(firstDay)}`))
+      })
+
+      expect(isMountedDay(firstDay)).toBe(true)
+    })
+
+    it('protects a day with focus inside it from eviction', () => {
+      const dates = setupDays(STREAM_MOUNT_WINDOW + 2)
+      render(<StreamView />)
+
+      const firstDay = dates[0]
+      expect(firstDay).toBeDefined()
+      if (!firstDay) return
+      const firstDateStr = formatDate(firstDay)
+
+      // Enter the first day, then focus an element inside it.
+      act(() => {
+        fireEvent.click(screen.getByTestId(`enter-${firstDateStr}`))
+      })
+      const focusable = screen.getByTestId(`focusable-${firstDateStr}`)
+      focusable.focus()
+      expect(document.activeElement).toBe(focusable)
+
+      // Scroll through the rest — normally enough to evict the first day.
+      enterAll(dates.slice(1))
+
+      // Still mounted: the focus guard protected it.
+      expect(screen.getByTestId(`day-section-${firstDateStr}`)).toHaveAttribute(
+        'data-mounted',
+        'true',
+      )
+    })
   })
 })

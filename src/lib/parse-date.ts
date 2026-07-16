@@ -1,6 +1,6 @@
 import { addMonths } from 'date-fns'
 
-import { formatDate } from './date-utils'
+import { formatDate } from '@/lib/date-utils'
 
 // A Date whose time value is non-finite (NaN) renders as "Invalid time value"
 // and makes date-fns `format` (via `formatDate`) throw a RangeError. The

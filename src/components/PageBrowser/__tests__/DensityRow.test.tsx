@@ -11,9 +11,12 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  collectFlagTokens,
+  DensityRow,
+  formatRelativeShort,
+} from '@/components/PageBrowser/DensityRow'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
-
-import { collectFlagTokens, DensityRow, formatRelativeShort } from '../DensityRow'
 
 type RequiredProps = React.ComponentProps<typeof DensityRow>
 

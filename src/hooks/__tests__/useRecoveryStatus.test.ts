@@ -2,14 +2,13 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { RecoveryStatus } from '@/lib/tauri'
-
 import {
   RECOVERY_DEGRADED_EVENT,
   RECOVERY_DEGRADED_TOAST_ID,
   showRecoveryDegradedBanner,
   useRecoveryStatus,
-} from '../useRecoveryStatus'
+} from '@/hooks/useRecoveryStatus'
+import type { RecoveryStatus } from '@/lib/tauri'
 
 // -- Hoisted mocks ------------------------------------------------------------
 

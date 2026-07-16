@@ -15,10 +15,7 @@
 
 import { useSyncExternalStore } from 'react'
 
-import {
-  getGraphStructureKey,
-  subscribeToGraphStructureEvents,
-} from '../lib/graph-structure-events'
+import { getGraphStructureKey, subscribeToGraphStructureEvents } from '@/lib/graph-structure-events'
 
 export interface UseGraphStructureEventsReturn {
   /** Monotonic counter — increments (debounced) on each graph-topology mutation. */

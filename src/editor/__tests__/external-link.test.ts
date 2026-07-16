@@ -11,7 +11,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { ExternalLink, isValidHttpUrl } from '../extensions/external-link'
+import { ExternalLink, isValidHttpUrl } from '@/editor/extensions/external-link'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 

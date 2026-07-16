@@ -39,8 +39,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { createPerSpaceSlice } from './createPerSpaceSlice'
-import { LEGACY_SPACE_KEY } from './space'
+import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
+import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 export type View =
   | 'journal'

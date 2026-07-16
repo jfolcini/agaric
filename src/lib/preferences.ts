@@ -96,8 +96,8 @@
  * existing user's stored value.
  */
 
-import { useLocalStoragePreference } from '../hooks/useLocalStoragePreference'
-import { logger } from './logger'
+import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { logger } from '@/lib/logger'
 
 export interface PreferenceDefinition<T> {
   /** The localStorage key base. Kept verbatim — never re-keyed. */

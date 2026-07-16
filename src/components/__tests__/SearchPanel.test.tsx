@@ -23,16 +23,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { queryClient } from '@/lib/query-client'
-
-import { useNavigationStore } from '../../stores/navigation'
-import { type PageRef, useRecentPagesStore } from '../../stores/recent-pages'
-import { useSearchHistoryStore } from '../../stores/search-history'
-import { useSpaceStore } from '../../stores/space'
-import { selectPageStack, useTabsStore } from '../../stores/tabs'
-import { SearchPanel } from '../SearchPanel'
+import { useNavigationStore } from '@/stores/navigation'
+import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
+import { useSearchHistoryStore } from '@/stores/search-history'
+import { useSpaceStore } from '@/stores/space'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 // The per-group result listbox is now virtualized
 // (`@tanstack/react-virtual`). jsdom gives the scroll container zero
@@ -44,15 +43,15 @@ vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
 // Mock resolvePageByAlias separately so alias-resolution calls
 // don't consume values from the FIFO invoke mock queue.
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     resolvePageByAlias: vi.fn().mockResolvedValue(null),
   }
 })
 
-import { resolvePageByAlias } from '../../lib/tauri'
+import { resolvePageByAlias } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 

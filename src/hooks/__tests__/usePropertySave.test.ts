@@ -19,10 +19,10 @@ import { act, renderHook } from '@testing-library/react'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PropertyRow } from '../../lib/tauri'
-import { usePropertySave } from '../usePropertySave'
+import { usePropertySave } from '@/hooks/usePropertySave'
+import type { PropertyRow } from '@/lib/tauri'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -96,7 +96,7 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('announces on save when announceOnSave is set', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const updatedProps = [makeProp('status', { value_text: 'done' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'set_property') return undefined
@@ -121,7 +121,7 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('does not announce when announceOnSave is not set', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const updatedProps = [makeProp('status', { value_text: 'done' })]
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'set_property') return undefined
@@ -140,7 +140,7 @@ describe('usePropertySave handleSave', () => {
   })
 
   it('logs errors when logTag is set', async () => {
-    const { logger } = await import('../../lib/logger')
+    const { logger } = await import('@/lib/logger')
     vi.spyOn(logger, 'error').mockImplementation(() => {})
     mockedInvoke.mockRejectedValue(new Error('backend error'))
 
@@ -230,7 +230,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('announces on delete when announceOnDelete is set', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     mockedInvoke.mockResolvedValue(undefined)
 
     const setProperties = vi.fn()
@@ -250,7 +250,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('does not announce when announceOnDelete is not set', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     mockedInvoke.mockResolvedValue(undefined)
 
     const setProperties = vi.fn()
@@ -276,7 +276,7 @@ describe('usePropertySave handleDelete', () => {
   })
 
   it('logs errors when logTag is set', async () => {
-    const { logger } = await import('../../lib/logger')
+    const { logger } = await import('@/lib/logger')
     vi.spyOn(logger, 'error').mockImplementation(() => {})
     mockedInvoke.mockRejectedValue(new Error('delete error'))
 

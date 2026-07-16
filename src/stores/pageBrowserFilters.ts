@@ -23,9 +23,9 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import type { PageFilterWithKey } from '../components/PageBrowser/PageBrowserFilterRow'
-import type { FilterPrimitive } from '../lib/tauri'
-import { LEGACY_SPACE_KEY } from './space'
+import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
+import type { FilterPrimitive } from '@/lib/tauri'
+import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 interface PageBrowserFiltersState {
   /** Per-space active chip lists, keyed by space id (`__legacy__` for no-space). */

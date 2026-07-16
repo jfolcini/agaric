@@ -12,7 +12,7 @@
  * `tokenize.ts` or `classify.ts`.
  */
 
-import type { FilterToken } from './types'
+import type { FilterToken } from '@/lib/search-query/types'
 
 /**
  * Parse a token's `value` portion into a concrete `FilterToken`.

@@ -13,7 +13,7 @@ import {
   type GraphFilterableNode,
   getGraphFilterKey,
   nodeMatchesFilter,
-} from '../graph-filters'
+} from '@/lib/graph-filters'
 
 // Test fixtures
 const makeNode = (overrides: Partial<GraphFilterableNode> = {}): GraphFilterableNode => ({

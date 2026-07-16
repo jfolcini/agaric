@@ -15,8 +15,8 @@
 import { InputRule, mergeAttributes, Node } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 
-import { isValidHttpUrl } from './external-link'
-import { ImageNodeView } from './ImageNodeView'
+import { isValidHttpUrl } from '@/editor/extensions/external-link'
+import { ImageNodeView } from '@/editor/extensions/ImageNodeView'
 
 /**
  * Schemes the app legitimately mounts as `<img src>` besides http(s). These

@@ -14,7 +14,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   type UseBlockTreeContextBagsParams,
   useBlockTreeContextBags,
-} from '../use-block-tree-context-bags'
+} from '@/components/block-tree/use-block-tree-context-bags'
 
 function makeParams(
   overrides: Partial<UseBlockTreeContextBagsParams> = {},

@@ -26,7 +26,7 @@ const mockedRender = vi.mocked(mermaid.render)
 const mockedInitialize = vi.mocked(mermaid.initialize)
 
 // Import after mocks are set up
-const { MermaidDiagram } = await import('../MermaidDiagram')
+const { MermaidDiagram } = await import('@/components/rendering/MermaidDiagram')
 
 describe('MermaidDiagram', () => {
   beforeEach(() => {

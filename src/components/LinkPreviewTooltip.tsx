@@ -14,12 +14,11 @@ import { Globe } from 'lucide-react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
+import { Spinner } from '@/components/ui/spinner'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
-
-import { Spinner } from './ui/spinner'
 
 interface LinkPreviewTooltipProps {
   container: HTMLElement | null

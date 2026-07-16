@@ -12,6 +12,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import {
+  BLOCK_TYPE_VALUES,
+  DATE_OPS,
+  type DateOpKind,
+  PROPERTY_OPS,
+  type PropertyOpKind,
+  TODO_STATE_VALUES,
+  VALUE_BEARING_OPS,
+} from '@/components/PageBrowser/add-filter/vocab'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
@@ -23,16 +32,6 @@ import type { PageHeading } from '@/lib/tauri'
 import { listAllPagesInSpace } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-import {
-  BLOCK_TYPE_VALUES,
-  DATE_OPS,
-  type DateOpKind,
-  PROPERTY_OPS,
-  type PropertyOpKind,
-  TODO_STATE_VALUES,
-  VALUE_BEARING_OPS,
-} from './vocab'
 
 export function InlineValueEditor({
   label,

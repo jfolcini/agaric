@@ -19,7 +19,10 @@ import { createRef } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { FilterValueSelect, type FilterValueOption } from '../forms/FilterValueSelect'
+import {
+  FilterValueSelect,
+  type FilterValueOption,
+} from '@/components/filters/forms/FilterValueSelect'
 
 const OPTIONS: FilterValueOption[] = [
   { value: 'a', label: 'Alpha' },

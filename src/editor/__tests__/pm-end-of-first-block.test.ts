@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest'
 
-import { pmEndOfFirstBlock } from '../types'
 import {
   blockLink,
   bold,
@@ -11,7 +10,8 @@ import {
   paragraph,
   tagRef,
   text,
-} from './builders'
+} from '@/editor/__tests__/builders'
+import { pmEndOfFirstBlock } from '@/editor/types'
 
 describe('pmEndOfFirstBlock', () => {
   it('plain text', () => {

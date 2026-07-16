@@ -1,5 +1,14 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderBlockquoteBlock } from '@/components/RichContentRenderer/marks/blockquote'
+import { renderCodeBlock } from '@/components/RichContentRenderer/marks/code'
+import { renderHeadingBlock } from '@/components/RichContentRenderer/marks/heading'
+import { renderHorizontalRuleBlock } from '@/components/RichContentRenderer/marks/horizontalRule'
+import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
+import { renderMathBlock } from '@/components/RichContentRenderer/marks/math'
+import { renderOrderedListBlock } from '@/components/RichContentRenderer/marks/orderedList'
+import { renderTableBlock } from '@/components/RichContentRenderer/marks/table'
 import type {
   BlockLevelNode,
   BulletListNode,
@@ -8,16 +17,6 @@ import type {
   ParagraphNode,
   TableNode,
 } from '@/editor/types'
-
-import type { RenderContext } from '../context'
-import { renderBlockquoteBlock } from './blockquote'
-import { renderCodeBlock } from './code'
-import { renderHeadingBlock } from './heading'
-import { renderHorizontalRuleBlock } from './horizontalRule'
-import { renderInlineContent } from './inline'
-import { renderMathBlock } from './math'
-import { renderOrderedListBlock } from './orderedList'
-import { renderTableBlock } from './table'
 
 /**
  * Compile-time exhaustiveness guard for the block-type dispatch switches

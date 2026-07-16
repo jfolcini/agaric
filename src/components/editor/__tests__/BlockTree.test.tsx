@@ -166,7 +166,7 @@ let capturedBlockActions:
 // Minimal mock for SortableBlock — production SortableBlock pulls action
 // callbacks from `useBlockActions()`, so the mock does the same to mirror
 // The real component's wiring.
-vi.mock('../SortableBlock', async () => {
+vi.mock('@/components/editor/SortableBlock', async () => {
   const { useBlockActions } = await import('@/hooks/useBlockActions')
   return {
     SortableBlock: (props: {

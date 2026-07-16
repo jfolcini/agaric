@@ -30,7 +30,7 @@ vi.mock('@/lib/logger', () => ({
 const mockSetDueDate = vi.hoisted(() => vi.fn())
 const mockGetBlock = vi.hoisted(() => vi.fn())
 const mockSetScheduledDate = vi.hoisted(() => vi.fn())
-vi.mock('../../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   setDueDate: (...args: unknown[]) => mockSetDueDate(...args),
   getBlock: (...args: unknown[]) => mockGetBlock(...args),
   setScheduledDate: (...args: unknown[]) => mockSetScheduledDate(...args),
@@ -40,9 +40,8 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
+import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '@/components/journal/RescheduleDropZone'
 import { announce } from '@/lib/announcer'
-
-import { RESCHEDULE_DRAG_TYPE, RescheduleDropZone } from '../RescheduleDropZone'
 
 const mockedAnnounce = vi.mocked(announce)
 

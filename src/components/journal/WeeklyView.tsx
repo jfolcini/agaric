@@ -5,13 +5,12 @@
 import type React from 'react'
 import { useMemo } from 'react'
 
+import { DaySection } from '@/components/journal/DaySection'
+import { RescheduleDropZone } from '@/components/journal/RescheduleDropZone'
 import { useBatchCounts } from '@/hooks/useBatchCounts'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate, getWeekDays } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
-
-import { DaySection } from './DaySection'
-import { RescheduleDropZone } from './RescheduleDropZone'
 
 interface WeeklyViewProps {
   makeDayEntry: (d: Date) => DayEntry

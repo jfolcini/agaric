@@ -14,12 +14,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
-
-import { useNavigationStore } from '../../stores/navigation'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { SearchPanel } from '../SearchPanel'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 // The per-group result listbox is now virtualized
 // (`@tanstack/react-virtual`). jsdom gives the scroll container zero
@@ -29,8 +28,8 @@ import { SearchPanel } from '../SearchPanel'
 // the full list. `measureElement` is a no-op (jsdom can't measure layout).
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     resolvePageByAlias: vi.fn().mockResolvedValue(null),

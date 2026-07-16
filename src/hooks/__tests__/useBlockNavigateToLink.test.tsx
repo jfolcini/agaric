@@ -12,7 +12,7 @@ import type { TFunction } from 'i18next'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   getBlock: vi.fn(),
 }))
 
@@ -23,7 +23,7 @@ vi.mock('sonner', () => ({
   },
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -32,12 +32,12 @@ vi.mock('../../lib/logger', () => ({
   },
 }))
 
-import type { RovingEditorHandle } from '../../editor/use-roving-editor'
-import { logger } from '../../lib/logger'
-import { getBlock } from '../../lib/tauri'
-import { useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useBlockNavigateToLink } from '../useBlockNavigateToLink'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useBlockNavigateToLink } from '@/hooks/useBlockNavigateToLink'
+import { logger } from '@/lib/logger'
+import { getBlock } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedGetBlock = vi.mocked(getBlock)
 const mockedLoggerError = vi.mocked(logger.error)

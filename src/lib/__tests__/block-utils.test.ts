@@ -11,7 +11,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '../block-utils'
+import { INTERNAL_PROPERTY_KEYS, processCheckboxSyntax } from '@/lib/block-utils'
 
 describe('processCheckboxSyntax', () => {
   it('detects TODO checkbox and strips prefix', () => {

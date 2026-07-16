@@ -17,7 +17,7 @@ import Text from '@tiptap/extension-text'
 import { TextSelection } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { QueryHint, queryHintPluginKey } from '../extensions/query-hint'
+import { QueryHint, queryHintPluginKey } from '@/editor/extensions/query-hint'
 
 function createEditor(text: string): Editor {
   const editor = new Editor({

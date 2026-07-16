@@ -8,8 +8,8 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { BlockRef } from '../extensions/block-ref'
-import { BlockRefPicker } from '../extensions/block-ref-picker'
+import { BlockRef } from '@/editor/extensions/block-ref'
+import { BlockRefPicker } from '@/editor/extensions/block-ref-picker'
 
 describe('BlockRefPicker', () => {
   it('creates an extension with the correct name', () => {
@@ -439,7 +439,7 @@ describe('BlockRefPicker input rule ((c))', () => {
   })
 
   it('falls back to plain text on items callback error and logs a warning', async () => {
-    const { logger } = await import('../../lib/logger')
+    const { logger } = await import('@/lib/logger')
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const insertContentAtCalls: Array<{ pos: number; content: unknown }> = []
@@ -681,7 +681,7 @@ describe('resolveBlockRefFromSelection command ((c))', () => {
   })
 
   it('falls back to plain text on items callback error and logs a warning', async () => {
-    const { logger } = await import('../../lib/logger')
+    const { logger } = await import('@/lib/logger')
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const { chainProxy, insertContentAtCalls } = createChainProxy()

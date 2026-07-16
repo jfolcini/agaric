@@ -7,8 +7,8 @@ import {
   formatReportBody,
   formatReportFields,
   truncateDeviceId,
-} from '../bug-report'
-import type { BugReport } from '../tauri'
+} from '@/lib/bug-report'
+import type { BugReport } from '@/lib/tauri'
 
 // #609: UUID-shaped, like the real per-device identifier — the issue body
 // must never embed it in full (the same value is scrubbed to

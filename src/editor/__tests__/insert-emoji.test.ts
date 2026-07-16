@@ -9,8 +9,8 @@
 import type { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { setActiveEditor } from '../active-editor'
-import { insertEmojiIntoActiveEditor } from '../insert-emoji'
+import { setActiveEditor } from '@/editor/active-editor'
+import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
 
 afterEach(() => {
   setActiveEditor(null)

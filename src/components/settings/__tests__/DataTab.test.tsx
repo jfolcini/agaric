@@ -17,10 +17,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { DataTab } from '@/components/settings/DataTab'
 import type { SpaceRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-
-import { DataTab } from '../DataTab'
 
 const mockExportGraphAsZip = vi.fn()
 const mockDownloadBlob = vi.fn()

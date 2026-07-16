@@ -9,6 +9,7 @@ import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { SearchInput } from '@/components/ui/search-input'
 import {
   Select,
@@ -18,8 +19,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { CompareOp } from '@/lib/tauri'
-
-import type { FilterFormHandle } from './types'
 
 export interface BacklinkPropertyFilterFormProps {
   propertyKeys: string[]

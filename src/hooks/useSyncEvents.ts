@@ -19,6 +19,7 @@
  * Resolves issues #276, #386, #378.
  */
 
+import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { announce } from '@/lib/announcer'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
@@ -29,8 +30,6 @@ import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 import { useUndoStore } from '@/stores/undo'
-
-import { useTauriEventListener } from './useTauriEventListener'
 
 /** Payload shapes from the Rust backend sync_events.rs */
 export interface SyncCompletePayload {

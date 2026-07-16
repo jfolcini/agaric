@@ -14,10 +14,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useBlockPropertyIpc } from '@/hooks/useBlockPropertyIpc'
 import { paginationLimit } from '@/lib/safe-limit'
 import { listPropertyDefs as listPropertyDefsIpc } from '@/lib/tauri'
-
-import { useBlockPropertyIpc } from '../useBlockPropertyIpc'
 
 const mockedInvoke = vi.mocked(invoke)
 

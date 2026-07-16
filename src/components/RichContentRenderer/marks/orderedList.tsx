@@ -1,9 +1,8 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
 import type { BulletListNode, OrderedListNode, ParagraphNode } from '@/editor/types'
-
-import type { RenderContext } from '../context'
-import { renderInlineContent } from './inline'
 
 /**
  * Render an orderedList node as an ordered list. Each item's leading paragraph

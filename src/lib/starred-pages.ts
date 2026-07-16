@@ -5,7 +5,7 @@
  * Used by PageBrowser to let users pin frequently-used pages and filter to show only starred ones.
  */
 
-import { PREFERENCES, readPreference, writePreference } from './preferences'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /** Read the starred page IDs from localStorage. */
 export function getStarredPages(): string[] {

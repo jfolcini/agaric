@@ -4,7 +4,7 @@
  * Extracted from the original `markdown-serializer.ts` monolith. The
  * public API is still exposed via the
  * `markdown-serializer.ts` barrel — every existing
- * `import { serialize } from './markdown-serializer'` site continues to
+ * `import { serialize } from '@/editor/markdown-serializer'` site continues to
  * resolve unchanged.
  *
  * Zero external dependencies. O(n) in the document size.
@@ -23,7 +23,7 @@ import {
   ULID_RE,
   underscoreRunFlank,
   WORD_CHAR_RE,
-} from './markdown-common'
+} from '@/editor/markdown-common'
 import type {
   BlockLevelNode,
   BlockquoteNode,
@@ -40,7 +40,7 @@ import type {
   PMMark,
   TableNode,
   TextNode,
-} from './types'
+} from '@/editor/types'
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 

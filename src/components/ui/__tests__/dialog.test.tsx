@@ -11,7 +11,6 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-
 import {
   Dialog,
   DialogBody,
@@ -24,7 +23,7 @@ import {
   DialogPortal,
   DialogTitle,
   DialogTrigger,
-} from '../dialog'
+} from '@/components/ui/dialog'
 
 // ---------------------------------------------------------------------------
 // displayName

@@ -5,8 +5,8 @@
  * `useLocalStoragePreference` hook in.
  */
 
-import type { AgendaGroupBy, AgendaSortBy } from '../lib/agenda-sort'
-import { useLocalStoragePreference } from './useLocalStoragePreference'
+import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import type { AgendaGroupBy, AgendaSortBy } from '@/lib/agenda-sort'
 
 const GROUP_BY_KEY = 'agaric:agenda:groupBy'
 const SORT_BY_KEY = 'agaric:agenda:sortBy'

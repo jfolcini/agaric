@@ -14,7 +14,6 @@ import { render, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { CodeBlockNode } from '../../../../editor/types'
 import {
   __highlightCacheStats,
   clearHighlightCache,
@@ -22,7 +21,8 @@ import {
   peekHighlightCache,
   renderCodeBlock,
   writeHighlightCache,
-} from '../code'
+} from '@/components/RichContentRenderer/marks/code'
+import type { CodeBlockNode } from '@/editor/types'
 
 function codeBlock(text: string, language: string | null = null): CodeBlockNode {
   return {

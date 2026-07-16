@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { applyAutocompleteReplacement, detectAutocompleteAnchor } from '../autocomplete'
+import {
+  applyAutocompleteReplacement,
+  detectAutocompleteAnchor,
+} from '@/lib/search-query/autocomplete'
 
 describe('detectAutocompleteAnchor', () => {
   it('opens on tag:# with empty query', () => {

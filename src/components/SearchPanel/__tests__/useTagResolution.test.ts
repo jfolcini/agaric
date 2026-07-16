@@ -21,20 +21,20 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     listTagsByPrefix: vi.fn(),
   }
 })
 
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), info: vi.fn(), error: vi.fn(), debug: vi.fn() },
 }))
 
-import { listTagsByPrefix, type TagCacheRow } from '../../../lib/tauri'
-import { useTagResolution } from '../useTagResolution'
+import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
+import { listTagsByPrefix, type TagCacheRow } from '@/lib/tauri'
 
 const mockedListTags = vi.mocked(listTagsByPrefix)
 

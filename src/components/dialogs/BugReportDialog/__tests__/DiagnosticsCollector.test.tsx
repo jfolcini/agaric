@@ -22,9 +22,11 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  DiagnosticsCollector,
+  type DiagnosticsCollectorProps,
+} from '@/components/dialogs/BugReportDialog/DiagnosticsCollector'
 import { t } from '@/lib/i18n'
-
-import { DiagnosticsCollector, type DiagnosticsCollectorProps } from '../DiagnosticsCollector'
 
 function renderCollector(overrides?: Partial<DiagnosticsCollectorProps>) {
   const props: DiagnosticsCollectorProps = {

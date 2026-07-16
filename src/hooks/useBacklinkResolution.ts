@@ -19,11 +19,11 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { logger } from '../lib/logger'
-import type { BacklinkGroup, ResolvedBlock } from '../lib/tauri'
-import { batchResolve } from '../lib/tauri'
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+import { logger } from '@/lib/logger'
+import type { BacklinkGroup, ResolvedBlock } from '@/lib/tauri'
+import { batchResolve } from '@/lib/tauri'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export interface UseBacklinkResolutionResult {
   resolveBlockTitle: (id: string) => string

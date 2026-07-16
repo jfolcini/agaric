@@ -22,12 +22,6 @@ import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
-import type { FilterExpr, FilterPrimitive } from '@/lib/tauri'
-
 import {
   BlockTypeEditor,
   CreatedEditor,
@@ -37,15 +31,20 @@ import {
   PathEditor,
   PropertyEditor,
   StateEditor,
-} from './add-filter/editors'
-import { FilterCategoryGroup, FilterMenuItem } from './add-filter/menu'
+} from '@/components/PageBrowser/add-filter/editors'
+import { FilterCategoryGroup, FilterMenuItem } from '@/components/PageBrowser/add-filter/menu'
 import {
   type DateOpKind,
   type EditorKey,
   LAST_EDITED_BUCKETS,
   type PropertyOpKind,
   VALUE_BEARING_OPS,
-} from './add-filter/vocab'
+} from '@/components/PageBrowser/add-filter/vocab'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { usePriorityLevels } from '@/hooks/usePriorityLevels'
+import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
+import type { FilterExpr, FilterPrimitive } from '@/lib/tauri'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */

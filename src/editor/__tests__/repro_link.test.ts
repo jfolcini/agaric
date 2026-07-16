@@ -5,9 +5,9 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { describe, expect, it } from 'vitest'
 
-import { ExternalLink } from '../extensions/external-link'
-import { serialize } from '../markdown-serializer'
-import type { DocNode } from '../types'
+import { ExternalLink } from '@/editor/extensions/external-link'
+import { serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
 
 describe('autolink stability under repeated update dispatch', () => {
   it('serialized md is stable across repeated no-op transactions (long url)', () => {

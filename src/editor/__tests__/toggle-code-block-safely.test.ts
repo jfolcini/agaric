@@ -19,7 +19,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { describe, expect, it } from 'vitest'
 
-import { toggleCodeBlockSafely } from '../toggle-code-block-safely'
+import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
 
 /**
  * Minimal chainable editor stub. Every chain method records its name (and any

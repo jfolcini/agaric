@@ -37,7 +37,7 @@ import {
   _resetPropertyKeysCacheForTest,
   invalidatePropertyKeysCache,
   usePropertyKeysCache,
-} from '../usePropertyKeysCache'
+} from '@/hooks/usePropertyKeysCache'
 
 const mockedInvoke = vi.mocked(invoke)
 

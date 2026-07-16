@@ -14,9 +14,9 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import type { PMMark, TextNode } from '../../../../editor/types'
-import type { RenderContext } from '../../context'
-import { renderTextInline } from '../text'
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderTextInline } from '@/components/RichContentRenderer/marks/text'
+import type { PMMark, TextNode } from '@/editor/types'
 
 const ctx: RenderContext = { interactive: true }
 

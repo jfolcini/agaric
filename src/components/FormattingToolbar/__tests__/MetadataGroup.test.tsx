@@ -11,10 +11,9 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { t } from '@/lib/i18n'
-
-import { renderCyclePriority } from '../MetadataGroup'
 
 vi.mock('@/lib/block-events', () => ({
   dispatchBlockEvent: vi.fn(),

@@ -11,8 +11,8 @@
 
 import { useCallback } from 'react'
 
-import { logger } from '../lib/logger'
-import { fetchLinkMetadata, type LinkMetadata } from '../lib/tauri'
+import { logger } from '@/lib/logger'
+import { fetchLinkMetadata, type LinkMetadata } from '@/lib/tauri'
 
 export interface UseLinkMetadataReturn {
   /** Fetch (and cache) link metadata for a URL. Throws on failure. */

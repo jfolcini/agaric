@@ -4,9 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { EmojiPicker } from '@/components/EmojiPicker/EmojiPicker'
 import { clearEmojiRecents, pushEmojiRecent } from '@/hooks/useEmojiRecents'
-
-import { EmojiPicker } from '../EmojiPicker'
 
 // jsdom/happy-dom collapse the zero-height scroll container to zero virtual
 // rows. Use the shared virtualizer mock, but render only a bounded window of

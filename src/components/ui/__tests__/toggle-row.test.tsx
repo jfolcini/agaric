@@ -16,7 +16,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { ToggleRow } from '../toggle-row'
+import { ToggleRow } from '@/components/ui/toggle-row'
 
 const defaultProps = {
   id: 'sample-toggle',

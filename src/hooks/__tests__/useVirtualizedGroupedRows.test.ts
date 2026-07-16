@@ -23,8 +23,7 @@ import { renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
-
-import { useVirtualizedGroupedRows } from '../useVirtualizedGroupedRows'
+import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 
 const { scrollToIndex, estimators } = vi.hoisted(() => ({
   scrollToIndex: vi.fn(),

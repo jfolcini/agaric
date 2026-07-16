@@ -12,9 +12,8 @@
 import type { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { insertPageLinkInto } from '@/components/palette/insert-page-link'
 import { setActiveEditor } from '@/editor/active-editor'
-
-import { insertPageLinkInto } from './insert-page-link'
 
 afterEach(() => {
   setActiveEditor(null)

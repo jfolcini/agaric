@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { DayEntry } from '@/lib/date-utils'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import type { DayEntry } from '../lib/date-utils'
-import { logger } from '../lib/logger'
-import { countAgendaBatchBySource, countBacklinksBatch } from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
+import { countAgendaBatchBySource, countBacklinksBatch } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 export function useBatchCounts(entries: DayEntry[]) {
   const { t } = useTranslation()

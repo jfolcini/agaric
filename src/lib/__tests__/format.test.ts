@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { formatTimestamp, truncateId, ulidToDate } from '../format'
+import { formatTimestamp, truncateId, ulidToDate } from '@/lib/format'
 
 // ── Fake-timer anchor ────────────────────────────────────────────────────
 // All relative-time tests pin "now" to this instant so diffs are deterministic.

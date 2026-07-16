@@ -33,6 +33,19 @@ import type React from 'react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { buildConfigByKey, buildToolbarItems } from '@/components/FormattingToolbar/items'
+import { renderCyclePriority } from '@/components/FormattingToolbar/MetadataGroup'
+import {
+  renderFormatButton,
+  renderTableOpsButton,
+  renderTablePickerButton,
+  renderTurnIntoButton,
+} from '@/components/FormattingToolbar/RefsAndBlocksGroup'
+import { type RenderMode, renderConfigButton, Tip } from '@/components/FormattingToolbar/shared'
+import { Button } from '@/components/ui/button'
+import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
+import { Popover, PopoverAnchor } from '@/components/ui/popover'
+import { Separator } from '@/components/ui/separator'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { type ToolbarItem, useToolbarOverflow } from '@/hooks/useToolbarOverflow'
@@ -44,20 +57,6 @@ import {
   createStructureButtons,
 } from '@/lib/toolbar-config'
 import { cn } from '@/lib/utils'
-
-import { buildConfigByKey, buildToolbarItems } from './FormattingToolbar/items'
-import { renderCyclePriority } from './FormattingToolbar/MetadataGroup'
-import {
-  renderFormatButton,
-  renderTableOpsButton,
-  renderTablePickerButton,
-  renderTurnIntoButton,
-} from './FormattingToolbar/RefsAndBlocksGroup'
-import { type RenderMode, renderConfigButton, Tip } from './FormattingToolbar/shared'
-import { Button } from './ui/button'
-import { MenuPopoverContent } from './ui/menu-popover-content'
-import { Popover, PopoverAnchor } from './ui/popover'
-import { Separator } from './ui/separator'
 
 interface FormattingToolbarProps {
   editor: Editor

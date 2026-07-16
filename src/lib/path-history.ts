@@ -6,7 +6,7 @@
  * recently-used globs for that space, newest-first.
  */
 
-import { PREFERENCES, readPreference, removePreference, writePreference } from './preferences'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 
 export const PATH_HISTORY_LIMIT = 30
 

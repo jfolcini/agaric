@@ -19,11 +19,10 @@
 
 import { useEffect, useState } from 'react'
 
+import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { logger } from '@/lib/logger'
 import { getMdnsStatus } from '@/lib/tauri'
 import type { MdnsStatus } from '@/lib/tauri'
-
-import { useTauriEventListener } from './useTauriEventListener'
 
 /** Event name — must mirror `EVENT_SYNC_MDNS_DISABLED` in
  *  `src-tauri/src/sync_events.rs`. */

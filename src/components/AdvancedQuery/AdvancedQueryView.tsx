@@ -21,6 +21,16 @@ import type React from 'react'
 import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
+import { FilterGroup } from '@/components/AdvancedQuery/FilterGroup'
+import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
+import { QueryControlsBar } from '@/components/AdvancedQuery/QueryControlsBar'
+import {
+  QUERY_SPEC_KEY,
+  QUERY_VIEW_MARKER,
+  SavedViews,
+  VIEW_TYPE_KEY,
+} from '@/components/AdvancedQuery/SavedViews'
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
@@ -41,12 +51,6 @@ import {
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
 import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
-
-import { AggregateSummary } from './AggregateSummary'
-import { FilterGroup } from './FilterGroup'
-import { GroupedResults } from './GroupedResults'
-import { QueryControlsBar } from './QueryControlsBar'
-import { QUERY_SPEC_KEY, QUERY_VIEW_MARKER, SavedViews, VIEW_TYPE_KEY } from './SavedViews'
 
 export interface AdvancedQueryViewProps {
   /** Navigate to a block's parent page (wired through from the app shell). */

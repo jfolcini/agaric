@@ -24,13 +24,12 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { makePage } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
-
-import { makePage } from '../../__tests__/fixtures'
-import { usePageBrowserFiltersStore } from '../../stores/pageBrowserFilters'
-import { useSpaceStore } from '../../stores/space'
-import { PageBrowser } from '../PageBrowser'
+import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import { useSpaceStore } from '@/stores/space'
 
 // Render-all virtualizer mock (jsdom has zero-height containers). Shared
 // helper, default mode (see src/__tests__/mocks/react-virtual.ts).

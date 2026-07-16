@@ -4,9 +4,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  computeSourceModifiers,
+  JournalCalendarDropdown,
+} from '@/components/journal/JournalCalendarDropdown'
 import { logger } from '@/lib/logger'
-
-import { computeSourceModifiers, JournalCalendarDropdown } from '../journal/JournalCalendarDropdown'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -17,11 +19,11 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-vi.mock('../../hooks/useBlockPropertyEvents', () => ({
+vi.mock('@/hooks/useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: 0 })),
 }))
 
-vi.mock('../ui/calendar', () => ({
+vi.mock('@/components/ui/calendar', () => ({
   Calendar: (props: Record<string, unknown>) => {
     const modifiers = props['modifiers'] as Record<string, Date[]> | undefined
     const components = props['components'] as Record<string, unknown> | undefined

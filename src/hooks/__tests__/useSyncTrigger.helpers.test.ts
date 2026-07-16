@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { computeNextSyncDelay, runWithTimeout } from '../useSyncTrigger'
+import { computeNextSyncDelay, runWithTimeout } from '@/hooks/useSyncTrigger'
 
 const BASE_INTERVAL_MS = 60_000
 const MAX_INTERVAL_MS = 600_000

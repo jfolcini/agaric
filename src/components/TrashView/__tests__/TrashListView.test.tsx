@@ -57,10 +57,9 @@ vi.mock('@tanstack/react-virtual', async () => {
 import { useVirtualizer } from '@tanstack/react-virtual'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { TrashListView } from '@/components/TrashView/TrashListView'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
 import type { BlockRow } from '@/lib/tauri'
-
-import { TrashListView } from '../TrashListView'
 
 const callbacks: RichContentCallbacks = {
   resolveBlockTitle: () => undefined,

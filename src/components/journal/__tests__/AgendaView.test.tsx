@@ -22,14 +22,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 // ── Mock agenda-filters ─────────────────────────────────────────────
-vi.mock('../../../lib/agenda-filters', () => ({
+vi.mock('@/lib/agenda-filters', () => ({
   executeAgendaFilters: vi.fn(),
   loadMoreAgendaFilters: vi.fn(),
   loadMoreUnfilteredAgenda: vi.fn(),
 }))
 
 // ── Mock tauri lib ──────────────────────────────────────────────────
-vi.mock('../../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   batchResolve: vi.fn(),
   queryByProperty: vi.fn(),
   paginationLimit: (n: number) => n,
@@ -129,16 +129,15 @@ vi.mock('@/lib/notify', () => ({
   },
 }))
 
-import { notify } from '@/lib/notify'
-
-import { makeBlock as _makeBlock } from '../../../__tests__/fixtures'
+import { makeBlock as _makeBlock } from '@/__tests__/fixtures'
+import { AgendaView } from '@/components/journal/AgendaView'
 import {
   executeAgendaFilters,
   loadMoreAgendaFilters,
   loadMoreUnfilteredAgenda,
-} from '../../../lib/agenda-filters'
-import { batchResolve, queryByProperty } from '../../../lib/tauri'
-import { AgendaView } from '../AgendaView'
+} from '@/lib/agenda-filters'
+import { notify } from '@/lib/notify'
+import { batchResolve, queryByProperty } from '@/lib/tauri'
 
 const mockedNotifyRetry = vi.mocked(notify.retry)
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)

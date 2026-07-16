@@ -30,7 +30,7 @@ import {
   getProperties as getPropertiesIpc,
   listPropertyDefs as listPropertyDefsIpc,
   setProperty as setPropertyIpc,
-} from '../lib/tauri'
+} from '@/lib/tauri'
 
 /**
  * Mirrors the inline param shape of `setProperty` in `src/lib/tauri.ts`.

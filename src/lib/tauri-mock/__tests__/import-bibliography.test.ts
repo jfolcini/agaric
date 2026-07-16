@@ -11,9 +11,9 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { isAppError, isValidation } from '../../app-error'
-import { dispatch } from '../handlers'
-import { blocks, makeBlock, properties } from '../seed'
+import { isAppError, isValidation } from '@/lib/app-error'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks, makeBlock, properties } from '@/lib/tauri-mock/seed'
 
 const SPACE = 'SPACE_PERSONAL'
 

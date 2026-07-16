@@ -22,9 +22,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchPriorityFilterForm } from '@/components/search/filter-forms/SearchPriorityFilterForm'
 import { t } from '@/lib/i18n'
-
-import { SearchPriorityFilterForm } from '../filter-forms/SearchPriorityFilterForm'
 
 function setup(): {
   onAddFilter: ReturnType<typeof vi.fn>

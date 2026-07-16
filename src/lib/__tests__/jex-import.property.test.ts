@@ -12,7 +12,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parseJex } from '../jex-import'
+import { parseJex } from '@/lib/jex-import'
 
 const enc = new TextEncoder()
 

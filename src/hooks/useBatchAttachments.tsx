@@ -29,9 +29,9 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
-import { logger } from '../lib/logger'
-import type { AttachmentRow } from '../lib/tauri'
-import { getBatchAttachments } from '../lib/tauri'
+import { logger } from '@/lib/logger'
+import type { AttachmentRow } from '@/lib/tauri'
+import { getBatchAttachments } from '@/lib/tauri'
 
 interface BatchAttachmentsValue {
   /** Read the cached attachment list for a block. Returns undefined if the block isn't in the cache. */

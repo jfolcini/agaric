@@ -9,9 +9,8 @@
 
 import { Check, ChevronDown, ChevronRight } from 'lucide-react'
 
+import type { MenuItem } from '@/components/editor/block-context-menu/types'
 import { cn } from '@/lib/utils'
-
-import type { MenuItem } from './types'
 
 /**
  * #999/#1002/#1003 — the trailing slot of an interactive row holds a keyboard

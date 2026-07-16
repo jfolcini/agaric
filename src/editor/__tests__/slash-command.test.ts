@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PickerItem } from '../SuggestionList'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 // --- Mocks ---
 
@@ -16,7 +16,7 @@ vi.mock('@tiptap/core', () => ({
   },
 }))
 
-vi.mock('../suggestion-renderer', () => ({
+vi.mock('@/editor/suggestion-renderer', () => ({
   createSuggestionRenderer: () => ({
     onStart: vi.fn(),
     onUpdate: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('../suggestion-renderer', () => ({
 // The picker plugin is exercised here only to capture the `command` config
 // it is handed, so we can assert that an explicit selection delegates to
 // onCommand. The plugin itself is unit-tested separately.
-vi.mock('../extensions/picker-plugin', () => ({
+vi.mock('@/editor/extensions/picker-plugin', () => ({
   createPickerPlugin: (config: Record<string, unknown>) => {
     capturedPickerConfig = config
     return {}
@@ -36,7 +36,7 @@ vi.mock('../extensions/picker-plugin', () => ({
 }))
 
 // --- Import after mocks ---
-import { SlashCommand } from '../extensions/slash-command'
+import { SlashCommand } from '@/editor/extensions/slash-command'
 
 interface Lifecycle {
   onStart: (props: Record<string, unknown>) => void
@@ -67,7 +67,7 @@ function setup(options?: { onCommand?: ReturnType<typeof vi.fn> }) {
 
 describe('slash-command — explicit selection only (no auto-execute)', () => {
   it('exposes no AUTO_EXEC_DELAY_MS constant', async () => {
-    const mod = (await import('../extensions/slash-command')) as Record<string, unknown>
+    const mod = (await import('@/editor/extensions/slash-command')) as Record<string, unknown>
     expect(mod['AUTO_EXEC_DELAY_MS']).toBeUndefined()
   })
 

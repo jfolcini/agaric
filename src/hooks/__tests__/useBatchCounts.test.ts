@@ -1,18 +1,18 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DayEntry } from '../../lib/date-utils'
+import type { DayEntry } from '@/lib/date-utils'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   countAgendaBatchBySource: vi.fn(),
   countBacklinksBatch: vi.fn(),
 }))
 
 import { toast } from 'sonner'
 
-import { countAgendaBatchBySource, countBacklinksBatch } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
-import { useBatchCounts } from '../useBatchCounts'
+import { useBatchCounts } from '@/hooks/useBatchCounts'
+import { countAgendaBatchBySource, countBacklinksBatch } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedCountAgendaBatchBySource = vi.mocked(countAgendaBatchBySource)
 const mockedCountBacklinksBatch = vi.mocked(countBacklinksBatch)

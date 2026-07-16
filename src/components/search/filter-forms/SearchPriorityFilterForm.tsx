@@ -12,11 +12,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
+import { IncludeExcludeToggle } from '@/components/search/filter-forms/IncludeExcludeToggle'
 import { Button } from '@/components/ui/button'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
 import type { FilterToken } from '@/lib/search-query'
-
-import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
 export interface SearchPriorityFilterFormProps {
   onAddFilter: (token: FilterToken) => void

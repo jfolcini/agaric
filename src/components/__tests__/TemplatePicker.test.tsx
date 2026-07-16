@@ -15,7 +15,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { TemplatePicker } from '../block-tree/TemplatePicker'
+import { TemplatePicker } from '@/components/block-tree/TemplatePicker'
 
 const templatePages = [
   { id: 'T1', content: 'Meeting Notes', preview: 'Agenda, notes, action items' },

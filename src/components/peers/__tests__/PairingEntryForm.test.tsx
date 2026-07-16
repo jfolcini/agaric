@@ -27,7 +27,7 @@ import { PairingEntryForm } from '@/components/peers/PairingEntryForm'
 // Mock QrScanner to avoid loading html5-qrcode in tests.
 // Also expose an `onCameraDenied` button so tests can drive the
 // camera-denied auto-fallback to manual entry.
-vi.mock('../QrScanner', () => ({
+vi.mock('@/components/peers/QrScanner', () => ({
   QrScanner: ({
     onScan,
     onCameraDenied,

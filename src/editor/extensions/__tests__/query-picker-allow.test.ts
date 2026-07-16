@@ -9,7 +9,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PickerItem } from '../../SuggestionList'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 let capturedPickerConfig: Record<string, unknown> = {}
 
@@ -23,7 +23,7 @@ vi.mock('@tiptap/core', () => ({
   },
 }))
 
-vi.mock('../picker-plugin', () => ({
+vi.mock('@/editor/extensions/picker-plugin', () => ({
   createPickerPlugin: (config: Record<string, unknown>) => {
     capturedPickerConfig = config
     return {}
@@ -31,7 +31,7 @@ vi.mock('../picker-plugin', () => ({
 }))
 
 // --- Import after mocks ---
-import { QueryPicker } from '../query-picker'
+import { QueryPicker } from '@/editor/extensions/query-picker'
 
 type AllowFn = (props: { state: unknown; range: { from: number; to: number } }) => boolean
 

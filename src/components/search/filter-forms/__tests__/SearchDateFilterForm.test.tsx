@@ -15,7 +15,7 @@ import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 
-import { SearchDateFilterForm } from '../SearchDateFilterForm'
+import { SearchDateFilterForm } from '@/components/search/filter-forms/SearchDateFilterForm'
 
 describe('SearchDateFilterForm — op-mode ISO validation (#2275)', () => {
   it('keeps Add disabled, shows an error, and emits nothing for an invalid date', async () => {

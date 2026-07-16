@@ -7,8 +7,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makePage } from '../../__tests__/fixtures'
-import { isFrontendOnlySort, usePageBrowserSort } from '../usePageBrowserSort'
+import { makePage } from '@/__tests__/fixtures'
+import { isFrontendOnlySort, usePageBrowserSort } from '@/hooks/usePageBrowserSort'
 
 // #1149 — recent-pages moved to the zustand store. `sortPages` reads the
 // snapshot helper `getRecentPagesForSpace`; override only that and keep the
@@ -218,7 +218,7 @@ describe('usePageBrowserSort', () => {
 // PageWithMetadataRow shape is camelCase; the sortPages discriminator
 // looks for `lastModifiedAt` to detect it. The returned object is cast
 // to the type the production wrapper would produce, via the import.
-import type { PageWithMetadataRow } from '../../lib/tauri'
+import type { PageWithMetadataRow } from '@/lib/tauri'
 
 function makeMetaRow(
   id: string,

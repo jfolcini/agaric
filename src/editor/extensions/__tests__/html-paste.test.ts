@@ -36,11 +36,11 @@ vi.mock('@/stores/blocks', () => ({
 const htmlBodyToOutline = vi.fn()
 const outlineToIndentedMarkdown = vi.fn()
 
-vi.mock('../../inline-turndown', () => ({
+vi.mock('@/editor/inline-turndown', () => ({
   createInlineTurndown: () => ({ inline: (el: Element) => el.textContent ?? '' }),
 }))
 
-vi.mock('../../html-to-blocks', () => ({
+vi.mock('@/editor/html-to-blocks', () => ({
   htmlBodyToOutline: (...args: unknown[]) => htmlBodyToOutline(...args),
   outlineToIndentedMarkdown: (...args: unknown[]) => outlineToIndentedMarkdown(...args),
 }))
@@ -88,7 +88,7 @@ function makeViewDestroyedAfter(flipAfter: number): FakeView {
 }
 
 async function loadModule() {
-  return import('../html-paste')
+  return import('@/editor/extensions/html-paste')
 }
 
 describe('convertAndInsert — destroyed-view guard (#2033)', () => {

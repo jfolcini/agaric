@@ -14,10 +14,13 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import {
+  renderGraphElements,
+  runWorkerSimulation,
+  type SimulationCtx,
+} from '@/lib/graph-sim-helpers'
 import type { GraphEdge, GraphNode } from '@/lib/graph-types'
 import type { WorkerOutboundMessage } from '@/workers/graph-worker-types'
-
-import { renderGraphElements, runWorkerSimulation, type SimulationCtx } from '../graph-sim-helpers'
 
 // ── Controllable Worker stub ─────────────────────────────────────────
 

@@ -1,3 +1,11 @@
-export { EmojiPicker, type EmojiPickerProps } from './EmojiPicker'
-export { EmojiPickerDialog, type EmojiPickerDialogProps } from './EmojiPickerDialog'
-export { applySkinTone, SKIN_TONES, supportsSkinTone, type SkinToneId } from './emoji-skin-tone'
+export { EmojiPicker, type EmojiPickerProps } from '@/components/EmojiPicker/EmojiPicker'
+export {
+  EmojiPickerDialog,
+  type EmojiPickerDialogProps,
+} from '@/components/EmojiPicker/EmojiPickerDialog'
+export {
+  applySkinTone,
+  SKIN_TONES,
+  supportsSkinTone,
+  type SkinToneId,
+} from '@/components/EmojiPicker/emoji-skin-tone'

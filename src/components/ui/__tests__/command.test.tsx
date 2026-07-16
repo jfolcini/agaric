@@ -25,7 +25,7 @@ import {
   CommandItem,
   CommandList,
   CommandSeparator,
-} from '../command'
+} from '@/components/ui/command'
 
 function Harness({
   onSelect = vi.fn(),
