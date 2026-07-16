@@ -134,7 +134,7 @@ Integration test surfaces, all `#[cfg(test)] mod` includes in `lib.rs` (they com
 
 ## Snapshot testing (insta)
 
-Snapshots live alongside the code: `src/snapshots/`, `src/backlink/snapshots/`, `src/commands/tests/snapshots/`, `src/pagination/snapshots/`, `src/mcp/snapshots/`. Naming: `agaric_lib__<module>__tests__<test_name>.snap`. New snapshot-testing modules get a sibling `snapshots/` directory.
+Snapshots live alongside the code: `src/snapshots/`, `src/backlink/snapshots/`, `src/commands/tests/snapshots/`, `agaric-store/src/pagination/snapshots/`, `src/mcp/snapshots/`. Naming: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules and `agaric_store__<module>__tests__<test_name>.snap` for modules that have moved into `agaric-store` (#2621). New snapshot-testing modules get a sibling `snapshots/` directory.
 
 ### Redaction patterns
 

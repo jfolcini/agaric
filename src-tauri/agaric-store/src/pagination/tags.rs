@@ -1,0 +1,58 @@
+use sqlx::SqlitePool;
+
+use super::{ActiveBlockRow, Cursor, PageRequest, PageResponse, build_page_response};
+use agaric_core::error::AppError;
+
+/// List blocks that carry a specific tag, paginated.
+///
+/// Ordered by `bt.block_id ASC` (≡ `b.id`, ULID ≈ chronological).  Excludes
+/// soft-deleted and conflict blocks, consistent with `eval_tag_query`.
+/// Uses covering index `idx_block_tags_tag_block(tag_id, block_id)`, so the
+/// order is index-supplied and no temp B-tree is built (audit #425).
+///
+/// `space_id` — when `Some`, restricts the result set to blocks
+/// whose owning page (`b.page_id`) carries `space = ?space_id`.
+/// `None` keeps the pre-existing behaviour (no filter). See
+/// `crate::space_filter_clause` for the shared SQL fragment definition.
+pub async fn list_by_tag(
+    pool: &SqlitePool,
+    tag_id: &str,
+    page: &PageRequest,
+    space_id: Option<&str>,
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
+    };
+
+    // ?5 (space_id) drives the shared space-filter clause.
+    // Mirrors `crate::space_filter_clause!` — kept inline because
+    // `sqlx::query_as!` requires a string literal directly.
+    let rows = sqlx::query_as!(
+        ActiveBlockRow,
+        r#"SELECT b.id as "id: agaric_core::ulid::ActiveBlockId", b.block_type, b.content, b.parent_id as "parent_id: agaric_core::ulid::BlockId", b.position,
+                b.deleted_at,
+                b.todo_state, b.priority, b.due_date, b.scheduled_date,
+                b.page_id as "page_id: agaric_core::ulid::BlockId"
+         FROM block_tags bt
+         JOIN blocks b ON b.id = bt.block_id
+         WHERE bt.tag_id = ?1 AND b.deleted_at IS NULL
+           AND (?2 IS NULL OR bt.block_id > ?3)
+           AND (?5 IS NULL OR b.space_id = ?5)
+         ORDER BY bt.block_id ASC
+         LIMIT ?4"#,
+        tag_id,      // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
+        space_id,    // ?5
+    )
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_string())
+    })
+}

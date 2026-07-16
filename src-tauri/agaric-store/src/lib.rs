@@ -54,6 +54,18 @@ pub mod tag_inheritance_macros;
 // cache. Built entirely on the `tag_inh_*!` macro family above.
 pub mod tag_inheritance;
 
+// ── Wave S4b (#2621): two read/query modules. The app re-exports each so
+// `crate::<mod>::…` paths resolve unchanged.
+//
+// `pagination` — cursor-based keyset pagination (the eleven paginated query
+// functions + cursor codec). Leaf read module. A handful of phase-7
+// cross-space tests that call app-only command inner functions relocated to
+// the app crate (`pagination_app_tests`).
+pub mod pagination;
+// `tag_query` — tag search / prefix-resolve read queries. Builds on the
+// sibling `tag_inheritance` + `pagination` modules.
+pub mod tag_query;
+
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4
