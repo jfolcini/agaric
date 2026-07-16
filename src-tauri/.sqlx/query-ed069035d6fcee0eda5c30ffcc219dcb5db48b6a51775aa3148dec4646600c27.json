@@ -1,0 +1,62 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH cs AS (\n              SELECT btr.source_id AS source_id, btr.tag_id AS tag_id,\n                bs.space_id AS source_space,\n                tg.space_id AS target_space\n              FROM block_tag_refs btr\n              JOIN blocks bs ON bs.id = btr.source_id AND bs.deleted_at IS NULL\n              JOIN blocks tg ON tg.id = btr.tag_id AND tg.deleted_at IS NULL\n           )\n           SELECT source_id AS \"source_id!\", tag_id AS \"tag_id!\",\n                  source_space AS \"source_space?\", target_space AS \"target_space?\"\n             FROM cs\n            WHERE source_space IS NOT target_space",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_refs",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "name": "tag_id!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_refs",
+            "name": "tag_id"
+          }
+        }
+      },
+      {
+        "name": "source_space?",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "target_space?",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "space_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "ed069035d6fcee0eda5c30ffcc219dcb5db48b6a51775aa3148dec4646600c27"
+}

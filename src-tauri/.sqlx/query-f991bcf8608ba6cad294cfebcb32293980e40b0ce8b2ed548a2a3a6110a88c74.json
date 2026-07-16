@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO tags_cache (tag_id, name, usage_count, updated_at) VALUES (?, ?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 4
+    },
+    "nullable": []
+  },
+  "hash": "f991bcf8608ba6cad294cfebcb32293980e40b0ce8b2ed548a2a3a6110a88c74"
+}
