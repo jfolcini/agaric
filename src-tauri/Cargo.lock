@@ -126,6 +126,7 @@ dependencies = [
  "chrono",
  "insta",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "specta",
@@ -134,6 +135,7 @@ dependencies = [
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "ulid",
 ]
 
 [[package]]

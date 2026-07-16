@@ -1,16 +1,8 @@
 use super::*;
-use crate::db::init_pool;
+use crate::test_support::test_pool;
 use sqlx::SqlitePool;
-use tempfile::TempDir;
 
 // -- Helpers --
-
-async fn test_pool() -> (SqlitePool, TempDir) {
-    let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
-    (pool, dir)
-}
 
 async fn insert_block(
     pool: &SqlitePool,
@@ -66,7 +58,7 @@ async fn soft_delete(pool: &SqlitePool, id: &str) {
 #[tokio::test]
 async fn apply_op_tag_inheritance_dispatches_add_tag() {
     use crate::op::{AddTagPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "TAG_APP", "tag", "tag", None).await;
@@ -98,7 +90,7 @@ async fn apply_op_tag_inheritance_dispatches_add_tag() {
 #[tokio::test]
 async fn apply_op_tag_inheritance_dispatches_create_block() {
     use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
     let (pool, _dir) = test_pool().await;
 
     insert_block(&pool, "TAG_CB", "tag", "tag", None).await;
@@ -136,7 +128,7 @@ async fn apply_op_tag_inheritance_dispatches_create_block() {
 #[tokio::test]
 async fn apply_op_tag_inheritance_noop_for_edit_and_set_property() {
     use crate::op::{EditBlockPayload, OpPayload, SetPropertyPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "B_NOOP", "content", "hi", None).await;
 

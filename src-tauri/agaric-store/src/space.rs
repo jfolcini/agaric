@@ -1,6 +1,6 @@
 //! `SpaceId` newtype + `SpaceScope` tagged enum, used by space-scoped queries.
 //!
-//! Mirrors [`crate::ulid::ActiveBlockId`]: transparent serde + sqlx so the
+//! Mirrors [`agaric_core::ulid::ActiveBlockId`]: transparent serde + sqlx so the
 //! wire / DB layers see a plain string while Rust call sites get the named
 //! type.
 //!
@@ -17,12 +17,12 @@ use serde::{Deserialize, Serialize};
 use std::fmt;
 use std::str::FromStr;
 
-use crate::error::AppError;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 
 /// Newtype wrapper around a space ULID for type-safety + IPC bindings.
 ///
-/// Mirrors [`crate::ulid::ActiveBlockId`] (the strict newtype):
+/// Mirrors [`agaric_core::ulid::ActiveBlockId`] (the strict newtype):
 /// transparent serde + transparent sqlx + `specta::Type` so the wire / DB
 /// layers see a plain string while Rust call sites get the named type.
 ///
@@ -87,7 +87,7 @@ impl SpaceId {
     /// Construct from a string already known to be a valid ULID. Skips
     /// the parse but still uppercases via `to_ascii_uppercase` to match
     /// the `Deserialize` impl byte-for-byte. Mirrors
-    /// [`crate::ulid::BlockId::from_trusted`].
+    /// [`agaric_core::ulid::BlockId::from_trusted`].
     pub fn from_trusted(s: &str) -> Self {
         Self(s.to_ascii_uppercase())
     }
@@ -399,7 +399,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::tests::common::test_pool;
+    use crate::test_support::test_pool;
 
     /// A known-valid ULID in canonical uppercase Crockford base32.
     const FIXTURE_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -672,7 +672,10 @@ mod tests {
     // Resolve_block_space — Phase 2 helper
     // -----------------------------------------------------------------
 
-    use crate::spaces::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
+    // Inlined from `crate::spaces::bootstrap` (app-only; stays in the app
+    // crate). The seeded Personal/Work space ULIDs are byte-stable fixtures.
+    const SPACE_PERSONAL_ULID: &str = "00000000000000000AGAR1CPER";
+    const SPACE_WORK_ULID: &str = "00000000000000000AGAR1CWRK";
     use sqlx::SqlitePool;
 
     /// Synthetic page ULIDs for the resolver tests. Hand-typed 26-char

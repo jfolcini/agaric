@@ -72,7 +72,7 @@
 ///
 /// # Relationship to `MAX_BLOCK_DEPTH` (= 20)
 ///
-/// [`crate::domain::block_ops::MAX_BLOCK_DEPTH`] (= 20) is the *product*
+/// `crate::domain::block_ops::MAX_BLOCK_DEPTH` (= 20) is the *product*
 /// invariant: block creation rejects a new block whose nesting would exceed
 /// depth 20. This `DESCENDANT_DEPTH_CAP` of 100 is a much looser
 /// *runaway-safety net* sitting well above that product limit — it exists only
@@ -80,7 +80,7 @@
 /// create-path check, e.g. via a bad sync replay) cannot blow SQLite's
 /// recursion budget. It is deliberately NOT the enforced product depth limit;
 /// the two numbers are independent and must not be conflated.
-pub(crate) const DESCENDANT_DEPTH_CAP: i64 = 100;
+pub const DESCENDANT_DEPTH_CAP: i64 = 100;
 
 /// Recursive descendant CTE, standard variant.
 ///
@@ -325,7 +325,7 @@ where
 /// Recursive-arm filter for [`collect_subtree_ids_unbounded`]'s batched
 /// depth-unbounded descendant walk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum DescendantWalkFilter {
+pub enum DescendantWalkFilter {
     /// Descend only through still-active children (`deleted_at IS NULL`) —
     /// the soft-delete cascade shape ([`descendants_cte_active`]).
     Active,
@@ -358,7 +358,7 @@ pub(crate) enum DescendantWalkFilter {
 /// once (`anchored` set), so the frontier strictly consumes unvisited nodes.
 /// Crossing the cap is LOUD (a `tracing::warn!` per walk), never a silent
 /// truncation.
-pub(crate) async fn collect_subtree_ids_unbounded(
+pub async fn collect_subtree_ids_unbounded(
     conn: &mut sqlx::SqliteConnection,
     seed_id: &str,
     filter: DescendantWalkFilter,
@@ -461,7 +461,7 @@ pub(crate) async fn collect_subtree_ids_unbounded(
 /// sweep (a concurrently moved-in block inherits this ancestor's cohort).
 /// A corrupted parent-chain CYCLE terminates loudly (`tracing::error!`) and
 /// reports `None` rather than wedging inbound sync.
-pub(crate) async fn nearest_tombstoned_ancestor(
+pub async fn nearest_tombstoned_ancestor(
     conn: &mut sqlx::SqliteConnection,
     block_id: &str,
 ) -> Result<Option<(String, i64)>, sqlx::Error> {
@@ -588,7 +588,7 @@ pub struct RestoredAncestorChain {
 /// ancestor (or the root).
 ///
 /// `restore_block_inner` and the op-replay projection
-/// ([`crate::loro::projection::project_restore_block_to_sql`]) both walk
+/// (`crate::loro::projection::project_restore_block_to_sql`) both walk
 /// only DOWNWARD when clearing `deleted_at`. That leaves a reachable hole:
 /// delete a child, later delete its parent (the cascade SKIPS the
 /// already-deleted child, so the child becomes a trash root), then restore
@@ -807,17 +807,8 @@ mod tests {
 /// is anchored by behavioural tests, not just textual ones.
 #[cfg(test)]
 mod ancestor_db_tests {
-    use crate::db::init_pool;
+    use crate::test_support::test_pool;
     use sqlx::SqlitePool;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    async fn test_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().unwrap();
-        let db_path: PathBuf = dir.path().join("test.db");
-        let pool = init_pool(&db_path).await.unwrap();
-        (pool, dir)
-    }
 
     /// Direct INSERT bypassing the command layer.
     async fn insert_block(pool: &SqlitePool, id: &str, parent_id: Option<&str>) {
@@ -1132,8 +1123,14 @@ mod cohort_cascade_drift_guard {
     /// string), i.e. inside that arm's own `WHERE`.
     #[test]
     fn every_descendants_cte_keeps_depth_cap() {
-        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let files = collect_rs_files(&src_root, &src_root);
+        // #2621 wave S4a: `descendants` cascade sites span two crates now —
+        // the store's own multi-seed walkers (this file) and the app crate's
+        // projections / crud cascades (`../src`). Walk BOTH so the guard keeps
+        // full coverage after the split.
+        let store_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let app_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
+        let mut files = collect_rs_files(&store_src, &store_src);
+        files.extend(collect_rs_files(&app_src, &app_src));
         // The recursive arm + its WHERE up to the closing paren of the
         // recursive member. `[^)]*` keeps the match inside this arm so a
         // capped sibling can't satisfy an uncapped one.
@@ -1221,8 +1218,10 @@ mod cohort_cascade_drift_guard {
     /// or the cohort filter there is caught.
     #[test]
     fn multi_root_crud_cascades_pin_canonical_filters() {
+        // #2621 wave S4a: `crud.rs` (the multi-root bulk cascades) stays in
+        // the app crate; reach it via `../src` from the store.
         let crud =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/blocks/crud.rs");
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/commands/blocks/crud.rs");
         let norm = normalize(
             &std::fs::read_to_string(&crud)
                 .unwrap_or_else(|e| panic!("read {} failed: {e}", crud.display())),

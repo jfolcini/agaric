@@ -2,7 +2,7 @@
 //!
 //! Used as the materializer's safety-net / initial-population path. The
 //! split variant ([`rebuild_all_split`]) exists for API parity with the
-//! materializer's [`crate::materializer::handlers`] split/single dispatch
+//! materializer's `crate::materializer::handlers` split/single dispatch
 //! helper but now collapses onto the same single-statement recursive-CTE
 //! `INSERT … SELECT` shape as [`rebuild_all`].
 //!
@@ -11,7 +11,7 @@
 
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Full rebuild of the `block_tag_inherited` table.
 ///
@@ -49,7 +49,7 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
 /// a single `BEGIN IMMEDIATE` transaction: DELETE followed by a single
 /// recursive-CTE `INSERT … SELECT` (the same shape used by the unified
 /// [`rebuild_all`]). The `read_pool` argument is retained for API
-/// stability with the [`crate::materializer::handlers`] split/single
+/// stability with the `crate::materializer::handlers` split/single
 /// dispatch helper but is intentionally unused.
 ///
 /// Closes (no per-row INSERT loop — the recursive CTE writes the
@@ -58,7 +58,7 @@ pub async fn rebuild_all(pool: &SqlitePool) -> Result<(), AppError> {
 /// [`super::apply_op_tag_inheritance`] writers, so any in-flight incremental
 /// update either lands fully before the rebuild's DELETE or commits
 /// after the rebuild commits, never sandwiched between).
-pub(crate) async fn rebuild_all_split(
+pub async fn rebuild_all_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<(), AppError> {

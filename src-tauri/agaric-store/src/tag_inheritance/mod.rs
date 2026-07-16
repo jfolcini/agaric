@@ -32,19 +32,19 @@ mod tests;
 
 use sqlx::SqliteConnection;
 
-use crate::error::AppError;
 use crate::op::OpPayload;
+use agaric_core::error::AppError;
 
 // Helpers are `pub(crate)` because the documented single entry
 // point is `apply_op_tag_inheritance`. Pre-existing in-crate call-sites
 // (commands/blocks/crud.rs, commands/blocks/move_ops.rs, commands/tags.rs,
 // materializer/handlers.rs) continue to invoke specific helpers directly
 // via these re-exports.
-pub(crate) use incremental::{
+pub use incremental::{
     inherit_parent_tags, propagate_tag_to_descendants, recompute_subtree_inheritance,
     remove_inherited_tag, remove_subtree_inherited,
 };
-pub(crate) use rebuild::rebuild_all_split;
+pub use rebuild::rebuild_all_split;
 // `rebuild_all` is also called from `benches/tag_query_bench.rs`, which
 // links the crate as an external dependency, so it must stay `pub`.
 pub use rebuild::rebuild_all;
@@ -66,7 +66,7 @@ pub async fn apply_op_tag_inheritance(
 ) -> Result<(), AppError> {
     match payload {
         OpPayload::CreateBlock(p) => {
-            let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+            let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
             inherit_parent_tags(conn, p.block_id.as_str(), parent).await
         }
         OpPayload::DeleteBlock(p) => remove_subtree_inherited(conn, p.block_id.as_str()).await,
