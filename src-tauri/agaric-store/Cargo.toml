@@ -47,6 +47,11 @@ rustc-hash = "2.1.2"
 # `tag_query::resolve` fans out prefix-resolve lookups via `try_join_all`.
 # Version/features mirror the app crate exactly (#2621, wave S4b).
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+# `cache/mod.rs` compiles the three ULID-token regexes (`ULID_LINK_RE`,
+# `TAG_REF_RE`, `PAGE_LINK_RE`) at first use via `LazyLock<Regex>` — prod code,
+# so `regex` is a regular dependency (#2621, wave S4c). Version mirrors the app
+# crate's `regex = "1"`.
+regex = "1"
 
 [dev-dependencies]
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,
@@ -63,10 +68,6 @@ agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-ut
 # op_log's DB tests build a temp-file-backed migrated pool (the store-local
 # stand-in for the app's `init_pool`). Version mirrors the app crate.
 tempfile = "3.27.0"
-# `space_filter_canonical` + `block_descendants` drift-guard tests compile a
-# `regex::Regex` to normalise SQL fragments. Test-only (no prod use). Version
-# mirrors the app crate's `regex = "1"`.
-regex = "1"
 # Two op_log `origin` tests capture `tracing::warn!` output via an in-process
 # subscriber. Version/features mirror the app crate's `tracing-subscriber` dep.
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

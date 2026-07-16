@@ -12,7 +12,13 @@ pub use agaric_store::{
     ancestors_cte_active, ancestors_cte_standard, descendants_cte_active, descendants_cte_cohort,
     descendants_cte_purge, descendants_cte_standard,
 };
-pub mod cache;
+// `cache` moved into `agaric-store` (#2621, wave S4c). Re-exported so every
+// `crate::cache::…` path resolves unchanged. Three app-command cache tests
+// (which call `crate::commands::{list_projected_agenda_on_the_fly,
+// list_page_links_inner}`) relocated here as `cache_app_tests`.
+pub use agaric_store::cache;
+#[cfg(test)]
+mod cache_app_tests;
 // `cancellation` moved into `agaric-store` (#2621, wave S1). Re-exported so
 // every `crate::cancellation::…` path (fts, commands) resolves unchanged.
 pub use agaric_store::cancellation;
@@ -80,9 +86,11 @@ pub mod query;
 pub mod recovery;
 pub mod recurrence;
 // Pure recurrence date-math (interval shift + per-block projection), split out
-// of `recurrence` (#2621) so the store-layer projected-agenda cache can reuse
-// it without depending on the app-layer recurrence module.
-pub(crate) mod recurrence_math;
+// of `recurrence` (#2621) and moved into `agaric-store` (wave S4c) so the
+// store-layer projected-agenda cache can reuse it without depending on the
+// app-layer recurrence module. Re-exported so `crate::recurrence_math::…`
+// paths resolve unchanged.
+pub use agaric_store::recurrence_math;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;

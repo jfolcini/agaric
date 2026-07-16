@@ -66,6 +66,22 @@ pub mod pagination;
 // sibling `tag_inheritance` + `pagination` modules.
 pub mod tag_query;
 
+// ── Wave S4c (#2621): the read/rebuild cache + its pure chrono-only date-math
+// leaf. The app re-exports both so `crate::{cache,recurrence_math}::…` paths
+// resolve unchanged.
+//
+// `recurrence_math` — pure recurrence date-math (interval shift + per-block
+// occurrence projection). No DB, no async, chrono only. Sits below `cache`,
+// whose `projected_agenda` module projects recurrence dates through it.
+pub mod recurrence_math;
+// `cache` — the read/rebuild cache (tags, pages, agenda, projected agenda,
+// block/page links, block-tag refs). Carries `sqlx::query!` macros. External
+// deps are `agaric_core::{error,ulid,tag_norm,time}`; `db`, `space`, and
+// `recurrence_math` are store siblings. Three app-command cache tests that
+// call app-only command inner functions relocated to the app crate
+// (`cache_app_tests`).
+pub mod cache;
+
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4

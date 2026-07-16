@@ -592,7 +592,7 @@ pub async fn apply_remote(
 /// for `changed_blocks`, walking the committed `parent_id` chain in SQL.
 ///
 /// A page block resolves to itself (`page_id = id` invariant, migration
-/// 0073). The recursive CTE mirrors [`crate::cache::page_id`]'s ancestor walk
+/// 0073). The recursive CTE mirrors `crate::cache::page_id`'s ancestor walk
 /// (Invariant #9 `depth < 100` runaway guard) but is scoped to just the
 /// changed-block id set instead of the whole vault — bounded by the number of
 /// blocks one inbound sync message actually touched.
