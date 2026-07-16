@@ -7,6 +7,7 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Button } from '@/components/ui/button'
 import { useRichContentCallbacks } from '@/hooks/useRichContentCallbacks'
+import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import type { DiffSpan } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
@@ -169,7 +170,7 @@ export function DiffDisplay({ spans }: DiffDisplayProps): React.ReactElement {
         const ancestorRect = ancestor.getBoundingClientRect()
         if (elRect.top >= ancestorRect.top && elRect.bottom <= ancestorRect.bottom) return
       }
-      el.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      scrollElementIntoView(el, { block: 'nearest', behavior: 'smooth' })
     },
     [hunkStarts],
   )

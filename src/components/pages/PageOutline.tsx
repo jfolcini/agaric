@@ -22,6 +22,7 @@ import {
   SheetTrigger,
 } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { scrollElementIntoView } from '@/lib/scroll-into-view'
 import { cn } from '@/lib/utils'
 import type { FlatBlock } from '@/stores/page-blocks'
 import { usePageBlockStore } from '@/stores/page-blocks'
@@ -69,9 +70,8 @@ export function PageOutline() {
     // Blocks render `data-block-id={blockId}`; the editable element's own `id`
     // is `editor-${blockId}`, so `getElementById(blockId)` never matched and the
     // click was a silent no-op (#2211). Match PageEditor's link-navigation scroll.
-    document
-      .querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
-      ?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    const el = document.querySelector(`[data-block-id="${CSS.escape(blockId)}"]`)
+    if (el) scrollElementIntoView(el, { behavior: 'smooth', block: 'center' })
   }
 
   return (
