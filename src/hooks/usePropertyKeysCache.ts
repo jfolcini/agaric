@@ -22,14 +22,13 @@
 import { useQuery } from '@tanstack/react-query'
 import { useEffect } from 'react'
 
-import { queryClient } from '@/lib/query-client'
-
 import {
   ensurePropertyKeysInvalidationListener,
   propertyKeysQueryFn,
   propertyKeysQueryKey,
   PROPERTY_KEYS_GLOBAL_KEY,
-} from '../lib/property-keys-cache'
+} from '@/lib/property-keys-cache'
+import { queryClient } from '@/lib/query-client'
 
 // Re-exports keep the historical import path working for tests and
 // any caller that already imports `invalidatePropertyKeysCache` /
@@ -37,7 +36,7 @@ import {
 export {
   _resetPropertyKeysCacheForTest,
   invalidatePropertyKeysCache,
-} from '../lib/property-keys-cache'
+} from '@/lib/property-keys-cache'
 
 /** Stable empty-array reference returned before the first fetch resolves, so
  *  consumers relying on referential stability across renders don't thrash. */

@@ -21,12 +21,12 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { App } from '../../App'
-import { t } from '../../lib/i18n'
-import { useBootStore } from '../../stores/boot'
-import { useNavigationStore } from '../../stores/navigation'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
+import { App } from '@/App'
+import { t } from '@/lib/i18n'
+import { useBootStore } from '@/stores/boot'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 // -- Controllable crash flags (hoisted so the mock factories can close
 //    over them safely) ---------------------------------------------------------
@@ -40,7 +40,7 @@ vi.mock('@/components/layout/TabBar', () => ({
   },
 }))
 
-vi.mock('../ui/sonner', () => ({
+vi.mock('@/components/ui/sonner', () => ({
   Toaster: () => {
     if (crash.toaster) throw new Error('Toaster exploded')
     return <div data-testid="toaster-ok" />
@@ -49,11 +49,11 @@ vi.mock('../ui/sonner', () => ({
 
 // Heavy / IPC-bound children that are irrelevant to the boundary
 // behaviour under test (same set App.test.tsx inert-mocks).
-vi.mock('../../hooks/useSyncTrigger', () => ({
+vi.mock('@/hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => ({ syncing: false, syncAll: vi.fn() }),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     error: vi.fn(),
     warn: vi.fn(),

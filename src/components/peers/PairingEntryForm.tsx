@@ -21,7 +21,9 @@ import { Spinner } from '@/components/ui/spinner'
 import { notify } from '@/lib/notify'
 
 // Lazy-load QrScanner to avoid bundling html5-qrcode on desktop
-const LazyQrScanner = lazy(() => import('./QrScanner').then((m) => ({ default: m.QrScanner })))
+const LazyQrScanner = lazy(() =>
+  import('@/components/peers/QrScanner').then((m) => ({ default: m.QrScanner })),
+)
 
 // Auto-resume window — even an idle user with focus in an input
 // must not keep the pairing countdown paused indefinitely. After this many

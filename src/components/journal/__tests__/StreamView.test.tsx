@@ -17,7 +17,7 @@ import { render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { DayEntry } from '../../../lib/date-utils'
+import type { DayEntry } from '@/lib/date-utils'
 
 // ── Mock the data hook so dates/loading/horizon are deterministic ────
 const mockStream = vi.hoisted(() => ({
@@ -45,7 +45,7 @@ vi.mock('@/hooks/useJournalBlockCreation', () => ({
 }))
 
 // ── Mock DaySection to a thin probe carrying its props ────────────────
-vi.mock('../DaySection', () => ({
+vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
     return (
@@ -93,7 +93,7 @@ function fireIntersection(isIntersecting: boolean): void {
   )
 }
 
-import { StreamView } from '../StreamView'
+import { StreamView } from '@/components/journal/StreamView'
 
 const TODAY = new Date(2026, 5, 20) // Sat, Jun 20, 2026
 function d(year: number, month1: number, day: number): Date {

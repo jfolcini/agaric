@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { computeKeyboardInset } from '../keyboard-inset'
+import { computeKeyboardInset } from '@/lib/keyboard-inset'
 
 /** Build a VisualViewport-shaped object for the inset math. */
 function makeVv(opts: { height: number; offsetTop?: number; scale?: number }): VisualViewport {

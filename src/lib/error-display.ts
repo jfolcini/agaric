@@ -21,9 +21,8 @@
  * per-call-site discipline.
  */
 
+import { isAppError } from '@/lib/app-error'
 import { getDebugMode } from '@/stores/useDebugStore'
-
-import { isAppError } from './app-error'
 
 /**
  * Leading `AppError` Display prefixes (mirrors the `#[error("… : {0}")]`

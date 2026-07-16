@@ -17,13 +17,13 @@ import type { MarkType, Node as PmNode } from '@tiptap/pm/model'
 import { DOMParser as PMDOMParser, DOMSerializer } from '@tiptap/pm/model'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { Underline } from '@/editor/extensions/underline'
 import {
   configKeyToTipTap,
   getShortcutKeys,
   resetAllShortcuts,
   setCustomShortcut,
-} from '../../lib/keyboard-config'
-import { Underline } from '../extensions/underline'
+} from '@/lib/keyboard-config'
 
 const schema = getSchema([Document, Paragraph, Text, Underline])
 const markType = schema.marks['underline'] as unknown as MarkType

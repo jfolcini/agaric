@@ -11,11 +11,10 @@ import type { TFunction } from 'i18next'
 import { useCallback, useState } from 'react'
 
 import { notify } from '@/lib/notify'
-
-import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '../lib/template-utils'
-import { useBlockStore } from '../stores/blocks'
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+import { insertTemplateBlocks, loadTemplatePagesWithPreview } from '@/lib/template-utils'
+import { useBlockStore } from '@/stores/blocks'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export interface TemplatePagePreview {
   id: string

@@ -28,10 +28,9 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { TagList } from '@/components/TagList'
 import { t } from '@/lib/i18n'
 import { useSpaceStore } from '@/stores/space'
-
-import { TagList } from '../TagList'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)

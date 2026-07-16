@@ -1,13 +1,13 @@
 import JSZip from 'jszip'
 
-import { parseAttachmentRef } from './attachment-ref'
-import { logger } from './logger'
+import { parseAttachmentRef } from '@/lib/attachment-ref'
+import { logger } from '@/lib/logger'
 import {
   exportPageMarkdown,
   listAllPagesInSpace,
   readAttachment,
   readAttachmentMeta,
-} from './tauri'
+} from '@/lib/tauri'
 
 /**
  * Characters that are illegal in a path SEGMENT on common filesystems

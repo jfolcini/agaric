@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '../classify'
+import { parse } from '@/lib/search-query/classify'
 
 describe('classify / parse', () => {
   it('parses an empty string', () => {

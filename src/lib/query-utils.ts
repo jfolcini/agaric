@@ -1,4 +1,4 @@
-import type { BacklinkFilter, CompareOp } from './tauri'
+import type { BacklinkFilter, CompareOp } from '@/lib/tauri'
 
 /** Parsed property filter from shorthand syntax (property:key=value). */
 export interface PropertyFilter {

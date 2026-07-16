@@ -15,7 +15,7 @@ import Text from '@tiptap/extension-text'
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { PickerItem } from '../SuggestionList'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 type CapturedOptions = Record<string, unknown>
 
@@ -31,7 +31,7 @@ afterEach(() => {
  * Returns the freshly-loaded helper module.
  */
 async function loadHelper(): Promise<{
-  createPickerPlugin: typeof import('../extensions/picker-plugin').createPickerPlugin
+  createPickerPlugin: typeof import('@/editor/extensions/picker-plugin').createPickerPlugin
   captured: { current: CapturedOptions | undefined }
   rendererArgs: {
     current: { label: unknown; key: unknown; triggerChar: unknown } | undefined
@@ -61,16 +61,16 @@ async function loadHelper(): Promise<{
       }
     },
   }))
-  const mod = await import('../extensions/picker-plugin')
+  const mod = await import('@/editor/extensions/picker-plugin')
   return { createPickerPlugin: mod.createPickerPlugin, captured, rendererArgs }
 }
 
 /** Build a baseline cfg with placeholders for the test under inspection. */
 function makeCfg(
   overrides: Partial<
-    Parameters<typeof import('../extensions/picker-plugin').createPickerPlugin>[0]
+    Parameters<typeof import('@/editor/extensions/picker-plugin').createPickerPlugin>[0]
   > = {},
-): Parameters<typeof import('../extensions/picker-plugin').createPickerPlugin>[0] {
+): Parameters<typeof import('@/editor/extensions/picker-plugin').createPickerPlugin>[0] {
   const pluginKey = new PluginKey('testPicker')
   return {
     loggerComponent: 'TestPicker',
@@ -137,7 +137,7 @@ describe('createPickerPlugin — wrapped items callback', () => {
     // Import the logger AFTER loadHelper() — vi.resetModules() inside the
     // loader drops the module cache, so the picker-plugin and the test
     // must share the same fresh logger instance for the spy to apply.
-    const { logger } = await import('../../lib/logger')
+    const { logger } = await import('@/lib/logger')
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const userItems = vi.fn().mockRejectedValue(new Error('IPC down'))
@@ -248,7 +248,7 @@ describe('createPickerPlugin — render', () => {
 // paths through their picker; these tests pin down the helper's branches
 // directly so the next race-fix lands with confidence.
 
-import { resolveAndInsertPickerToken } from '../extensions/picker-plugin'
+import { resolveAndInsertPickerToken } from '@/editor/extensions/picker-plugin'
 
 /** Build a chainProxy mock that records insertContent / insertContentAt calls. */
 function makeChainProxy() {
@@ -421,8 +421,9 @@ describe('resolveAndInsertPickerToken — error fallback', () => {
     // logger instance. Re-import both together inside the test so the
     // spy applies to the logger the helper actually calls.
     vi.resetModules()
-    const { resolveAndInsertPickerToken: helper } = await import('../extensions/picker-plugin')
-    const { logger } = await import('../../lib/logger')
+    const { resolveAndInsertPickerToken: helper } =
+      await import('@/editor/extensions/picker-plugin')
+    const { logger } = await import('@/lib/logger')
     const warnSpy = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
     const { editor, calls } = makeEditor(1000)

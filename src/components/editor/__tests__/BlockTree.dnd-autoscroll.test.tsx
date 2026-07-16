@@ -88,7 +88,7 @@ vi.mock('@/editor/use-roving-editor', () => ({
   }),
 }))
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: ({ blockId }: { blockId: string }) => <div data-testid={`row-${blockId}`} />,
   INDENT_WIDTH: 24,
 }))

@@ -16,12 +16,11 @@ import { lazy, Suspense, useCallback, useEffect, useState } from 'react'
 
 import type { AttachmentRendererProps } from '@/components/attachments/AttachmentRenderer'
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
+import { useImageProperties } from '@/components/editor/useImageProperties'
 import { ImageLightbox } from '@/components/rendering/ImageLightbox'
 import { Spinner } from '@/components/ui/spinner'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { openUrl } from '@/lib/open-url'
-
-import { useImageProperties } from './useImageProperties'
 
 // Lazy-load PdfViewerDialog to avoid bundling pdfjs-dist on initial load
 const LazyPdfViewerDialog = lazy(() =>

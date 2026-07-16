@@ -5,7 +5,7 @@
 import type { TFunction } from 'i18next'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -25,8 +25,8 @@ vi.mock('sonner', () => ({
 
 import { toast } from 'sonner'
 
-import { logger } from '../logger'
-import { reportIpcError } from '../report-ipc-error'
+import { logger } from '@/lib/logger'
+import { reportIpcError } from '@/lib/report-ipc-error'
 
 const mockT = ((key: string) => `translated:${key}`) as unknown as TFunction
 

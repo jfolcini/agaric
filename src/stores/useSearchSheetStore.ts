@@ -18,7 +18,7 @@
 
 import { create } from 'zustand'
 
-import type { View } from './navigation'
+import type { View } from '@/stores/navigation'
 
 /** Active segment of the unified search sheet. */
 export type SearchSheetMode = 'in-page' | 'all-pages'

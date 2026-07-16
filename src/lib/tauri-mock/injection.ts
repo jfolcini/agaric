@@ -13,7 +13,7 @@
  *     the specta-generated unions — a typo'd injection fails type-checking.
  */
 
-import type { AppError } from '../bindings'
+import type { AppError } from '@/lib/bindings'
 
 const injectedErrors = new Map<string, string | AppError>()
 

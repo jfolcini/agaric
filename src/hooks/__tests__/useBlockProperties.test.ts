@@ -18,18 +18,14 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { announce } from '../../lib/announcer'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '../../lib/priority-levels'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '../../stores/page-blocks'
-import { useUndoStore } from '../../stores/undo'
-import { useBlockProperties } from '../useBlockProperties'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockProperties } from '@/hooks/useBlockProperties'
+import { announce } from '@/lib/announcer'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -22,12 +22,11 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
+import { loadEmojiDataset, peekEmojiDataset, searchEmoji } from '@/editor/emoji-data'
+import { createPickerPlugin } from '@/editor/extensions/picker-plugin'
+import type { PickerItem } from '@/editor/SuggestionList'
 import { pushEmojiRecent } from '@/hooks/useEmojiRecents'
 import { isEmojiPickerEnabled } from '@/lib/editor-preferences'
-
-import { loadEmojiDataset, peekEmojiDataset, searchEmoji } from '../emoji-data'
-import type { PickerItem } from '../SuggestionList'
-import { createPickerPlugin } from './picker-plugin'
 
 export const emojiPickerPluginKey = new PluginKey('emojiPicker')
 

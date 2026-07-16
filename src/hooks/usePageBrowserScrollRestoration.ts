@@ -21,8 +21,8 @@
 
 import { type RefObject, useEffect, useRef } from 'react'
 
-import type { DensityMode } from './usePageBrowserDensity'
-import type { SortOption } from './usePageBrowserSort'
+import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+import type { SortOption } from '@/hooks/usePageBrowserSort'
 
 interface VirtualizerLike {
   getTotalSize: () => number

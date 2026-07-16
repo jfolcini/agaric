@@ -32,7 +32,9 @@ import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
+import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
+import { renderRichContent } from '@/components/RichContentRenderer'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
@@ -45,9 +47,6 @@ import { notify } from '@/lib/notify'
 import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
 import { computeBlockVsCurrentDiff } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import { renderRichContent } from '../RichContentRenderer'
-import { HistoryItemCore } from './HistoryItemCore'
 
 const DIFF_MODE_DEFAULT: BlockHistoryDiffMode = 'comparedToCurrent'
 

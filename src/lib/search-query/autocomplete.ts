@@ -22,8 +22,8 @@
  * token the user is currently editing.
  */
 
-import { quoteValueIfNeeded } from './serialize'
-import { tokenize } from './tokenize'
+import { quoteValueIfNeeded } from '@/lib/search-query/serialize'
+import { tokenize } from '@/lib/search-query/tokenize'
 
 export type AutocompleteAnchor =
   | { active: 'tag'; query: string; anchor: number }

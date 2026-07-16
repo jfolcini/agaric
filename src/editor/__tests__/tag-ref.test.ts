@@ -8,7 +8,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { TagRef } from '../extensions/tag-ref'
+import { TagRef } from '@/editor/extensions/tag-ref'
 
 describe('TagRef', () => {
   it('creates an extension with the correct name', () => {

@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Checkbox } from '../checkbox'
+import { Checkbox } from '@/components/ui/checkbox'
 
 describe('Checkbox', () => {
   // -- Default rendering ------------------------------------------------------

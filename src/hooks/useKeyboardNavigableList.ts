@@ -31,7 +31,7 @@ import { type Dispatch, type RefObject, type SetStateAction, useEffect, useRef }
 import {
   type UseListKeyboardNavigationOptions,
   useListKeyboardNavigation,
-} from './useListKeyboardNavigation'
+} from '@/hooks/useListKeyboardNavigation'
 
 export interface UseKeyboardNavigableListOptions {
   /** Enable Home/End keys (default: false). */

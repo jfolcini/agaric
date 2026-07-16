@@ -16,7 +16,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // NOTE: logger is a soft dep — mock it so tests can assert on warn calls.
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -25,7 +25,7 @@ vi.mock('../logger', () => ({
   },
 }))
 
-import { logger } from '../logger'
+import { logger } from '@/lib/logger'
 import {
   __resetPriorityLevelsForTests,
   DEFAULT_PRIORITY_LEVELS,
@@ -34,7 +34,7 @@ import {
   priorityRank,
   setPriorityLevels,
   subscribePriorityLevels,
-} from '../priority-levels'
+} from '@/lib/priority-levels'
 
 beforeEach(() => {
   vi.clearAllMocks()

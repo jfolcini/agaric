@@ -11,16 +11,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { useBlockStore } from '../../stores/blocks'
-import type { PageBlockState } from '../../stores/page-blocks'
 import {
   __resetBlockCommandBus,
   type BlockCommandName,
   dispatchBlockCommand,
   registerBlockCommandTarget,
   registeredBlockCommandTargetCount,
-} from '../block-command-bus'
-import { BLOCK_EVENTS } from '../block-events'
+} from '@/lib/block-command-bus'
+import { BLOCK_EVENTS } from '@/lib/block-events'
+import { useBlockStore } from '@/stores/blocks'
+import type { PageBlockState } from '@/stores/page-blocks'
 
 /** Page-store stub owning the given block ids (the bus reads `blocksById.has`). */
 function makeStore(ownedIds: string[]): StoreApi<PageBlockState> {

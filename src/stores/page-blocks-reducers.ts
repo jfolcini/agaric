@@ -13,16 +13,15 @@
 
 import type { StoreApi } from 'zustand'
 
+import { retryOnPoolBusy } from '@/lib/app-error'
+import { internalizeRefTokens, parseIndentedMarkdown } from '@/lib/block-clipboard'
+import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
+import { recordGraphStructureChange } from '@/lib/graph-structure-events'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { retryOnPoolBusy } from '../lib/app-error'
-import { internalizeRefTokens, parseIndentedMarkdown } from '../lib/block-clipboard'
-import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '../lib/block-tree-ops'
-import { recordGraphStructureChange } from '../lib/graph-structure-events'
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import { buildImportRefInternalizers } from '../lib/paste-internalize'
-import type { BlockRow, CreateBlockSpec, OpRef } from '../lib/tauri'
+import { buildImportRefInternalizers } from '@/lib/paste-internalize'
+import type { BlockRow, CreateBlockSpec, OpRef } from '@/lib/tauri'
 import {
   createBlock,
   createBlocksBatch,
@@ -30,17 +29,21 @@ import {
   editBlock,
   moveBlock,
   moveBlocksBatch,
-} from '../lib/tauri'
+} from '@/lib/tauri'
 import {
   buildIndexById,
   getDragDescendants,
   MAX_BLOCK_DEPTH,
   type FlatBlock,
-} from '../lib/tree-utils'
-import { buildBlocksById, cloneBlocksByIdWith, cloneBlocksByIdWithout } from './page-blocks-map'
-import { applyStructuralMove, reconcileBatchMove } from './page-blocks-move'
-import type { PageBlockState } from './page-blocks-types'
-import { useUndoStore } from './undo'
+} from '@/lib/tree-utils'
+import {
+  buildBlocksById,
+  cloneBlocksByIdWith,
+  cloneBlocksByIdWithout,
+} from '@/stores/page-blocks-map'
+import { applyStructuralMove, reconcileBatchMove } from '@/stores/page-blocks-move'
+import type { PageBlockState } from '@/stores/page-blocks-types'
+import { useUndoStore } from '@/stores/undo'
 
 /**
  * Notify the undo store that a new action occurred on the given page, and bump

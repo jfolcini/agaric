@@ -27,7 +27,7 @@
  * skipped. Scroll-into-view falls back to scrolling the `node.parentElement`.
  */
 
-import type { FindMatch } from './matcher'
+import type { FindMatch } from '@/lib/in-page-find/matcher'
 
 const HIGHLIGHT_ALL = 'find-match'
 const HIGHLIGHT_CURRENT = 'find-match-current'

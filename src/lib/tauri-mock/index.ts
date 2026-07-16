@@ -13,21 +13,21 @@
 
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks'
 
-import { dispatch } from './handlers'
-import { clearMockErrors, getInjectedError, injectMockError } from './injection'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { clearMockErrors, getInjectedError, injectMockError } from '@/lib/tauri-mock/injection'
 import {
   addMockAgendaItems,
   addMockAttachment,
   addMockAttachmentWithBytes,
   seedBlocks,
-} from './seed'
+} from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Public re-exports
 // ---------------------------------------------------------------------------
 
-export { clearMockErrors, injectMockError } from './injection'
-export { SEED_IDS } from './seed'
+export { clearMockErrors, injectMockError } from '@/lib/tauri-mock/injection'
+export { SEED_IDS } from '@/lib/tauri-mock/seed'
 
 /** Reset mock state — clears and re-seeds the in-memory store. Useful for tests. */
 export function resetMock(): void {

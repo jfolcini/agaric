@@ -19,8 +19,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     searchBlocks: vi.fn(),
@@ -30,11 +30,10 @@ vi.mock('../../../lib/tauri', async (importOriginal) => {
   }
 })
 
+import { UNRESOLVED_TAG_SENTINEL } from '@/components/SearchPanel/searchFilterParams'
+import { useSearchResults } from '@/components/SearchPanel/useSearchResults'
 import { parse } from '@/lib/search-query'
-
-import { batchResolve, listTagsByPrefix, searchBlocks, type TagCacheRow } from '../../../lib/tauri'
-import { UNRESOLVED_TAG_SENTINEL } from '../searchFilterParams'
-import { useSearchResults } from '../useSearchResults'
+import { batchResolve, listTagsByPrefix, searchBlocks, type TagCacheRow } from '@/lib/tauri'
 
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 const mockedListTags = vi.mocked(listTagsByPrefix)

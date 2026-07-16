@@ -96,7 +96,7 @@ vi.mock('@/components/editor/AddBlockButton', () => ({
 }))
 
 // ── Mock PageBlockStoreProvider ─────────────────────────────────────
-vi.mock('../../../stores/page-blocks', () => ({
+vi.mock('@/stores/page-blocks', () => ({
   PageBlockStoreProvider: ({ pageId, children }: { pageId: string; children: React.ReactNode }) => (
     <div data-testid="page-block-store-provider" data-page-id={pageId}>
       {children}
@@ -122,9 +122,9 @@ vi.mock('@/components/ui/button', () => ({
   buttonVariants: () => '',
 }))
 
-import type { DayEntry } from '../../../lib/date-utils'
-import { useJournalStore } from '../../../stores/journal'
-import { DaySection } from '../DaySection'
+import { DaySection } from '@/components/journal/DaySection'
+import type { DayEntry } from '@/lib/date-utils'
+import { useJournalStore } from '@/stores/journal'
 
 /** Format a Date as YYYY-MM-DD (mirrors the component's formatDate). */
 function formatDate(d: Date): string {

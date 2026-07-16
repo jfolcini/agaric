@@ -22,7 +22,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { parseSnippet, SnippetHighlight } from '../SnippetHighlight'
+import { parseSnippet, SnippetHighlight } from '@/components/search/SnippetHighlight'
 
 // #828 — the backend snippet sentinels the parser recognises.
 const OPEN = '\u{E000}'

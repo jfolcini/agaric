@@ -18,7 +18,7 @@
 
 import { useCallback, useEffect, useState } from 'react'
 
-import { logger } from '../lib/logger'
+import { logger } from '@/lib/logger'
 
 export interface LocalStoragePreferenceOptions<T> {
   /** Convert the raw stored string into a value. May throw on invalid input. */

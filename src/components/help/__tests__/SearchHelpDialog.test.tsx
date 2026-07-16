@@ -9,10 +9,9 @@ import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchHelpDialog } from '@/components/help/SearchHelpDialog'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { t } from '@/lib/i18n'
-
-import { SearchHelpDialog } from '../SearchHelpDialog'
 
 // The dialog swaps to a bottom Sheet via `useDialogOrSheet` (#2665) when
 // `useIsMobile()` is true. Mock the hook so each test can pin the

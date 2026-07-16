@@ -10,9 +10,9 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
-import { BACK_PRIORITY_ZOOM, registerBackHandler } from '../lib/back-chain'
-import type { FlatBlock } from '../lib/tree-utils'
-import { getDragDescendants } from '../lib/tree-utils'
+import { BACK_PRIORITY_ZOOM, registerBackHandler } from '@/lib/back-chain'
+import type { FlatBlock } from '@/lib/tree-utils'
+import { getDragDescendants } from '@/lib/tree-utils'
 
 export interface BreadcrumbItem {
   id: string

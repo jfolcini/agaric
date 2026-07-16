@@ -11,9 +11,9 @@ import type { TFunction } from 'i18next'
 import { vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import { createPageBlockStore, type PageBlockState } from '../../../stores/page-blocks'
-import type { SlashCommandContext } from '../types'
+import { makeBlock } from '@/__tests__/fixtures'
+import type { SlashCommandContext } from '@/hooks/useBlockSlashCommands/types'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 export interface SyntheticCtx {
   ctx: SlashCommandContext

@@ -6,31 +6,31 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import { _resetPropertyKeysCacheForTest } from '../../lib/property-keys-cache'
-import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '../../lib/recent-commands'
+import { makeBlock } from '@/__tests__/fixtures'
+import { logger } from '@/lib/logger'
+import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 import {
   RECENT_SLASH_CATEGORY,
   SLASH_COMMANDS,
   searchPropertyKeys,
   searchSlashCommands,
-} from '../../lib/slash-commands'
+} from '@/lib/slash-commands'
 import {
   createPageBlockStore,
   PageBlockContext,
   type PageBlockState,
-} from '../../stores/page-blocks'
-import { useUndoStore } from '../../stores/undo'
-import { mergeSlashHandlerTables, useBlockSlashCommands } from '../useBlockSlashCommands'
-import { useSlashCommandDate } from '../useBlockSlashCommands/useSlashCommandDate'
-import { useSlashCommandMarks } from '../useBlockSlashCommands/useSlashCommandMarks'
-import { useSlashCommandProperty } from '../useBlockSlashCommands/useSlashCommandProperty'
-import { useSlashCommandStructural } from '../useBlockSlashCommands/useSlashCommandStructural'
-import { useSlashCommandTemplate } from '../useBlockSlashCommands/useSlashCommandTemplate'
+} from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
+import { mergeSlashHandlerTables, useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
+import { useSlashCommandDate } from '@/hooks/useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandMarks } from '@/hooks/useBlockSlashCommands/useSlashCommandMarks'
+import { useSlashCommandProperty } from '@/hooks/useBlockSlashCommands/useSlashCommandProperty'
+import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
+import { useSlashCommandTemplate } from '@/hooks/useBlockSlashCommands/useSlashCommandTemplate'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -38,13 +38,13 @@ vi.mock('../../lib/logger', () => ({
     error: vi.fn(),
   },
 }))
-vi.mock('../../editor/markdown-serializer', () => ({
+vi.mock('@/editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'content'),
 }))
-vi.mock('../../lib/repeat-utils', () => ({
+vi.mock('@/lib/repeat-utils', () => ({
   formatRepeatLabel: vi.fn((v: string) => v),
 }))
-vi.mock('../../lib/template-utils', () => ({
+vi.mock('@/lib/template-utils', () => ({
   insertTemplateBlocks: vi.fn(async () => ['NEW_1']),
   loadTemplatePagesWithPreview: vi.fn(async () => []),
 }))

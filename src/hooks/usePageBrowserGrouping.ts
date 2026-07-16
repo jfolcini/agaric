@@ -10,11 +10,10 @@
 
 import { useMemo } from 'react'
 
+import type { SortOption } from '@/hooks/usePageBrowserSort'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
+import type { BlockRow } from '@/lib/tauri'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
-
-import type { BlockRow } from '../lib/tauri'
-import type { SortOption } from './usePageBrowserSort'
 
 /**
  * Unified `Starred` + `Pages` row model.

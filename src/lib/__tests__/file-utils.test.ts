@@ -6,7 +6,7 @@ import {
   isAttachmentAllowed,
   MAX_ATTACHMENT_BYTES,
   readFileBytes,
-} from '../file-utils'
+} from '@/lib/file-utils'
 
 describe('guessMimeType', () => {
   it('returns correct MIME type for common image extensions', () => {

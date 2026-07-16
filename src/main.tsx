@@ -2,17 +2,16 @@ import { QueryClientProvider } from '@tanstack/react-query'
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
-import './lib/i18n'
+import '@/lib/i18n'
 
-import './index.css'
+import '@/index.css'
+import { App } from '@/App.tsx'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
-
-import { App } from './App.tsx'
-import { PrimaryFocusProvider } from './hooks/usePrimaryFocus'
-import { logger } from './lib/logger'
-import { initFrontendObservability } from './lib/observability'
-import { queryClient } from './lib/query-client'
+import { PrimaryFocusProvider } from '@/hooks/usePrimaryFocus'
+import { logger } from '@/lib/logger'
+import { initFrontendObservability } from '@/lib/observability'
+import { queryClient } from '@/lib/query-client'
 
 // Global catch-all: capture uncaught errors and unhandled rejections
 // before React mounts, so even early failures are logged persistently.
@@ -52,7 +51,7 @@ async function main() {
   // unset), so the OR arm folds to `false` and the shipped bundle is mock-free
   // exactly as before — the tree-shake win is preserved for real releases.
   if ((!import.meta.env.PROD || import.meta.env.VITE_E2E) && !window.__TAURI_INTERNALS__) {
-    const { setupMock } = await import('./lib/tauri-mock')
+    const { setupMock } = await import('@/lib/tauri-mock')
     setupMock()
   }
 

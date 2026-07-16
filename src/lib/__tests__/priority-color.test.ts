@@ -11,8 +11,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { priorityColor } from '../priority-color'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
+import { priorityColor } from '@/lib/priority-color'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 beforeEach(() => {
   __resetPriorityLevelsForTests()

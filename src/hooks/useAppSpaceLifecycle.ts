@@ -26,9 +26,9 @@
 
 import { useEffect, useRef } from 'react'
 
-import { setWindowTitle } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+import { setWindowTitle } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export function useAppSpaceLifecycle(): void {
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)

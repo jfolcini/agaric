@@ -13,7 +13,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __resetAnnouncerForTests, announce } from '../announcer'
+import { __resetAnnouncerForTests, announce } from '@/lib/announcer'
 
 /** Helper that fetches the announcer element, failing if absent. */
 function getAnnouncer(): HTMLElement {

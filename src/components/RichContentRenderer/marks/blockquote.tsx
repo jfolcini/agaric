@@ -1,11 +1,14 @@
 import type React from 'react'
 
+import {
+  CALLOUT_CONFIG,
+  HEADING_CLASSES,
+  type RenderContext,
+} from '@/components/RichContentRenderer/context'
+import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
 import type { BlockLevelNode, BlockquoteNode } from '@/editor/types'
 import { i18n } from '@/lib/i18n'
 import { cn } from '@/lib/utils'
-
-import { CALLOUT_CONFIG, HEADING_CLASSES, type RenderContext } from '../context'
-import { renderInlineContent } from './inline'
 
 /**
  * Signature of the block dispatcher (`renderBlock`). Injected as a parameter

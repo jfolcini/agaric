@@ -37,7 +37,7 @@ vi.mock('@dnd-kit/core', () => ({
   },
 }))
 
-import { BlockDndOverlay } from '../block-tree/BlockDndOverlay'
+import { BlockDndOverlay } from '@/components/block-tree/BlockDndOverlay'
 
 describe('BlockDndOverlay', () => {
   it('renders the ghost when activeBlock is provided', () => {

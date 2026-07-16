@@ -27,14 +27,14 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import type { RovingEditorHandle } from '../../../editor/use-roving-editor'
-import { createPageBlockStore, type PageBlockState } from '../../../stores/page-blocks'
-import { useBlockFlush } from '../use-block-flush'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockFlush } from '@/components/block-tree/use-block-flush'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 // Force the multi-block detector to see a single block so flush takes the
 // checkbox branch regardless of how the real serializer tokenizes a task item.
-vi.mock('../../../editor/markdown-serializer', () => ({
+vi.mock('@/editor/markdown-serializer', () => ({
   parse: () => ({ content: [{ type: 'paragraph' }] }),
 }))
 

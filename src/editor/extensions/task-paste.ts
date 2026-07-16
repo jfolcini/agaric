@@ -29,8 +29,8 @@
 import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
-import { parse } from '../markdown-serializer'
-import type { ParagraphNode, TodoState } from '../types'
+import { parse } from '@/editor/markdown-serializer'
+import type { ParagraphNode, TodoState } from '@/editor/types'
 
 const taskPastePluginKey = new PluginKey('taskPaste')
 

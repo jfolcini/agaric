@@ -11,11 +11,11 @@
  * diffed against the real backend's command surface in `src/lib/bindings.ts`.
  */
 
-import type { AppError, PageResponse, commands } from '../bindings'
-import { matchesSearchFolded } from '../fold-for-search'
-import { logger } from '../logger'
-import { asciiLowercase, pageGlobFilterMatches } from '../search-query/glob-validate'
-import { applyRevertForOp } from './revert'
+import type { AppError, PageResponse, commands } from '@/lib/bindings'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { logger } from '@/lib/logger'
+import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
   attachmentBytes,
   attachments,
@@ -31,7 +31,7 @@ import {
   properties,
   propertyDefs,
   pushOp,
-} from './seed'
+} from '@/lib/tauri-mock/seed'
 
 /**
  * Build an `AppError`-shaped rejection for a mock handler (#2251).

@@ -15,8 +15,8 @@
  * `URL` parsing errors degrade to "no value" / "no-op" with a warn log.
  */
 
-import { logger } from './logger'
-import { PREFERENCES } from './preferences'
+import { logger } from '@/lib/logger'
+import { PREFERENCES } from '@/lib/preferences'
 
 const SETTINGS_PARAM = 'settings'
 

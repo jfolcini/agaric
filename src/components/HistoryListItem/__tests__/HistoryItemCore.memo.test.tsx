@@ -26,7 +26,7 @@ import type { HistoryEntry } from '@/lib/tauri'
 // Return STABLE callback identities across renders (the real hooks use
 // `useCallback` with empty deps), so the component's content-preview memo
 // only recomputes on real content / resolve-version changes.
-vi.mock('../../../hooks/useRichContentCallbacks', () => {
+vi.mock('@/hooks/useRichContentCallbacks', () => {
   const stableCallbacks = {
     resolveBlockTitle: vi.fn(() => undefined),
     resolveBlockStatus: vi.fn(() => 'active' as const),
@@ -45,9 +45,8 @@ vi.mock('@/components/RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 
+import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { renderRichContent } from '@/components/RichContentRenderer'
-
-import { HistoryItemCore } from '../HistoryItemCore'
 
 function makeEntry(
   seq: number,

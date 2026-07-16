@@ -37,11 +37,10 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
-import { useDialogOrSheet } from '../useDialogOrSheet'
-import { useIsMobile } from '../useIsMobile'
-
-vi.mock('../useIsMobile', () => ({
+vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 

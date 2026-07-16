@@ -22,9 +22,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
+import { SearchStateFilterForm } from '@/components/search/filter-forms/SearchStateFilterForm'
 import { t } from '@/lib/i18n'
-
-import { SearchStateFilterForm } from '../filter-forms/SearchStateFilterForm'
 
 function setup(): {
   onAddFilter: ReturnType<typeof vi.fn>

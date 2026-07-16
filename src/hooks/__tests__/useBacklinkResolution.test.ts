@@ -14,15 +14,15 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
-import type { BacklinkGroup } from '../../lib/tauri'
-import { batchResolve } from '../../lib/tauri'
-import { keyFor, useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useBacklinkResolution } from '../useBacklinkResolution'
+import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
+import type { BacklinkGroup } from '@/lib/tauri'
+import { batchResolve } from '@/lib/tauri'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedBatchResolve = vi.mocked(batchResolve)
 

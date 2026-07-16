@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '../query-utils'
+import { buildFilters, OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 
 describe('parseQueryExpression', () => {
   it('parses tag query', () => {

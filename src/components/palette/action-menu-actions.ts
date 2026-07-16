@@ -5,7 +5,7 @@
 
 import type { useTranslation } from 'react-i18next'
 
-import type { PaletteAction } from './PaletteActionMenu'
+import type { PaletteAction } from '@/components/palette/PaletteActionMenu'
 
 /** Row types that expose a Tab / `…` action menu. */
 export type ActionMenuRowType = 'recent' | 'page' | 'block'

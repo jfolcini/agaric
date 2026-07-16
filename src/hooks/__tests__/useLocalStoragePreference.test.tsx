@@ -18,8 +18,8 @@
 import { act, render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../lib/logger'
-import { useLocalStoragePreference } from '../useLocalStoragePreference'
+import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { logger } from '@/lib/logger'
 
 interface HarnessProps<T> {
   storageKey: string

@@ -16,7 +16,7 @@
 import type { LucideIcon } from 'lucide-react'
 import { Hand, PanelLeft, PenLine, Pointer } from 'lucide-react'
 
-import { PREFERENCES, readPreference, writePreference } from './preferences'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /** True once the user has dismissed the first-run gesture coach-mark. */
 export function isGestureCoachMarkSeen(): boolean {

@@ -11,7 +11,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { CalloutBlockquote } from '../extensions/callout-blockquote'
+import { CalloutBlockquote } from '@/editor/extensions/callout-blockquote'
 
 function makeEditor(content?: Content): Editor {
   return new Editor({

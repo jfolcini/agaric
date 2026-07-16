@@ -21,8 +21,8 @@ import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { TaskParagraph } from '../task-paragraph'
-import { TaskPaste } from '../task-paste'
+import { TaskParagraph } from '@/editor/extensions/task-paragraph'
+import { TaskPaste } from '@/editor/extensions/task-paste'
 
 const lowlight = createLowlight(common)
 

@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useScrollRestore } from '../useScrollRestore'
+import { useScrollRestore } from '@/hooks/useScrollRestore'
 
 /**
  * Create a container element with a writable `scrollTop` property.

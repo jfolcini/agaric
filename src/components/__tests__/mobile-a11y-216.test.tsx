@@ -24,12 +24,12 @@ import { axe } from 'vitest-axe'
 // Side-effect import: src/test-setup.ts already initialises i18next, but make
 // the dependency explicit so `useTranslation()` resolves real English strings
 // (aria-labels / aria-keyshortcuts) rather than dropping the attributes.
-import '../../lib/i18n'
-import { TooltipProvider } from '../ui/tooltip'
+import '@/lib/i18n'
+import { TooltipProvider } from '@/components/ui/tooltip'
 
 // lib/tauri is imported transitively (BlockListItem → useBlockReschedule);
 // stub the IPC surface so the module loads under happy-dom.
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   getBlock: vi.fn(),
   setDueDate: vi.fn(),
   setScheduledDate: vi.fn(),

@@ -26,7 +26,7 @@
  * hooks (like `useBlockZoom`) has zero effect on desktop behavior.
  */
 
-import { logger } from './logger'
+import { logger } from '@/lib/logger'
 
 /** Returns `true` when the handler consumed the back press. */
 export type BackHandler = () => boolean

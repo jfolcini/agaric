@@ -36,7 +36,7 @@ vi.mock('@floating-ui/dom', () => ({
 
 import { computePosition } from '@floating-ui/dom'
 
-import { LinkPreviewTooltip } from '../LinkPreviewTooltip'
+import { LinkPreviewTooltip } from '@/components/LinkPreviewTooltip'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

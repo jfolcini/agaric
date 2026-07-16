@@ -10,9 +10,8 @@ import type { StoreApi } from 'zustand'
 
 import type { PickerItem } from '@/editor/SuggestionList'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { DatePickerMode, TFn } from '@/hooks/useBlockSlashCommands/types'
 import type { PageBlockState } from '@/stores/page-blocks'
-
-import type { DatePickerMode, TFn } from './types'
 
 export interface UseBlockSlashCommandsParams {
   focusedBlockId: string | null

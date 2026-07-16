@@ -15,7 +15,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { useSidebarRailDrag } from '../use-sidebar-rail-drag'
+import { useSidebarRailDrag } from '@/components/ui/sidebar/use-sidebar-rail-drag'
 
 function makePointerEvent(type: 'pointermove' | 'pointerup', clientX: number): PointerEvent {
   const event = new Event(type, { bubbles: true }) as Event & { clientX: number }

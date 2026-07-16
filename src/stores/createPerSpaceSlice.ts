@@ -33,8 +33,8 @@
 
 import type { StoreApi } from 'zustand'
 
-import { activeSpaceKey } from '../lib/active-space'
-import { createSpaceSubscriber } from '../lib/createSpaceSubscriber'
+import { activeSpaceKey } from '@/lib/active-space'
+import { createSpaceSubscriber } from '@/lib/createSpaceSubscriber'
 
 /** Context handed to {@link PerSpaceSliceOptions.fallback} on a real switch. */
 export interface PerSpaceSwitchContext<T> {

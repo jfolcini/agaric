@@ -20,9 +20,9 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../../lib/priority-levels'
-import type { PropertyDefinition, PropertyRow } from '../../../lib/tauri'
-import { useSpaceStore } from '../../../stores/space'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
+import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -53,9 +53,8 @@ vi.mock('lucide-react', () => ({
 
 import { toast } from 'sonner'
 
+import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { t } from '@/lib/i18n'
-
-import { PropertyRowEditor } from '../PropertyRowEditor'
 
 const mockedToastError = vi.mocked(toast.error)
 
@@ -900,7 +899,7 @@ describe('PropertyRowEditor ref picker', () => {
     // seeds an active space ('SPACE_TEST'), so the component resolves the
     // ref title via `keyFor('SPACE_TEST', id)` — seed the cache under that
     // same key.
-    const { useResolveStore, keyFor } = await import('../../../stores/resolve')
+    const { useResolveStore, keyFor } = await import('@/stores/resolve')
     useResolveStore.setState({
       cache: new Map([
         [keyFor('SPACE_TEST', 'TARGET_PAGE'), { title: 'My Target', deleted: false }],

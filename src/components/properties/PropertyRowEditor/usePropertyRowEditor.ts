@@ -14,6 +14,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import {
+  parseSelectOptions,
+  readCurrentValue,
+} from '@/components/properties/PropertyRowEditor/shared'
 import { useDateInput } from '@/hooks/useDateInput'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
@@ -22,8 +26,6 @@ import { setPriorityLevels } from '@/lib/priority-levels'
 import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-
-import { parseSelectOptions, readCurrentValue } from './shared'
 
 export interface UsePropertyRowEditorArgs {
   blockId: string

@@ -14,9 +14,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { BugReportForm } from '@/components/dialogs/BugReportDialog/BugReportForm'
 import { t } from '@/lib/i18n'
-
-import { BugReportForm } from '../BugReportForm'
 
 function renderForm(overrides?: Partial<Parameters<typeof BugReportForm>[0]>) {
   const props = {

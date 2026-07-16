@@ -14,7 +14,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('../BlockPropertyDrawer', () => ({
+vi.mock('@/components/editor/BlockPropertyDrawer', () => ({
   BlockPropertyDrawer: ({
     blockId,
     open,

@@ -13,14 +13,13 @@ import type React from 'react'
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DensityRow } from '@/components/PageBrowser/DensityRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import type { PageWithMetadataRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import { DensityRow } from './DensityRow'
 
 export interface PageBrowserRowRendererProps {
   virtualRow: VirtualItem

@@ -15,12 +15,11 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { computeKeyboardInset } from '@/lib/keyboard-inset'
-
 import {
   scrollCaretAboveKeyboard,
   useScrollCaretAboveKeyboard,
-} from '../useScrollCaretAboveKeyboard'
+} from '@/hooks/useScrollCaretAboveKeyboard'
+import { computeKeyboardInset } from '@/lib/keyboard-inset'
 
 // ---------------------------------------------------------------------------
 // Test doubles

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { formatSize } from '../attachment-utils'
+import { formatSize } from '@/lib/attachment-utils'
 
 describe('attachment-utils', () => {
   describe('formatSize', () => {

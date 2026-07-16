@@ -11,12 +11,14 @@
  * mount.
  */
 
+import { SpaceAccentPicker } from '@/components/SpaceManageDialog/SpaceAccentPicker'
+import {
+  SpaceDeleteBlockedHint,
+  SpaceDeleteButton,
+} from '@/components/SpaceManageDialog/SpaceDeleteButton'
+import { SpaceJournalTemplateEditor } from '@/components/SpaceManageDialog/SpaceJournalTemplateEditor'
+import { SpaceNameEditor } from '@/components/SpaceManageDialog/SpaceNameEditor'
 import type { SpaceRow } from '@/lib/tauri'
-
-import { SpaceAccentPicker } from './SpaceAccentPicker'
-import { SpaceDeleteBlockedHint, SpaceDeleteButton } from './SpaceDeleteButton'
-import { SpaceJournalTemplateEditor } from './SpaceJournalTemplateEditor'
-import { SpaceNameEditor } from './SpaceNameEditor'
 
 export interface SpaceRowEditorProps {
   space: SpaceRow

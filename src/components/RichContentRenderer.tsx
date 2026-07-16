@@ -1,13 +1,13 @@
 import type React from 'react'
 
-import { parse } from '../editor/markdown-serializer'
-import type { BlockLevelNode, DocNode } from '../editor/types'
-import type { RenderContext } from './RichContentRenderer/context'
-import { renderBlock, renderBlockInline } from './RichContentRenderer/marks/block'
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderBlock, renderBlockInline } from '@/components/RichContentRenderer/marks/block'
+import { parse } from '@/editor/markdown-serializer'
+import type { BlockLevelNode, DocNode } from '@/editor/types'
 
 // Re-export `CALLOUT_CONFIG` so existing imports keep working.
-// (`{ CALLOUT_CONFIG, renderRichContent } from './RichContentRenderer'`)
-export { CALLOUT_CONFIG } from './RichContentRenderer/context'
+// (`{ CALLOUT_CONFIG, renderRichContent } from '@/components/RichContentRenderer'`)
+export { CALLOUT_CONFIG } from '@/components/RichContentRenderer/context'
 
 /**
  * Bounded LRU cache for the pure `parse(markdown)` step.

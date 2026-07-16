@@ -20,14 +20,14 @@ import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockLoggerWarn = vi.fn()
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     warn: (...args: unknown[]) => mockLoggerWarn(...args),
   },
 }))
 
-import type { PropertyRow } from '../../lib/tauri'
-import { BatchPropertiesProvider, useBatchPropertyRows } from '../useBatchPropertyRows'
+import { BatchPropertiesProvider, useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import type { PropertyRow } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 

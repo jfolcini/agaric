@@ -17,10 +17,9 @@ import {
   STATE_FILTER_VALUES,
   useStateFilterOptions,
 } from '@/components/filters/forms/stateVocabulary'
+import { IncludeExcludeToggle } from '@/components/search/filter-forms/IncludeExcludeToggle'
 import { Button } from '@/components/ui/button'
 import type { FilterToken } from '@/lib/search-query'
-
-import { IncludeExcludeToggle } from './IncludeExcludeToggle'
 
 export interface SearchStateFilterFormProps {
   onAddFilter: (token: FilterToken) => void

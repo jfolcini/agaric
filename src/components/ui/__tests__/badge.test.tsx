@@ -16,8 +16,8 @@ import * as React from 'react'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '../../../lib/priority-levels'
-import { Badge } from '../badge'
+import { Badge } from '@/components/ui/badge'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 describe('Badge', () => {
   it('renders with default tone/size/shape', () => {

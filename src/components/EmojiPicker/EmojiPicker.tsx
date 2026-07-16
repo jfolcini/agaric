@@ -49,6 +49,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
+  applySkinTone,
+  computeTonableBases,
+  SKIN_TONES,
+  supportsSkinTone,
+  type SkinToneId,
+} from '@/components/EmojiPicker/emoji-skin-tone'
+import { Input } from '@/components/ui/input'
+import {
   type EmojiDataset,
   type EmojiEntry,
   loadEmojiDataset,
@@ -58,15 +66,6 @@ import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { cn } from '@/lib/utils'
-
-import { Input } from '../ui/input'
-import {
-  applySkinTone,
-  computeTonableBases,
-  SKIN_TONES,
-  supportsSkinTone,
-  type SkinToneId,
-} from './emoji-skin-tone'
 
 /** Stable empty set — the tonable-base set before the dataset resolves. */
 const NO_TONABLE_BASES: ReadonlySet<string> = new Set()

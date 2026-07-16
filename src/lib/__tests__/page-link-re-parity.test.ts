@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { HUMAN_PAGE_LINK_RE } from '../block-clipboard'
+import { HUMAN_PAGE_LINK_RE } from '@/lib/block-clipboard'
 
 /**
  * #1920 — cross-language parity for the inbound wiki-link regex.

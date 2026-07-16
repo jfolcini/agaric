@@ -8,7 +8,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { BlockLink } from '../extensions/block-link'
+import { BlockLink } from '@/editor/extensions/block-link'
 
 describe('BlockLink', () => {
   it('creates an extension with the correct name', () => {

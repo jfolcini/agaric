@@ -20,24 +20,29 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { BatchActionToolbar } from '@/components/common/BatchActionToolbar'
+import { TrashBatchPurgeDialog } from '@/components/TrashView/TrashBatchPurgeDialog'
+import { TrashBatchRestoreDialog } from '@/components/TrashView/TrashBatchRestoreDialog'
+import { TrashEmptyDialog } from '@/components/TrashView/TrashEmptyDialog'
+import { TrashListView } from '@/components/TrashView/TrashListView'
+import { TrashPurgeDialog } from '@/components/TrashView/TrashPurgeDialog'
+import { TrashRestoreAllDialog } from '@/components/TrashView/TrashRestoreAllDialog'
 import { Button } from '@/components/ui/button'
 import { FeaturePageHeader } from '@/components/ui/feature-page-header'
 import { SearchInput } from '@/components/ui/search-input'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { useListMultiSelect } from '@/hooks/useListMultiSelect'
+import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
+import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
+import { useTrashFilter } from '@/hooks/useTrashFilter'
+import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
+import { announce } from '@/lib/announcer'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-
-import { useListKeyboardNavigation } from '../hooks/useListKeyboardNavigation'
-import { useListMultiSelect } from '../hooks/useListMultiSelect'
-import { useRichContentCallbacks, useTagClickHandler } from '../hooks/useRichContentCallbacks'
-import { useTrashBreadcrumbs } from '../hooks/useTrashBreadcrumbs'
-import { useTrashDescendantCounts } from '../hooks/useTrashDescendantCounts'
-import { useTrashFilter } from '../hooks/useTrashFilter'
-import { useTrashListShortcuts } from '../hooks/useTrashListShortcuts'
-import { announce } from '../lib/announcer'
-import { logger } from '../lib/logger'
-import type { BlockRow, PageResponse } from '../lib/tauri'
+import type { BlockRow, PageResponse } from '@/lib/tauri'
 import {
   listTrash,
   purgeAllDeletedInSpace,
@@ -46,15 +51,9 @@ import {
   restoreAllDeletedInSpace,
   restoreBlock,
   restoreBlocksByIds,
-} from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import { TrashBatchPurgeDialog } from './TrashView/TrashBatchPurgeDialog'
-import { TrashBatchRestoreDialog } from './TrashView/TrashBatchRestoreDialog'
-import { TrashEmptyDialog } from './TrashView/TrashEmptyDialog'
-import { TrashListView } from './TrashView/TrashListView'
-import { TrashPurgeDialog } from './TrashView/TrashPurgeDialog'
-import { TrashRestoreAllDialog } from './TrashView/TrashRestoreAllDialog'
+} from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 export function TrashView(): React.ReactElement {
   const { t } = useTranslation()

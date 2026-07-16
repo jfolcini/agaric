@@ -15,8 +15,8 @@
  * variants split out for users who explicitly customize per device.
  */
 
-import { isMac } from './platform'
-import { PREFERENCES, readPreference, writePreference } from './preferences'
+import { isMac } from '@/lib/platform'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /** localStorage key under which the user's chosen chord is persisted. */
 export const QUICK_CAPTURE_SHORTCUT_STORAGE_KEY = PREFERENCES.quickCaptureShortcut.key

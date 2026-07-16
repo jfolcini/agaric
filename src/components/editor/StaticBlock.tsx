@@ -18,13 +18,12 @@ import type React from 'react'
 import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachments'
+import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
+import { useRichContent } from '@/components/editor/useRichContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { cn } from '@/lib/utils'
-
-import { StaticBlockAttachments } from './StaticBlockAttachments'
-import { StaticQueryBlock } from './StaticQueryBlock'
-import { useRichContent } from './useRichContent'
 
 export interface StaticBlockProps {
   blockId: string

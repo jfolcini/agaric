@@ -20,12 +20,11 @@ import type React from 'react'
 import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { Badge } from '@/components/ui/badge'
 import { Spinner } from '@/components/ui/spinner'
 import type { MatchOffset, SearchBlockRow as SearchBlockRowT } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
-
-import { SnippetHighlight } from './SnippetHighlight'
 
 export interface SearchResultBlockRowProps {
   row: SearchBlockRowT

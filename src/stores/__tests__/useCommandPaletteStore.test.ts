@@ -5,7 +5,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { useCommandPaletteStore } from '../useCommandPaletteStore'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 
 function resetStore(): void {
   useCommandPaletteStore.setState({

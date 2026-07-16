@@ -13,10 +13,10 @@ import { act, renderHook } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useNavigationStore } from '../../stores/navigation'
-import { useResolveStore } from '../../stores/resolve'
-import { useTabsStore } from '../../stores/tabs'
-import { useRichContentCallbacks, useTagClickHandler } from '../useRichContentCallbacks'
+import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { useNavigationStore } from '@/stores/navigation'
+import { useResolveStore } from '@/stores/resolve'
+import { useTabsStore } from '@/stores/tabs'
 
 beforeEach(() => {
   useResolveStore.setState({

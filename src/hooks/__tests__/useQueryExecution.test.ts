@@ -2,8 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { encodeInlineQueryPayload } from '../../lib/inline-query-spec'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   dispatchQuery,
   fetchBacklinksQuery,
@@ -13,7 +12,8 @@ import {
   fetchTagQuery,
   QueryValidationError,
   useQueryExecution,
-} from '../useQueryExecution'
+} from '@/hooks/useQueryExecution'
+import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 

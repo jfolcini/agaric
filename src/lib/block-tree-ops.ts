@@ -7,10 +7,10 @@
  * rather than back in the store factory.
  */
 
-import { notifyUnknownNodeTypeToast } from '../editor/markdown-serialize-toast'
-import { parse, serialize } from '../editor/markdown-serializer'
-import type { BlockLevelNode } from '../editor/types'
-import { buildIndexById, type FlatBlock, getDragDescendants } from './tree-utils'
+import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type { BlockLevelNode } from '@/editor/types'
+import { buildIndexById, type FlatBlock, getDragDescendants } from '@/lib/tree-utils'
 
 // ── splitBlock helpers ───────────────────────────────────────────────────
 

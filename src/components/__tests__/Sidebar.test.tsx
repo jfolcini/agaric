@@ -14,7 +14,6 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '../../lib/i18n'
 import {
   Sidebar,
   SidebarContent,
@@ -29,7 +28,8 @@ import {
   SidebarProvider,
   SidebarRail,
   SidebarTrigger,
-} from '../ui/sidebar'
+} from '@/components/ui/sidebar'
+import { t } from '@/lib/i18n'
 
 /**
  * Render a Sidebar with typical navigation content, mirroring how App.tsx

@@ -19,6 +19,8 @@ import { FolderPlus } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { HasParentMatchingEditor } from '@/components/AdvancedQuery/HasParentMatchingEditor'
+import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
@@ -31,9 +33,6 @@ import type {
   BuilderPath,
 } from '@/stores/advancedQuery'
 import { useResolveStore } from '@/stores/resolve'
-
-import { AddFilterPopover } from '../PageBrowser/AddFilterPopover'
-import { HasParentMatchingEditor } from './HasParentMatchingEditor'
 
 /** Append `index` to `path` (a child address relative to a parent path). */
 function childPath(path: BuilderPath, index: number): BuilderPath {

@@ -24,24 +24,23 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
-
-import { BlockDatePicker } from '../BlockDatePicker'
+import { BlockDatePicker } from '@/components/block-tree/BlockDatePicker'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
 // useWeekStart — return Monday start
-vi.mock('../../../hooks/useWeekStart', () => ({
+vi.mock('@/hooks/useWeekStart', () => ({
   useWeekStart: () => ({ weekStartsOn: 1 as const }),
 }))
 
 // parseDate — controllable mock for preview tests
 const mockParseDate = vi.fn()
-vi.mock('../../../lib/parse-date', () => ({
+vi.mock('@/lib/parse-date', () => ({
   parseDate: (...args: unknown[]) => mockParseDate(...args),
 }))
 
 // Calendar — renders a simple clickable day button to test onSelect pass-through
-vi.mock('../../ui/calendar', () => ({
+vi.mock('@/components/ui/calendar', () => ({
   Calendar: ({ onSelect }: { onSelect?: (day: Date | undefined) => void }) => (
     <div data-testid="calendar-mock">
       <button
@@ -56,7 +55,7 @@ vi.mock('../../ui/calendar', () => ({
 }))
 
 // ScrollArea — passthrough wrapper (Radix primitives need browser APIs)
-vi.mock('../../ui/scroll-area', () => ({
+vi.mock('@/components/ui/scroll-area', () => ({
   ScrollArea: ({ children, className }: { children: React.ReactNode; className?: string }) => (
     <div data-testid="scroll-area" className={className}>
       {children}

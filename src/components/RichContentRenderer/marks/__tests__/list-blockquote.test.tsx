@@ -10,10 +10,10 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '../../../../editor/markdown-serializer'
-import type { BlockLevelNode } from '../../../../editor/types'
-import type { RenderContext } from '../../context'
-import { renderBlock } from '../block'
+import type { RenderContext } from '@/components/RichContentRenderer/context'
+import { renderBlock } from '@/components/RichContentRenderer/marks/block'
+import { parse } from '@/editor/markdown-serializer'
+import type { BlockLevelNode } from '@/editor/types'
 
 const ctx: RenderContext = {}
 

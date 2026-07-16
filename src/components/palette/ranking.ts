@@ -6,12 +6,11 @@
  * the existing test import path.
  */
 
+import { MAX_MATCHES_PER_GROUP, MAX_PAGE_GROUPS } from '@/components/palette/constants'
+import type { PaletteGroup } from '@/components/palette/types'
 import { t } from '@/lib/i18n'
 import { jaroWinkler } from '@/lib/jaro-winkler'
 import type { SearchBlockRow } from '@/lib/tauri'
-
-import { MAX_MATCHES_PER_GROUP, MAX_PAGE_GROUPS } from './constants'
-import type { PaletteGroup } from './types'
 
 /**
  * Merge the two FTS partitions into capped palette groups.

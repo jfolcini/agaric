@@ -11,9 +11,9 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useNavigationStore } from '../navigation'
-import { useRecentPagesStore } from '../recent-pages'
-import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '../tabs'
+import { useNavigationStore } from '@/stores/navigation'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import { MAX_PAGE_STACK_DEPTH, selectPageStack, useTabsStore } from '@/stores/tabs'
 
 const migrate = useTabsStore.persist.getOptions().migrate
 

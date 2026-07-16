@@ -6,7 +6,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { DEFAULT_LONG_PRESS_DELAY, useLongPress } from '../useLongPress'
+import { DEFAULT_LONG_PRESS_DELAY, useLongPress } from '@/hooks/useLongPress'
 
 function pointerEvent(x: number, y: number): React.PointerEvent {
   return { clientX: x, clientY: y } as React.PointerEvent

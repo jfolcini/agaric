@@ -10,16 +10,15 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  EXTERNAL_IMAGE_ALLOWLIST_KEY,
-  EXTERNAL_IMAGE_POLICY_KEY,
-} from '@/lib/external-image-policy'
-
-import {
   getExternalImageAllowlist,
   getExternalImagePolicy,
   useExternalImageAllowlist,
   useExternalImagePolicy,
-} from '../useExternalImagePolicy'
+} from '@/hooks/useExternalImagePolicy'
+import {
+  EXTERNAL_IMAGE_ALLOWLIST_KEY,
+  EXTERNAL_IMAGE_POLICY_KEY,
+} from '@/lib/external-image-policy'
 
 afterEach(() => {
   localStorage.clear()

@@ -18,7 +18,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { IncludeExcludeToggle } from '../filter-forms/IncludeExcludeToggle'
+import { IncludeExcludeToggle } from '@/components/search/filter-forms/IncludeExcludeToggle'
 
 const LABEL = 'Match mode'
 const INCLUDE = 'Include'

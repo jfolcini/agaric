@@ -31,12 +31,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useToday } from '@/hooks/useToday'
 import { formatDate } from '@/lib/date-utils'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { logger } from '../lib/logger'
-import { PREFERENCES, readPreference } from '../lib/preferences'
-import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '../lib/tauri'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
+import type { BlockRow, PageResponse, ProjectedAgendaEntry, ResolvedBlock } from '@/lib/tauri'
 import {
   batchResolve,
   listBlocks,
@@ -45,10 +46,8 @@ import {
   listProjectedAgendaLimit,
   paginationLimit,
   queryByProperty,
-} from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
-import { useBlockPropertyEvents } from './useBlockPropertyEvents'
-import { useToday } from './useToday'
+} from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 // ── ULID reference extraction (B-53) ──────────────────────────────────
 /** Matches [[ULID]], #[ULID], and ((ULID)) refs inside block content. */

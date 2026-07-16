@@ -20,9 +20,9 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react'
 
-import { logger } from '../lib/logger'
-import type { PropertyRow } from '../lib/tauri'
-import { getBatchProperties } from '../lib/tauri'
+import { logger } from '@/lib/logger'
+import type { PropertyRow } from '@/lib/tauri'
+import { getBatchProperties } from '@/lib/tauri'
 
 interface BatchPropertiesValue {
   /** Read the cached property list for a block. Returns undefined if the block isn't in the cache yet. */

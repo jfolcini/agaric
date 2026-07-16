@@ -7,7 +7,7 @@
  * `block-command-bus`) so the bus can reference the `BLOCK_EVENTS` *type* and
  * `block-events` can use the *value* without forming an import cycle (#1250).
  * `block-events.ts` re-exports `BLOCK_EVENTS` so existing
- * `import { BLOCK_EVENTS } from './block-events'` call sites keep working.
+ * `import { BLOCK_EVENTS } from '@/lib/block-events'` call sites keep working.
  */
 export const BLOCK_EVENTS = {
   OPEN_DATE_PICKER: 'open-date-picker',

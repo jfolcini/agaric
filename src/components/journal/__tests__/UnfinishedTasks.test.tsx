@@ -18,10 +18,10 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import { logger } from '../../../lib/logger'
-import type { BlockRow } from '../../../lib/tauri'
-import { useSpaceStore } from '../../../stores/space'
+import { makeBlock } from '@/__tests__/fixtures'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
@@ -125,7 +125,7 @@ function mockInvokeForBlocks(blocks: BlockRow[], resolvedPages?: { id: string; t
   })
 }
 
-import { UnfinishedTasks } from '../UnfinishedTasks'
+import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -989,7 +989,7 @@ describe('UnfinishedTasks', () => {
 // ── DailyView integration tests ──────────────────────────────────────
 
 // Mock DaySection — vi.mock is hoisted above imports automatically
-vi.mock('../DaySection', () => ({
+vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
@@ -1001,7 +1001,7 @@ vi.mock('../DaySection', () => ({
 }))
 
 // Import DailyView after vi.mock (hoisting ensures mocks apply)
-import { DailyView } from '../DailyView'
+import { DailyView } from '@/components/journal/DailyView'
 
 describe('UnfinishedTasks in DailyView', () => {
   it("shows UnfinishedTasks only for today's date", async () => {

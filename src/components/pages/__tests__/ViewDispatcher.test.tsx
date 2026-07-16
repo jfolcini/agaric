@@ -48,7 +48,7 @@ vi.mock('@/components/history/HistoryView', () => ({
 vi.mock('@/components/PageBrowser', () => ({
   PageBrowser: () => <div data-testid="page-browser-mock">pages</div>,
 }))
-vi.mock('../PageEditor', () => ({
+vi.mock('@/components/pages/PageEditor', () => ({
   PageEditor: ({ title }: { title: string }) => (
     <div data-testid="page-editor-mock">{`page-editor:${title}`}</div>
   ),
@@ -56,7 +56,7 @@ vi.mock('../PageEditor', () => ({
 vi.mock('@/components/SearchPanel', () => ({
   SearchPanel: () => <div data-testid="search-panel-mock">search</div>,
 }))
-vi.mock('../SettingsView', () => ({
+vi.mock('@/components/pages/SettingsView', () => ({
   SettingsView: () => <div data-testid="settings-view-mock">settings</div>,
 }))
 vi.mock('@/components/agenda/StatusPanel', () => ({
@@ -354,7 +354,8 @@ describe('ViewDispatcher — Suspense fallback', () => {
     }))
 
     try {
-      const { ViewDispatcher: IsolatedDispatcher } = await import('../ViewDispatcher')
+      const { ViewDispatcher: IsolatedDispatcher } =
+        await import('@/components/pages/ViewDispatcher')
 
       render(
         <IsolatedDispatcher

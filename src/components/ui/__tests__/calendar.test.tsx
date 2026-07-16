@@ -14,7 +14,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Calendar } from '../calendar'
+import { Calendar } from '@/components/ui/calendar'
 
 /** Helper: querySelector that throws on null. */
 function q(container: HTMLElement, selector: string): Element {

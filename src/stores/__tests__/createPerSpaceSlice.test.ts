@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { create, type StoreApi } from 'zustand'
 
-import { createPerSpaceSlice, type PerSpaceSliceOptions } from '../createPerSpaceSlice'
-import { LEGACY_SPACE_KEY, useSpaceStore } from '../space'
+import { createPerSpaceSlice, type PerSpaceSliceOptions } from '@/stores/createPerSpaceSlice'
+import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 // ---------------------------------------------------------------------------
 // A minimal single-field store exercising the primitive in isolation: a flat

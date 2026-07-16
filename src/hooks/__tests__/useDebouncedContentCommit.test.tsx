@@ -2,8 +2,10 @@ import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-
-import { CONTENT_COMMIT_DEBOUNCE_MS, useDebouncedContentCommit } from '../useDebouncedContentCommit'
+import {
+  CONTENT_COMMIT_DEBOUNCE_MS,
+  useDebouncedContentCommit,
+} from '@/hooks/useDebouncedContentCommit'
 
 vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },

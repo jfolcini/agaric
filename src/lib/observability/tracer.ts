@@ -42,10 +42,10 @@ import {
   TraceFlags,
 } from '@opentelemetry/api'
 
-import type { FrontendSpan, FrontendSpanAttr } from '../bindings'
-import { shouldSampleRoot } from './config'
-import { SpanExporter } from './exporter'
-import { generateSpanId, generateTraceId } from './ids'
+import type { FrontendSpan, FrontendSpanAttr } from '@/lib/bindings'
+import { shouldSampleRoot } from '@/lib/observability/config'
+import { SpanExporter } from '@/lib/observability/exporter'
+import { generateSpanId, generateTraceId } from '@/lib/observability/ids'
 
 /** Epoch-millis wall clock matching the backend's `start_unix_millis`. */
 function nowEpochMillis(): number {

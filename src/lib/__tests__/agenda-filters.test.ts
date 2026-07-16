@@ -9,7 +9,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   AGENDA_QUERY_LIMIT,
   executeAgendaFilters,
@@ -17,7 +17,7 @@ import {
   loadMoreUnfilteredAgenda,
   toFutureDatePreset,
   toPastDatePreset,
-} from '../agenda-filters'
+} from '@/lib/agenda-filters'
 
 const mockedInvoke = vi.mocked(invoke)
 

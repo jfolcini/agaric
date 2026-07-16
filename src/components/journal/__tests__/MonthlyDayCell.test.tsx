@@ -19,8 +19,8 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { DayEntry } from '../../../lib/date-utils'
-import { MonthlyDayCell } from '../MonthlyDayCell'
+import { MonthlyDayCell } from '@/components/journal/MonthlyDayCell'
+import type { DayEntry } from '@/lib/date-utils'
 
 function makeEntry(dateStr: string): DayEntry {
   const parts = dateStr.split('-')

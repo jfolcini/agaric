@@ -26,9 +26,8 @@ import { X } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-
-import { Input } from './input'
 
 export interface SearchInputProps extends Omit<React.ComponentProps<'input'>, 'onChange'> {
   /** Current value (controlled). The clear button is only rendered when non-empty. */

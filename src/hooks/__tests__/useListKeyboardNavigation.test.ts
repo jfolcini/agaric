@@ -18,7 +18,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { resolveNavOptions, useListKeyboardNavigation } from '../useListKeyboardNavigation'
+import { resolveNavOptions, useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 
 function keyEvent(key: string): KeyboardEvent {
   return new KeyboardEvent('keydown', { key })

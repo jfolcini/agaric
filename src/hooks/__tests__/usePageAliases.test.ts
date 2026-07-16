@@ -15,16 +15,16 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   getPageAliases: vi.fn(),
   setPageAliases: vi.fn(),
 }))
 
-vi.mock('../../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -44,9 +44,9 @@ vi.mock('sonner', () => ({
   }),
 }))
 
-import { announce } from '../../lib/announcer'
-import { getPageAliases, setPageAliases } from '../../lib/tauri'
-import { usePageAliases } from '../usePageAliases'
+import { usePageAliases } from '@/hooks/usePageAliases'
+import { announce } from '@/lib/announcer'
+import { getPageAliases, setPageAliases } from '@/lib/tauri'
 
 const mockedGet = vi.mocked(getPageAliases)
 const mockedSet = vi.mocked(setPageAliases)

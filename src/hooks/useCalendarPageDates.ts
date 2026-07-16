@@ -24,9 +24,8 @@ import { useTranslation } from 'react-i18next'
 
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { listJournalPagesInRange } from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
+import { listJournalPagesInRange } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 const inflightByKey = new Map<string, Promise<Map<string, string>>>()
 

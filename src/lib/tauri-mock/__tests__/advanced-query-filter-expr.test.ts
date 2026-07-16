@@ -15,8 +15,16 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { dispatch, metaRowMatchesExpr, type PageMetaRow } from '../handlers'
-import { blockTags, blocks, makeBlock, opLog, properties, propertyDefs, seedBlocks } from '../seed'
+import { dispatch, metaRowMatchesExpr, type PageMetaRow } from '@/lib/tauri-mock/handlers'
+import {
+  blockTags,
+  blocks,
+  makeBlock,
+  opLog,
+  properties,
+  propertyDefs,
+  seedBlocks,
+} from '@/lib/tauri-mock/seed'
 
 const SPACE_A = 'SPACE_A'.padStart(26, '0')
 const SPACE_B = 'SPACE_B'.padStart(26, '0')

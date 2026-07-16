@@ -16,28 +16,7 @@
  * Zero external dependencies. O(n) in the input length.
  */
 
-import { logger } from '@/lib/logger'
-import { isAllowedUrl } from '@/lib/url-validation'
-
-import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from '../markdown-common'
-import type {
-  BlockLevelNode,
-  BlockquoteNode,
-  BulletListNode,
-  CodeBlockNode,
-  DocNode,
-  HeadingNode,
-  HorizontalRuleNode,
-  InlineNode,
-  ListItemNode,
-  MathBlockNode,
-  OrderedListNode,
-  ParagraphNode,
-  PMMark,
-  TableNode,
-  TableRowNode,
-  TodoState,
-} from '../types'
+import { scanBareUrl, underscoreRunFlank, WORD_CHAR_RE } from '@/editor/markdown-common'
 import {
   BULLET_ITEM_RE,
   BULLET_TASK_RE,
@@ -62,7 +41,27 @@ import {
   type BlockParseResult,
   unescapeImageAlt,
   unescapeUrl,
-} from './vocab'
+} from '@/editor/markdown-parse/vocab'
+import type {
+  BlockLevelNode,
+  BlockquoteNode,
+  BulletListNode,
+  CodeBlockNode,
+  DocNode,
+  HeadingNode,
+  HorizontalRuleNode,
+  InlineNode,
+  ListItemNode,
+  MathBlockNode,
+  OrderedListNode,
+  ParagraphNode,
+  PMMark,
+  TableNode,
+  TableRowNode,
+  TodoState,
+} from '@/editor/types'
+import { logger } from '@/lib/logger'
+import { isAllowedUrl } from '@/lib/url-validation'
 
 // -- External link parsing ----------------------------------------------------
 

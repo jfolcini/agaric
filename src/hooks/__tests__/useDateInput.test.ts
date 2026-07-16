@@ -20,11 +20,11 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { parseDate } from '../../lib/parse-date'
-import { useDateInput } from '../useDateInput'
+import { useDateInput } from '@/hooks/useDateInput'
+import { parseDate } from '@/lib/parse-date'
 
 // Mock parseDate to make tests deterministic
-vi.mock('../../lib/parse-date', () => ({
+vi.mock('@/lib/parse-date', () => ({
   parseDate: vi.fn((input: string) => {
     const lower = input.trim().toLowerCase()
     if (lower === 'tomorrow') return '2025-07-02'

@@ -8,13 +8,13 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { makePage } from '../../__tests__/fixtures'
-import type { BlockRow } from '../../lib/tauri'
+import { makePage } from '@/__tests__/fixtures'
 import {
   buildMultiPageBranch,
   buildSinglePageBranch,
   usePageBrowserGrouping,
-} from '../usePageBrowserGrouping'
+} from '@/hooks/usePageBrowserGrouping'
+import type { BlockRow } from '@/lib/tauri'
 
 // #1149 — recent-pages moved to the zustand store. The grouping comparator
 // reads the snapshot helper `getRecentPagesForSpace`; override only that and

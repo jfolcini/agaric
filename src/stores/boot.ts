@@ -23,7 +23,7 @@
 
 import { create } from 'zustand'
 
-import { useSpaceStore } from './space'
+import { useSpaceStore } from '@/stores/space'
 
 type BootState = 'booting' | 'ready' | 'error'
 

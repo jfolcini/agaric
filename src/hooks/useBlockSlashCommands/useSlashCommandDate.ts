@@ -9,8 +9,8 @@
 
 import { useMemo } from 'react'
 
-import { openDatePicker } from './helpers'
-import type { SlashHandlerTables } from './types'
+import { openDatePicker } from '@/hooks/useBlockSlashCommands/helpers'
+import type { SlashHandlerTables } from '@/hooks/useBlockSlashCommands/types'
 
 export function useSlashCommandDate(): SlashHandlerTables {
   return useMemo<SlashHandlerTables>(

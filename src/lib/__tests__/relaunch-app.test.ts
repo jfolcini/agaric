@@ -21,7 +21,7 @@ describe('relaunchApp', () => {
   it('calls relaunch() from @tauri-apps/plugin-process when available', async () => {
     vi.doMock('@tauri-apps/plugin-process', () => ({ relaunch: mockRelaunch }))
     mockRelaunch.mockResolvedValueOnce(undefined)
-    const { relaunchApp } = await import('../relaunch-app')
+    const { relaunchApp } = await import('@/lib/relaunch-app')
 
     await relaunchApp()
 
@@ -45,7 +45,7 @@ describe('relaunchApp', () => {
     vi.doMock('@/lib/logger', () => ({
       logger: { warn: vi.fn(), error: vi.fn() },
     }))
-    const { relaunchApp } = await import('../relaunch-app')
+    const { relaunchApp } = await import('@/lib/relaunch-app')
 
     await relaunchApp()
 

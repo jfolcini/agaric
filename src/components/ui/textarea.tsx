@@ -1,8 +1,7 @@
 import type * as React from 'react'
 
+import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-
-import { SHARED_INPUT_CLASSES } from './input'
 
 const Textarea = ({ ref, className, ...props }: React.ComponentProps<'textarea'>) => (
   <textarea

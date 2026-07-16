@@ -1,8 +1,8 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '../classify'
-import { addFilter, removeFilterAt, serialize, tokenSource } from '../serialize'
+import { parse } from '@/lib/search-query/classify'
+import { addFilter, removeFilterAt, serialize, tokenSource } from '@/lib/search-query/serialize'
 
 describe('serialize round-trip', () => {
   const canonicalInputs = [

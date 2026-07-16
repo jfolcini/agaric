@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { insertEmojiIntoInput, spliceEmojiIntoText } from '../insert-emoji-at-caret'
+import { insertEmojiIntoInput, spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 
 const ROCKET = '\u{1F680}'
 

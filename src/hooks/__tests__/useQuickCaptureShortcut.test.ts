@@ -10,11 +10,10 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { logger } from '@/lib/logger'
 import { QUICK_CAPTURE_SHORTCUT_STORAGE_KEY } from '@/lib/quick-capture-shortcut'
 import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
-
-import { useQuickCaptureShortcut } from '../useQuickCaptureShortcut'
 
 vi.mock('@/lib/tauri', () => ({
   registerGlobalShortcut: vi.fn(),

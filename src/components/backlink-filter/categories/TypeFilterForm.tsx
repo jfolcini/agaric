@@ -7,6 +7,7 @@ import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import {
   Select,
   SelectContent,
@@ -14,8 +15,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-
-import type { FilterFormHandle } from './types'
 
 export interface TypeFilterFormProps {
   ref?: React.Ref<FilterFormHandle>

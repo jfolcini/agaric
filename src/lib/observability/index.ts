@@ -20,11 +20,11 @@
 
 import { context, type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 
-import { resolveEnabled, setSamplingRatio } from './config'
-import type { InteractionName } from './interactions'
+import { resolveEnabled, setSamplingRatio } from '@/lib/observability/config'
+import type { InteractionName } from '@/lib/observability/interactions'
 
-export { getSamplingRatio, setSamplingRatio } from './config'
-export { INTERACTIONS, type InteractionName } from './interactions'
+export { getSamplingRatio, setSamplingRatio } from '@/lib/observability/config'
+export { INTERACTIONS, type InteractionName } from '@/lib/observability/interactions'
 
 /** Instrumentation scope name — the backend tags these `service.name=agaric-frontend`. */
 const SCOPE = 'agaric-frontend'
@@ -55,10 +55,10 @@ export async function initFrontendObservability(opts?: { enabled?: boolean }): P
       transport,
       { commands },
     ] = await Promise.all([
-      import('./tracer'),
-      import('./invoke'),
-      import('./transport'),
-      import('../bindings'),
+      import('@/lib/observability/tracer'),
+      import('@/lib/observability/invoke'),
+      import('@/lib/observability/transport'),
+      import('@/lib/bindings'),
     ])
 
     context.setGlobalContextManager(new StackContextManager())
@@ -158,7 +158,7 @@ export async function flushFrontendSpans(): Promise<void> {
 export async function setTraceSampling(ratio: number): Promise<void> {
   setSamplingRatio(ratio)
   try {
-    const { commands } = await import('../bindings')
+    const { commands } = await import('@/lib/bindings')
     await commands.setTraceSampling(ratio)
   } catch {
     // IPC unavailable (browser dev / tests) — frontend half is already applied.
@@ -173,7 +173,7 @@ export async function setTraceSampling(ratio: number): Promise<void> {
 export async function _resetFrontendObservabilityForTest(): Promise<void> {
   trace.disable()
   context.disable()
-  const { _resetSpanSink } = await import('./transport')
+  const { _resetSpanSink } = await import('@/lib/observability/transport')
   _resetSpanSink()
   initialized = false
   exporter = null

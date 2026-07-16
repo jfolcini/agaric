@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { i18n } from '../i18n'
-import { formatRepeatLabel } from '../repeat-utils'
+import { i18n } from '@/lib/i18n'
+import { formatRepeatLabel } from '@/lib/repeat-utils'
 
 // Use the real i18n instance (initialized in test-setup.ts) so the test
 // exercises actual translated strings from the `en` resource bundle.

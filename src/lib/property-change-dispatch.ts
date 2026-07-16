@@ -27,8 +27,8 @@
 
 import { listen } from '@tauri-apps/api/event'
 
-import { EVENT_PROPERTY_CHANGED } from './block-event-names'
-import { logger } from './logger'
+import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
+import { logger } from '@/lib/logger'
 
 export { EVENT_PROPERTY_CHANGED }
 

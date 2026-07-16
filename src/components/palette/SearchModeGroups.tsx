@@ -7,10 +7,9 @@ import { FileText } from 'lucide-react'
 import type React from 'react'
 import type { useTranslation } from 'react-i18next'
 
+import type { PaletteGroup } from '@/components/palette/types'
 import { SnippetHighlight } from '@/components/search/SnippetHighlight'
 import { CommandGroup, CommandItem } from '@/components/ui/command'
-
-import type { PaletteGroup } from './types'
 
 /**
  * Search-mode body — renders the merged groups produced by

@@ -6,8 +6,8 @@
  * while a BlockTree is zoomed.
  */
 
-import { useNavigationStore } from '../stores/navigation'
-import { useTabsStore } from '../stores/tabs'
+import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 
 /**
  * Radix-rendered overlay surfaces that should swallow a back press.

@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '../property-utils'
+import { BUILTIN_PROPERTY_ICONS, formatPropertyName } from '@/lib/property-utils'
 
 describe('formatPropertyName', () => {
   it('replaces underscores with spaces and title-cases', () => {

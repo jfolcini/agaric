@@ -35,6 +35,14 @@ import { useCallback, useEffect, useId, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
+import {
+  getPriorityLabel,
+  getTodoLabel,
+  priorityHint,
+  shortcutHint,
+} from '@/components/editor/block-context-menu/hints'
+import { renderItem as renderMenuItem } from '@/components/editor/block-context-menu/menu-row'
+import type { BlockContextMenuProps, MenuItem } from '@/components/editor/block-context-menu/types'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { writeText } from '@/lib/clipboard'
@@ -45,18 +53,9 @@ import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
-import {
-  getPriorityLabel,
-  getTodoLabel,
-  priorityHint,
-  shortcutHint,
-} from './block-context-menu/hints'
-import { renderItem as renderMenuItem } from './block-context-menu/menu-row'
-import type { BlockContextMenuProps, MenuItem } from './block-context-menu/types'
-
 // Re-export the public type from its leaf module so external code keeps
 // importing it from `@/components/editor/BlockContextMenu` unchanged.
-export type { BlockContextMenuProps } from './block-context-menu/types'
+export type { BlockContextMenuProps } from '@/components/editor/block-context-menu/types'
 
 /** Translate fn shape used by the pure builders below. */
 type TFn = ReturnType<typeof useTranslation>['t']

@@ -4,11 +4,10 @@ import { Dialog as SheetPrimitive } from 'radix-ui'
 import type * as React from 'react'
 import { useEffect, useState } from 'react'
 
+import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { computeKeyboardInset } from '@/lib/keyboard-inset'
 import { cn } from '@/lib/utils'
-
-import { CloseButtonIcon, closeButtonClassName } from './close-button'
-import { ScrollArea } from './scroll-area'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
 // the caller's `className` rather than this whole base on every render.

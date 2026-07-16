@@ -29,7 +29,7 @@ import type {
   TableRowNode,
   TagRefNode,
   TextNode,
-} from '../types'
+} from '@/editor/types'
 
 export function text(t: string, marks?: readonly PMMark[]): TextNode {
   const node: TextNode = { type: 'text', text: t }

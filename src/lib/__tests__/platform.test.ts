@@ -13,7 +13,7 @@ import {
   isMac,
   isMobilePlatform,
   modKey,
-} from '../platform'
+} from '@/lib/platform'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(navigator, 'platform')
 const originalUserAgent = Object.getOwnPropertyDescriptor(navigator, 'userAgent')
@@ -203,11 +203,11 @@ describe('platform', () => {
   // `tauri.ts:1871` doc anchor.
   describe('isMobilePlatform dedup — single export, three import sites', () => {
     const sites = [
-      { name: 'tauri.ts', path: '../tauri.ts', spec: "from './platform'" },
+      { name: 'tauri.ts', path: '../tauri.ts', spec: "from '@/lib/platform'" },
       {
         name: 'useUpdateCheck.ts',
         path: '../../hooks/useUpdateCheck.ts',
-        spec: "from '../lib/platform'",
+        spec: "from '@/lib/platform'",
       },
       {
         name: 'HelpTab.tsx',

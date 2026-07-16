@@ -15,7 +15,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   createBlock: vi.fn(),
   createPageInSpace: vi.fn(),
   listAllPagesInSpace: vi.fn(),
@@ -25,6 +25,7 @@ vi.mock('../../lib/tauri', () => ({
   searchBlocksLimit: (n: number) => n,
 }))
 
+import { useBlockResolve } from '@/hooks/useBlockResolve'
 import {
   createBlock,
   createPageInSpace,
@@ -32,10 +33,9 @@ import {
   listAllTagsInSpace,
   listPageAliasesByPrefix,
   searchBlocks,
-} from '../../lib/tauri'
-import { keyFor, useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useBlockResolve } from '../useBlockResolve'
+} from '@/lib/tauri'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedCreateBlock = vi.mocked(createBlock)
 const mockedCreatePageInSpace = vi.mocked(createPageInSpace)

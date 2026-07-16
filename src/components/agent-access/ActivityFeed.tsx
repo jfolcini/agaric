@@ -21,6 +21,7 @@ import type React from 'react'
 import { Fragment, useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { SessionRevertControls } from '@/components/agent-access/SessionRevertControls'
 import { EmptyState } from '@/components/common/EmptyState'
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { Badge } from '@/components/ui/badge'
@@ -35,8 +36,6 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { revertOps } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import { SessionRevertControls } from './SessionRevertControls'
 
 /**
  * Shape of an `AppError::NonReversible` once it crosses the Tauri IPC

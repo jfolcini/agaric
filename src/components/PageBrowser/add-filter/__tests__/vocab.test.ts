@@ -31,7 +31,7 @@ import {
   PROPERTY_OPS,
   type PropertyOpKind,
   VALUE_BEARING_OPS,
-} from '../vocab'
+} from '@/components/PageBrowser/add-filter/vocab'
 
 // Compile-time exhaustiveness: must name every DatePredicate variant.
 const ALL_DATE_OPS = {

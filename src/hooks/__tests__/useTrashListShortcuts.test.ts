@@ -7,9 +7,9 @@
 import { fireEvent, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import type { BlockRow } from '../../lib/tauri'
-import { useTrashListShortcuts } from '../useTrashListShortcuts'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useTrashListShortcuts } from '@/hooks/useTrashListShortcuts'
+import type { BlockRow } from '@/lib/tauri'
 
 interface Opts {
   filteredBlocks: BlockRow[]

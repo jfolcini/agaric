@@ -13,7 +13,7 @@ import {
   DEFAULT_EXTERNAL_IMAGE_POLICY,
   externalImageHost,
   shouldLoadExternalImage,
-} from '../external-image-policy'
+} from '@/lib/external-image-policy'
 
 const EMPTY: ReadonlySet<string> = new Set()
 

@@ -4,7 +4,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -13,8 +13,8 @@ vi.mock('../logger', () => ({
   },
 }))
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../logger'
+import { makeBlock } from '@/__tests__/fixtures'
+import { logger } from '@/lib/logger'
 import {
   buildFlatTree,
   buildIndexById,
@@ -28,7 +28,7 @@ import {
   projectDepth,
   SENTINEL_ID,
   simulateProjection,
-} from '../tree-utils'
+} from '@/lib/tree-utils'
 
 const mockedLoggerWarn = vi.mocked(logger.warn)
 

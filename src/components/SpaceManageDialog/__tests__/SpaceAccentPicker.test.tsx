@@ -19,9 +19,11 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import {
+  ACCENT_SWATCHES,
+  SpaceAccentPicker,
+} from '@/components/SpaceManageDialog/SpaceAccentPicker'
 import { t } from '@/lib/i18n'
-
-import { ACCENT_SWATCHES, SpaceAccentPicker } from '../SpaceAccentPicker'
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },

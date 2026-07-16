@@ -13,9 +13,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { HelpTab } from '@/components/settings/HelpTab'
 import { t } from '@/lib/i18n'
-
-import { HelpTab } from '../settings/HelpTab'
 
 // Stub the updater hook surface — the manual button shouldn't actually
 // reach into the Tauri updater plugin from inside a unit test.

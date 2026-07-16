@@ -10,9 +10,9 @@
 
 import { useCallback, useRef } from 'react'
 
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import { useTabsStore } from '../stores/tabs'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 export interface RichContentCallbacks {
   resolveBlockTitle: (id: string) => string | undefined

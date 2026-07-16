@@ -9,7 +9,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useVoiceInput } from '../useVoiceInput'
+import { useVoiceInput } from '@/hooks/useVoiceInput'
 
 class FakeRecognition {
   lang = ''

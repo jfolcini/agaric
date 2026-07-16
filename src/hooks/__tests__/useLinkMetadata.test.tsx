@@ -10,9 +10,9 @@ import { invoke } from '@tauri-apps/api/core'
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../lib/logger'
-import type { LinkMetadata } from '../../lib/tauri'
-import { useLinkMetadata } from '../useLinkMetadata'
+import { useLinkMetadata } from '@/hooks/useLinkMetadata'
+import { logger } from '@/lib/logger'
+import type { LinkMetadata } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -16,9 +16,13 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import type { FlatBlock } from '../../lib/tree-utils'
-import { INITIAL_MOUNT_LIMIT, MOUNT_LIMIT_STEP, useBlockMountLimit } from '../useBlockMountLimit'
+import { makeBlock } from '@/__tests__/fixtures'
+import {
+  INITIAL_MOUNT_LIMIT,
+  MOUNT_LIMIT_STEP,
+  useBlockMountLimit,
+} from '@/hooks/useBlockMountLimit'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 function makeFlatBlocks(count: number): FlatBlock[] {
   return Array.from({ length: count }, (_, i) => makeBlock({ id: `BLK_${i}`, content: `b${i}` }))

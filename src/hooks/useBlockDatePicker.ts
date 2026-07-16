@@ -3,11 +3,10 @@ import type { RefObject } from 'react'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { announce } from '../lib/announcer'
 import {
   createPageInSpace,
   listAllPagesInSpace,
@@ -15,11 +14,11 @@ import {
   setDueDate as setDueDateCmd,
   setProperty,
   setScheduledDate as setScheduledDateCmd,
-} from '../lib/tauri'
-import type { PageBlockState } from '../stores/page-blocks'
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import { useUndoStore } from '../stores/undo'
+} from '@/lib/tauri'
+import type { PageBlockState } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 export type DatePickerMode = 'date' | 'due' | 'schedule' | 'repeat-until'
 

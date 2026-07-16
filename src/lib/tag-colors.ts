@@ -17,8 +17,8 @@
  * against that drift.
  */
 
-import { PREFERENCES, readPreference, writePreference } from './preferences'
-import { accentVar } from './space-accent'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
+import { accentVar } from '@/lib/space-accent'
 
 /**
  * Preset color palette — re-keyed (#1099) onto the themed per-space

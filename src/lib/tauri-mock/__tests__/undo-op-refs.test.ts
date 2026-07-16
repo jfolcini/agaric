@@ -23,8 +23,15 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { dispatch } from '../handlers'
-import { blocks, blockTags, makeBlock, opLog, properties, propertyDefs } from '../seed'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import {
+  blocks,
+  blockTags,
+  makeBlock,
+  opLog,
+  properties,
+  propertyDefs,
+} from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
 const TAG = '000000000000000000000TAGZZ'

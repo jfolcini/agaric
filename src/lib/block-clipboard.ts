@@ -16,8 +16,8 @@
  * it, so refs/marks/headings round-trip untouched.
  */
 
-import type { FlatBlock } from './tree-utils'
-import { buildIndexById, computeSelectionRoots, getDragDescendants } from './tree-utils'
+import type { FlatBlock } from '@/lib/tree-utils'
+import { buildIndexById, computeSelectionRoots, getDragDescendants } from '@/lib/tree-utils'
 
 /** Spaces per indent level — the repo's outline convention (2-space indent). */
 export const INDENT_UNIT = 2

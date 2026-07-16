@@ -10,8 +10,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import type { FilterToken } from '../types'
-import { tokenKey } from '../types'
+import type { FilterToken } from '@/lib/search-query/types'
+import { tokenKey } from '@/lib/search-query/types'
 
 describe('tokenKey', () => {
   it('disambiguates duplicate value tokens by start column', () => {

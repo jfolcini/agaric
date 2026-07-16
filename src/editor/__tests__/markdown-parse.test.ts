@@ -7,7 +7,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -16,9 +16,6 @@ vi.mock('../../lib/logger', () => ({
   },
 }))
 
-import { logger } from '../../lib/logger'
-import { parse } from '../markdown-parse'
-import { serialize } from '../markdown-serialize'
 import {
   bold,
   bulletList,
@@ -30,7 +27,10 @@ import {
   paragraph,
   task,
   text,
-} from './builders'
+} from '@/editor/__tests__/builders'
+import { parse } from '@/editor/markdown-parse'
+import { serialize } from '@/editor/markdown-serialize'
+import { logger } from '@/lib/logger'
 
 describe('parse — depth-limit truncation (FE-L-7)', () => {
   beforeEach(() => {

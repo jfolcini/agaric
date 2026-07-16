@@ -19,15 +19,15 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useAndroidBackButton } from '@/hooks/useAndroidBackButton'
 import {
   __resetBackHandlersForTests,
   BACK_PRIORITY_ZOOM,
   registerBackHandler,
   runBackChain,
-} from '../../lib/back-chain'
-import { useNavigationStore } from '../../stores/navigation'
-import { resetTabIdCounter, useTabsStore } from '../../stores/tabs'
-import { useAndroidBackButton } from '../useAndroidBackButton'
+} from '@/lib/back-chain'
+import { useNavigationStore } from '@/stores/navigation'
+import { resetTabIdCounter, useTabsStore } from '@/stores/tabs'
 
 const mocks = vi.hoisted(() => ({
   addPluginListener: vi.fn(),
@@ -41,7 +41,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 vi.mock('@tauri-apps/plugin-process', () => ({
   exit: mocks.exit,
 }))
-vi.mock('../../lib/platform', () => ({
+vi.mock('@/lib/platform', () => ({
   isAndroid: mocks.isAndroid,
 }))
 

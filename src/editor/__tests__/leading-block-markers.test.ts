@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '../markdown-serializer'
-import { doc, paragraph, tagRef, text } from './builders'
+import { doc, paragraph, tagRef, text } from '@/editor/__tests__/builders'
+import { parse, serialize } from '@/editor/markdown-serializer'
 
 const ULID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 

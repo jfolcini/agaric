@@ -19,23 +19,22 @@ import { Lock, RotateCcw } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
-
-import type { DiffSpan, HistoryEntry } from '../lib/tauri'
-import { HistoryItemCore } from './HistoryListItem/HistoryItemCore'
 
 export type {
   BlockHistoryDiffMode,
   BlockHistoryItemProps,
-} from './HistoryListItem/BlockHistoryItem'
-export { BlockHistoryItem } from './HistoryListItem/BlockHistoryItem'
-export type { HistoryItemCoreProps } from './HistoryListItem/HistoryItemCore'
+} from '@/components/HistoryListItem/BlockHistoryItem'
+export { BlockHistoryItem } from '@/components/HistoryListItem/BlockHistoryItem'
+export type { HistoryItemCoreProps } from '@/components/HistoryListItem/HistoryItemCore'
 // Re-export public surface from the extracted siblings so consumers can
 // keep importing from `./HistoryListItem`.
-export { HistoryItemCore, opIcon } from './HistoryListItem/HistoryItemCore'
+export { HistoryItemCore, opIcon } from '@/components/HistoryListItem/HistoryItemCore'
 
 // ---------------------------------------------------------------------------
 // Props

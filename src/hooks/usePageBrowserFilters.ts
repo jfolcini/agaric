@@ -32,18 +32,17 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { logger } from '@/lib/logger'
-
 import {
   type PageFilterWithKey,
   pageFilterSummary,
-} from '../components/PageBrowser/PageBrowserFilterRow'
-import type { FilterPrimitive } from '../lib/tauri'
-import { resolvePageByAlias } from '../lib/tauri'
-import { useNavigationStore } from '../stores/navigation'
-import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '../stores/pageBrowserFilters'
-import { useResolveStore } from '../stores/resolve'
-import { LEGACY_SPACE_KEY } from '../stores/space'
+} from '@/components/PageBrowser/PageBrowserFilterRow'
+import { logger } from '@/lib/logger'
+import type { FilterPrimitive } from '@/lib/tauri'
+import { resolvePageByAlias } from '@/lib/tauri'
+import { useNavigationStore } from '@/stores/navigation'
+import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import { useResolveStore } from '@/stores/resolve'
+import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 interface UsePageBrowserFiltersResult {
   filters: PageFilterWithKey[]

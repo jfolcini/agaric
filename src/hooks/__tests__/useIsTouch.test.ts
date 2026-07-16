@@ -16,7 +16,7 @@
 import { renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { useIsTouch } from '../useIsTouch'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 function mockMatchMedia(coarse: boolean) {
   window.matchMedia = vi.fn().mockImplementation((query: string) => ({

@@ -11,19 +11,29 @@
 import { type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { FrontendSpan } from '../../bindings'
-import { commands } from '../../bindings'
-import { getSamplingRatio, resolveEnabled, setSamplingRatio, shouldSampleRoot } from '../config'
-import { generateSpanId, generateTraceId, isValidSpanId, isValidTraceId } from '../ids'
+import type { FrontendSpan } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
+import {
+  getSamplingRatio,
+  resolveEnabled,
+  setSamplingRatio,
+  shouldSampleRoot,
+} from '@/lib/observability/config'
+import {
+  generateSpanId,
+  generateTraceId,
+  isValidSpanId,
+  isValidTraceId,
+} from '@/lib/observability/ids'
 import {
   _resetFrontendObservabilityForTest,
   flushFrontendSpans,
   initFrontendObservability,
   setTraceSampling,
   traceInteraction,
-} from '../index'
-import { INTERACTIONS } from '../interactions'
-import { _resetSpanSink, setSpanSink } from '../transport'
+} from '@/lib/observability/index'
+import { INTERACTIONS } from '@/lib/observability/interactions'
+import { _resetSpanSink, setSpanSink } from '@/lib/observability/transport'
 
 interface InvokeCall {
   cmd: string
@@ -287,7 +297,7 @@ describe('traceInteraction: endError re-throws and records an error span', () =>
 
 describe('exporter caps', () => {
   it('auto-flushes at the 128-span batch threshold', async () => {
-    const { SpanExporter } = await import('../exporter')
+    const { SpanExporter } = await import('@/lib/observability/exporter')
     const batches: number[] = []
     setSpanSink((spans) => {
       batches.push(spans.length)
@@ -314,7 +324,7 @@ describe('exporter caps', () => {
   })
 
   it('truncates per-span attributes to the 64 cap', async () => {
-    const { SpanExporter } = await import('../exporter')
+    const { SpanExporter } = await import('@/lib/observability/exporter')
     const captured: FrontendSpan[] = []
     setSpanSink((spans) => {
       captured.push(...spans)
@@ -353,7 +363,7 @@ describe('exporter: coalescing timer + no-sink drain', () => {
   it('flushes buffered spans exactly once when the 2000ms coalescing timer fires', async () => {
     vi.useFakeTimers()
     try {
-      const { SpanExporter } = await import('../exporter')
+      const { SpanExporter } = await import('@/lib/observability/exporter')
       const batches: number[] = []
       setSpanSink((spans) => {
         batches.push(spans.length)
@@ -383,7 +393,7 @@ describe('exporter: coalescing timer + no-sink drain', () => {
   })
 
   it('drains and drops the buffer without error when no sink is configured', async () => {
-    const { SpanExporter } = await import('../exporter')
+    const { SpanExporter } = await import('@/lib/observability/exporter')
     _resetSpanSink() // ensure getSpanSink() === null for this test
     const exporter = new SpanExporter()
     exporter.enqueue(makeSpan())

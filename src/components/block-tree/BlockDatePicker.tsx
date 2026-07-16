@@ -16,12 +16,17 @@ import type React from 'react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { Calendar } from '@/components/ui/calendar'
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogDescription,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { parseDate } from '@/lib/parse-date'
-
-import { Calendar } from '../ui/calendar'
-import { Dialog, DialogBody, DialogContent, DialogDescription, DialogTitle } from '../ui/dialog'
-import { Input } from '../ui/input'
 
 export function BlockDatePicker({
   onSelect,

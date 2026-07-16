@@ -6,7 +6,7 @@
 
 import type { KeyboardShortcutCommand } from '@tiptap/core'
 
-import { getShortcutKeys } from './storage'
+import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 
 /**
  * Convert a SINGLE keyboard-config chord (no ` / ` alternatives) to TipTap

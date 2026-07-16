@@ -17,10 +17,9 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { resetOnboardingSeen } from '@/components/SpaceManageDialog'
 import { Button } from '@/components/ui/button'
 import { notify } from '@/lib/notify'
-
-import { resetOnboardingSeen } from '../SpaceManageDialog'
 
 export function ResetOnboardingRow(): React.ReactElement {
   const { t } = useTranslation()

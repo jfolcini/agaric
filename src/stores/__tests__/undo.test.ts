@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { isWithinUndoGroup, MAX_REDO_STACK, UNDO_GROUP_WINDOW_MS, useUndoStore } from '../undo'
+import {
+  isWithinUndoGroup,
+  MAX_REDO_STACK,
+  UNDO_GROUP_WINDOW_MS,
+  useUndoStore,
+} from '@/stores/undo'
 
 // #2190 — the undo store reverts an entire Ctrl+Z group through a SINGLE
 // `undoPageGroup` IPC (one IMMEDIATE tx) instead of the old `findUndoGroup` +

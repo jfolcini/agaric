@@ -20,9 +20,17 @@ import { join } from 'node:path'
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { dispatch } from '../handlers'
-import { blocks, blockTags, makeBlock, opLog, properties, propertyDefs, seedBlocks } from '../seed'
-import { buildSnapshot, type MockState } from './conformance-snapshot'
+import { buildSnapshot, type MockState } from '@/lib/tauri-mock/__tests__/conformance-snapshot'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import {
+  blocks,
+  blockTags,
+  makeBlock,
+  opLog,
+  properties,
+  propertyDefs,
+  seedBlocks,
+} from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Fixture loading

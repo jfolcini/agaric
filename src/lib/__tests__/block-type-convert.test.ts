@@ -11,7 +11,7 @@ import {
   detectBlockType,
   stripBlockMarker,
   turnIdToBlockType,
-} from '../block-type-convert'
+} from '@/lib/block-type-convert'
 
 describe('stripBlockMarker', () => {
   it('strips heading, quote, callout, ordered and bullet markers', () => {

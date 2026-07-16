@@ -9,7 +9,7 @@
  * (private mode, sandboxed iframe).
  */
 
-import { PREFERENCES, readPreference, writePreference } from './preferences'
+import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /** True once the user has dismissed the first-run welcome modal. */
 export function isOnboardingDone(): boolean {

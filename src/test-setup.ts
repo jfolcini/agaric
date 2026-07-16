@@ -5,9 +5,9 @@ import '@testing-library/jest-dom/vitest'
 import 'vitest-axe/extend-expect'
 import * as matchers from 'vitest-axe/matchers'
 
-import './lib/i18n'
-import { setLogLevel } from './lib/logger'
-import { queryClient } from './lib/query-client'
+import '@/lib/i18n'
+import { setLogLevel } from '@/lib/logger'
+import { queryClient } from '@/lib/query-client'
 
 expect.extend(matchers)
 
@@ -281,7 +281,7 @@ vi.mock('@tauri-apps/plugin-clipboard-manager', () => ({
 // by ~55 component/hook tests. Per-file `vi.mock('sonner', ...)` overrides
 // still work for tests that need custom capture variables.
 // See src/__tests__/mocks/sonner.ts for the mock implementation.
-vi.mock('sonner', async () => await import('./__tests__/mocks/sonner'))
+vi.mock('sonner', async () => await import('@/__tests__/mocks/sonner'))
 
 // Shared tooltip provider for tests (#1094). Production mounts ONE app-level
 // `<TooltipProvider>` in `src/main.tsx`; the per-surface and IconButton-embedded
@@ -322,7 +322,7 @@ vi.mock('@/components/ui/tooltip', async () => {
 // Per-file overrides still work for tests that need custom behavior (e.g.
 // GraphView.test.tsx hardcodes a data-testid).
 // See src/__tests__/mocks/ui-select.tsx for the mock implementation.
-vi.mock('@/components/ui/select', async () => await import('./__tests__/mocks/ui-select'))
+vi.mock('@/components/ui/select', async () => await import('@/__tests__/mocks/ui-select'))
 
 // Stub HTMLCanvasElement.getContext — jsdom does not implement canvas, and
 // installing the `canvas` npm package would pull in heavy native cairo

@@ -18,10 +18,10 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../logger'
-import { dispatch, PLUGIN_HANDLERS } from '../handlers'
+import { logger } from '@/lib/logger'
+import { dispatch, PLUGIN_HANDLERS } from '@/lib/tauri-mock/handlers'
 
-vi.mock('../../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

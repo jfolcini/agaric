@@ -12,13 +12,13 @@
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../lib/logger'
-import type { SpaceRow } from '../../lib/tauri'
-import { listSpaces } from '../../lib/tauri'
-import { useSpaceStore } from '../space'
+import { logger } from '@/lib/logger'
+import type { SpaceRow } from '@/lib/tauri'
+import { listSpaces } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
-vi.mock('../../lib/tauri', async (importActual) => {
-  const actual = await importActual<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     listSpaces: vi.fn(),

@@ -11,8 +11,8 @@ import type { Node as PMNode } from '@tiptap/pm/model'
 import { Selection } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
-import { isTabIndentEnabled } from '../lib/editor-preferences'
-import { matchesShortcutBinding } from '../lib/keyboard-config'
+import { isTabIndentEnabled } from '@/lib/editor-preferences'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 /**
  * Check whether a suggestion popup (.suggestion-popup) is currently visible.

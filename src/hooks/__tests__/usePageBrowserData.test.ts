@@ -10,16 +10,16 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { FilterPrimitive, PageWithMetadataRow } from '../../lib/tauri'
-import { usePageBrowserData } from '../usePageBrowserData'
-import type { SortOption } from '../usePageBrowserSort'
+import { usePageBrowserData } from '@/hooks/usePageBrowserData'
+import type { SortOption } from '@/hooks/usePageBrowserSort'
+import type { FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   listPagesWithMetadata: vi.fn(),
   deleteBlock: vi.fn(),
 }))
 
-import { listPagesWithMetadata } from '../../lib/tauri'
+import { listPagesWithMetadata } from '@/lib/tauri'
 
 const mockedList = vi.mocked(listPagesWithMetadata)
 const mockedToastError = vi.mocked(toast.error)

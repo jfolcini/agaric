@@ -5,9 +5,9 @@
  * duplicated type-based dispatch and validation when saving properties.
  */
 
-import { getTodayString } from './date-utils'
-import type { PropertyDefinition, PropertyRow } from './tauri'
-import { deleteProperty, getProperties, setProperty } from './tauri'
+import { getTodayString } from '@/lib/date-utils'
+import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
+import { deleteProperty, getProperties, setProperty } from '@/lib/tauri'
 
 type SetPropertyParams = Parameters<typeof setProperty>[0]
 

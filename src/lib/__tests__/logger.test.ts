@@ -5,8 +5,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { _resetRateLimits, logger, setLogLevel } from '../logger'
-import { setLogBackendSink } from '../logger-transport'
+import { _resetRateLimits, logger, setLogLevel } from '@/lib/logger'
+import { setLogBackendSink } from '@/lib/logger-transport'
 
 // ── Backend log sink ─────────────────────────────────────────────────────
 //

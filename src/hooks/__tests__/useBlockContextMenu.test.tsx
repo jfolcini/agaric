@@ -6,7 +6,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { useBlockContextMenu } from '../useBlockContextMenu'
+import { useBlockContextMenu } from '@/hooks/useBlockContextMenu'
 
 describe('useBlockContextMenu', () => {
   it('initial state has null contextMenu, editingProp, and editingKey', () => {

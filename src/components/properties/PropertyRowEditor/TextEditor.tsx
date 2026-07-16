@@ -3,9 +3,8 @@
  * `textLike` slice of the `usePropertyRowEditor` hook.
  */
 
+import type { TextLikeEditorState } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Input } from '@/components/ui/input'
-
-import type { TextLikeEditorState } from './usePropertyRowEditor'
 
 export interface TextEditorProps {
   state: TextLikeEditorState

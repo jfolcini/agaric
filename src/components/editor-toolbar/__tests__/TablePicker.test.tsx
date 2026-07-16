@@ -12,7 +12,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { TablePicker } from '../TablePicker'
+import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 
 // Mirror the slash command's chain: insertTable returns a chainable that
 // terminates in run(). We capture the dimensions it was called with.

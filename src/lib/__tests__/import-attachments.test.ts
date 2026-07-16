@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { scanAttachmentRefs } from '../import-attachments'
+import { scanAttachmentRefs } from '@/lib/import-attachments'
 
 describe('scanAttachmentRefs', () => {
   it('detects an Obsidian embed `![[file.png]]`', () => {

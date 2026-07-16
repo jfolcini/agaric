@@ -35,9 +35,9 @@
 
 import { create } from 'zustand'
 
-import { logger } from '../lib/logger'
-import { listAllTagsInSpace, listBlocks, listBlocksLimit } from '../lib/tauri'
-import { useSpaceStore } from './space'
+import { logger } from '@/lib/logger'
+import { listAllTagsInSpace, listBlocks, listBlocksLimit } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 const MAX_CACHE_SIZE = 10_000
 

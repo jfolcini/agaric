@@ -13,7 +13,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../logger'
+import { logger } from '@/lib/logger'
 import {
   type PreferenceDefinition,
   effectiveKey,
@@ -23,7 +23,7 @@ import {
   removePreference,
   usePreference,
   writePreference,
-} from '../preferences'
+} from '@/lib/preferences'
 
 type Flavor = 'a' | 'b' | 'c'
 const ALL: ReadonlyArray<Flavor> = ['a', 'b', 'c']

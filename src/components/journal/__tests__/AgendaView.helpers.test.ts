@@ -10,16 +10,16 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import type { ExecuteFiltersResult } from '../../../lib/agenda-filters'
-import type { ResolvedBlock } from '../../../lib/tauri'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   appendUniqueBlocks,
   buildPageTitleMap,
   collectUniquePageIds,
   FALLBACK_PAGE_TITLE,
   processFilterResult,
-} from '../AgendaView.helpers'
+} from '@/components/journal/AgendaView.helpers'
+import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
+import type { ResolvedBlock } from '@/lib/tauri'
 
 describe('collectUniquePageIds', () => {
   it('returns an empty array for no blocks', () => {

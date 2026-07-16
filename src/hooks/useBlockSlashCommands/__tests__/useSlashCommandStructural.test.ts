@@ -8,16 +8,16 @@ import { invoke } from '@tauri-apps/api/core'
 import { renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import { useUndoStore } from '../../../stores/undo'
-import { useSlashCommandStructural } from '../useSlashCommandStructural'
-import { makeSyntheticCtx } from './test-utils'
+import { makeBlock } from '@/__tests__/fixtures'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
+import { useUndoStore } from '@/stores/undo'
 
-vi.mock('../../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-vi.mock('../../../editor/markdown-serializer', () => ({
+vi.mock('@/editor/markdown-serializer', () => ({
   serialize: vi.fn(() => 'serialized'),
 }))
 

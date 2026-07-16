@@ -23,21 +23,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { SearchPanel } from '@/components/SearchPanel'
 import { t } from '@/lib/i18n'
-
-import { useNavigationStore } from '../../stores/navigation'
-import { useSearchHistoryStore } from '../../stores/search-history'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { SearchPanel } from '../SearchPanel'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSearchHistoryStore } from '@/stores/search-history'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 // Virtualized result listbox: render every row in jsdom
 // (zero-height scroll container would otherwise window to zero rows) so the
 // match-offset `<mark>` assertion below can find the rendered row.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-vi.mock('../../lib/tauri', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     resolvePageByAlias: vi.fn().mockResolvedValue(null),

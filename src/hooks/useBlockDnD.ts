@@ -22,9 +22,10 @@ import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
+import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
+import { useIsTouch } from '@/hooks/useIsTouch'
 import { logger } from '@/lib/logger'
 import { consumePreDragFocus } from '@/lib/pre-drag-focus'
-
 import {
   computeDropIndex,
   computeSelectionRoots,
@@ -34,9 +35,7 @@ import {
   projectDepth,
   SENTINEL_ID,
   simulateProjection,
-} from '../lib/tree-utils'
-import { useAutoScrollOnDrag } from './useAutoScrollOnDrag'
-import { useIsTouch } from './useIsTouch'
+} from '@/lib/tree-utils'
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]

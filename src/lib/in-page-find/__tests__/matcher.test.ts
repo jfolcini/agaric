@@ -26,7 +26,7 @@ import {
   REGEX_TIME_BUDGET_MS,
   runWalker,
   walkSync,
-} from '../matcher'
+} from '@/lib/in-page-find/matcher'
 
 const defaultOpts = { caseSensitive: false, wholeWord: false, isRegex: false }
 

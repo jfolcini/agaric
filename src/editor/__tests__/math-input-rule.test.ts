@@ -38,7 +38,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { MathBlock, MathInline } from '../extensions/math'
+import { MathBlock, MathInline } from '@/editor/extensions/math'
 
 // The real math node views render React + KaTeX, irrelevant to the input-rule
 // logic and awkward under happy-dom. Drop the node views so the atoms mount

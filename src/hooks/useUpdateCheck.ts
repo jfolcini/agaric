@@ -35,12 +35,12 @@
 import { relaunch } from '@tauri-apps/plugin-process'
 import { useEffect } from 'react'
 
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import { notify } from '../lib/notify'
-import { isMobilePlatform } from '../lib/platform'
-import { PREFERENCES, readPreference, removePreference, writePreference } from '../lib/preferences'
-import { flushAllDrafts } from '../lib/tauri'
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import { isMobilePlatform } from '@/lib/platform'
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
+import { flushAllDrafts } from '@/lib/tauri'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
 export const LAST_UPDATE_CHECK_STORAGE_KEY = PREFERENCES.lastUpdateCheck.key

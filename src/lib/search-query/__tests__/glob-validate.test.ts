@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { EXPANSION_CAP, expandBraces, validateGlob } from '../glob-validate'
+import { EXPANSION_CAP, expandBraces, validateGlob } from '@/lib/search-query/glob-validate'
 
 describe('validateGlob', () => {
   it('accepts plain globs', () => {

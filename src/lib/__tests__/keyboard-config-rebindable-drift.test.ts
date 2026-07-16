@@ -21,7 +21,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { DEFAULT_SHORTCUTS } from '../keyboard-config'
+import { DEFAULT_SHORTCUTS } from '@/lib/keyboard-config'
 
 // vitest's happy-dom environment rewrites `import.meta.url` to an http://
 // URL, so fileURLToPath(import.meta.url) throws at collection time in some

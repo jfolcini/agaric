@@ -1,5 +1,5 @@
-import { getPriorityLevels, priorityRank } from './priority-levels'
-import type { BlockRow } from './tauri'
+import { getPriorityLevels, priorityRank } from '@/lib/priority-levels'
+import type { BlockRow } from '@/lib/tauri'
 
 export type AgendaSortBy = 'date' | 'priority' | 'state' | 'page'
 export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'

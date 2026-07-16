@@ -11,7 +11,7 @@ import {
   getWeekOptions,
   isDateFormattedPage,
   MONTH_SHORT,
-} from '../date-utils'
+} from '@/lib/date-utils'
 
 describe('formatDate (review-timezone semantics regression)', () => {
   // The migration replaced an inline `padStart`-based formatter

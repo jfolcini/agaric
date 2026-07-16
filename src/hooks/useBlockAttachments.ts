@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { i18n } from '../lib/i18n'
-import type { AttachmentRow } from '../lib/tauri'
-import { addAttachment, deleteAttachment, listAttachments, renameAttachment } from '../lib/tauri'
-import { usePageBlockStoreApi } from '../stores/page-blocks'
-import { useUndoStore } from '../stores/undo'
-import { useBatchAttachments } from './useBatchAttachments'
+import type { AttachmentRow } from '@/lib/tauri'
+import { addAttachment, deleteAttachment, listAttachments, renameAttachment } from '@/lib/tauri'
+import { usePageBlockStoreApi } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 export interface UseBlockAttachmentsReturn {
   attachments: AttachmentRow[]

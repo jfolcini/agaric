@@ -37,7 +37,7 @@ vi.mock('@/components/editor/BlockTree', () => ({
 
 // ── Mock PageHeader ─────────────────────────────────────────────────
 let capturedPageHeaderProps: { pageId: string; title: string; onBack?: () => void } | null = null
-vi.mock('../PageHeader', () => ({
+vi.mock('@/components/pages/PageHeader', () => ({
   PageHeader: (props: { pageId: string; title: string; onBack?: () => void }) => {
     capturedPageHeaderProps = props
     return <div data-testid="page-header" data-page-id={props.pageId} data-title={props.title} />
@@ -54,7 +54,7 @@ vi.mock('@/components/backlinks/LinkedReferences', () => ({
 }))
 
 let capturedPagesTreeSectionProps: { pageId: string; pageTitle: string } | undefined
-vi.mock('../PagesTreeSection', () => ({
+vi.mock('@/components/pages/PagesTreeSection', () => ({
   PagesTreeSection: (props: { pageId: string; pageTitle: string; onNavigateToPage?: unknown }) => {
     capturedPagesTreeSectionProps = { pageId: props.pageId, pageTitle: props.pageTitle }
     return (
@@ -108,7 +108,7 @@ vi.mock('@/components/agenda/DonePanel', () => ({
 }))
 
 // ── Mock PageMetadataBar ────────────────────────────────────────────
-vi.mock('../PageMetadataBar', () => ({
+vi.mock('@/components/pages/PageMetadataBar', () => ({
   PageMetadataBar: (props: { blocks: unknown[]; pageId: string }) => (
     <div data-testid="page-metadata-bar" data-page-id={props.pageId} />
   ),

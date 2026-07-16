@@ -13,12 +13,12 @@
 
 import { useMemo } from 'react'
 
+import type { SlashHandlerTables } from '@/hooks/useBlockSlashCommands/types'
 import {
   type UseTemplateSelectionParams,
   type UseTemplateSelectionReturn,
   useTemplateSelection,
-} from '../useTemplateSelection'
-import type { SlashHandlerTables } from './types'
+} from '@/hooks/useTemplateSelection'
 
 export interface UseSlashCommandTemplateReturn extends UseTemplateSelectionReturn {
   tables: SlashHandlerTables

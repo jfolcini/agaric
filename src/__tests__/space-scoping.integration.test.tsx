@@ -24,9 +24,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchGraphData } from '@/components/graph/GraphView.helpers'
 import { TemplatesView } from '@/components/templates/TemplatesView'
 import { TooltipProvider } from '@/components/ui/tooltip'
-
-import { useDuePanelData } from '../hooks/useDuePanelData'
-import { useSpaceStore } from '../stores/space'
+import { useDuePanelData } from '@/hooks/useDuePanelData'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }

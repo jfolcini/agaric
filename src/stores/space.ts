@@ -16,12 +16,11 @@
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
 
+import { i18n } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { i18n } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import type { SpaceRow } from '../lib/tauri'
-import { listSpaces } from '../lib/tauri'
+import type { SpaceRow } from '@/lib/tauri'
+import { listSpaces } from '@/lib/tauri'
 
 const LOG_MODULE = 'stores/space'
 

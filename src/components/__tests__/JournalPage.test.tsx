@@ -22,7 +22,7 @@ import { addDays, addMonths, endOfWeek, format, startOfWeek, subDays } from 'dat
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeDailyPage } from '../../__tests__/fixtures'
+import { emptyPage, makeDailyPage } from '@/__tests__/fixtures'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
 vi.mock('@/components/editor/BlockTree', () => ({
@@ -108,7 +108,7 @@ vi.mock('@/components/agenda/AgendaResults', () => ({
 // Render a sentinel only when `open === true` so the new
 // configure-template entry can be exercised without pulling the dialog's
 // internals into this suite.
-vi.mock('../SpaceManageDialog', () => ({
+vi.mock('@/components/SpaceManageDialog', () => ({
   SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
     open ? (
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- test mock mirrors SpaceManageDialog's ARIA dialog role
@@ -117,7 +117,7 @@ vi.mock('../SpaceManageDialog', () => ({
 }))
 
 // ── Mock MonthlyDayCell ─────────────────────────────────────
-vi.mock('../journal/MonthlyDayCell', () => ({
+vi.mock('@/components/journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as { dateStr: string; displayDate: string }
     return (
@@ -140,19 +140,19 @@ vi.mock('../journal/MonthlyDayCell', () => ({
   },
 }))
 
-import { __resetCalendarPageDatesForTests } from '../../hooks/useCalendarPageDates'
-import { useBlockStore } from '../../stores/blocks'
-import { useJournalStore } from '../../stores/journal'
-import { useNavigationStore } from '../../stores/navigation'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
 import {
   getMaxJournalDate,
   GlobalDateControls,
   JournalControls,
   JournalPage,
   MIN_JOURNAL_DATE,
-} from '../JournalPage'
+} from '@/components/JournalPage'
+import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import { useBlockStore } from '@/stores/blocks'
+import { useJournalStore } from '@/stores/journal'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -19,8 +19,8 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { DayEntry } from '../../../lib/date-utils'
-import { useJournalStore } from '../../../stores/journal'
+import type { DayEntry } from '@/lib/date-utils'
+import { useJournalStore } from '@/stores/journal'
 
 // ── Mock useBatchCounts ─────────────────────────────────────────────
 const mockBatchCounts = vi.hoisted(() => ({
@@ -29,12 +29,12 @@ const mockBatchCounts = vi.hoisted(() => ({
   backlinkCounts: {} as Record<string, number>,
 }))
 
-vi.mock('../../../hooks/useBatchCounts', () => ({
+vi.mock('@/hooks/useBatchCounts', () => ({
   useBatchCounts: () => mockBatchCounts,
 }))
 
 // ── Mock DaySection ─────────────────────────────────────────────────
-vi.mock('../DaySection', () => ({
+vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
     return (
@@ -75,7 +75,7 @@ vi.mock('../DaySection', () => ({
 }))
 
 // ── Mock RescheduleDropZone ─────────────────────────────────────────
-vi.mock('../RescheduleDropZone', () => ({
+vi.mock('@/components/journal/RescheduleDropZone', () => ({
   RescheduleDropZone: ({ dateStr, children }: { dateStr: string; children: React.ReactNode }) => (
     <div data-testid={`reschedule-drop-zone-${dateStr}`}>{children}</div>
   ),
@@ -83,7 +83,7 @@ vi.mock('../RescheduleDropZone', () => ({
 
 vi.mocked(invoke)
 
-import { WeeklyView } from '../WeeklyView'
+import { WeeklyView } from '@/components/journal/WeeklyView'
 
 /** Fixed Wednesday for deterministic tests. */
 const FIXED_DATE = new Date(2025, 0, 15) // Wed, Jan 15, 2025

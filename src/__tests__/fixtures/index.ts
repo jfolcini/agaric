@@ -5,9 +5,9 @@
  * sensible defaults, following the Partial<T> pattern.
  */
 
-import type { HistoryEntry } from '../../lib/bindings'
-import type { BlockRow } from '../../lib/tauri'
-import type { FlatBlock } from '../../lib/tree-utils'
+import type { HistoryEntry } from '@/lib/bindings'
+import type { BlockRow } from '@/lib/tauri'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 /** Create a FlatBlock (block + depth) with sensible defaults. */
 export function makeBlock(overrides: Partial<FlatBlock> = {}): FlatBlock {

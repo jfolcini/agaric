@@ -9,9 +9,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { SYNC_MDNS_DISABLED_EVENT, useMdnsStatus } from '@/hooks/useMdnsStatus'
 import type { MdnsStatus } from '@/lib/tauri'
-
-import { SYNC_MDNS_DISABLED_EVENT, useMdnsStatus } from '../useMdnsStatus'
 
 // -- Hoisted mocks ------------------------------------------------------------
 

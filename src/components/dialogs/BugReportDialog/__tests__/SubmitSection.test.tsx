@@ -19,9 +19,11 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  SubmitSection,
+  type SubmitSectionProps,
+} from '@/components/dialogs/BugReportDialog/SubmitSection'
 import { t } from '@/lib/i18n'
-
-import { SubmitSection, type SubmitSectionProps } from '../SubmitSection'
 
 function renderSection(overrides?: Partial<SubmitSectionProps>) {
   const props: SubmitSectionProps = {

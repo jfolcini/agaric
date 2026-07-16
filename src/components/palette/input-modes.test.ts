@@ -17,7 +17,7 @@ import {
   pageLinkQuery,
   routePrefixToMode,
   tagsModeQuery,
-} from './input-modes'
+} from '@/components/palette/input-modes'
 
 describe('isPageLinkMode', () => {
   it('requires the `[[` prefix plus at least one more char', () => {

@@ -13,7 +13,7 @@
 
 import { useSyncExternalStore } from 'react'
 
-import { getPriorityLevels, subscribePriorityLevels } from '../lib/priority-levels'
+import { getPriorityLevels, subscribePriorityLevels } from '@/lib/priority-levels'
 
 export function usePriorityLevels(): readonly string[] {
   return useSyncExternalStore(subscribePriorityLevels, getPriorityLevels, getPriorityLevels)

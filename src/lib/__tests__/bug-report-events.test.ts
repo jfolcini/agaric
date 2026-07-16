@@ -15,7 +15,7 @@ import {
   BUG_REPORT_EVENT,
   type BugReportEventDetail,
   dispatchBugReport,
-} from '../bug-report-events'
+} from '@/lib/bug-report-events'
 
 describe('BUG_REPORT_EVENT', () => {
   it('is the agreed-upon namespaced event name', () => {

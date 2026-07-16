@@ -30,6 +30,10 @@ import type React from 'react'
 import { useCallback, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { SearchDateFilterForm } from '@/components/search/filter-forms/SearchDateFilterForm'
+import { SearchPriorityFilterForm } from '@/components/search/filter-forms/SearchPriorityFilterForm'
+import { SearchPropertyFilterForm } from '@/components/search/filter-forms/SearchPropertyFilterForm'
+import { SearchStateFilterForm } from '@/components/search/filter-forms/SearchStateFilterForm'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
@@ -38,11 +42,6 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { logger } from '@/lib/logger'
 import type { FilterToken } from '@/lib/search-query'
 import { listTagsByPrefix, paginationLimit, type TagCacheRow } from '@/lib/tauri'
-
-import { SearchDateFilterForm } from './filter-forms/SearchDateFilterForm'
-import { SearchPriorityFilterForm } from './filter-forms/SearchPriorityFilterForm'
-import { SearchPropertyFilterForm } from './filter-forms/SearchPropertyFilterForm'
-import { SearchStateFilterForm } from './filter-forms/SearchStateFilterForm'
 
 /**
  * #718 — a path glob cannot contain a literal `"` (mirrors

@@ -38,7 +38,7 @@ vi.mock('@/editor/emoji-data', async () => {
   }
 })
 
-import { EmojiPicker } from '../EmojiPicker'
+import { EmojiPicker } from '@/components/EmojiPicker/EmojiPicker'
 
 afterEach(() => {
   resolveDataset = undefined

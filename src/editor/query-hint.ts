@@ -33,7 +33,7 @@ import {
   QUERY_OPERATORS,
   QUERY_PROPERTY_KEYS,
   QUERY_TYPE_VALUES,
-} from '../lib/query-utils'
+} from '@/lib/query-utils'
 
 /** A computed hint: the suffix to append on Tab + a human label for display. */
 export interface QueryHint {

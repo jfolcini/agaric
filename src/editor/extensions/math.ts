@@ -16,7 +16,7 @@
 import { InputRule, mergeAttributes, Node } from '@tiptap/core'
 import { ReactNodeViewRenderer } from '@tiptap/react'
 
-import { MathBlockNodeView, MathInlineNodeView } from './MathNodeView'
+import { MathBlockNodeView, MathInlineNodeView } from '@/editor/extensions/MathNodeView'
 
 declare module '@tiptap/core' {
   interface Commands<ReturnType> {

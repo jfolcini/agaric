@@ -148,9 +148,9 @@ describe('graph-worker dispatcher (#747 item 1: resize updates forces in place)'
   // top-level import) so the `vi.mock('d3-force')` factory's hoisted spies are
   // initialized before the worker module evaluates — #2273 reads its exported
   // pure `shouldEmitTick`/`TICK_THROTTLE_MS` off this handle.
-  let workerModule: typeof import('../graph-worker')
+  let workerModule: typeof import('@/workers/graph-worker')
   beforeAll(async () => {
-    workerModule = await import('../graph-worker')
+    workerModule = await import('@/workers/graph-worker')
   })
 
   beforeEach(() => {

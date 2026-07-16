@@ -92,7 +92,7 @@ vi.mock('@dnd-kit/sortable', () => ({
   verticalListSortingStrategy: vi.fn(),
 }))
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: ({ blockId }: { blockId: string }) => <div data-testid={`row-${blockId}`} />,
   INDENT_WIDTH: 24,
 }))

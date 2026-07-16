@@ -56,6 +56,9 @@ import { Check, Plus } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ACCENT_SWATCHES, type AccentToken } from '@/components/SpaceManageDialog/SpaceAccentPicker'
+import { SpaceOnboardingHint } from '@/components/SpaceManageDialog/SpaceOnboardingHint'
+import { SpaceRowEditor } from '@/components/SpaceManageDialog/SpaceRowEditor'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -66,15 +69,11 @@ import { createSpace, getBatchProperties, listBlocks, listBlocksLimit } from '@/
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
-import { ACCENT_SWATCHES, type AccentToken } from './SpaceManageDialog/SpaceAccentPicker'
-import { SpaceOnboardingHint } from './SpaceManageDialog/SpaceOnboardingHint'
-import { SpaceRowEditor } from './SpaceManageDialog/SpaceRowEditor'
-
 // Re-export so existing call sites (Settings → ResetOnboardingRow,
 // tests, future white-label keep) keep working without churn. The
 // implementations now live alongside their respective sub-components.
-export { ACCENT_SWATCHES } from './SpaceManageDialog/SpaceAccentPicker'
-export { resetOnboardingSeen } from './SpaceManageDialog/SpaceOnboardingHint'
+export { ACCENT_SWATCHES } from '@/components/SpaceManageDialog/SpaceAccentPicker'
+export { resetOnboardingSeen } from '@/components/SpaceManageDialog/SpaceOnboardingHint'
 
 const LOG_MODULE = 'components/SpaceManageDialog'
 

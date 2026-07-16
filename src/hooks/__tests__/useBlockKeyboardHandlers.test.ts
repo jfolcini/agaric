@@ -3,20 +3,20 @@ import type { TFunction } from 'i18next'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { parse } from '../../editor/markdown-serializer'
-import { announce } from '../../lib/announcer'
-import { useBlockKeyboardHandlers } from '../useBlockKeyboardHandlers'
+import { makeBlock } from '@/__tests__/fixtures'
+import { parse } from '@/editor/markdown-serializer'
+import { useBlockKeyboardHandlers } from '@/hooks/useBlockKeyboardHandlers'
+import { announce } from '@/lib/announcer'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../editor/markdown-serializer', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/editor/markdown-serializer', () => ({
   parse: vi.fn((s: string) => ({
     type: 'doc',
     content: [{ type: 'paragraph', content: [{ type: 'text', text: s }] }],
   })),
   serialize: vi.fn(() => 'content'),
 }))
-vi.mock('../../editor/types', () => ({
+vi.mock('@/editor/types', () => ({
   pmEndOfFirstBlock: vi.fn(() => 1),
 }))
 vi.mock('@/lib/logger', () => ({

@@ -11,11 +11,11 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { computeBlockVsCurrentDiff } from '../../../lib/tauri'
-import type { BlockHistoryItemProps } from '../BlockHistoryItem'
-import { BlockHistoryItem } from '../BlockHistoryItem'
+import type { BlockHistoryItemProps } from '@/components/HistoryListItem/BlockHistoryItem'
+import { BlockHistoryItem } from '@/components/HistoryListItem/BlockHistoryItem'
+import { computeBlockVsCurrentDiff } from '@/lib/tauri'
 
-vi.mock('../../../hooks/useRichContentCallbacks', () => ({
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
     resolveBlockTitle: vi.fn(() => undefined),
     resolveBlockStatus: vi.fn(() => 'active' as const),
@@ -28,8 +28,8 @@ vi.mock('../../../hooks/useRichContentCallbacks', () => ({
 // The compared-to-current diff fetch is invoked lazily on expand; stub
 // the IPC so the effect doesn't fire a real Tauri call during the axe
 // audit. The render-only tests don't expand, so this is defensive.
-vi.mock('../../../lib/tauri', async () => {
-  const actual = await vi.importActual<typeof import('../../../lib/tauri')>('../../../lib/tauri')
+vi.mock('@/lib/tauri', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/tauri')>('@/lib/tauri')
   return {
     ...actual,
     computeBlockVsCurrentDiff: vi.fn(async () => []),

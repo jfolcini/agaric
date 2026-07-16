@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { CURATED_LANGUAGES, curatedLowlight } from '../lowlight-curated'
+import { CURATED_LANGUAGES, curatedLowlight } from '@/lib/lowlight-curated'
 
 /**
  * The exact set of languages our curated `lowlight` instance must support.

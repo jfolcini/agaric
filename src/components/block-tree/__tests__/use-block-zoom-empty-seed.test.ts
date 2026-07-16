@@ -20,10 +20,10 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../../__tests__/fixtures'
-import { useBlockStore } from '../../../stores/blocks'
-import { createPageBlockStore, type PageBlockState } from '../../../stores/page-blocks'
-import { useBlockZoomEmptySeed } from '../use-block-zoom-empty-seed'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
+import { useBlockStore } from '@/stores/blocks'
+import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
 

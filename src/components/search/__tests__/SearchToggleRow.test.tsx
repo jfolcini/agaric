@@ -17,7 +17,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { SearchToggleRow, type SearchToggleState } from '../SearchToggleRow'
+import { SearchToggleRow, type SearchToggleState } from '@/components/search/SearchToggleRow'
 
 const OFF: SearchToggleState = { caseSensitive: false, wholeWord: false, isRegex: false }
 

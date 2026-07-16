@@ -25,8 +25,8 @@ import {
   ensureBlockPropertyEventsListener,
   getBlockPropertyInvalidationKey,
   subscribeToBlockPropertyEvents,
-} from '../lib/block-property-events'
-import { logger } from '../lib/logger'
+} from '@/lib/block-property-events'
+import { logger } from '@/lib/logger'
 
 export interface UseBlockPropertyEventsReturn {
   /** Monotonic counter — increments on each (debounced) property change event. */

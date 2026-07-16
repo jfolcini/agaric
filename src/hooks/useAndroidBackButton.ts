@@ -40,10 +40,10 @@ import {
   BACK_PRIORITY_OVERLAY,
   registerBackHandler,
   runBackChain,
-} from '../lib/back-chain'
-import { navigationBackHandler, overlayBackHandler } from '../lib/back-handlers'
-import { logger } from '../lib/logger'
-import { isAndroid } from '../lib/platform'
+} from '@/lib/back-chain'
+import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
+import { logger } from '@/lib/logger'
+import { isAndroid } from '@/lib/platform'
 
 export function useAndroidBackButton(): void {
   useEffect(() => {

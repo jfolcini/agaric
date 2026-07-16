@@ -15,13 +15,13 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { __resetBackHandlersForTests, runBackChain } from '../../lib/back-chain'
-import type { FlatBlock } from '../../lib/tree-utils'
-import { useBlockZoom } from '../useBlockZoom'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockZoom } from '@/hooks/useBlockZoom'
+import { __resetBackHandlersForTests, runBackChain } from '@/lib/back-chain'
+import type { FlatBlock } from '@/lib/tree-utils'
 
-vi.mock('../../lib/tree-utils', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../lib/tree-utils')>()
+vi.mock('@/lib/tree-utils', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/tree-utils')>()
   return {
     ...actual,
     // Use real getDragDescendants so zoom filtering works correctly in tests

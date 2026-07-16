@@ -6,17 +6,20 @@
  * projections are derived state.
  */
 
-export type { AutocompleteAnchor } from './autocomplete'
-export { applyAutocompleteReplacement, detectAutocompleteAnchor } from './autocomplete'
-export { classify, parse } from './classify'
-export { EXPANSION_CAP, expandBraces, validateGlob } from './glob-validate'
-export { ensureRegistered } from './register'
-export { looksLikeUnknownPrefix, recognise, registerTokenPrefix } from './registry'
-export { addFilter, removeFilterAt, serialize, tokenSource } from './serialize'
-export type { AstFilterProjection } from './to-search-filter'
-export { astToFilterProjection } from './to-search-filter'
-export type { RawToken } from './tokenize'
-export { tokenize } from './tokenize'
+export type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
+export {
+  applyAutocompleteReplacement,
+  detectAutocompleteAnchor,
+} from '@/lib/search-query/autocomplete'
+export { classify, parse } from '@/lib/search-query/classify'
+export { EXPANSION_CAP, expandBraces, validateGlob } from '@/lib/search-query/glob-validate'
+export { ensureRegistered } from '@/lib/search-query/register'
+export { looksLikeUnknownPrefix, recognise, registerTokenPrefix } from '@/lib/search-query/registry'
+export { addFilter, removeFilterAt, serialize, tokenSource } from '@/lib/search-query/serialize'
+export type { AstFilterProjection } from '@/lib/search-query/to-search-filter'
+export { astToFilterProjection } from '@/lib/search-query/to-search-filter'
+export type { RawToken } from '@/lib/search-query/tokenize'
+export { tokenize } from '@/lib/search-query/tokenize'
 export type {
   DateFilterValue,
   DateOp,
@@ -24,5 +27,5 @@ export type {
   NamedDateRange,
   SearchPropertyFilter,
   SearchQueryAST,
-} from './types'
-export { tokenKey } from './types'
+} from '@/lib/search-query/types'
+export { tokenKey } from '@/lib/search-query/types'

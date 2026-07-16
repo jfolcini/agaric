@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { EMOJI_PICKER_ENABLED_KEY, isEmojiPickerEnabled } from '../editor-preferences'
+import { EMOJI_PICKER_ENABLED_KEY, isEmojiPickerEnabled } from '@/lib/editor-preferences'
 
 describe('editor-preferences — isEmojiPickerEnabled', () => {
   afterEach(() => {

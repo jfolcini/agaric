@@ -22,12 +22,12 @@ vi.mock('@tauri-apps/api/mocks', () => ({
   mockWindows: vi.fn(),
 }))
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 
-import { logger } from '../logger'
-import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '../tauri-mock'
+import { logger } from '@/lib/logger'
+import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {

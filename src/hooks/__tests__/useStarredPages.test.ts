@@ -10,8 +10,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { getStarredPages } from '../../lib/starred-pages'
-import { useStarredPages } from '../useStarredPages'
+import { useStarredPages } from '@/hooks/useStarredPages'
+import { getStarredPages } from '@/lib/starred-pages'
 
 beforeEach(() => {
   localStorage.clear()

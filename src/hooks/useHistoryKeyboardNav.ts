@@ -14,8 +14,8 @@
 
 import { type Dispatch, type SetStateAction, useEffect } from 'react'
 
-import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { useListKeyboardNavigation } from './useListKeyboardNavigation'
+import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
 export interface UseHistoryKeyboardNavOptions {
   /** Number of items in the list. */

@@ -11,7 +11,7 @@
  * across the four stores.
  */
 
-import { LEGACY_SPACE_KEY, useSpaceStore } from '../stores/space'
+import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 export function activeSpaceKey(): string {
   return useSpaceStore.getState().currentSpaceId ?? LEGACY_SPACE_KEY

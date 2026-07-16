@@ -19,7 +19,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { t } from '@/lib/i18n'
 
 // Mock SortableBlock
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
     <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
   ),

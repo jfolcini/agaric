@@ -19,7 +19,7 @@ import {
   MAX_HISTORY,
   selectHistoryForSpace,
   useSearchHistoryStore,
-} from '../search-history'
+} from '@/stores/search-history'
 
 const SPACE_A = 'SPACE_A'
 const SPACE_B = 'SPACE_B'

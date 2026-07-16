@@ -39,7 +39,7 @@
  * `(prevKey, newKey)` flush/pull path.
  */
 
-import { LEGACY_SPACE_KEY, useSpaceStore } from '../stores/space'
+import { LEGACY_SPACE_KEY, useSpaceStore } from '@/stores/space'
 
 /**
  * Subscribe to `useSpaceStore` and forward space changes to `onChange`.

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { getSourceColor, getSourceLabel } from '../date-property-colors'
+import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
 
 describe('getSourceColor', () => {
   it('returns date-due token for column:due_date', () => {

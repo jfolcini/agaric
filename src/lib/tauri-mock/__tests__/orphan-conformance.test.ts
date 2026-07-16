@@ -23,7 +23,7 @@ import path from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { type PageMetaRow, metaRowMatchesFilter } from '../handlers'
+import { type PageMetaRow, metaRowMatchesFilter } from '@/lib/tauri-mock/handlers'
 
 interface FixtureRow {
   id: string

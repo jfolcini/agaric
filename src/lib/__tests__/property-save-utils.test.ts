@@ -14,15 +14,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockedInvoke = vi.mocked(invoke)
 
-import { getTodayString } from '../date-utils'
+import { getTodayString } from '@/lib/date-utils'
 import {
   buildInitParams,
   buildPropertyParams,
   handleDeleteProperty,
   handleSaveProperty,
   NON_DELETABLE_PROPERTIES,
-} from '../property-save-utils'
-import type { PropertyDefinition } from '../tauri'
+} from '@/lib/property-save-utils'
+import type { PropertyDefinition } from '@/lib/tauri'
 
 beforeEach(() => {
   vi.clearAllMocks()

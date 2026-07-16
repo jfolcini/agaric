@@ -26,8 +26,12 @@
  * query. The `not-state:none` chip flips to `col IS NOT NULL`.
  */
 
-import { splitTopLevelCommas } from './glob-validate'
-import type { DateFilterValue, SearchPropertyFilter, SearchQueryAST } from './types'
+import { splitTopLevelCommas } from '@/lib/search-query/glob-validate'
+import type {
+  DateFilterValue,
+  SearchPropertyFilter,
+  SearchQueryAST,
+} from '@/lib/search-query/types'
 
 export interface AstFilterProjection {
   tagNames: string[]

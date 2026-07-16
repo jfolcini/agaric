@@ -6,17 +6,17 @@
  * existing callers (`@/lib/keyboard-config` import path) keep working
  * verbatim.
  */
-export type { ShortcutBinding } from './keyboard-config/catalog'
-export { DEFAULT_SHORTCUTS } from './keyboard-config/catalog'
-export { formatChordTokens } from './keyboard-config/format-chord'
-export { matchesShortcutBinding } from './keyboard-config/match'
-export type { ParsedChord } from './keyboard-config/parse'
+export type { ShortcutBinding } from '@/lib/keyboard-config/catalog'
+export { DEFAULT_SHORTCUTS } from '@/lib/keyboard-config/catalog'
+export { formatChordTokens } from '@/lib/keyboard-config/format-chord'
+export { matchesShortcutBinding } from '@/lib/keyboard-config/match'
+export type { ParsedChord } from '@/lib/keyboard-config/parse'
 export {
   formatParsedChord,
   normalizeBinding,
   parseChord,
   validateBindingInput,
-} from './keyboard-config/parse'
+} from '@/lib/keyboard-config/parse'
 export {
   findConflicts,
   getCurrentShortcuts,
@@ -26,5 +26,5 @@ export {
   resetShortcut,
   setCustomShortcut,
   toAriaKeyshortcuts,
-} from './keyboard-config/storage'
-export { configKeyToTipTap, tipTapShortcutMap } from './keyboard-config/tiptap'
+} from '@/lib/keyboard-config/storage'
+export { configKeyToTipTap, tipTapShortcutMap } from '@/lib/keyboard-config/tiptap'

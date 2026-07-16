@@ -30,12 +30,12 @@ import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DocNode } from '../../../editor/types'
-import { useSlashCommandStructural } from '../useSlashCommandStructural'
-import { makeSyntheticCtx } from './test-utils'
+import type { DocNode } from '@/editor/types'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
 
-vi.mock('../../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 

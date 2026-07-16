@@ -16,9 +16,8 @@
  * (null) rather than feeding an invalid mode into the store.
  */
 
+import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
 import type { SearchSheetMode } from '@/stores/useSearchSheetStore'
-
-import { PREFERENCES, readPreference, removePreference, writePreference } from './preferences'
 
 /**
  * Read the pinned scope, or `null` when none is pinned / the value is

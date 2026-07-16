@@ -8,16 +8,16 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { logger } from '../../../lib/logger'
-import { useUndoStore } from '../../../stores/undo'
-import { useSlashCommandProperty } from '../useSlashCommandProperty'
-import { makeSyntheticCtx } from './test-utils'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandProperty } from '@/hooks/useBlockSlashCommands/useSlashCommandProperty'
+import { logger } from '@/lib/logger'
+import { useUndoStore } from '@/stores/undo'
 
-vi.mock('../../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-vi.mock('../../../lib/repeat-utils', () => ({ formatRepeatLabel: vi.fn((v: string) => v) }))
+vi.mock('@/lib/repeat-utils', () => ({ formatRepeatLabel: vi.fn((v: string) => v) }))
 
 const mockedInvoke = vi.mocked(invoke)
 const originalOnNewAction = useUndoStore.getState().onNewAction

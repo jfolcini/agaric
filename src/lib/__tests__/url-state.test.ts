@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { getSettingsTabFromUrl, setSettingsTabInUrl } from '../url-state'
+import { getSettingsTabFromUrl, setSettingsTabInUrl } from '@/lib/url-state'
 
 const ALLOWED = ['general', 'keyboard', 'sync'] as const
 

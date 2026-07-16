@@ -15,7 +15,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { PopoverMenuItem } from '../popover-menu-item'
+import { PopoverMenuItem } from '@/components/ui/popover-menu-item'
 
 describe('PopoverMenuItem', () => {
   it('renders children', () => {
