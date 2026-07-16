@@ -13,7 +13,7 @@ import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 import type { StoreApi } from 'zustand'
 
@@ -23,6 +23,7 @@ import { t } from '@/lib/i18n'
 import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 // Capture the options passed to useRovingEditor so we can call searchTags/searchPages directly.
 let capturedSearchTags: ((query: string) => PickerItem[] | Promise<PickerItem[]>) | undefined
@@ -4343,6 +4344,8 @@ describe('BlockTree handleMergeWithPrev', () => {
 // =========================================================================
 
 describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () => {
+  const originalOnNewAction = useUndoStore.getState().onNewAction
+
   beforeEach(() => {
     mockedInvoke.mockReset()
     mockedInvoke.mockImplementation(async (cmd: string) => {
@@ -4350,6 +4353,10 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
       if (cmd === 'list_all_pages_in_space') return []
       return {}
     })
+  })
+
+  afterEach(() => {
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: originalOnNewAction })
   })
 
   it('Turn into converts the LIVE editor content and remounts with the converted content', async () => {
@@ -4404,6 +4411,76 @@ describe('BlockTree Turn-into / Duplicate flush the dirty focused editor', () =>
     // The mounted editor (on b2) is untouched.
     expect(mockUnmount).not.toHaveBeenCalled()
     expect(mockMount).not.toHaveBeenCalledWith('b1', expect.anything())
+  })
+
+  // #2662 — Turn into must notify the undo store the same way every other
+  // content-edit mutation does. `pageStore.edit()` funnels every successful
+  // write through `notifyUndoNewAction` (page-blocks-reducers.ts), which
+  // resets the page's redo stack (undo.ts:94-99, the #731 comment on why
+  // unaccounted-for ops shift the positional indexing). Pre-fix,
+  // `handleTurnInto` wrote via a raw `editBlock` IPC call that never touched
+  // the undo store, so a conversion left a stale redo entry that could later
+  // clobber the converted content (see useBlockSlashCommands/helpers.ts's
+  // `notifyUndo`, fixed for the identical gap in slash commands).
+  it('Turn into notifies the undo store (onNewAction) so the redo stack resets', async () => {
+    const onNewAction = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'hello world'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'h1')
+    })
+
+    // `pageStore.getState().rootParentId` is this page's id ('PAGE_1', see
+    // the top-level `beforeEach`'s `createPageBlockStore('PAGE_1')`).
+    await waitFor(() => {
+      expect(onNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+  })
+
+  // #2662 — a failed conversion must NOT resurrect the pre-conversion doc:
+  // `pageStore.edit()` rolls back its optimistic content update and resolves
+  // `false` on a write failure, so `handleTurnInto`'s `if (!ok) return` guard
+  // must skip the remount + `load()` it would otherwise perform on success.
+  it('Turn into does not remount or reload when the write fails', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'list_all_pages_in_space') return []
+      if (cmd === 'edit_block') throw new Error('backend rejected the write')
+      return {}
+    })
+
+    pageStore.setState({ blocks: [makeBlock({ id: 'b1', content: 'hello' })], loading: false })
+    useBlockStore.setState({ focusedBlockId: 'b1' })
+    mockActiveBlockId = 'b1'
+    mockUnmountReturn = 'hello world'
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(capturedBlockActions?.onTurnInto).toBeDefined()
+    })
+
+    await act(async () => {
+      await capturedBlockActions?.onTurnInto?.('b1', 'h1')
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'b1',
+        toText: '# hello world',
+      })
+    })
+    // No remount with the (unsaved) converted content on failure.
+    expect(mockMount).not.toHaveBeenCalledWith('b1', '# hello world')
   })
 
   it('Duplicate copies the LIVE editor content of the focused block', async () => {
