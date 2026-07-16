@@ -317,8 +317,10 @@ vi.mock('@dnd-kit/sortable', () => ({
 }))
 
 import { emptyPage, makeBlock } from '@/__tests__/fixtures'
-import { BlockTree, guessMimeType, processCheckboxSyntax } from '@/components/editor/BlockTree'
+import { BlockTree } from '@/components/editor/BlockTree'
 import { announce } from '@/lib/announcer'
+import { processCheckboxSyntax } from '@/lib/block-utils'
+import { guessMimeType } from '@/lib/file-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 

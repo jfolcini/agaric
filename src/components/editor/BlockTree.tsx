@@ -66,11 +66,7 @@ import { useBlockProperties } from '@/hooks/useBlockProperties'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useBlockResolve } from '@/hooks/useBlockResolve'
 import { BlockResolversProvider } from '@/hooks/useBlockResolvers'
-import {
-  searchPropertyKeys,
-  searchSlashCommands,
-  useBlockSlashCommands,
-} from '@/hooks/useBlockSlashCommands'
+import { useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
 import { useBlockTreeEventListeners } from '@/hooks/useBlockTreeEventListeners'
 import { useBlockTreeKeyboardShortcuts } from '@/hooks/useBlockTreeKeyboardShortcuts'
 import { useBlockZoom } from '@/hooks/useBlockZoom'
@@ -83,15 +79,12 @@ import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
 import { deleteDraft, setProperty } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
-
-export { processCheckboxSyntax } from '@/lib/block-utils'
-
-export { guessMimeType } from '@/lib/file-utils'
 
 /**
  * Stable DnD measuring config — module-level to avoid re-creation per render.

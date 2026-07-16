@@ -32,8 +32,8 @@
  * groups and the mobile escalation CTA are extracted into the sibling
  * `components/common/command-palette/` directory. `CommandPalette` /
  * `PaletteBody` remain the stable public entry points (App.tsx and
- * SearchSheet.tsx import them from here) and `mergeAndRankGroups` is
- * re-exported below for the existing test import path.
+ * SearchSheet.tsx import them from here); `mergeAndRankGroups` lives in
+ * `components/palette/ranking`.
  */
 
 import { Mic } from 'lucide-react'
@@ -101,11 +101,6 @@ import {
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
-
-// #751 — re-export the ranking helper so the existing test import
-// (`import { mergeAndRankGroups } from '@/CommandPalette'`) and any
-// other consumers keep working after the extraction to `palette/`.
-export { mergeAndRankGroups } from '@/components/palette/ranking'
 
 /**
  * Public component. Mounts nothing when the store flag is closed; the
