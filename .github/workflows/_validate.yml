@@ -36,47 +36,19 @@ env:
 jobs:
   # ---------------------------------------------------------------------------
   # detect-changes (#833, extended) — per-category change classifier.
-  #
-  # Emits FOUR boolean outputs describing which suites a diff needs:
-  #   - docs_only : EVERY changed path matches the conservative docs allowlist
-  #                 (drives the lint / docs-lint complement — unchanged #833).
-  #   - frontend  : ANY changed path matches the frontend regex (src/, e2e/,
-  #                 .ts/.tsx/.js/.jsx/.css, package[-lock].json, the vite /
-  #                 vitest / tailwind / postcss configs, tsconfig*.json,
-  #                 index.html) → gates vitest + playwright.
-  #   - backend   : ANY changed path matches the backend regex (src-tauri/,
-  #                 .rs, Cargo.toml/lock, migrations, .sqlx/) → gates
-  #                 cargo-tests + mcp-tests (+ the transitive cargo-coverage).
-  #   - ci        : ANY changed path matches the CI regex (.github/, prek.toml,
-  #                 .taplo.toml, lychee.toml, .gitleaks.toml). Emitted for
-  #                 completeness / future use; the cross-cutting `lint` job
-  #                 already runs on any non-docs change so nothing gates on it
-  #                 today.
-  # The four categories are INDEPENDENT (OR semantics): a file may match
-  # several, and each category flips true if ANY changed file matches it. A
-  # backend change that regenerates `src/lib/bindings.ts` therefore also flips
-  # `frontend` true, so the frontend suite (bindings-drift / tauri-mock-parity
-  # tests) runs — this cross-cutting safety is intentional, do NOT special-case
-  # it away.
-  #
-  # SECURITY CONTRACT (co-designed with #805's strict gate — read this with
-  # the `validate-all` job at the bottom of the file):
-  #   - This classifier is the ONLY thing that lets a `skipped` sibling job
-  #     pass `validate-all`. If it is wrong in the "absent" direction for a
-  #     category, that category's heavy jobs could ride in skipped. So it is:
-  #       * allowlist/regex-based: a path must AFFIRMATIVELY match a category
-  #         pattern to include it; docs_only defaults false on any unmatched
-  #         path, and a category defaults false only when NO file matches it.
-  #       * FAIL-CLOSED (#810 contract): on ANY inability to compute the diff
-  #         (unresolved/unreachable base sha, a failed `git diff`, empty diff),
-  #         the `full_suite` helper emits docs_only=false AND frontend=true,
-  #         backend=true, ci=true — i.e. run EVERYTHING. A classifier error can
-  #         only ever cost extra CI minutes, never weaken the gate.
-  #   - `validate-all` ALSO independently fails-closed: if this job itself
-  #     does not succeed, its result != 'success' trips the #805 assertion and
-  #     the gate pins frontend=backend=true, docs_only=false.
-  #
-  # Mirrors the fail-closed `git diff` shape of ci.yml's `detect-changes`.
+  # Emits four OR-semantics booleans from a fail-closed three-dot diff:
+  #   docs_only : every path matches the docs allowlist (drives lint/docs-lint).
+  #   frontend  : any src/, e2e/, *.ts/tsx/js/jsx/css, package*.json, vite/
+  #               vitest/tailwind/postcss/tsconfig config, index.html.
+  #   backend   : any src-tauri/, *.rs, Cargo.*, migrations, .sqlx/.
+  #   ci        : any .github/, prek.toml, .taplo.toml, lychee.toml, .gitleaks.toml.
+  # A path may match several; a backend change that regenerates src/lib/bindings.ts
+  # also flips frontend (bindings-drift / mock-parity tests run) — keep that.
+  # SECURITY (read with validate-all): this classifier is the ONLY thing that lets
+  # a skipped sibling pass the gate, so it is allowlist-based and FAIL-CLOSED — any
+  # diff-compute error makes full_suite emit docs_only=false + frontend/backend/
+  # ci=true (run everything), and validate-all also fails closed if this job is not
+  # success. A classifier error only ever costs CI minutes, never weakens the gate.
   # ---------------------------------------------------------------------------
   detect-changes:
     runs-on: ubuntu-24.04
@@ -1403,75 +1375,24 @@ jobs:
         run: test -x src-tauri/binaries/agaric-mcp-x86_64-unknown-linux-gnu
 
   # ---------------------------------------------------------------------------
-  # validate-all — the single aggregate gate. Branch protection and the
-  # ci.yml / release.yml callers treat this as "did all validate work pass?".
-  # Required so adding/removing a sibling job doesn't churn the protected-
-  # check list.
+  # validate-all — the single required aggregate gate (branch protection + the
+  # ci.yml / release.yml callers depend on this one context, so adding/removing
+  # siblings never churns the protected-check list).
   #
-  # ===========================================================================
-  # SECURITY-SENSITIVE LOGIC (#805 strict gate + #833 fast-path, per-category).
-  # This is the part the maintainer reviews. Read it slowly.
-  # ===========================================================================
-  #
-  # `if: always()` is load-bearing (#805): with a plain `needs:`, GitHub
-  # SKIPS this job when a sibling fails — and a skipped REQUIRED status check
-  # counts as PASSING for branch protection, so a red sibling would still
-  # yield a mergeable PR. So this job ALWAYS runs and ALWAYS makes an explicit
-  # pass/fail decision from the sibling `result`s.
-  #
-  # #805's original rule was simply: every sibling must be `success`; anything
-  # else (failure/cancelled/skipped) fails the gate. That rule assumed NO
-  # sibling is ever path-filtered. The classifier (`detect-changes`) now
-  # path-filters siblings across FOUR categories, so we relax the rule in a
-  # controlled, per-category way, and ONLY on categories the fail-closed
-  # classifier proves are ABSENT from the diff:
-  #
-  #   * detect-changes must itself have SUCCEEDED. If the classifier did not
-  #     succeed we cannot trust any category, so we PIN frontend=true,
-  #     backend=true, docs_only=false (run/require everything) and fail the
-  #     gate outright (fail-closed). The classifier already emits the "run
-  #     everything" tuple on any internal git error, so "classifier succeeded
-  #     but couldn't compute a diff" also means full-suite.
-  #
-  #   * Per-job skip acceptance (success is ALWAYS ok; failure/cancelled is
-  #     NEVER ok, even on the fast path):
-  #       - lint                       : skipped OK iff docs_only == 'true'
-  #                                      (cross-cutting; runs on ANY non-docs
-  #                                      change, not a single category).
-  #       - vitest, playwright         : skipped OK iff frontend != 'true'
-  #       - cargo-tests, cargo-coverage,
-  #         mcp-tests                  : skipped OK iff backend  != 'true'
-  #       - docs-lint (the complement) : success iff docs_only == 'true',
-  #                                      else must be skipped.
-  #
-  # INVARIANT (the whole point): under classifier failure OR any category
-  # being true, that category's heavy jobs MUST be `success`. A code change can
-  # never ride in on a skip — the classifier is regex/allowlist-based and
-  # fail-closed, so a category is marked absent only when NO changed file
-  # matches it. Cross-cutting safety: a backend change that regenerates
-  # src/lib/bindings.ts also flips frontend=true, so the bindings-drift suite
-  # runs too.
-  #
-  # Truth table (traced in the PR body):
-  #   ┌────────────────────┬──────────┬─────────┬─────────┬──────────────────────────────┐
-  #   │ scenario           │ docs_only│ frontend│ backend │ gate expectation             │
-  #   ├────────────────────┼──────────┼─────────┼─────────┼──────────────────────────────┤
-  #   │ frontend-only PR   │ false    │ true    │ false   │ vitest+playwright SUCCESS;   │
-  #   │                    │          │         │         │ cargo-tests/cov/mcp skipped  │
-  #   │                    │          │         │         │ OK; lint SUCCESS; docs-lint  │
-  #   │                    │          │         │         │ skipped                      │
-  #   │ backend-only PR    │ false    │ false   │ true    │ cargo-tests/cov/mcp SUCCESS; │
-  #   │                    │          │         │         │ vitest+playwright skipped OK;│
-  #   │                    │          │         │         │ lint SUCCESS; docs-lint      │
-  #   │                    │          │         │         │ skipped                      │
-  #   │ docs-only PR       │ true     │ false   │ false   │ ALL heavy skipped OK; lint   │
-  #   │                    │          │         │         │ skipped OK; docs-lint        │
-  #   │                    │          │         │         │ SUCCESS                      │
-  #   │ mixed FE+BE PR     │ false    │ true    │ true    │ every heavy SUCCESS;         │
-  #   │                    │          │         │         │ docs-lint skipped            │
-  #   │ classifier error   │ (pinned) │ true    │ true    │ gate FAILS; heavy required   │
-  #   │                    │ false    │         │         │ success but skipped → fail   │
-  #   └────────────────────┴──────────┴─────────┴─────────┴──────────────────────────────┘
+  # SECURITY-SENSITIVE (#805 strict gate + #833 per-category fast-path). Read
+  # slowly. `if: always()` is load-bearing: a plain needs: would SKIP this job on
+  # a sibling failure, and a skipped REQUIRED check counts as PASSING — a red
+  # sibling would stay mergeable. It always runs and decides from sibling results:
+  #   - detect-changes must have SUCCEEDED; else pin frontend=backend=true,
+  #     docs_only=false and fail (fail-closed).
+  #   - success always OK; failure/cancelled NEVER OK; skipped OK only when the
+  #     job's category is absent — lint iff docs_only; vitest/playwright iff
+  #     !frontend; cargo-tests/cargo-coverage/mcp-tests iff !backend; docs-lint is
+  #     the complement (success iff docs_only, else skipped).
+  # INVARIANT: under classifier failure or any category true, that category's
+  # heavy jobs MUST be success — no code change rides in on a skip (classifier is
+  # allowlist-based + fail-closed; a backend change that regenerates bindings also
+  # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
     needs: [detect-changes, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
