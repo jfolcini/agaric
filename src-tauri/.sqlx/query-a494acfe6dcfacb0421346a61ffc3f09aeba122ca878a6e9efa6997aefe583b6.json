@@ -1,0 +1,61 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT\n             COALESCE(sb.page_id, sb.parent_id, bl.source_id) AS \"source_page_id!: String\",\n             bl.target_id AS \"target_page_id!: String\",\n             COUNT(*) AS \"edge_count!: i64\",\n             MAX(CASE WHEN sp.id IS NULL THEN 1 ELSE (sp.deleted_at IS NOT NULL) END) AS \"src_deleted!: i64\",\n             MAX(tb.deleted_at IS NOT NULL) AS \"tgt_deleted!: i64\",\n             MIN(tb.block_type = 'page') AS \"tgt_is_page!: i64\"\n         FROM block_links bl\n         JOIN blocks sb ON sb.id = bl.source_id\n         JOIN blocks tb ON tb.id = bl.target_id\n         LEFT JOIN blocks sp ON sp.id = COALESCE(sb.page_id, sb.parent_id, bl.source_id)\n         WHERE sb.deleted_at IS NULL\n         GROUP BY 1, 2",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_page_id!: String",
+        "ordinal": 0,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "target_page_id!: String",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_links",
+            "name": "target_id"
+          }
+        }
+      },
+      {
+        "name": "edge_count!: i64",
+        "ordinal": 2,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "src_deleted!: i64",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "tgt_deleted!: i64",
+        "ordinal": 4,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "tgt_is_page!: i64",
+        "ordinal": 5,
+        "type_info": "Null",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      null,
+      false,
+      null,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "a494acfe6dcfacb0421346a61ffc3f09aeba122ca878a6e9efa6997aefe583b6"
+}
