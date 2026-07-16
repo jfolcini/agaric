@@ -17,13 +17,19 @@ on:
     branches: [main]
 
 # Cancel an in-flight CI run when a new push lands on the same ref. Saves
-# minutes on rapid push-then-fix cycles. NOT applied to `main` (the
-# `!= 'main'` guard) so a push that triggers a release-adjacent CI run
-# always completes — we never want the validate result for a commit on
-# main to be silently overwritten by a follow-up commit's run.
+# minutes on rapid push-then-fix cycles AND on rapid stacked merges to main:
+# when several PRs land back-to-back, each merge otherwise kicks a full main
+# CI (linux smoke + android) and none supersede each other, so N merges burn
+# N full runs. Cancelling superseded main runs keeps only the latest main
+# HEAD validated. This is safe here because main CI is a post-merge sanity
+# check — its artifacts are NOT consumed downstream (tag/release builds run
+# through release.yml), and the PR merge gates (validate-all, dco) already
+# validated each commit before it landed. Trade-off: an intermediate commit
+# in a rapid merge stack is not independently re-validated on main; the
+# latest state always is.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+  cancel-in-progress: true
 
 # Default to read-only for the workflow's GITHUB_TOKEN. Individual jobs do
 # not need to write back to the repo (artifact uploads use separate scopes
