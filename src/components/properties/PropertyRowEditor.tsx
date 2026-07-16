@@ -52,6 +52,14 @@ export interface PropertyRowEditorProps {
    * editor needs the active space ID, which it does not have access to).
    */
   onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
+  /**
+   * #2792 — see `UsePropertyRowEditorArgs.forceSaveOnBlur`. Set by callers
+   * rendering a not-yet-persisted draft row (e.g. `PagePropertyTable`'s
+   * text/select add-from-definition draft) so blurring an untouched draft
+   * still fires `onSave('')` and the caller can drop it locally instead of
+   * leaving a stranded empty row.
+   */
+  forceSaveOnBlur?: boolean | undefined
 }
 
 export function PropertyRowEditor({
@@ -63,6 +71,7 @@ export function PropertyRowEditor({
   onDefUpdated,
   onRefSaved,
   onCreateNewPage,
+  forceSaveOnBlur,
 }: PropertyRowEditorProps) {
   const { t } = useTranslation()
   const bag = usePropertyRowEditor({
@@ -73,6 +82,7 @@ export function PropertyRowEditor({
     onDefUpdated,
     onRefSaved,
     onCreateNewPage,
+    forceSaveOnBlur,
   })
   const valueLabel = t('pageProperty.valueLabel', { key: prop.key })
 

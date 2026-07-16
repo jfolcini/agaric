@@ -20,6 +20,8 @@ import { axe } from 'vitest-axe'
 import { getTodayString } from '@/lib/date-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { properties, propertyDefs, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 
 // Wrap `reportIpcError` in a spy that delegates to the real implementation.
 // Lets FE-H-17 partial-failure assertions inspect call arguments while
@@ -464,7 +466,11 @@ describe('PagePropertyTable add property flow', () => {
     })
   })
 
-  it('clicking a definition adds the property', async () => {
+  // #2792 — text/select defs no longer persist an empty `value_text` on add;
+  // see the "draft rows" describe block below for full coverage against the
+  // real tauri-mock. This test only pins that a plain text def renders an
+  // editable draft row locally instead of calling `set_property`.
+  it('clicking a text definition adds a draft row WITHOUT calling set_property', async () => {
     const user = userEvent.setup()
     setupMock([], [makeDef('status', 'text')])
 
@@ -477,18 +483,11 @@ describe('PagePropertyTable add property flow', () => {
     await user.click(screen.getByText('Status'))
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'PAGE_1',
-        key: 'status',
-        value: {
-          value_text: '',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      })
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'status' })),
+      ).toBeInTheDocument()
     })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
   it('clicking a number definition initializes with valueNum: 0', async () => {
@@ -794,10 +793,13 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
 
   it('set_property rejection during handleAddFromDef shows addFailed toast', async () => {
     const user = userEvent.setup()
+    // #2792 — a number def persists immediately on add (buildInitParams gives
+    // a valid `value_num: 0`), so this exercises the add-time failure path.
+    // (text/select defs no longer persist on add — see the draft-row tests.)
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
-        return { items: [makeDef('status', 'text')], next_cursor: null, has_more: false }
+        return { items: [makeDef('weight', 'number')], next_cursor: null, has_more: false }
       if (cmd === 'set_property') throw new Error('backend set error')
       return null
     })
@@ -805,10 +807,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByText('Status')).toBeInTheDocument()
+      expect(screen.getByText('Weight')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText('Weight'))
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.addFailed'))
@@ -818,13 +820,14 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
   it('get_properties rejection during handleAddFromDef shows addFailed toast', async () => {
     const user = userEvent.setup()
     let addPhase = false
+    // #2792 — number def (see note above): still init-persists on add.
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'get_properties') {
         if (addPhase) throw new Error('backend reload error')
         return []
       }
       if (cmd === 'list_property_defs')
-        return { items: [makeDef('status', 'text')], next_cursor: null, has_more: false }
+        return { items: [makeDef('weight', 'number')], next_cursor: null, has_more: false }
       if (cmd === 'set_property') {
         addPhase = true
         return undefined
@@ -835,10 +838,10 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
     render(<PagePropertyTable pageId="PAGE_1" forceExpanded />)
 
     await waitFor(() => {
-      expect(screen.getByText('Status')).toBeInTheDocument()
+      expect(screen.getByText('Weight')).toBeInTheDocument()
     })
 
-    await user.click(screen.getByText('Status'))
+    await user.click(screen.getByText('Weight'))
 
     await waitFor(() => {
       expect(mockedToastError).toHaveBeenCalledWith(t('pageProperty.addFailed'))
@@ -1384,5 +1387,173 @@ describe('PagePropertyTable forceExpanded', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /Properties/ })).toBeInTheDocument()
     })
+  })
+})
+
+// ── #2792 — add-from-definition against the REAL tauri-mock ────────────────
+//
+// Every test above stubs `invoke` directly with hand-written command
+// responses, which is exactly why the empty-`value_text` bug (#2792, the
+// PagePropertyTable sibling of #2656) was latent: the stubs never modeled
+// the backend's `set_property` value validation, so an invalid empty write
+// would have "succeeded" silently. This block instead routes the mocked
+// `invoke` through the real `dispatch()` from `@/lib/tauri-mock/handlers`,
+// whose `assertValidSetPropertyValue` mirrors `op.rs::validate_property_value`
+// and rejects an empty `value_text` (and an out-of-options select value).
+// Follows the draft-row test pattern from `BlockPropertyDrawer.test.tsx` (#2656).
+describe('PagePropertyTable add-from-definition against the real tauri-mock (#2792)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+
+  beforeEach(() => {
+    seedBlocks()
+    // The seed loop stamps every seeded page with a `space` ref property;
+    // clear it so this page starts from a clean, deterministic property list.
+    properties.set(PAGE_ID, new Map())
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  it('text add-from-def creates an editable draft WITHOUT an empty set_property', async () => {
+    const user = userEvent.setup()
+    // `context` is a seeded text-typed property definition (see tauri-mock/seed.ts).
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Context')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Context'))
+
+    // An editable draft input appears…
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'context' })),
+      ).toBeInTheDocument()
+    })
+    // …and NO empty-value set_property was fired. Without the #2792 fix this
+    // calls `set_property` with `value_text: ''`, which the real mock's
+    // `assertValidSetPropertyValue` rejects (mirroring the backend) — that
+    // rejection would otherwise surface as an addFailed toast.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('persists a non-empty text draft save via the real mock', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Context')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Context'))
+
+    const input = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'context' }))
+    await user.type(input, 'work')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: PAGE_ID,
+          key: 'context',
+          value: expect.objectContaining({ value_text: 'work' }),
+        }),
+      )
+    })
+    // Actually persisted in the mock store, not just called.
+    expect(properties.get(PAGE_ID)?.get('context')?.['value_text']).toBe('work')
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('drops an empty text draft on blur without any set_property call', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Context')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Context'))
+
+    const input = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'context' }))
+    input.focus()
+    await user.tab() // blur with no value entered → draft dropped
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText(t('pageProperty.valueLabel', { key: 'context' })),
+      ).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(properties.get(PAGE_ID)?.get('context')).toBeUndefined()
+  })
+
+  it('select add-from-def creates a draft; picking a valid option persists via the real mock', async () => {
+    const user = userEvent.setup()
+    // `project` is a seeded select-typed def with options alpha/beta/gamma.
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Project')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Project'))
+
+    // Draft select renders with the definition's seeded options and no
+    // premature set_property call (the empty-value bug — and, for select,
+    // an invalid-option write — are both guarded by the real mock).
+    const select = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'project' }))
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+
+    await user.selectOptions(select, 'alpha')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: PAGE_ID,
+          key: 'project',
+          value: expect.objectContaining({ value_text: 'alpha' }),
+        }),
+      )
+    })
+    expect(properties.get(PAGE_ID)?.get('project')?.['value_text']).toBe('alpha')
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('number and boolean defs still init-persist immediately via the real mock', async () => {
+    const user = userEvent.setup()
+    propertyDefs.set('weight', {
+      key: 'weight',
+      value_type: 'number',
+      options: null,
+      created_at: new Date().toISOString(),
+    })
+    propertyDefs.set('is_featured', {
+      key: 'is_featured',
+      value_type: 'boolean',
+      options: null,
+      created_at: new Date().toISOString(),
+    })
+
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Weight')).toBeInTheDocument()
+      expect(screen.getByText('Is Featured')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByText('Weight'))
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('weight')?.['value_num']).toBe(0)
+    })
+
+    // Picking a definition closes the popover — reopen it for the second pick.
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await waitFor(() => {
+      expect(screen.getByText('Is Featured')).toBeInTheDocument()
+    })
+    await user.click(screen.getByText('Is Featured'))
+    await waitFor(() => {
+      expect(properties.get(PAGE_ID)?.get('is_featured')?.['value_bool']).toBe(0)
+    })
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 })

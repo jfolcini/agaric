@@ -35,6 +35,16 @@ export interface UsePropertyRowEditorArgs {
   onDefUpdated?: ((updatedDef: PropertyDefinition) => void) | undefined
   onRefSaved?: (() => void) | undefined
   onCreateNewPage?: ((title: string) => void | Promise<void>) | undefined
+  /**
+   * #2792 — when true, `textLike.handleBlur` always calls `onSave` on blur,
+   * even when the input value is unchanged from `currentValue`. Used for a
+   * not-yet-persisted DRAFT row (see `PagePropertyTable.handleAddFromDef`):
+   * such a row has no real "current value" to compare against, so the normal
+   * unchanged-value skip would silently strand an untouched empty draft in
+   * the UI forever instead of dropping it on blur (mirrors the drawer's
+   * `PropertyField`, whose `onBlur` always fires unconditionally).
+   */
+  forceSaveOnBlur?: boolean | undefined
 }
 
 export interface TextLikeEditorState {
@@ -106,6 +116,7 @@ export function usePropertyRowEditor({
   onDefUpdated,
   onRefSaved,
   onCreateNewPage,
+  forceSaveOnBlur,
 }: UsePropertyRowEditorArgs): UsePropertyRowEditorReturn {
   const { t } = useTranslation()
   const valueType = def?.value_type ?? 'text'
@@ -141,10 +152,10 @@ export function usePropertyRowEditor({
       handleDateBlur()
       return
     }
-    if (localValue !== currentValue) {
+    if (forceSaveOnBlur || localValue !== currentValue) {
       onSave(localValue)
     }
-  }, [localValue, currentValue, onSave, valueType, handleDateBlur])
+  }, [localValue, currentValue, onSave, valueType, handleDateBlur, forceSaveOnBlur])
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {

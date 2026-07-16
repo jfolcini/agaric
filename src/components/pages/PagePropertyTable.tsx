@@ -40,6 +40,13 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
   const [showAddPopover, setShowAddPopover] = useState(false)
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
+  // #2792 — keys of text/select properties added but not yet persisted.
+  // Mirrors `BlockPropertyDrawer`'s `draftKeys` (#2656): such properties
+  // cannot be created with an empty `value_text` (the real backend rejects
+  // it), so we render a local DRAFT row for value entry and only write on
+  // the first non-empty save. A draft is dropped (no backend call) if the
+  // user leaves it empty.
+  const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
 
   // Load properties and definitions in parallel.
   // `listPropertyDefs` is paginated; this surface is
@@ -51,6 +58,10 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   // the half that loaded.
   useEffect(() => {
     setLoading(true)
+    // #2792 — drop any unsaved draft rows from a previous page so they can't
+    // leak into this page's table (drafts are transient, never persisted).
+    // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
+    setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
     Promise.allSettled([getProperties(pageId), listPropertyDefs()]).then(
       ([propsResult, defsResult]) => {
         if (propsResult.status === 'fulfilled') {
@@ -103,13 +114,38 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     },
   })
 
-  /** Wrapper that resolves valueType from def before delegating to hook. */
+  /**
+   * Wrapper that resolves valueType from def before delegating to hook.
+   *
+   * #2792 — for a not-yet-persisted DRAFT (text/select) row, an empty value
+   * means "nothing entered": drop the draft locally without a backend call
+   * (an empty `value_text` would be rejected). A non-empty value clears the
+   * draft flag and persists via the shared save hook (the reload then
+   * replaces the draft with the stored row). Mirrors
+   * `BlockPropertyDrawer.handleSaveField`.
+   */
   const doSaveProperty = useCallback(
     async (key: string, def: PropertyDefinition | undefined, rawValue: string) => {
       const valueType = def?.value_type ?? 'text'
+      if (draftKeys.has(key)) {
+        if (rawValue.trim() === '') {
+          setProperties((prev) => prev.filter((p) => p.key !== key))
+          setDraftKeys((prev) => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+          return
+        }
+        setDraftKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+      }
       await doSave(key, rawValue, valueType)
     },
-    [doSave],
+    [doSave, draftKeys],
   )
 
   const handleConfirmDelete = useCallback(() => {
@@ -121,6 +157,36 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
 
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
+      // #2792 — mirrors `BlockPropertyDrawer.handleAddFromDef` (#2656):
+      // text/select properties have no valid empty initializer (the backend
+      // rejects an empty `value_text` and, for select, any value outside the
+      // definition's options). Add a local draft row for value entry instead
+      // of persisting an invalid placeholder; it writes on the first
+      // non-empty save (see `doSaveProperty`).
+      if (def.value_type === 'text' || def.value_type === 'select') {
+        setDraftKeys((prev) => {
+          if (prev.has(def.key)) return prev
+          const next = new Set(prev)
+          next.add(def.key)
+          return next
+        })
+        setProperties((prev) =>
+          prev.some((p) => p.key === def.key)
+            ? prev
+            : [
+                ...prev,
+                {
+                  key: def.key,
+                  value_text: null,
+                  value_num: null,
+                  value_date: null,
+                  value_ref: null,
+                  value_bool: null,
+                },
+              ],
+        )
+        return
+      }
       try {
         const params = buildInitParams(pageId, def)
         if (!params) return
@@ -199,6 +265,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                   prop={prop}
                   def={def}
                   onSave={(rawValue) => doSaveProperty(prop.key, def, rawValue)}
+                  forceSaveOnBlur={draftKeys.has(prop.key)}
                   onDelete={canDelete ? () => setDeleteTarget(prop.key) : undefined}
                   onDefUpdated={(updatedDef) => {
                     setDefinitions((prev) =>
