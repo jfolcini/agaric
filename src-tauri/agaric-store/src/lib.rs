@@ -31,3 +31,32 @@ pub mod db;
 // are store siblings. The app re-exports it (`pub use agaric_store::op_log;`)
 // so every existing `crate::op_log::…` path resolves unchanged.
 pub mod op_log;
+// ── Wave S4a (#2621): five leaf read/query modules + a reusable test_support.
+// The app re-exports each so `crate::<mod>::…` paths resolve unchanged.
+//
+// `space` — `SpaceId`/`SpaceScope` newtype + space-scoped query helpers.
+pub mod space;
+// `space_filter_canonical` — drift-detection parity guard for the space-filter
+// SQL fragment (test-only canonical; a couple of `query!`-shaped helpers).
+pub mod space_filter_canonical;
+// `block_descendants` — shared recursive descendant/ancestor CTEs, exposed as
+// `#[macro_export]` `macro_rules!` (`descendants_cte_*!`, `ancestors_cte_*!`).
+// The macros land at the crate root; the app re-exports them so
+// `crate::descendants_cte_*!` paths resolve unchanged.
+pub mod block_descendants;
+// `peer_refs` — peer-ref read/write helpers + pending-pairing marker.
+pub mod peer_refs;
+// `tag_inheritance_macros` — the `#[macro_export]` `tag_inh_*!` CTE macros that
+// emit `tag_inheritance`'s sqlx queries. MUST precede `tag_inheritance`; the
+// app re-exports the macros so `crate::tag_inh_*!` paths resolve unchanged.
+pub mod tag_inheritance_macros;
+// `tag_inheritance` — incremental maintenance of the `block_tag_inherited`
+// cache. Built entirely on the `tag_inh_*!` macro family above.
+pub mod tag_inheritance;
+
+// `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
+// + `insert_block` + space helpers) that the moved tests use in place of the
+// app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4
+// waves reuse it. Compiled only for the store's own test build.
+#[cfg(test)]
+pub mod test_support;

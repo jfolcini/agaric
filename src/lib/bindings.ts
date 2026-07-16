@@ -3439,7 +3439,7 @@ export type SortSource =
 /**
  *  Newtype wrapper around a space ULID for type-safety + IPC bindings.
  * 
- *  Mirrors [`crate::ulid::ActiveBlockId`] (the strict newtype):
+ *  Mirrors [`agaric_core::ulid::ActiveBlockId`] (the strict newtype):
  *  transparent serde + transparent sqlx + `specta::Type` so the wire / DB
  *  layers see a plain string while Rust call sites get the named type.
  * 

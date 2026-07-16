@@ -2,7 +2,16 @@
 pub mod appimage_integration;
 pub mod backlink;
 pub mod bibliography;
-pub mod block_descendants;
+// `block_descendants` moved into `agaric-store` (#2621, wave S4a). Re-exported
+// so every `crate::block_descendants::…` path resolves unchanged. Its
+// `#[macro_export]` CTE macros (`descendants_cte_*!`, `ancestors_cte_*!`) land
+// at the store crate root; they are re-exported at this crate's root below so
+// `crate::descendants_cte_*!` / `crate::ancestors_cte_*!` paths keep resolving.
+pub use agaric_store::block_descendants;
+pub use agaric_store::{
+    ancestors_cte_active, ancestors_cte_standard, descendants_cte_active, descendants_cte_cohort,
+    descendants_cte_purge, descendants_cte_standard,
+};
 pub mod cache;
 // `cancellation` moved into `agaric-store` (#2621, wave S1). Re-exported so
 // every `crate::cancellation::…` path (fts, commands) resolves unchanged.
@@ -51,7 +60,12 @@ pub use agaric_store::op_log;
 mod op_log_app_tests;
 pub mod pagination;
 pub mod pairing;
-pub mod peer_refs;
+// `peer_refs` moved into `agaric-store` (#2621, wave S4a). Re-exported so
+// every `crate::peer_refs::…` path resolves unchanged. The one test that
+// couples to the app-only `pairing` module lives in `peer_refs_app_tests`.
+pub use agaric_store::peer_refs;
+#[cfg(test)]
+mod peer_refs_app_tests;
 // #1280 — the advanced-query engine (composable FilterExpr boolean-tree
 // queries). Structural-only; full-text / grouping / aggregation are
 // fast-follows.
@@ -65,8 +79,11 @@ pub(crate) mod recurrence_math;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;
-pub mod space;
-pub mod space_filter_canonical;
+// `space` + `space_filter_canonical` moved into `agaric-store` (#2621, wave
+// S4a). Re-exported so `crate::space::…` / `crate::space_filter_canonical::…`
+// paths resolve unchanged. `spaces` (Personal/Work bootstrap) stays app-side.
+pub use agaric_store::space;
+pub use agaric_store::space_filter_canonical;
 pub mod spaces;
 pub use agaric_core::sql_utils; // foundation crate (#2621)
 pub mod sync_cert;
@@ -77,9 +94,20 @@ pub mod sync_files;
 pub mod sync_net;
 pub mod sync_protocol;
 pub mod sync_scheduler;
-pub mod tag_inheritance;
-pub mod tag_inheritance_macros;
-pub use agaric_core::tag_norm; // foundation crate (#2621)
+// `tag_inheritance` + its companion `tag_inheritance_macros` moved into
+// `agaric-store` (#2621, wave S4a). Re-exported so `crate::tag_inheritance::…`
+// / `crate::tag_inheritance_macros::…` paths resolve unchanged. The
+// `#[macro_export]` `tag_inh_*!` macros land at the store crate root; they are
+// re-exported at this crate's root below so `crate::tag_inh_*!` (and the bare
+// unqualified forms) keep resolving.
+pub use agaric_core::tag_norm;
+pub use agaric_store::tag_inheritance;
+pub use agaric_store::tag_inheritance_macros;
+pub use agaric_store::{
+    tag_inh_ancestors_walk, tag_inh_descendant_tags_full, tag_inh_descendants_active,
+    tag_inh_rebuild_nearest, tag_inh_subtree_active, tag_inh_subtree_unfiltered,
+    tag_inh_tagged_descendants_in_subtree,
+}; // foundation crate (#2621)
 pub mod tag_query;
 // `task_locals` moved into `agaric-store` (#2621, wave S3a). Re-exported so
 // every `crate::task_locals::…` path (op_log, mcp::actor, mcp::activity, …)

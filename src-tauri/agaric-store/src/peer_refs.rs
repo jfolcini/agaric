@@ -6,7 +6,7 @@
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// A row from the `peer_refs` table representing a remote sync peer.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
@@ -453,7 +453,7 @@ const PENDING_PAIRING_TTL_MS: i64 = PAIRING_TIMEOUT.as_millis() as i64;
 /// Owned here in the store layer because [`PENDING_PAIRING_TTL_MS`] bounds
 /// the pending-pairing marker to the same clock, and the sync-layer
 /// `pairing` module re-exports it (`pub use crate::peer_refs::PAIRING_TIMEOUT;`)
-/// for [`crate::pairing::PairingSession::is_expired`]. Reusing one value
+/// for `crate::pairing::PairingSession::is_expired`. Reusing one value
 /// keeps a pairing session and its pending marker on the same window: once
 /// the interactive window has elapsed, an abandoned pairing (the joining
 /// device never connects) must stop driving the daemon into pairing-mode.
@@ -562,20 +562,7 @@ pub async fn clear_pending_pairing(pool: &SqlitePool) -> Result<(), AppError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_pool;
-    use sqlx::SqlitePool;
-    use std::path::PathBuf;
-    use tempfile::TempDir;
-
-    // ── Helpers ─────────────────────────────────────────────────────────
-
-    /// Create a fresh SQLite pool with migrations applied (temp directory).
-    async fn test_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().unwrap();
-        let db_path: PathBuf = dir.path().join("test.db");
-        let pool = init_pool(&db_path).await.unwrap();
-        (pool, dir)
-    }
+    use crate::test_support::test_pool;
 
     // ── get_peer_ref ────────────────────────────────────────────────────
 
@@ -1120,49 +1107,9 @@ mod tests {
 
     // ── pending-pairing marker ─────────────────────────────
 
-    #[tokio::test]
-    async fn pending_pairing_set_check_clear_roundtrip() {
-        let (pool, _dir) = test_pool().await;
-        let proof = crate::pairing::pairing_proof("correct horse battery staple");
-
-        assert!(
-            !is_pending_pairing(&pool).await.unwrap(),
-            "pending-pairing must be false on a fresh DB"
-        );
-        assert!(
-            get_pending_pairing_proof(&pool).await.unwrap().is_none(),
-            "no stored proof on a fresh DB"
-        );
-
-        set_pending_pairing(&pool, &proof).await.unwrap();
-        assert!(
-            is_pending_pairing(&pool).await.unwrap(),
-            "pending-pairing must be true after set"
-        );
-        // #855: the stored proof round-trips so the responder can compare it.
-        assert_eq!(
-            get_pending_pairing_proof(&pool).await.unwrap().as_deref(),
-            Some(proof.as_str()),
-            "the expected pairing proof round-trips"
-        );
-
-        // Idempotent: a second set stays true (and updates the proof).
-        set_pending_pairing(&pool, &proof).await.unwrap();
-        assert!(is_pending_pairing(&pool).await.unwrap());
-
-        clear_pending_pairing(&pool).await.unwrap();
-        assert!(
-            !is_pending_pairing(&pool).await.unwrap(),
-            "pending-pairing must be false after clear"
-        );
-        assert!(
-            get_pending_pairing_proof(&pool).await.unwrap().is_none(),
-            "no stored proof after clear"
-        );
-
-        // Clearing an already-clear marker is a no-op (no error).
-        clear_pending_pairing(&pool).await.unwrap();
-    }
+    // `pending_pairing_set_check_clear_roundtrip` couples to the app-only
+    // `crate::pairing::pairing_proof`, so it lives in the app crate
+    // (`src/peer_refs_app_tests.rs`, #2621 wave S4a) rather than here.
 
     /// #1603: a pending-pairing marker older than `PENDING_PAIRING_TTL_MS`
     /// reads as *not* pending (and is cleared lazily), while a freshly-set

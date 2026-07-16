@@ -14,7 +14,7 @@
 
 use sqlx::SqliteConnection;
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// After adding a tag to a block, propagate it to all descendants.
 ///
@@ -22,7 +22,7 @@ use crate::error::AppError;
 /// descendant of `block_id`. Uses `INSERT OR IGNORE` to handle races and
 /// re-application safely (a descendant might already inherit the same tag from
 /// a closer ancestor — the PK constraint keeps the existing row).
-pub(crate) async fn propagate_tag_to_descendants(
+pub async fn propagate_tag_to_descendants(
     conn: &mut SqliteConnection,
     block_id: &str,
     tag_id: &str,
@@ -58,7 +58,7 @@ pub(crate) async fn propagate_tag_to_descendants(
 /// Step 2 handles the symmetric case where a tagger lives strictly INSIDE the
 /// removed subtree (#675): without it, that tagger's descendants would silently
 /// lose the tag.
-pub(crate) async fn remove_inherited_tag(
+pub async fn remove_inherited_tag(
     conn: &mut SqliteConnection,
     block_id: &str,
     tag_id: &str,
@@ -215,7 +215,7 @@ pub(crate) async fn remove_inherited_tag(
 /// soft-deleted), and `restore_block` (subtree un-deleted). This is the
 /// "nuclear option" — deletes all inherited entries for the subtree, then
 /// recomputes from scratch by walking up ancestors for each block.
-pub(crate) async fn recompute_subtree_inheritance(
+pub async fn recompute_subtree_inheritance(
     conn: &mut SqliteConnection,
     root_id: &str,
 ) -> Result<(), AppError> {
@@ -298,7 +298,7 @@ pub(crate) async fn recompute_subtree_inheritance(
 ///
 /// The new block has no children yet, so we only need to copy the parent's
 /// effective tags (direct from `block_tags` + inherited from `block_tag_inherited`).
-pub(crate) async fn inherit_parent_tags(
+pub async fn inherit_parent_tags(
     conn: &mut SqliteConnection,
     block_id: &str,
     parent_id: Option<&str>,
@@ -349,7 +349,7 @@ pub(crate) async fn inherit_parent_tags(
 ///
 /// The depth bound (`MAX_TAG_INHERITANCE_DEPTH`) still guards against
 /// runaway recursion on corrupted parent_id chains.
-pub(crate) async fn remove_subtree_inherited(
+pub async fn remove_subtree_inherited(
     conn: &mut SqliteConnection,
     root_id: &str,
 ) -> Result<(), AppError> {

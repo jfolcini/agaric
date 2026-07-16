@@ -28,7 +28,7 @@
 //! As an alternative drift-mitigation, this module pins the canonical
 //! shape of the space-filter SQL fragment and asserts every production
 //! site matches it after normalisation. Mirrors the
-//! [`crate::pagination::block_row_columns`] precedent (
+//! `crate::pagination::block_row_columns` precedent (
 //! Option 2, session 677).
 //!
 //! The canonical is `#[cfg(test)]` only — production code continues
@@ -68,7 +68,7 @@
 /// [`tests::space_filter_production_sites_match_canonical`].
 ///
 /// `#[cfg(test)]`-gated for the same reason as the precedent in
-/// [`crate::pagination::block_row_columns::BLOCK_ROW_CANONICAL_SELECT`]:
+/// `crate::pagination::block_row_columns::BLOCK_ROW_CANONICAL_SELECT`:
 /// the const is documentation / drift-detection scaffolding consumed
 /// only by the parity tests in this module — production callsites
 /// embed the fragment inline as a string literal because
@@ -213,8 +213,14 @@ mod tests {
             "space_filter_canonical.rs",
         ];
 
-        let src_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-        let sites = collect_rs_files(&src_root, &src_root);
+        // #2621 wave S4a: the production space-filter sites live in the app
+        // crate (`../src`: pagination / fts / commands); this module (the
+        // canonical const) moved into the store. Walk BOTH crates' `src/` so
+        // the drift guard keeps full coverage across the split.
+        let store_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        let app_src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src");
+        let mut sites = collect_rs_files(&store_src, &store_src);
+        sites.extend(collect_rs_files(&app_src, &app_src));
 
         // Permissive regex that locates every canonical-shape space-
         // filter occurrence. `(?s)` enables dot-matches-newline so

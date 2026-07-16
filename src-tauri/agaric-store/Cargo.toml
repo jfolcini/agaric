@@ -33,6 +33,9 @@ tokio = { version = "1", features = ["sync"] }
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # `db::now_ms` uses `chrono::Utc::now().timestamp_millis()`.
 chrono = { version = "0.4.44", features = ["serde"] }
+# `space::SpaceId` validates via `ulid::Ulid::from_str`. Version mirrors the
+# app crate + agaric-core.
+ulid = "1.2.1"
 # `db` acquire helpers use `tracing::warn!`.
 tracing = { version = "0.1.44", features = ["attributes"] }
 
@@ -51,6 +54,10 @@ agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-ut
 # op_log's DB tests build a temp-file-backed migrated pool (the store-local
 # stand-in for the app's `init_pool`). Version mirrors the app crate.
 tempfile = "3.27.0"
+# `space_filter_canonical` + `block_descendants` drift-guard tests compile a
+# `regex::Regex` to normalise SQL fragments. Test-only (no prod use). Version
+# mirrors the app crate's `regex = "1"`.
+regex = "1"
 # Two op_log `origin` tests capture `tracing::warn!` output via an in-process
 # subscriber. Version/features mirror the app crate's `tracing-subscriber` dep.
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }

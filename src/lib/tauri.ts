@@ -2030,7 +2030,7 @@ export async function deletePropertyDef(key: string): Promise<void> {
 // implements them.
 
 /** Peer reference row returned by `list_peer_refs` / `get_peer_ref`.
- *  Fields match the Rust `PeerRef` struct (see src-tauri/src/peer_refs.rs). */
+ *  Fields match the Rust `PeerRef` struct (see src-tauri/agaric-store/src/peer_refs.rs). */
 export interface PeerRefRow {
   peer_id: string
   last_hash: string | null
