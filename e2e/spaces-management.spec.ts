@@ -66,7 +66,7 @@
  *      attempted here.
  */
 
-import { clearConsoleErrors, expect, openPage, test, waitForBoot } from './helpers'
+import { expect, openPage, test, waitForBoot } from './helpers'
 
 const SWITCH_SPACE = 'Switch space'
 const MANAGE_SPACES = 'Manage spaces…'
@@ -308,19 +308,13 @@ test.describe('Spaces — move a page between spaces', () => {
     await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
     await expect(page.getByText('Page moved to Work', { exact: true })).toBeVisible()
 
-    // Discovered while writing this spec (not fixed here — out of scope,
-    // "attribute-only test hooks" only): `handleMoveToSpace`
-    // (src/components/pages/PageHeader.tsx) reloads the just-moved page's
-    // OWN block store (`await pageStore.getState().load()`) right after
-    // pointing its `space` property at the target — but the ACTIVE space
-    // (`useSpaceStore`) hasn't changed, so that reload is scoped to the
-    // OLD space and the backend's own-space guard correctly rejects it
-    // ("not in current space"). Moving the page you are CURRENTLY VIEWING
-    // to another space reliably logs this console error / toast. Real,
-    // reproducible, pre-existing — worth its own follow-up issue — but a
-    // functional fix is out of this e2e-coverage task's scope.
-    await expect(page.getByText('Failed to load blocks', { exact: true })).toBeVisible()
-    clearConsoleErrors(page)
+    // #2785: moving the CURRENTLY-VIEWED page no longer reloads it under
+    // the stale old-space scope (which raised a spurious "Failed to load
+    // blocks" toast); PageHeader.handleMoveToSpace now navigates back
+    // instead, mirroring the delete flow. The editor closes and no error
+    // toast appears.
+    await expect(page.locator('[aria-label="Page title"]')).not.toBeVisible()
+    await expect(page.getByText('Failed to load blocks', { exact: true })).not.toBeVisible()
 
     // Origin (Personal): the page is gone from the Pages list.
     await openPagesView(page)

@@ -1806,6 +1806,12 @@ describe('PageHeader Move to space (Phase 2)', () => {
     mockedInvoke.mockImplementation(async (cmd, args) => {
       if (cmd === 'list_blocks') return emptyPage
       if (cmd === 'list_tags_for_block') return []
+      // useBlockTags also fetches inherited tags in parallel; leaving this
+      // command unhandled (falls through to the default `return null` below)
+      // makes `unwrap()` throw, which the hook logs as "Failed to load tags"
+      // — a pre-existing gap in this fixture that #2785's new test below
+      // would otherwise misattribute to the move-to-space fix.
+      if (cmd === 'list_inherited_tags_for_block') return []
       if (cmd === 'get_properties') {
         const props: PropertyRow[] = [
           {
@@ -1905,6 +1911,36 @@ describe('PageHeader Move to space (Phase 2)', () => {
     await waitFor(() => {
       expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
     })
+  })
+
+  // #2785 — moving the CURRENTLY-VIEWED page used to reload the
+  // per-page block store via `pageStore.getState().load()`, which
+  // scopes to the OLD (still-current) space. The backend membership
+  // check rejects that stale scope, producing a spurious "Failed to
+  // load blocks" error toast on top of the (correct) success toast,
+  // and leaving the stale view on screen. The fix navigates away
+  // (mirroring the delete-page flow) instead of reloading a store
+  // scoped to a space the page no longer belongs to.
+  it('does not fire "Failed to load blocks" and navigates away via onBack after moving the current page (#2785)', async () => {
+    const user = userEvent.setup()
+    const onBack = vi.fn()
+    setupPageWithSpace('SPACE_PERSONAL')
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test" onBack={onBack} />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Move to space/i))
+    await user.click(await screen.findByRole('menuitem', { name: 'Work' }))
+
+    await waitFor(() => {
+      expect(mockedToastSuccess).toHaveBeenCalledWith(expect.stringMatching(/moved to Work/i))
+    })
+
+    // Consistent end state: the caller's back-navigation fires exactly
+    // once and no "Failed to load blocks" (or any other) error toast
+    // ever fires for this flow.
+    expect(onBack).toHaveBeenCalledTimes(1)
+    expect(mockedToastError).not.toHaveBeenCalled()
   })
 
   it('shows error toast when set_property rejects', async () => {
