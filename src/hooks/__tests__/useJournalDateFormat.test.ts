@@ -49,6 +49,16 @@ describe('useJournalDateFormat', () => {
     expect(result.current.journalDateFormat).toBe('EEE, MMM d')
   })
 
+  it('cross-instance sync (#2666): a change in one instance updates another', () => {
+    const a = renderHook(() => useJournalDateFormat())
+    const b = renderHook(() => useJournalDateFormat())
+    expect(b.result.current.journalDateFormat).toBe('locale')
+
+    act(() => a.result.current.setJournalDateFormat('yyyy-MM-dd'))
+    expect(a.result.current.journalDateFormat).toBe('yyyy-MM-dd')
+    expect(b.result.current.journalDateFormat).toBe('yyyy-MM-dd')
+  })
+
   it('dispatches a fully populated StorageEvent on change', () => {
     localStorage.setItem(KEY, 'yyyy-MM-dd')
     const events: StorageEvent[] = []

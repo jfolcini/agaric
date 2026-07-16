@@ -142,8 +142,8 @@ export function PageBrowserBatchToolbar({
 
   const handleToggleStar = useCallback(() => {
     if (selectedIds.length === 0) return
-    // Pure-FE: `setMany` persists to localStorage and broadcasts the
-    // `starred-pages-changed` event, so no `notify` / `onMutated` is needed.
+    // Pure-FE: `setMany` persists to localStorage and broadcasts the change
+    // (registry write, #2666), so no `notify` / `onMutated` is needed.
     setMany(selectedIds, !allStarred)
     onClearSelection()
   }, [selectedIds, allStarred, setMany, onClearSelection])

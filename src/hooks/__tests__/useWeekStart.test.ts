@@ -57,6 +57,17 @@ describe('useWeekStart', () => {
     }
   })
 
+  it('cross-instance sync (#2666): setWeekStart in one instance updates another', () => {
+    const a = renderHook(() => useWeekStart())
+    const b = renderHook(() => useWeekStart())
+    expect(a.result.current.weekStartsOn).toBe(1)
+    expect(b.result.current.weekStartsOn).toBe(1)
+
+    act(() => a.result.current.setWeekStart(0))
+    expect(a.result.current.weekStartsOn).toBe(0)
+    expect(b.result.current.weekStartsOn).toBe(0)
+  })
+
   it('setWeekStart degrades to no-op (no throw, no event) when storage write throws', () => {
     const spy = vi.spyOn(window.localStorage, 'setItem').mockImplementation(() => {
       throw new DOMException('quota', 'QuotaExceededError')

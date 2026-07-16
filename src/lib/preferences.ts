@@ -50,6 +50,18 @@
  * the current format on the next write (the mount-effect in
  * `useLocalStoragePreference` handles this for the hook path).
  *
+ * ## Change notification (#2666)
+ *
+ * `writePreference` / `removePreference` broadcast every successful write
+ * via `broadcastPreferenceChange` (a synthetic `StorageEvent` — the
+ * app-wide same-tab convention; other windows receive the native event).
+ * `useLocalStoragePreference` — and therefore `usePreference` — subscribes
+ * per key, so every mounted hook instance re-reads after ANY registry
+ * write, whether it came from another hook instance or a non-hook lib
+ * writer (e.g. `starred-pages.ts`). Pre-existing raw `storage` listeners
+ * (`keyboard-config`, `HelpTab`, `useQuickCaptureShortcut`) keep working
+ * unchanged and gain same-tab coverage.
+ *
  * ## Failure discipline
  *
  * The pure helpers (`readPreference` / `writePreference`) and the
@@ -96,7 +108,10 @@
  * existing user's stored value.
  */
 
-import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import {
+  broadcastPreferenceChange,
+  useLocalStoragePreference,
+} from '@/hooks/useLocalStoragePreference'
 import { logger } from '@/lib/logger'
 
 export interface PreferenceDefinition<T> {
@@ -192,13 +207,24 @@ export function readPreference<T>(def: PreferenceDefinition<T>, keyArg?: string)
 
 /**
  * Write a preference value directly (non-hook). SSR-safe; swallows and warns
- * on any storage failure (quota, private mode, locked-down webview).
+ * on any storage failure (quota, private mode, locked-down webview). On
+ * success, broadcasts the change (see module docstring, "Change
+ * notification") so every mounted `usePreference` /
+ * `useLocalStoragePreference` instance for the key re-reads.
  */
 export function writePreference<T>(def: PreferenceDefinition<T>, value: T, keyArg?: string): void {
   if (typeof window === 'undefined') return
   const key = effectiveKey(def, keyArg)
   try {
-    localStorage.setItem(key, def.serialize(value))
+    const newValue = def.serialize(value)
+    let oldValue: string | null = null
+    try {
+      oldValue = localStorage.getItem(key)
+    } catch {
+      // Reading the previous value is best-effort broadcast metadata.
+    }
+    localStorage.setItem(key, newValue)
+    broadcastPreferenceChange(key, oldValue, newValue)
   } catch (err) {
     logger.warn(`preference:${def.key}`, 'Failed to write localStorage preference', { key }, err)
   }
@@ -231,7 +257,14 @@ export function removePreference<T>(def: PreferenceDefinition<T>, keyArg?: strin
   if (typeof window === 'undefined') return
   const key = effectiveKey(def, keyArg)
   try {
+    let oldValue: string | null = null
+    try {
+      oldValue = localStorage.getItem(key)
+    } catch {
+      // Reading the previous value is best-effort broadcast metadata.
+    }
     localStorage.removeItem(key)
+    broadcastPreferenceChange(key, oldValue, null)
   } catch (err) {
     logger.warn(`preference:${def.key}`, 'Failed to remove localStorage preference', { key }, err)
   }
@@ -248,19 +281,20 @@ export function usePreference<T>(
   keyArg?: string,
 ): [T, (value: T | ((prev: T) => T)) => void] {
   const key = effectiveKey(def, keyArg)
-  // `useLocalStoragePreference` only invokes `parse` on the initial read
-  // (its `useState` initializer), so composing `migrate` here means the
-  // legacy → current transform runs exactly on mount. A `null` from
-  // `migrate` (discard) is surfaced as a throw so the shared hook's
-  // parse-failure path resets to `defaultValue`.
+  // `useLocalStoragePreference` invokes `parse` whenever the raw stored
+  // string changes (initial read + every broadcast re-read), so composing
+  // `migrate` ahead of it applies the legacy → current transform on every
+  // read of a legacy raw value. A `null` from `migrate` (discard) is
+  // surfaced as a throw so the shared hook's parse-failure path resets to
+  // `defaultValue`.
   const parse = (raw: string): T => {
     const migrated = def.migrate ? def.migrate(raw) : raw
     if (migrated === null) throw new Error('preference migrate: discarded legacy value')
     return def.parse(migrated)
   }
   // `cloneDefault` — see the module docstring's "Failure discipline" section:
-  // the `useState` initializer inside `useLocalStoragePreference` falls back
-  // to this value by reference on "key absent", same hazard as
+  // `useLocalStoragePreference` captures this value on first render and
+  // hands it back by reference on "key absent", same hazard as
   // `readPreference`'s default branch.
   return useLocalStoragePreference<T>(key, cloneDefault(def.defaultValue), {
     parse,
@@ -327,6 +361,67 @@ function parseSort(raw: string): SortOption {
 /** Identity serializer — density/sort persist as the bare option string. */
 function identity<T extends string>(value: T): string {
   return value
+}
+
+/** Week start day: 0 = Sunday, 1 = Monday (the default). */
+export type WeekStartDay = 0 | 1
+
+/**
+ * `week-start-preference` — first day of the week for calendar/agenda views
+ * (`src/hooks/useWeekStart.ts`). Bare-string format (`'0'` / `'1'`).
+ * Legacy contract (pre-registry `useWeekStart`): the literal `'0'` means
+ * Sunday, ANY other stored value — including garbage — means Monday, so
+ * `parse` never throws.
+ */
+const WEEK_START_PREFERENCE: PreferenceDefinition<WeekStartDay> = {
+  key: 'week-start-preference',
+  scope: 'device',
+  version: 1,
+  defaultValue: 1,
+  parse: (raw) => (raw === '0' ? 0 : 1),
+  serialize: (value) => String(value),
+}
+
+/**
+ * Allowed journal-title display formats (#1448, `useJournalDateFormat`).
+ *
+ * - `'locale'` is a sentinel for the app's pre-existing localized rendering
+ *   (`formatDateDisplay`, e.g. "Mon, Jun 17 2026"). It is the DEFAULT, so the
+ *   journal title looks exactly as it did before this feature — nothing changes
+ *   for existing users.
+ * - The remaining entries are date-fns format token strings (the same dialect
+ *   already used across `date-utils.ts`). `'yyyy-MM-dd'` reproduces the canonical
+ *   stored ISO shape, so formatting under it is an identity transform.
+ */
+export const JOURNAL_DATE_FORMATS = [
+  'locale',
+  'yyyy-MM-dd',
+  'MMMM d, yyyy',
+  'dd/MM/yyyy',
+  'EEE, MMM d',
+] as const
+
+export type JournalDateFormat = (typeof JOURNAL_DATE_FORMATS)[number]
+
+/** Default: the existing localized rendering, so nothing changes for existing users. */
+export const DEFAULT_JOURNAL_DATE_FORMAT: JournalDateFormat = 'locale'
+
+/**
+ * `journal-date-format` — the *display* format of journal page titles
+ * (`src/hooks/useJournalDateFormat.ts`). Bare-string format validated
+ * against the {@link JOURNAL_DATE_FORMATS} allowlist; unknown values reset
+ * to the localized default.
+ */
+const JOURNAL_DATE_FORMAT_PREFERENCE: PreferenceDefinition<JournalDateFormat> = {
+  key: 'journal-date-format',
+  scope: 'device',
+  version: 1,
+  defaultValue: DEFAULT_JOURNAL_DATE_FORMAT,
+  parse: (raw) => {
+    if ((JOURNAL_DATE_FORMATS as readonly string[]).includes(raw)) return raw as JournalDateFormat
+    throw new Error(`invalid journal date format: ${raw}`)
+  },
+  serialize: identity,
 }
 
 /**
@@ -707,6 +802,8 @@ const BLOCK_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
 export const PREFERENCES = {
   density: DENSITY_PREFERENCE,
   sort: SORT_PREFERENCE,
+  weekStart: WEEK_START_PREFERENCE,
+  journalDateFormat: JOURNAL_DATE_FORMAT_PREFERENCE,
   gestureCoachmarkSeen: GESTURE_COACHMARK_SEEN_PREFERENCE,
   onboardingDone: ONBOARDING_DONE_PREFERENCE,
   spaceOnboardingSeen: SPACE_ONBOARDING_SEEN_PREFERENCE,

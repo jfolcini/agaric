@@ -4,6 +4,11 @@
  * editor without a store/prop dependency. The Settings toggle writes the key
  * (via `useLocalStoragePreference`); the editor reads it on demand — so a
  * change takes effect on the next keystroke, no editor remount needed.
+ *
+ * (#2666) These non-hook getters are intentionally NOT the reactive
+ * `usePreference` path: they are documented thin read-on-demand views over
+ * the same registry keys, because editor extensions run outside React and
+ * always want the freshest value at keystroke time.
  */
 
 import { PREFERENCES, readPreference } from '@/lib/preferences'
