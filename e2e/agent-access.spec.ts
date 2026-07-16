@@ -7,27 +7,14 @@ import { clearConsoleErrors, expect, getInvokeCalls, installIpcRecorder, test } 
  * switch, activity feed, session-revert controls) had zero e2e coverage —
  * only component-level unit tests (AgentAccessTab.test.tsx, ActivityFeed.test.tsx).
  *
- * Coverage gaps that are NOT closed here, and why (do not attempt to fake
- * these — see the task note and #2683):
+ * UPDATE (#2683 fixed): the mock event bus now delivers events
+ * (`shouldMockEvents: true` + `window.__emitMockEvent`), which unblocked
+ * three of the four gaps originally documented here — live `mcp:activity`
+ * delivery, non-empty feed content, and `SessionRevertControls`
+ * reachability are now covered end-to-end in `mcp-activity-events.spec.ts`.
  *
- *   - Live `mcp:activity` events. `useMcpActivityFeed` subscribes via
- *     `useTauriEventListener` → `@tauri-apps/api/event`'s `listen()`. The
- *     tauri-mock's event bus does not deliver events back to listeners
- *     registered through the mock IPC shim in the Playwright/mock harness
- *     (#2683) — there is no supported way from a spec to make a `listen()`
- *     callback fire.
- *   - Non-empty activity feed content / per-entry Undo buttons. The mock's
- *     `get_mcp_recent_activity` handler (src/lib/tauri-mock/handlers.ts) is
- *     a pure function that always returns `[]` — there is no mock-side
- *     activity ring to seed, and the only test-facing override the mock
- *     exposes (`__injectMockError`, src/lib/tauri-mock/injection.ts) injects
- *     *errors*, not custom success payloads.
- *   - `SessionRevertControls` (the per-session bulk-revert header). It only
- *     renders when a session has ≥ 2 undoable ops in the feed — which is
- *     unreachable for the two reasons above. Its presence/behavior is
- *     therefore blocked end-to-end; it does have full unit coverage
- *     (AgentAccessTab.test.tsx exercises `revert_ops` invocation, in-flight
- *     state, and error paths at the component level).
+ * The one gap that remains (orthogonal to the event bus):
+ *
  *   - Persisted toggle state. `get_mcp_status` / `get_mcp_rw_status` are
  *     also pure functions that always answer `{ enabled: false, ... }` —
  *     the mock has no in-memory MCP state to mutate, so a toggle's optimistic
