@@ -185,7 +185,11 @@ export interface UseBlockKeyboardHandlersParams {
   moveDown: (id: string) => Promise<boolean>
   createBelow: (afterBlockId: string, content?: string) => Promise<string | null>
   justCreatedBlockIds: RefObject<Set<string>>
-  /** Discard any persisted draft for the given block (called on Escape). */
+  /**
+   * Discard any persisted draft for the given block. Called on Escape, and
+   * (#2786) after a successful caret-split `edit()` to drop the departed
+   * block's now-stale pre-split draft row.
+   */
   discardDraft: (blockId: string) => void
   t: TFunction
 }
@@ -734,6 +738,22 @@ export function useBlockKeyboardHandlers({
           rovingEditorRef.current.mount(focusedBlockId, savedContent)
           return
         }
+        // #2786 — the direct `unmount()` above bypasses `persistUnmount`
+        // (the shared cleanup every OTHER programmatic block switch routes
+        // through — see EditableBlock's auto-mount effect and `handleFocus`),
+        // so neither `flushDraft` nor `deleteDraft` ever ran for the
+        // DEPARTED (split-source) block. Left alone, a debounced
+        // `block_drafts` row from before Enter was pressed survives and a
+        // later boot-time `flush_all_drafts` would replay it as a stray
+        // `edit_block` op. `split.before` was just committed via `edit()`
+        // above — exactly the same "content already committed, row is now
+        // stale" situation `persistUnmount`'s `deletePrevDraft` cleans up
+        // on its own success path — so mirror that with a plain
+        // `discardDraft` (delete only). Deliberately NOT `flushDraft`: the
+        // stale row may hold the FULL pre-split text, and flushing it would
+        // append a SECOND `edit_block` op that clobbers the split we just
+        // committed with the old, un-split content.
+        discardDraft(focusedBlockId)
         const newBlockId = await createBelow(focusedBlockId, split.after)
         if (newBlockId) {
           // NOT added to justCreatedBlockIds: the new block carries real
@@ -762,7 +782,16 @@ export function useBlockKeyboardHandlers({
     } finally {
       enterSaveInProgress.current = false
     }
-  }, [focusedBlockId, handleFlush, createBelow, edit, setFocused, justCreatedBlockIds, t])
+  }, [
+    focusedBlockId,
+    handleFlush,
+    createBelow,
+    edit,
+    setFocused,
+    justCreatedBlockIds,
+    discardDraft,
+    t,
+  ])
 
   const handleEscapeCancel = useCallback(() => {
     if (!focusedBlockId) return

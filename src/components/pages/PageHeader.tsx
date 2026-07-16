@@ -292,16 +292,31 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
         setPageSpaceId(targetSpaceId)
         notify.success(t('space.movedToast', { space: targetName }))
         announce(t('announce.pageMoved'))
-        // Refresh the page block store so any space-scoped subviews
-        // (outline, property table) pick up the new ownership.
-        await pageStore.getState().load()
+        // #2785 — do NOT `pageStore.getState().load()` here. `load()`
+        // scopes its fetch to `useSpaceStore.getState().currentSpaceId`,
+        // which is still the OLD space right after this `await` — the
+        // backend's membership check now rejects the (page, old-space)
+        // pair, so the reload throws and surfaces a spurious "Failed to
+        // load blocks" error toast while leaving the stale, now-foreign
+        // view on screen. Reloading this store is meaningless anyway:
+        // the page no longer belongs to the space it is scoped to.
+        // Navigate away instead, mirroring `handleRequestDelete`'s
+        // `onDeleted` callback just above, which faces the identical
+        // "this page is no longer valid in the current view" situation.
+        // (Switching the app's active space to follow the page was
+        // considered and rejected — `setCurrentSpace` drives
+        // `createPerSpaceSlice`'s cross-store reconcile, which flushes
+        // and restores the TARGET space's own last-active tab/view, not
+        // necessarily this page, so "following" would not reliably land
+        // back on the moved page anyway.)
+        onBack?.()
       } catch (err) {
         logger.error('PageHeader', 'Failed to move page to space', { pageId, targetSpaceId }, err)
         notify.error(t('space.moveFailed'))
         announce(t('announce.pageMoveFailed'))
       }
     },
-    [availableSpaces, pageId, pageStore, setPageSpaceId, t],
+    [availableSpaces, onBack, pageId, setPageSpaceId, t],
   )
 
   // Sync editableTitle when prop changes (e.g., navigating to a different page)

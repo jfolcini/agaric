@@ -1468,6 +1468,69 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'helloworld')
     expect(params.setFocused).not.toHaveBeenCalled()
   })
+
+  // #2786 — the caret-split branch unmounts the roving editor directly
+  // instead of routing through `persistUnmount` (the shared cleanup every
+  // OTHER programmatic block switch uses), so the departed (split-source)
+  // block's persisted draft row was never cleaned up. Assert the fix:
+  // `discardDraft` runs for the OLD block once `split.before` commits.
+  it('discards the departed block draft after a successful caret split', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.discardDraft).toHaveBeenCalledWith('B')
+    // Ordering matters: the draft is only stale to discard once the split
+    // content is actually committed.
+    const editOrder = vi.mocked(params.edit).mock.invocationCallOrder[0] ?? -1
+    const discardOrder = vi.mocked(params.discardDraft).mock.invocationCallOrder[0] ?? -1
+    expect(editOrder).toBeLessThan(discardOrder)
+  })
+
+  it('does not discard the draft when the before-caret save fails (block never departed)', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
+    params.edit = vi.fn(async () => false)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.discardDraft).not.toHaveBeenCalled()
+  })
+
+  it('still discards the departed block draft even when createBelow fails post-split', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
+    params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
+    params.createBelow = vi.fn(async () => null)
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    // `split.before` already committed via `edit()` before createBelow ran,
+    // so the stale draft row is cleaned up regardless of createBelow's outcome.
+    expect(params.discardDraft).toHaveBeenCalledWith('B')
+  })
+
+  it('does not discard any draft on the legacy (non-split) Enter path', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+
+    await act(async () => {
+      await result.current.handleEnterSave()
+    })
+
+    expect(params.discardDraft).not.toHaveBeenCalled()
+  })
 })
 
 describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
