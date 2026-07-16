@@ -58,7 +58,14 @@ pub use agaric_store::op_log;
 // S3b-ii); they live here in the app crate instead.
 #[cfg(test)]
 mod op_log_app_tests;
-pub mod pagination;
+// `pagination` moved into `agaric-store` (#2621, wave S4b). Re-exported so
+// every `crate::pagination::…` path resolves unchanged. A few phase-7
+// cross-space tests that call app-only command inner functions
+// (`batch_resolve_inner`, `get_page_inner`) relocated here as
+// `pagination_app_tests`.
+pub use agaric_store::pagination;
+#[cfg(test)]
+mod pagination_app_tests;
 pub mod pairing;
 // `peer_refs` moved into `agaric-store` (#2621, wave S4a). Re-exported so
 // every `crate::peer_refs::…` path resolves unchanged. The one test that
@@ -108,7 +115,9 @@ pub use agaric_store::{
     tag_inh_rebuild_nearest, tag_inh_subtree_active, tag_inh_subtree_unfiltered,
     tag_inh_tagged_descendants_in_subtree,
 }; // foundation crate (#2621)
-pub mod tag_query;
+// `tag_query` moved into `agaric-store` (#2621, wave S4b). Re-exported so
+// every `crate::tag_query::…` path resolves unchanged.
+pub use agaric_store::tag_query;
 // `task_locals` moved into `agaric-store` (#2621, wave S3a). Re-exported so
 // every `crate::task_locals::…` path (op_log, mcp::actor, mcp::activity, …)
 // resolves unchanged.

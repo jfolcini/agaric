@@ -36,7 +36,7 @@ test.describe.configure({ mode: 'serial' })
  *  - `list_page_history` (handlers.ts ~2554-2595) reads `args.scope` (space
  *    scoping) but never reads `args.opTypeFilter` — op-type filtering is
  *    NOT applied mock-side, only real-backend-side
- *    (src-tauri/src/pagination/history.rs). The filter-bar test below
+ *    (src-tauri/agaric-store/src/pagination/history.rs). The filter-bar test below
  *    asserts the Select's WIRING (the chosen op type reaches the
  *    `list_page_history` IPC call), not that the rendered list narrows,
  *    since the mock always returns the full unfiltered set regardless of

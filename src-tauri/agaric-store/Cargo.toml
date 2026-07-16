@@ -38,6 +38,15 @@ chrono = { version = "0.4.44", features = ["serde"] }
 ulid = "1.2.1"
 # `db` acquire helpers use `tracing::warn!`.
 tracing = { version = "0.1.44", features = ["attributes"] }
+# `pagination`'s keyset cursor codec (`Cursor`) base64-encodes the opaque
+# cursor payload. Version mirrors the app crate exactly (#2621, wave S4b).
+base64 = "0.22.1"
+# `tag_query` uses `FxHashSet` for tag-leaf de-duplication. Version mirrors
+# the app crate's `rustc-hash` dep (#2621, wave S4b).
+rustc-hash = "2.1.2"
+# `tag_query::resolve` fans out prefix-resolve lookups via `try_join_all`.
+# Version/features mirror the app crate exactly (#2621, wave S4b).
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 
 [dev-dependencies]
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,

@@ -1,0 +1,158 @@
+use sqlx::SqlitePool;
+
+use super::{
+    ActiveBlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest, PageResponse, build_page_response,
+    position_keyset_binds,
+};
+use agaric_core::error::AppError;
+
+// ---------------------------------------------------------------------------
+// Paginated queries
+// ---------------------------------------------------------------------------
+//
+// Each query uses the `(?N IS NULL OR <keyset-condition>)` pattern so that a
+// single SQL statement handles both the first-page (no cursor) and subsequent
+// (with cursor) cases.  When `cursor_flag` is NULL the keyset condition
+// short-circuits; when it is 1 the condition is evaluated normally.
+// This eliminates the duplicated if/else branches that the original code had.
+
+/// List children of `parent_id` (or top-level blocks when `None`), paginated.
+///
+/// Ordered by `(position ASC, id ASC)`.  Blocks that formerly had `NULL`
+/// position (e.g. tag children) now store `NULL_POSITION_SENTINEL` and sort
+/// *after* all positioned blocks.
+///
+/// When `space_id` is `Some`, the result set is restricted to blocks whose
+/// owning page (`b.page_id`) carries a `space` property pointing at
+/// `space_id`. `None` is the unscoped (pre-) behaviour — every
+/// existing callsite that hasn't migrated yet passes `None` and sees
+/// identical results. The filter uses bare `b.page_id` (migration 0066
+/// dropped the old `COALESCE(page_id, id)` form for sargability; 0073's
+/// `page_id_self_for_pages` CHECK makes the fallback unnecessary). See
+/// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
+/// SQL fragment definition.
+///
+/// Uses index `idx_blocks_parent_covering(parent_id, deleted_at, position, id)`.
+pub async fn list_children(
+    pool: &SqlitePool,
+    parent_id: Option<&str>,
+    page: &PageRequest,
+    space_id: Option<&str>,
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    // #1652 — shared `(position, id)` cursor-bind destructure (the single
+    // source of truth shared with `get_page_inner` / the markdown export).
+    let (cursor_flag, cursor_pos, cursor_id) = position_keyset_binds(page.after.as_ref());
+
+    // Phase 2 — ?6 (space_id) drives the shared space-filter
+    // clause. ?7 is `NULL_POSITION_SENTINEL`: the keyset comparison and
+    // `ORDER BY` wrap `position` in `COALESCE(position, ?7)` so a genuine
+    // NULL position sorts at the sentinel rather than mis-ordering or being
+    // dropped across a pagination boundary — mirroring `get_page_inner`.
+    // The literal is mirrored (modulo ?N) by
+    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
+    // inline here because `sqlx::query_as!` requires a string literal
+    // directly and does not accept `concat!()`. Any change to the filter
+    // SQL must touch every inlined copy (list_children, list_by_type,
+    // list_trash, fts::search_fts).
+    let rows = sqlx::query_as!(
+        ActiveBlockRow,
+        r#"SELECT id as "id: agaric_core::ulid::ActiveBlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position,
+                deleted_at,
+                 todo_state, priority, due_date, scheduled_date,
+                page_id as "page_id: agaric_core::ulid::BlockId"
+         FROM blocks b
+         WHERE parent_id IS ?1 AND deleted_at IS NULL
+           AND (?2 IS NULL OR (
+                COALESCE(position, ?7) > ?3
+                OR (COALESCE(position, ?7) = ?3 AND id > ?4)))
+           AND (?6 IS NULL OR b.space_id = ?6)
+         ORDER BY COALESCE(position, ?7) ASC, id ASC
+         LIMIT ?5"#,
+        parent_id,              // ?1
+        cursor_flag,            // ?2
+        cursor_pos,             // ?3
+        cursor_id,              // ?4
+        fetch_limit,            // ?5
+        space_id,               // ?6
+        NULL_POSITION_SENTINEL, // ?7
+    )
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id_and_position(
+            last.id.as_str().to_string(),
+            last.position.unwrap_or(NULL_POSITION_SENTINEL),
+        )
+    })
+}
+
+/// List blocks by `block_type`, paginated.
+///
+/// Ordered by `id ASC` (ULID ≈ chronological).
+///
+/// When `space_id` is `Some`, only blocks whose owning page (bare
+/// `b.page_id`; migration 0066 dropped the old `COALESCE(page_id, id)`
+/// form for sargability, 0073's `page_id_self_for_pages` CHECK makes the
+/// fallback unnecessary) carries `space = ?space_id` are returned. `None`
+/// Keeps the pre-existing behaviour (no filter). See
+/// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] for the shared
+/// SQL fragment definition.
+///
+/// Uses index `idx_blocks_type(block_type, deleted_at)`.
+///
+/// #1460 — saved-view marker blocks (a `block_properties` row with
+/// `key = 'view_type'` and `value_text = 'query-view'`) are excluded so
+/// they never pollute the normal block/page listings the UI drives. The
+/// dedicated `query_by_property(view_type = 'query-view')` path is
+/// unaffected and still lists them. `count_blocks_by_type` mirrors this
+/// predicate so the "X of Y" progress chip stays consistent.
+pub async fn list_by_type(
+    pool: &SqlitePool,
+    block_type: &str,
+    page: &PageRequest,
+    space_id: Option<&str>,
+) -> Result<PageResponse<ActiveBlockRow>, AppError> {
+    let fetch_limit = page.limit + 1;
+
+    let (cursor_flag, cursor_id): (Option<i64>, &str) = match page.after.as_ref() {
+        Some(c) => (Some(1), &c.id),
+        None => (None, ""),
+    };
+
+    // Phase 2 — ?5 (space_id) drives the space filter. See the
+    // header note on `list_children` for why the clause is inlined
+    // rather than composed via
+    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`].
+    let rows = sqlx::query_as!(
+        ActiveBlockRow,
+        r#"SELECT id as "id: agaric_core::ulid::ActiveBlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position,
+                deleted_at,
+                 todo_state, priority, due_date, scheduled_date,
+                page_id as "page_id: agaric_core::ulid::BlockId"
+         FROM blocks b
+         WHERE block_type = ?1 AND deleted_at IS NULL
+           AND (?2 IS NULL OR id > ?3)
+           AND (?5 IS NULL OR b.space_id = ?5)
+           AND NOT EXISTS (
+                SELECT 1 FROM block_properties bp
+                WHERE bp.block_id = b.id
+                  AND bp.key = 'view_type'
+                  AND bp.value_text = 'query-view')
+         ORDER BY id ASC
+         LIMIT ?4"#,
+        block_type,  // ?1
+        cursor_flag, // ?2
+        cursor_id,   // ?3
+        fetch_limit, // ?4
+        space_id,    // ?5
+    )
+    .fetch_all(pool)
+    .await?;
+
+    build_page_response(rows, page.limit, |last| {
+        Cursor::for_id(last.id.as_str().to_string())
+    })
+}

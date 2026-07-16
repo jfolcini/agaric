@@ -1,0 +1,832 @@
+//! Cursor-based keyset pagination for block queries.
+//!
+//! All list queries use cursor/keyset pagination — offset pagination is banned
+//! per the ADR.  The cursor is an opaque base64-encoded JSON string.
+//!
+//! ## Design notes
+//!
+//! **`total_count` is intentionally omitted** from [`PageResponse`]. Cursor/keyset
+//! pagination doesn't require or benefit from a total count (which would need an
+//! extra `COUNT(*)` query on every request), and clients detect the end of results
+//! via `has_more = false`.
+//!
+//! **Cursor type**: a single [`Cursor`] struct is used for all query types.  The
+//! `position` and `deleted_at` fields are only populated by the queries that key
+//! on those columns (`list_children` and `list_trash`, respectively).  This keeps
+//! the API surface small and the cursor remains opaque to callers anyway.
+
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use serde::{Deserialize, Serialize};
+
+use agaric_core::error::AppError;
+
+mod agenda;
+pub mod block_row_columns;
+mod hierarchy;
+mod history;
+mod links;
+mod properties;
+mod tags;
+mod tasks;
+mod trash;
+mod undated;
+
+#[cfg(test)]
+mod tests;
+
+pub use agenda::{list_agenda, list_agenda_range};
+pub use hierarchy::{list_by_type, list_children};
+pub use history::{list_block_history, list_page_history};
+pub use links::list_backlinks;
+pub use properties::query_by_property;
+pub use tags::list_by_tag;
+pub use tasks::list_unfinished_tasks;
+pub use trash::{list_trash, trash_descendant_counts};
+pub use undated::list_undated_tasks;
+
+// ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/// Default page size when no limit is specified by the client.
+const DEFAULT_PAGE_SIZE: i64 = 50;
+
+/// Maximum page size the client may request.
+pub const MAX_PAGE_SIZE: i64 = 200;
+
+/// Upper bound on how many block ids a single `*_by_ids` / batch command
+/// will accept. Resolving in one `json_each(?1)` membership query under a
+/// single `BEGIN IMMEDIATE` transaction means the whole batch holds the
+/// writer lock for its duration; a runaway caller (or a malicious MCP tool)
+/// could otherwise hold the writer lock for an unbounded interval while
+/// writing thousands of op_log rows. 1000 covers every realistic UI
+/// multi-select gesture (TrashView caps its own table to a few hundred rows;
+/// the page editor's multi-select fans the same way). Callers exceeding the
+/// cap should chunk client-side — the FE wrappers in `src/lib/tauri.ts`
+/// deliberately pass the input through unchanged so the backend's cap is the
+/// single authority.
+///
+/// This is the single source of truth for the limit across the whole
+/// `*_by_ids` / batch family — both the write-batch commands
+/// (`restore_blocks_by_ids_inner`, `set_todo_state_batch_inner`,
+/// `delete_blocks_by_ids_inner`, `add_tags_by_ids_inner`,
+/// `create_blocks_batch_inner`, `move_blocks_to_space_inner`) and the
+/// batch-read commands (`batch_resolve_inner`, `get_blocks_inner`,
+/// `first_child_for_blocks_inner`, `get_batch_properties_inner`,
+/// `list_attachments_batch_inner`, `count_backlinks_batch_inner`,
+/// `count_agenda_batch_inner`, `count_agenda_batch_by_source_inner`,
+/// `trash_descendant_counts_inner`, and any future `*_by_ids` siblings) so
+/// the limit is not silently inconsistent across the family. Every site
+/// enforces it via [`ensure_batch_within_cap`]. Lives here in the store
+/// layer (`crate::pagination::MAX_BATCH_BLOCK_IDS`) so store callers like
+/// [`trash::trash_descendant_counts`] enforce it without reaching up into
+/// `commands`; the command-layer `*_by_ids` sites reach the guard via the
+/// `crate::commands::ensure_batch_within_cap` re-export.
+pub const MAX_BATCH_BLOCK_IDS: usize = 1000;
+
+/// Reject an over-cap batch with the canonical
+/// `"{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"`
+/// [`AppError::Validation`] message, sharing the [`MAX_BATCH_BLOCK_IDS`]
+/// guard across the `*_by_ids` / batch family.
+///
+/// `subject` is the noun used in the message (e.g. `"block_ids"`, `"ids"`,
+/// `"specs"`) so each call site keeps its existing, verbatim error text.
+/// Callers still perform their own empty-list check separately; this helper
+/// only covers the upper-bound branch.
+pub fn ensure_batch_within_cap(subject: &str, len: usize) -> Result<(), AppError> {
+    if len > MAX_BATCH_BLOCK_IDS {
+        return Err(AppError::validation(format!(
+            "{subject} length {len} exceeds maximum {MAX_BATCH_BLOCK_IDS}"
+        )));
+    }
+    Ok(())
+}
+
+/// Current cursor schema version.
+///
+/// The encoded JSON cursor carries a `version` field so that any future
+/// reordering or semantic change of the [`Cursor`] fields can reject stale
+/// cursors instead of silently decoding them under the new schema.
+///
+/// Bump this constant in the same commit that changes [`Cursor`]'s field
+/// layout / semantics.  Pre-versioning cursors (no `version` key in their
+/// JSON) decode as version 1 — see [`Cursor::decode`].
+const CURRENT_CURSOR_VERSION: u8 = 1;
+
+// ---------------------------------------------------------------------------
+// Phase 2 — shared space-filter SQL fragment.
+// ---------------------------------------------------------------------------
+//
+// Every paginated list / search query that honours the active space must
+// restrict results to blocks whose `b.space_id` matches the active space.
+// The clause short-circuits when `?space_id` is NULL so the same SQL serves
+// both the scoped and unscoped cases without a separate codepath.
+//
+// Canonical form (bind slot `?N` is referenced twice — once for the NULL
+// guard, once for the equality filter):
+//
+//     AND (?N IS NULL OR b.space_id = ?N)
+//
+// (#533, migration 0086) Space membership is now a first-class
+// `blocks.space_id` column, so the read filter is the trivial equality
+// above — the former `b.page_id IN (SELECT bp.block_id FROM
+// block_properties bp WHERE bp.key = 'space' AND bp.value_ref = ?N)`
+// sub-select no longer exists. The canonical text lives in
+// [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`], and the
+// `check-space-filter-drift` prek hook (#139) guards every inlined copy
+// against drift.
+//
+// `sqlx::query_as!` / `sqlx::query!` require a string literal and do
+// *not* accept `concat!()`, so the fragment is inlined at each compile-
+// time-checked callsite (`pagination::list_children`,
+// `pagination::list_by_type`, `pagination::list_trash`). The dynamic-SQL
+// FTS path (`fts::search_fts`) appends the bare `b.space_id = ?N` form
+// (no NULL guard — the filter is only appended when a space is active) so
+// its `?N` index tracks the runtime param count. Any change to the filter
+// SQL must mirror across every copy.
+//
+// Schema reminder (migration 0086):
+// * `blocks.space_id` — nullable FK to the owning space block's id. NULL
+//   means the block is unscoped (visible in every space). A page block and
+//   its content blocks carry the same `space_id`; space blocks themselves
+//   carry `is_space = 'true'`.
+
+/// Sentinel substituted for NULL `position` in keyset comparisons.
+///
+/// Children with `position = NULL` (e.g. tag associations) are sorted *after*
+/// all positioned siblings.  `i64::MAX` is safe because no real block list will
+/// approach 2^63 children, and SQLite natively handles 64-bit signed integers.
+pub const NULL_POSITION_SENTINEL: i64 = i64::MAX;
+
+/// Convert a 0-based sibling slot (`index`/`new_index`) to the 1-based
+/// provisional `position` the optimistic SQL write / reverse-op payload uses.
+///
+/// Saturates and caps strictly below [`NULL_POSITION_SENTINEL`] so an absurd or
+/// hostile slot (e.g. from a corrupt op-log payload) can neither overflow
+/// (debug panic / release negative-wrap) nor land on the reserved keyset tail
+/// marker. The materializer reprojects the authoritative dense rank regardless,
+/// so the exact capped value only matters for not breaking those invariants
+/// (#400, review). Shared by every index→position conversion.
+pub fn index_to_provisional_position(index: i64) -> i64 {
+    index.saturating_add(1).min(NULL_POSITION_SENTINEL - 1)
+}
+
+// ---------------------------------------------------------------------------
+// #1652 — shared `(COALESCE(position, sentinel) ASC, id ASC)` keyset.
+// ---------------------------------------------------------------------------
+//
+// The same NULL-tolerant `(position, id)` keyset is inlined at every site
+// that walks a sibling / subtree slice ordered by position with id as the
+// tiebreaker: `pagination::list_children`, `commands::pages::get_page_inner`,
+// and `commands::pages::markdown` (export subtree walk). All three share the
+// identical WHERE keyset condition and `ORDER BY`, the identical
+// cursor-binding destructure, and (the response-assembly sites) the identical
+// has_more / next_cursor / truncate logic.
+//
+// Like the space filter (see [`crate::space_filter_canonical`]), the SQL
+// fragment itself MUST stay inlined: `sqlx::query_as!` requires a string
+// literal directly and does not accept `concat!()`, so it cannot be composed
+// from a `const &str`. Drift between the inlined copies is therefore caught by
+// a parity walk ([`POSITION_KEYSET_CANONICAL`] + the
+// `position_keyset_production_sites_match_canonical` test in `tests`) rather
+// than by sharing the string.
+//
+// The *Rust* glue around the macro — cursor binds and page-response assembly
+// — is genuinely shared via [`position_keyset_binds`] and
+// [`split_position_keyset_page`] so the has_more / next_cursor / cursor-format
+// logic has exactly one implementation across the sites that previously
+// hand-rolled it.
+
+/// Canonical inline form of the `(COALESCE(position, sentinel), id)` keyset
+/// **WHERE** condition, with `?N` standing in for the bind index (which varies
+/// per site: `?7` in `list_children`, `?6` in `get_page_inner` / `markdown`).
+/// After whitespace + bind-index normalisation (see `tests::normalize_keyset`)
+/// every production occurrence equals this string exactly.
+///
+/// Guarded separately from [`POSITION_KEYSET_ORDER_CANONICAL`] because the two
+/// fragments are *not* contiguous at every site — `list_children` interposes
+/// the space filter between the keyset condition and the ORDER BY.
+///
+/// Keep in sync with every inlined copy — drift is flagged by
+/// `pagination_app_tests::position_keyset_drift` in the app crate. Because
+/// `sqlx::query_as!` needs a string literal, this is a drift sentinel;
+/// production code keeps the SQL inlined at each callsite. It is a plain
+/// `pub const` (not `#[cfg(test)]`-gated) so the relocated cross-crate drift
+/// walk in the app crate can read it as the single source of truth (#2621).
+pub const POSITION_KEYSET_WHERE_CANONICAL: &str =
+    "(?N IS NULL OR ( COALESCE(position, ?N) > ?N OR (COALESCE(position, ?N) = ?N AND id > ?N)))";
+
+/// Canonical inline form of the `(COALESCE(position, sentinel), id)` keyset
+/// **ORDER BY**. See [`POSITION_KEYSET_WHERE_CANONICAL`] for the WHERE half and
+/// the rationale for keeping it an always-compiled drift sentinel.
+pub const POSITION_KEYSET_ORDER_CANONICAL: &str = "ORDER BY COALESCE(position, ?N) ASC, id ASC";
+
+/// Destructure a position-keyset cursor into the `(flag, position, id)` bind
+/// triple shared by every `(COALESCE(position, sentinel), id)` query.
+///
+/// Returns `(cursor_flag, cursor_pos, cursor_id)`:
+/// * `cursor_flag` — `Some(1)` when a cursor is present (the SQL keyset
+///   `(?N IS NULL OR …)` guard activates), `None` for the first page (the
+///   guard short-circuits true).
+/// * `cursor_pos` — the cursor's position, defaulting NULL positions to
+///   [`NULL_POSITION_SENTINEL`] so they sort after positioned siblings;
+///   irrelevant (`0`) on the first page.
+/// * `cursor_id` — the cursor's id tiebreaker; `""` on the first page.
+///
+/// This is the single source of truth for how `list_children`,
+/// `get_page_inner` and the markdown export walk bind their keyset cursor.
+pub fn position_keyset_binds(after: Option<&Cursor>) -> (Option<i64>, i64, &str) {
+    match after {
+        Some(c) => (Some(1), c.position.unwrap_or(NULL_POSITION_SENTINEL), &c.id),
+        None => (None, 0, ""),
+    }
+}
+
+/// A row keyed by the `(position, id)` keyset — the minimal accessors the
+/// shared page-assembly helper needs. Implemented for both [`ActiveBlockRow`]
+/// and [`BlockRow`] so [`split_position_keyset_page`] is row-type agnostic.
+pub trait PositionKeyRow {
+    /// The block id, used as the keyset tiebreaker and cursor `id`.
+    fn keyset_id(&self) -> &str;
+    /// The block position; `None` is encoded as [`NULL_POSITION_SENTINEL`]
+    /// in the cursor so it resumes after positioned siblings.
+    fn keyset_position(&self) -> Option<i64>;
+}
+
+impl PositionKeyRow for ActiveBlockRow {
+    fn keyset_id(&self) -> &str {
+        self.id.as_str()
+    }
+    fn keyset_position(&self) -> Option<i64> {
+        self.position
+    }
+}
+
+impl PositionKeyRow for BlockRow {
+    fn keyset_id(&self) -> &str {
+        self.id.as_str()
+    }
+    fn keyset_position(&self) -> Option<i64> {
+        self.position
+    }
+}
+
+/// The page-boundary signals derived from an over-fetched position-keyset
+/// result set: whether more rows remain and the cursor that resumes there.
+pub struct PositionPage {
+    /// `true` when the `limit + 1` fetch returned a sentinel row, i.e. more
+    /// rows remain beyond this page.
+    pub has_more: bool,
+    /// Opaque cursor resuming after the last row of this page; `None` when
+    /// `has_more` is `false`.
+    pub next_cursor: Option<String>,
+}
+
+/// Trim an over-fetched (`limit + 1`) position-keyset result set to a page and
+/// derive its `(has_more, next_cursor)` boundary.
+///
+/// This is the single source of truth for the has_more / truncate /
+/// next_cursor logic shared by sites that walk the `(position, id)` keyset but
+/// do **not** return a [`PageResponse<T>`] (e.g. `get_page_inner`, whose
+/// children nest inside `PageSubtreeResponse`, and the markdown export walk).
+/// The cursor is built via [`Cursor::for_id_and_position`] with NULL positions
+/// folded to [`NULL_POSITION_SENTINEL`] — byte-identical to the cursor
+/// `build_page_response` produces for `list_children`, so a page boundary is
+/// interchangeable across all three sites.
+///
+/// `rows` is mutated in place: truncated to `limit` when a sentinel row was
+/// fetched.
+pub fn split_position_keyset_page<T: PositionKeyRow>(
+    rows: &mut Vec<T>,
+    limit: i64,
+) -> Result<PositionPage, AppError> {
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    if has_more {
+        rows.truncate(limit_usize);
+    }
+    let next_cursor = if has_more {
+        let last = rows.last().expect("has_more implies non-empty");
+        Some(
+            Cursor::for_id_and_position(
+                last.keyset_id().to_string(),
+                last.keyset_position().unwrap_or(NULL_POSITION_SENTINEL),
+            )
+            .encode()?,
+        )
+    } else {
+        None
+    };
+    Ok(PositionPage {
+        has_more,
+        next_cursor,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Row returned by paginated block queries.
+///
+/// Took the parallel-types path (over the explored
+/// `BlockRow<Id = String>` generic, which collided with two
+/// `specta-typescript` 0.0.11 constraints — no generic-default emit and
+/// `PLACEHOLDER_Id` codegen dropping `Id: Clone` bounds through embedded
+/// generic structs). `BlockRow` stays raw — used by polymorphic
+/// dispatchers (`list_blocks_inner`'s show-deleted/agenda/tag/by-type/
+/// children fan-out) and by helpers that intentionally surface conflict
+/// or deleted rows (`get_block`, `list_trash`). Helpers
+/// whose SQL filters `deleted_at IS NULL` return
+/// [`ActiveBlockRow`] instead and lift the activeness invariant into
+/// the type system at the helper signature.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+pub struct BlockRow {
+    pub id: agaric_core::ulid::BlockId,
+    pub block_type: String,
+    pub content: Option<String>,
+    pub parent_id: Option<agaric_core::ulid::BlockId>,
+    pub position: Option<i64>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    pub deleted_at: Option<i64>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<agaric_core::ulid::BlockId>,
+}
+
+/// A projected future occurrence of a repeating block.
+///
+/// Not stored in the database — computed on-the-fly from repeat rules.
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ProjectedAgendaEntry {
+    /// The source block (real, materialized block).
+    pub block: BlockRow,
+    /// The projected date for this occurrence (YYYY-MM-DD).
+    pub projected_date: String,
+    /// Which date column was used as the base for projection.
+    pub source: String, // "due_date" or "scheduled_date"
+}
+
+/// Row returned by paginated block queries that filter
+/// on `deleted_at IS NULL` in their SQL.
+///
+/// Mirror of [`BlockRow`] except `id` is typed [`agaric_core::ulid::ActiveBlockId`]
+/// — a strict subset of the raw block-id space that has been verified
+/// (by the helper's own SQL filter) to refer to a live block. Helpers
+/// that intentionally surface deleted rows (`list_trash`) keep returning
+/// `BlockRow`.
+///
+/// Specta emits this as a separate TypeScript type, but `id`'s emit is
+/// `ActiveBlockId` which is itself a transparent alias for `string`. The
+/// runtime wire format is byte-identical to `BlockRow` (same JSON shape,
+/// same SQLite column types). Frontend code that consumed `BlockRow` from
+/// active-filtering Tauri commands continues to compile because
+/// TypeScript's structural typing accepts `ActiveBlockRow` wherever a
+/// `BlockRow` is expected (and vice-versa) — both have `id: string`
+/// at the wire level.
+///
+/// Construction is via `sqlx::query_as` with a column cast like
+/// `id as "id: ActiveBlockId"` (see `fts/search.rs::search_fts` for an
+/// example), or via [`ActiveBlockRow::from_block_row_unchecked`] at the
+/// boundary of an internal helper that already filtered active rows.
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+pub struct ActiveBlockRow {
+    pub id: agaric_core::ulid::ActiveBlockId,
+    pub block_type: String,
+    pub content: Option<String>,
+    pub parent_id: Option<agaric_core::ulid::BlockId>,
+    pub position: Option<i64>,
+    /// Epoch-ms (blocks.deleted_at is INTEGER since migration 0080).
+    pub deleted_at: Option<i64>,
+    pub todo_state: Option<String>,
+    pub priority: Option<String>,
+    pub due_date: Option<String>,
+    pub scheduled_date: Option<String>,
+    pub page_id: Option<agaric_core::ulid::BlockId>,
+}
+
+impl ActiveBlockRow {
+    /// Construct from a raw [`BlockRow`] without re-checking the active
+    /// invariant. Use ONLY at the boundary of a helper that has just
+    /// produced the row from an active-filtering SQL query
+    /// (`WHERE deleted_at IS NULL`).
+    ///
+    /// For untrusted input (e.g., a `BlockRow` returned by a polymorphic
+    /// dispatcher that may have routed through `list_trash`), call
+    /// [`agaric_core::ulid::verify_active`] on the id and reconstruct the row
+    /// instead.
+    pub fn from_block_row_unchecked(row: BlockRow) -> Self {
+        Self {
+            id: agaric_core::ulid::ActiveBlockId::from_trusted_active(row.id.as_str()),
+            block_type: row.block_type,
+            content: row.content,
+            parent_id: row.parent_id,
+            position: row.position,
+            deleted_at: row.deleted_at,
+            todo_state: row.todo_state,
+            priority: row.priority,
+            due_date: row.due_date,
+            scheduled_date: row.scheduled_date,
+            page_id: row.page_id,
+        }
+    }
+}
+
+impl From<ActiveBlockRow> for BlockRow {
+    /// `ActiveBlockRow` is a strict subset of `BlockRow`; conversion is
+    /// always safe and infallible.
+    fn from(active: ActiveBlockRow) -> Self {
+        Self {
+            id: active.id.into(),
+            block_type: active.block_type,
+            content: active.content,
+            parent_id: active.parent_id,
+            position: active.position,
+            deleted_at: active.deleted_at,
+            todo_state: active.todo_state,
+            priority: active.priority,
+            due_date: active.due_date,
+            scheduled_date: active.scheduled_date,
+            page_id: active.page_id,
+        }
+    }
+}
+
+/// Active-id variant of [`ProjectedAgendaEntry`]. Used by
+/// `commands::agenda::list_projected_agenda_inner` and its on-the-fly
+/// fallback, both of which only emit projections of live, non-conflict
+/// blocks (the projector reads from `block_properties` joined against
+/// `blocks WHERE deleted_at IS NULL`).
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct ActiveProjectedAgendaEntry {
+    /// The source block (real, materialized, active block).
+    pub block: ActiveBlockRow,
+    /// The projected date for this occurrence (YYYY-MM-DD).
+    pub projected_date: String,
+    /// Which date column was used as the base for projection.
+    pub source: String, // "due_date" or "scheduled_date"
+}
+
+impl From<ActiveProjectedAgendaEntry> for ProjectedAgendaEntry {
+    fn from(active: ActiveProjectedAgendaEntry) -> Self {
+        Self {
+            block: active.block.into(),
+            projected_date: active.projected_date,
+            source: active.source,
+        }
+    }
+}
+
+/// Row returned by block history queries (op_log entries for a block).
+#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+pub struct HistoryEntry {
+    pub device_id: String,
+    pub seq: i64,
+    pub op_type: String,
+    pub payload: String,
+    /// Epoch-ms (op_log.created_at is INTEGER since migration 0079).
+    pub created_at: i64,
+    /// #2481 phase 2: `true` for a **foreign** op replicated from a peer as
+    /// append-only audit metadata (`op_log.is_replicated = 1`) — surfaced in
+    /// the History view for cross-device attribution and to gate revert
+    /// (replicated rows are not locally revertible; see
+    /// `reverse::reject_replicated_targets`). Local-authored ops are `false`.
+    pub is_replicated: bool,
+}
+
+/// Internal cursor for keyset pagination.
+/// Opaque to callers; serialised as base64-encoded JSON.
+///
+/// A single cursor type is shared across all queries:
+/// - `position` — set by `list_children` (keyset on `position, id`).
+/// - `deleted_at` — set by `list_trash` (keyset on `deleted_at, id`).
+/// - `seq` — set by `list_block_history` (keyset on `seq, device_id`).
+///   For history queries `id` stores `device_id` as the tie-breaker
+///   because the op_log PK is `(device_id, seq)`.
+/// - `rank` — set by `search_fts` (keyset on `rank, id` with epsilon
+///   comparison `ABS(rank - cursor_rank) < 1e-9` to avoid exact float
+///   equality).  `id` stores `block_id` as the deterministic tiebreaker.
+/// - `id` — always present; serves as the tie-breaker in every keyset.
+///
+/// **Composite overload** (`list_page_history`): three slots are reused
+/// simultaneously — `deleted_at` stashes `created_at`, `seq` keeps its
+/// usual meaning, and `id` stashes `device_id` as the keyset tiebreaker.
+/// This compound usage lets the same opaque cursor type carry the
+/// `(created_at, seq, device_id)` triple without expanding the struct;
+/// future cursor-bearing queries should reuse the existing slots in the
+/// same way rather than adding new fields.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct Cursor {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub position: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deleted_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seq: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rank: Option<f64>,
+}
+
+/// Pagination request from the client.
+#[derive(Debug, Clone)]
+pub struct PageRequest {
+    // `after` carries the decoded keyset `Cursor`. Both are `pub` so store
+    // consumers in the `agaric` app crate (`commands::pages::listing`,
+    // `backlink`, `fts`) can read the cursor after the S4b move (#2621).
+    // External callers still construct `PageRequest` via [`PageRequest::new`].
+    pub after: Option<Cursor>,
+    pub limit: i64,
+}
+
+/// Paginated response.
+///
+/// `total_count` is `Option<i64>` because cursor pagination does not in
+/// general require a count and most pagination helpers leave it `None`
+/// (the FE detects the end of results via `has_more = false`). A small
+/// number of list surfaces compute it via a dedicated `COUNT(*)` query
+/// and surface "X of Y" progress to the user — `list_blocks_inner`
+/// (when filtering on `block_type`) is the first such site (PageBrowser
+/// pagination UX, 2026-05-14). Helpers that do not compute the count
+/// flow through [`build_page_response`] which initialises the field to
+/// `None`; sites that compute it use
+/// [`build_page_response_with_total`].
+#[derive(Debug, Clone, Serialize, specta::Type)]
+pub struct PageResponse<T: specta::Type> {
+    pub items: Vec<T>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    /// Total number of matching rows in the underlying table, ignoring
+    /// the page cursor/limit. `None` when the helper does not compute
+    /// it (the default). Populated by surfaces that drive an "X of Y"
+    /// progress indicator.
+    ///
+    /// Always serialised (no `skip_serializing_if`) so the wire format
+    /// matches the TS type `number | null` exactly — consumers read
+    /// `total_count` directly without having to check for an absent key.
+    pub total_count: Option<i64>,
+}
+
+// ---------------------------------------------------------------------------
+// Cursor codec
+// ---------------------------------------------------------------------------
+
+impl Cursor {
+    /// Encode to opaque base64 representation.
+    ///
+    /// The encoded JSON includes a `version` key set to
+    /// [`CURRENT_CURSOR_VERSION`] so that future schema bumps can reject
+    /// Stale cursors on decode. The version is injected via a
+    /// `serde_json::Value` intermediate rather than a struct field so
+    /// that the many `Cursor { … }` literal call sites across the crate
+    /// (`tag_query`, `fts`, `commands`, `backlink`) remain unchanged —
+    /// versioning is an encode/decode concern, not part of the cursor's
+    /// in-memory shape.
+    #[must_use = "encoded cursor string must be returned to the client"]
+    pub fn encode(&self) -> Result<String, AppError> {
+        let mut value = serde_json::to_value(self)?;
+        if let serde_json::Value::Object(ref mut map) = value {
+            map.insert(
+                "version".to_string(),
+                serde_json::Value::from(CURRENT_CURSOR_VERSION),
+            );
+        }
+        let json = serde_json::to_string(&value)?;
+        Ok(URL_SAFE_NO_PAD.encode(json.as_bytes()))
+    }
+
+    /// Decode an opaque cursor string.
+    ///
+    /// Cursors emitted by [`Cursor::encode`] carry a `version` key.  This
+    /// function rejects any cursor whose version is not
+    /// [`CURRENT_CURSOR_VERSION`] with [`AppError::Validation`] so clients
+    /// re-paginate from page 1 instead of silently consuming a cursor that
+    /// Was encoded against a different field layout.
+    ///
+    /// **Backwards compatibility:** pre-versioning cursors (no `version`
+    /// key in their JSON) are treated as version 1.  This is the desired
+    /// behaviour at the seating commit — any FUTURE bump of
+    /// [`CURRENT_CURSOR_VERSION`] will reject those legacy cursors.
+    pub fn decode(s: &str) -> Result<Self, AppError> {
+        let bytes = URL_SAFE_NO_PAD
+            .decode(s)
+            .map_err(|e| AppError::validation(format!("invalid cursor: {e}")))?;
+        let json = String::from_utf8(bytes)
+            .map_err(|e| AppError::validation(format!("invalid cursor UTF-8: {e}")))?;
+        let value: serde_json::Value = serde_json::from_str(&json)
+            .map_err(|e| AppError::validation(format!("invalid cursor JSON: {e}")))?;
+
+        // Read the version slot.  Missing → assume 1 (pre-versioning
+        // cursor).  Present-but-malformed → reject as invalid version.
+        let version = match value.get("version") {
+            None => CURRENT_CURSOR_VERSION,
+            Some(serde_json::Value::Number(n)) => n
+                .as_u64()
+                .and_then(|v| u8::try_from(v).ok())
+                .ok_or_else(|| AppError::validation("cursor: invalid version field".to_string()))?,
+            Some(_) => {
+                return Err(AppError::validation(
+                    "cursor: invalid version field".to_string(),
+                ));
+            }
+        };
+        if version != CURRENT_CURSOR_VERSION {
+            return Err(AppError::validation(format!(
+                "cursor: unsupported version {version} (expected {CURRENT_CURSOR_VERSION})"
+            )));
+        }
+
+        // The `Cursor` struct does not declare a `version` field; serde
+        // silently ignores unknown keys (no `deny_unknown_fields`), so the
+        // value can be deserialised in place without stripping `version`.
+        serde_json::from_value(value)
+            .map_err(|e| AppError::validation(format!("invalid cursor JSON: {e}")))
+    }
+
+    // -------------------------------------------------------------------
+    // Constructors
+    // -------------------------------------------------------------------
+    //
+    // The optional fields on `Cursor` are populated in a small number of
+    // recurring shapes across `pagination::*` (and `fts::search`). The
+    // constructors below cover the four common shapes; each call site
+    // collapses from a 6-line struct literal to a one-line helper call.
+    // Shapes not enumerated here (currently only the FTS rank cursor in
+    // `fts::search`) keep using the struct literal.
+
+    /// Cursor keyed only on `id` — all other slots `None`.
+    ///
+    /// Used by `list_backlinks`, `list_by_type`, `list_undated_tasks`,
+    /// `list_by_tag`, `query_by_property`, and `list_agenda`
+    /// (single-date variant).
+    #[must_use]
+    pub fn for_id(id: String) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(position, id)` — used by `list_children` whose
+    /// keyset is `(position ASC, id ASC)`. NULL positions are encoded
+    /// with [`NULL_POSITION_SENTINEL`] so they sort after positioned
+    /// siblings.
+    #[must_use]
+    pub fn for_id_and_position(id: String, position: i64) -> Self {
+        Self {
+            id,
+            position: Some(position),
+            deleted_at: None,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(deleted_at, id)` — used by `list_trash` and
+    /// `list_agenda_range` (which reuses `deleted_at` as the
+    /// agenda-cache `date` carrier per the H-8 fix in `agenda.rs`).
+    #[must_use]
+    pub fn for_id_and_deleted_at(id: String, deleted_at: Option<String>) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(seq, device_id)` — used by `list_block_history`
+    /// where `id` stores the op-log `device_id` tiebreaker.
+    #[must_use]
+    pub fn for_history_seq(device_id: String, seq: i64) -> Self {
+        Self {
+            id: device_id,
+            position: None,
+            deleted_at: None,
+            seq: Some(seq),
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(created_at, seq, device_id)` — used by
+    /// `list_page_history`, where `deleted_at` reuses the slot to carry
+    /// the op-log `created_at` and `id` carries `device_id`.
+    #[must_use]
+    pub fn for_history_full(device_id: String, created_at: String, seq: i64) -> Self {
+        Self {
+            id: device_id,
+            position: None,
+            deleted_at: Some(created_at),
+            seq: Some(seq),
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(group_title, page_id)` — used by the grouped
+    /// backlink / unlinked-references queries, whose group keyset sorts by
+    /// `page_title` (NULL last) then `page_id`. `id` carries the source
+    /// `page_id`; the `deleted_at` slot reuses its String carrier to stash
+    /// the group's `page_title` (`None` ⇒ a title-less group, which sorts
+    /// last). #625 — resuming on `(title, page_id) > cursor` rather than an
+    /// equality `skip_while` lets pagination continue from the next-greater
+    /// group when the cursor's own group has vanished between page requests.
+    #[must_use]
+    pub fn for_group(page_id: String, page_title: Option<String>) -> Self {
+        Self {
+            id: page_id,
+            position: None,
+            deleted_at: page_title,
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Cursor keyed on `(rank, id)` — used by `fts::search`, whose
+    /// keyset is `(rank ASC, id ASC)` with epsilon comparison
+    /// `ABS(rank - cursor_rank) < 1e-9` to avoid exact float equality.
+    /// `id` stores the `block_id` deterministic tiebreaker.
+    #[must_use]
+    pub fn for_id_and_rank(id: String, rank: f64) -> Self {
+        Self {
+            id,
+            position: None,
+            deleted_at: None,
+            seq: None,
+            rank: Some(rank),
+        }
+    }
+}
+
+impl PageRequest {
+    /// Build a page request.
+    ///
+    /// `limit` must be in `[1, MAX_PAGE_SIZE]` when supplied; a value
+    /// outside that range surfaces as `AppError::Validation` (limit-
+    /// clamp-followup Phase 1 — see the followup doc for the rationale
+    /// against the previous `clamp(1, MAX_PAGE_SIZE)` silent truncation).
+    /// `None` falls through to [`DEFAULT_PAGE_SIZE`].
+    pub fn new(after: Option<String>, limit: Option<i64>) -> Result<Self, AppError> {
+        let limit = match limit {
+            Some(l) if (1..=MAX_PAGE_SIZE).contains(&l) => l,
+            Some(l) => {
+                return Err(AppError::validation(format!(
+                    "pagination limit must be in [1, {MAX_PAGE_SIZE}]; got {l}. \
+                     For larger result sets, use cursor pagination."
+                )));
+            }
+            None => DEFAULT_PAGE_SIZE,
+        };
+        let after = match after {
+            Some(s) => Some(Cursor::decode(&s)?),
+            None => None,
+        };
+        Ok(Self { after, limit })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Shared pagination helper
+// ---------------------------------------------------------------------------
+
+/// Build a [`PageResponse`] from a result set that fetched `limit + 1` rows.
+///
+/// The extra row is used solely to detect `has_more`; it is trimmed before
+/// returning.  `cursor_from_last` constructs the cursor from the last item on
+/// the page.
+///
+/// `total_count` is initialised to `None`. Callers that compute a
+/// separate `SELECT COUNT(*)` for an "X of Y" progress indicator
+/// (currently `commands::blocks::queries::list_blocks_inner` for the
+/// PageBrowser path) should overwrite `total_count` on the returned
+/// response — adding a parallel constructor is not worth the API
+/// surface when only one site needs it today.
+pub fn build_page_response<T: specta::Type>(
+    mut rows: Vec<T>,
+    limit: i64,
+    cursor_from_last: impl FnOnce(&T) -> Cursor,
+) -> Result<PageResponse<T>, AppError> {
+    // limit is a validated positive pagination bound; safe to convert
+    let limit_usize = usize::try_from(limit).unwrap_or(usize::MAX);
+    let has_more = rows.len() > limit_usize;
+    if has_more {
+        rows.truncate(limit_usize);
+    }
+    let next_cursor = if has_more {
+        let last = rows.last().expect("has_more implies non-empty");
+        Some(cursor_from_last(last).encode()?)
+    } else {
+        None
+    };
+    Ok(PageResponse {
+        items: rows,
+        next_cursor,
+        has_more,
+        total_count: None,
+    })
+}

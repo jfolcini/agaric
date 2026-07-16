@@ -123,10 +123,13 @@ name = "agaric-store"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "base64 0.22.1",
  "chrono",
+ "futures-util",
  "insta",
  "proptest",
  "regex",
+ "rustc-hash",
  "serde",
  "serde_json",
  "specta",
