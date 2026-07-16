@@ -209,6 +209,9 @@ export const editor: Record<string, string> = {
   'emojiPicker.categories': 'Emoji categories',
   'emojiPicker.frequentlyUsedCategory': 'Frequently used',
   'emojiPicker.noResults': 'No emoji found',
+  // #2671 — the ~150 KB dataset now lazy-loads on first open; this covers the
+  // brief window before it resolves.
+  'emojiPicker.loading': 'Loading emoji…',
   'emojiPicker.skinTone': 'Skin tone',
   'emojiPicker.skinTone.default': 'Default',
   'emojiPicker.skinTone.light': 'Light',

@@ -14,9 +14,17 @@
  * variant — i.e. exactly the cases this append-based `applySkinTone` handles
  * correctly (ZWJ sequences are excluded). Membership ignores the variation
  * selector so a caller's `🖐️`/`🖐` and `👍️`/`👍` forms all resolve.
+ *
+ * #2671 — the dataset is now lazy-loaded (see `emoji-data.ts`), so this
+ * module no longer imports it directly (that would just re-introduce the
+ * eager ~150 KB payload one hop away). `computeTonableBases` is a pure
+ * function the caller runs once against whatever `EmojiEntry[]` it already
+ * has resolved (the browse-grid `<EmojiPicker>`, which awaits
+ * `loadEmojiDataset()` itself); `supportsSkinTone`/`applySkinTone` take the
+ * resulting set as a parameter instead of reading a module-scope constant.
  */
 
-import { EMOJI } from '@/editor/emoji-data'
+import type { EmojiEntry } from '@/editor/emoji-data'
 
 /**
  * The five Fitzpatrick modifiers, light → dark, plus the "default" (none).
@@ -41,15 +49,17 @@ function stripVariationSelector(char: string): string {
 
 /**
  * Tonable base glyphs (variation-selector-stripped) sourced from the dataset's
- * `skin` flag. Built once at module load.
+ * `skin` flag. Pure — call once against a resolved `EmojiEntry[]` and hold the
+ * result (e.g. `useMemo`); cheap enough (~1900 entries) to not need its own
+ * cache here on top of the caller's.
  */
-const TONABLE_BASES: ReadonlySet<string> = new Set(
-  EMOJI.filter((e) => e.skin).map((e) => stripVariationSelector(e.char)),
-)
+export function computeTonableBases(entries: readonly EmojiEntry[]): ReadonlySet<string> {
+  return new Set(entries.filter((e) => e.skin).map((e) => stripVariationSelector(e.char)))
+}
 
-/** Whether `char` accepts a Fitzpatrick skin-tone modifier. */
-export function supportsSkinTone(char: string): boolean {
-  return TONABLE_BASES.has(stripVariationSelector(char))
+/** Whether `char` accepts a Fitzpatrick skin-tone modifier, given the tonable-base set. */
+export function supportsSkinTone(char: string, tonable: ReadonlySet<string>): boolean {
+  return tonable.has(stripVariationSelector(char))
 }
 
 /**
@@ -58,9 +68,13 @@ export function supportsSkinTone(char: string): boolean {
  * modifiers. Strips a trailing variation selector before appending the
  * modifier (the modifier supplies emoji presentation on its own).
  */
-export function applySkinTone(char: string, tone: SkinToneId): string {
+export function applySkinTone(
+  char: string,
+  tone: SkinToneId,
+  tonable: ReadonlySet<string>,
+): string {
   if (tone === 'default') return char
-  if (!supportsSkinTone(char)) return char
+  if (!supportsSkinTone(char, tonable)) return char
   const modifier = SKIN_TONES.find((t) => t.id === tone)?.modifier ?? ''
   if (modifier === '') return char
   const base = char.replace(/\u{FE0F}$/u, '')
