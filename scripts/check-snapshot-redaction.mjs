@@ -113,17 +113,31 @@ function walk(dir, predicate, results = []) {
   return results
 }
 
-// Build a single concatenated blob of every `.rs` file under
-// `src-tauri/src/` for the fixture-allowlist substring index. Reading
-// 200+ small files and joining them takes ~30ms; subsequent
-// `.includes()` calls are O(N) over the blob but N ≈ 5 MB and we run
-// at most ~50 lookups, so total time stays well under the <2s budget.
+// Build a single concatenated blob of every `.rs` file under the app crate
+// AND the extracted workspace-member crates (`agaric-core`, `agaric-store`,
+// #2621) for the fixture-allowlist substring index. Modules that own
+// snapshot tests (e.g. `op.rs` with its `const TEST_TID` fixtures) move
+// between these crates during the layered split, so the fixture consts must
+// be discoverable wherever the module currently lives. Reading a few hundred
+// small files and joining them takes ~30ms; subsequent `.includes()` calls
+// are O(N) over the blob but N ≈ 5 MB and we run at most ~50 lookups, so
+// total time stays well under the <2s budget.
+const RUST_SOURCE_ROOTS = [
+  'src-tauri/src',
+  'src-tauri/agaric-core/src',
+  'src-tauri/agaric-store/src',
+]
 let RUST_SOURCE_BLOB = null
 function getRustSourceBlob() {
   if (RUST_SOURCE_BLOB !== null) return RUST_SOURCE_BLOB
-  const rustFiles = walk(path.join(ROOT, 'src-tauri/src'), (n) => n.endsWith('.rs'))
   const parts = []
-  for (const f of rustFiles) parts.push(fs.readFileSync(f, 'utf8'))
+  for (const root of RUST_SOURCE_ROOTS) {
+    const dir = path.join(ROOT, root)
+    if (!fs.existsSync(dir)) continue
+    for (const f of walk(dir, (n) => n.endsWith('.rs'))) {
+      parts.push(fs.readFileSync(f, 'utf8'))
+    }
+  }
   RUST_SOURCE_BLOB = parts.join('\n')
   return RUST_SOURCE_BLOB
 }

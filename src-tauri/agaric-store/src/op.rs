@@ -15,7 +15,7 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
-use crate::ulid::{AttachmentId, BlockId};
+use agaric_core::ulid::{AttachmentId, BlockId};
 
 // ---------------------------------------------------------------------------
 // OpType — the string tag stored in op_log.op_type
@@ -269,7 +269,7 @@ pub struct DeletePropertyPayload {
 /// `attachment_id` is an [`AttachmentId`] (alias of [`BlockId`]) so that it
 /// auto-uppercases on construction / deserialization. Storing it as a raw
 /// `String` would bypass the uppercase contract and feed un-normalized bytes
-/// into [`compute_op_hash`](crate::hash::compute_op_hash), breaking the
+/// into [`compute_op_hash`](agaric_core::hash::compute_op_hash), breaking the
 /// blake3 hash determinism that AGENTS.md invariant #8 relies on for
 /// cross-device sync. The serde wire format is unchanged (`BlockId` is
 /// `#[serde(transparent)]`).
@@ -528,10 +528,10 @@ pub fn is_builtin_property_key(key: &str) -> bool {
 ///
 /// Returns `Ok(())` if valid, or an `AppError::Validation` describing the
 /// violation.
-pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error::AppError> {
+pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), agaric_core::error::AppError> {
     // Validate key format: alphanumeric + hyphens + underscores, 1-64 chars
     if p.key.is_empty() || p.key.len() > 64 {
-        return Err(crate::error::AppError::validation(format!(
+        return Err(agaric_core::error::AppError::validation(format!(
             "property key must be 1-64 characters, got {} characters",
             p.key.len()
         )));
@@ -541,7 +541,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
         .chars()
         .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
     {
-        return Err(crate::error::AppError::validation(format!(
+        return Err(agaric_core::error::AppError::validation(format!(
             "property key must contain only alphanumeric characters, hyphens, and underscores, got '{}'",
             p.key
         )));
@@ -552,7 +552,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
     if let Some(num) = p.value_num
         && !num.is_finite()
     {
-        return Err(crate::error::AppError::validation(format!(
+        return Err(agaric_core::error::AppError::validation(format!(
             "value_num must be finite, got {num}"
         )));
     }
@@ -576,12 +576,12 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
         // parses `value_date` as ISO 8601 and chokes on `""`).
         // `value_num` is unaffected — finite-ness is checked above.
         if p.value_text.as_ref().is_some_and(|s| s.trim().is_empty()) {
-            return Err(crate::error::AppError::validation(
+            return Err(agaric_core::error::AppError::validation(
                 "set_property.value_text.empty".into(),
             ));
         }
         if p.value_date.as_ref().is_some_and(|s| s.trim().is_empty()) {
-            return Err(crate::error::AppError::validation(
+            return Err(agaric_core::error::AppError::validation(
                 "set_property.value_date.empty".into(),
             ));
         }
@@ -589,7 +589,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
             .as_ref()
             .is_some_and(|b| b.as_str().trim().is_empty())
         {
-            return Err(crate::error::AppError::validation(
+            return Err(agaric_core::error::AppError::validation(
                 "set_property.value_ref.empty".into(),
             ));
         }
@@ -598,7 +598,7 @@ pub fn validate_set_property(p: &SetPropertyPayload) -> Result<(), crate::error:
         // Reserved keys allow all-null values (= clear the column)
         Ok(())
     } else {
-        Err(crate::error::AppError::validation(format!(
+        Err(agaric_core::error::AppError::validation(format!(
             "SetProperty must have exactly 1 non-null value field, found {count}"
         )))
     }
@@ -1419,7 +1419,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 0"));
@@ -1438,7 +1438,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 2"));
@@ -1480,7 +1480,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "expected Validation error, got: {err:?}"
         );
         assert!(err.to_string().contains("found 2"));
@@ -1548,7 +1548,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "empty key should be rejected"
         );
         assert!(err.to_string().contains("1-64 characters"));
@@ -1567,7 +1567,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "65-char key should be rejected"
         );
         assert!(err.to_string().contains("1-64 characters"));
@@ -1587,7 +1587,7 @@ mod tests {
             };
             let err = validate_set_property(&p).unwrap_err();
             assert!(
-                matches!(err, crate::error::AppError::Validation { .. }),
+                matches!(err, agaric_core::error::AppError::Validation { .. }),
                 "key '{key}' should be rejected"
             );
             assert!(
@@ -1649,7 +1649,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "NaN value_num must return Validation error, got: {err:?}"
         );
         assert!(
@@ -1671,7 +1671,7 @@ mod tests {
         };
         let err = validate_set_property(&p).unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "Infinity value_num must return Validation error, got: {err:?}"
         );
         assert!(
@@ -1691,7 +1691,7 @@ mod tests {
         };
         let err_neg = validate_set_property(&p_neg).unwrap_err();
         assert!(
-            matches!(err_neg, crate::error::AppError::Validation { .. }),
+            matches!(err_neg, agaric_core::error::AppError::Validation { .. }),
             "NEG_INFINITY value_num must return Validation error, got: {err_neg:?}"
         );
     }
@@ -1733,7 +1733,7 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    crate::error::AppError::Validation { message: ref m, .. }
+                    agaric_core::error::AppError::Validation { message: ref m, .. }
                         if m == "set_property.value_text.empty"
                 ),
                 "empty value_text ({empty:?}) must return the value_text.empty error, got: {err:?}"
@@ -1757,7 +1757,7 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    crate::error::AppError::Validation { message: ref m, .. }
+                    agaric_core::error::AppError::Validation { message: ref m, .. }
                         if m == "set_property.value_date.empty"
                 ),
                 "empty value_date ({empty:?}) must return the value_date.empty error, got: {err:?}"
@@ -1781,7 +1781,7 @@ mod tests {
             assert!(
                 matches!(
                     err,
-                    crate::error::AppError::Validation { message: ref m, .. }
+                    agaric_core::error::AppError::Validation { message: ref m, .. }
                         if m == "set_property.value_ref.empty"
                 ),
                 "empty value_ref ({empty:?}) must return the value_ref.empty error, got: {err:?}"

@@ -37,7 +37,9 @@ pub mod merge;
 // OpenTelemetry trace observability (#2110, M1a). Backend traces to a LOCAL
 // FILE only — zero network egress, gated OFF by default (AGARIC_OTEL unset).
 pub mod observability;
-pub mod op;
+// `op` moved into `agaric-store` (#2621, wave S2). Re-exported so every
+// `crate::op::…` path (op_log, materializer, commands, …) resolves unchanged.
+pub use agaric_store::op;
 pub mod op_log;
 pub mod pagination;
 pub mod pairing;

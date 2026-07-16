@@ -13,3 +13,6 @@
 //! modules (`pagination`, `fts`, `cache`, …).
 
 pub mod cancellation;
+// `op` — op-type / op-payload value types (the op-log record shape). Pure:
+// depends only on `agaric-core` (`error`, `hash`, `ulid`) + serde/specta.
+pub mod op;

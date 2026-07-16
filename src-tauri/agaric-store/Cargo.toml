@@ -19,6 +19,13 @@ publish = false
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
+# `agaric-core` — `op` references `error::AppError`, `hash`, and the `ulid`
+# newtypes. Path dep pinned with a version (cargo-deny wildcard ban).
+agaric-core = { path = "../agaric-core", version = "0.1.0" }
+# `op` — op-type / op-payload (de)serialization + `specta::Type` derives.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # `cancellation` uses `tokio::sync::watch` only.
 tokio = { version = "1", features = ["sync"] }
 

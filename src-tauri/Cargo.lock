@@ -122,6 +122,10 @@ dependencies = [
 name = "agaric-store"
 version = "0.1.0"
 dependencies = [
+ "agaric-core",
+ "serde",
+ "serde_json",
+ "specta",
  "tokio",
 ]
 
