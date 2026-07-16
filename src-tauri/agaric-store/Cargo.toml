@@ -33,6 +33,14 @@ tokio = { version = "1", features = ["sync"] }
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,
 # the multi-thread flavor, and `tokio::time::timeout`.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "time", "sync"] }
+# `op`'s tests: `insta` snapshot assertions + `proptest` property tests.
+# Versions/features mirror the app crate's `[dev-dependencies]`.
+insta = { version = "1.47.0", features = ["yaml", "redactions"] }
+proptest = "1.11.0"
+# Re-declare agaric-core with `test-util` so the `*::test_id` newtype
+# constructors (otherwise `#[cfg(test)]`-only) are available to op's test
+# build — same pattern the app crate uses (#2621).
+agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-util"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-diagnostics` members).
