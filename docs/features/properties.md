@@ -22,14 +22,14 @@ These ship out of the box and back specific features:
 
 | Key | Type | Used by |
 | --- | --- | --- |
-| `todo_state` | Select (TODO / DOING / DONE / CANCELLED) | Editor task cycle; Agenda filter |
-| `priority` | Select (P1 / P2 / P3) | Editor priority cycle; Agenda filter; visual chip |
+| `todo_state` | Select (TODO / DOING / DONE) | Editor task cycle; Agenda filter |
+| `priority` | Select (1 / 2 / 3) | Editor priority cycle; Agenda filter; visual chip |
 | `due_date` | Date | Agenda Due panel; date-property colour |
 | `scheduled_date` | Date | Agenda Due panel; date-property colour |
-| `completed_date` | Date | Done panel; Agenda filter |
-| `created_date` | Date | Agenda filter; History timestamps |
-| `effort` | Number | Optional task sizing |
-| `assignee` | Ref | Optional task ownership |
+| `completed_at` | Date | Done panel; Agenda filter |
+| `created_at` | Date | Agenda filter; History timestamps |
+| `effort` | Select (15m / 30m / 1h / 2h / 4h / 1d) | Optional task sizing |
+| `assignee` | Text | Optional task ownership |
 | `location` | Text | Optional task context |
 
 ## Repeat properties (recurring tasks)
@@ -54,7 +54,7 @@ Marking a repeating task DONE rolls it forward: a new occurrence is generated, `
 
 Opens via `Ctrl+Shift+P` or the toolbar's Properties button. A slide-out sheet (mobile = bottom sheet) on the focused block.
 
-- **Built-in date fields** at the top — `due_date`, `scheduled_date`, plus `completed_date` and `created_date` (read-only).
+- **Built-in date fields** at the top — `due_date`, `scheduled_date`, plus `completed_at` and `created_at` (read-only).
 - **Custom property rows** below — one row per property. The editor switches by type: text input, number input, date picker, checkbox, dropdown (with edit-options affordance), page picker.
 - **Add a property** with the "+" button → **AddPropertyPopover** (search existing definitions, or create new with type picker).
 - **Blur-to-save** — closing the drawer or moving focus commits the change.

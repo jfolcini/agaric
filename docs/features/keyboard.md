@@ -23,10 +23,13 @@ The five **picker triggers** — `[[`, `@`, `((`, `/`, `::` — are part of the 
 | `Ctrl+Shift+↑` | Move block up |
 | `Ctrl+Shift+↓` | Move block down |
 | `Ctrl+.` | Collapse / expand block children |
+| `Alt+.` | Zoom in to the focused block |
 | `Ctrl+Enter` | Cycle the block's task state |
 | `Ctrl+Shift+P` | Open the **Property Drawer** for the block |
-| `Ctrl+Shift+D` | Open the date picker for `due_date` |
-| `Ctrl+Shift+S` | Open the date picker for `scheduled_date` |
+| `Ctrl+Shift+D` | Open the date picker (inserts a date at the cursor) |
+| `Ctrl+Shift+Y` | Open block history |
+| `Ctrl+Shift+J` | Duplicate block (and its subtree) |
+| `Ctrl+Shift+T` | Turn block into another type |
 | `Ctrl+Backspace` (on empty block) | Delete the block |
 
 ## Formatting marks
