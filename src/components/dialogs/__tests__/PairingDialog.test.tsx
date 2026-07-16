@@ -27,8 +27,16 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from '@/__tests__/helpers/axe'
 import { PairingDialog } from '@/components/dialogs/PairingDialog'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { useIsMobile } from '@/hooks/useIsMobile'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
+
+// The dialog swaps to a bottom Sheet via `useDialogOrSheet` (#2665) when
+// `useIsMobile()` is true. Mock the hook so each test can pin the
+// viewport-state boolean.
+vi.mock('@/hooks/useIsMobile', () => ({
+  useIsMobile: vi.fn(() => false),
+}))
 
 // Mock react-qr-code — no longer used by the component, but keep mock to avoid import errors
 vi.mock('react-qr-code', () => ({
@@ -93,6 +101,7 @@ vi.mock('@/stores/sync', () => {
 })
 
 const mockedInvoke = vi.mocked(invoke)
+const mockedUseIsMobile = vi.mocked(useIsMobile)
 
 const mockPairingInfo = {
   passphrase: 'alpha bravo charlie delta',
@@ -131,6 +140,8 @@ function mockInvokeByCommand(commands: Record<string, unknown>) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  // Default to the desktop path so existing test bodies keep their semantics.
+  mockedUseIsMobile.mockReturnValue(false)
 })
 
 describe('PairingDialog', () => {
@@ -1344,6 +1355,42 @@ describe('PairingDialog', () => {
       const retryBtn = screen.getByRole('button', { name: /Retry/i })
       // t('pairing.retryButton') === 'Retry'
       expect(retryBtn).toHaveTextContent('Retry')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // #2665 — the dialog mounts under both the desktop Dialog path and the
+  // mobile Sheet path via useDialogOrSheet('dialog'). Pairing is a
+  // phone-first flow, so this matters more here than for most dialogs.
+  // Assert on body content (title + word inputs) being visible rather than
+  // the Dialog / Sheet DOM specifics so the test stays decoupled from the
+  // underlying primitive.
+  // -----------------------------------------------------------------------
+  describe('mobile / desktop responsive surfaces', () => {
+    it('renders the pairing form on the mobile Sheet path', async () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+
+      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+    })
+
+    it('renders the pairing form on the desktop Dialog path', async () => {
+      mockedUseIsMobile.mockReturnValue(false)
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+      })
+
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+
+      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
     })
   })
 })

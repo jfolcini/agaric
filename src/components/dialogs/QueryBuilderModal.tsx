@@ -3,6 +3,11 @@
  *
  * Supports 3 query types: tag, property, backlinks.
  * Generates `{{query ...}}` expression strings.
+ *
+ * On phones < 768 px (`useIsMobile() === true`) the dialog renders as a
+ * bottom Sheet via `useDialogOrSheet('dialog')` (#2665) — reachable from
+ * the `/query` slash command on mobile too. Both paths share the same
+ * controlled `open` / `onOpenChange` API.
  */
 
 import type React from 'react'
@@ -11,15 +16,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { DialogBody } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import {
@@ -29,6 +26,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { SheetBody } from '@/components/ui/sheet'
+import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseQueryExpression } from '@/lib/query-utils'
@@ -327,15 +326,24 @@ export function QueryBuilderModal({
     radioRefs.current[target]?.focus()
   }
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>{t('queryBuilder.title')}</DialogTitle>
-          <DialogDescription>{t('queryBuilder.description')}</DialogDescription>
-        </DialogHeader>
+  const parts = useDialogOrSheet('dialog')
+  const { Root, Content, Header, Title, Description, Footer } = parts
+  // Sheet's Content takes a `side` prop; DialogContent does not.
+  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+  // Mobile bottom-sheet path uses the Sheet body primitive so
+  // padding/scroll behaviour comes from the Sheet scaffolding rather than
+  // Dialog's — matches QuickCaptureDialog / BugReportDialog.
+  const Body = parts.isMobile ? SheetBody : DialogBody
 
-        <DialogBody>
+  return (
+    <Root open={open} onOpenChange={onOpenChange}>
+      <Content {...contentSideProps}>
+        <Header>
+          <Title>{t('queryBuilder.title')}</Title>
+          <Description>{t('queryBuilder.description')}</Description>
+        </Header>
+
+        <Body>
           {/* ---- Mode toggle (Simple text form vs. nested And/Or/Not builder) ---- */}
           <div className="flex flex-wrap gap-2" aria-label={t('queryBuilder.mode.label')}>
             {(['simple', 'advanced'] as const).map((m) => (
@@ -529,18 +537,18 @@ export function QueryBuilderModal({
               )}
             </div>
           )}
-        </DialogBody>
+        </Body>
 
         {/* ---- Footer ---- */}
-        <DialogFooter>
+        <Footer>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             {t('queryBuilder.cancelButton')}
           </Button>
           <Button disabled={!isValid} onClick={handleSave}>
             {isEditing ? t('queryBuilder.updateButton') : t('queryBuilder.insertButton')}
           </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+        </Footer>
+      </Content>
+    </Root>
   )
 }
