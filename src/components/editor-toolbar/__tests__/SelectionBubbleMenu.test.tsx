@@ -180,7 +180,7 @@ vi.mock('@/components/ui/popover', () => ({
 }))
 
 // Mock LinkEditPopover — render a simple stub with data attributes for props
-vi.mock('../LinkEditPopover', () => ({
+vi.mock('@/components/editor-toolbar/LinkEditPopover', () => ({
   LinkEditPopover: ({
     isEditing,
     initialUrl,

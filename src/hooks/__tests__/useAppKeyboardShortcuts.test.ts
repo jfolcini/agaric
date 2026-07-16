@@ -14,22 +14,22 @@
 import { fireEvent, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useJournalStore } from '../../stores/journal'
-import { useNavigationStore } from '../../stores/navigation'
-import { useSpaceStore } from '../../stores/space'
-import { useTabsStore } from '../../stores/tabs'
-import { useInPageFindStore } from '../../stores/useInPageFindStore'
-import { useAppKeyboardShortcuts } from '../useAppKeyboardShortcuts'
+import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
+import { useJournalStore } from '@/stores/journal'
+import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }))
 
 // Partial mock of tauri lib — only `createPageInSpace` is exercised here.
 // Other lib/tauri exports are not used by the hook so we don't bother
 // `importActual`.
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   createPageInSpace: vi.fn(async () => 'NEW_PAGE_ID_00000000000000'),
 }))
 
@@ -108,7 +108,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
 
     // The command ran without opening the palette dialog.
     expect(useNavigationStore.getState().currentView).toBe('settings')
-    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     expect(useCommandPaletteStore.getState().open).toBe(false)
     // The id stays at position 0 (consecutive Cmd+. keeps running it).
     const recents = JSON.parse(localStorage.getItem('recent_commands:SPACE_PERSONAL') ?? '[]')
@@ -121,7 +121,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
 
     fireEvent.keyDown(window, { key: '.', ctrlKey: true })
 
-    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     expect(useCommandPaletteStore.getState().open).toBe(true)
     expect(useCommandPaletteStore.getState().mode).toBe('commands')
   })
@@ -146,7 +146,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
   })
 
   it('Ctrl+N (createNewPage) routes through createPageInSpace and navigates', async () => {
-    const { createPageInSpace } = await import('../../lib/tauri')
+    const { createPageInSpace } = await import('@/lib/tauri')
     const mockedCreate = vi.mocked(createPageInSpace)
 
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
@@ -174,7 +174,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
   // contenteditable surface (consume WITHOUT preventDefault). Both branches:
 
   it('OUTSIDE the editor → opens the command palette', async () => {
-    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     useCommandPaletteStore.setState({ open: false })
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
@@ -194,7 +194,7 @@ describe('useAppKeyboardShortcuts — Ctrl+K collision (palette vs editor link)'
   })
 
   it('INSIDE the editor → does NOT open the palette (editor owns the link command)', async () => {
-    const { useCommandPaletteStore } = await import('../../stores/useCommandPaletteStore')
+    const { useCommandPaletteStore } = await import('@/stores/useCommandPaletteStore')
     useCommandPaletteStore.setState({ open: false })
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
@@ -442,7 +442,7 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
 
 describe('useAppKeyboardShortcuts — close-overlays', () => {
   it('Escape dispatches CLOSE_ALL_OVERLAYS_EVENT on window', async () => {
-    const { CLOSE_ALL_OVERLAYS_EVENT } = await import('../../lib/overlay-events')
+    const { CLOSE_ALL_OVERLAYS_EVENT } = await import('@/lib/overlay-events')
     const listener = vi.fn()
     window.addEventListener(CLOSE_ALL_OVERLAYS_EVENT, listener)
 

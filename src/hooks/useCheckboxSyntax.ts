@@ -12,12 +12,11 @@ import type { TFunction } from 'i18next'
 import { useCallback, useRef } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { logger } from '../lib/logger'
-import { getProperty, setTodoState as setTodoStateCmd } from '../lib/tauri'
-import type { PageBlockState } from '../stores/page-blocks'
-import { useUndoStore } from '../stores/undo'
+import { getProperty, setTodoState as setTodoStateCmd } from '@/lib/tauri'
+import type { PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 export interface UseCheckboxSyntaxParams {
   focusedBlockId: string | null

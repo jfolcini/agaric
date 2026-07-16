@@ -8,7 +8,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { CheckboxInputRule } from '../extensions/checkbox-input-rule'
+import { CheckboxInputRule } from '@/editor/extensions/checkbox-input-rule'
 
 describe('CheckboxInputRule extension', () => {
   it('creates without error', () => {

@@ -26,7 +26,7 @@ const loggerMock = {
   error: vi.fn(),
 }
 
-vi.mock('../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: loggerMock,
   setLogLevel: vi.fn(),
 }))
@@ -36,18 +36,18 @@ vi.mock('react-dom/client', () => ({
   default: { createRoot: vi.fn(() => ({ render: vi.fn(), unmount: vi.fn() })) },
 }))
 
-vi.mock('../App.tsx', () => ({ App: () => null }))
+vi.mock('@/App.tsx', () => ({ App: () => null }))
 
 vi.mock('@/components/common/ErrorBoundary', () => ({
   ErrorBoundary: ({ children }: { children: ReactNode }) => children,
 }))
 
-vi.mock('../hooks/usePrimaryFocus', () => ({
+vi.mock('@/hooks/usePrimaryFocus', () => ({
   PrimaryFocusProvider: ({ children }: { children: ReactNode }) => children,
   usePrimaryFocus: () => ({ register: vi.fn(), focus: vi.fn() }),
 }))
 
-vi.mock('../lib/tauri-mock', () => ({ setupMock: vi.fn() }))
+vi.mock('@/lib/tauri-mock', () => ({ setupMock: vi.fn() }))
 
 let capturedErrorHandler: ((event: Event) => void) | undefined
 let capturedRejectionHandler: ((event: Event) => void) | undefined
@@ -66,7 +66,7 @@ beforeAll(async () => {
 
   // Importing the module synchronously registers both window listeners at
   // the top level (before main() runs).
-  await import('../main')
+  await import('@/main')
 
   for (const call of addSpy.mock.calls) {
     const [type, handler] = call

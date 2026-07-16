@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   groupByDate,
   groupByPage,
@@ -11,8 +11,8 @@ import {
   sortByPage,
   sortByPriority,
   sortByState,
-} from '../agenda-sort'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
+} from '@/lib/agenda-sort'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 beforeEach(() => {
   __resetPriorityLevelsForTests()

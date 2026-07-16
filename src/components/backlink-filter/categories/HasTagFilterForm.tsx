@@ -10,6 +10,7 @@ import type React from 'react'
 import { useEffect, useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { Button } from '@/components/ui/button'
 import {
   Command,
@@ -25,8 +26,6 @@ import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { listTagsByPrefix } from '@/lib/tauri'
-
-import type { FilterFormHandle } from './types'
 
 export interface HasTagFilterFormProps {
   tags: Array<{ id: string; name: string }>

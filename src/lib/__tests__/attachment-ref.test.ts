@@ -14,7 +14,7 @@ import {
   attachmentRef,
   isAttachmentRef,
   parseAttachmentRef,
-} from '../attachment-ref'
+} from '@/lib/attachment-ref'
 
 describe('attachmentRef / parseAttachmentRef (#1434)', () => {
   it('builds and parses an attachment ref round-trip', () => {

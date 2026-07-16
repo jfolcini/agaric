@@ -10,7 +10,7 @@ import {
   handleOpenSettingsPayload,
   SETTINGS_ACTIVE_TAB_KEY,
   useDeepLinkRouter,
-} from '../useDeepLinkRouter'
+} from '@/hooks/useDeepLinkRouter'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 

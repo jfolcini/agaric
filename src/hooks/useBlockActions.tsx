@@ -21,7 +21,7 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useContext } from 'react'
 
-import type { BlockTypeToken } from '../lib/block-type-convert'
+import type { BlockTypeToken } from '@/lib/block-type-convert'
 
 /**
  * Per-block action callbacks consumed by SortableBlock's subcomponents.

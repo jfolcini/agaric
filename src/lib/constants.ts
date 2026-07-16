@@ -1,4 +1,4 @@
-import { paginationLimit, type SafeLimit } from './safe-limit'
+import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
 
 /**
  * Default page size for cursor-paginated list queries.

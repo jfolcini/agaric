@@ -11,6 +11,11 @@ import {
   AgendaSortGroupControls,
 } from '@/components/agenda/AgendaFilterBuilder'
 import { AgendaResults } from '@/components/agenda/AgendaResults'
+import {
+  appendUniqueBlocks,
+  buildPageTitleMap,
+  processFilterResult,
+} from '@/components/journal/AgendaView.helpers'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
 import {
@@ -24,8 +29,6 @@ import { notify } from '@/lib/notify'
 import type { BlockRow } from '@/lib/tauri'
 import { batchResolve } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-
-import { appendUniqueBlocks, buildPageTitleMap, processFilterResult } from './AgendaView.helpers'
 
 interface AgendaViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined

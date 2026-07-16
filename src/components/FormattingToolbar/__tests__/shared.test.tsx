@@ -17,10 +17,9 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { renderConfigButton } from '@/components/FormattingToolbar/shared'
 import { t } from '@/lib/i18n'
 import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
-
-import { renderConfigButton } from '../shared'
 
 // Radix tooltips need a TooltipProvider + portal plumbing that is irrelevant
 // here — render trigger and label inline (same shim as FormattingToolbar.test).

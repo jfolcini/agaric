@@ -11,7 +11,7 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { getStarredPages, isStarred, setStarred, toggleStarred } from '../starred-pages'
+import { getStarredPages, isStarred, setStarred, toggleStarred } from '@/lib/starred-pages'
 
 beforeEach(() => {
   localStorage.removeItem('starred-pages')

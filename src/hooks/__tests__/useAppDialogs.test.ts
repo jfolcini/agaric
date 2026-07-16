@@ -12,10 +12,10 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../../lib/bug-report-events'
-import { setCustomShortcut } from '../../lib/keyboard-config/storage'
-import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '../../lib/overlay-events'
-import { useAppDialogs } from '../useAppDialogs'
+import { useAppDialogs } from '@/hooks/useAppDialogs'
+import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
+import { setCustomShortcut } from '@/lib/keyboard-config/storage'
+import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
 
 beforeEach(() => {
   // The #754 showShortcuts listener resolves its binding from

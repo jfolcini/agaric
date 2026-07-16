@@ -6,8 +6,8 @@ import { fireEvent, render } from '@testing-library/react'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { _resetHardwareKeyboardLatchForTests } from '../useHasHardwareKeyboard'
-import { useShouldShowMobileChrome } from '../useShouldShowMobileChrome'
+import { _resetHardwareKeyboardLatchForTests } from '@/hooks/useHasHardwareKeyboard'
+import { useShouldShowMobileChrome } from '@/hooks/useShouldShowMobileChrome'
 
 interface MqlMock {
   matches: boolean

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { applyRevertForOp } from '../revert'
-import type { MockOpLogEntry } from '../seed'
+import { applyRevertForOp } from '@/lib/tauri-mock/revert'
+import type { MockOpLogEntry } from '@/lib/tauri-mock/seed'
 
 // ---------------------------------------------------------------------------
 // Helpers

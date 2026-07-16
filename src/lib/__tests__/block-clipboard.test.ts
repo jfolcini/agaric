@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   humanizeRefTokens,
   INDENT_UNIT,
@@ -12,8 +12,8 @@ import {
   parseIndentedMarkdown,
   type RefInternalizers,
   serializeBlockSubtree,
-} from '../block-clipboard'
-import type { FlatBlock } from '../tree-utils'
+} from '@/lib/block-clipboard'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 // Canonical 26-char uppercase Crockford-base32 ULIDs (the only shape the
 // reference-token regexes accept). Reused across the #1440 humanize tests.

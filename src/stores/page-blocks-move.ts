@@ -8,10 +8,10 @@
  * moveBlocks). Callers live in `page-blocks-reducers.ts`.
  */
 
-import type { MoveResponse } from '../lib/tauri'
-import { buildFlatTree, type FlatBlock } from '../lib/tree-utils'
-import { cloneBlocksByIdWith } from './page-blocks-map'
-import type { PageBlockState } from './page-blocks-types'
+import type { MoveResponse } from '@/lib/tauri'
+import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
+import { cloneBlocksByIdWith } from '@/stores/page-blocks-map'
+import type { PageBlockState } from '@/stores/page-blocks-types'
 
 // ── Optimistic structural-move core (#1077) ──────────────────────────────
 

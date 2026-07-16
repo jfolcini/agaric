@@ -15,13 +15,12 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import type { AstFilterProjection } from '@/lib/search-query'
-
 import {
   astFilterParams,
   type SearchFilterParams,
   UNRESOLVED_TAG_SENTINEL,
-} from '../searchFilterParams'
+} from '@/components/SearchPanel/searchFilterParams'
+import type { AstFilterProjection } from '@/lib/search-query'
 
 function emptyProjection(): AstFilterProjection {
   return {

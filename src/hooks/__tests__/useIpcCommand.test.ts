@@ -22,9 +22,8 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { logger } from '@/lib/logger'
-
-import { useIpcCommand } from '../useIpcCommand'
 
 vi.mock('@/lib/logger', () => ({
   logger: {

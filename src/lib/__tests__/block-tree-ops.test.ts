@@ -7,14 +7,14 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import type { BlockLevelNode } from '../../editor/types'
+import { makeBlock } from '@/__tests__/fixtures'
+import type { BlockLevelNode } from '@/editor/types'
 import {
   computeIndentedBlocks,
   findPrevSiblingAt,
   isNonEmptyBlock,
   planSplit,
-} from '../block-tree-ops'
+} from '@/lib/block-tree-ops'
 
 describe('isNonEmptyBlock', () => {
   it('returns true for a non-paragraph block even without content', () => {

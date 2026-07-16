@@ -14,7 +14,7 @@ import type * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Button } from '../button'
+import { Button } from '@/components/ui/button'
 
 /** Helper: render a Button with a given size and return the DOM element. */
 function renderButton(

@@ -29,17 +29,16 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
+import type { BacklinkFilterBuilderProps } from '@/components/BacklinkFilterBuilder'
+import { BacklinkFilterBuilder } from '@/components/BacklinkFilterBuilder'
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
-
-import type { BacklinkFilter } from '../../lib/tauri'
-import { listTagsByPrefix } from '../../lib/tauri'
-import type { BacklinkFilterBuilderProps } from '../BacklinkFilterBuilder'
-import { BacklinkFilterBuilder } from '../BacklinkFilterBuilder'
+import type { BacklinkFilter } from '@/lib/tauri'
+import { listTagsByPrefix } from '@/lib/tauri'
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   listTagsByPrefix: vi.fn().mockResolvedValue([]),
 }))
 

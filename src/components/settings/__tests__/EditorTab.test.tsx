@@ -3,10 +3,9 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { EditorTab } from '@/components/settings/EditorTab'
 import { EMOJI_PICKER_ENABLED_KEY } from '@/lib/editor-preferences'
 import { EXTERNAL_IMAGE_ALLOWLIST_KEY } from '@/lib/external-image-policy'
-
-import { EditorTab } from '../EditorTab'
 
 describe('EditorTab', () => {
   afterEach(() => {

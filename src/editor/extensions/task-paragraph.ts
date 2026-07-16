@@ -18,7 +18,7 @@
 
 import Paragraph from '@tiptap/extension-paragraph'
 
-import type { TodoState } from '../types'
+import type { TodoState } from '@/editor/types'
 
 /** Valid GFM task states (mirrors {@link TodoState}). */
 const TODO_STATES = new Set<string>(['TODO', 'DOING', 'DONE', 'CANCELLED'])

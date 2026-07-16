@@ -9,7 +9,7 @@
  * `null` → empty string so callers can spread without conditionals.
  */
 
-import { getPriorityLevels } from './priority-levels'
+import { getPriorityLevels } from '@/lib/priority-levels'
 
 const INDEX_COLORS = [
   'bg-priority-urgent text-priority-foreground',

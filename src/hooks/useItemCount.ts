@@ -12,7 +12,7 @@
  * without churning every consumer at once.
  */
 
-import { usePollingQuery } from './usePollingQuery'
+import { usePollingQuery } from '@/hooks/usePollingQuery'
 
 /**
  * Polls a Tauri command and returns the item count.

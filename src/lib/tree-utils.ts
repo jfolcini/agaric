@@ -7,8 +7,8 @@
  * to a target depth / parent — enabling drag-to-indent.
  */
 
-import { logger } from './logger'
-import type { BlockRow } from './tauri'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
 
 /** Sentinel ID used as drop target after the last block in the list. */
 export const SENTINEL_ID = '__drop-after-last__'

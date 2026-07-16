@@ -16,7 +16,7 @@
  * subscribe via the `usePriorityLevels()` hook in `src/hooks/usePriorityLevels.ts`.
  */
 
-import { logger } from './logger'
+import { logger } from '@/lib/logger'
 
 /** Default fallback used until the DB load completes and in tests. */
 export const DEFAULT_PRIORITY_LEVELS: readonly string[] = ['1', '2', '3']

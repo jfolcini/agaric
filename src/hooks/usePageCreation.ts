@@ -28,13 +28,12 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
+import { isConflict } from '@/lib/app-error'
 import { notify } from '@/lib/notify'
-
-import { isConflict } from '../lib/app-error'
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '../lib/tauri'
-import { createPageInSpace } from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
-import { useRegisterPrimaryFocus } from './usePrimaryFocus'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
+import { createPageInSpace } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 interface UsePageCreationParams {
   wireFilters: FilterPrimitive[]

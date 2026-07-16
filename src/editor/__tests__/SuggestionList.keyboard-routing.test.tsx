@@ -20,14 +20,14 @@ import { createRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { PickerItem, SuggestionListRef } from '../SuggestionList'
-import { SuggestionList } from '../SuggestionList'
+import type { PickerItem, SuggestionListRef } from '@/editor/SuggestionList'
+import { SuggestionList } from '@/editor/SuggestionList'
 import {
   type BlockKeyboardCallbacks,
   type DeleteBlockOpts,
   type EditorLike,
   handleBlockKeyDown,
-} from '../use-block-keyboard'
+} from '@/editor/use-block-keyboard'
 
 const sampleItems: PickerItem[] = [
   { id: '1', label: 'Alpha' },

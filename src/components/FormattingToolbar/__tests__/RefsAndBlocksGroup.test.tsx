@@ -19,14 +19,13 @@ import { useState } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '@/lib/i18n'
-
 import {
   renderFormatButton,
   renderTablePickerButton,
   renderTableOpsButton,
   renderTurnIntoButton,
-} from '../RefsAndBlocksGroup'
+} from '@/components/FormattingToolbar/RefsAndBlocksGroup'
+import { t } from '@/lib/i18n'
 
 // Heavy popover children are irrelevant here — replace each with a single
 // tabbable button so Radix's autofocus has a target to (wrongly) grab.

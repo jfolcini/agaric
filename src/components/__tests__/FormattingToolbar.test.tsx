@@ -25,11 +25,11 @@ import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '../../lib/i18n'
-import { resetAllShortcuts, setCustomShortcut } from '../../lib/keyboard-config'
-import type { ToolbarButtonConfig } from '../../lib/toolbar-config'
-import { FormattingToolbar } from '../FormattingToolbar'
-import { renderConfigButton, TOOLBAR_SHORTCUT_IDS } from '../FormattingToolbar/shared'
+import { FormattingToolbar } from '@/components/FormattingToolbar'
+import { renderConfigButton, TOOLBAR_SHORTCUT_IDS } from '@/components/FormattingToolbar/shared'
+import { t } from '@/lib/i18n'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
+import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 
 // #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed
@@ -95,7 +95,7 @@ vi.mock('@/editor/toggle-code-block-safely', () => ({
 }))
 
 // Mock Separator — Radix UI Separator needs browser APIs
-vi.mock('../ui/separator', () => ({
+vi.mock('@/components/ui/separator', () => ({
   Separator: ({ orientation, className }: { orientation?: string; className?: string }) => (
     <div data-testid="separator" data-orientation={orientation} className={className} />
   ),
@@ -103,7 +103,7 @@ vi.mock('../ui/separator', () => ({
 
 // Mock Tooltip primitives — Radix portals tooltip content lazily; render
 // The label inline so tests can assert on tooltip text.
-vi.mock('../ui/tooltip', () => ({
+vi.mock('@/components/ui/tooltip', () => ({
   TooltipProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   Tooltip: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   TooltipTrigger: ({ children }: { children: React.ReactNode; asChild?: boolean }) => (
@@ -116,7 +116,7 @@ vi.mock('../ui/tooltip', () => ({
 
 // Mock Popover components — render children inline for testing
 let popoverIdx = 0
-vi.mock('../ui/popover', () => ({
+vi.mock('@/components/ui/popover', () => ({
   Popover: ({
     children,
     open,

@@ -20,9 +20,8 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { NotificationsTab } from '@/components/settings/NotificationsTab'
 import { ensureNotificationPermission, notifyTask } from '@/lib/tauri'
-
-import { NotificationsTab } from '../NotificationsTab'
 
 vi.mock('@/lib/tauri', () => ({
   ensureNotificationPermission: vi.fn(),

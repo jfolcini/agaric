@@ -14,10 +14,10 @@ import History from '@tiptap/extension-history'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { TaskParagraph } from '../extensions/task-paragraph'
-import { pastedTaskParagraph, TaskPaste } from '../extensions/task-paste'
-import { serialize } from '../markdown-serializer'
-import type { DocNode, ParagraphNode } from '../types'
+import { TaskParagraph } from '@/editor/extensions/task-paragraph'
+import { pastedTaskParagraph, TaskPaste } from '@/editor/extensions/task-paste'
+import { serialize } from '@/editor/markdown-serializer'
+import type { DocNode, ParagraphNode } from '@/editor/types'
 
 /** Narrow the first top-level block to a ParagraphNode for attr assertions. */
 function firstParagraph(json: DocNode): ParagraphNode | undefined {

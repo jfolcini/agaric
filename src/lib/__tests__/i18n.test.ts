@@ -7,23 +7,23 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { i18n } from '../i18n'
+import { i18n } from '@/lib/i18n'
 // Import every namespace individually so we can detect cross-namespace
 // key collisions that object spread silently overwrites.
-import { agenda } from '../i18n/agenda'
-import { block } from '../i18n/block'
-import { common } from '../i18n/common'
-import { editor } from '../i18n/editor'
-import { errors } from '../i18n/errors'
-import { history } from '../i18n/history'
-import { pages } from '../i18n/pages'
-import { properties } from '../i18n/properties'
-import { references } from '../i18n/references'
-import { settings } from '../i18n/settings'
-import { shortcuts } from '../i18n/shortcuts'
-import { sync } from '../i18n/sync'
-import { toolbar } from '../i18n/toolbar'
-import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '../slash-commands'
+import { agenda } from '@/lib/i18n/agenda'
+import { block } from '@/lib/i18n/block'
+import { common } from '@/lib/i18n/common'
+import { editor } from '@/lib/i18n/editor'
+import { errors } from '@/lib/i18n/errors'
+import { history } from '@/lib/i18n/history'
+import { pages } from '@/lib/i18n/pages'
+import { properties } from '@/lib/i18n/properties'
+import { references } from '@/lib/i18n/references'
+import { settings } from '@/lib/i18n/settings'
+import { shortcuts } from '@/lib/i18n/shortcuts'
+import { sync } from '@/lib/i18n/sync'
+import { toolbar } from '@/lib/i18n/toolbar'
+import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 

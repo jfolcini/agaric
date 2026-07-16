@@ -1,11 +1,10 @@
 import type React from 'react'
 import { Fragment, useEffect, useState } from 'react'
 
+import { renderMermaidBlock } from '@/components/RichContentRenderer/marks/mermaid'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { CodeBlockNode } from '@/editor/types'
 import { curatedLowlight } from '@/lib/lowlight-curated'
-
-import { renderMermaidBlock } from './mermaid'
 
 // `curatedLowlight` shared instance (see `src/lib/lowlight-curated.ts`).
 // Aliased locally so the existing `lowlight.highlight(...)` call-sites below

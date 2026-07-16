@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
-import { useIsTouch } from './useIsTouch'
+import { useIsTouch } from '@/hooks/useIsTouch'
 
 /** Minimum leftward drag to reveal the delete button (px). */
 export const REVEAL_THRESHOLD = 80

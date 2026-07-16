@@ -46,7 +46,7 @@ import {
   fetchPropertyValuesOnce,
   invalidatePropertyValuesCache,
   propertyValuesQueryKey,
-} from '../property-values-cache'
+} from '@/lib/property-values-cache'
 
 const mockedInvoke = vi.mocked(invoke)
 

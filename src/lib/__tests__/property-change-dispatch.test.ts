@@ -39,7 +39,7 @@ import {
   EVENT_PROPERTY_CHANGED,
   type PropertyChangedPayload,
   registerPropertyChangeTarget,
-} from '../property-change-dispatch'
+} from '@/lib/property-change-dispatch'
 
 const mockedListen = vi.mocked(listen)
 

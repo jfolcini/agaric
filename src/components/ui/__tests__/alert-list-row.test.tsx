@@ -16,7 +16,7 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { AlertListRow } from '../alert-list-row'
+import { AlertListRow } from '@/components/ui/alert-list-row'
 
 describe('AlertListRow', () => {
   it('renders children', () => {

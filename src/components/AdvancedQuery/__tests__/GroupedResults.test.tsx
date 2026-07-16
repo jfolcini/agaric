@@ -22,9 +22,8 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { GroupedResults } from '@/components/AdvancedQuery/GroupedResults'
 import type { ActiveBlockRow, GroupSpec, QueryGroup } from '@/lib/tauri'
-
-import { GroupedResults } from '../GroupedResults'
 
 /** Build a `QueryResultRow`-shaped member row (ActiveBlockRow + score). */
 function makeRow(overrides: Partial<ActiveBlockRow> = {}): ActiveBlockRow & { score: null } {

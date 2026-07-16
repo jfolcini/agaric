@@ -1,8 +1,7 @@
 import type { TFunction } from 'i18next'
 
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { logger } from './logger'
 
 /**
  * Unified IPC error reporting helper.

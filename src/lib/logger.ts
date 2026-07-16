@@ -14,7 +14,7 @@
  * Format: [ISO-timestamp] [LEVEL] [module] message {optional JSON data}
  */
 
-import { getLogBackendSink } from './logger-transport'
+import { getLogBackendSink } from '@/lib/logger-transport'
 
 type LogLevel = 'debug' | 'info' | 'warn' | 'error'
 

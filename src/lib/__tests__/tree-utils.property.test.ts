@@ -19,7 +19,7 @@
 import fc from 'fast-check'
 import { describe, expect, it, vi } from 'vitest'
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -28,7 +28,7 @@ vi.mock('../logger', () => ({
   },
 }))
 
-import { makeBlock } from '../../__tests__/fixtures'
+import { makeBlock } from '@/__tests__/fixtures'
 import {
   buildFlatTree,
   computeDropIndex,
@@ -38,7 +38,7 @@ import {
   getProjection,
   MAX_BLOCK_DEPTH,
   SENTINEL_ID,
-} from '../tree-utils'
+} from '@/lib/tree-utils'
 
 // -- Configuration ------------------------------------------------------------
 

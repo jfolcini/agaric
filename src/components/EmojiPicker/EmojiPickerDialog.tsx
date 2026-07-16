@@ -15,11 +15,22 @@
 import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { EmojiPicker } from '@/components/EmojiPicker/EmojiPicker'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
-
-import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '../ui/dialog'
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from '../ui/sheet'
-import { EmojiPicker } from './EmojiPicker'
 
 export interface EmojiPickerDialogProps {
   open: boolean

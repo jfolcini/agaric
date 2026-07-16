@@ -28,9 +28,17 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { isAppError, isNotFound, isValidation, validationCode } from '../../app-error'
-import { dispatch } from '../handlers'
-import { blocks, blockTags, makeBlock, opLog, properties, propertyDefs, seedBlocks } from '../seed'
+import { isAppError, isNotFound, isValidation, validationCode } from '@/lib/app-error'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import {
+  blocks,
+  blockTags,
+  makeBlock,
+  opLog,
+  properties,
+  propertyDefs,
+  seedBlocks,
+} from '@/lib/tauri-mock/seed'
 
 const PAGE = '00000000000000000000PAGEZZ'
 const CHILD = '00000000000000000000CHILDA'

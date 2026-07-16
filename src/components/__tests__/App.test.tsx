@@ -16,29 +16,29 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { App } from '../../App'
-import { useIsMobile } from '../../hooks/useIsMobile'
-import { announce } from '../../lib/announcer'
-import { t } from '../../lib/i18n'
-import { logger } from '../../lib/logger'
-import { CLOSE_ALL_OVERLAYS_EVENT } from '../../lib/overlay-events'
-import { __resetPriorityLevelsForTests, getPriorityLevels } from '../../lib/priority-levels'
-import { setWindowTitle } from '../../lib/tauri'
-import { useBootStore } from '../../stores/boot'
-import { useJournalStore } from '../../stores/journal'
-import { useNavigationStore } from '../../stores/navigation'
-import { useRecentPagesStore } from '../../stores/recent-pages'
-import { keyFor, useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useSyncStore } from '../../stores/sync'
-import { selectPageStack, useTabsStore } from '../../stores/tabs'
+import { App } from '@/App'
+import { useIsMobile } from '@/hooks/useIsMobile'
+import { announce } from '@/lib/announcer'
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
+import { setWindowTitle } from '@/lib/tauri'
+import { useBootStore } from '@/stores/boot'
+import { useJournalStore } from '@/stores/journal'
+import { useNavigationStore } from '@/stores/navigation'
+import { useRecentPagesStore } from '@/stores/recent-pages'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import { useSyncStore } from '@/stores/sync'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 // Partial mock: replace `setWindowTitle` with a vitest spy
 // so we can assert the App-level effect calls it with
 // `"<SpaceName> · Agaric"`. Every other lib/tauri export passes
 // through unchanged via `importActual`.
-vi.mock('../../lib/tauri', async (importActual) => {
-  const actual = await importActual<typeof import('../../lib/tauri')>()
+vi.mock('@/lib/tauri', async (importActual) => {
+  const actual = await importActual<typeof import('@/lib/tauri')>()
   return {
     ...actual,
     setWindowTitle: vi.fn().mockResolvedValue(undefined),
@@ -47,15 +47,15 @@ vi.mock('../../lib/tauri', async (importActual) => {
 
 // Controllable mobile mock so we can flip the breakpoint per-test
 // without fiddling with window.innerWidth + matchMedia polyfills.
-vi.mock('../../hooks/useIsMobile', () => ({
+vi.mock('@/hooks/useIsMobile', () => ({
   useIsMobile: vi.fn(() => false),
 }))
 
-vi.mock('../../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     error: vi.fn(),
     warn: vi.fn(),
@@ -84,7 +84,7 @@ vi.mock('@/components/pages/PagePropertyTable', () => ({
 // the non-empty-peers branch still forwards to `syncAll()` after the
 // no-peers guard short-circuits the empty branch).
 const { mockSyncAll } = vi.hoisted(() => ({ mockSyncAll: vi.fn() }))
-vi.mock('../../hooks/useSyncTrigger', () => ({
+vi.mock('@/hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => ({ syncing: false, syncAll: mockSyncAll }),
 }))
 
@@ -1759,7 +1759,7 @@ describe('App', () => {
   // makes the tablist visible across every sidebar destination — not just
   // inside page-editor.
   describe(' shell-level TabBar hoist', () => {
-    const shellViews: Array<import('../../stores/navigation').View> = [
+    const shellViews: Array<import('@/stores/navigation').View> = [
       'journal',
       'pages',
       'tags',

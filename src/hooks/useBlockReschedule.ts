@@ -20,8 +20,8 @@
 
 import { useCallback } from 'react'
 
-import { logger } from '../lib/logger'
-import { getBlock, setDueDate, setScheduledDate } from '../lib/tauri'
+import { logger } from '@/lib/logger'
+import { getBlock, setDueDate, setScheduledDate } from '@/lib/tauri'
 
 export type RescheduleField = 'due_date' | 'scheduled_date'
 

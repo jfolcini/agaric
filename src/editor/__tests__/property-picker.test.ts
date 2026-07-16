@@ -8,8 +8,8 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { PropertyPicker } from '../extensions/property-picker'
-import type { PickerItem } from '../SuggestionList'
+import { PropertyPicker } from '@/editor/extensions/property-picker'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 describe('PropertyPicker', () => {
   it('creates an extension with the correct name', () => {
@@ -63,7 +63,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/property-picker')
+    const mod = await import('@/editor/extensions/property-picker')
     const ext = mod.PropertyPicker.configure({ items: () => [] })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
@@ -89,7 +89,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/property-picker')
+    const mod = await import('@/editor/extensions/property-picker')
     const userItems = vi.fn().mockResolvedValue([{ id: 'status', label: 'status' }])
     const ext = mod.PropertyPicker.configure({ items: userItems })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
@@ -115,7 +115,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/property-picker')
+    const mod = await import('@/editor/extensions/property-picker')
     const userItems = vi.fn().mockRejectedValue(new Error('IPC blew up'))
     const ext = mod.PropertyPicker.configure({ items: userItems })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
@@ -142,7 +142,7 @@ describe('PropertyPicker suggestion plugin configuration', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/property-picker')
+    const mod = await import('@/editor/extensions/property-picker')
     const ext = mod.PropertyPicker.configure({ items: () => [] })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
@@ -189,7 +189,7 @@ describe('PropertyPicker suggestion command', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/property-picker')
+    const mod = await import('@/editor/extensions/property-picker')
     const config: { items: () => PickerItem[]; onSelect?: typeof onSelect } = {
       items: () => [],
     }

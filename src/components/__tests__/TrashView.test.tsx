@@ -25,13 +25,13 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeBlock } from '../../__tests__/fixtures'
-import { mockReactVirtual } from '../../__tests__/mocks/react-virtual'
-import { keyFor, useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { TrashView } from '../TrashView'
+import { emptyPage, makeBlock } from '@/__tests__/fixtures'
+import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { TrashView } from '@/components/TrashView'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
-vi.mock('../RichContentRenderer', () => ({
+vi.mock('@/components/RichContentRenderer', () => ({
   renderRichContent: vi.fn((markdown: string) => markdown),
 }))
 
@@ -43,7 +43,7 @@ vi.mock('../RichContentRenderer', () => ({
 // tests) so these existing assertions keep exercising the full list.
 vi.mock('@tanstack/react-virtual', () => mockReactVirtual())
 
-vi.mock('../../hooks/useRichContentCallbacks', () => ({
+vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
     resolveBlockTitle: vi.fn(() => undefined),
     resolveBlockStatus: vi.fn(() => 'active' as const),
@@ -53,7 +53,7 @@ vi.mock('../../hooks/useRichContentCallbacks', () => ({
   useTagClickHandler: vi.fn(() => vi.fn()),
 }))
 
-vi.mock('../../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
@@ -1835,7 +1835,7 @@ describe('TrashView', () => {
 
 describe('TrashView screen reader announcements', () => {
   it('announces batch restore count after Restore selected', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     const blocks = [
@@ -1863,7 +1863,7 @@ describe('TrashView screen reader announcements', () => {
   })
 
   it('announces batch purge count after confirmation', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     const blocks = [
@@ -1895,7 +1895,7 @@ describe('TrashView screen reader announcements', () => {
   // announce, mirroring the single-item path) AND keep the selection so the
   // user can retry, rather than silently clearing it.
   it('batch restore failure shows error toast, announces, and keeps the selection', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const mockedToastError = vi.mocked(toast.error)
     const user = userEvent.setup()
@@ -1934,7 +1934,7 @@ describe('TrashView screen reader announcements', () => {
   // #1888 — batch purge failure: same contract (error toast + announce, dialog
   // closes, selection preserved).
   it('batch purge failure shows error toast, announces, and keeps the selection', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const mockedToastError = vi.mocked(toast.error)
     const user = userEvent.setup()
@@ -1973,7 +1973,7 @@ describe('TrashView screen reader announcements', () => {
   })
 
   it('announces trash emptied count on Empty Trash success', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {
@@ -2000,7 +2000,7 @@ describe('TrashView screen reader announcements', () => {
   })
 
   it('announces failure when empty trash backend rejects', async () => {
-    const { announce } = await import('../../lib/announcer')
+    const { announce } = await import('@/lib/announcer')
     const mockedAnnounce = vi.mocked(announce)
     const user = userEvent.setup()
     mockedInvoke.mockImplementation(async (cmd: string, _args?: unknown) => {

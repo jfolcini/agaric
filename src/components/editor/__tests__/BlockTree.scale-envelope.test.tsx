@@ -54,7 +54,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import type { BlockRow } from '@/lib/tauri'
 import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => (
     <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
   ),

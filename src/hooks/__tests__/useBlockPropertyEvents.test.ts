@@ -33,11 +33,11 @@ vi.mock('@tauri-apps/api/event', () => ({
 // the lazy-init path hits the mocked `listen()` above.
 ;(window as unknown as { __TAURI_INTERNALS__: object }).__TAURI_INTERNALS__ = {}
 
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import {
   _resetBlockPropertyEventsForTest,
   EVENT_PROPERTY_CHANGED,
-} from '../../lib/block-property-events'
-import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
+} from '@/lib/block-property-events'
 
 beforeEach(() => {
   eventListeners.clear()

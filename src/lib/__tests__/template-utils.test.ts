@@ -9,7 +9,7 @@ import {
   loadJournalTemplateForSpace,
   loadTemplatePages,
   loadTemplatePagesWithPreview,
-} from '../template-utils'
+} from '@/lib/template-utils'
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -54,7 +54,7 @@ vi.mock('@/components/LinkPreviewTooltip', () => ({
 }))
 
 // Mock StaticBlock to keep tests focused on EditableBlock logic
-vi.mock('../StaticBlock', () => ({
+vi.mock('@/components/editor/StaticBlock', () => ({
   StaticBlock: ({
     blockId,
     content,

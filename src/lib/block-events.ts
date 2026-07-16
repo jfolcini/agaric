@@ -6,16 +6,16 @@
  * bug.
  */
 
-import { dispatchBlockCommand } from './block-command-bus'
-import type { BLOCK_EVENTS } from './block-event-names'
+import { dispatchBlockCommand } from '@/lib/block-command-bus'
+import type { BLOCK_EVENTS } from '@/lib/block-event-names'
 
 // ── Event name constants ────────────────────────────────────────────────
 
 // The constants live in the leaf module `block-event-names` so the command bus
 // can import the type without forming a cycle with this module (#1250).
-// Re-exported here so existing `import { BLOCK_EVENTS } from './block-events'`
+// Re-exported here so existing `import { BLOCK_EVENTS } from '@/lib/block-events'`
 // call sites keep working unchanged.
-export { BLOCK_EVENTS } from './block-event-names'
+export { BLOCK_EVENTS } from '@/lib/block-event-names'
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 

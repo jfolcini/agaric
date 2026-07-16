@@ -18,22 +18,24 @@
 import { X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import { BooleanEditor } from '@/components/properties/PropertyRowEditor/BooleanEditor'
+import { DateEditor } from '@/components/properties/PropertyRowEditor/DateEditor'
+import { NumberEditor } from '@/components/properties/PropertyRowEditor/NumberEditor'
+import { RefEditor } from '@/components/properties/PropertyRowEditor/RefEditor'
+import {
+  SelectEditor,
+  SelectOptionsAffordance,
+} from '@/components/properties/PropertyRowEditor/SelectEditor'
+import { TextEditor } from '@/components/properties/PropertyRowEditor/TextEditor'
+import {
+  type UsePropertyRowEditorReturn,
+  usePropertyRowEditor,
+} from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
-
-import { BooleanEditor } from './PropertyRowEditor/BooleanEditor'
-import { DateEditor } from './PropertyRowEditor/DateEditor'
-import { NumberEditor } from './PropertyRowEditor/NumberEditor'
-import { RefEditor } from './PropertyRowEditor/RefEditor'
-import { SelectEditor, SelectOptionsAffordance } from './PropertyRowEditor/SelectEditor'
-import { TextEditor } from './PropertyRowEditor/TextEditor'
-import {
-  type UsePropertyRowEditorReturn,
-  usePropertyRowEditor,
-} from './PropertyRowEditor/usePropertyRowEditor'
 
 export interface PropertyRowEditorProps {
   blockId: string

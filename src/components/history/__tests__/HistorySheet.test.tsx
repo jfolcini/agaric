@@ -15,7 +15,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-vi.mock('../HistoryPanel', () => ({
+vi.mock('@/components/history/HistoryPanel', () => ({
   HistoryPanel: ({ blockId }: { blockId: string }) => (
     <div data-testid="history-panel">History for {blockId}</div>
   ),

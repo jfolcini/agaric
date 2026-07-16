@@ -13,7 +13,7 @@
  * Zero external dependencies. Moved verbatim from the original monolith.
  */
 
-import { ULID_RE } from '../markdown-common'
+import { ULID_RE } from '@/editor/markdown-common'
 import type {
   BlockLevelNode,
   BlockLinkNode,
@@ -24,13 +24,13 @@ import type {
   TagRefNode,
   TextNode,
   TodoState,
-} from '../types'
+} from '@/editor/types'
 
 // -- Constants ----------------------------------------------------------------
 
 // Canonical home moved to `markdown-common.ts` (the serializer needs it too);
 // re-exported here so the vocab surface is unchanged.
-export { ULID_RE } from '../markdown-common'
+export { ULID_RE } from '@/editor/markdown-common'
 export const MAX_LINK_SCAN = 10_000
 export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 /**

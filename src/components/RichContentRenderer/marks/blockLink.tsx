@@ -1,10 +1,9 @@
 import type React from 'react'
 
+import type { RenderContext } from '@/components/RichContentRenderer/context'
 import type { BlockLinkNode } from '@/editor/types'
 import { getPageDisplayName } from '@/lib/page-display'
 import { cn } from '@/lib/utils'
-
-import type { RenderContext } from '../context'
 
 /**
  * Build the event-handler + role props bundle for a clickable block-link chip.

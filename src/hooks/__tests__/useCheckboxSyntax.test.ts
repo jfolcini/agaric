@@ -15,20 +15,20 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createStore, type StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import { getProperty, setTodoState } from '../../lib/tauri'
-import type { PageBlockState } from '../../stores/page-blocks'
-import { useCheckboxSyntax } from '../useCheckboxSyntax'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { logger } from '@/lib/logger'
+import { getProperty, setTodoState } from '@/lib/tauri'
+import type { PageBlockState } from '@/stores/page-blocks'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   setTodoState: vi.fn(),
   // Checkbox-syntax DONE path now reads
   // `blocked_by` via the single-key `getProperty` command.
   getProperty: vi.fn(),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -44,7 +44,7 @@ vi.mock('sonner', () => ({
   },
 }))
 
-vi.mock('../../stores/undo', () => ({
+vi.mock('@/stores/undo', () => ({
   useUndoStore: {
     getState: () => ({ onNewAction: vi.fn() }),
   },

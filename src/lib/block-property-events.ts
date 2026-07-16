@@ -23,13 +23,13 @@
  * The React adapter lives in `src/hooks/useBlockPropertyEvents.ts`.
  */
 
-import { EVENT_PROPERTY_CHANGED } from './block-event-names'
+import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import {
   _resetPropertyChangeDispatchForTest,
   ensurePropertyChangeDispatch,
   type PropertyChangedPayload,
   registerPropertyChangeTarget,
-} from './property-change-dispatch'
+} from '@/lib/property-change-dispatch'
 
 export { EVENT_PROPERTY_CHANGED }
 export type { PropertyChangedPayload }

@@ -18,7 +18,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Textarea } from '../textarea'
+import { Textarea } from '@/components/ui/textarea'
 
 describe('Textarea', () => {
   // -- Controlled rendering ---------------------------------------------------

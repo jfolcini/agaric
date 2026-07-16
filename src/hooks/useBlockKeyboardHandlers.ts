@@ -2,16 +2,15 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 
+import { parse } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
+import { pmEndOfFirstBlock } from '@/editor/types'
+import type { DeleteBlockOpts } from '@/editor/use-block-keyboard'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { parse } from '../editor/markdown-serializer'
-import type { DocNode } from '../editor/types'
-import { pmEndOfFirstBlock } from '../editor/types'
-import type { DeleteBlockOpts } from '../editor/use-block-keyboard'
-import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { announce } from '../lib/announcer'
-import type { FlatBlock } from '../lib/tree-utils'
+import type { FlatBlock } from '@/lib/tree-utils'
 
 /**
  * Scroll the block's DOM node into view after a reorder so the

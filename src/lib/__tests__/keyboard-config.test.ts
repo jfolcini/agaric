@@ -20,9 +20,9 @@ import {
   tipTapShortcutMap,
   toAriaKeyshortcuts,
   validateBindingInput,
-} from '../keyboard-config'
+} from '@/lib/keyboard-config'
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -31,7 +31,7 @@ vi.mock('../logger', () => ({
   },
 }))
 
-import { logger } from '../logger'
+import { logger } from '@/lib/logger'
 
 const mockedLogger = vi.mocked(logger)
 

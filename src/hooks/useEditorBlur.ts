@@ -20,9 +20,9 @@ import type React from 'react'
 import { useCallback, useRef } from 'react'
 import { flushSync } from 'react-dom'
 
-import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import { shouldSplitOnBlur } from '../editor/use-roving-editor'
-import { logger } from '../lib/logger'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
+import { logger } from '@/lib/logger'
 
 /**
  * Single-attribute opt-in for transient UI elements (popups, toolbars,

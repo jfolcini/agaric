@@ -20,8 +20,8 @@ import { createRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { PickerItem, SuggestionListRef } from '../SuggestionList'
-import { SuggestionList } from '../SuggestionList'
+import type { PickerItem, SuggestionListRef } from '@/editor/SuggestionList'
+import { SuggestionList } from '@/editor/SuggestionList'
 
 const sampleItems: PickerItem[] = [
   { id: '1', label: 'Alpha' },

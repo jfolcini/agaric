@@ -16,8 +16,8 @@
 import { render } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { __resetPlatformCacheForTests } from '../../../lib/platform'
-import { Kbd, KbdChord } from '../kbd'
+import { Kbd, KbdChord } from '@/components/ui/kbd'
+import { __resetPlatformCacheForTests } from '@/lib/platform'
 
 beforeEach(() => {
   __resetPlatformCacheForTests()

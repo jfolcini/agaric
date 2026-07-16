@@ -2,9 +2,8 @@ import { CheckIcon, ChevronDownIcon, ChevronUpIcon } from 'lucide-react'
 import { Select as SelectPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
+import { SHARED_INPUT_CLASSES } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-
-import { SHARED_INPUT_CLASSES } from './input'
 
 // PERF: hoisted from an inline string in render — twMerge then only re-parses
 // the caller's `className` rather than this whole base on every render.

@@ -21,10 +21,9 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import type { DayEntry } from '@/lib/date-utils'
 import { t } from '@/lib/i18n'
-
-import type { DayEntry } from '../../../lib/date-utils'
-import { useJournalStore } from '../../../stores/journal'
+import { useJournalStore } from '@/stores/journal'
 
 // ── Mock useBatchCounts ─────────────────────────────────────────────
 const mockBatchCounts = vi.hoisted(() => ({
@@ -33,7 +32,7 @@ const mockBatchCounts = vi.hoisted(() => ({
   backlinkCounts: {} as Record<string, number>,
 }))
 
-vi.mock('../../../hooks/useBatchCounts', () => ({
+vi.mock('@/hooks/useBatchCounts', () => ({
   useBatchCounts: () => mockBatchCounts,
 }))
 
@@ -42,7 +41,7 @@ const mockWeekStart = vi.hoisted(() => ({
   weekStartsOn: 1 as 0 | 1,
 }))
 
-vi.mock('../../../hooks/useWeekStart', () => ({
+vi.mock('@/hooks/useWeekStart', () => ({
   useWeekStart: () => mockWeekStart,
 }))
 
@@ -50,7 +49,7 @@ vi.mock('../../../hooks/useWeekStart', () => ({
 // The mock forwards the roving props the real cell consumes (ref, tabIndex,
 // onFocus) so the roving-tabindex / arrow-key tests below exercise
 // MonthlyView's grid keyboard handler against focusable cells.
-vi.mock('../MonthlyDayCell', () => ({
+vi.mock('@/components/journal/MonthlyDayCell', () => ({
   MonthlyDayCell: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
     const isCurrentMonth = !!props['isCurrentMonth']
@@ -78,7 +77,7 @@ vi.mock('../MonthlyDayCell', () => ({
 
 vi.mocked(invoke)
 
-import { MonthlyView } from '../MonthlyView'
+import { MonthlyView } from '@/components/journal/MonthlyView'
 
 /** Fixed date: January 2025 (31 days). */
 const FIXED_DATE = new Date(2025, 0, 15) // Wed, Jan 15, 2025

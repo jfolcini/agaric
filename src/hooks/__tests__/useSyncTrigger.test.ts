@@ -15,21 +15,21 @@ vi.mock('sonner', () => {
 })
 
 // Mock tauri.ts
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   listPeerRefs: vi.fn(),
   startSync: vi.fn(),
   flushAllDrafts: vi.fn(),
 }))
 
-vi.mock('../../lib/announcer', () => ({
+vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-import { announce } from '../../lib/announcer'
-import type { PeerRefRow, SyncSessionInfo } from '../../lib/tauri'
-import { flushAllDrafts, listPeerRefs, startSync } from '../../lib/tauri'
-import { useSyncStore } from '../../stores/sync'
-import { mapPeerRefToInfo, useSyncTrigger } from '../useSyncTrigger'
+import { mapPeerRefToInfo, useSyncTrigger } from '@/hooks/useSyncTrigger'
+import { announce } from '@/lib/announcer'
+import type { PeerRefRow, SyncSessionInfo } from '@/lib/tauri'
+import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
+import { useSyncStore } from '@/stores/sync'
 
 /**
  * #748 — drive a `visibilitychange` event with the given visibility state.

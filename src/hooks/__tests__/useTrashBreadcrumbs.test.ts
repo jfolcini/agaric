@@ -7,11 +7,11 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   batchResolve: vi.fn(),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -20,11 +20,11 @@ vi.mock('../../lib/logger', () => ({
   },
 }))
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import type { BlockRow, ResolvedBlock } from '../../lib/tauri'
-import { batchResolve } from '../../lib/tauri'
-import { useTrashBreadcrumbs } from '../useTrashBreadcrumbs'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
+import { logger } from '@/lib/logger'
+import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
+import { batchResolve } from '@/lib/tauri'
 
 const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedLoggerWarn = vi.mocked(logger.warn)

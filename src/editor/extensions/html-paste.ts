@@ -35,12 +35,11 @@ import { Fragment, Slice } from '@tiptap/pm/model'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import type { EditorView } from '@tiptap/pm/view'
 
+import { parse } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
 import { dispatchBlockEvent } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { useBlockStore } from '@/stores/blocks'
-
-import { parse } from '../markdown-serializer'
-import type { DocNode } from '../types'
 
 const htmlPastePluginKey = new PluginKey('htmlPaste')
 
@@ -122,7 +121,7 @@ export async function convertAndInsert(
     // Lazy-load Turndown + the converter so they stay out of the main chunk and
     // only load on the first HTML paste (#750).
     const [{ createInlineTurndown }, { htmlBodyToOutline, outlineToIndentedMarkdown }] =
-      await Promise.all([import('../inline-turndown'), import('../html-to-blocks')])
+      await Promise.all([import('@/editor/inline-turndown'), import('@/editor/html-to-blocks')])
 
     // The dynamic import is itself a turn, so re-check after it resolves.
     if (view.isDestroyed) return

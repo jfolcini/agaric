@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isAllowedUrl, normalizeUrl } from '../url-validation'
+import { isAllowedUrl, normalizeUrl } from '@/lib/url-validation'
 
 describe('isAllowedUrl', () => {
   it.each([

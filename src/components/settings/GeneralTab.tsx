@@ -10,11 +10,10 @@
 import type React from 'react'
 
 import { DeadlineWarningSection } from '@/components/agenda/DeadlineWarningSection'
-
-import { AutostartRow } from './AutostartRow'
-import { DebugModeRow } from './DebugModeRow'
-import { QuickCaptureRow } from './QuickCaptureRow'
-import { ResetOnboardingRow } from './ResetOnboardingRow'
+import { AutostartRow } from '@/components/settings/AutostartRow'
+import { DebugModeRow } from '@/components/settings/DebugModeRow'
+import { QuickCaptureRow } from '@/components/settings/QuickCaptureRow'
+import { ResetOnboardingRow } from '@/components/settings/ResetOnboardingRow'
 
 export function GeneralTab(): React.ReactElement {
   return (

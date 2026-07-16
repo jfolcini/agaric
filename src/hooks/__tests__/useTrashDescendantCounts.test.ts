@@ -7,11 +7,11 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   trashDescendantCounts: vi.fn(),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -20,11 +20,11 @@ vi.mock('../../lib/logger', () => ({
   },
 }))
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import type { BlockRow } from '../../lib/tauri'
-import { trashDescendantCounts } from '../../lib/tauri'
-import { useTrashDescendantCounts } from '../useTrashDescendantCounts'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
+import { trashDescendantCounts } from '@/lib/tauri'
 
 const mockedTrashDescendantCounts = vi.mocked(trashDescendantCounts)
 const mockedLoggerWarn = vi.mocked(logger.warn)

@@ -13,7 +13,7 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useFocusedRowEffect } from '../useFocusedRowEffect'
+import { useFocusedRowEffect } from '@/hooks/useFocusedRowEffect'
 
 const FOCUS_CLASSES = ['ring-2', 'ring-ring/50', 'bg-accent/30']
 /** Stable default rows so the harness prop keeps referential equality across renders. */

@@ -13,10 +13,10 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import type { ValidationCode as GeneratedValidationCode } from '../../bindings'
-import { parse } from '../classify'
-import { validateGlob } from '../glob-validate'
-import { prefixed, ValidationCode } from '../validation-codes'
+import type { ValidationCode as GeneratedValidationCode } from '@/lib/bindings'
+import { parse } from '@/lib/search-query/classify'
+import { validateGlob } from '@/lib/search-query/glob-validate'
+import { prefixed, ValidationCode } from '@/lib/search-query/validation-codes'
 
 describe('ValidationCode (#1061/#2251 shared contract)', () => {
   it('pins the exact code strings the Rust backend serialises', () => {

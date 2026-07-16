@@ -23,15 +23,14 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '@/lib/i18n'
-
 import {
   Breadcrumb,
   type BreadcrumbCrumb,
   BreadcrumbHome,
   BreadcrumbItem,
   BreadcrumbSeparator,
-} from '../breadcrumb'
+} from '@/components/ui/breadcrumb'
+import { t } from '@/lib/i18n'
 
 describe('Breadcrumb', () => {
   const baseItems: BreadcrumbCrumb[] = [

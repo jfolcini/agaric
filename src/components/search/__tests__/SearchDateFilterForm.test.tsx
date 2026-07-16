@@ -25,12 +25,11 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { t } from '@/lib/i18n'
-
 import {
   SearchDateFilterForm,
   type SearchDateFilterFormProps,
-} from '../filter-forms/SearchDateFilterForm'
+} from '@/components/search/filter-forms/SearchDateFilterForm'
+import { t } from '@/lib/i18n'
 
 function setup(kind: SearchDateFilterFormProps['kind'] = 'due'): {
   onAddFilter: ReturnType<typeof vi.fn>

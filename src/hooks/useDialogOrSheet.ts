@@ -52,8 +52,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-
-import { useIsMobile } from './useIsMobile'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
 export type DialogKind = 'alert' | 'dialog'
 

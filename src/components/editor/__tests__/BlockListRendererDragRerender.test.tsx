@@ -28,7 +28,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 // wrapper re-rendered (the memo did NOT short-circuit).
 const renderCounts = new Map<string, number>()
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: { blockId: string }) => {
     renderCounts.set(props.blockId, (renderCounts.get(props.blockId) ?? 0) + 1)
     return <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>

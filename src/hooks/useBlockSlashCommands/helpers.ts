@@ -8,12 +8,11 @@
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
+import type { DatePickerMode, SlashCommandContext } from '@/hooks/useBlockSlashCommands/types'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { editBlock, getProperty, type OpRef } from '@/lib/tauri'
 import { useUndoStore } from '@/stores/undo'
-
-import type { DatePickerMode, SlashCommandContext } from './types'
 
 /**
  * #2468 — `opRefs` threads a migrated command's `op_refs` (the exact op-log

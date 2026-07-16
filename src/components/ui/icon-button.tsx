@@ -23,8 +23,8 @@
 
 import type * as React from 'react'
 
-import { Button } from './button'
-import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip'
+import { Button } from '@/components/ui/button'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 
 type IconSize = 'icon-xs' | 'icon-sm' | 'icon' | 'icon-lg'
 

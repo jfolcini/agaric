@@ -62,11 +62,15 @@ const HistoryView = lazy(() =>
 const PageBrowser = lazy(() =>
   import('@/components/PageBrowser').then((m) => ({ default: m.PageBrowser })),
 )
-const PageEditor = lazy(() => import('./PageEditor').then((m) => ({ default: m.PageEditor })))
+const PageEditor = lazy(() =>
+  import('@/components/pages/PageEditor').then((m) => ({ default: m.PageEditor })),
+)
 const SearchPanel = lazy(() =>
   import('@/components/SearchPanel').then((m) => ({ default: m.SearchPanel })),
 )
-const SettingsView = lazy(() => import('./SettingsView').then((m) => ({ default: m.SettingsView })))
+const SettingsView = lazy(() =>
+  import('@/components/pages/SettingsView').then((m) => ({ default: m.SettingsView })),
+)
 const StatusPanel = lazy(() =>
   import('@/components/agenda/StatusPanel').then((m) => ({ default: m.StatusPanel })),
 )

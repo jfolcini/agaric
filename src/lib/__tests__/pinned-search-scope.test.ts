@@ -9,7 +9,7 @@ import {
   clearPinnedSearchScope,
   getPinnedSearchScope,
   setPinnedSearchScope,
-} from '../pinned-search-scope'
+} from '@/lib/pinned-search-scope'
 
 beforeEach(() => {
   localStorage.clear()

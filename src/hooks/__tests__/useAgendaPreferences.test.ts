@@ -6,7 +6,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useAgendaPreferences } from '../useAgendaPreferences'
+import { useAgendaPreferences } from '@/hooks/useAgendaPreferences'
 
 beforeEach(() => {
   localStorage.clear()

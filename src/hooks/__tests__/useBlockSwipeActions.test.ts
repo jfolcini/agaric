@@ -9,7 +9,7 @@ import {
   REVEAL_THRESHOLD,
   useBlockSwipeActions,
   VERTICAL_CANCEL_THRESHOLD,
-} from '../useBlockSwipeActions'
+} from '@/hooks/useBlockSwipeActions'
 
 /** Helper to build a minimal React.TouchEvent from coordinates. */
 function touch(clientX: number, clientY: number) {

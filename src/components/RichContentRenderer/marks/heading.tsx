@@ -1,9 +1,8 @@
 import type React from 'react'
 
+import { HEADING_CLASSES, type RenderContext } from '@/components/RichContentRenderer/context'
+import { renderInlineContent } from '@/components/RichContentRenderer/marks/inline'
 import type { HeadingNode } from '@/editor/types'
-
-import { HEADING_CLASSES, type RenderContext } from '../context'
-import { renderInlineContent } from './inline'
 
 export function renderHeadingBlock(
   block: HeadingNode,

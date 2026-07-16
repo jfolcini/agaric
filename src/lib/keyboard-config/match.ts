@@ -4,8 +4,8 @@
  * binding string regardless of the layout quirks the user is typing on.
  */
 
-import { parseChord } from './parse'
-import { getShortcutKeys } from './storage'
+import { parseChord } from '@/lib/keyboard-config/parse'
+import { getShortcutKeys } from '@/lib/keyboard-config/storage'
 
 /**
  * Normalize a raw key token (from a binding string or `KeyboardEvent.key`)

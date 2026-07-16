@@ -14,10 +14,10 @@
  * stable across input edits in the middle of the query.
  */
 
-import { ensureRegistered } from './register'
-import { looksLikeUnknownPrefix, recognise } from './registry'
-import { type RawToken, tokenize } from './tokenize'
-import type { FilterToken, SearchQueryAST } from './types'
+import { ensureRegistered } from '@/lib/search-query/register'
+import { looksLikeUnknownPrefix, recognise } from '@/lib/search-query/registry'
+import { type RawToken, tokenize } from '@/lib/search-query/tokenize'
+import type { FilterToken, SearchQueryAST } from '@/lib/search-query/types'
 
 /**
  * Parse a full search query string into the AST.

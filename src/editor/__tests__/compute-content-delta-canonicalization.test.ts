@@ -17,9 +17,9 @@
 import * as fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '../markdown-serializer'
-import type { DocNode } from '../types'
-import { computeContentDelta } from '../use-roving-editor'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type { DocNode } from '@/editor/types'
+import { computeContentDelta } from '@/editor/use-roving-editor'
 
 /** No-edit blur: the live doc is exactly `parse(original)`. */
 function noEditDelta(original: string) {

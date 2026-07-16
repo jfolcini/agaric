@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { useBootStore } from '../stores/boot'
+import { useBootStore } from '@/stores/boot'
 
 describe('useBootStore', () => {
   beforeEach(() => {

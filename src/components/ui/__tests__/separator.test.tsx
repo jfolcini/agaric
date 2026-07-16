@@ -12,7 +12,7 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Separator } from '../separator'
+import { Separator } from '@/components/ui/separator'
 
 /** Helper: querySelector that throws on null. */
 function q(container: HTMLElement, selector: string): Element {

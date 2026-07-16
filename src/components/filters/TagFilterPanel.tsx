@@ -13,6 +13,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ResultCard } from '@/components/common/ResultCard'
+import { TagComposer, useTagComposerState } from '@/components/filters/TagComposer'
 import { PageLink } from '@/components/pages/PageLink'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
@@ -33,8 +34,6 @@ import { batchResolve, getBlock, listTagsByPrefix, queryByTagExpr, queryByTags }
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
-
-import { TagComposer, useTagComposerState } from './TagComposer'
 
 interface SelectedTag {
   id: string

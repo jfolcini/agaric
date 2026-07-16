@@ -1,7 +1,7 @@
 import { PluginKey } from '@tiptap/pm/state'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { createSuggestionRenderer } from '../suggestion-renderer'
+import { createSuggestionRenderer } from '@/editor/suggestion-renderer'
 
 const { mockReactRenderer } = vi.hoisted(() => {
   const reactRenderer = vi.fn().mockImplementation(function (this: any) {
@@ -25,7 +25,7 @@ vi.mock('@floating-ui/dom', () => ({
   size: vi.fn((opts) => ({ __middleware: 'size', opts })),
 }))
 
-vi.mock('../../lib/keyboard-config', () => ({
+vi.mock('@/lib/keyboard-config', () => ({
   getShortcutKeys: vi.fn((id: string) => {
     const defaults: Record<string, string> = {
       suggestionClose: 'Escape',

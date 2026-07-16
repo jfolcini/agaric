@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { substituteTemplateVariables } from '../template-variables'
+import { substituteTemplateVariables } from '@/editor/template-variables'
 
 // A fixed clock so date/time assertions are deterministic.
 // 2026-03-07 09:05 local time.

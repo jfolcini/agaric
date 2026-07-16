@@ -14,7 +14,7 @@ import { zoom, zoomIdentity } from 'd3-zoom'
 import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useGraphZoom } from '../useGraphZoom'
+import { useGraphZoom } from '@/hooks/useGraphZoom'
 
 vi.mock('d3-selection', () => ({
   select: vi.fn(() => ({

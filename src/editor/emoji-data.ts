@@ -25,7 +25,7 @@
 
 import { matchSorter } from 'match-sorter'
 
-import type { GeneratedEmoji, GeneratedEmojiGroup } from './emoji-data.generated'
+import type { GeneratedEmoji, GeneratedEmojiGroup } from '@/editor/emoji-data.generated'
 
 export interface EmojiEntry {
   /** The native Unicode emoji to insert. */
@@ -99,7 +99,7 @@ let resolvedDataset: EmojiDataset | null = null
  * load (#2671).
  */
 export function loadEmojiDataset(): Promise<EmojiDataset> {
-  datasetPromise ??= import('./emoji-data.generated').then(({ EMOJI_DATA }) => {
+  datasetPromise ??= import('@/editor/emoji-data.generated').then(({ EMOJI_DATA }) => {
     const dataset = buildDataset(EMOJI_DATA)
     resolvedDataset = dataset
     return dataset

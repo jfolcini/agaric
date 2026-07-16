@@ -19,7 +19,7 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   listBlocks: vi.fn(),
   batchResolve: vi.fn(),
   listProjectedAgenda: vi.fn(),
@@ -30,7 +30,7 @@ vi.mock('../../lib/tauri', () => ({
 }))
 
 let mockInvalidationKey = 0
-vi.mock('../useBlockPropertyEvents', () => ({
+vi.mock('@/hooks/useBlockPropertyEvents', () => ({
   useBlockPropertyEvents: vi.fn(() => ({ invalidationKey: mockInvalidationKey })),
 }))
 
@@ -49,15 +49,14 @@ vi.mock('@/lib/notify', () => ({
   }),
 }))
 
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '@/hooks/useDuePanelData'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { makeBlock } from '../../__tests__/fixtures'
-import { logger } from '../../lib/logger'
-import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
-import { useBlockPropertyEvents } from '../useBlockPropertyEvents'
-import { clearProjectedCache, extractUlidRefs, useDuePanelData } from '../useDuePanelData'
+import { batchResolve, listBlocks, listProjectedAgenda, queryByProperty } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedListBlocks = vi.mocked(listBlocks)
 const mockedBatchResolve = vi.mocked(batchResolve)

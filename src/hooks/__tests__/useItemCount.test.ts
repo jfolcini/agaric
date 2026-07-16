@@ -14,7 +14,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useItemCount } from '../useItemCount'
+import { useItemCount } from '@/hooks/useItemCount'
 
 describe('useItemCount', () => {
   beforeEach(() => {

@@ -15,13 +15,17 @@
  */
 
 import type { AgendaFilter } from '@/components/agenda/AgendaFilterBuilder'
+import type { PageResponse } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
-
-import type { PageResponse } from './bindings'
-import { formatDate, getDateRangeForFilter } from './date-utils'
-import { paginationLimit, type SafeLimit } from './safe-limit'
-import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from './tauri'
-import { filteredBlocksQuery, listTagsByPrefix, listUndatedTasks, queryByProperty } from './tauri'
+import { formatDate, getDateRangeForFilter } from '@/lib/date-utils'
+import { paginationLimit, type SafeLimit } from '@/lib/safe-limit'
+import type { BlockRow, FilteredBlocksPropertyFilter, FilteredBlocksTagFilter } from '@/lib/tauri'
+import {
+  filteredBlocksQuery,
+  listTagsByPrefix,
+  listUndatedTasks,
+  queryByProperty,
+} from '@/lib/tauri'
 
 /**
  * Per-page limit for agenda queries — pinned to `PageRequest::new`'s

@@ -12,8 +12,7 @@ import { select } from 'd3-selection'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
-
-import { useGraphRenderElements } from '../useGraphRenderElements'
+import { useGraphRenderElements } from '@/hooks/useGraphRenderElements'
 
 vi.mock('d3-selection', () => ({
   select: vi.fn(() => ({

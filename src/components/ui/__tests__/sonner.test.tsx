@@ -11,7 +11,7 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Toaster } from '../sonner'
+import { Toaster } from '@/components/ui/sonner'
 
 describe('Toaster', () => {
   it('has displayName', () => {

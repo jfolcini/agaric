@@ -14,11 +14,10 @@ import type React from 'react'
 import { FormatMenu } from '@/components/editor-toolbar/FormatMenu'
 import { TablePicker } from '@/components/editor-toolbar/TablePicker'
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
-
-import { TableOpsSelector } from '../TableOpsSelector'
-import { Button } from '../ui/button'
-import { Popover, PopoverAnchor, PopoverContent } from '../ui/popover'
-import { type RenderMode, Tip, toolbarPressHandlers } from './shared'
+import { type RenderMode, Tip, toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
+import { TableOpsSelector } from '@/components/TableOpsSelector'
+import { Button } from '@/components/ui/button'
+import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 
 interface FormatButtonProps {
   editor: Editor

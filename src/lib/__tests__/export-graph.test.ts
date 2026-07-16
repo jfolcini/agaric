@@ -2,9 +2,9 @@ import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { exportGraphAsZip } from '../export-graph'
+import { exportGraphAsZip } from '@/lib/export-graph'
 
-vi.mock('../logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -13,7 +13,7 @@ vi.mock('../logger', () => ({
   },
 }))
 
-import { logger } from '../logger'
+import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedLogger = vi.mocked(logger)

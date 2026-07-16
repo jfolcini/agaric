@@ -13,8 +13,8 @@ import {
   encodeInlineQueryPayload,
   INLINE_QUERY_V2_PREFIX,
   isInlineQueryV2,
-} from '../inline-query-spec'
-import type { FilterExpr } from '../tauri'
+} from '@/lib/inline-query-spec'
+import type { FilterExpr } from '@/lib/tauri'
 
 const NESTED: FilterExpr = {
   type: 'Or',

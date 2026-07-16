@@ -17,7 +17,7 @@ describe('writeText', () => {
       writeText: mockPluginWriteText,
     }))
     mockPluginWriteText.mockResolvedValueOnce(undefined)
-    const { writeText } = await import('../clipboard')
+    const { writeText } = await import('@/lib/clipboard')
 
     await writeText('hello world')
 
@@ -36,7 +36,7 @@ describe('writeText', () => {
       configurable: true,
       value: { writeText: navigatorWriteText },
     })
-    const { writeText } = await import('../clipboard')
+    const { writeText } = await import('@/lib/clipboard')
 
     await writeText('fallback text')
 
@@ -56,7 +56,7 @@ describe('writeText', () => {
       configurable: true,
       value: { writeText: navigatorWriteText },
     })
-    const { writeText } = await import('../clipboard')
+    const { writeText } = await import('@/lib/clipboard')
 
     await writeText('fallback after reject')
 
@@ -76,7 +76,7 @@ describe('writeText', () => {
       configurable: true,
       value: { writeText: navigatorWriteText },
     })
-    const { writeText } = await import('../clipboard')
+    const { writeText } = await import('@/lib/clipboard')
 
     // Wrapper does not silently swallow the failure — the caller's
     // existing try/catch + toast UI must see the rejection.
@@ -102,7 +102,7 @@ describe('readText', () => {
       readText: mockPluginReadText,
     }))
     mockPluginReadText.mockResolvedValueOnce('clipboard contents')
-    const { readText } = await import('../clipboard')
+    const { readText } = await import('@/lib/clipboard')
 
     await expect(readText()).resolves.toBe('clipboard contents')
     expect(mockPluginReadText).toHaveBeenCalled()
@@ -120,7 +120,7 @@ describe('readText', () => {
       configurable: true,
       value: { readText: navigatorReadText },
     })
-    const { readText } = await import('../clipboard')
+    const { readText } = await import('@/lib/clipboard')
 
     await expect(readText()).resolves.toBe('from navigator')
     expect(navigatorReadText).toHaveBeenCalled()
@@ -138,7 +138,7 @@ describe('readText', () => {
       configurable: true,
       value: { readText: navigatorReadText },
     })
-    const { readText } = await import('../clipboard')
+    const { readText } = await import('@/lib/clipboard')
 
     await expect(readText()).rejects.toThrow('clipboard blocked')
     expect(navigatorReadText).toHaveBeenCalled()

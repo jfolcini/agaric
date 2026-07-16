@@ -26,9 +26,8 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { toolbarPressHandlers } from '@/components/FormattingToolbar/shared'
-
-import { Button } from './ui/button'
-import { Separator } from './ui/separator'
+import { Button } from '@/components/ui/button'
+import { Separator } from '@/components/ui/separator'
 
 export interface TableOpsSelectorProps {
   editor: Editor

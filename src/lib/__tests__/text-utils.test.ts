@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { truncateContent } from '../text-utils'
+import { truncateContent } from '@/lib/text-utils'
 
 describe('truncateContent', () => {
   it('returns emptyFallback for null input', () => {

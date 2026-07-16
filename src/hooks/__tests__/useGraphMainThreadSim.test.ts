@@ -14,9 +14,8 @@ import { forceCenter, forceSimulation, forceX, forceY } from 'd3-force'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
-
-import type { SimulationCtx } from '../../lib/graph-sim-helpers'
-import { useGraphMainThreadSim } from '../useGraphMainThreadSim'
+import { useGraphMainThreadSim } from '@/hooks/useGraphMainThreadSim'
+import type { SimulationCtx } from '@/lib/graph-sim-helpers'
 
 // Capture the simulation mock so individual tests can assert on it.
 let lastSim: any = null

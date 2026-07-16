@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useBlockStore } from '../blocks'
-import { useNavigationStore } from '../navigation'
-import { useTabsStore } from '../tabs'
+import { useBlockStore } from '@/stores/blocks'
+import { useNavigationStore } from '@/stores/navigation'
+import { useTabsStore } from '@/stores/tabs'
 
 describe('useBlockStore', () => {
   beforeEach(() => {

@@ -54,9 +54,8 @@ import { useEffect } from 'react'
 import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { logger } from '@/lib/logger'
-
-import { useDebouncedCallback } from './useDebouncedCallback'
 
 /** Trailing idle-debounce window (ms) before a mid-typing content commit. */
 export const CONTENT_COMMIT_DEBOUNCE_MS = 700

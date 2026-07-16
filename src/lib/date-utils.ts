@@ -4,7 +4,7 @@
 
 import { addMonths, eachDayOfInterval, endOfWeek, format, startOfWeek } from 'date-fns'
 
-import { getWeekStartDay } from '../hooks/useWeekStart'
+import { getWeekStartDay } from '@/hooks/useWeekStart'
 
 /** Dynamic week options — reads weekStartsOn from user preference. */
 export function getWeekOptions(): { weekStartsOn: 0 | 1 } {

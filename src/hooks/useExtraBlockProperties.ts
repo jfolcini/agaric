@@ -36,8 +36,8 @@
 
 import { useMemo, useRef } from 'react'
 
-import type { PropertyRow } from '../lib/tauri'
-import { useBatchPropertyRows } from './useBatchPropertyRows'
+import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import type { PropertyRow } from '@/lib/tauri'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'todo_state',

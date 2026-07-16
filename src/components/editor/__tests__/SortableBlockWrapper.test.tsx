@@ -31,7 +31,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 // Mock SortableBlock — record props so we can assert on them
 const sortableBlockProps: Array<Record<string, unknown>> = []
 
-vi.mock('../SortableBlock', () => ({
+vi.mock('@/components/editor/SortableBlock', () => ({
   SortableBlock: (props: Record<string, unknown>) => {
     sortableBlockProps.push(props)
     return (

@@ -25,7 +25,7 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }))
 
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),
@@ -34,7 +34,7 @@ vi.mock('../../lib/logger', () => ({
   },
 }))
 
-import { useTauriEventListener } from '../useTauriEventListener'
+import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 
 beforeEach(() => {
   vi.clearAllMocks()

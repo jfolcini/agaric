@@ -7,7 +7,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { buildActionMenuActions } from './action-menu-actions'
+import { buildActionMenuActions } from '@/components/palette/action-menu-actions'
 
 // Identity translator — returns the key so assertions can match on the
 // translation key directly.

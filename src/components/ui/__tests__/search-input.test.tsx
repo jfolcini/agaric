@@ -8,9 +8,8 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchInput } from '@/components/ui/search-input'
 import { t } from '@/lib/i18n'
-
-import { SearchInput } from '../search-input'
 
 function Controlled({
   initial = '',

@@ -8,6 +8,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 import type { useTranslation } from 'react-i18next'
 
+import { PALETTE_DEBOUNCE_MS, TAGS_QUERY_LIMIT } from '@/components/palette/constants'
 import { CommandEmpty, CommandGroup, CommandItem } from '@/components/ui/command'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
@@ -20,8 +21,6 @@ import type { SearchBlockRow } from '@/lib/tauri'
 import { searchBlocks, searchBlocksLimit } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
-
-import { PALETTE_DEBOUNCE_MS, TAGS_QUERY_LIMIT } from './constants'
 
 /**
  * Tags-mode body — debounced `searchBlocks({ blockTypeFilter: 'tag' })`

@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 
+import { computeQueryHint, queryExprAtCaret } from '@/editor/query-hint'
 import {
   QUERY_KEYS,
   QUERY_OPERATORS,
   QUERY_PROPERTY_KEYS,
   QUERY_TYPE_VALUES,
-} from '../../lib/query-utils'
-import { computeQueryHint, queryExprAtCaret } from '../query-hint'
+} from '@/lib/query-utils'
 
 /**
  * Convenience: place the caret at the literal `|` marker in `s`, strip it, and

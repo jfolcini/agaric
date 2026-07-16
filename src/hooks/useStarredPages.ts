@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 
-import { getStarredPages, setStarred, toggleStarred } from '../lib/starred-pages'
+import { getStarredPages, setStarred, toggleStarred } from '@/lib/starred-pages'
 
 /** Window event name broadcast on every successful toggle. */
 const STARRED_PAGES_CHANGED_EVENT = 'starred-pages-changed'

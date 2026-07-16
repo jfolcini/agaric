@@ -1,9 +1,8 @@
 import { format as formatDateFns, addDays, getISOWeek } from 'date-fns'
 
 import { substituteTemplateVariables } from '@/editor/template-variables'
-
-import { logger } from './logger'
-import type { BlockRow, CreateBlockSpec } from './tauri'
+import { logger } from '@/lib/logger'
+import type { BlockRow, CreateBlockSpec } from '@/lib/tauri'
 import {
   createBlocksBatch,
   firstChildForBlocks,
@@ -11,7 +10,7 @@ import {
   loadPageSubtree,
   paginationLimit,
   queryByProperty,
-} from './tauri'
+} from '@/lib/tauri'
 
 /**
  * Load all pages marked as templates (property `template` = 'true').

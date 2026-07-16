@@ -31,14 +31,13 @@ import type React from 'react'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { DaySection } from '@/components/journal/DaySection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { STREAM_BATCH_DAYS, useStreamDates } from '@/hooks/useStreamDates'
 import type { DayEntry } from '@/lib/date-utils'
 import { formatDate, formatJournalTitle } from '@/lib/date-utils'
-
-import { DaySection } from './DaySection'
 
 interface StreamViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined

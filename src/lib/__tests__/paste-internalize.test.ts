@@ -11,9 +11,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { buildImportRefInternalizers } from '../paste-internalize'
+import { buildImportRefInternalizers } from '@/lib/paste-internalize'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockListAllPagesInSpace = vi.fn()
 const mockListAllTagsInSpace = vi.fn()
@@ -22,7 +22,7 @@ const mockCreateBlock = vi.fn()
 
 // The stores imported above pull additional names from `./tauri` at module
 // load; stub the ones they bind so the mocked module satisfies every importer.
-vi.mock('../tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   listSpaces: vi.fn(),
   listBlocks: vi.fn(),
   listBlocksLimit: vi.fn(),

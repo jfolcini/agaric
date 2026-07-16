@@ -9,13 +9,10 @@ import Text from '@tiptap/extension-text'
 import { common, createLowlight } from 'lowlight'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { BLOCK_EVENTS } from '../../lib/block-events'
-import { resetAllShortcuts, setCustomShortcut } from '../../lib/keyboard-config'
-import { logger } from '../../lib/logger'
-import { Underline } from '../extensions/underline'
-import { parse, serialize } from '../markdown-serializer'
-import { toggleCodeBlockSafely } from '../toggle-code-block-safely'
-import type { DocNode } from '../types'
+import { Underline } from '@/editor/extensions/underline'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import type { DocNode } from '@/editor/types'
 import {
   CodeBlockWithShortcut,
   CodeWithShortcut,
@@ -28,7 +25,10 @@ import {
   StrikeWithShortcut,
   shouldSplitOnBlur,
   useRovingEditor,
-} from '../use-roving-editor'
+} from '@/editor/use-roving-editor'
+import { BLOCK_EVENTS } from '@/lib/block-events'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
+import { logger } from '@/lib/logger'
 
 // #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed
@@ -50,8 +50,8 @@ vi.mock('@/lib/block-command-bus', async () => {
   }
 })
 
-vi.mock('../markdown-serializer', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../markdown-serializer')>()
+vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/editor/markdown-serializer')>()
   return {
     ...actual,
     serialize: vi.fn((...args: Parameters<typeof actual.serialize>) => actual.serialize(...args)),

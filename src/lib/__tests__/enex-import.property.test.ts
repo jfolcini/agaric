@@ -12,7 +12,7 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parseEnex } from '../enex-import'
+import { parseEnex } from '@/lib/enex-import'
 
 /** Build a well-formed ENEX document from XML-safe note fields. */
 function buildEnex(notes: { title: string; tags: string[] }[]): string {

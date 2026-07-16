@@ -11,7 +11,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ToolbarButtonConfig } from '../toolbar-config'
+import type { ToolbarButtonConfig } from '@/lib/toolbar-config'
 import {
   CODE_LANGUAGES,
   createHistoryButtons,
@@ -22,7 +22,7 @@ import {
   LANG_SHORT,
   MARK_TOGGLE_SHORTCUT_IDS,
   toolbarActiveClass,
-} from '../toolbar-config'
+} from '@/lib/toolbar-config'
 
 // #2222: `dispatchBlockEvent` no longer broadcasts a legacy document
 // CustomEvent (the broadcast had zero production listeners; the focus-keyed

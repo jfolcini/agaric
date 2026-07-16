@@ -7,7 +7,7 @@ import {
   PrimaryFocusProvider,
   usePrimaryFocusRegistry,
   useRegisterPrimaryFocus,
-} from '../usePrimaryFocus'
+} from '@/hooks/usePrimaryFocus'
 
 function Wrapper({ children }: { children: ReactNode }) {
   return createElement(PrimaryFocusProvider, null, children)

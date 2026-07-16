@@ -6,7 +6,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { scrollElementIntoView } from '../scroll-into-view'
+import { scrollElementIntoView } from '@/lib/scroll-into-view'
 
 /** Point `window.matchMedia` at a fixed reduced-motion answer. */
 function mockReducedMotion(matches: boolean): void {

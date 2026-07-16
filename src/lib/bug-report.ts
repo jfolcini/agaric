@@ -7,7 +7,7 @@
  * result to `openUrl` / clipboard / preview.
  */
 
-import type { BugReport } from './tauri'
+import type { BugReport } from '@/lib/tauri'
 
 /** Cap the URL-encoded body at this many characters. GitHub silently drops
  *  prefill bodies past ~8 KB in the wild; 7000 keeps us well below even the

@@ -12,10 +12,14 @@ import type { PluginKey } from '@tiptap/pm/state'
 import { ReactRenderer } from '@tiptap/react'
 import type { SuggestionKeyDownProps, SuggestionProps } from '@tiptap/suggestion'
 
-import { applySafePosition } from '../lib/floating-position'
-import { getShortcutKeys } from '../lib/keyboard-config'
-import { logger } from '../lib/logger'
-import { SUGGESTION_LISTBOX_ID, SuggestionList, type SuggestionListRef } from './SuggestionList'
+import {
+  SUGGESTION_LISTBOX_ID,
+  SuggestionList,
+  type SuggestionListRef,
+} from '@/editor/SuggestionList'
+import { applySafePosition } from '@/lib/floating-position'
+import { getShortcutKeys } from '@/lib/keyboard-config'
+import { logger } from '@/lib/logger'
 
 /**
  * #1102 — WCAG editable-combobox wiring.

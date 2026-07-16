@@ -10,6 +10,8 @@
 
 import { useMemo } from 'react'
 
+import { notifyUndo, warnIfBlocked } from '@/hooks/useBlockSlashCommands/helpers'
+import type { SlashCommandContext, SlashHandlerTables } from '@/hooks/useBlockSlashCommands/types'
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -21,9 +23,6 @@ import {
   setProperty,
   setTodoState as setTodoStateCmd,
 } from '@/lib/tauri'
-
-import { notifyUndo, warnIfBlocked } from './helpers'
-import type { SlashCommandContext, SlashHandlerTables } from './types'
 
 async function handleTodoState(ctx: SlashCommandContext, state: string): Promise<void> {
   try {

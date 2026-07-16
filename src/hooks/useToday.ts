@@ -17,7 +17,7 @@
 
 import { useEffect, useState } from 'react'
 
-import { getTodayString } from '../lib/date-utils'
+import { getTodayString } from '@/lib/date-utils'
 
 /** Milliseconds from `now` until the next local midnight (always > 0). */
 function msUntilNextMidnight(now: Date): number {

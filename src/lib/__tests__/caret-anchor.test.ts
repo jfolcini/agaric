@@ -9,7 +9,7 @@
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { defaultMeasureText, getCaretRect, type MeasureTextFn } from '../caret-anchor'
+import { defaultMeasureText, getCaretRect, type MeasureTextFn } from '@/lib/caret-anchor'
 
 const STYLES = [
   'box-sizing: border-box',

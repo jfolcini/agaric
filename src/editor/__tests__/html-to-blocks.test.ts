@@ -10,11 +10,15 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { parseIndentedMarkdown } from '../../lib/block-clipboard'
-import { isUsableHtml } from '../extensions/html-paste'
-import { htmlBodyToOutline, type OutlineBlock, outlineToIndentedMarkdown } from '../html-to-blocks'
-import { createInlineTurndown } from '../inline-turndown'
-import { parse } from '../markdown-serializer'
+import { isUsableHtml } from '@/editor/extensions/html-paste'
+import {
+  htmlBodyToOutline,
+  type OutlineBlock,
+  outlineToIndentedMarkdown,
+} from '@/editor/html-to-blocks'
+import { createInlineTurndown } from '@/editor/inline-turndown'
+import { parse } from '@/editor/markdown-serializer'
+import { parseIndentedMarkdown } from '@/lib/block-clipboard'
 
 /** Convert an HTML fragment to the outline blocks via the real Turndown config. */
 function convert(html: string): OutlineBlock[] {

@@ -11,7 +11,7 @@
 import { render } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { type BlockActions, BlockActionsProvider, useBlockActions } from '../useBlockActions'
+import { type BlockActions, BlockActionsProvider, useBlockActions } from '@/hooks/useBlockActions'
 
 function Probe({ onResult }: { onResult: (actions: BlockActions) => void }) {
   const actions = useBlockActions()

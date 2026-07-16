@@ -10,8 +10,8 @@
  *
  * This file is the public-API barrel for the split implementation.
  * Every existing
- * `import { ... } from './markdown-serializer'` continues to resolve here.
+ * `import { ... } from '@/editor/markdown-serializer'` continues to resolve here.
  */
-export * from './markdown-common'
-export * from './markdown-parse'
-export * from './markdown-serialize'
+export * from '@/editor/markdown-common'
+export * from '@/editor/markdown-parse'
+export * from '@/editor/markdown-serialize'

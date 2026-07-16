@@ -9,6 +9,12 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  QUERY_SPEC_KEY,
+  QUERY_VIEW_MARKER,
+  SavedViews,
+  VIEW_TYPE_KEY,
+} from '@/components/AdvancedQuery/SavedViews'
 import { t } from '@/lib/i18n'
 import type { BlockRow } from '@/lib/tauri'
 import {
@@ -16,8 +22,6 @@ import {
   selectAdvancedQueryControlsForSpace,
   useAdvancedQueryStore,
 } from '@/stores/advancedQuery'
-
-import { QUERY_SPEC_KEY, QUERY_VIEW_MARKER, SavedViews, VIEW_TYPE_KEY } from '../SavedViews'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastSuccess = vi.mocked(toast.success)

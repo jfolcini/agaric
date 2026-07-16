@@ -35,12 +35,11 @@
 
 import { create } from 'zustand'
 
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { t } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import type { OpRef, UndoResult } from '../lib/tauri'
-import { redoPageOp, undoOp, undoOps, undoPageGroup } from '../lib/tauri'
+import type { OpRef, UndoResult } from '@/lib/tauri'
+import { redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
 
 export type { OpRef, UndoResult }
 

@@ -9,8 +9,15 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '../markdown-serializer'
-import type { CodeBlockNode, DocNode, InlineNode, ParagraphNode, PMMark, TextNode } from '../types'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type {
+  CodeBlockNode,
+  DocNode,
+  InlineNode,
+  ParagraphNode,
+  PMMark,
+  TextNode,
+} from '@/editor/types'
 
 // -- Configuration ------------------------------------------------------------
 

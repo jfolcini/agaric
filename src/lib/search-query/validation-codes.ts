@@ -17,7 +17,7 @@
  * pair of string-pinning tests.
  */
 
-import type { ValidationCode as GeneratedValidationCode } from '../bindings'
+import type { ValidationCode as GeneratedValidationCode } from '@/lib/bindings'
 
 /** The specta-generated string-literal union (see `bindings.ts`). */
 export type ValidationCode = GeneratedValidationCode

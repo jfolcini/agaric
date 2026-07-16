@@ -19,16 +19,16 @@
  * has no pin concept (deferred to Phase 4).
  */
 
-import { activeSpaceKey } from './active-space'
+import { activeSpaceKey } from '@/lib/active-space'
 import {
   PREFERENCES,
   type PreferenceDefinition,
   readPreference,
   type RecentCommand,
   writePreference,
-} from './preferences'
+} from '@/lib/preferences'
 
-export type { RecentCommand } from './preferences'
+export type { RecentCommand } from '@/lib/preferences'
 
 const SPACE_KEY_PREFIX = 'recent_commands'
 const MAX_RECENT_COMMANDS = 5

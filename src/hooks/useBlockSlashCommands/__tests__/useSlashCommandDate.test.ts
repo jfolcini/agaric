@@ -7,11 +7,11 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
-import { useSlashCommandDate } from '../useSlashCommandDate'
-import { makeSyntheticCtx } from './test-utils'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandDate } from '@/hooks/useBlockSlashCommands/useSlashCommandDate'
 
-vi.mock('../../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
 

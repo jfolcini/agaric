@@ -18,9 +18,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchPropertyFilterForm } from '@/components/search/filter-forms/SearchPropertyFilterForm'
 import { t } from '@/lib/i18n'
-
-import { SearchPropertyFilterForm } from '../filter-forms/SearchPropertyFilterForm'
 
 function setup(): { onAddFilter: ReturnType<typeof vi.fn>; container: HTMLElement } {
   const onAddFilter = vi.fn()

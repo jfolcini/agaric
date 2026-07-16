@@ -28,7 +28,7 @@ import {
   scanItalic,
   scanStrike,
   scanTokenRef,
-} from '../markdown-serializer'
+} from '@/editor/markdown-serializer'
 
 // -- Block production helpers ------------------------------------------------
 

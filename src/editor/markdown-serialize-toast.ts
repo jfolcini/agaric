@@ -13,10 +13,9 @@
  * the call site now.
  */
 
+import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { t } from '../lib/i18n'
-import { logger } from '../lib/logger'
 
 /**
  * Module-scoped set of node types we've already toasted about this session.

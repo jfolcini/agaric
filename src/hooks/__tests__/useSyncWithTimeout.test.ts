@@ -11,12 +11,12 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   cancelSync: vi.fn(),
 }))
 
-import { cancelSync } from '../../lib/tauri'
-import { useSyncWithTimeout } from '../useSyncWithTimeout'
+import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
+import { cancelSync } from '@/lib/tauri'
 
 const mockCancelSync = vi.mocked(cancelSync)
 

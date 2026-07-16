@@ -99,6 +99,22 @@
   },
   "overrides": [
     {
+      "files": ["src/**/*.ts", "src/**/*.tsx"],
+      "rules": {
+        "eslint/no-restricted-imports": [
+          "error",
+          {
+            "patterns": [
+              {
+                "regex": "^\\.\\.?/",
+                "message": "Use the @/ alias for intra-src imports (#2699)."
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
       "files": ["src/main.tsx", "*.config.ts"],
       "rules": {
         "import/no-default-export": "off"

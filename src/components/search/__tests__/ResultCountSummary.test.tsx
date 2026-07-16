@@ -12,9 +12,8 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { ResultCountSummary } from '@/components/search/ResultCountSummary'
 import { t } from '@/lib/i18n'
-
-import { ResultCountSummary } from '../ResultCountSummary'
 
 describe('ResultCountSummary', () => {
   it('renders nothing for 0 matches', () => {

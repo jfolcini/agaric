@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { tokenize } from '../tokenize'
+import { tokenize } from '@/lib/search-query/tokenize'
 
 describe('tokenize', () => {
   it('returns no tokens for empty input', () => {

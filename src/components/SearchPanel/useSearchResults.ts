@@ -22,6 +22,10 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { groupResultsByPage, type SearchResultGroup } from '@/components/search/SearchResultGroups'
+import type { SearchToggleState } from '@/components/search/SearchToggleRow'
+import { astFilterParams } from '@/components/SearchPanel/searchFilterParams'
+import { useTagResolution } from '@/components/SearchPanel/useTagResolution'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { isAppError, isCancellation, type TypedAppError, validationCode } from '@/lib/app-error'
@@ -42,11 +46,6 @@ import {
   useRecentPagesStore,
 } from '@/stores/recent-pages'
 import { useTabsStore } from '@/stores/tabs'
-
-import { groupResultsByPage, type SearchResultGroup } from '../search/SearchResultGroups'
-import type { SearchToggleState } from '../search/SearchToggleRow'
-import { astFilterParams } from './searchFilterParams'
-import { useTagResolution } from './useTagResolution'
 
 /**
  * The accumulated-results ceiling, matching the retired `usePaginatedQuery`'s

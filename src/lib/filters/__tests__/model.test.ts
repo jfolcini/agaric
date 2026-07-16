@@ -11,9 +11,12 @@
 
 import { describe, expect, it } from 'vitest'
 
+import {
+  canonicalToGraphFilters,
+  type FilterPredicate,
+  graphFiltersToCanonical,
+} from '@/lib/filters/model'
 import type { GraphFilter } from '@/lib/graph-filters'
-
-import { canonicalToGraphFilters, type FilterPredicate, graphFiltersToCanonical } from '../model'
 
 // ---------------------------------------------------------------------------
 // Graph surface — lossless ROUND TRIP (the sole live consumer surface).

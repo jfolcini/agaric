@@ -18,16 +18,12 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '../../stores/page-blocks'
-import { useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useUndoStore } from '../../stores/undo'
-import { useBlockTags } from '../useBlockTags'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockTags } from '@/hooks/useBlockTags'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)

@@ -11,7 +11,7 @@
  *
  * This file is now the public-API barrel for that directory. The public
  * surface is unchanged — every existing
- * `import { parse, parseCodeBlock, scanBold, ... } from './markdown-parse'`
+ * `import { parse, parseCodeBlock, scanBold, ... } from '@/editor/markdown-parse'`
  * (and via the `markdown-serializer.ts` barrel above it) continues to resolve
  * unchanged.
  *
@@ -42,5 +42,5 @@ export {
   scanStrike,
   scanTokenRef,
   scanUnderline,
-} from './markdown-parse/parser'
-export { createInlineState, type InlineState } from './markdown-parse/vocab'
+} from '@/editor/markdown-parse/parser'
+export { createInlineState, type InlineState } from '@/editor/markdown-parse/vocab'

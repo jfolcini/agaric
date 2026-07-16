@@ -13,9 +13,9 @@
 
 import { create } from 'zustand'
 
-import type { FlatBlock } from '../lib/tree-utils'
-import { useNavigationStore } from './navigation'
-import { selectPageStack, useTabsStore } from './tabs'
+import type { FlatBlock } from '@/lib/tree-utils'
+import { useNavigationStore } from '@/stores/navigation'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 export type { FlatBlock }
 

@@ -42,9 +42,8 @@
  * `javascript:`/`data:` image src is dropped rather than emitted.
  */
 
+import { isValidHttpUrl } from '@/editor/extensions/external-link'
 import { INDENT_UNIT, OUTLINE_NEWLINE_SENTINEL } from '@/lib/block-clipboard'
-
-import { isValidHttpUrl } from './extensions/external-link'
 
 /**
  * Converts one element's INLINE content to single-line Agaric markdown

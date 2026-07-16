@@ -10,7 +10,7 @@ import { act, renderHook } from '@testing-library/react'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useHistoryKeyboardNav } from '../useHistoryKeyboardNav'
+import { useHistoryKeyboardNav } from '@/hooks/useHistoryKeyboardNav'
 
 interface HookOpts {
   itemCount: number

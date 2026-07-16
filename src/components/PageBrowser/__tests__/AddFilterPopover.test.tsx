@@ -21,6 +21,7 @@ import {
   HasParentMatchingEditor,
   type HasParentMatchingEditorProps,
 } from '@/components/AdvancedQuery/HasParentMatchingEditor'
+import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import {
   __resetPriorityLevelsForTests,
   DEFAULT_PRIORITY_LEVELS,
@@ -29,8 +30,6 @@ import {
 import type { FilterPrimitive } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-import { AddFilterPopover } from '../AddFilterPopover'
 
 const mockedInvoke = vi.mocked(invoke)
 

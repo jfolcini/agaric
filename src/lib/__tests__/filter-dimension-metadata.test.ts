@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import type { AgendaFilterDimension } from '../filter-dimension-metadata'
+import type { AgendaFilterDimension } from '@/lib/filter-dimension-metadata'
 import {
   ALL_DIMENSIONS,
   DIMENSION_OPTIONS,
@@ -8,8 +8,8 @@ import {
   getPriorityChoices,
   getTaskStates,
   TASK_STATES,
-} from '../filter-dimension-metadata'
-import { __resetPriorityLevelsForTests, setPriorityLevels } from '../priority-levels'
+} from '@/lib/filter-dimension-metadata'
+import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 
 beforeEach(() => {
   __resetPriorityLevelsForTests()

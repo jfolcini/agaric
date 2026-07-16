@@ -23,21 +23,6 @@
 import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '../markdown-serializer'
-import type {
-  BlockLevelNode,
-  BlockquoteNode,
-  CodeBlockNode,
-  DocNode,
-  HeadingNode,
-  InlineNode,
-  ListItemNode,
-  MathBlockNode,
-  ParagraphNode,
-  PMMark,
-  TableNode,
-  TodoState,
-} from '../types'
 import {
   blockRef,
   blockquote,
@@ -55,7 +40,22 @@ import {
   tableRow,
   task,
   text,
-} from './builders'
+} from '@/editor/__tests__/builders'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type {
+  BlockLevelNode,
+  BlockquoteNode,
+  CodeBlockNode,
+  DocNode,
+  HeadingNode,
+  InlineNode,
+  ListItemNode,
+  MathBlockNode,
+  ParagraphNode,
+  PMMark,
+  TableNode,
+  TodoState,
+} from '@/editor/types'
 
 // -- Configuration ------------------------------------------------------------
 

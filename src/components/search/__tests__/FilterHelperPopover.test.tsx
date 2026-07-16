@@ -17,13 +17,15 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import {
+  FilterHelperPopover,
+  type FilterHelperPopoverProps,
+} from '@/components/search/FilterHelperPopover'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { type FilterToken, parse, serialize, tokenSource } from '@/lib/search-query'
 import type { TagCacheRow } from '@/lib/tauri'
 import { listTagsByPrefix } from '@/lib/tauri'
-
-import { FilterHelperPopover, type FilterHelperPopoverProps } from '../FilterHelperPopover'
 
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/tauri')>()

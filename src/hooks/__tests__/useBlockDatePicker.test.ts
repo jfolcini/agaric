@@ -6,18 +6,14 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import { announce } from '../../lib/announcer'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '../../stores/page-blocks'
-import { useSpaceStore } from '../../stores/space'
-import { useUndoStore } from '../../stores/undo'
-import { useBlockDatePicker } from '../useBlockDatePicker'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockDatePicker } from '@/hooks/useBlockDatePicker'
+import { announce } from '@/lib/announcer'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useSpaceStore } from '@/stores/space'
+import { useUndoStore } from '@/stores/undo'
 
-vi.mock('../../lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -6,14 +6,10 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '../../stores/page-blocks'
-import { useUndoStore } from '../../stores/undo'
-import { useBlockMultiSelect } from '../useBlockMultiSelect'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 

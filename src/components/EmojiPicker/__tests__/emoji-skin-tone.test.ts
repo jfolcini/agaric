@@ -5,7 +5,7 @@ import {
   computeTonableBases,
   SKIN_TONES,
   supportsSkinTone,
-} from '../emoji-skin-tone'
+} from '@/components/EmojiPicker/emoji-skin-tone'
 
 // #2671 — `supportsSkinTone`/`applySkinTone` no longer read a module-scope
 // constant built from a statically-imported dataset; the tonable-base set is

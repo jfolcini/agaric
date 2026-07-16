@@ -9,14 +9,14 @@ import { renderHook } from '@testing-library/react'
 import type { TFunction } from 'i18next'
 import { describe, expect, it, vi } from 'vitest'
 
-import { useSlashCommandTemplate } from '../useSlashCommandTemplate'
-import { makeSyntheticCtx } from './test-utils'
+import { makeSyntheticCtx } from '@/hooks/useBlockSlashCommands/__tests__/test-utils'
+import { useSlashCommandTemplate } from '@/hooks/useBlockSlashCommands/useSlashCommandTemplate'
 
-vi.mock('../../../lib/announcer', () => ({ announce: vi.fn() }))
-vi.mock('../../../lib/logger', () => ({
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }))
-vi.mock('../../../lib/template-utils', () => ({
+vi.mock('@/lib/template-utils', () => ({
   insertTemplateBlocks: vi.fn(async () => ['NEW_1']),
   loadTemplatePagesWithPreview: vi.fn(async () => []),
 }))

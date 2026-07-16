@@ -3,7 +3,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { format } from 'date-fns'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useJournalAutoCreate } from '../useJournalAutoCreate'
+import { useJournalAutoCreate } from '@/hooks/useJournalAutoCreate'
 
 const mockedInvoke = vi.mocked(invoke)
 

@@ -15,7 +15,7 @@ import * as React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { SectionTitle } from '../section-title'
+import { SectionTitle } from '@/components/ui/section-title'
 
 describe('SectionTitle', () => {
   it('renders label text', () => {

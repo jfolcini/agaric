@@ -7,8 +7,6 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { GraphEdge, GraphNode } from '@/lib/graph-types'
-
 import {
   createZoomKeyHandler,
   packPositions,
@@ -16,8 +14,9 @@ import {
   unpackPositions,
   ZOOM_STEP,
   zoomIdentity,
-} from '../graph-sim-helpers'
-import { resetAllShortcuts } from '../keyboard-config'
+} from '@/lib/graph-sim-helpers'
+import type { GraphEdge, GraphNode } from '@/lib/graph-types'
+import { resetAllShortcuts } from '@/lib/keyboard-config'
 
 function makeSvg(): SVGSVGElement {
   return document.createElementNS('http://www.w3.org/2000/svg', 'svg') as SVGSVGElement

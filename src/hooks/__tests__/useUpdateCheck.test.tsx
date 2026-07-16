@@ -16,13 +16,12 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { flushAllDrafts } from '@/lib/tauri'
-
 import {
   checkForUpdatesNow,
   LAST_UPDATE_CHECK_STORAGE_KEY,
   useUpdateCheck,
-} from '../useUpdateCheck'
+} from '@/hooks/useUpdateCheck'
+import { flushAllDrafts } from '@/lib/tauri'
 
 // ── Module mocks ────────────────────────────────────────────────────
 // These need to be hoisted, hence the `vi.mock` + module-scope captured

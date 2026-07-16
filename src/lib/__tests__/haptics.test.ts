@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { haptic } from '../haptics'
+import { haptic } from '@/lib/haptics'
 
 describe('haptic', () => {
   afterEach(() => {

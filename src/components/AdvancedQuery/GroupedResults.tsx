@@ -10,10 +10,9 @@
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { AggregateSummary } from '@/components/AdvancedQuery/AggregateSummary'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import type { BlockRow, GroupSpec, QueryGroup } from '@/lib/tauri'
-
-import { AggregateSummary } from './AggregateSummary'
 
 export interface GroupedResultsProps {
   /** The group buckets to render. */

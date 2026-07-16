@@ -20,7 +20,7 @@ import { Extension } from '@tiptap/core'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 import { Decoration, DecorationSet } from '@tiptap/pm/view'
 
-import { computeQueryHint, type QueryHint as QueryHintData } from '../query-hint'
+import { computeQueryHint, type QueryHint as QueryHintData } from '@/editor/query-hint'
 
 export const queryHintPluginKey = new PluginKey<QueryHintState>('queryHint')
 

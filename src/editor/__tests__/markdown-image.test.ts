@@ -9,9 +9,9 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '../markdown-parse'
-import { serialize } from '../markdown-serialize'
-import type { DocNode, ImageNode, ParagraphNode } from '../types'
+import { parse } from '@/editor/markdown-parse'
+import { serialize } from '@/editor/markdown-serialize'
+import type { DocNode, ImageNode, ParagraphNode } from '@/editor/types'
 
 /** Inline content nodes of the first paragraph of a parsed doc. */
 function firstParaContent(md: string) {

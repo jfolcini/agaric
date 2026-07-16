@@ -10,8 +10,8 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SHOW_SHORTCUTS_EVENT } from '../overlay-events'
-import { getPaletteCommand, PALETTE_COMMANDS } from '../palette-commands'
+import { SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
+import { getPaletteCommand, PALETTE_COMMANDS } from '@/lib/palette-commands'
 
 describe('PALETTE_COMMANDS — keyboard-shortcuts entry (#922)', () => {
   const listener = vi.fn()

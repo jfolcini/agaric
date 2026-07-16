@@ -9,6 +9,10 @@
 import { ArrowDown, ArrowUp, Lock, Pencil, Plus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
+import type {
+  SelectEditorState,
+  SelectOptionsEditorState,
+} from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -22,8 +26,6 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-
-import type { SelectEditorState, SelectOptionsEditorState } from './usePropertyRowEditor'
 
 export interface SelectEditorProps {
   state: SelectEditorState

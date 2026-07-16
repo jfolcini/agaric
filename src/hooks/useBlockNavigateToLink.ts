@@ -15,13 +15,12 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { NavigateToPageFn } from '@/lib/block-events'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import type { RovingEditorHandle } from '../editor/use-roving-editor'
-import type { NavigateToPageFn } from '../lib/block-events'
-import { logger } from '../lib/logger'
-import { getBlock } from '../lib/tauri'
-import { useResolveStore } from '../stores/resolve'
+import { getBlock } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
 
 type TFn = TFunction
 

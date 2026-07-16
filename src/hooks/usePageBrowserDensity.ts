@@ -15,7 +15,7 @@
 
 import { useCallback } from 'react'
 
-import { type DensityMode, PREFERENCES, usePreference } from '../lib/preferences'
+import { type DensityMode, PREFERENCES, usePreference } from '@/lib/preferences'
 
 // `DensityMode` is defined in the preferences registry (it annotates
 // `PREFERENCES.density`) and re-exported here so this hook's public API is

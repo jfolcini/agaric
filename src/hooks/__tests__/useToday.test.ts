@@ -19,7 +19,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useToday } from '../useToday'
+import { useToday } from '@/hooks/useToday'
 
 describe('useToday', () => {
   let visibility: DocumentVisibilityState = 'visible'

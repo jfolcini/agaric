@@ -16,13 +16,14 @@
 import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { dispatchQuery, fetchRichInlineQuery } from '@/hooks/useQueryExecution'
 import {
   resolveLegacyQueryToFilterExpr,
   type InlineQueryResolveDeps,
-} from '../../lib/inline-query-resolve'
-import { parseQueryExpression } from '../../lib/query-utils'
-import { listTagsByPrefix } from '../../lib/tauri'
-import { dispatch } from '../../lib/tauri-mock/handlers'
+} from '@/lib/inline-query-resolve'
+import { parseQueryExpression } from '@/lib/query-utils'
+import { listTagsByPrefix } from '@/lib/tauri'
+import { dispatch } from '@/lib/tauri-mock/handlers'
 import {
   blockTagRefs,
   blockTags,
@@ -32,8 +33,7 @@ import {
   properties,
   propertyDefs,
   seedBlocks,
-} from '../../lib/tauri-mock/seed'
-import { dispatchQuery, fetchRichInlineQuery } from '../useQueryExecution'
+} from '@/lib/tauri-mock/seed'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 

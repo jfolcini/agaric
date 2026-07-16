@@ -69,7 +69,7 @@
 
 import { useCallback, useMemo, useSyncExternalStore } from 'react'
 
-import type { ViewportObserver } from './useViewportObserver'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
 
 /**
  * Returns the subset of `blocks` whose rows are currently within the rendered

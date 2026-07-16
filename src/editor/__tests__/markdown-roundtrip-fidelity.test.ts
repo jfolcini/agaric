@@ -15,7 +15,6 @@
  */
 import { describe, expect, it } from 'vitest'
 
-import { parse, serialize } from '../markdown-serializer'
 import {
   blockRef,
   bold,
@@ -34,7 +33,8 @@ import {
   tableRow,
   task,
   text,
-} from './builders'
+} from '@/editor/__tests__/builders'
+import { parse, serialize } from '@/editor/markdown-serializer'
 
 const ULID = '01HZ00000000000000000BLOCK'
 

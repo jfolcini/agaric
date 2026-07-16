@@ -16,8 +16,8 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: vi.fn(async (): Promise<() => void> => () => {}),
 }))
 
-import { i18n } from '../i18n'
-import { _resetPropertyKeysCacheForTest } from '../property-keys-cache'
+import { i18n } from '@/lib/i18n'
+import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
 import {
   REPEAT_COMMANDS,
   SLASH_COMMANDS,
@@ -25,7 +25,7 @@ import {
   TURN_INTO_OPTIONS,
   searchPropertyKeys,
   searchSlashCommands,
-} from '../slash-commands'
+} from '@/lib/slash-commands'
 
 const mockedInvoke = vi.mocked(invoke)
 

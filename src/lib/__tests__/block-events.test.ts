@@ -12,7 +12,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { BLOCK_EVENTS } from '../block-events'
+import { BLOCK_EVENTS } from '@/lib/block-events'
 
 describe('BLOCK_EVENTS', () => {
   it('contains all 17 expected event keys', () => {

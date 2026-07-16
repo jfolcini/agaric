@@ -27,10 +27,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { groupResultsByPage, SearchResultGroups } from '@/components/search/SearchResultGroups'
 import type { SearchBlockRow } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-
-import { groupResultsByPage, SearchResultGroups } from '../SearchResultGroups'
 
 // ── Configurable virtualizer mock ───────────────────────────────────────
 // `windowSize === null` → yield every row (default). A number → yield only

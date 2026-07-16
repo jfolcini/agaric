@@ -17,7 +17,7 @@ import * as React from 'react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { ScrollArea, ScrollBar } from '../scroll-area'
+import { ScrollArea, ScrollBar } from '@/components/ui/scroll-area'
 
 /** Helper: querySelector that throws on null. */
 function q(container: HTMLElement, selector: string): Element {

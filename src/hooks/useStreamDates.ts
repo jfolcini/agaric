@@ -26,12 +26,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { formatDate, MIN_JOURNAL_DATE } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import { formatDate, MIN_JOURNAL_DATE } from '../lib/date-utils'
-import { listJournalPagesInRange } from '../lib/tauri'
-import { useSpaceStore } from '../stores/space'
+import { listJournalPagesInRange } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 /** Number of days revealed per `loadOlder()` call (one "batch"). */
 export const STREAM_BATCH_DAYS = 14

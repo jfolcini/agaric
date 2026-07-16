@@ -20,7 +20,7 @@
 
 import { useCallback, useEffect, useSyncExternalStore } from 'react'
 
-import { logger } from '../lib/logger'
+import { logger } from '@/lib/logger'
 
 const SOURCE = 'useEmojiRecents'
 

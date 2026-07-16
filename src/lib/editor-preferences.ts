@@ -6,7 +6,7 @@
  * change takes effect on the next keystroke, no editor remount needed.
  */
 
-import { PREFERENCES, readPreference } from './preferences'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 
 /** Inline `:` emoji picker enable/disable (#130). Default: enabled. */
 export const EMOJI_PICKER_ENABLED_KEY = PREFERENCES.emojiPickerEnabled.key

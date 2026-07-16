@@ -57,10 +57,10 @@ import {
 } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 
-import type { PickerItem } from '../editor/SuggestionList'
-import { matchesSearchFolded } from './fold-for-search'
-import { getPropertyKeys } from './property-keys-cache'
-import { getRecentCommands, RECENT_SLASH_PREFIX } from './recent-commands'
+import type { PickerItem } from '@/editor/SuggestionList'
+import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { getPropertyKeys } from '@/lib/property-keys-cache'
+import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 
 /**
  * #1105 — synthetic category for the "Recent" band the slash menu prepends

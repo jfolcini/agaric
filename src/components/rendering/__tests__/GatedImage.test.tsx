@@ -13,12 +13,11 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { GatedImage } from '@/components/rendering/GatedImage'
 import {
   EXTERNAL_IMAGE_ALLOWLIST_KEY,
   EXTERNAL_IMAGE_POLICY_KEY,
 } from '@/lib/external-image-policy'
-
-import { GatedImage } from '../GatedImage'
 
 // #1434 — resolving an `attachment:<id>` ref reads the bytes over IPC.
 const mockReadAttachment = vi.fn()

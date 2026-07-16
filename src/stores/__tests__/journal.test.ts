@@ -13,7 +13,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { parseISODate, useJournalStore } from '../journal'
+import { parseISODate, useJournalStore } from '@/stores/journal'
 
 beforeEach(() => {
   useJournalStore.setState({

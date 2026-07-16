@@ -19,14 +19,10 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
-import { BatchAttachmentsProvider } from '../../hooks/useBatchAttachments'
-import {
-  createPageBlockStore,
-  PageBlockContext,
-  type PageBlockState,
-} from '../../stores/page-blocks'
-import { useUndoStore } from '../../stores/undo'
-import { useBlockAttachments } from '../useBlockAttachments'
+import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
+import { useBlockAttachments } from '@/hooks/useBlockAttachments'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)

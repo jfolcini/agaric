@@ -16,10 +16,9 @@ import type React from 'react'
 import { useImperativeHandle, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 import { useStateFilterOptions } from '@/components/filters/forms/stateVocabulary'
-
-import type { FilterFormHandle } from './types'
 
 export interface BacklinkStateFilterFormProps {
   ref?: React.Ref<FilterFormHandle>

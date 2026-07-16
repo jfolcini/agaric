@@ -24,8 +24,8 @@
 import TurndownService from 'turndown'
 import { strikethrough } from 'turndown-plugin-gfm'
 
-import { isValidHttpUrl } from './extensions/external-link'
-import type { InlineToMarkdown } from './html-to-blocks'
+import { isValidHttpUrl } from '@/editor/extensions/external-link'
+import type { InlineToMarkdown } from '@/editor/html-to-blocks'
 
 /**
  * Build a Turndown service pinned to Agaric's markdown subset, with the paste

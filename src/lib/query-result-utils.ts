@@ -1,5 +1,5 @@
-import type { BlockRow } from './tauri'
-import { truncateContent } from './text-utils'
+import type { BlockRow } from '@/lib/tauri'
+import { truncateContent } from '@/lib/text-utils'
 
 /** Detects the `[[ULID...]]` cache-miss fallback emitted by useBlockResolve. */
 const CACHE_MISS_FALLBACK_PATTERN = /^\[\[[0-9A-Z]{1,12}\.{3}\]\]$/

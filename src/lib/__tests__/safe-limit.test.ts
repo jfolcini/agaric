@@ -19,7 +19,7 @@ import {
   partitionedSearchLimit,
   safeLimit,
   safeLimitZero,
-} from '../safe-limit'
+} from '@/lib/safe-limit'
 
 describe('safeLimit', () => {
   it('returns the value unchanged when in range', () => {

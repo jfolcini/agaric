@@ -14,14 +14,13 @@ import { FileText, Hash, Tag } from 'lucide-react'
 import { matchSorter } from 'match-sorter'
 import { useCallback, useEffect, useRef } from 'react'
 
+import type { PickerItem } from '@/editor/SuggestionList'
 import { PAGINATION_LIMIT } from '@/lib/constants'
+import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
+import { t as translate } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-
-import type { PickerItem } from '../editor/SuggestionList'
-import { foldForSearch, matchesSearchFolded } from '../lib/fold-for-search'
-import { t as translate } from '../lib/i18n'
-import { logger } from '../lib/logger'
-import { getPageDisplayName } from '../lib/page-display'
+import { getPageDisplayName } from '@/lib/page-display'
 import {
   createBlock,
   createPageInSpace,
@@ -30,9 +29,9 @@ import {
   listPageAliasesByPrefix,
   searchBlocks,
   searchBlocksLimit,
-} from '../lib/tauri'
-import { keyFor, useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
+} from '@/lib/tauri'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 function logSlowQuery(fn: string, query: string, t0: number, count: number): void {
   const durationMs = Math.round(performance.now() - t0)

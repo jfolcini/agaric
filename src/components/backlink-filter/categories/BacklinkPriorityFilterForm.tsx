@@ -15,10 +15,9 @@ import type React from 'react'
 import { useImperativeHandle, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import type { FilterFormHandle } from '@/components/backlink-filter/categories/types'
 import { FilterValueSelect } from '@/components/filters/forms/FilterValueSelect'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-
-import type { FilterFormHandle } from './types'
 
 export interface BacklinkPriorityFilterFormProps {
   ref?: React.Ref<FilterFormHandle>

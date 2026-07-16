@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchSheet } from '@/components/mobile/SearchSheet'
 import { getPinnedSearchScope, setPinnedSearchScope } from '@/lib/pinned-search-scope'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
@@ -10,8 +11,6 @@ import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
-
-import { SearchSheet } from '../SearchSheet'
 
 // Shared host element for the in-page segment tests. The find-in-page
 // matcher only runs when `useInPageFindStore.container` is non-null —

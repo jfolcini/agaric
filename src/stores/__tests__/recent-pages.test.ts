@@ -7,8 +7,8 @@ import {
   reconcileRecentPagesOnSpaceChange,
   selectRecentPagesForSpace,
   useRecentPagesStore,
-} from '../recent-pages'
-import { useSpaceStore } from '../space'
+} from '@/stores/recent-pages'
+import { useSpaceStore } from '@/stores/space'
 
 const STORAGE_KEY = 'agaric:recent-pages'
 

@@ -9,9 +9,9 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { makeBlock } from '../../__tests__/fixtures'
-import type { BlockRow } from '../../lib/tauri'
-import { useTrashFilter } from '../useTrashFilter'
+import { makeBlock } from '@/__tests__/fixtures'
+import { useTrashFilter } from '@/hooks/useTrashFilter'
+import type { BlockRow } from '@/lib/tauri'
 
 beforeEach(() => {
   vi.useFakeTimers()

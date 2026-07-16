@@ -15,20 +15,20 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { formatDate } from '../../lib/date-utils'
+import { formatDate } from '@/lib/date-utils'
 
 const listJournalPagesInRange = vi.hoisted(() => vi.fn())
-vi.mock('../../lib/tauri', () => ({ listJournalPagesInRange }))
+vi.mock('@/lib/tauri', () => ({ listJournalPagesInRange }))
 
 // Mutable active-space id so a single test can exercise the b1
 // no-active-space short-circuit by flipping it to `null`.
 const spaceRef = vi.hoisted(() => ({ current: 'space-1' as string | null }))
-vi.mock('../../stores/space', () => ({
+vi.mock('@/stores/space', () => ({
   useSpaceStore: (selector: (s: { currentSpaceId: string | null }) => unknown) =>
     selector({ currentSpaceId: spaceRef.current }),
 }))
 
-import { STREAM_BATCH_DAYS, STREAM_INITIAL_DAYS, useStreamDates } from '../useStreamDates'
+import { STREAM_BATCH_DAYS, STREAM_INITIAL_DAYS, useStreamDates } from '@/hooks/useStreamDates'
 
 const TODAY = new Date(2026, 5, 20) // Sat, Jun 20, 2026
 

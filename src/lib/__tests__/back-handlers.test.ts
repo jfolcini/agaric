@@ -16,9 +16,9 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useNavigationStore } from '../../stores/navigation'
-import { resetTabIdCounter, useTabsStore } from '../../stores/tabs'
-import { navigationBackHandler, overlayBackHandler } from '../back-handlers'
+import { navigationBackHandler, overlayBackHandler } from '@/lib/back-handlers'
+import { useNavigationStore } from '@/stores/navigation'
+import { resetTabIdCounter, useTabsStore } from '@/stores/tabs'
 
 function resetStores() {
   resetTabIdCounter()

@@ -16,10 +16,9 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
+import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 
-import { useGraphSimulation } from '../useGraphSimulation'
-
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

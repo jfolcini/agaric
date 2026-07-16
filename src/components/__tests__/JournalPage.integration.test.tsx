@@ -29,14 +29,14 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { emptyPage, makeBlock } from '../../__tests__/fixtures'
+import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 
 // ── BlockTree-internal mocks ────────────────────────────────────────
 // These mirror `BlockTree.test.tsx` and stub the editor + DnD layers
 // without touching BlockTree itself, so the `autoCreateFirstBlock`
 // effect still runs end-to-end. We do NOT mock `../BlockTree`.
 
-vi.mock('../../editor/use-roving-editor', () => ({
+vi.mock('@/editor/use-roving-editor', () => ({
   useRovingEditor: () => ({
     editor: null,
     mount: vi.fn(),
@@ -45,11 +45,11 @@ vi.mock('../../editor/use-roving-editor', () => ({
   }),
 }))
 
-vi.mock('../../editor/use-block-keyboard', () => ({
+vi.mock('@/editor/use-block-keyboard', () => ({
   useBlockKeyboard: () => {},
 }))
 
-vi.mock('../../hooks/useViewportObserver', () => ({
+vi.mock('@/hooks/useViewportObserver', () => ({
   useViewportObserver: () => ({
     isOffscreen: () => false,
     createObserveRef: () => vi.fn(),
@@ -103,11 +103,11 @@ vi.mock('@/components/backlinks/LinkedReferences', () => ({
   LinkedReferences: () => <div data-testid="linked-references" />,
 }))
 
-import { __resetCalendarPageDatesForTests } from '../../hooks/useCalendarPageDates'
-import { useBlockStore } from '../../stores/blocks'
-import { useJournalStore } from '../../stores/journal'
-import { useSpaceStore } from '../../stores/space'
-import { JournalControls, JournalPage } from '../JournalPage'
+import { JournalControls, JournalPage } from '@/components/JournalPage'
+import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import { useBlockStore } from '@/stores/blocks'
+import { useJournalStore } from '@/stores/journal'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 

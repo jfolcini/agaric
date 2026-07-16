@@ -8,9 +8,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { mergeAndRankGroups } from '@/components/palette/ranking'
 import type { SearchBlockRow } from '@/lib/tauri'
-
-import { mergeAndRankGroups } from './ranking'
 
 function pageRow(id: string, content: string): SearchBlockRow {
   return {

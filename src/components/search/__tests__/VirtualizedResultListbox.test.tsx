@@ -14,9 +14,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
+import { VirtualizedResultListbox } from '@/components/search/VirtualizedResultListbox'
 import type { SearchBlockRow } from '@/lib/bindings'
-
-import { VirtualizedResultListbox } from '../VirtualizedResultListbox'
 
 // Deterministic virtualizer: yields every row (jsdom has no layout, so the
 // real windowing math would mount nothing). The shared mock's default mode

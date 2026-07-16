@@ -5,13 +5,13 @@ import Text from '@tiptap/extension-text'
 import type { NodeType, Node as PmNode } from '@tiptap/pm/model'
 import { describe, expect, it, vi } from 'vitest'
 
-import { AtTagPicker } from '../extensions/at-tag-picker'
-import { BlockLink } from '../extensions/block-link'
-import { BlockLinkPicker } from '../extensions/block-link-picker'
-import { BlockRef } from '../extensions/block-ref'
-import { ExternalLink } from '../extensions/external-link'
-import { SlashCommand } from '../extensions/slash-command'
-import { TagRef } from '../extensions/tag-ref'
+import { AtTagPicker } from '@/editor/extensions/at-tag-picker'
+import { BlockLink } from '@/editor/extensions/block-link'
+import { BlockLinkPicker } from '@/editor/extensions/block-link-picker'
+import { BlockRef } from '@/editor/extensions/block-ref'
+import { ExternalLink } from '@/editor/extensions/external-link'
+import { SlashCommand } from '@/editor/extensions/slash-command'
+import { TagRef } from '@/editor/extensions/tag-ref'
 
 // Build a ProseMirror schema from our extensions to inspect their specs.
 const schema = getSchema([

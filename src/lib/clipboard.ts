@@ -1,4 +1,4 @@
-import { logger } from './logger'
+import { logger } from '@/lib/logger'
 
 /**
  * Write text to the system clipboard.

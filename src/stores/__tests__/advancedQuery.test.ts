@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 
 import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
-
 import {
   type BuilderGroupNode,
   builderTreeToFilterExpr,
@@ -12,7 +11,7 @@ import {
   selectAdvancedQueryFiltersForSpace,
   serializeQuerySpec,
   useAdvancedQueryStore,
-} from '../advancedQuery'
+} from '@/stores/advancedQuery'
 
 const SPACE = 'SPACE_A'
 

@@ -11,7 +11,7 @@
 import type { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { getActiveEditor, setActiveEditor } from '../active-editor'
+import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 
 afterEach(() => {
   setActiveEditor(null)

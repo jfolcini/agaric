@@ -16,7 +16,7 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import { Image, isValidImageSrc } from '../extensions/image'
+import { Image, isValidImageSrc } from '@/editor/extensions/image'
 
 // The real Image node view renders `GatedImage` (i18n + policy hooks), which is
 // irrelevant to the input-rule logic under test. Drop the React node view so the

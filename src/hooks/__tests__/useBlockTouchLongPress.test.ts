@@ -5,7 +5,7 @@ import {
   LONG_PRESS_DELAY,
   LONG_PRESS_MOVE_THRESHOLD,
   useBlockTouchLongPress,
-} from '../useBlockTouchLongPress'
+} from '@/hooks/useBlockTouchLongPress'
 
 describe('useBlockTouchLongPress', () => {
   beforeEach(() => {

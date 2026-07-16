@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { PickerItem } from '../SuggestionList'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 // --- Mocks ---
 
@@ -19,7 +19,7 @@ vi.mock('@tiptap/core', () => ({
 // Capture the config handed to createPickerPlugin so we can assert the
 // trigger char, the empty-query gate, and the command delegation. The plugin
 // itself is unit-tested separately in picker-plugin.test.ts.
-vi.mock('../extensions/picker-plugin', () => ({
+vi.mock('@/editor/extensions/picker-plugin', () => ({
   createPickerPlugin: (config: Record<string, unknown>) => {
     capturedPickerConfig = config
     return {}
@@ -27,7 +27,7 @@ vi.mock('../extensions/picker-plugin', () => ({
 }))
 
 // --- Import after mocks ---
-import { QueryPicker } from '../extensions/query-picker'
+import { QueryPicker } from '@/editor/extensions/query-picker'
 
 function setup(options?: { onCommand?: ReturnType<typeof vi.fn> }) {
   const onCommand = options?.onCommand ?? vi.fn()

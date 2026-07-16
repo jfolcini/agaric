@@ -14,8 +14,8 @@
 import { Extension, InputRule } from '@tiptap/core'
 import { PluginKey } from '@tiptap/pm/state'
 
-import type { PickerItem } from '../SuggestionList'
-import { createPickerPlugin, resolveAndInsertPickerToken } from './picker-plugin'
+import { createPickerPlugin, resolveAndInsertPickerToken } from '@/editor/extensions/picker-plugin'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 export const blockRefPickerPluginKey = new PluginKey('blockRefPicker')
 

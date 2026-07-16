@@ -12,12 +12,12 @@
  * type-check error instead of a silently-false branch.
  */
 
-import type { AppError, ValidationCode } from './bindings'
+import type { AppError, ValidationCode } from '@/lib/bindings'
 
 // Re-export the generated unions under their canonical names so consumers
 // keep importing error vocabulary from `@/lib/app-error` (the narrowing
 // module) rather than reaching into the generated bindings directly.
-export type { AppError, AppErrorKind, ValidationCode } from './bindings'
+export type { AppError, AppErrorKind, ValidationCode } from '@/lib/bindings'
 
 /**
  * The IPC error shape. Since #2251 the generated `AppError` already carries

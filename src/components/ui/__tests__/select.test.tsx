@@ -32,7 +32,7 @@ import {
   SelectSeparator,
   SelectTrigger,
   SelectValue,
-} from '../select'
+} from '@/components/ui/select'
 
 // jsdom does not implement pointer-capture APIs that Radix Select requires.
 // Stub them on Element.prototype so the trigger opens correctly.

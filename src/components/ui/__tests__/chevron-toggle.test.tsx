@@ -13,7 +13,7 @@ import { render } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { ChevronToggle } from '../chevron-toggle'
+import { ChevronToggle } from '@/components/ui/chevron-toggle'
 
 describe('ChevronToggle', () => {
   it('renders ChevronRight icon when collapsed', () => {

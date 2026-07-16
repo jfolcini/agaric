@@ -14,9 +14,9 @@
 
 import { beforeEach, describe, expect, it } from 'vitest'
 
-import { isValidation } from '../../app-error'
-import { dispatch } from '../handlers'
-import { blocks, makeBlock, opLog, properties, seedBlocks } from '../seed'
+import { isValidation } from '@/lib/app-error'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { blocks, makeBlock, opLog, properties, seedBlocks } from '@/lib/tauri-mock/seed'
 
 const A = '0000000000000000000000000A'
 const B = '0000000000000000000000000B'

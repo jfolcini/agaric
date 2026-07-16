@@ -5,7 +5,7 @@
 import { renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { useGenerationGuard } from '../useGenerationGuard'
+import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 
 describe('useGenerationGuard', () => {
   it('returns 1 from the first next() call', () => {

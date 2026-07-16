@@ -4,9 +4,9 @@
  * defaults from `./catalog`, and reports conflicts within a category.
  */
 
-import { logger } from '../logger'
-import { DEFAULT_SHORTCUTS, type ShortcutBinding } from './catalog'
-import { normalizeBinding } from './parse'
+import { DEFAULT_SHORTCUTS, type ShortcutBinding } from '@/lib/keyboard-config/catalog'
+import { normalizeBinding } from '@/lib/keyboard-config/parse'
+import { logger } from '@/lib/logger'
 
 const STORAGE_KEY = 'agaric-keyboard-shortcuts'
 

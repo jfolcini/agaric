@@ -13,8 +13,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
-import { clear, isSupported, paint } from '../highlighter'
-import type { FindMatch } from '../matcher'
+import { clear, isSupported, paint } from '@/lib/in-page-find/highlighter'
+import type { FindMatch } from '@/lib/in-page-find/matcher'
 
 const HIGHLIGHT_ALL = 'find-match'
 const HIGHLIGHT_CURRENT = 'find-match-current'

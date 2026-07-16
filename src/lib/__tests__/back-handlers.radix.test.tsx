@@ -27,8 +27,7 @@ import { useState } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog'
-
-import { overlayBackHandler } from '../back-handlers'
+import { overlayBackHandler } from '@/lib/back-handlers'
 
 function TestDialog({ onOpenChange }: { onOpenChange: (open: boolean) => void }) {
   const [open, setOpen] = useState(true)

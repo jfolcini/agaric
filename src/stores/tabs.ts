@@ -24,12 +24,12 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { isDateFormattedPage } from '../lib/date-utils'
-import { parseDate } from '../lib/parse-date'
-import { createPerSpaceSlice } from './createPerSpaceSlice'
-import { useJournalStore } from './journal'
-import { useNavigationStore } from './navigation'
-import { useRecentPagesStore } from './recent-pages'
+import { isDateFormattedPage } from '@/lib/date-utils'
+import { parseDate } from '@/lib/parse-date'
+import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
+import { useJournalStore } from '@/stores/journal'
+import { useNavigationStore } from '@/stores/navigation'
+import { useRecentPagesStore } from '@/stores/recent-pages'
 
 export interface PageEntry {
   pageId: string

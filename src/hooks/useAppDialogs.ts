@@ -36,9 +36,9 @@
 
 import { useEffect, useState } from 'react'
 
-import { BUG_REPORT_EVENT, type BugReportEventDetail } from '../lib/bug-report-events'
-import { matchesShortcutBinding } from '../lib/keyboard-config'
-import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '../lib/overlay-events'
+import { BUG_REPORT_EVENT, type BugReportEventDetail } from '@/lib/bug-report-events'
+import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { CLOSE_ALL_OVERLAYS_EVENT, SHOW_SHORTCUTS_EVENT } from '@/lib/overlay-events'
 
 export interface UseAppDialogsReturn {
   // Bug-report

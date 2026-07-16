@@ -11,9 +11,8 @@
 import { fireEvent, renderHook } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { useSidebarKeyboard } from '@/components/ui/sidebar/use-sidebar-keyboard'
 import { setCustomShortcut } from '@/lib/keyboard-config'
-
-import { useSidebarKeyboard } from '../use-sidebar-keyboard'
 
 describe('useSidebarKeyboard', () => {
   afterEach(() => {

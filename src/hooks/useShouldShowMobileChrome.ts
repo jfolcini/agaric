@@ -24,8 +24,8 @@
 
 import { useEffect, useState } from 'react'
 
-import { useHasHardwareKeyboard } from './useHasHardwareKeyboard'
-import { useIsMobile } from './useIsMobile'
+import { useHasHardwareKeyboard } from '@/hooks/useHasHardwareKeyboard'
+import { useIsMobile } from '@/hooks/useIsMobile'
 
 const TABLET_BREAKPOINT = 1024
 

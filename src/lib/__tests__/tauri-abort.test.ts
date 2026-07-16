@@ -4,8 +4,8 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { isCancellation } from '../app-error'
-import { cancelledError, withAbort } from '../tauri'
+import { isCancellation } from '@/lib/app-error'
+import { cancelledError, withAbort } from '@/lib/tauri'
 
 describe('cancelledError', () => {
   it('returns the AppError shape isCancellation recognises', () => {

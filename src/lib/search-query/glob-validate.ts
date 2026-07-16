@@ -19,7 +19,7 @@
  * parser) as the more user-friendly "path: value required".
  */
 
-import { prefixed, ValidationCode } from './validation-codes'
+import { prefixed, ValidationCode } from '@/lib/search-query/validation-codes'
 
 export interface GlobValidationError {
   /** `InvalidGlob: …` — chip display copy labelled with the shared code. */

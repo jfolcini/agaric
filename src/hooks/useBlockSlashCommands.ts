@@ -29,24 +29,24 @@
 
 import { useCallback, useMemo, useRef } from 'react'
 
-import type { PickerItem } from '../editor/SuggestionList'
-import { addRecentCommand, RECENT_SLASH_PREFIX } from '../lib/recent-commands'
-import type { SlashCommandContext, SlashHandlerTables } from './useBlockSlashCommands/types'
+import type { PickerItem } from '@/editor/SuggestionList'
+import type { SlashCommandContext, SlashHandlerTables } from '@/hooks/useBlockSlashCommands/types'
 import type {
   UseBlockSlashCommandsParams,
   UseBlockSlashCommandsReturn,
-} from './useBlockSlashCommands/types-public'
-import { useSlashCommandDate } from './useBlockSlashCommands/useSlashCommandDate'
-import { useSlashCommandMarks } from './useBlockSlashCommands/useSlashCommandMarks'
-import { useSlashCommandProperty } from './useBlockSlashCommands/useSlashCommandProperty'
-import { useSlashCommandStructural } from './useBlockSlashCommands/useSlashCommandStructural'
-import { useSlashCommandTemplate } from './useBlockSlashCommands/useSlashCommandTemplate'
-import { useCheckboxSyntax } from './useCheckboxSyntax'
+} from '@/hooks/useBlockSlashCommands/types-public'
+import { useSlashCommandDate } from '@/hooks/useBlockSlashCommands/useSlashCommandDate'
+import { useSlashCommandMarks } from '@/hooks/useBlockSlashCommands/useSlashCommandMarks'
+import { useSlashCommandProperty } from '@/hooks/useBlockSlashCommands/useSlashCommandProperty'
+import { useSlashCommandStructural } from '@/hooks/useBlockSlashCommands/useSlashCommandStructural'
+import { useSlashCommandTemplate } from '@/hooks/useBlockSlashCommands/useSlashCommandTemplate'
+import { useCheckboxSyntax } from '@/hooks/useCheckboxSyntax'
+import { addRecentCommand, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
 
 export type {
   UseBlockSlashCommandsParams,
   UseBlockSlashCommandsReturn,
-} from './useBlockSlashCommands/types-public'
+} from '@/hooks/useBlockSlashCommands/types-public'
 
 /**
  * Merge the sub-hook tables. Order is fixed:

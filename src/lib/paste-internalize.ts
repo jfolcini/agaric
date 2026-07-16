@@ -8,11 +8,16 @@
  * the `pasteBlocks` reducer.
  */
 
-import { useResolveStore } from '../stores/resolve'
-import { useSpaceStore } from '../stores/space'
-import type { RefInternalizers } from './block-clipboard'
-import { logger } from './logger'
-import { createBlock, createPageInSpace, listAllPagesInSpace, listAllTagsInSpace } from './tauri'
+import type { RefInternalizers } from '@/lib/block-clipboard'
+import { logger } from '@/lib/logger'
+import {
+  createBlock,
+  createPageInSpace,
+  listAllPagesInSpace,
+  listAllTagsInSpace,
+} from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 // ── Import wiki-link resolution (#1484) ──────────────────────────────────────
 

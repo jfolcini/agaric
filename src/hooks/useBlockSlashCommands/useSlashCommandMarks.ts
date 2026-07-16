@@ -17,9 +17,8 @@
 
 import { useMemo } from 'react'
 
+import type { SlashCommandContext, SlashHandlerTables } from '@/hooks/useBlockSlashCommands/types'
 import { createMarkToggles } from '@/lib/toolbar-config'
-
-import type { SlashCommandContext, SlashHandlerTables } from './types'
 
 interface MarkSpec {
   /** `activeKey` of the matching `createMarkToggles` entry (the TipTap toggle). */

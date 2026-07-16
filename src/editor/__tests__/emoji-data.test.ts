@@ -7,7 +7,7 @@ import {
   searchEmoji,
   type EmojiDataset,
   type EmojiEntry,
-} from '../emoji-data'
+} from '@/editor/emoji-data'
 
 // #2671 — the dataset is lazy-loaded via a memoized dynamic `import()` rather
 // than a static top-level import. Every read goes through one of the async
@@ -148,7 +148,7 @@ describe('emoji-data', () => {
 
     it('has not resolved a dataset before any loader is called', async () => {
       vi.resetModules()
-      const mod = await import('../emoji-data')
+      const mod = await import('@/editor/emoji-data')
       expect(mod.peekEmojiDataset()).toBeNull()
     })
 
@@ -166,7 +166,7 @@ describe('emoji-data', () => {
           ],
         }
       })
-      const mod = await import('../emoji-data')
+      const mod = await import('@/editor/emoji-data')
 
       // Two concurrent calls before either resolves...
       const [a, b] = await Promise.all([mod.loadEmojiDataset(), mod.loadEmojiDataset()])
@@ -182,7 +182,7 @@ describe('emoji-data', () => {
 
     it('peekEmojiDataset synchronously reflects the resolved dataset once loadEmojiDataset settles', async () => {
       vi.resetModules()
-      const mod = await import('../emoji-data')
+      const mod = await import('@/editor/emoji-data')
       expect(mod.peekEmojiDataset()).toBeNull()
       const resolved: EmojiDataset = await mod.loadEmojiDataset()
       expect(mod.peekEmojiDataset()).toBe(resolved)

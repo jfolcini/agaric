@@ -10,13 +10,13 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { setWindowTitle } from '../../lib/tauri'
-import { useResolveStore } from '../../stores/resolve'
-import { useSpaceStore } from '../../stores/space'
-import { useAppSpaceLifecycle } from '../useAppSpaceLifecycle'
+import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
+import { setWindowTitle } from '@/lib/tauri'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
-vi.mock('../../lib/tauri', async () => {
-  const actual = await vi.importActual<typeof import('../../lib/tauri')>('../../lib/tauri')
+vi.mock('@/lib/tauri', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/tauri')>('@/lib/tauri')
   return {
     ...actual,
     setWindowTitle: vi.fn().mockResolvedValue(undefined),

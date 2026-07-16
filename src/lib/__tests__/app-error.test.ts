@@ -8,7 +8,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { AppErrorKind } from '../app-error'
+import type { AppErrorKind } from '@/lib/app-error'
 import {
   isAppError,
   isCancellation,
@@ -19,8 +19,8 @@ import {
   isValidation,
   retryOnPoolBusy,
   validationCode,
-} from '../app-error'
-import { ValidationCode } from '../search-query/validation-codes'
+} from '@/lib/app-error'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 
 describe('isAppError', () => {
   it('returns true for an IPC-shaped AppError', () => {

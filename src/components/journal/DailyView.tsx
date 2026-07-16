@@ -4,14 +4,13 @@
 
 import type React from 'react'
 
+import { DaySection } from '@/components/journal/DaySection'
+import { UnfinishedTasks } from '@/components/journal/UnfinishedTasks'
 import { useScrollToFocus } from '@/hooks/useScrollToFocus'
 import { useToday } from '@/hooks/useToday'
 import type { DayEntry } from '@/lib/date-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
-
-import { DaySection } from './DaySection'
-import { UnfinishedTasks } from './UnfinishedTasks'
 
 interface DailyViewProps {
   entry: DayEntry

@@ -22,7 +22,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { Switch } from '../switch'
+import { Switch } from '@/components/ui/switch'
 
 describe('Switch', () => {
   // -- Controlled rendering ---------------------------------------------------

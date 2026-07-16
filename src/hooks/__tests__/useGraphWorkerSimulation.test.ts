@@ -16,12 +16,11 @@ import { drag } from 'd3-drag'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { GraphEdge, GraphNode } from '@/components/graph/GraphView.helpers'
+import { useGraphWorkerSimulation } from '@/hooks/useGraphWorkerSimulation'
+import type { SimulationCtx } from '@/lib/graph-sim-helpers'
+import { logger } from '@/lib/logger'
 
-import type { SimulationCtx } from '../../lib/graph-sim-helpers'
-import { logger } from '../../lib/logger'
-import { useGraphWorkerSimulation } from '../useGraphWorkerSimulation'
-
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     debug: vi.fn(),
     info: vi.fn(),

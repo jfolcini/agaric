@@ -10,7 +10,7 @@ import {
   getPathHistory,
   PATH_HISTORY_LIMIT,
   recordPathHistory,
-} from '../path-history'
+} from '@/lib/path-history'
 
 const KEY_PREFIX = 'agaric:pathHistory:v1:'
 

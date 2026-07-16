@@ -29,7 +29,7 @@ import {
   setTagColor,
   TAG_COLOR_PRESETS,
   tagColorForeground,
-} from '../tag-colors'
+} from '@/lib/tag-colors'
 
 const mockedInvoke = vi.mocked(invoke)
 

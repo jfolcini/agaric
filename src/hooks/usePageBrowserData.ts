@@ -33,17 +33,16 @@ import type { Dispatch, SetStateAction } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { pageSortWireFor, type SortOption } from '@/hooks/usePageBrowserSort'
+import { usePageDelete } from '@/hooks/usePageDelete'
+import { isAppError, isCancellation, type TypedAppError, validationCode } from '@/lib/app-error'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { t as i18nT } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
-
-import { isAppError, isCancellation, type TypedAppError, validationCode } from '../lib/app-error'
-import { ValidationCode } from '../lib/search-query/validation-codes'
-import type { BlockRow, FilterPrimitive, PageResponse, PageWithMetadataRow } from '../lib/tauri'
-import { listPagesWithMetadata } from '../lib/tauri'
-import { pageSortWireFor, type SortOption } from './usePageBrowserSort'
-import { usePageDelete } from './usePageDelete'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
+import type { BlockRow, FilterPrimitive, PageResponse, PageWithMetadataRow } from '@/lib/tauri'
+import { listPagesWithMetadata } from '@/lib/tauri'
 
 /**
  * Phase 3 — wrap a paginating IPC call so that a v2 cursor

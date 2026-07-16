@@ -20,7 +20,7 @@ import {
   type EditorLike,
   handleBlockKeyDown,
   useBlockKeyboard,
-} from '../use-block-keyboard'
+} from '@/editor/use-block-keyboard'
 
 // -- Helpers ------------------------------------------------------------------
 

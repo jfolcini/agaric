@@ -8,21 +8,21 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockGetPropertyDef = vi.fn()
 const mockListBlocks = vi.fn()
-vi.mock('../../lib/tauri', () => ({
+vi.mock('@/lib/tauri', () => ({
   getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
 }))
 
 const mockLoggerWarn = vi.fn()
-vi.mock('../../lib/logger', () => ({
+vi.mock('@/lib/logger', () => ({
   logger: {
     warn: (...args: unknown[]) => mockLoggerWarn(...args),
   },
 }))
 
-import type { BlockRow } from '../../lib/tauri'
-import { useSpaceStore } from '../../stores/space'
-import { usePropertyDefForEdit } from '../usePropertyDefForEdit'
+import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import type { BlockRow } from '@/lib/tauri'
+import { useSpaceStore } from '@/stores/space'
 
 function makePage(id: string, content: string): BlockRow {
   return {

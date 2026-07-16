@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest'
 
-import { jexNoteToMarkdown, parseJex, sanitizeNoteTitleToFilename } from '../jex-import'
+import { jexNoteToMarkdown, parseJex, sanitizeNoteTitleToFilename } from '@/lib/jex-import'
 
 // --- Synthetic USTAR tar builder -------------------------------------------
 

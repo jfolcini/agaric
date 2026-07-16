@@ -2,20 +2,6 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  __resetSerializerToastsForTests,
-  notifyUnknownNodeTypeToast,
-} from '../markdown-serialize-toast'
-import { parse, serialize } from '../markdown-serializer'
-import type {
-  BlockLevelNode,
-  BlockquoteNode,
-  DocNode,
-  InlineNode,
-  ParagraphNode,
-  TableNode,
-  TextNode,
-} from '../types'
-import {
   blockLink,
   blockquote,
   bold,
@@ -42,7 +28,21 @@ import {
   task,
   text,
   underline,
-} from './builders'
+} from '@/editor/__tests__/builders'
+import {
+  __resetSerializerToastsForTests,
+  notifyUnknownNodeTypeToast,
+} from '@/editor/markdown-serialize-toast'
+import { parse, serialize } from '@/editor/markdown-serializer'
+import type {
+  BlockLevelNode,
+  BlockquoteNode,
+  DocNode,
+  InlineNode,
+  ParagraphNode,
+  TableNode,
+  TextNode,
+} from '@/editor/types'
 
 /** Create a text node with a link mark (and optional additional marks). */
 function linked(t: string, href: string, extraMarks?: TextNode['marks']): TextNode {

@@ -7,7 +7,7 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { TableOpsSelector } from '../TableOpsSelector'
+import { TableOpsSelector } from '@/components/TableOpsSelector'
 
 // Each command returns the chain so calls can be fluent; `.run()` is the
 // terminal. We assert the specific command spy fired.

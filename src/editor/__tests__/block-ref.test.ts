@@ -4,7 +4,7 @@
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { BlockRef } from '../extensions/block-ref'
+import { BlockRef } from '@/editor/extensions/block-ref'
 
 describe('BlockRef', () => {
   it('creates an extension with the correct name', () => {

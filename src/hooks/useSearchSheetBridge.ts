@@ -29,9 +29,9 @@
 
 import { useEffect, useRef } from 'react'
 
-import { useCommandPaletteStore } from '../stores/useCommandPaletteStore'
-import { useInPageFindStore } from '../stores/useInPageFindStore'
-import { type SearchSheetMode, useSearchSheetStore } from '../stores/useSearchSheetStore'
+import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+import { useInPageFindStore } from '@/stores/useInPageFindStore'
+import { type SearchSheetMode, useSearchSheetStore } from '@/stores/useSearchSheetStore'
 
 interface BridgeStore {
   isOpen: () => boolean

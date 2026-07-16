@@ -9,9 +9,9 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
-import { logger } from '../lib/logger'
-import type { BlockRow } from '../lib/tauri'
-import { trashDescendantCounts } from '../lib/tauri'
+import { logger } from '@/lib/logger'
+import type { BlockRow } from '@/lib/tauri'
+import { trashDescendantCounts } from '@/lib/tauri'
 
 export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, number> {
   const [counts, setCounts] = useState<Record<string, number>>({})

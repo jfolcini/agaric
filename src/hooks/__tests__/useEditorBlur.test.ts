@@ -16,10 +16,9 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useDraftAutosave } from '@/hooks/useDraftAutosave'
+import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
 import { deleteDraft, saveDraft } from '@/lib/tauri'
-
-import { useDraftAutosave } from '../useDraftAutosave'
-import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '../useEditorBlur'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave
 // composed with useEditorBlur); the useEditorBlur unit tests never reach IPC.
@@ -50,7 +49,7 @@ const LEGACY_PORTAL_PATTERNS = [
 
 // Mock shouldSplitOnBlur from use-roving-editor
 const mockShouldSplitOnBlur = vi.fn((md: string) => md.includes('\n'))
-vi.mock('../../editor/use-roving-editor', () => ({
+vi.mock('@/editor/use-roving-editor', () => ({
   shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
 }))
 

@@ -16,7 +16,10 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { SearchHistoryDropdown, type SearchHistoryDropdownProps } from '../SearchHistoryDropdown'
+import {
+  SearchHistoryDropdown,
+  type SearchHistoryDropdownProps,
+} from '@/components/search/SearchHistoryDropdown'
 
 // Phase 3.U2 — props gained `listboxId` + `activeIndex` for the
 // listbox/combobox a11y wiring. The helper supplies stable defaults so

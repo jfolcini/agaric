@@ -23,7 +23,7 @@ vi.mock('katex', () => ({
 const katex = (await import('katex')).default
 const mockedRender = vi.mocked(katex.renderToString)
 
-const { KatexMath } = await import('../KatexMath')
+const { KatexMath } = await import('@/components/rendering/KatexMath')
 
 describe('KatexMath (#1437)', () => {
   afterEach(() => {

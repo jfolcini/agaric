@@ -1,6 +1,6 @@
 import { relaunch } from '@tauri-apps/plugin-process'
 
-import { logger } from './logger'
+import { logger } from '@/lib/logger'
 
 /**
  * Relaunch the Agaric app.

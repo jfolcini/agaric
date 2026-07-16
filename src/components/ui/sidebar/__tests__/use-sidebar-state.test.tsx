@@ -13,7 +13,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { SIDEBAR_WIDTH_DEFAULT, useSidebarState } from '../use-sidebar-state'
+import { SIDEBAR_WIDTH_DEFAULT, useSidebarState } from '@/components/ui/sidebar/use-sidebar-state'
 
 beforeEach(() => {
   // Default to desktop viewport so isMobile is false.

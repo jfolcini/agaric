@@ -8,8 +8,8 @@ import Paragraph from '@tiptap/extension-paragraph'
 import Text from '@tiptap/extension-text'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AtTagPicker } from '../extensions/at-tag-picker'
-import { TagRef } from '../extensions/tag-ref'
+import { AtTagPicker } from '@/editor/extensions/at-tag-picker'
+import { TagRef } from '@/editor/extensions/tag-ref'
 
 describe('AtTagPicker', () => {
   it('creates an extension with the correct name', () => {
@@ -332,7 +332,7 @@ describe('AtTagPicker suggestion plugin configuration', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/at-tag-picker')
+    const mod = await import('@/editor/extensions/at-tag-picker')
     const ext = mod.AtTagPicker.configure({ items: () => [] })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
@@ -364,7 +364,7 @@ describe('AtTagPicker suggestion command chain', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/at-tag-picker')
+    const mod = await import('@/editor/extensions/at-tag-picker')
     const ext = mod.AtTagPicker.configure({ items: () => [] })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({
       editor: {} as unknown,
@@ -426,7 +426,7 @@ describe('AtTagPicker suggestion command chain', () => {
         return { key: opts['pluginKey'] }
       },
     }))
-    const mod = await import('../extensions/at-tag-picker')
+    const mod = await import('@/editor/extensions/at-tag-picker')
     const onCreate = vi.fn().mockResolvedValue('NEW_TAG_ULID')
     const ext = mod.AtTagPicker.configure({ items: () => [], onCreate })
     ;(ext.config.addProseMirrorPlugins as (...args: unknown[]) => unknown).call({

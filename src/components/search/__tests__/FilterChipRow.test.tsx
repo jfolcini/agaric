@@ -7,9 +7,8 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { FilterChipRow } from '@/components/search/FilterChipRow'
 import type { FilterToken } from '@/lib/search-query'
-
-import { FilterChipRow } from '../FilterChipRow'
 
 describe('FilterChipRow', () => {
   it('renders nothing when there are no filters and no trailing slot', () => {

@@ -22,8 +22,8 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useSpaceStore } from '../../stores/space'
-import { createSpaceSubscriber } from '../createSpaceSubscriber'
+import { createSpaceSubscriber } from '@/lib/createSpaceSubscriber'
+import { useSpaceStore } from '@/stores/space'
 
 beforeEach(() => {
   // Reset to a deterministic starting state. All tests drive

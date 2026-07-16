@@ -19,10 +19,9 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { KeyboardTab } from '@/components/settings/KeyboardTab'
 import { t } from '@/lib/i18n'
 import type { ShortcutBinding } from '@/lib/keyboard-config'
-
-import { KeyboardTab } from '../KeyboardTab'
 
 const mockGetCurrentShortcuts = vi.fn()
 const mockSetCustomShortcut = vi.fn()
@@ -461,7 +460,7 @@ describe('KeyboardTab', () => {
     try {
       const { __resetPlatformCacheForTests } = await import('@/lib/platform')
       __resetPlatformCacheForTests()
-      const { KeyboardTab: MacTab } = await import('../KeyboardTab')
+      const { KeyboardTab: MacTab } = await import('@/components/settings/KeyboardTab')
 
       render(<MacTab />)
 
@@ -484,7 +483,7 @@ describe('KeyboardTab', () => {
     try {
       const { __resetPlatformCacheForTests } = await import('@/lib/platform')
       __resetPlatformCacheForTests()
-      const { KeyboardTab: LinuxTab } = await import('../KeyboardTab')
+      const { KeyboardTab: LinuxTab } = await import('@/components/settings/KeyboardTab')
 
       render(<LinuxTab />)
 

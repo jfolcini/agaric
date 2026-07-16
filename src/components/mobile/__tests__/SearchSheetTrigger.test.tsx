@@ -10,11 +10,10 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { SearchSheetTrigger } from '@/components/mobile/SearchSheetTrigger'
 import { setPinnedSearchScope } from '@/lib/pinned-search-scope'
 import { useNavigationStore } from '@/stores/navigation'
 import { useSearchSheetStore } from '@/stores/useSearchSheetStore'
-
-import { SearchSheetTrigger } from '../SearchSheetTrigger'
 
 beforeEach(() => {
   localStorage.clear()

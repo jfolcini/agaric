@@ -23,7 +23,7 @@ vi.mock('@dnd-kit/utilities', () => ({
 }))
 
 // Mock EditableBlock to keep tests focused on SortableBlock behavior
-vi.mock('../EditableBlock', () => ({
+vi.mock('@/components/editor/EditableBlock', () => ({
   EditableBlock: (props: { blockId: string }) => (
     <div data-testid={`editable-block-${props.blockId}`}>EditableBlock</div>
   ),
@@ -160,7 +160,7 @@ vi.mock('@/components/attachments/AttachmentList', () => ({
 }))
 
 // Mock BlockContextMenu to avoid importing all its lucide-react icons
-vi.mock('../BlockContextMenu', () => ({
+vi.mock('@/components/editor/BlockContextMenu', () => ({
   BlockContextMenu: ({
     onClose,
     blockId,
