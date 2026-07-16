@@ -649,7 +649,7 @@ function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) 
   // keep the compact bare form.
   const forceBracketed = new Set<number>()
   let result = ''
-  for (let retry = true; retry; ) {
+  for (let retry = true; retry;) {
     retry = false
     result = ''
     let prevTail: SeamTail = 'text'
