@@ -270,7 +270,7 @@ DFA-size limits, a per-block match-offset cap (surplus matches are silently
 dropped), and a regex-mode pre-filter row count that bounds the SQL scan
 (most-recent-first ordering by `b.id DESC`, since ULID prefixes are time-sortable
 and `blocks` carries no `created_at`). The exact values and their rationale are
-the documented `pub const`s in `src-tauri/src/fts/toggle_filter.rs`
+the documented `pub const`s in `src-tauri/agaric-store/src/fts/toggle_filter.rs`
 (`MAX_PATTERN_LEN`, `REGEX_SIZE_LIMIT_BYTES`, `REGEX_DFA_SIZE_LIMIT_BYTES`,
 `MAX_OFFSETS_PER_BLOCK`, `REGEX_PRE_FILTER_CAP`) — read them from the code rather
 than a number here, which would drift.

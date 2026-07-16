@@ -1,0 +1,1473 @@
+//! `StructuralFilterBuilder`: atomic SQL-fragment + placeholder-index +
+//! ordered-bind construction for the three FTS structural-filter query
+//! builders (#348).
+//!
+//! ## The drift hazard this removes
+//!
+//! `fts::search::fts_fetch_rows`, `fts::toggle_filter::regex_mode_query`,
+//! and `fts::toggle_filter::filter_only_scan` each built their dynamic
+//! `WHERE` SQL in one pass (hand-incrementing a `next_param` index per
+//! `?N` placeholder) and then re-emitted the matching `.bind(...)` calls
+//! in a *second, physically separate* pass. The two passes had to be
+//! kept in lockstep by hand; an off-by-one between them would not be a
+//! SQL-injection (every value is bound, never interpolated) but WOULD
+//! silently misbind a value into the wrong placeholder slot.
+//!
+//! This builder couples the two: every `add_*` call appends the SQL
+//! fragment AND records its bind value(s) into a single ordered vector
+//! in the same call, so append-order and bind-order cannot diverge.
+//! The caller still controls the *call order* (the three builders emit
+//! their filters in slightly different orders — notably metadata vs
+//! `block_type`), but within a single call the fragment and its binds
+//! are atomic.
+//!
+//! The generated SQL is byte-identical to the hand-built strings it replaced
+//! (verified by the existing `fts` test suite); the indentation/`AND `
+//! glue prefix is passed in by each caller because it differs between
+//! the `search_fts` builder (11-space indent) and the toggle builders
+//! (13-space indent).
+
+use super::metadata_filter::{DatePredicate as MetaDatePredicate, MetadataPredicates};
+use crate::filters::SqlFragment;
+use crate::filters::primitive::{
+    Bind, DatePredicate, FilterPrimitive, LastEditedSpec, Projection, PropertyPredicate,
+    PropertyValue, SearchProjection,
+};
+use crate::search_types::{DateOp, SearchPropertyFilter};
+
+/// Dedupe + canonical-UPPERCASE-normalise a caller's `tag_ids` before they are
+/// bound into an ALL-tags predicate. Shared by the three structural-filter
+/// builders (`fts::search::fts_fetch_rows`, `fts::toggle_filter::regex_mode_query`,
+/// and `fts::toggle_filter::filter_only_scan`) so the normalisation cannot drift
+/// between them.
+///
+/// The "ALL tags" clause compares `COUNT(DISTINCT bt.tag_id)` against the bound
+/// list length; a duplicate id (the same chip added twice, or two FE code paths
+/// appending the same id) would make the raw `len()` exceed the achievable
+/// distinct count, so the predicate could never be satisfied and the query
+/// silently returned zero rows. De-duplicating here makes the bound count match
+/// the `DISTINCT` semantics. Order is preserved so the placeholder/bind indices
+/// stay deterministic.
+///
+/// SQL-A6 — each id is normalised to its canonical UPPERCASE ULID form BEFORE
+/// entering the dedup set (and the normalised form is what gets bound).
+/// `block_tags.tag_id` stores the canonical uppercase Crockford-base32 ULID
+/// (`BlockId`/`ActiveBlockId` both normalise via `to_ascii_uppercase`), so a
+/// mixed-case duplicate would otherwise survive byte-exact dedup, inflate the
+/// bound count past the achievable `COUNT(DISTINCT)`, and silently zero out the
+/// ALL-tags predicate. Uppercasing collapses the duplicate AND aligns the bound
+/// `IN (...)` values with the stored canonical form.
+pub(crate) fn normalize_tag_ids(tag_ids: Option<&[String]>) -> Vec<String> {
+    match tag_ids {
+        Some(ids) if !ids.is_empty() => {
+            let mut seen = std::collections::HashSet::new();
+            ids.iter()
+                .map(|id| id.to_ascii_uppercase())
+                .filter(|id| seen.insert(id.clone()))
+                .collect()
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// #1280 B2 — bridge the search-side resolved [`MetaDatePredicate`]
+/// (`IsNull` / `Range` / `Op{DateOp}`) onto the cross-surface
+/// [`DatePredicate`] the projection compiles. The resolver oracle treats the
+/// `due_date` / `scheduled_date` columns as DATE-exact, so `Op{Eq}` maps to
+/// `On` (the projection's exact `= ?` form, NOT the half-open day expansion)
+/// and `Range` maps to the inclusive `Between` — keeping the compiled SQL
+/// result-equivalent to the legacy `append_date_predicate` fragment.
+fn meta_date_to_primitive(pred: &MetaDatePredicate) -> DatePredicate {
+    match pred {
+        MetaDatePredicate::IsNull => DatePredicate::IsNull,
+        MetaDatePredicate::Range { from, to } => DatePredicate::Between {
+            from: from.clone(),
+            to: to.clone(),
+        },
+        MetaDatePredicate::Op { op, date } => {
+            let date = date.clone();
+            match op {
+                DateOp::Lt => DatePredicate::Before { date },
+                DateOp::Lte => DatePredicate::OnOrBefore { date },
+                DateOp::Eq => DatePredicate::On { date },
+                DateOp::Gte => DatePredicate::OnOrAfter { date },
+                DateOp::Gt => DatePredicate::After { date },
+            }
+        }
+    }
+}
+
+/// #properties-typed-always — infer the most-specific [`PropertyValue`] from
+/// a `prop:KEY=VALUE` search token's raw string, selecting ONE typed column
+/// instead of the legacy untyped four-column OR.
+///
+/// **Value-typing rule (the behaviour change):**
+/// 1. If the raw parses as a finite `f64` → [`PropertyValue::Num`]
+///    (compared against `block_properties.value_num`, bound as
+///    [`Bind::Real`]). Non-finite spellings (`inf`/`NaN`) are rejected by the
+///    `is_finite()` filter — mirroring the legacy `parse_prop_value` #383
+///    guard — and fall through to the next rule.
+/// 2. Else if the raw is a valid ISO `YYYY-MM-DD` date (the SAME
+///    `NaiveDate::parse_from_str(_, "%Y-%m-%d")` check the legacy
+///    `parse_prop_value` used) → [`PropertyValue::Date`] (compared against
+///    `value_date`).
+/// 3. Else → [`PropertyValue::Text`] (compared against `value_text`).
+///
+/// [`PropertyValue::Ref`] is deliberately NOT inferred: search has no ref
+/// syntax, and a 26-char ULID-shaped string is treated as ordinary text. (The
+/// legacy untyped path matched `value_ref` opportunistically; under the typed
+/// rule a bare ULID is Text and matches `value_text` only.)
+fn infer_property_value(raw: &str) -> PropertyValue {
+    if let Some(n) = raw.parse::<f64>().ok().filter(|n| n.is_finite()) {
+        return PropertyValue::Num { value: n };
+    }
+    if chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d").is_ok() {
+        return PropertyValue::Date {
+            value: raw.to_string(),
+        };
+    }
+    PropertyValue::Text {
+        value: raw.to_string(),
+    }
+}
+
+/// Shared `AND ` glue prefix for every projection-routed metadata clause
+/// spliced by [`StructuralFilterBuilder::add_metadata`] — `state:`,
+/// `priority:`, `due-date:`, `scheduled:`, `last-edited:`, and property
+/// predicates (#1320-C / #1280 B2). The 11-space indent matches the
+/// hand-built `AND` fragments of the `search_fts` fetch query (see
+/// `fts::search::fetch`'s `PREFIX`), preserving byte-for-byte the SQL the
+/// now-deleted legacy `append_metadata_sql` emitted there. The toggle
+/// builders glue their other fragments at 13 spaces; the mismatch is
+/// cosmetic (whitespace inside generated SQL only).
+const METADATA_AND_PREFIX: &str = "\n           AND ";
+
+/// One bound value, tagged with its SQLite affinity. Recorded in
+/// declaration order alongside the SQL fragment that references it, so
+/// [`StructuralFilterBuilder::apply`] can replay the binds in the exact
+/// order the placeholders were appended.
+pub(super) enum ScalarBind {
+    /// A text value (`parent_id`, tag id, `space_id`, glob pattern,
+    /// `block_type`, `after_id`).
+    Str(String),
+    /// An integer value (the `COUNT(DISTINCT)` ALL-tags target, or a
+    /// `LIMIT` cap).
+    I64(i64),
+    /// #1280 — a real (`f64`) value. Now reachable on the FTS side: the
+    /// typed `prop:KEY=VALUE` search filter routes a numeric value through
+    /// [`SearchProjection::compile_has_property`], whose `Num` variant emits
+    /// a [`Bind::Real`] (#properties-typed-always). Also used by the
+    /// `BacklinkProjection`-shaped binds.
+    F64(f64),
+}
+
+/// Owns the dynamic `WHERE`-clause fragment, the running 1-based `?N`
+/// placeholder index, and the ordered bind sequence as a single unit.
+///
+/// Construct with [`new`](Self::new) seeded at the first dynamic
+/// placeholder index (the three builders reserve a different number of
+/// leading base params: `search_fts` reserves `?1..?5`, the toggle
+/// builders reserve none and start at `?1`). Append filters with the
+/// `add_*` methods, splice the resulting `sql` into the query string,
+/// then [`apply`](Self::apply) the recorded binds onto the prepared
+/// query AFTER its base binds.
+pub(super) struct StructuralFilterBuilder {
+    /// The accumulated dynamic SQL fragment (each fragment begins with
+    /// the caller-supplied `prefix`, e.g. `"\n           AND "`).
+    sql: String,
+    /// Next free 1-based placeholder index.
+    next_param: usize,
+    /// Bind values in placeholder-declaration order.
+    binds: Vec<ScalarBind>,
+}
+
+impl StructuralFilterBuilder {
+    /// Create a builder whose next placeholder is `first_param`.
+    pub(super) fn new(first_param: usize) -> Self {
+        Self {
+            sql: String::new(),
+            next_param: first_param,
+            binds: Vec::new(),
+        }
+    }
+
+    /// The accumulated dynamic SQL fragment, ready to splice into the
+    /// query string after the static `WHERE` prefix.
+    pub(super) fn sql(&self) -> &str {
+        &self.sql
+    }
+
+    /// The next free placeholder index. The regex/filter-only builders
+    /// read this to bind their trailing `LIMIT ?N` cap, whose index
+    /// must follow every dynamic filter placeholder.
+    pub(super) fn next_param(&self) -> usize {
+        self.next_param
+    }
+
+    /// `AND b.parent_id = ?N` when `parent_id` is `Some`.
+    pub(super) fn add_parent(&mut self, prefix: &str, parent_id: Option<&str>) {
+        if let Some(pid) = parent_id {
+            let i = self.next_param;
+            self.sql.push_str(&format!("{prefix}b.parent_id = ?{i}"));
+            self.next_param += 1;
+            self.binds.push(ScalarBind::Str(pid.to_string()));
+        }
+    }
+
+    /// `AND b.space_id = ?N` when `Some`.
+    ///
+    /// The fragment is identical across all three builders; only the
+    /// leading `prefix` glue differs by builder indentation.
+    pub(super) fn add_space(&mut self, prefix: &str, space_id: Option<&str>) {
+        if let Some(sid) = space_id {
+            let i = self.next_param;
+            self.sql.push_str(&format!("{prefix}b.space_id = ?{i}"));
+            self.next_param += 1;
+            self.binds.push(ScalarBind::Str(sid.to_string()));
+        }
+    }
+
+    /// #1320 append a pre-compiled [`crate::filters::primitive::WhereClause`]
+    /// fragment (bare `?` placeholders, ordered [`Bind`]s) into this builder,
+    /// renumbering each `?` to the running `?N` index in left-to-right order
+    /// and recording the matching scalar binds in declaration order.
+    ///
+    /// This is the single splice point through which the
+    /// [`SearchProjection`]-routed subset (currently `Space` only — see
+    /// [`add_space_via_projection`](Self::add_space_via_projection) /
+    /// `fts_fetch_rows`) enters the dynamic FTS WHERE clause. The projection
+    /// emits bare `?`; this method
+    /// is the only place that maps them onto the builder's `?N` slots, so
+    /// the placeholder/bind invariant the builder guarantees still holds.
+    ///
+    /// Pre-condition: the fragment's `?` count MUST equal its `binds.len()`
+    /// (every primitive `SearchProjection` compiles satisfies this). The
+    /// fragment is composed via a structured [`SqlFragment`] (#2255): the
+    /// placeholders are numbered in one arithmetic pass, and a `?`/bind-count
+    /// mismatch (e.g. a literal `?` in a string) is a HARD error active in
+    /// release too — the promotion of the former `debug_assert!`.
+    fn add_projection_clause(&mut self, prefix: &str, sql: &str, binds: &[Bind]) {
+        let fragment = SqlFragment::new(sql, binds.to_vec());
+        let rendered = fragment.render(&mut self.next_param);
+        self.sql.push_str(prefix);
+        self.sql.push_str(&rendered);
+        for b in fragment.binds() {
+            self.binds.push(match b {
+                Bind::Text(s) => ScalarBind::Str(s.clone()),
+                Bind::Int(n) => ScalarBind::I64(*n),
+                Bind::Real(n) => ScalarBind::F64(*n),
+            });
+        }
+    }
+
+    /// #1320 space-id filter routed through [`SearchProjection`]
+    /// instead of the inline [`add_space`](Self::add_space) fragment. The
+    /// projection's `compile_space` emits `b.space_id = ?` with one text
+    /// bind — byte-identical (modulo placeholder numbering) to the legacy
+    /// `add_space` fragment, so this is a zero-behaviour-change cutover and
+    /// gives `SearchProjection` its first production call site. No-op when
+    /// `space_id` is `None` (mirrors `add_space`).
+    ///
+    /// Only `Space` is routed here: the legacy Tag (`COUNT(DISTINCT)`
+    /// ALL-semantics) and property (`prop:` four-column OR) fragments are
+    /// NOT byte-identical to their `SearchProjection` counterparts and stay
+    /// on the legacy path — see the `projection_space_parity` test for the
+    /// proof.
+    pub(super) fn add_space_via_projection(&mut self, prefix: &str, space_id: Option<&str>) {
+        let Some(sid) = space_id else { return };
+        let prims = vec![FilterPrimitive::Space {
+            space_id: sid.to_string(),
+        }];
+        for prim in &prims {
+            let wc = SearchProjection.compile(prim);
+            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+        }
+    }
+
+    /// #1320-C — `last-edited:` window filter routed through
+    /// [`SearchProjection`] (`compile_last_edited`, which delegates to
+    /// `PagesProjection`). The projection emits a
+    /// `COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id),
+    /// 0) <op> ?` comparison against the block's last-edit epoch-ms — so it
+    /// references the block table via the hardcoded `b.` alias the three FTS
+    /// builders use. Mirrors [`add_space_via_projection`]: build one
+    /// [`FilterPrimitive::LastEdited`], compile it, and splice the
+    /// bare-`?` fragment + ordered binds through
+    /// [`add_projection_clause`](Self::add_projection_clause). The caller
+    /// only invokes this when the spec is present (see
+    /// [`add_metadata`](Self::add_metadata)).
+    pub(super) fn add_last_edited_via_projection(&mut self, prefix: &str, spec: &LastEditedSpec) {
+        let prim = FilterPrimitive::LastEdited { spec: spec.clone() };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `state:` membership filter routed through
+    /// [`SearchProjection`] (`compile_state`, which delegates to the canonical
+    /// A2 `PagesProjection` SQL). Replaces the legacy `append_metadata_sql`
+    /// emission of the `b.todo_state IN (…) / IS NULL` include clause and the
+    /// `b.todo_state IS NULL OR … NOT IN (…)` exclude clause. The A2 SQL is
+    /// byte-shape-identical to the legacy `append_text_in_or_null` /
+    /// `append_text_not_in_or_not_null` oracle, so this is a zero-behaviour-
+    /// change cutover at the result level.
+    ///
+    /// Legacy state carries BOTH an include set (`state_values`/`state_is_null`)
+    /// and an exclude set (`excluded_state_values`/`excluded_state_not_null`).
+    /// The caller emits TWO primitives — an include `State { exclude: false }`
+    /// and an exclude `State { exclude: true }` — feeding each here. Each
+    /// emits its own AND-joined fragment under `prefix`, matching the legacy
+    /// two-clause shape. An empty include (no values, not is_null) compiles to
+    /// the no-op `1=1`, matching the legacy helper's early return; we splice it
+    /// regardless (a `1=1` AND-clause is inert), keeping the call unconditional.
+    pub(super) fn add_state_via_projection(
+        &mut self,
+        prefix: &str,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+    ) {
+        // Mirror the legacy helpers' early return: emit nothing when there is
+        // no predicate at all (empty values AND no null/not-null flag), so the
+        // generated SQL stays byte-identical to the legacy no-clause case.
+        if values.is_empty() && !is_null {
+            return;
+        }
+        let prim = FilterPrimitive::State {
+            values: values.to_vec(),
+            is_null,
+            exclude,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// `priority:` membership filter routed through [`SearchProjection`]
+    /// (`compile_priority`, which delegates to the canonical A2
+    /// `PagesProjection` SQL over `b.priority`). Replaces the legacy
+    /// `append_metadata_sql` emission of the `b.priority IN (…) / IS NULL`
+    /// include clause and the `b.priority IS NULL OR … NOT IN (…)` exclude
+    /// clause. The A2 SQL is byte-shape-identical to the legacy
+    /// `append_text_in_or_null` / `append_text_not_in_or_not_null` oracle, so
+    /// this is a zero-behaviour-change cutover at the result level.
+    ///
+    /// Exactly mirrors [`add_state_via_projection`](Self::add_state_via_projection):
+    /// legacy priority carries BOTH an include set (`priority_values` /
+    /// `priority_is_null`) and an exclude set (`excluded_priority_values` /
+    /// `excluded_priority_not_null`); the caller emits TWO primitives — an
+    /// include `Priority { exclude: false }` and an exclude
+    /// `Priority { exclude: true }`, feeding each here. An empty include (no
+    /// values, not is_null) is a no-op, matching the legacy helper's early
+    /// return.
+    pub(super) fn add_priority_via_projection(
+        &mut self,
+        prefix: &str,
+        values: &[String],
+        is_null: bool,
+        exclude: bool,
+    ) {
+        // Mirror the legacy helpers' early return: emit nothing when there is
+        // no predicate at all (empty values AND no null/not-null flag), so the
+        // generated SQL stays byte-identical to the legacy no-clause case.
+        if values.is_empty() && !is_null {
+            return;
+        }
+        let prim = FilterPrimitive::Priority {
+            values: values.to_vec(),
+            is_null,
+            exclude,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #properties-typed-always — a `prop:KEY=VALUE` (or excluded
+    /// `not-prop:`) search filter routed through [`SearchProjection`]
+    /// (`compile_has_property`, the SAME typed compiler every other surface
+    /// — Pages browser, advanced query, backlinks — already uses).
+    ///
+    /// Search property matching is TYPED: the user's value is parsed to the
+    /// single most-specific [`PropertyValue`] and only that one column is
+    /// compared — never an untyped four-column OR
+    /// (`value_text`/`value_num`/`value_date`/`value_ref` matched
+    /// simultaneously with one value bound four ways).
+    ///
+    /// The [`SearchPropertyFilter`] → [`PropertyPredicate`] mapping:
+    /// - empty value, include → `Exists` (key presence)
+    /// - empty value, exclude → `NotExists`
+    /// - non-empty value, include → `Eq { value: <typed> }`
+    /// - non-empty value, exclude → `Ne { value: <typed> }`
+    ///
+    /// The compiled fragment emits the hardcoded `b.id` alias the three FTS
+    /// builders use (the projection's `EXISTS (SELECT 1 FROM block_properties
+    /// WHERE block_id = b.id …)` form), so it is alias-compatible verbatim.
+    pub(super) fn add_property_via_projection(&mut self, prefix: &str, pf: &SearchPropertyFilter) {
+        self.add_property_predicate(prefix, pf, false);
+    }
+
+    /// #properties-typed-always — excluded sibling of
+    /// [`add_property_via_projection`](Self::add_property_via_projection):
+    /// empty value compiles to `NotExists`, non-empty to `Ne { value }`.
+    pub(super) fn add_excluded_property_via_projection(
+        &mut self,
+        prefix: &str,
+        pf: &SearchPropertyFilter,
+    ) {
+        self.add_property_predicate(prefix, pf, true);
+    }
+
+    /// Shared body for the include / exclude property splices: build the
+    /// typed [`PropertyPredicate`], compile via the projection, splice.
+    fn add_property_predicate(&mut self, prefix: &str, pf: &SearchPropertyFilter, exclude: bool) {
+        // BE-8: bind the trimmed key so a whitespace-padded `prop:` key (which
+        // the empty-key guard already trims before its is-empty check) matches
+        // the stored, un-padded key instead of silently matching nothing. This
+        // preserves the legacy `append_property_match` key-trim behaviour.
+        let key = pf.key.trim();
+        let predicate = if pf.value.is_empty() {
+            if exclude {
+                PropertyPredicate::NotExists
+            } else {
+                PropertyPredicate::Exists
+            }
+        } else {
+            let value = infer_property_value(&pf.value);
+            if exclude {
+                PropertyPredicate::Ne { value }
+            } else {
+                PropertyPredicate::Eq { value }
+            }
+        };
+        let prim = FilterPrimitive::HasProperty {
+            key: key.to_string(),
+            predicate,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `block-type:` equality filter routed through
+    /// [`SearchProjection`] (`compile_block_type` → canonical A2
+    /// `PagesProjection` SQL). Replaces the legacy inline `b.block_type = ?N`
+    /// fragment. The routed SQL SHAPE differs
+    /// (`b.block_type IN (?)` vs `b.block_type = ?`) but is RESULT-EQUIVALENT
+    /// for the single-value filter the FTS surface passes. `None` is a no-op;
+    /// the projection's empty-include `1=0` is never reached because we only
+    /// compile a primitive when a value is present.
+    pub(super) fn add_block_type_via_projection(&mut self, prefix: &str, block_type: Option<&str>) {
+        let Some(bt) = block_type else { return };
+        let prim = FilterPrimitive::BlockType {
+            values: vec![bt.to_string()],
+            exclude: false,
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `due-date:` predicate routed through [`SearchProjection`]
+    /// (`compile_due_date` → canonical A2 `PagesProjection` SQL over
+    /// `b.due_date`). Replaces the legacy `append_metadata_sql` emission of the
+    /// `b.due_date <pred>` clause. The A2 SQL is byte-shape-identical to the
+    /// legacy `append_date_predicate` oracle (guarded `IS NOT NULL`, exact `=`
+    /// for `On`). Only invoked when the predicate is present (see
+    /// [`add_metadata`](Self::add_metadata)).
+    pub(super) fn add_due_date_via_projection(
+        &mut self,
+        prefix: &str,
+        predicate: &MetaDatePredicate,
+    ) {
+        let prim = FilterPrimitive::DueDate {
+            predicate: meta_date_to_primitive(predicate),
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1280 B2 — `scheduled:` predicate routed through [`SearchProjection`]
+    /// (`compile_scheduled` → canonical A2 `PagesProjection` SQL over
+    /// `b.scheduled_date`). Replaces the legacy `append_metadata_sql` emission
+    /// of the `b.scheduled_date <pred>` clause. Same byte-shape contract as
+    /// [`add_due_date_via_projection`].
+    pub(super) fn add_scheduled_via_projection(
+        &mut self,
+        prefix: &str,
+        predicate: &MetaDatePredicate,
+    ) {
+        let prim = FilterPrimitive::Scheduled {
+            predicate: meta_date_to_primitive(predicate),
+        };
+        let wc = SearchProjection.compile(&prim);
+        self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+    }
+
+    /// #1320 ALL-tags filter routed through [`SearchProjection`]
+    /// instead of the inline `add_tags_all` `COUNT(DISTINCT)` fragment
+    /// (#1320 retired that legacy method; this is now the sole path).
+    /// For each requested tag, compiles a
+    /// [`FilterPrimitive::Tag`] (which `SearchProjection::compile_tag`
+    /// emits as `b.id IN (SELECT block_id FROM block_tags WHERE tag_id =
+    /// ?)`) and splices it through [`add_projection_clause`] under the same
+    /// `prefix`. Because every per-tag fragment is AND-joined with the same
+    /// `AND ` glue prefix, a block must sit in EVERY per-tag set — i.e. it
+    /// must carry every requested tag. That is RESULT-EQUIVALENT to the
+    /// legacy `COUNT(DISTINCT bt.tag_id) = N` ALL-semantics (proved by the
+    /// `tags_via_projection_matches_legacy_*` DB equivalence tests), though
+    /// the emitted SQL SHAPE differs (N IN-subselects vs one
+    /// `COUNT(DISTINCT)` sub-select).
+    ///
+    /// `tags` must already be deduped + UPPERCASE-normalised by the caller
+    /// (/ SQL-A6) — dedup is now a correctness-neutral nicety rather
+    /// than a hard requirement (a duplicated tag id only emits a redundant
+    /// identical IN-subselect), but the caller keeps deduping for SQL
+    /// economy. No-op on an empty slice (mirrors `add_tags_all`). The
+    /// loop calls `add_projection_clause` once per tag, each consuming one
+    /// `?N` placeholder, so `next_param` advances by exactly `tags.len()`.
+    pub(super) fn add_tags_via_projection(&mut self, prefix: &str, tags: &[String]) {
+        if tags.is_empty() {
+            return;
+        }
+        for tag in tags {
+            let prim = FilterPrimitive::Tag { tag: tag.clone() };
+            let wc = SearchProjection.compile(&prim);
+            self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+        }
+    }
+
+    /// Page-name-glob filter routed through [`SearchProjection`] — the
+    /// sole path for this filter (#1320). Preserves the LEGACY
+    /// `LOWER(title) GLOB ?` dialect byte-for-byte at the result level
+    /// (zero behaviour change — search users keep `GLOB` + brace +
+    /// `[class]` semantics).
+    ///
+    /// `prepared_globs` are the patterns the caller already ran through
+    /// [`super::glob_filter::prepare_globs`] (brace-expanded,
+    /// substring-wrapped, ASCII-lowercased) — IDENTICAL input contract to
+    /// the legacy `add_page_globs`, so the `fts_fetch_rows` swap is a pure
+    /// drop-in (the prepare happens once upstream in
+    /// `commands::queries::prepare_search_filter`; re-preprocessing here
+    /// would double-wrap). Each pattern compiles to one
+    /// `SearchProjection::compile_path_glob` fragment:
+    ///   `b.page_id [NOT ]IN (SELECT page_id FROM pages_cache
+    ///                        WHERE LOWER(title) GLOB ?)`.
+    ///
+    /// ## Multiplicity (the load-bearing join semantics)
+    ///
+    /// The legacy helper folds ALL patterns into ONE sub-select whose
+    /// inner `GLOB` terms are OR-joined, so a page matches if its title
+    /// matches ANY pattern:
+    ///   `b.page_id IN  (… GLOB ?a OR GLOB ?b)`  (include = set union)
+    ///   `b.page_id NOT IN (… GLOB ?a OR GLOB ?b)` (exclude = set diff)
+    ///
+    /// Routed per-pattern, that becomes:
+    /// - INCLUDE (`negate == false`): the per-pattern `IN`-fragments are
+    ///   **OR-joined** and wrapped in parens —
+    ///   `(b.page_id IN (?a) OR b.page_id IN (?b))` ≡ `IN (… ?a OR ?b)`.
+    ///   The parens keep the OR-group atomic against the surrounding
+    ///   AND-joined builder clauses.
+    /// - EXCLUDE (`negate == true`): the per-pattern `NOT IN`-fragments are
+    ///   **AND-joined** (each via [`add_projection_clause`] under `prefix`)
+    ///   — `b.page_id NOT IN (?a) AND b.page_id NOT IN (?b)` ≡ NONE match ≡
+    ///   `NOT IN (… ?a OR ?b)`.
+    ///
+    /// No-op on an empty slice (mirrors `add_page_globs`). Each compiled
+    /// fragment carries one `?` placeholder; `add_projection_clause`
+    /// advances `next_param` by one per call, so the running index stays
+    /// consistent regardless of the OR/AND branch.
+    pub(super) fn add_page_globs_via_projection(
+        &mut self,
+        prefix: &str,
+        negate: bool,
+        prepared_globs: &[String],
+    ) {
+        if prepared_globs.is_empty() {
+            return;
+        }
+        if negate {
+            // EXCLUDE: AND-join each `NOT IN` fragment under `prefix`, so a
+            // page must fall outside EVERY per-pattern set.
+            for pat in prepared_globs {
+                let wc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+                    pattern: pat.clone(),
+                    exclude: true,
+                });
+                self.add_projection_clause(prefix, &wc.sql, &wc.binds);
+            }
+        } else {
+            // INCLUDE: OR-join the per-pattern `IN` fragments inside one
+            // paren-wrapped group spliced under a single `prefix`, so a page
+            // matches if its title matches ANY pattern (set union).
+            self.sql.push_str(prefix);
+            self.sql.push('(');
+            for (i, pat) in prepared_globs.iter().enumerate() {
+                if i > 0 {
+                    self.sql.push_str(" OR ");
+                }
+                let wc = SearchProjection.compile(&FilterPrimitive::PathGlob {
+                    pattern: pat.clone(),
+                    exclude: false,
+                });
+                // Renumber the fragment's single bare `?` to the running
+                // `?N` slot and record its bind (same contract as
+                // `add_projection_clause`, but with empty glue so the OR is
+                // the only separator and the paren group stays intact).
+                self.add_projection_clause("", &wc.sql, &wc.binds);
+            }
+            self.sql.push(')');
+        }
+    }
+
+    /// `AND b.id < ?N` keyset cursor predicate when `Some`.
+    pub(super) fn add_after_id(&mut self, prefix: &str, after_id: Option<&str>) {
+        if let Some(aid) = after_id {
+            let i = self.next_param;
+            self.sql.push_str(&format!("{prefix}b.id < ?{i}"));
+            self.next_param += 1;
+            self.binds.push(ScalarBind::Str(aid.to_string()));
+        }
+    }
+
+    /// Splice the metadata predicates into the fragment by compiling each
+    /// leaf through [`SearchProjection`], recording each bind in declaration
+    /// order. The relative position of this call vs
+    /// [`add_block_type_via_projection`](Self::add_block_type_via_projection)
+    /// differs between the FTS and the toggle builders — the caller drives
+    /// that order.
+    pub(super) fn add_metadata(&mut self, metadata: &MetadataPredicates, alias: &str) {
+        // #1280 B2 / #properties-typed-always — EVERY metadata leaf (`state:` /
+        // `priority:` / `due-date:` / `scheduled:` / `last-edited:` and now
+        // `prop:`) is routed through `SearchProjection` (which delegates to the
+        // canonical A2 `PagesProjection` SQL). These projections emit a
+        // hardcoded `b.` / `b.id` alias, so they require `alias == "b"` (all
+        // three FTS builders splice metadata with `"b"`). The legacy
+        // `append_metadata_sql` four-column property OR has been DELETED — its
+        // single user value was bound four ways against
+        // `value_text/num/date/ref` (untyped); property now matches a SINGLE
+        // typed column chosen from the inferred `PropertyValue`, identical to
+        // every other surface.
+        debug_assert_eq!(
+            alias, "b",
+            "state/due/scheduled/last_edited/property projections emit a \
+             hardcoded `b.` alias; the metadata block alias must be `b`"
+        );
+
+        // INCLUDE state (`state_values` / `state_is_null`) and the symmetric
+        // EXCLUDE state (`excluded_state_values` / `excluded_state_not_null`)
+        // are TWO separate legacy clauses → two primitives. Each splice is a
+        // no-op when its set is empty (mirrors the legacy helpers' early
+        // return), so the generated SQL stays byte-identical to the legacy
+        // no-clause cases.
+        self.add_state_via_projection(
+            METADATA_AND_PREFIX,
+            &metadata.state_values,
+            metadata.state_is_null,
+            false,
+        );
+        self.add_state_via_projection(
+            METADATA_AND_PREFIX,
+            &metadata.excluded_state_values,
+            metadata.excluded_state_not_null,
+            true,
+        );
+
+        // INCLUDE priority (`priority_values` / `priority_is_null`) and the
+        // symmetric EXCLUDE priority (`excluded_priority_values` /
+        // `excluded_priority_not_null`) mirror the state two-clause shape. Each
+        // splice is a no-op when its set is empty (mirrors the legacy helpers'
+        // early return).
+        self.add_priority_via_projection(
+            METADATA_AND_PREFIX,
+            &metadata.priority_values,
+            metadata.priority_is_null,
+            false,
+        );
+        self.add_priority_via_projection(
+            METADATA_AND_PREFIX,
+            &metadata.excluded_priority_values,
+            metadata.excluded_priority_not_null,
+            true,
+        );
+
+        // #properties-typed-always — property includes / excludes now route
+        // through `SearchProjection::compile_has_property` (TYPED single-column
+        // match), the same way every other surface compiles them. This
+        // replaces the legacy untyped `append_metadata_sql` four-column OR.
+        // Each entry consumes its own `?N` placeholder slots via
+        // `add_projection_clause`.
+        for pf in &metadata.property_includes {
+            self.add_property_via_projection(METADATA_AND_PREFIX, pf);
+        }
+        for pf in &metadata.property_excludes {
+            self.add_excluded_property_via_projection(METADATA_AND_PREFIX, pf);
+        }
+
+        // due_date / scheduled_date predicates routed through the projection.
+        if let Some(pred) = &metadata.due {
+            self.add_due_date_via_projection(METADATA_AND_PREFIX, pred);
+        }
+        if let Some(pred) = &metadata.scheduled {
+            self.add_scheduled_via_projection(METADATA_AND_PREFIX, pred);
+        }
+
+        // #1320-C — the `last-edited:` window is also compiled through
+        // `SearchProjection::compile_last_edited` (hardcoded `b.` alias).
+        if let Some(spec) = &metadata.last_edited {
+            self.add_last_edited_via_projection(METADATA_AND_PREFIX, spec);
+        }
+    }
+
+    /// Replay the recorded binds onto `query`, in declaration order.
+    /// Call AFTER binding the query's fixed base parameters and BEFORE
+    /// binding any trailing param (e.g. a `LIMIT` cap) whose placeholder
+    /// index the builder reserved last via [`next_param`](Self::next_param).
+    pub(super) fn apply<'q, O>(
+        &'q self,
+        mut query: sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments>,
+    ) -> sqlx::query::QueryAs<'q, sqlx::Sqlite, O, sqlx::sqlite::SqliteArguments> {
+        for bind in &self.binds {
+            query = match bind {
+                ScalarBind::Str(s) => query.bind(s),
+                ScalarBind::I64(n) => query.bind(n),
+                ScalarBind::F64(n) => query.bind(n),
+            };
+        }
+        query
+    }
+
+    /// Number of recorded scalar binds (test-only invariant check).
+    #[cfg(test)]
+    pub(super) fn bind_count(&self) -> usize {
+        self.binds.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FTS_PREFIX: &str = "\n           AND ";
+    const TOGGLE_PREFIX: &str = "\n             AND ";
+
+    #[test]
+    fn parent_fragment_is_byte_identical() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_parent(FTS_PREFIX, Some("blk"));
+        assert_eq!(fb.sql(), "\n           AND b.parent_id = ?6");
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    #[test]
+    fn parent_none_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_parent(FTS_PREFIX, None);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    #[test]
+    fn space_fragment_matches_canonical_inner() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_space(FTS_PREFIX, Some("space1"));
+        assert_eq!(fb.sql(), "\n           AND b.space_id = ?6");
+        assert_eq!(fb.next_param(), 7);
+    }
+
+    // ── #1320 SearchProjection cutover parity ──────────────────
+    //
+    // The zero-behaviour-change contract: routing the shared subset through
+    // `SearchProjection` must emit byte-identical SQL + binds to the legacy
+    // inline fragment, OR the predicate stays on the legacy path. These
+    // tests prove which predicates are byte-identical (cut over) and which
+    // are NOT (excluded, kept legacy). Modeled on `backlink/tests::parity_p1`.
+
+    /// Space IS byte-identical between the legacy `add_space` fragment and
+    /// the `SearchProjection`-routed `add_space_via_projection` — so it is
+    /// the predicate we cut over in `fts_fetch_rows`. SQL string + bind
+    /// sequence (and the consumed placeholder index) must match exactly.
+    #[test]
+    fn projection_space_parity() {
+        // Legacy path.
+        let mut legacy = StructuralFilterBuilder::new(6);
+        legacy.add_space(FTS_PREFIX, Some("01SPACE0001"));
+
+        // Projection-routed path (the production cutover).
+        let mut routed = StructuralFilterBuilder::new(6);
+        routed.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
+
+        assert_eq!(
+            routed.sql(),
+            legacy.sql(),
+            "Space fragment must be byte-identical via SearchProjection"
+        );
+        assert_eq!(
+            routed.sql(),
+            "\n           AND b.space_id = ?6",
+            "Space fragment snapshot"
+        );
+        assert_eq!(
+            routed.next_param(),
+            legacy.next_param(),
+            "Space must consume the same number of placeholders"
+        );
+        assert_eq!(routed.next_param(), 7);
+        assert_eq!(
+            routed.bind_count(),
+            legacy.bind_count(),
+            "Space must record the same bind count"
+        );
+        assert_eq!(routed.bind_count(), 1);
+        // Bind value parity.
+        assert!(matches!(
+            routed.binds.first(),
+            Some(ScalarBind::Str(s)) if s == "01SPACE0001"
+        ));
+    }
+
+    /// `add_space_via_projection(None)` is a no-op, mirroring `add_space`.
+    #[test]
+    fn projection_space_none_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_space_via_projection(FTS_PREFIX, None);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// Tag filtering is ROUTED through `SearchProjection` in
+    /// `fts_fetch_rows` (`add_tags_via_projection`, #1320); the projection
+    /// emits N per-tag `b.id IN (SELECT block_id FROM block_tags WHERE
+    /// tag_id = ?N)` sub-selects AND-joined under the same prefix, rather
+    /// than a single `COUNT(DISTINCT bt.tag_id) = N` sub-select. The two
+    /// shapes are RESULT-EQUIVALENT (a block in every per-tag set has all
+    /// N tags), proved at the DB level by the
+    /// `tags_via_projection_matches_legacy_*` equivalence tests below.
+    ///
+    /// This test PINs the routed behaviour: it asserts the exact SQL
+    /// `add_tags_via_projection` emits, that it AND-joins per tag with
+    /// correct placeholder renumbering, and (via the shape-divergence
+    /// assertion) that the SQL never regresses to a `COUNT(DISTINCT)`
+    /// form.
+    #[test]
+    fn tags_via_projection_routes_and_documents_shape_cutover() {
+        // Routed path (the production cutover) — two tags, ALL-semantics.
+        let mut routed = StructuralFilterBuilder::new(6);
+        routed.add_tags_via_projection(
+            FTS_PREFIX,
+            &[
+                "01TAG0000000000000000000A".to_string(),
+                "01TAG0000000000000000000B".to_string(),
+            ],
+        );
+
+        // Exact SQL snapshot: two per-tag IN-subselects, AND-joined, with
+        // renumbered `?6` / `?7` placeholders (one bind each).
+        assert_eq!(
+            routed.sql(),
+            "\n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?6)\
+             \n           AND b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
+            "routed Tag emits N AND-joined per-tag IN sub-selects"
+        );
+        assert_eq!(routed.next_param(), 8, "two tags consume ?6 and ?7");
+        assert_eq!(routed.bind_count(), 2, "one bind per tag, no count bind");
+        assert!(
+            matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "01TAG0000000000000000000A")
+        );
+
+        // No live legacy builder exists to diff against (#1320), so pin the
+        // shape directly: the routed path uses per-tag `IN`-subselects, NOT
+        // a single `COUNT(DISTINCT bt.tag_id) = N` form (the two are
+        // result-equivalent, proved by the
+        // `tags_via_projection_matches_*` DB equivalence tests).
+        assert!(
+            !routed.sql().contains("COUNT(DISTINCT"),
+            "routed Tag is per-tag IN-subselects, not the legacy COUNT(DISTINCT) form"
+        );
+    }
+
+    // ── #properties-typed-always — search property is TYPED ──────────────
+    //
+    // The search property filter compiles to the SAME typed
+    // single-column SQL as `SearchProjection::compile_has_property` — the
+    // shared compiler every other surface (Pages browser, advanced query,
+    // backlinks) already uses. Each snapshot proves
+    // `add_property_via_projection` / `add_excluded_property_via_projection`
+    // splice EXACTLY the projection's `compile_has_property` output (modulo the
+    // builder's `?N` renumbering + the metadata `AND ` glue prefix), for the
+    // value-typing rule: finite f64 → `value_num` (Bind::Real); ISO date →
+    // `value_date`; otherwise `value_text`; empty value → key-presence
+    // Exists/NotExists; excluded → NotExists / Ne.
+
+    /// Helper: compile a `HasProperty` primitive through the projection and
+    /// return the builder-renumbered fragment (prefix-stripped) it should
+    /// produce, so each parity test asserts the splice == the projection.
+    fn projection_property_fragment(
+        pf: &SearchPropertyFilter,
+        exclude: bool,
+    ) -> StructuralFilterBuilder {
+        let mut routed = StructuralFilterBuilder::new(6);
+        if exclude {
+            routed.add_excluded_property_via_projection(FTS_PREFIX, pf);
+        } else {
+            routed.add_property_via_projection(FTS_PREFIX, pf);
+        }
+        routed
+    }
+
+    /// Text value → `value_text = ?` single-column match (typed Text). One
+    /// key bind + one text value bind.
+    #[test]
+    fn property_text_via_projection_matches_compile_has_property() {
+        use crate::filters::primitive::{FilterPrimitive, PropertyPredicate, PropertyValue};
+        let pf = SearchPropertyFilter {
+            key: "status".into(),
+            value: "draft".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        // Oracle: the projection compiled directly with the typed predicate.
+        let oracle = SearchProjection.compile(&FilterPrimitive::HasProperty {
+            key: "status".into(),
+            predicate: PropertyPredicate::Eq {
+                value: PropertyValue::Text {
+                    value: "draft".into(),
+                },
+            },
+        });
+        // Builder splices `prefix + renumber(oracle.sql)`; reproduce that.
+        let expected_sql = format!("{FTS_PREFIX}{}", renumber_from(&oracle.sql, 6));
+        assert_eq!(routed.sql(), expected_sql, "typed Text fragment parity");
+        assert!(
+            routed.sql().contains("key = ?6 AND value_text = ?7"),
+            "Text compiles to a single value_text column match, got: {}",
+            routed.sql()
+        );
+        assert!(
+            !routed.sql().contains("value_num") && !routed.sql().contains("value_ref"),
+            "typed Text must NOT emit the legacy four-column OR"
+        );
+        assert_eq!(routed.bind_count(), 2, "key + value");
+        assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "status"));
+        assert!(matches!(routed.binds.get(1), Some(ScalarBind::Str(s)) if s == "draft"));
+    }
+
+    /// Numeric value → `value_num = ?` (typed Num), bound as a REAL
+    /// ([`ScalarBind::F64`] ← [`Bind::Real`]), NOT stringified.
+    #[test]
+    fn property_num_via_projection_binds_real() {
+        let pf = SearchPropertyFilter {
+            key: "score".into(),
+            value: "1".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains("key = ?6 AND value_num = ?7"),
+            "finite f64 value compiles to a value_num column match, got: {}",
+            routed.sql()
+        );
+        assert_eq!(routed.bind_count(), 2);
+        assert!(matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "score"));
+        // The numeric value keeps its REAL affinity (Bind::Real → F64).
+        assert!(
+            matches!(routed.binds.get(1), Some(ScalarBind::F64(n)) if (n - 1.0).abs() < f64::EPSILON),
+            "numeric value must bind as REAL (Bind::Real), got a non-F64 bind"
+        );
+    }
+
+    /// ISO-date value → `value_date = ?` (typed Date), bound as text.
+    #[test]
+    fn property_iso_date_via_projection_matches_value_date() {
+        let pf = SearchPropertyFilter {
+            key: "deadline".into(),
+            value: "2026-05-17".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains("key = ?6 AND value_date = ?7"),
+            "ISO YYYY-MM-DD value compiles to a value_date column match, got: {}",
+            routed.sql()
+        );
+        assert!(matches!(routed.binds.get(1), Some(ScalarBind::Str(s)) if s == "2026-05-17"));
+    }
+
+    /// Empty value, include → `EXISTS … key = ?` key-presence (Exists).
+    #[test]
+    fn property_empty_value_via_projection_is_exists() {
+        let pf = SearchPropertyFilter {
+            key: "notes".into(),
+            value: String::new(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            routed.sql().contains(
+                "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6)"
+            ),
+            "empty value → key-presence EXISTS, got: {}",
+            routed.sql()
+        );
+        assert!(!routed.sql().contains("NOT EXISTS"));
+        assert_eq!(routed.bind_count(), 1, "key only");
+    }
+
+    /// Excluded entry, empty value → `NOT EXISTS` (NotExists); non-empty →
+    /// `NOT EXISTS … value_text = ?` (Ne).
+    #[test]
+    fn property_excluded_via_projection_is_not_exists_and_ne() {
+        // empty → NotExists
+        let pf_empty = SearchPropertyFilter {
+            key: "archived".into(),
+            value: String::new(),
+        };
+        let routed_empty = projection_property_fragment(&pf_empty, true);
+        assert!(
+            routed_empty.sql().contains(
+                "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6)"
+            ),
+            "excluded empty → NotExists, got: {}",
+            routed_empty.sql()
+        );
+
+        // non-empty → Ne over the typed column
+        let pf_val = SearchPropertyFilter {
+            key: "archived".into(),
+            value: "true".into(),
+        };
+        let routed_val = projection_property_fragment(&pf_val, true);
+        assert!(
+            routed_val.sql().contains("NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?6 AND value_text = ?7)"),
+            "excluded non-empty → Ne (single typed column), got: {}",
+            routed_val.sql()
+        );
+        assert!(
+            !routed_val.sql().contains("value_num"),
+            "Ne must NOT emit the legacy four-column OR"
+        );
+    }
+
+    /// BE-8 — a whitespace-padded `prop:` key binds as its TRIMMED form (the
+    /// key-trim moved from the deleted `append_property_match` into
+    /// `add_property_predicate`).
+    #[test]
+    fn property_key_is_trimmed_via_projection() {
+        let pf = SearchPropertyFilter {
+            key: "  owner  ".into(),
+            value: "me".into(),
+        };
+        let routed = projection_property_fragment(&pf, false);
+        assert!(
+            matches!(routed.binds.first(), Some(ScalarBind::Str(s)) if s == "owner"),
+            "padded key must bind trimmed to `owner`"
+        );
+    }
+
+    /// #383 — a non-finite numeric spelling (`inf`/`NaN`) is NOT inferred as
+    /// `Num` (the `is_finite()` filter rejects it); it falls through to Text,
+    /// so it compiles to a `value_text` match rather than `value_num`.
+    #[test]
+    fn property_non_finite_falls_through_to_text() {
+        for raw in ["inf", "NaN", "infinity"] {
+            let pf = SearchPropertyFilter {
+                key: "k".into(),
+                value: raw.into(),
+            };
+            let routed = projection_property_fragment(&pf, false);
+            assert!(
+                routed.sql().contains("value_text = ?7"),
+                "non-finite {raw:?} must be Text, got: {}",
+                routed.sql()
+            );
+            assert!(
+                !routed.sql().contains("value_num"),
+                "non-finite {raw:?} must NOT bind value_num"
+            );
+        }
+    }
+
+    /// Left-to-right `?` → `?N` renumber that the builder applies, so the
+    /// parity tests can reconstruct the expected spliced fragment from the
+    /// projection's bare-`?` SQL. Mirrors `add_projection_clause`.
+    fn renumber_from(sql: &str, mut next: usize) -> String {
+        let mut out = String::new();
+        for ch in sql.chars() {
+            if ch == '?' {
+                out.push('?');
+                out.push_str(&next.to_string());
+                next += 1;
+            } else {
+                out.push(ch);
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn space_inner_is_indent_independent() {
+        // Both builders must produce the SAME sub-select body — only the
+        // leading prefix differs.
+        let mut a = StructuralFilterBuilder::new(2);
+        a.add_space(FTS_PREFIX, Some("s"));
+        let mut b = StructuralFilterBuilder::new(2);
+        b.add_space(TOGGLE_PREFIX, Some("s"));
+        let strip_prefix = |s: &str| s.trim_start().to_string();
+        assert_eq!(strip_prefix(a.sql()), strip_prefix(b.sql()));
+    }
+
+    #[test]
+    fn block_type_and_after_id_fragments() {
+        let mut fb = StructuralFilterBuilder::new(3);
+        fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page"));
+        assert_eq!(fb.sql(), "\n             AND b.block_type IN (?3)");
+        fb.add_after_id(TOGGLE_PREFIX, Some("cursor"));
+        assert!(fb.sql().ends_with("\n             AND b.id < ?4"));
+        assert_eq!(fb.next_param(), 5);
+        assert_eq!(fb.bind_count(), 2);
+    }
+
+    // ── #1280 B2 — metadata splices (state / block_type / due / scheduled) ──
+
+    /// State INCLUDE compiles to the canonical `(b.todo_state IN (…) OR
+    /// b.todo_state IS NULL)` shape spliced under the metadata prefix, with
+    /// renumbered placeholders and one bind per value.
+    #[test]
+    fn state_include_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["TODO".to_string()], true, false);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IN (?6) OR b.todo_state IS NULL)"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// State EXCLUDE compiles to the NULL-inclusive inversion `(b.todo_state
+    /// IS NULL OR b.todo_state NOT IN (…))` — the `IS NULL` branch OUTSIDE
+    /// the `NOT IN` list (3-valued trap guard). With `is_null=true`
+    /// (`not-state:DONE,none`) the listed values AND the NULL bucket are
+    /// excluded, so the conditions are AND-joined into `(b.todo_state IS NOT
+    /// NULL AND b.todo_state NOT IN (…))` (#2019 — the previous OR-join was a
+    /// tautology matching every row).
+    #[test]
+    fn state_exclude_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["DONE".to_string()], true, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IS NOT NULL AND b.todo_state NOT IN (?6))"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// State EXCLUDE without the `none` sentinel keeps NULL-state rows: the
+    /// `IS NULL` branch lives OUTSIDE the `NOT IN` list, OR-joined.
+    #[test]
+    fn state_exclude_without_none_keeps_null_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &["DONE".to_string()], false, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.todo_state IS NULL OR b.todo_state NOT IN (?6))"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// An empty, null-less state include is a no-op (mirrors the legacy
+    /// helper's early return) — no clause, no placeholder consumed.
+    #[test]
+    fn state_empty_via_projection_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_state_via_projection(FTS_PREFIX, &[], false, false);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    // ── priority via projection — parity with the legacy `b.priority` oracle ──
+    //
+    // The projection-built priority SQL must be byte-shape-identical to the
+    // legacy `append_text_in_or_null` / `append_text_not_in_or_not_null`
+    // fragments over `b.priority` (the fragments `append_metadata_sql` used to
+    // emit before the multi-value `Priority` cutover). These mirror the
+    // `state_*_via_projection_*` snapshots above, on the `b.priority` column.
+
+    /// Single value: priority INCLUDE compiles to the canonical
+    /// `(b.priority IN (?))` shape, one bind, one placeholder consumed —
+    /// result-equivalent to the legacy single-value `b.priority = ?` emission.
+    #[test]
+    fn priority_single_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &["A".to_string()], false, false);
+        assert_eq!(fb.sql(), "\n           AND (b.priority IN (?6))");
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+        assert!(matches!(fb.binds.first(), Some(ScalarBind::Str(s)) if s == "A"));
+    }
+
+    /// Multi value: priority INCLUDE compiles to `(b.priority IN (?,?))` with
+    /// one bind per value and contiguous renumbered placeholders — byte-shape
+    /// identical to the legacy `append_text_in_or_null` multi-value fragment.
+    #[test]
+    fn priority_multi_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(
+            FTS_PREFIX,
+            &["A".to_string(), "B".to_string()],
+            false,
+            false,
+        );
+        assert_eq!(fb.sql(), "\n           AND (b.priority IN (?6, ?7))");
+        assert_eq!(fb.next_param(), 8);
+        assert_eq!(fb.bind_count(), 2);
+        assert!(matches!(fb.binds.first(), Some(ScalarBind::Str(s)) if s == "A"));
+    }
+
+    /// `priority:none` (IS NULL, no values) compiles to the bare
+    /// `(b.priority IS NULL)` — no placeholder consumed, matching the legacy
+    /// `append_text_in_or_null` is_null branch.
+    #[test]
+    fn priority_none_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &[], true, false);
+        assert_eq!(fb.sql(), "\n           AND (b.priority IS NULL)");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// EXCLUDE compiles to the NULL-inclusive inversion
+    /// `(b.priority IS NULL OR b.priority NOT IN (…))` — the `IS NULL` branch
+    /// OUTSIDE the `NOT IN` list (3-valued trap guard). With `is_null=true`
+    /// (`not-priority:A,none`) the listed values AND the NULL bucket are
+    /// excluded, so the conditions are AND-joined into `(b.priority IS NOT NULL
+    /// AND b.priority NOT IN (…))` (#2019 — the previous OR-join was a
+    /// tautology matching every row).
+    #[test]
+    fn priority_exclude_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &["A".to_string()], true, true);
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.priority IS NOT NULL AND b.priority NOT IN (?6))"
+        );
+        assert_eq!(fb.next_param(), 7);
+        assert_eq!(fb.bind_count(), 1);
+    }
+
+    /// An empty, null-less priority include is a no-op (mirrors the legacy
+    /// helper's early return) — no clause, no placeholder consumed.
+    #[test]
+    fn priority_empty_via_projection_is_noop() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_priority_via_projection(FTS_PREFIX, &[], false, false);
+        assert_eq!(fb.sql(), "");
+        assert_eq!(fb.next_param(), 6);
+        assert_eq!(fb.bind_count(), 0);
+    }
+
+    /// block_type routes to `b.block_type IN (?)` (result-equivalent to the
+    /// legacy `b.block_type = ?`); `None` is a no-op.
+    #[test]
+    fn block_type_via_projection_snapshot() {
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_block_type_via_projection(FTS_PREFIX, Some("page"));
+        assert_eq!(fb.sql(), "\n           AND b.block_type IN (?6)");
+        assert_eq!(fb.bind_count(), 1);
+
+        let mut none = StructuralFilterBuilder::new(6);
+        none.add_block_type_via_projection(FTS_PREFIX, None);
+        assert_eq!(none.sql(), "");
+        assert_eq!(none.next_param(), 6);
+    }
+
+    /// due / scheduled date predicates compile to the guarded canonical
+    /// fragment over the right column. `On{Eq}` is the exact `= ?` form;
+    /// `IsNull` is the bare `IS NULL`.
+    #[test]
+    fn due_scheduled_via_projection_snapshot() {
+        use crate::fts::metadata_filter::DatePredicate;
+
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_due_date_via_projection(
+            FTS_PREFIX,
+            &DatePredicate::Op {
+                op: crate::search_types::DateOp::Eq,
+                date: "2026-05-18".into(),
+            },
+        );
+        assert_eq!(
+            fb.sql(),
+            "\n           AND (b.due_date IS NOT NULL AND b.due_date = ?6)"
+        );
+        assert_eq!(fb.bind_count(), 1);
+
+        let mut sched = StructuralFilterBuilder::new(6);
+        sched.add_scheduled_via_projection(FTS_PREFIX, &DatePredicate::IsNull);
+        assert_eq!(sched.sql(), "\n           AND b.scheduled_date IS NULL");
+        assert_eq!(sched.bind_count(), 0, "IsNull binds nothing");
+    }
+
+    #[test]
+    fn call_order_drives_placeholder_order() {
+        // Mirrors the regex builder's order (metadata omitted): parent,
+        // tags, space, globs, block_type. Indices must increase
+        // monotonically with no gaps or reuse.
+        //
+        // #1320 routed through the `_via_projection` tag + glob
+        // variants (the legacy `add_tags_all` / `add_page_globs` were
+        // retired). `add_tags_via_projection` consumes ONE placeholder per
+        // tag (no trailing `COUNT(DISTINCT)` count bind), so the indices are
+        // now contiguous: parent ?1, tag ?2, space ?3, glob ?4, block_type ?5.
+        let mut fb = StructuralFilterBuilder::new(1);
+        fb.add_parent(TOGGLE_PREFIX, Some("p")); // ?1
+        fb.add_tags_via_projection(TOGGLE_PREFIX, &["T".to_string()]); // ?2
+        fb.add_space(TOGGLE_PREFIX, Some("s")); // ?3
+        fb.add_page_globs_via_projection(TOGGLE_PREFIX, false, &["*g*".to_string()]); // ?4
+        fb.add_block_type_via_projection(TOGGLE_PREFIX, Some("page")); // ?5
+        assert_eq!(fb.next_param(), 6);
+        // parent(1) + tags_via_projection(1 tag) + space(1) + glob(1)
+        // + block_type(1) = 5 recorded binds.
+        assert_eq!(fb.bind_count(), 5);
+        // Placeholders appear in ascending order in the SQL.
+        let sql = fb.sql();
+        let p1 = sql.find("?1").unwrap();
+        let p3 = sql.find("?3").unwrap();
+        let p5 = sql.find("?5").unwrap();
+        assert!(p1 < p3 && p3 < p5, "placeholders must be in source order");
+    }
+
+    // #2255 — assembly equivalence: the structured `SqlFragment` path (routed
+    // through every `add_*_via_projection` + `add_metadata` splice) must build
+    // a full multi-fragment FTS filter BYTE-IDENTICAL to the pre-refactor
+    // char-by-char renumber. Golden captured from `origin/main`.
+    #[test]
+    fn structured_assembly_is_byte_identical_to_legacy_renumber() {
+        use crate::fts::metadata_filter::{DatePredicate, MetadataPredicates};
+        use crate::search_types::{DateOp, SearchPropertyFilter};
+        let metadata = MetadataPredicates {
+            state_values: vec!["TODO".into(), "DOING".into()],
+            state_is_null: true,
+            excluded_state_values: vec!["DONE".into()],
+            excluded_state_not_null: false,
+            priority_values: vec!["A".into()],
+            priority_is_null: false,
+            excluded_priority_values: vec!["C".into()],
+            excluded_priority_not_null: true,
+            property_includes: vec![
+                SearchPropertyFilter {
+                    key: "status".into(),
+                    value: "draft".into(),
+                },
+                SearchPropertyFilter {
+                    key: "score".into(),
+                    value: "1.5".into(),
+                },
+                SearchPropertyFilter {
+                    key: "deadline".into(),
+                    value: "2026-05-17".into(),
+                },
+                SearchPropertyFilter {
+                    key: "notes".into(),
+                    value: String::new(),
+                },
+            ],
+            property_excludes: vec![SearchPropertyFilter {
+                key: "archived".into(),
+                value: String::new(),
+            }],
+            due: Some(DatePredicate::Op {
+                op: DateOp::Lte,
+                date: "2026-06-01".into(),
+            }),
+            scheduled: Some(DatePredicate::Range {
+                from: "2026-01-01".into(),
+                to: "2026-12-31".into(),
+            }),
+            last_edited: Some(crate::filters::LastEditedSpec::Rolling { days: 7 }),
+        };
+        let mut fb = StructuralFilterBuilder::new(6);
+        fb.add_parent(FTS_PREFIX, Some("PARENT01"));
+        fb.add_tags_via_projection(FTS_PREFIX, &["TAGA".to_string(), "TAGB".to_string()]);
+        fb.add_space_via_projection(FTS_PREFIX, Some("01SPACE0001"));
+        fb.add_page_globs_via_projection(
+            FTS_PREFIX,
+            false,
+            &["*proj*".to_string(), "*docs*".to_string()],
+        );
+        fb.add_page_globs_via_projection(FTS_PREFIX, true, &["*trash*".to_string()]);
+        fb.add_block_type_via_projection(FTS_PREFIX, Some("page"));
+        fb.add_metadata(&metadata, "b");
+
+        // Byte-identical golden. Each fragment is spliced with `FTS_PREFIX`
+        // ("\n           AND "); the bodies + `?N` numbers below are the exact
+        // pre-refactor renumber output over this call sequence.
+        let bodies = [
+            "b.parent_id = ?6",
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?7)",
+            "b.id IN (SELECT block_id FROM block_tags WHERE tag_id = ?8)",
+            "b.space_id = ?9",
+            "(b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?10) OR b.page_id IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?11))",
+            "b.page_id NOT IN (SELECT page_id FROM pages_cache WHERE LOWER(title) GLOB ?12)",
+            "b.block_type IN (?13)",
+            "(b.todo_state IN (?14, ?15) OR b.todo_state IS NULL)",
+            "(b.todo_state IS NULL OR b.todo_state NOT IN (?16))",
+            "(b.priority IN (?17))",
+            "(b.priority IS NOT NULL AND b.priority NOT IN (?18))",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?19 AND value_text = ?20)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?21 AND value_num = ?22)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?23 AND value_date = ?24)",
+            "EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?25)",
+            "NOT EXISTS (SELECT 1 FROM block_properties WHERE block_id = b.id AND key = ?26)",
+            "(b.due_date IS NOT NULL AND b.due_date <= ?27)",
+            "(b.scheduled_date IS NOT NULL AND b.scheduled_date BETWEEN ?28 AND ?29)",
+            "COALESCE((SELECT MAX(created_at) FROM op_log WHERE block_id = b.id), 0) >= (CAST(strftime('%s', 'now', ?30) AS INTEGER) * 1000)",
+        ];
+        let expected: String = bodies.iter().map(|b| format!("{FTS_PREFIX}{b}")).collect();
+        assert_eq!(fb.sql(), expected, "assembled SQL must be byte-identical");
+        assert_eq!(fb.next_param(), 31, "next free slot after ?30");
+        assert_eq!(
+            fb.bind_count(),
+            25,
+            "25 binds appended in placeholder order"
+        );
+
+        let bind_vals: Vec<String> = fb
+            .binds
+            .iter()
+            .map(|b| match b {
+                ScalarBind::Str(s) => format!("S:{s}"),
+                ScalarBind::I64(n) => format!("I:{n}"),
+                ScalarBind::F64(n) => format!("F:{n}"),
+            })
+            .collect();
+        let expected_binds = [
+            "S:PARENT01",
+            "S:TAGA",
+            "S:TAGB",
+            "S:01SPACE0001",
+            "S:*proj*",
+            "S:*docs*",
+            "S:*trash*",
+            "S:page",
+            "S:TODO",
+            "S:DOING",
+            "S:DONE",
+            "S:A",
+            "S:C",
+            "S:status",
+            "S:draft",
+            "S:score",
+            "F:1.5",
+            "S:deadline",
+            "S:2026-05-17",
+            "S:notes",
+            "S:archived",
+            "S:2026-06-01",
+            "S:2026-01-01",
+            "S:2026-12-31",
+            "S:-7 days",
+        ];
+        assert_eq!(
+            bind_vals, expected_binds,
+            "bind values in placeholder order"
+        );
+    }
+}

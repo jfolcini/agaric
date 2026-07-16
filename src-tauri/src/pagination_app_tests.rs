@@ -730,7 +730,10 @@ mod block_row_canonical_conformance {
         );
 
         let sources: &[(&str, &str)] = &[
-            ("backlink/query.rs", include_str!("backlink/query.rs")),
+            (
+                "backlink/query.rs",
+                include_str!("../agaric-store/src/backlink/query.rs"),
+            ),
             (
                 "tag_query/query.rs",
                 include_str!("../agaric-store/src/tag_query/query.rs"),

@@ -2,7 +2,7 @@
  * Lightweight glob validation for the frontend.
  *
  * The backend re-validates and brace-expands authoritatively
- * (`src-tauri/src/fts/glob_filter.rs`); the frontend duplicates the
+ * (`src-tauri/agaric-store/src/fts/glob_filter.rs`); the frontend duplicates the
  * cheap checks so the chip can render red **before** an IPC round-trip
  * tells us the same thing.
  *
@@ -94,7 +94,7 @@ function stepGlobValidate(
  * alternatives are silently dropped (matches the plan's "Whitespace-
  * only entry between commas → silently dropped" rule).
  *
- * Mirrors the Rust implementation in `src-tauri/src/fts/glob_filter.rs`
+ * Mirrors the Rust implementation in `src-tauri/agaric-store/src/fts/glob_filter.rs`
  * so chip-side preview counts match the backend exactly.
  *
  * This is a parity reference: it currently has no production
@@ -166,7 +166,7 @@ export function expandBraces(pattern: string): string[] {
 
 /**
  * Maximum byte length of a single trimmed sub-entry. Mirrors
- * `MAX_GLOB_LEN` in `src-tauri/src/fts/glob_filter.rs` — a DoS guard against
+ * `MAX_GLOB_LEN` in `src-tauri/agaric-store/src/fts/glob_filter.rs` — a DoS guard against
  * a caller shipping a many-megabyte pattern. Measured in UTF-8 bytes (as the
  * Rust side measures `str::len`) AFTER comma-split + trim.
  */
@@ -207,7 +207,7 @@ function wrapSubstring(input: string): string {
 const UTF8 = new TextEncoder()
 
 /**
- * Port of `prepare_globs` (`src-tauri/src/fts/glob_filter.rs`): turn raw glob
+ * Port of `prepare_globs` (`src-tauri/agaric-store/src/fts/glob_filter.rs`): turn raw glob
  * entries into the SQL-ready, ASCII-lowercased GLOB pattern list the backend
  * would bind into `LOWER(title) GLOB ?`. Each entry is split on top-level
  * commas; each non-empty trimmed sub-entry is length-checked, validated

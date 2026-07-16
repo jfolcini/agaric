@@ -20,4 +20,7 @@
 //! a re-export living in `commands`).
 
 pub mod block_ops;
-pub mod search_types;
+// `search_types` moved into `agaric-store` (#2621, wave S4d) alongside the
+// `fts` / `filters` search cluster that consumes it. Re-exported so every
+// `crate::domain::search_types::…` path resolves unchanged.
+pub use agaric_store::search_types;

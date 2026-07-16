@@ -68,7 +68,7 @@ export function astToFilterProjection(ast: SearchQueryAST): AstFilterProjection 
       case 'tag': {
         // NFC-normalise the tag name before it enters the
         // matching projection. The backend stores/indexes tag content
-        // in NFC (see `src-tauri/src/fts/strip.rs` / `search.rs`), and
+        // in NFC (see `src-tauri/agaric-store/src/fts/strip.rs` / `search.rs`), and
         // `useTagResolution` matches by lowercased name string, so a
         // decomposed query (e.g. `e`+U+0301) would never equal the
         // composed stored tag (U+00E9) without this. Normalise once,

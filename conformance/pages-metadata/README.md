@@ -90,7 +90,7 @@ list.
   seeds `pages_cache` counts, `blocks.priority`, and `op_log.created_at`, then
   drives the real `list_pages_with_metadata_inner` with the fixture's
   `FilterPrimitive` list (each primitive compiled to SQL in
-  `src-tauri/src/filters/primitive.rs`).
+  `src-tauri/agaric-store/src/filters/primitive.rs`).
 - **TypeScript** — `src/lib/tauri-mock/__tests__/filter-primitive-conformance.test.ts`
   drives `metaRowMatchesFilter` (now exported from `handlers.ts`), AND-composing
   the same list.
@@ -107,7 +107,7 @@ cannot pin.
 
 `orphan.vectors.json` locks the `Orphan` primitive — a page with **no inbound
 links AND no outbound link**. The backend (`compile_orphan` in
-`src-tauri/src/filters/primitive.rs`) reads `pages_cache.inbound_link_count = 0`
+`src-tauri/agaric-store/src/filters/primitive.rs`) reads `pages_cache.inbound_link_count = 0`
 AND a `NOT EXISTS` over `block_links` (an outbound link is any edge from a block
 on the page to a block on a *different* page); the mock evaluates
 `r.inboundLinkCount === 0 && !r.hasOutboundLink`.

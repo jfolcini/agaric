@@ -18,7 +18,7 @@ The Markdown ↔ ProseMirror serializer lives **on the frontend** (`src/editor/m
 
 The serializer is property-tested with `fast-check`: round-trip identity (`parse(serialize(parse(md))) == parse(md)`) and serialise idempotence. Off-the-shelf parsers were rejected because none of them handled the locked-mark set + our inline-ULID nodes losslessly.
 
-The backend reads/writes `blocks.content` as opaque markdown text. The **only** backend interaction with the content format is the FTS strip pass (`src-tauri/src/fts/strip.rs::strip_for_fts`), which removes Markdown markup and resolves `[[ULID]]` / `#[ULID]` to their target titles for full-text search. The strip path has a sync variant (`strip_for_fts_with_maps`) for materialization paths that have already prefetched tag-name + page-title hash maps.
+The backend reads/writes `blocks.content` as opaque markdown text. The **only** backend interaction with the content format is the FTS strip pass (`src-tauri/agaric-store/src/fts/strip.rs::strip_for_fts`), which removes Markdown markup and resolves `[[ULID]]` / `#[ULID]` to their target titles for full-text search. The strip path has a sync variant (`strip_for_fts_with_maps`) for materialization paths that have already prefetched tag-name + page-title hash maps.
 
 ## Roving-editor invariant
 

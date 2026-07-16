@@ -66,7 +66,7 @@ Issue #650 names a **third** surface: `fts/strip.rs` + `sanitize_fts_query`
 entry points (`strip_for_fts_with_maps`, `nfc_normalise`, `sanitize_fts_query`)
 are `pub(crate)`, so they are not reachable from this external fuzz crate
 without widening their visibility (e.g. a `#[doc(hidden)] pub` shim or a
-`pub(crate)` → `pub` change behind a `fuzzing` cfg). The `src-tauri/src/fts/`
+`pub(crate)` → `pub` change behind a `fuzzing` cfg). The `src-tauri/agaric-store/src/fts/`
 module is owned by a separate in-flight branch, so that change is deferred to
 avoid a cross-branch conflict. When fts lands, add a `fts_strip` target here
 that calls the exposed shim and seed its corpus from the existing

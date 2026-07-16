@@ -3500,7 +3500,7 @@ describe('scope-filter parity', () => {
 // ---------------------------------------------------------------------------
 // list_pages_with_metadata — compound-filter narrowing + real total_count
 // (T-M1). Each filter primitive mirrors the REAL backend semantics
-// in src-tauri/src/filters/primitive.rs; these assert the mock narrows the
+// in src-tauri/agaric-store/src/filters/primitive.rs; these assert the mock narrows the
 // seeded page set and reports a paginatable-independent total_count.
 // ---------------------------------------------------------------------------
 
