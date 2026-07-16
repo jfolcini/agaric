@@ -124,38 +124,29 @@ describe('useSlashCommandProperty — priority', () => {
 })
 
 describe('useSlashCommandProperty — assignee + location', () => {
-  it('/assignee opens an empty assignee property', async () => {
+  // #2656 — the bare `/assignee` · `/location` commands open the property
+  // drawer for value entry instead of persisting an empty `value_text` the
+  // real backend rejects.
+  it('/assignee opens the property drawer (no empty set_property)', async () => {
     const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
+    const { ctx, openPropertyDrawer } = makeSyntheticCtx()
     await result.current.exact['assignee']?.(ctx, {
       id: 'assignee',
       label: 'ASSIGNEE — Set assignee',
     })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'assignee',
-        value: expect.objectContaining({ value_text: '' }),
-      }),
-    )
+    expect(openPropertyDrawer).toHaveBeenCalledWith('BLOCK_1')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
-  it('/location opens an empty location property', async () => {
+  it('/location opens the property drawer (no empty set_property)', async () => {
     const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
+    const { ctx, openPropertyDrawer } = makeSyntheticCtx()
     await result.current.exact['location']?.(ctx, {
       id: 'location',
       label: 'LOCATION — Set location',
     })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'location',
-        value: expect.objectContaining({ value_text: '' }),
-      }),
-    )
+    expect(openPropertyDrawer).toHaveBeenCalledWith('BLOCK_1')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
   it('assignee-* preset extracts value from label and sets it', async () => {
@@ -174,19 +165,13 @@ describe('useSlashCommandProperty — assignee + location', () => {
     )
   })
 
-  it('assignee-custom routes through the empty-value branch', async () => {
+  it('assignee-custom opens the property drawer (no empty set_property)', async () => {
     const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
+    const { ctx, openPropertyDrawer } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'assignee-')?.[1]
     await handler?.(ctx, { id: 'assignee-custom', label: 'ASSIGNEE custom' })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'assignee',
-        value: expect.objectContaining({ value_text: '' }),
-      }),
-    )
+    expect(openPropertyDrawer).toHaveBeenCalledWith('BLOCK_1')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
   it.each([
@@ -209,19 +194,13 @@ describe('useSlashCommandProperty — assignee + location', () => {
     )
   })
 
-  it('location-custom routes through the empty-value branch', async () => {
+  it('location-custom opens the property drawer (no empty set_property)', async () => {
     const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
+    const { ctx, openPropertyDrawer } = makeSyntheticCtx()
     const handler = result.current.prefix.find(([p]) => p === 'location-')?.[1]
     await handler?.(ctx, { id: 'location-custom', label: 'LOCATION custom' })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'location',
-        value: expect.objectContaining({ value_text: '' }),
-      }),
-    )
+    expect(openPropertyDrawer).toHaveBeenCalledWith('BLOCK_1')
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 })
 
@@ -245,30 +224,9 @@ describe('useSlashCommandProperty — effort', () => {
     },
   )
 
-  it('effort-custom routes through the empty-value branch (escape hatch, #1107)', async () => {
-    const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
-    const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
-    await handler?.(ctx, { id: 'effort-custom', label: 'EFFORT Custom...' })
-    expect(mockedInvoke).toHaveBeenCalledWith(
-      'set_property',
-      expect.objectContaining({
-        blockId: 'BLOCK_1',
-        key: 'effort',
-        value: expect.objectContaining({ value_text: '' }),
-      }),
-    )
-    expect(vi.mocked(toast.success)).toHaveBeenCalledWith('blockTree.addedEffortProperty')
-  })
-
-  it('toasts addPropertyFailed when effort-custom fails (#1107)', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
-    const { result } = renderHook(() => useSlashCommandProperty())
-    const { ctx } = makeSyntheticCtx()
-    const handler = result.current.prefix.find(([p]) => p === 'effort-')?.[1]
-    await handler?.(ctx, { id: 'effort-custom', label: 'EFFORT Custom...' })
-    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.addPropertyFailed')
-  })
+  // #2656 — `effort-custom` was removed from EFFORT_COMMANDS: effort is a
+  // fixed-option SELECT, so a free-text custom value can never persist. Only
+  // the fixed buckets remain (covered by the it.each above).
 
   it('toasts on effort failure', async () => {
     mockedInvoke.mockRejectedValueOnce(new Error('fail'))

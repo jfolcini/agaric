@@ -901,7 +901,10 @@ describe('BlockPropertyDrawer', () => {
 
   it('shows error toast when adding a property from definition fails', async () => {
     const user = userEvent.setup()
-    const defs = [makeDef('new_prop', 'text')]
+    // #2656 — a number def persists immediately on add (buildInitParams gives a
+    // valid `value_num: 0`), so this exercises the add-time failure path.
+    // (text/select defs no longer persist on add — see the draft-row tests.)
+    const defs = [makeDef('new_prop', 'number')]
     // No existing properties, but one definition available
     setupMock([], defs)
 
@@ -925,6 +928,81 @@ describe('BlockPropertyDrawer', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Failed to save property')
     })
+  })
+
+  // #2656 — text/select properties cannot be created with an empty value_text
+  // (the real backend rejects it). Adding one from a definition creates a local
+  // DRAFT row for value entry; it persists only on a non-empty save.
+  it('adds a text property as an editable draft WITHOUT an empty set_property', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('assignee', 'text')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Assignee'))
+
+    // An editable input for the draft appears…
+    const input = await screen.findByTestId('property-value-input-assignee')
+    expect(input).toBeInTheDocument()
+    // …and NO empty-value set_property was fired (the old bug).
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
+  it('persists a text draft with a valid value_text on save', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('assignee', 'text')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Assignee'))
+
+    const input = await screen.findByTestId('property-value-input-assignee')
+    await user.type(input, 'Ada')
+    await user.tab() // blur → onSave
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: 'BLOCK_1',
+          key: 'assignee',
+          value: expect.objectContaining({ value_text: 'Ada' }),
+        }),
+      )
+    })
+  })
+
+  it('drops an empty text draft on blur without any set_property', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('assignee', 'text')])
+
+    renderWithProvider(<BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />)
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Assignee'))
+
+    const input = await screen.findByTestId('property-value-input-assignee')
+    input.focus()
+    await user.tab() // blur with no value → draft dropped
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('property-value-input-assignee')).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
   it('does not crash when reloading properties after ref save fails', async () => {

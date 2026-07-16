@@ -43,6 +43,12 @@ export interface SlashCommandContext {
   openQueryBuilder: () => void
   /** Open the browse-grid emoji picker (#286); on select it inserts at the caret. */
   openEmojiPicker: () => void
+  /**
+   * Open the block property drawer for value entry (#2656). Used by the
+   * `/assignee` · `/location` commands (and their `Custom…` presets) instead
+   * of persisting an empty `value_text` the real backend rejects.
+   */
+  openPropertyDrawer: (blockId: string) => void
 }
 
 export type SlashHandler = (ctx: SlashCommandContext, item: PickerItem) => Promise<void> | void

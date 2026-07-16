@@ -28,6 +28,8 @@ export interface UseBlockSlashCommandsParams {
   openQueryBuilder: () => void
   /** Open the browse-grid emoji picker for the focused block (#286). */
   openEmojiPicker: () => void
+  /** Open the block property drawer for value entry (#2656). */
+  openPropertyDrawer: (blockId: string) => void
 }
 
 export interface UseBlockSlashCommandsReturn {

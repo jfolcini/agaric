@@ -47,7 +47,6 @@ import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
-import type { PickerItem } from '@/editor/SuggestionList'
 import { useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import { type RovingEditorHandle, useRovingEditor } from '@/editor/use-roving-editor'
@@ -80,7 +79,7 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
-import { deleteDraft, setProperty } from '@/lib/tauri'
+import { deleteDraft } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -458,6 +457,7 @@ export function BlockTree({
     t,
     openQueryBuilder,
     openEmojiPicker,
+    openPropertyDrawer: handleShowProperties,
   })
 
   // ── Multi-select hook ──────────────────────────────────────────────
@@ -649,27 +649,6 @@ export function BlockTree({
     }
   }, [zoomedBlockId, blocks, handleFlush, setFocused])
 
-  const handlePropertySelect = useCallback(
-    (item: PickerItem) => {
-      if (!focusedBlockId) return
-      setProperty({ blockId: focusedBlockId, key: item.label, valueText: '' }).catch(
-        (err: unknown) => {
-          logger.error(
-            'BlockTree',
-            'Failed to set property from slash command',
-            {
-              blockId: focusedBlockId,
-              key: item.label,
-            },
-            err,
-          )
-          notify.error(t('blockTree.setPropertyFailed'))
-        },
-      )
-    },
-    [focusedBlockId, t],
-  )
-
   // ── Late-bound editor-event handler registration (#752/#1019) ───────
   // These handlers are created at different points of this render but their
   // consuming hooks (`useRovingEditor`, `useBlockCollapse`,
@@ -681,7 +660,13 @@ export function BlockTree({
   dispatch.on('flush', handleFlush)
   dispatch.on('slashCommand', handleSlashCommand)
   dispatch.on('checkbox', handleCheckboxSyntax)
-  dispatch.on('propertySelect', handlePropertySelect)
+  // #2656 — the `::` picker's extension already inserts the `key:: ` inline
+  // text; it no longer fires `setProperty({ valueText: '' })` (the real backend
+  // rejects an empty value_text, so that produced a "Failed to set property"
+  // toast and created nothing on the shipped app). No `propertySelect` handler
+  // is registered — the value is entered inline after `key::`, and the block's
+  // properties can be filled from the property drawer (context-menu / toolbar).
+  // The default no-op `propertySelect` thunk stays wired via `onPropertySelect`.
   // beforeCollapse — rescue focus (flush + clear) when the collapsing subtree
   // contains the focused block.
   dispatch.on('beforeCollapse', (blockId: string) => {

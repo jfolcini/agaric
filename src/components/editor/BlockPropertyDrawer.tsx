@@ -53,6 +53,12 @@ export function BlockPropertyDrawer({
   const [loading, setLoading] = useState(true)
   const [properties, setProperties] = useState<PropertyRow[]>([])
   const [definitions, setDefinitions] = useState<PropertyDefinition[]>([])
+  // #2656 — keys of text/select properties added but not yet persisted. Such
+  // properties cannot be created with an empty `value_text` (the real backend
+  // rejects it), so we render a local DRAFT row for value entry and only write
+  // on the first non-empty save. A draft is dropped (no backend call) if the
+  // user leaves it empty.
+  const [draftKeys, setDraftKeys] = useState<Set<string>>(() => new Set())
   const { setDueDate: setDueDateCmd, setScheduledDate: setScheduledDateCmd } = useBlockReschedule()
   const { getProperties, listPropertyDefs, setProperty } = useBlockPropertyIpc()
 
@@ -204,6 +210,35 @@ export function BlockPropertyDrawer({
   const handleAddFromDef = useCallback(
     async (def: PropertyDefinition) => {
       if (!blockId) return
+      // #2656 — text/select properties have no valid empty initializer: the
+      // backend rejects an empty `value_text` and, for select, any value
+      // outside the definition's options. Add a local draft row for value
+      // entry instead of persisting an invalid placeholder; it writes on the
+      // first non-empty save (see handleSaveField).
+      if (def.value_type === 'text' || def.value_type === 'select') {
+        setDraftKeys((prev) => {
+          if (prev.has(def.key)) return prev
+          const next = new Set(prev)
+          next.add(def.key)
+          return next
+        })
+        setProperties((prev) =>
+          prev.some((p) => p.key === def.key)
+            ? prev
+            : [
+                ...prev,
+                {
+                  key: def.key,
+                  value_text: null,
+                  value_num: null,
+                  value_date: null,
+                  value_ref: null,
+                  value_bool: null,
+                },
+              ],
+        )
+        return
+      }
       try {
         const params = buildInitParams(blockId, def)
         if (!params) return
@@ -224,6 +259,34 @@ export function BlockPropertyDrawer({
       }
     },
     [blockId, t, setProperty, getProperties],
+  )
+
+  // #2656 — save wrapper for editable value rows. For a not-yet-persisted
+  // DRAFT (text/select) row, an empty value means "nothing entered": drop the
+  // draft locally without a backend call (an empty `value_text` would be
+  // rejected). A non-empty value clears the draft flag and persists via the
+  // shared save hook (the reload then replaces the draft with the stored row).
+  const handleSaveField = useCallback(
+    (key: string, value: string, type: string): Promise<void> => {
+      if (draftKeys.has(key)) {
+        if (value.trim() === '') {
+          setProperties((prev) => prev.filter((p) => p.key !== key))
+          setDraftKeys((prev) => {
+            const next = new Set(prev)
+            next.delete(key)
+            return next
+          })
+          return Promise.resolve()
+        }
+        setDraftKeys((prev) => {
+          const next = new Set(prev)
+          next.delete(key)
+          return next
+        })
+      }
+      return handleSave(key, value, type)
+    },
+    [draftKeys, handleSave],
   )
 
   // Definitions available for the add-property popover:
@@ -299,7 +362,7 @@ export function BlockPropertyDrawer({
                     }
                     ariaLabel={t('property.valueLabel', { key: prop.key })}
                     testId={`property-value-input-${prop.key}`}
-                    onSave={(v) => handleSave(prop.key, v, getType(prop.key))}
+                    onSave={(v) => handleSaveField(prop.key, v, getType(prop.key))}
                     onRemove={
                       !NON_DELETABLE_PROPERTIES.has(prop.key)
                         ? () => handleDelete(prop.key)
