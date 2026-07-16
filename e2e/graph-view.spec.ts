@@ -115,4 +115,161 @@ test.describe('Graph view', () => {
     const count = await nodeGroups.count()
     expect(count).toBeGreaterThanOrEqual(2) // At least 2 seed pages visible as nodes
   })
+
+  // ---------------------------------------------------------------------
+  // Filter bar (#2713) — `GraphFilterBar` narrows the rendered node set.
+  //
+  // No "content match" filter test: docs/features/views.md:86 advertises
+  // filtering "by content match", but `GraphFilter` (`src/lib/graph-filters.ts`
+  // lines ~44-52) only has `tag` / `status` / `priority` / `hasDueDate` /
+  // `hasScheduledDate` / `hasBacklinks` / `excludeTemplates` variants — there
+  // is no content/full-text dimension in `GraphFilterBar.tsx` to drive. This
+  // is docs-vs-implementation drift, not a coverage gap this spec can close;
+  // worth its own follow-up issue against the docs (or the missing filter).
+  //
+  // Seed data (`src/lib/tauri-mock/seed.ts`) has exactly one templated page,
+  // "Meeting Notes Template" (`PAGE_TMPL_MEETING`, flagged via the
+  // `template` block property), among the 6 canonical seed pages. It's the
+  // only dimension in `src/lib/graph-filters.ts` that's satisfiable against
+  // the DEFAULT seed with no `__mockFacetFixture` / `tagIds` plumbing: the
+  // `tag` dimension only matches PAGE-level tags (`blockTags.get(pageId)`),
+  // and the canonical seed's `work`/`personal` tags live on child blocks,
+  // not the page blocks themselves — so `excludeTemplates` is the
+  // deterministic, zero-extra-seed choice for exercising "the filter
+  // narrows the node set" end to end.
+  // ---------------------------------------------------------------------
+  test('the "Exclude templates" filter removes the template page node', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
+
+    const nodeGroups = page.locator('[data-testid="graph-view"] svg g.node')
+    await expect(nodeGroups.first()).toBeVisible()
+    const before = await nodeGroups.count()
+
+    const templateNode = nodeGroups.filter({ hasText: 'Meeting Notes Template' })
+    await expect(templateNode).toHaveCount(1)
+
+    await page.getByRole('button', { name: 'Add filter' }).click()
+    await page.getByRole('combobox', { name: 'Select a dimension' }).click()
+    await page.getByRole('option', { name: 'Exclude templates' }).click()
+    await page.getByRole('button', { name: 'Apply' }).click()
+
+    // The template page's node disappears and the total node count drops by
+    // exactly one — a broken filter would either change nothing (matcher
+    // bug) or over-remove (wrong predicate wiring).
+    await expect(templateNode).toHaveCount(0)
+    await expect.poll(() => nodeGroups.count()).toBe(before - 1)
+    await expect(page.getByTestId('graph-filter-count')).toHaveText(
+      `Showing ${before - 1} of ${before} pages`,
+    )
+
+    // Clearing the filter restores the template node.
+    await page.getByRole('button', { name: 'Clear all' }).click()
+    await expect(templateNode).toHaveCount(1)
+    await expect.poll(() => nodeGroups.count()).toBe(before)
+  })
+
+  // ---------------------------------------------------------------------
+  // Zoom / pan (#2713) — `useGraphZoom` (`src/lib/graph-sim-helpers.ts`)
+  // wires a d3-zoom behavior to the `<svg>`; the transform it computes is
+  // applied to the FIRST `<g>` child (`g.attr('transform', event.transform)`
+  // in `setupZoomBehavior`). That `<g transform="...">` attribute is the
+  // observable surface for both the on-screen zoom buttons and native
+  // wheel/drag input.
+  // ---------------------------------------------------------------------
+  function parseScale(transform: string | null): number | null {
+    const m = transform ? /scale\(([\d.]+)\)/.exec(transform) : null
+    return m?.[1] ? Number(m[1]) : null
+  }
+
+  test('the zoom in/out/reset buttons change the graph transform scale', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
+    await expect(page.locator('[data-testid="graph-svg"]')).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+
+    await page.getByRole('button', { name: /^Zoom in/ }).click()
+    // ZOOM_STEP is 1.3 (`src/lib/graph-sim-helpers.ts`); the button
+    // transition takes 200ms, so poll until it settles.
+    await expect.poll(async () => parseScale(await g.getAttribute('transform'))).toBe(1.3)
+
+    await page.getByRole('button', { name: /^Zoom out/ }).click()
+    await expect
+      .poll(async () => {
+        const scale = parseScale(await g.getAttribute('transform'))
+        return scale !== null && scale < 1.3
+      })
+      .toBe(true)
+
+    await page.getByRole('button', { name: /^Fit to view/ }).click()
+    await expect.poll(async () => parseScale(await g.getAttribute('transform'))).toBe(1)
+  })
+
+  test('wheel-zoom over the canvas changes the graph transform scale', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
+    const svg = page.locator('[data-testid="graph-svg"]')
+    await expect(svg).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+    await expect(g).toHaveCount(1)
+    const before = await g.getAttribute('transform')
+
+    await svg.hover()
+    // Negative deltaY == scroll up == zoom in (d3-zoom's default wheel
+    // handler; `setupZoomBehavior` applies no custom filter/wheelDelta).
+    await page.mouse.wheel(0, -100)
+
+    await expect.poll(() => g.getAttribute('transform')).not.toBe(before)
+    const after = parseScale(await g.getAttribute('transform'))
+    expect(after).not.toBeNull()
+    expect(after as number).toBeGreaterThan(1)
+  })
+
+  test('dragging empty canvas pans the graph transform', async ({ page }) => {
+    await page
+      .locator('[data-slot="sidebar"]')
+      .getByRole('button', { name: 'Graph', exact: true })
+      .click()
+    const svg = page.locator('[data-testid="graph-svg"]')
+    await expect(svg).toBeVisible()
+    await expect(page.locator('[data-testid="graph-view"] svg g.node').first()).toBeVisible()
+
+    const g = page.locator('[data-testid="graph-svg"] > g').first()
+    const before = await g.getAttribute('transform')
+
+    const svgBox = await svg.boundingBox()
+    if (!svgBox) throw new Error('graph svg has no bounding box')
+    // Bottom-left corner: clear of the top filter bar (`absolute top-2
+    // left-2 right-2`), the bottom-right zoom cluster (`absolute bottom-3
+    // right-3`), and — for this small seed graph — the force-simulated
+    // nodes, which settle away from the edges.
+    const startX = svgBox.x + 20
+    const startY = svgBox.y + svgBox.height - 20
+
+    await page.mouse.move(startX, startY)
+    await page.mouse.down()
+    for (let i = 1; i <= 10; i++) {
+      await page.mouse.move(startX + 6 * i, startY - 4 * i)
+    }
+    await page.mouse.up()
+
+    await expect.poll(() => g.getAttribute('transform')).not.toBe(before)
+    const after = await g.getAttribute('transform')
+    const m = /translate\(([-\d.]+),([-\d.]+)\)/.exec(after ?? '')
+    expect(m).not.toBeNull()
+    // Dragged right+up -> positive x translate, negative y translate.
+    expect(Number(m?.[1])).toBeGreaterThan(0)
+    expect(Number(m?.[2])).toBeLessThan(0)
+  })
 })
