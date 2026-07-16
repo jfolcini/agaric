@@ -7,8 +7,8 @@
  *  - empty state (recent pages) ……………… verbatim, renamed test ids.
  *  - parallel queries → partitioned …… switched mock from `searchBlocks`
  *    to `searchBlocksPartitioned`. Single IPC per keystroke now.
- *  - caps + surplus pill (`mergeAndRankGroups`) …… verbatim (the export
- *    is re-exported from CommandPalette.tsx).
+ *  - caps + surplus pill (`mergeAndRankGroups`) …… verbatim (imported
+ *    from `components/palette/ranking`).
  *  - keyboard navigation ……………………… relaxed: cmdk owns
  *    `aria-activedescendant`, so we assert the side effect (Enter fires
  *    `navigateToPage` with the correct args) rather than the
@@ -31,7 +31,8 @@ import type { Editor } from '@tiptap/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import { CommandPalette, mergeAndRankGroups } from '@/components/common/CommandPalette'
+import { CommandPalette } from '@/components/common/CommandPalette'
+import { mergeAndRankGroups } from '@/components/palette/ranking'
 import { setActiveEditor } from '@/editor/active-editor'
 import { useNavigationStore } from '@/stores/navigation'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'

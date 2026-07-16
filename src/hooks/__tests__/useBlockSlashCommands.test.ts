@@ -10,20 +10,19 @@ import { makeBlock } from '../../__tests__/fixtures'
 import { logger } from '../../lib/logger'
 import { _resetPropertyKeysCacheForTest } from '../../lib/property-keys-cache'
 import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '../../lib/recent-commands'
-import { RECENT_SLASH_CATEGORY } from '../../lib/slash-commands'
+import {
+  RECENT_SLASH_CATEGORY,
+  SLASH_COMMANDS,
+  searchPropertyKeys,
+  searchSlashCommands,
+} from '../../lib/slash-commands'
 import {
   createPageBlockStore,
   PageBlockContext,
   type PageBlockState,
 } from '../../stores/page-blocks'
 import { useUndoStore } from '../../stores/undo'
-import {
-  mergeSlashHandlerTables,
-  SLASH_COMMANDS,
-  searchPropertyKeys,
-  searchSlashCommands,
-  useBlockSlashCommands,
-} from '../useBlockSlashCommands'
+import { mergeSlashHandlerTables, useBlockSlashCommands } from '../useBlockSlashCommands'
 import { useSlashCommandDate } from '../useBlockSlashCommands/useSlashCommandDate'
 import { useSlashCommandMarks } from '../useBlockSlashCommands/useSlashCommandMarks'
 import { useSlashCommandProperty } from '../useBlockSlashCommands/useSlashCommandProperty'

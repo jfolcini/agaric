@@ -23,8 +23,8 @@
  * sub-hooks, merges their slices once via `useMemo`, and exposes a single
  * `handleSlashCommand` callback that walks the merged tables.
  *
- * For backward compatibility with existing import sites (and tests) the
- * command arrays and search helpers are re-exported from this module.
+ * The command catalog + search helpers live in `../lib/slash-commands` —
+ * import them from there directly rather than through this module.
  */
 
 import { useCallback, useMemo, useRef } from 'react'
@@ -42,21 +42,6 @@ import { useSlashCommandProperty } from './useBlockSlashCommands/useSlashCommand
 import { useSlashCommandStructural } from './useBlockSlashCommands/useSlashCommandStructural'
 import { useSlashCommandTemplate } from './useBlockSlashCommands/useSlashCommandTemplate'
 import { useCheckboxSyntax } from './useCheckboxSyntax'
-
-// Re-export command catalog + search helpers from the data module so existing
-// consumers (BlockTree.tsx, the test suite) keep working.
-export {
-  ASSIGNEE_COMMANDS,
-  CALLOUT_COMMANDS,
-  EFFORT_COMMANDS,
-  HEADING_COMMANDS,
-  LOCATION_COMMANDS,
-  PRIORITY_COMMANDS,
-  REPEAT_COMMANDS,
-  SLASH_COMMANDS,
-  searchPropertyKeys,
-  searchSlashCommands,
-} from '../lib/slash-commands'
 
 export type {
   UseBlockSlashCommandsParams,
