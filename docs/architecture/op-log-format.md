@@ -37,7 +37,7 @@ The canonical source is `src-tauri/agaric-core/src/hash.rs` (`compute_op_hash`,
 `src-tauri/src/op_log/payload.rs` (`serialize_inner_payload`),
 the remote-ingest / merge path in `src-tauri/src/dag.rs`
 (`insert_remote_op`, `append_merge_op`), and the payload types in
-`src-tauri/src/op.rs`. Where any detail here is ambiguous, those functions
+`src-tauri/agaric-store/src/op.rs`. Where any detail here is ambiguous, those functions
 are authoritative.
 
 ## `op_log` table schema
@@ -159,7 +159,7 @@ client must produce the identical canonical form:
   `[device_id, seq]`, or `null` when absent.
 
 Because the exact field set per op type matters for the bytes, the
-authoritative field list is the payload structs in `src-tauri/src/op.rs`
+authoritative field list is the payload structs in `src-tauri/agaric-store/src/op.rs`
 (`CreateBlockPayload`, `EditBlockPayload`, …). Snapshot tests in that file
 (`snapshot_all_payload_json_serialization`) pin the exact JSON shape of
 every variant.
