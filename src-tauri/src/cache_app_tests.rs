@@ -40,6 +40,7 @@ async fn insert_block(pool: &SqlitePool, id: &str, block_type: &str, content: &s
     .unwrap();
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn insert_repeating_block(
     pool: &SqlitePool,
     id: &str,
