@@ -1856,7 +1856,39 @@ const HANDLERS_TYPED = {
   // `currentSpaceId` non-null so page-creation flows (Ctrl+N, the
   // PageBrowser input, the `[[` picker) don't bail out at the
   // `if (!isReady || currentSpaceId == null) return` guard in `App.tsx`.
-  list_spaces: () => [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
+  //
+  // #2684 — ALSO scan `blocks` for any block carrying `is_space='true'`
+  // (written by `create_space` below) so a space created during a test
+  // actually shows up on the NEXT `list_spaces` call. Before this, the
+  // handler was a hardcoded one-element array — `create_space` silently
+  // produced an unreachable space (the SpaceSwitcher / Manage-spaces
+  // dialog never learned it existed, so no e2e spec could ever exercise a
+  // second space). Sorted alphabetically by name, matching the real
+  // backend's `list_spaces_inner` ordering — `SpaceSwitcher`'s
+  // `Ctrl+1`..`Ctrl+9` digit-hotkey contract depends on this order.
+  list_spaces: () => {
+    const created = [...blocks.values()]
+      .filter(
+        (b) =>
+          !b['deleted_at'] &&
+          properties.get(b['id'] as string)?.get('is_space')?.['value_text'] === 'true',
+      )
+      .map((b) => ({
+        id: b['id'] as string,
+        name: (b['content'] as string | null) ?? '',
+        accent_color:
+          (properties.get(b['id'] as string)?.get('accent_color')?.['value_text'] as
+            | string
+            | null
+            | undefined) ?? null,
+      }))
+    const rows = [
+      { id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' },
+      ...created,
+    ]
+    rows.sort((x, y) => x.name.localeCompare(y.name))
+    return rows
+  },
 
   // Phase 2 atomic page-creation IPC. Accepts `parentId` (null for a
   // top-level page), `content`, and `spaceId`. Returns the new page's ULID
@@ -1949,6 +1981,22 @@ const HANDLERS_TYPED = {
       value_date: null,
       value_ref: null,
     })
+    // #2684 — mirror the op-log write into the queryable `properties` map
+    // (the pattern every other `set_property`-style handler in this file
+    // follows, e.g. `create_page_in_space`'s `space` write above). Before
+    // this fix `is_space`/`accent_color` only ever reached the op log, so
+    // `list_spaces`'s scan (which reads `properties`, not `opLog`) could
+    // never discover a space created via this handler.
+    if (!properties.has(id)) properties.set(id, new Map())
+    properties.get(id)?.set('is_space', {
+      block_id: id,
+      key: 'is_space',
+      value_text: 'true',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
     const accentColor = a['accentColor'] as string | null | undefined
     if (accentColor != null) {
       pushOp('set_property', {
@@ -1958,6 +2006,15 @@ const HANDLERS_TYPED = {
         value_number: null,
         value_date: null,
         value_ref: null,
+      })
+      properties.get(id)?.set('accent_color', {
+        block_id: id,
+        key: 'accent_color',
+        value_text: accentColor,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
     }
     return id
