@@ -56,7 +56,7 @@ Actions whose result gates a caller's follow-up decision resolve a **boolean**; 
 
 ## ViewDispatcher (no router)
 
-`src/components/pages/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | properties | trash | status | history | templates | settings | graph | page-editor`).
+`src/components/pages/ViewDispatcher.tsx` is the single source of truth for which view renders. It switches on `useNavigationStore.currentView` (a 12-value enum: `journal | search | pages | tags | trash | status | history | templates | settings | graph | query | page-editor`).
 
 No router. Navigation is store-driven. `useTabsStore` owns the per-tab page stack; `useNavigationStore` owns the active view. `agaric://` deep links are parsed by the Rust backend, emitted as Tauri events, and dispatched into the nav / tabs stores by `useDeepLinkRouter`.
 
@@ -119,9 +119,9 @@ Page membership lives in the native, indexed `blocks.space_id` column (migration
 
 ### Per-space store partitioning
 
-Four stores carry per-space slices: `tabs.tabsBySpace`, `navigation.currentViewBySpace`, `journal.currentDateBySpace` (+ `modeBySpace`), `recent-pages.recentPagesBySpace`. All four are driven by one shared helper, `createSpaceSubscriber` (`src/lib/createSpaceSubscriber.ts`), keyed via `activeSpaceKey()` (`src/lib/active-space.ts`) with `LEGACY_SPACE_KEY = '__legacy__'` for pre-bootstrap state.
+Four stores carry per-space slices: `tabs.tabsBySpace`, `navigation.currentViewBySpace`, `journal.currentDateBySpace` (+ `modeBySpace`), `recent-pages.recentPagesBySpace`. Three of them (`tabs`, `navigation`, `recent-pages`) are built with the higher-level `createPerSpaceSlice` primitive (`src/stores/createPerSpaceSlice.ts`), introduced in #2253 to kill the flat-mirror bug class; `journal` still consumes the lower-level `createSpaceSubscriber` (`src/lib/createSpaceSubscriber.ts`) directly. `createPerSpaceSlice` wires its reconciliation through `createSpaceSubscriber` under the hood, so both are keyed via `activeSpaceKey()` (`src/lib/active-space.ts`) with `LEGACY_SPACE_KEY = '__legacy__'` for pre-bootstrap state.
 
-There is exactly one subscriber pattern, not four — adding a fifth per-space slice means consuming the same helper.
+There is one subscriber pattern underneath — adding a fifth per-space slice means building it with `createPerSpaceSlice`.
 
 ### Resolve cache
 
