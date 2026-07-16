@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makeBlock } from '@/__tests__/fixtures'
@@ -10,7 +10,9 @@ import { detectColumns, QueryResult } from '@/components/query/QueryResult'
 import { encodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildFilters, parseQueryExpression } from '@/lib/query-utils'
 import { useNavigationStore } from '@/stores/navigation'
+import { createPageBlockStore, PageBlockContext } from '@/stores/page-blocks'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
+import { useUndoStore } from '@/stores/undo'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }))
 vi.mock('@/components/dialogs/QueryBuilderModal', () => ({
@@ -1796,7 +1798,14 @@ describe('QueryResult – Edit Query button', () => {
         return [{ id: 'P1', title: 'Page', block_type: 'page', deleted: false }]
       }
       if (cmd === 'edit_block') {
-        return makeBlock({ id: 'BLOCK1', content: '{{query type:tag expr:updated}}' })
+        // #2468 — `edit_block`'s wire response carries the appended op ref(s)
+        // for ref-addressed undo; a wire-faithful mock exercises the same
+        // `onNewAction(pageId, opRefs, coalesceKey)` path production code
+        // takes (see useSlashCommandStructural.test.ts's identical fixture).
+        return {
+          ...makeBlock({ id: 'BLOCK1', content: '{{query type:tag expr:updated}}' }),
+          op_refs: [{ device_id: 'dev-1', seq: 1 }],
+        }
       }
       return null
     })
@@ -1890,6 +1899,102 @@ describe('QueryResult – Edit Query button', () => {
     })
   })
 
+  // #2663 — saving from the builder must update the OWNING page store's
+  // block content, not just fire the raw IPC. That store is what this
+  // widget's `expression` prop is derived from upstream (StaticBlock →
+  // StaticQueryBlock), so render inside a real `PageBlockStoreProvider` tree
+  // (the same context QueryResult is always mounted under in the app) and
+  // assert the store reflects the NEW expression after save. Pre-fix, a raw
+  // `editBlock` IPC call never touched this store, so the widget stayed on
+  // the OLD expression until an unrelated page reload.
+  describe('page store + undo contract', () => {
+    const originalOnNewAction = useUndoStore.getState().onNewAction
+
+    afterEach(() => {
+      useUndoStore.setState({
+        ...useUndoStore.getState(),
+        onNewAction: originalOnNewAction,
+        pages: new Map(),
+      })
+    })
+
+    it('updates the owning page store block content on builder save', async () => {
+      mockTagResultsWithBlock()
+
+      const pageStore = createPageBlockStore('PAGE1')
+      pageStore.setState({
+        blocks: [makeBlock({ id: 'BLOCK1', content: '{{query type:tag expr:project}}' })],
+      })
+
+      const user = userEvent.setup()
+      render(
+        <PageBlockContext.Provider value={pageStore}>
+          <QueryResult expression="type:tag expr:project" blockId="BLOCK1" />
+        </PageBlockContext.Provider>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Edit query' }))
+      await user.click(screen.getByTestId('modal-save-button'))
+
+      // The store — not just the IPC call — carries the NEW expression, so
+      // the next render of this block (via the store-driven `expression`
+      // prop) shows the just-saved query instead of the stale one.
+      await waitFor(() => {
+        expect(pageStore.getState().blocksById.get('BLOCK1')?.content).toBe(
+          '{{query type:tag expr:updated}}',
+        )
+      })
+    })
+
+    // #2662 / #2663 — saving from the builder must also reset the undo
+    // store's redo stack for the owning page (the exact contract
+    // `applyContentEdit`'s `notifyUndo` enforces for slash commands, see
+    // useBlockSlashCommands/helpers.ts). Spy on `onNewAction` the same way
+    // the slash-command test suite does (useSlashCommandStructural.test.ts)
+    // and assert it fires for this page — pre-fix, the raw `editBlock` IPC
+    // call never notified the undo store, so a stale redo entry could
+    // survive past the builder save and later resurrect the wrong content.
+    it('notifies the undo store (onNewAction) on builder save', async () => {
+      mockTagResultsWithBlock()
+
+      const onNewAction = vi.fn()
+      useUndoStore.setState({ ...useUndoStore.getState(), onNewAction })
+
+      const pageStore = createPageBlockStore('PAGE1')
+      pageStore.setState({
+        blocks: [makeBlock({ id: 'BLOCK1', content: '{{query type:tag expr:project}}' })],
+      })
+
+      const user = userEvent.setup()
+      render(
+        <PageBlockContext.Provider value={pageStore}>
+          <QueryResult expression="type:tag expr:project" blockId="BLOCK1" />
+        </PageBlockContext.Provider>,
+      )
+
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Edit query' })).toBeInTheDocument()
+      })
+
+      await user.click(screen.getByRole('button', { name: 'Edit query' }))
+      await user.click(screen.getByTestId('modal-save-button'))
+
+      await waitFor(() => {
+        expect(onNewAction).toHaveBeenCalledWith('PAGE1', expect.anything(), 'edit:BLOCK1')
+      })
+    })
+  })
+
+  // #2663 — `handleBuilderSave` now routes through `pageStore.getState().edit()`
+  // (same call as BlockTree's `handleQuerySave`) instead of a raw `editBlock`
+  // IPC call, so a failed write surfaces `edit()`'s own generic
+  // 'error.saveFailed' toast ("Failed to save") rather than the
+  // component-local `queryBuilder.saveFailed` message it used to raise via
+  // `reportIpcError`.
   it('shows toast error when editBlock fails', async () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'query_by_tags') {
@@ -1914,7 +2019,7 @@ describe('QueryResult – Edit Query button', () => {
 
     // Toast error should be shown
     await waitFor(() => {
-      expect(mockedToastError).toHaveBeenCalledWith('Failed to update query')
+      expect(mockedToastError).toHaveBeenCalledWith('Failed to save')
     })
 
     // Modal should remain open on error

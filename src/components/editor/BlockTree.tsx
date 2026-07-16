@@ -83,7 +83,7 @@ import type { BlockTypeToken } from '@/lib/block-type-convert'
 import { convertBlockContent } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { deleteDraft, editBlock, setProperty } from '@/lib/tauri'
+import { deleteDraft, setProperty } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -561,16 +561,22 @@ export function BlockTree({
       const current = pageStore.getState().blocksById.get(blockId)
       if (!current) return
       const newContent = convertBlockContent(current.content ?? '', blockType)
-      try {
-        await editBlock(blockId, newContent)
-        if (isLive) rovingEditorRef.current?.mount(blockId, newContent)
-        await load()
-      } catch (err) {
-        logger.error('BlockTree', 'Failed to convert block', { blockId, blockType }, err)
-        notify.error(t('slash.turnIntoFailed'))
-      }
+      // #2662 — route through `pageStore.edit()` (same as this hook's own
+      // `handleQuerySave` above) instead of a raw `editBlock` IPC call.
+      // `edit()` owns the undo-store contract: it resets the redo stack via
+      // `notifyUndoNewAction` (page-blocks-reducers.ts) so a later Ctrl+Z /
+      // Ctrl+Shift+Z can't resurrect the pre-conversion content past this
+      // mutation — the raw IPC call left that positional undo state stale
+      // (mirrors the identical bug already fixed for slash commands, see
+      // `applyContentEdit` in useBlockSlashCommands/helpers.ts). `edit()`
+      // also surfaces its own save-failed toast and rolls back on failure,
+      // so no separate try/catch is needed here.
+      const ok = await pageStore.getState().edit(blockId, newContent)
+      if (!ok) return
+      if (isLive) rovingEditorRef.current?.mount(blockId, newContent)
+      await load()
     },
-    [pageStore, load, handleFlush, t],
+    [pageStore, load, handleFlush],
   )
 
   // #976 (item 13) — Duplicate a block + its subtree, inserting the copy

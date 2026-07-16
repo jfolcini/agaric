@@ -20,7 +20,8 @@ import { buildCustomPropsMap, deriveCustomColumns } from '@/lib/query-result-col
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
 import type { BlockRow } from '@/lib/tauri'
-import { editBlock, getBatchProperties } from '@/lib/tauri'
+import { getBatchProperties } from '@/lib/tauri'
+import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
 /** Known block property keys that can become table columns. */
 const KNOWN_PROPERTY_KEYS: { key: keyof BlockRow; label: string }[] = [
@@ -198,18 +199,53 @@ export function QueryResult({
 
   const columns = useMemo(() => detectColumns(results, customProps), [results, customProps])
 
+  // #2663 — the page store's `edit()` action (tolerant of no ambient
+  // `PageBlockStoreProvider`, e.g. in isolated tests: falls back to a shared
+  // empty store whose writes are inert). Selecting the action itself (not a
+  // value) keeps this reference stable across renders.
+  const editPageBlock = usePageBlockStoreOptional((s) => s.edit)
+
   const handleBuilderSave = useCallback(
     async (newExpression: string) => {
       if (!blockId) return
-      try {
-        await editBlock(blockId, `{{query ${newExpression}}}`)
-        setBuilderOpen(false)
-        fetchResults()
-      } catch (err) {
-        reportIpcError('QueryResult', 'queryBuilder.saveFailed', err, t, { blockId })
-      }
+      // Route through the page store's `edit()` — the same call
+      // BlockTree's own builder save (`handleQuerySave`) makes — instead of
+      // a raw `editBlock` IPC write. `edit()` owns BOTH halves of the
+      // contract this widget was missing:
+      //   1. It resets the undo store's redo stack via
+      //      `notifyUndoNewAction` (mirrors the #2662 fix in BlockTree's
+      //      `handleTurnInto`), which a raw IPC call never touched.
+      //   2. It writes the new content into the page store that this
+      //      component's `expression` prop is derived from upstream
+      //      (StaticBlock → StaticQueryBlock). A raw IPC write left that
+      //      prop — and this widget's rendered pills/results — on the OLD
+      //      expression until an unrelated page reload, and a later
+      //      focus+blur on the block could re-persist the stale content.
+      // `edit()` also surfaces its own save-failed toast and rolls back
+      // optimistic state on failure, so no separate try/catch is needed.
+      // No unconditional manual `fetchResults()` call: `useQueryExecution`
+      // embeds `expression` in its query key, so once the store's new
+      // content flows back down as a fresh `expression` prop the query
+      // refetches on its own — calling `fetchResults()` here would just
+      // re-run the OLD expression from this closure before that prop
+      // update lands.
+      const ok = await editPageBlock(blockId, `{{query ${newExpression}}}`)
+      if (!ok) return
+      setBuilderOpen(false)
+      // Edge case the prop-driven refetch above can't cover: if the saved
+      // expression is textually IDENTICAL to what's already rendered (e.g.
+      // the user opened the builder and hit Save without changing any
+      // criteria), the page store still writes the same string, so the
+      // `expression` prop's VALUE never changes, the `useQueryExecution`
+      // query key stays the same, and (staleTime: Infinity) nothing
+      // refetches — a save that should still refresh results silently does
+      // nothing. Force one explicitly in that case only, using the CURRENT
+      // `expression` (which by construction equals `newExpression` here),
+      // so this can't reintroduce the stale-closure bug the unconditional
+      // call above had.
+      if (newExpression === expression) fetchResults()
     },
-    [blockId, fetchResults, t],
+    [blockId, editPageBlock, expression, fetchResults],
   )
 
   return (
