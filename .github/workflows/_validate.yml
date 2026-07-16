@@ -35,34 +35,57 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # detect-docs-only (#833) — docs-only fast-path classifier.
+  # detect-changes (#833, extended) — per-category change classifier.
   #
-  # Emits a single boolean output `docs_only`. It is `true` ONLY when EVERY
-  # path changed by this branch matches the conservative docs allowlist
-  # below; ANY non-docs path (a `.rs`/`.ts`, a lockfile, a non-doc workflow
-  # change, etc.) forces `docs_only=false` and the full validate suite runs.
+  # Emits FOUR boolean outputs describing which suites a diff needs:
+  #   - docs_only : EVERY changed path matches the conservative docs allowlist
+  #                 (drives the lint / docs-lint complement — unchanged #833).
+  #   - frontend  : ANY changed path matches the frontend regex (src/, e2e/,
+  #                 .ts/.tsx/.js/.jsx/.css, package[-lock].json, the vite /
+  #                 vitest / tailwind / postcss configs, tsconfig*.json,
+  #                 index.html) → gates vitest + playwright.
+  #   - backend   : ANY changed path matches the backend regex (src-tauri/,
+  #                 .rs, Cargo.toml/lock, migrations, .sqlx/) → gates
+  #                 cargo-tests + mcp-tests (+ the transitive cargo-coverage).
+  #   - ci        : ANY changed path matches the CI regex (.github/, prek.toml,
+  #                 .taplo.toml, lychee.toml, .gitleaks.toml). Emitted for
+  #                 completeness / future use; the cross-cutting `lint` job
+  #                 already runs on any non-docs change so nothing gates on it
+  #                 today.
+  # The four categories are INDEPENDENT (OR semantics): a file may match
+  # several, and each category flips true if ANY changed file matches it. A
+  # backend change that regenerates `src/lib/bindings.ts` therefore also flips
+  # `frontend` true, so the frontend suite (bindings-drift / tauri-mock-parity
+  # tests) runs — this cross-cutting safety is intentional, do NOT special-case
+  # it away.
   #
   # SECURITY CONTRACT (co-designed with #805's strict gate — read this with
   # the `validate-all` job at the bottom of the file):
   #   - This classifier is the ONLY thing that lets a `skipped` sibling job
-  #     pass `validate-all`. If it is wrong in the `true` direction, a code
-  #     change could ride in with its heavy jobs skipped. So it is:
-  #       * allowlist-based: a path must AFFIRMATIVELY match a docs pattern;
-  #         the default for any unmatched path is "not docs" → docs_only=false.
+  #     pass `validate-all`. If it is wrong in the "absent" direction for a
+  #     category, that category's heavy jobs could ride in skipped. So it is:
+  #       * allowlist/regex-based: a path must AFFIRMATIVELY match a category
+  #         pattern to include it; docs_only defaults false on any unmatched
+  #         path, and a category defaults false only when NO file matches it.
   #       * FAIL-CLOSED (#810 contract): on ANY inability to compute the diff
-  #         (unresolved/unreachable base sha, a failed `git diff`), it emits
-  #         `docs_only=false` so the full suite runs. A classifier error can
+  #         (unresolved/unreachable base sha, a failed `git diff`, empty diff),
+  #         the `full_suite` helper emits docs_only=false AND frontend=true,
+  #         backend=true, ci=true — i.e. run EVERYTHING. A classifier error can
   #         only ever cost extra CI minutes, never weaken the gate.
   #   - `validate-all` ALSO independently fails-closed: if this job itself
-  #     does not succeed, its result != 'success' trips the #805 assertion.
+  #     does not succeed, its result != 'success' trips the #805 assertion and
+  #     the gate pins frontend=backend=true, docs_only=false.
   #
   # Mirrors the fail-closed `git diff` shape of ci.yml's `detect-changes`.
   # ---------------------------------------------------------------------------
-  detect-docs-only:
+  detect-changes:
     runs-on: ubuntu-24.04
     timeout-minutes: 3
     outputs:
       docs_only: ${{ steps.classify.outputs.docs_only }}
+      frontend: ${{ steps.classify.outputs.frontend }}
+      backend: ${{ steps.classify.outputs.backend }}
+      ci: ${{ steps.classify.outputs.ci }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -82,12 +105,20 @@ jobs:
         run: |
           set -euo pipefail
 
-          # Helper: emit docs_only=false and exit 0. Used for every
-          # fail-closed branch so the full suite runs whenever we are not
-          # 100% certain the diff is docs-only.
+          # Helper: emit the "run everything" classification and exit 0. Used
+          # for every fail-closed branch so the full suite runs whenever we are
+          # not 100% certain what the diff touches. docs_only=false keeps the
+          # heavy `lint` job on; frontend/backend/ci=true force every
+          # category's heavy jobs to run. A classifier error costs CI minutes,
+          # never a weakened gate.
           full_suite() {
             echo "$1"
-            echo "docs_only=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "docs_only=false"
+              echo "frontend=true"
+              echo "backend=true"
+              echo "ci=true"
+            } >> "$GITHUB_OUTPUT"
             exit 0
           }
 
@@ -153,17 +184,62 @@ jobs:
           # changes that also touch code, etc. ANY of those ⇒ docs_only=false.
           docs_re='^(docs/|.*\.md$|LICENSE([.-].*)?$|NOTICE$|AUTHORS$|CHANGELOG$)'
 
+          # Per-category regexes (OR semantics: a file may match several; each
+          # category flips true if ANY changed file matches). Anchored where a
+          # root anchor is meaningful. Note `^src-tauri/` already subsumes the
+          # Cargo/migrations alternatives, but they are listed explicitly so
+          # the intent is legible and robust to future anchor tweaks.
+          backend_re='(^src-tauri/|\.rs$|^src-tauri/Cargo\.(toml|lock)$|src-tauri/migrations/|\.sqlx/)'
+          frontend_re='(^src/|^e2e/|\.(ts|tsx|js|jsx|css)$|^package(-lock)?\.json$|^(vite|vitest|tailwind|postcss)\.config\.|^tsconfig.*\.json$|^index\.html$)'
+          ci_re='(^\.github/|^prek\.toml$|^\.taplo\.toml$|^lychee\.toml$|^\.gitleaks\.toml$)'
+
+          # Single pass over the changed set. docs_only stays true only while
+          # EVERY path matches the docs allowlist; the three category flags are
+          # sticky-true once any matching path is seen. No `break` — every path
+          # must be inspected for the category flags even after docs_only flips.
+          #
+          # FAIL-CLOSED default for UNRECOGNIZED non-docs paths: a changed file
+          # that is neither docs NOR any known category (frontend/backend/ci) —
+          # e.g. rust-toolchain.toml, .cargo/config.toml, rustfmt.toml, a root
+          # Justfile / Dockerfile / flake.nix / *.sh — is a build/toolchain
+          # change we cannot attribute to a suite. Under per-category gating,
+          # BOTH vitest and cargo-tests would skip and it could merge with no
+          # heavy suite at all (a strictness regression vs the pre-#833 gate,
+          # which ran EVERYTHING on any non-docs change). So we pin
+          # frontend=backend=true for such a path, restoring "anything we don't
+          # explicitly recognize runs the full suite". Recognized-but-unsuited
+          # categories (a pure `ci` change like a workflow/prek.toml edit) do
+          # NOT trip this — `lint` (incl. zizmor) already covers them.
           docs_only=true
+          frontend=false
+          backend=false
+          ci=false
           for f in "${changed[@]}"; do
+            # Did this path match ANY known non-docs category?
+            matched_cat=false
+            if [[ "$f" =~ $frontend_re ]]; then frontend=true; matched_cat=true; fi
+            if [[ "$f" =~ $backend_re ]]; then backend=true; matched_cat=true; fi
+            if [[ "$f" =~ $ci_re ]]; then ci=true; matched_cat=true; fi
             if [[ ! "$f" =~ $docs_re ]]; then
-              echo "Non-docs path detected: $f → docs_only=false (full suite)."
+              if [ "$docs_only" = "true" ]; then
+                echo "Non-docs path detected: $f → docs_only=false (full lint suite)."
+              fi
               docs_only=false
-              break
+              if [ "$matched_cat" = "false" ]; then
+                echo "Unrecognized non-docs path: $f → pinning frontend=backend=true (fail-closed full suite)."
+                frontend=true
+                backend=true
+              fi
             fi
           done
 
-          echo "docs_only=$docs_only"
-          echo "docs_only=$docs_only" >> "$GITHUB_OUTPUT"
+          echo "docs_only=$docs_only frontend=$frontend backend=$backend ci=$ci"
+          {
+            echo "docs_only=$docs_only"
+            echo "frontend=$frontend"
+            echo "backend=$backend"
+            echo "ci=$ci"
+          } >> "$GITHUB_OUTPUT"
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
@@ -173,14 +249,19 @@ jobs:
   # zizmor, etc.
   # ---------------------------------------------------------------------------
   lint:
-    needs: detect-docs-only
+    needs: detect-changes
     # #833: the FULL lint job (clippy, cargo-deny, cargo-audit, sqlx-prepare,
     # zizmor, the whole prek suite + the heavy Rust/Node toolchain it needs)
     # is skipped on a provably docs-only diff. Docs are still linted by the
     # lightweight `docs-lint` job below, which runs the cheap doc-only hooks
     # (typos, markdownlint, lychee) with no toolchain. Fail-closed: an
     # uncertain classification ⇒ docs_only=false ⇒ this full job runs.
-    if: needs.detect-docs-only.outputs.docs_only != 'true'
+    #
+    # This is the CROSS-CUTTING guard: clippy / oxfmt / bindings-parity / zizmor
+    # all live here and must run on ANY non-docs change, so it stays gated on
+    # `docs_only != 'true'` (NOT on a single category) — the prek hooks
+    # self-filter by file type, so it is cheap-ish on a small diff.
+    if: needs.detect-changes.outputs.docs_only != 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — observed wall-clock 11.2 min (run 25966040732, 2026-05-16,
     # n=1 post-PEND-39-split). +50% headroom + round up to nearest 5 → 20 min.
@@ -509,8 +590,8 @@ jobs:
   # the reduced set is selected by passing hook ids on the command line.
   # ---------------------------------------------------------------------------
   docs-lint:
-    needs: detect-docs-only
-    if: needs.detect-docs-only.outputs.docs_only == 'true'
+    needs: detect-changes
+    if: needs.detect-changes.outputs.docs_only == 'true'
     runs-on: ubuntu-24.04
     # Cheap: Node + three prebuilt binaries + a handful of doc hooks. No
     # Rust compile. Generous 10-min ceiling (lychee hits the network).
@@ -603,11 +684,13 @@ jobs:
   # Node-only; no Rust toolchain or apt deps needed.
   # ---------------------------------------------------------------------------
   vitest:
-    needs: detect-docs-only
-    # #833: skip the frontend suite when the diff is provably docs-only.
-    # Fail-open is impossible here — the classifier fails CLOSED, so an
-    # uncertain classification yields docs_only=false and this job runs.
-    if: needs.detect-docs-only.outputs.docs_only != 'true'
+    needs: detect-changes
+    # Run the frontend unit/integration suite iff the diff touches frontend
+    # files (src/, e2e/, .ts/.tsx/.js/.jsx/.css, package[-lock].json, the
+    # vite/vitest/tailwind/postcss configs, tsconfig*.json, index.html). Fail-
+    # open is impossible: the classifier fails CLOSED (frontend=true on any
+    # diff error), and a classifier failure fails the gate outright.
+    if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     # PEND-41 R1 — full-suite wall-clock was ~3×2.2 min of test work split
     # across shards; run as one job that's ~6-7 min of tests + ~2 min v8
@@ -715,10 +798,11 @@ jobs:
   # collide). No merge step yet — deferred per the plan.
   # ---------------------------------------------------------------------------
   playwright:
-    needs: detect-docs-only
-    # #833: skip the E2E suite on a provably docs-only diff (fail-closed
-    # classifier — see detect-docs-only).
-    if: needs.detect-docs-only.outputs.docs_only != 'true'
+    needs: detect-changes
+    # Run the E2E browser suite iff the diff touches frontend files (same
+    # `frontend` category as vitest). Fail-closed classifier — see
+    # detect-changes.
+    if: needs.detect-changes.outputs.frontend == 'true'
     runs-on: ubuntu-24.04
     # The e2e suite outgrew the 2-shard split: shard 2 ran 10.5 min and shard 1
     # hit the old 15-min cap (run 27705633920). Re-sharded 2 → 3 (per-shard
@@ -843,12 +927,12 @@ jobs:
   # gate the MCP-sidecar signal (and vice versa).
   # ---------------------------------------------------------------------------
   cargo-tests:
-    needs: detect-docs-only
-    # #833: skip the Rust nextest+coverage suite on a provably docs-only
-    # diff (fail-closed classifier — see detect-docs-only). cargo-coverage
-    # `needs: cargo-tests`, so it skips transitively; that job is already
-    # informational/non-gating (not in validate-all's needs).
-    if: needs.detect-docs-only.outputs.docs_only != 'true'
+    needs: detect-changes
+    # Run the Rust nextest+coverage suite iff the diff touches backend files
+    # (src-tauri/, .rs, Cargo.toml/lock, migrations, .sqlx/). Fail-closed
+    # classifier — see detect-changes. cargo-coverage `needs: cargo-tests`, so
+    # it skips transitively when this job is skipped.
+    if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     # PEND-86: split into a 2-shard matrix via nextest `--partition count:N/2`.
     # The single-job full suite + llvm-cov was the ~16-min critical-path long
@@ -1022,11 +1106,12 @@ jobs:
     runs-on: ubuntu-24.04
     needs: cargo-tests
     # `success() || failure()` (i.e. cargo-tests actually ran) — NOT
-    # `!cancelled()`, because a docs-only diff (#833) SKIPS cargo-tests, and
-    # a skipped upstream would otherwise let this job run and then fail
-    # downloading shard artifacts that were never produced. Skipping
-    # coverage on docs-only is correct (no Rust changed) and harmless: this
-    # job is informational and not in validate-all's needs.
+    # `!cancelled()`, because a backend-absent PR SKIPS cargo-tests, and a
+    # skipped upstream would otherwise let this job run and then fail
+    # downloading shard artifacts that were never produced. Skipping coverage
+    # when no Rust changed is correct and consistent with the `backend`
+    # category gate on cargo-tests: this job stays paired with cargo-tests and
+    # runs iff cargo-tests ran.
     if: ${{ (success() || failure()) && needs.cargo-tests.result != 'cancelled' }}
     timeout-minutes: 10
     steps:
@@ -1122,10 +1207,11 @@ jobs:
   # lint tree nor the llvm-cov instrumented tree.
   # ---------------------------------------------------------------------------
   mcp-tests:
-    needs: detect-docs-only
-    # #833: skip the MCP sidecar build + UDS smoke on a provably docs-only
-    # diff (fail-closed classifier — see detect-docs-only).
-    if: needs.detect-docs-only.outputs.docs_only != 'true'
+    needs: detect-changes
+    # Run the MCP sidecar build + UDS smoke iff the diff touches backend files
+    # (same `backend` category as cargo-tests). Fail-closed classifier — see
+    # detect-changes.
+    if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-24.04
     # MCP build + smoke is much lighter than the full nextest+llvm-cov
     # run on cargo-tests. 20 min covers the cold-cache compile of
@@ -1246,7 +1332,7 @@ jobs:
   # check list.
   #
   # ===========================================================================
-  # SECURITY-SENSITIVE LOGIC (#805 strict gate + #833 docs fast-path).
+  # SECURITY-SENSITIVE LOGIC (#805 strict gate + #833 fast-path, per-category).
   # This is the part the maintainer reviews. Read it slowly.
   # ===========================================================================
   #
@@ -1258,55 +1344,80 @@ jobs:
   #
   # #805's original rule was simply: every sibling must be `success`; anything
   # else (failure/cancelled/skipped) fails the gate. That rule assumed NO
-  # sibling is ever path-filtered. #833 introduces a docs-only fast path that
-  # DOES skip siblings — so we relax the rule in exactly one controlled way,
-  # and ONLY when the fail-closed classifier proves the diff is docs-only:
+  # sibling is ever path-filtered. The classifier (`detect-changes`) now
+  # path-filters siblings across FOUR categories, so we relax the rule in a
+  # controlled, per-category way, and ONLY on categories the fail-closed
+  # classifier proves are ABSENT from the diff:
   #
-  #   * detect-docs-only must itself have SUCCEEDED. If the classifier did not
-  #     succeed we cannot trust `docs_only`, so we fall through to the strict
-  #     full-suite rule (fail-closed). The classifier already emits
-  #     docs_only=false on any internal git error, so "classifier succeeded
-  #     but couldn't compute a diff" already means full-suite.
+  #   * detect-changes must itself have SUCCEEDED. If the classifier did not
+  #     succeed we cannot trust any category, so we PIN frontend=true,
+  #     backend=true, docs_only=false (run/require everything) and fail the
+  #     gate outright (fail-closed). The classifier already emits the "run
+  #     everything" tuple on any internal git error, so "classifier succeeded
+  #     but couldn't compute a diff" also means full-suite.
   #
-  #   * HEAVY jobs (lint, vitest, playwright, cargo-tests, mcp-tests) run on
-  #     code PRs and are skipped on docs-only PRs. They may be `skipped` ONLY
-  #     when docs_only == true; otherwise they MUST be `success` (#805 intact).
-  #     A `failure`/`cancelled` is NEVER acceptable, even on docs-only.
+  #   * Per-job skip acceptance (success is ALWAYS ok; failure/cancelled is
+  #     NEVER ok, even on the fast path):
+  #       - lint                       : skipped OK iff docs_only == 'true'
+  #                                      (cross-cutting; runs on ANY non-docs
+  #                                      change, not a single category).
+  #       - vitest, playwright         : skipped OK iff frontend != 'true'
+  #       - cargo-tests, cargo-coverage,
+  #         mcp-tests                  : skipped OK iff backend  != 'true'
+  #       - docs-lint (the complement) : success iff docs_only == 'true',
+  #                                      else must be skipped.
   #
-  #   * docs-lint is the COMPLEMENT: it runs on docs-only PRs and is skipped on
-  #     code PRs. So its allowed states are mirrored — `success` when
-  #     docs_only, `skipped` when not.
+  # INVARIANT (the whole point): under classifier failure OR any category
+  # being true, that category's heavy jobs MUST be `success`. A code change can
+  # never ride in on a skip — the classifier is regex/allowlist-based and
+  # fail-closed, so a category is marked absent only when NO changed file
+  # matches it. Cross-cutting safety: a backend change that regenerates
+  # src/lib/bindings.ts also flips frontend=true, so the bindings-drift suite
+  # runs too.
   #
-  # Net effect (proved by the truth table in the PR):
-  #   - code PR  → docs_only=false → every heavy job must be success, docs-lint
-  #                skipped. Identical to the pre-#833 #805 gate. No bypass.
-  #   - docs PR  → docs_only=true  → heavy jobs skipped (OK), docs-lint must be
-  #                success. A docs PR passes; a broken docs PR (markdownlint /
-  #                lychee red) fails.
-  #   - any classifier/diff error → docs_only=false (fail-closed) → strict rule.
-  #
-  # A code change cannot ride in under docs_only=true: the classifier is
-  # allowlist-based + fail-closed (any .rs/.ts/lockfile/non-doc-workflow path
-  # ⇒ docs_only=false), so the heavy jobs are never legitimately skippable for
-  # a code diff.
+  # Truth table (traced in the PR body):
+  #   ┌────────────────────┬──────────┬─────────┬─────────┬──────────────────────────────┐
+  #   │ scenario           │ docs_only│ frontend│ backend │ gate expectation             │
+  #   ├────────────────────┼──────────┼─────────┼─────────┼──────────────────────────────┤
+  #   │ frontend-only PR   │ false    │ true    │ false   │ vitest+playwright SUCCESS;   │
+  #   │                    │          │         │         │ cargo-tests/cov/mcp skipped  │
+  #   │                    │          │         │         │ OK; lint SUCCESS; docs-lint  │
+  #   │                    │          │         │         │ skipped                      │
+  #   │ backend-only PR    │ false    │ false   │ true    │ cargo-tests/cov/mcp SUCCESS; │
+  #   │                    │          │         │         │ vitest+playwright skipped OK;│
+  #   │                    │          │         │         │ lint SUCCESS; docs-lint      │
+  #   │                    │          │         │         │ skipped                      │
+  #   │ docs-only PR       │ true     │ false   │ false   │ ALL heavy skipped OK; lint   │
+  #   │                    │          │         │         │ skipped OK; docs-lint        │
+  #   │                    │          │         │         │ SUCCESS                      │
+  #   │ mixed FE+BE PR     │ false    │ true    │ true    │ every heavy SUCCESS;         │
+  #   │                    │          │         │         │ docs-lint skipped            │
+  #   │ classifier error   │ (pinned) │ true    │ true    │ gate FAILS; heavy required   │
+  #   │                    │ false    │         │         │ success but skipped → fail   │
+  #   └────────────────────┴──────────┴─────────┴─────────┴──────────────────────────────┘
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-docs-only, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
     timeout-minutes: 5
     steps:
-      - name: Assert validate gate (docs-only-aware, fail-closed)
+      - name: Assert validate gate (per-category, fail-closed)
         env:
           # The full needs context, e.g. {"lint": {"result": "success"}, ...}.
           # Passed via env (not inline interpolation) so the JSON can never
           # be parsed as shell.
           NEEDS_JSON: ${{ toJSON(needs) }}
-          # Read the classifier output directly (NOT from NEEDS_JSON — outputs
-          # live under .outputs there, but reading the resolved value here is
-          # clearer). Empty/anything-but-"true" is treated as NOT docs-only.
-          DOCS_ONLY: ${{ needs.detect-docs-only.outputs.docs_only }}
+          # Read the classifier category outputs directly (NOT from NEEDS_JSON
+          # — outputs live under .outputs there, but reading the resolved value
+          # here is clearer). Each is passed via env, never inline-interpolated
+          # into the script body. Empty/anything-but-"true" is treated as the
+          # category being ABSENT (i.e. not docs-only / no frontend / no
+          # backend); the gate normalises them below.
+          DOCS_ONLY: ${{ needs.detect-changes.outputs.docs_only }}
+          FRONTEND: ${{ needs.detect-changes.outputs.frontend }}
+          BACKEND: ${{ needs.detect-changes.outputs.backend }}
         run: |
           set -euo pipefail
 
@@ -1315,37 +1426,61 @@ jobs:
 
           result_of() { jq -r --arg k "$1" '.[$k].result // "missing"' <<< "$NEEDS_JSON"; }
 
-          classifier="$(result_of detect-docs-only)"
-          echo "detect-docs-only result=$classifier docs_only=${DOCS_ONLY:-<empty>}"
-
-          # ---- Fail-closed on the classifier itself -------------------------
-          # If the classifier did not succeed we cannot trust DOCS_ONLY; force
-          # the strict full-suite rule by pinning docs_only to "false".
-          docs_only="false"
-          if [ "$classifier" = "success" ] && [ "$DOCS_ONLY" = "true" ]; then
-            docs_only="true"
-          fi
-          if [ "$classifier" != "success" ]; then
-            gate_fail "detect-docs-only did not succeed (result=$classifier) — failing gate (fail-closed)."
-          fi
-
-          # ---- Heavy jobs: skip-allowed ONLY under docs_only ----------------
-          # success            → always OK
-          # skipped            → OK iff docs_only == true (#833 fast path)
-          # failure/cancelled  → NEVER OK
-          # anything else      → NEVER OK
-          heavy="lint vitest playwright cargo-tests cargo-coverage mcp-tests"
-          for j in $heavy; do
+          # check_job JOB SKIP_OK: success is always OK; skipped is OK only when
+          # SKIP_OK=="true" (that job's category is absent); failure/cancelled/
+          # anything-else is NEVER OK. `fail` is a global mutated via gate_fail.
+          check_job() {
+            local j="$1" skip_ok="$2" r
             r="$(result_of "$j")"
             if [ "$r" = "success" ]; then
-              continue
-            elif [ "$r" = "skipped" ] && [ "$docs_only" = "true" ]; then
-              echo "$j skipped (allowed under docs_only)."
-              continue
-            else
-              gate_fail "heavy job '$j' result=$r is not acceptable (docs_only=$docs_only)."
+              return 0
             fi
-          done
+            if [ "$r" = "skipped" ] && [ "$skip_ok" = "true" ]; then
+              echo "$j skipped (allowed: category absent)."
+              return 0
+            fi
+            gate_fail "job '$j' result=$r is not acceptable (skip_ok=$skip_ok)."
+          }
+
+          classifier="$(result_of detect-changes)"
+          echo "detect-changes result=$classifier docs_only=${DOCS_ONLY:-<empty>} frontend=${FRONTEND:-<empty>} backend=${BACKEND:-<empty>}"
+
+          # ---- Resolve category booleans, fail-closed -----------------------
+          # On a SUCCESSFUL classifier, trust its outputs (normalised so only
+          # the literal string "true" counts as present). Otherwise we cannot
+          # trust any category: PIN frontend=true, backend=true, docs_only=false
+          # (require/run everything) and fail the gate — a classifier that did
+          # not succeed can never let a heavy job pass on a skip.
+          docs_only="false"
+          frontend="true"
+          backend="true"
+          if [ "$classifier" = "success" ]; then
+            docs_only="false"; if [ "$DOCS_ONLY" = "true" ]; then docs_only="true"; fi
+            frontend="false"; if [ "$FRONTEND" = "true" ]; then frontend="true"; fi
+            backend="false"; if [ "$BACKEND" = "true" ]; then backend="true"; fi
+          else
+            gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning frontend=backend=true, docs_only=false."
+          fi
+          echo "resolved: docs_only=$docs_only frontend=$frontend backend=$backend"
+
+          # ---- Per-category acceptance --------------------------------------
+          # lint is CROSS-CUTTING: it runs on any non-docs change, so its skip
+          # is allowed only when docs_only.
+          lint_skip_ok="false"; if [ "$docs_only" = "true" ]; then lint_skip_ok="true"; fi
+          check_job lint "$lint_skip_ok"
+
+          # frontend suite: skip allowed only when the frontend category is
+          # absent from the diff.
+          fe_skip_ok="false"; if [ "$frontend" != "true" ]; then fe_skip_ok="true"; fi
+          check_job vitest "$fe_skip_ok"
+          check_job playwright "$fe_skip_ok"
+
+          # backend suite (+ its transitive coverage): skip allowed only when
+          # the backend category is absent from the diff.
+          be_skip_ok="false"; if [ "$backend" != "true" ]; then be_skip_ok="true"; fi
+          check_job cargo-tests "$be_skip_ok"
+          check_job cargo-coverage "$be_skip_ok"
+          check_job mcp-tests "$be_skip_ok"
 
           # ---- docs-lint: the complement (runs on docs-only PRs) ------------
           # success → OK only under docs_only (it should have run)
@@ -1365,4 +1500,4 @@ jobs:
             echo "::error::validate-all gate FAILED (see above)."
             exit 1
           fi
-          echo "validate-all gate PASSED (docs_only=$docs_only)."
+          echo "validate-all gate PASSED (docs_only=$docs_only frontend=$frontend backend=$backend)."
