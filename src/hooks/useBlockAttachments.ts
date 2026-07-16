@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 
-import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -40,7 +40,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   // per-block `listAttachments` IPC only runs when no provider wraps us
   // (e.g. isolated unit tests, dialogs rendered outside the BlockTree).
   const batchActive = batchProvider !== null
-  const batchLoading = batchProvider?.loading ?? false
+  const batchLoading = useBatchAttachmentsLoading()
   const batchRows = batchProvider?.get(blockId ?? '')
 
   // Load attachments when blockId changes

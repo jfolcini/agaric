@@ -116,10 +116,12 @@ export function useExtraBlockProperties(blocks: Array<{ id: string }>): BlockPro
 
     for (const id of ids) {
       const rows = get?.(id)
-      // Block not present in the batch yet (initial fetch pending or the
-      // backend returned no row bucket for it) — leave it out of the map,
-      // mirroring the previous IPC-record iteration which only produced
-      // entries for blocks the batch returned.
+      // Block not present in the batch yet — initial fetch still pending,
+      // or the id hasn't entered the provider's window (`undefined`). A
+      // block the provider HAS fetched and confirmed has no properties
+      // reads as `[]` (#2701) and falls through to `next[id] = []` below —
+      // behaviorally equivalent to omitting the key for every downstream
+      // consumer (both render zero rows).
       if (rows == null) continue
       const mapped = mapRows(rows)
       const prior = prev[id]

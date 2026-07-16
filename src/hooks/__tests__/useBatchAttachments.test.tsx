@@ -9,10 +9,17 @@
  *  - Re-fetches when blockIds membership changes
  *  - Does NOT re-fetch when blockIds reference changes but membership is identical
  *  - `invalidate(blockId)` triggers a refetch of the whole batch
- *  - `loading` flips during initial fetch and after invalidation
+ *  - `loading` (via `useBatchAttachmentsLoading`) flips during initial fetch
+ *    and after invalidation
  * `getCount(blockId)` returns `rows.length` (or 0 when
  *    the block is absent from the cache) — replaces the dropped
  *    BatchAttachmentCountsProvider.
+ *  - #2701: a scroll settle with an overlapping window only fetches the ids
+ *    NOT already cached; evicted ids are retained (not refetched on
+ *    re-entry); `invalidate()` still force-refetches the whole current
+ *    window; the data context value updates once per settle (the loading
+ *    blip doesn't re-render data-only consumers, since it lives in a
+ *    separate context).
  */
 
 import { invoke } from '@tauri-apps/api/core'
@@ -27,7 +34,11 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { BatchAttachmentsProvider, useBatchAttachments } from '@/hooks/useBatchAttachments'
+import {
+  BatchAttachmentsProvider,
+  useBatchAttachments,
+  useBatchAttachmentsLoading,
+} from '@/hooks/useBatchAttachments'
 import type { AttachmentRow } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -35,7 +46,6 @@ const mockedInvoke = vi.mocked(invoke)
 interface BatchAttachmentsValue {
   get: (blockId: string) => AttachmentRow[] | undefined
   getCount: (blockId: string) => number
-  loading: boolean
   invalidate: (blockId: string) => void
 }
 
@@ -77,12 +87,13 @@ describe('useBatchAttachments', () => {
   })
 
   it('provider returns empty map / loading=false when blockIds is empty', async () => {
-    const { result } = renderHook(() => useBatchAttachments(), {
-      wrapper: makeWrapper([]),
-    })
+    const { result } = renderHook(
+      () => ({ data: useBatchAttachments(), loading: useBatchAttachmentsLoading() }),
+      { wrapper: makeWrapper([]) },
+    )
 
-    expect(result.current?.get('ANY')).toBeUndefined()
-    expect(result.current?.loading).toBe(false)
+    expect(result.current.data?.get('ANY')).toBeUndefined()
+    expect(result.current.loading).toBe(false)
 
     // Allow any pending microtasks to flush
     await Promise.resolve()
@@ -107,7 +118,11 @@ describe('useBatchAttachments', () => {
     })
 
     expect(result.current?.get('BLOCK_2')?.length).toBe(0)
-    expect(result.current?.get('BLOCK_3')).toBeUndefined()
+    // #2701: BLOCK_3 was requested and the response omitted it (no
+    // attachments) — the provider caches `[]` (not `undefined`) so the
+    // delta-fetch cache can tell "confirmed empty" apart from "never
+    // fetched" (only the latter needs a refetch when it re-enters a window).
+    expect(result.current?.get('BLOCK_3')).toEqual([])
 
     expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
       blockIds: ['BLOCK_1', 'BLOCK_2', 'BLOCK_3'],
@@ -120,16 +135,17 @@ describe('useBatchAttachments', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchAttachments(), {
-      wrapper: makeWrapper(['BLOCK_1']),
-    })
+    const { result } = renderHook(
+      () => ({ data: useBatchAttachments(), loading: useBatchAttachmentsLoading() }),
+      { wrapper: makeWrapper(['BLOCK_1']) },
+    )
 
     await waitFor(() => {
       expect(mockLoggerWarn).toHaveBeenCalled()
     })
 
-    expect(result.current?.get('BLOCK_1')).toBeUndefined()
-    expect(result.current?.loading).toBe(false)
+    expect(result.current.data?.get('BLOCK_1')).toBeUndefined()
+    expect(result.current.loading).toBe(false)
 
     const [scope, message] = mockLoggerWarn.mock.calls[0] as [string, string]
     expect(scope).toBe('BatchAttachmentsProvider')
@@ -264,12 +280,13 @@ describe('useBatchAttachments', () => {
       return undefined
     })
 
-    const { result } = renderHook(() => useBatchAttachments(), {
-      wrapper: makeWrapper(['A']),
-    })
+    const { result } = renderHook(
+      () => ({ data: useBatchAttachments(), loading: useBatchAttachmentsLoading() }),
+      { wrapper: makeWrapper(['A']) },
+    )
 
     // Loading should be true while the initial fetch is pending.
-    expect(result.current?.loading).toBe(true)
+    expect(result.current.loading).toBe(true)
 
     await act(async () => {
       resolveFetch({ A: [makeAttachment({ id: 'a1', block_id: 'A' })] })
@@ -278,26 +295,26 @@ describe('useBatchAttachments', () => {
     })
 
     await waitFor(() => {
-      expect(result.current?.loading).toBe(false)
+      expect(result.current.loading).toBe(false)
     })
-    expect(result.current?.get('A')?.length).toBe(1)
+    expect(result.current.data?.get('A')?.length).toBe(1)
 
     // Now invalidate and confirm loading flips back to true.
     act(() => {
-      result.current?.invalidate('A')
+      result.current.data?.invalidate('A')
     })
 
     await waitFor(() => {
-      expect(result.current?.loading).toBe(true)
+      expect(result.current.loading).toBe(true)
     })
 
     await act(async () => {
-      resolveFetch({ A: [makeAttachment({ id: 'a1', block_id: 'A' })] })
+      resolveFetch({ A: [makeAttachment({ id: 'a2', block_id: 'A' })] })
       await Promise.resolve()
     })
 
     await waitFor(() => {
-      expect(result.current?.loading).toBe(false)
+      expect(result.current.loading).toBe(false)
     })
   })
 
@@ -358,6 +375,237 @@ describe('useBatchAttachments', () => {
         ([cmd]) => cmd === 'get_batch_attachment_counts',
       )
       expect(countCalls).toHaveLength(0)
+    })
+  })
+
+  // -------------------------------------------------------------------------
+  // #2701 — delta fetching + single context commit per scroll settle
+  // -------------------------------------------------------------------------
+
+  describe('windowed scroll settle (#2701)', () => {
+    function mockBatchInvoke() {
+      mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+        if (cmd === 'list_attachments_batch') {
+          const ids = (args as { blockIds: string[] }).blockIds
+          const out: Record<string, AttachmentRow[]> = {}
+          for (const id of ids) {
+            out[id] = [makeAttachment({ id: `att-${id}`, block_id: id })]
+          }
+          return out
+        }
+        return undefined
+      })
+    }
+
+    it('only fetches ids NOT already cached when the window overlaps', async () => {
+      mockBatchInvoke()
+
+      const observed: Array<BatchAttachmentsValue | null> = []
+      const collect = (v: BatchAttachmentsValue | null) => observed.push(v)
+
+      const { rerender } = render(
+        <BatchAttachmentsProvider blockIds={['A', 'B', 'C']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('C')?.length).toBe(1)
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
+        blockIds: ['A', 'B', 'C'],
+      })
+
+      mockedInvoke.mockClear()
+
+      // Scroll settle: window shifts from [A,B,C] to [B,C,D] — B and C are
+      // already cached, only D is new.
+      rerender(
+        <BatchAttachmentsProvider blockIds={['B', 'C', 'D']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('D')?.length).toBe(1)
+      })
+
+      const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+      expect(batchCalls).toHaveLength(1)
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', { blockIds: ['D'] })
+
+      // A scrolled out of the window but stays readable from the cache
+      // (evicted entries are retained, not refetched on re-entry).
+      expect(observed.at(-1)?.get('A')?.length).toBe(1)
+    })
+
+    it('re-entering a previously-fetched id does not refetch it', async () => {
+      mockBatchInvoke()
+
+      const { rerender } = render(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={() => {}} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+        expect(calls).toHaveLength(1)
+      })
+
+      // Scroll away — A drops out of the window.
+      rerender(
+        <BatchAttachmentsProvider blockIds={['B']}>
+          <Probe onResult={() => {}} />
+        </BatchAttachmentsProvider>,
+      )
+      await Promise.resolve()
+
+      // Scroll back — A re-enters the window. No new IPC should fire since
+      // A is still in the cache.
+      rerender(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={() => {}} />
+        </BatchAttachmentsProvider>,
+      )
+      await Promise.resolve()
+
+      const batchCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+      expect(batchCalls).toHaveLength(1)
+    })
+
+    it('invalidate() force-refetches the whole current window, not just missing ids', async () => {
+      mockBatchInvoke()
+
+      const observed: Array<BatchAttachmentsValue | null> = []
+      const collect = (v: BatchAttachmentsValue | null) => observed.push(v)
+
+      render(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('B')?.length).toBe(1)
+      })
+
+      mockedInvoke.mockClear()
+
+      act(() => {
+        observed.at(-1)?.invalidate('A')
+      })
+
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+        expect(calls).toHaveLength(1)
+      })
+
+      // Both A and B are refetched — not just A (the argument is a legacy
+      // per-block hint; invalidate() always refreshes the whole window).
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
+        blockIds: ['A', 'B'],
+      })
+    })
+
+    it('invalidate() while a previously-cached id is OFF the current window purges it, so scrolling back refetches fresh instead of serving stale data', async () => {
+      mockBatchInvoke()
+
+      const observed: Array<BatchAttachmentsValue | null> = []
+      const collect = (v: BatchAttachmentsValue | null) => observed.push(v)
+
+      const { rerender } = render(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('A')?.length).toBe(1)
+      })
+
+      // Scroll away — A and B drop out of the window; C and D scroll in.
+      rerender(
+        <BatchAttachmentsProvider blockIds={['C', 'D']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('D')?.length).toBe(1)
+      })
+
+      mockedInvoke.mockClear()
+
+      // A mutation on A fires while A is OFF-window (e.g. an attachment add
+      // via a surface other than the currently-scrolled StaticBlock rows).
+      // `invalidate()` has no id-scoping, so this only force-refetches the
+      // CURRENT window [C, D] — it cannot know to specifically refresh A.
+      act(() => {
+        observed.at(-1)?.invalidate('A')
+      })
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+        expect(calls).toHaveLength(1)
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', { blockIds: ['C', 'D'] })
+
+      mockedInvoke.mockClear()
+
+      // Scroll back to A, B. Since the invalidation above could not know
+      // A was the mutated id, the cache entry for A must have been purged
+      // (not silently retained as pre-mutation data) — so re-entering the
+      // window must trigger a fresh fetch, not a cache hit.
+      rerender(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        const calls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'list_attachments_batch')
+        expect(calls).toHaveLength(1)
+      })
+      expect(mockedInvoke).toHaveBeenCalledWith('list_attachments_batch', {
+        blockIds: ['A', 'B'],
+      })
+    })
+
+    it('data context value updates once per settle — the loading blip does not re-render data-only consumers', async () => {
+      mockBatchInvoke()
+
+      const observed: Array<BatchAttachmentsValue | null> = []
+      const collect = (v: BatchAttachmentsValue | null) => observed.push(v)
+
+      const { rerender } = render(
+        <BatchAttachmentsProvider blockIds={['A']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('A')?.length).toBe(1)
+      })
+
+      // Scroll settle: window grows to include a new id (B), forcing a real
+      // fetch cycle (setLoading(true) → resolve → setAttachmentsByBlock).
+      rerender(
+        <BatchAttachmentsProvider blockIds={['A', 'B']}>
+          <Probe onResult={collect} />
+        </BatchAttachmentsProvider>,
+      )
+      // The rerender() call itself produces one Probe render (new `children`
+      // element identity from the test harness) — snapshot the count here so
+      // the assertion below isolates just the async fetch cycle.
+      const rendersAfterRerenderCommit = observed.length
+
+      await waitFor(() => {
+        expect(observed.at(-1)?.get('B')?.length).toBe(1)
+      })
+
+      // Exactly one additional Probe render for the whole async fetch cycle:
+      // `loading` lives in a separate context, so the setLoading(true) blip
+      // that precedes the data landing does not re-render a consumer that
+      // only reads `useBatchAttachments()`.
+      expect(observed.length - rendersAfterRerenderCommit).toBe(1)
     })
   })
 })

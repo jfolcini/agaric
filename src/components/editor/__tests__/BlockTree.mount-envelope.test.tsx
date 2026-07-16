@@ -321,10 +321,15 @@ describe('BlockTree mount envelope x windowed metadata IPCs (#2580)', () => {
     await user.click(getBoundaryButton())
 
     // Revealing the next batch mounts the previously-excluded rows — they
-    // must now resolve their metadata via a fresh, expanded IPC.
+    // must now resolve their metadata via a fresh IPC.
     await waitFor(() => {
       expect(lastBatchPropertiesIds()).toContain(`BLK_${INITIAL_MOUNT_LIMIT}`)
     })
-    expect(lastBatchPropertiesIds()).toHaveLength(total)
+    // #2701: the provider's delta-fetch cache already holds the first
+    // `INITIAL_MOUNT_LIMIT` rows (fetched before the boundary expanded), so
+    // the fresh IPC is scoped to ONLY the newly-revealed rows, not the
+    // whole expanded window.
+    expect(lastBatchPropertiesIds()).toHaveLength(total - INITIAL_MOUNT_LIMIT)
+    expect(lastBatchPropertiesIds()).not.toContain(`BLK_${INITIAL_MOUNT_LIMIT - 1}`)
   })
 })
