@@ -241,3 +241,30 @@ updates:
           - 'version-update:semver-patch'
           - 'version-update:semver-minor'
           - 'version-update:semver-major'
+
+  # Fuzz crate (#2734). `src-tauri/fuzz` is its OWN workspace (excluded from
+  # `src-tauri/Cargo.toml` members = [".", "agaric-core", "agaric-store",
+  # "diagnostics"]) with an independent `Cargo.lock`, so the `/src-tauri`
+  # entry above does not resolve or update it — and neither the blocking
+  # `cargo audit` step nor `deny.toml` (both `working-directory: src-tauri`)
+  # covers it. Its libFuzzer deps are compiled and run monthly in
+  # scheduled-deep-checks.yml, so they need the same cooldown-quarantined
+  # update signal as every other lockfile. Small dep set (libfuzzer-sys,
+  # arbitrary, the parent crate as a path dep) → one catch-all group.
+  - package-ecosystem: cargo
+    directory: /src-tauri/fuzz
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    open-pull-requests-limit: 8
+    commit-message:
+      prefix: chore(cargo)
+    labels:
+      - dependencies
+      - cargo
+    groups:
+      fuzz:
+        patterns:
+          - '*'

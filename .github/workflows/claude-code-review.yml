@@ -114,13 +114,33 @@ jobs:
                 gh pr review ${{ github.event.pull_request.number }} --request-changes --body "<what to fix>"
             Only approve when you are confident the change is safe to merge.
           # Least-privilege tool grant. The code-review plugin must READ the
-          # PR (gh pr view/diff, scoped gh api) and inspect the checkout
+          # PR (gh pr view/diff/checks) and inspect the checkout
           # (Read/Grep/Glob — local, no network), then POST its review
           # (gh pr comment) and cast the verdict (gh pr review). The previous
           # grant of only `gh pr review` silently lobotomized the job: every
           # run ended "success" with ~20 permission denials and zero output
           # (diagnosed 2026-06-10). No generic Bash, no write outside the two
-          # gh pr verbs, gh api restricted to this repo read paths.
+          # gh pr verbs.
+          #
+          # A raw `Bash(gh api repos/jfolcini/agaric/*)` grant was REMOVED
+          # (#2732): the pattern also matched MUTATING calls — `gh api … -X
+          # PUT/PATCH/POST/DELETE`, `-f`/`-F` follow the matched prefix — so a
+          # prompt-injected reviewer could e.g. dismiss a human's
+          # request-changes review or PATCH the PR body, a write surface wider
+          # than the intended read intent. The reviewer needs no raw endpoint:
+          # the `gh pr view/diff/checks` verbs above cover every read it makes.
+          #
+          # SECURITY NOTE: this job's approval is what SATISFIES the `default`
+          # ruleset's required pull_request review — the reviewer app is a
+          # distinct identity, so its approval counts toward the rule. Residual
+          # risk: the PR diff/title/body/comments are attacker-controllable and
+          # the only guard steering the verdict is the untrusted-input
+          # instruction in `prompt:` above — prompt text is not a security
+          # boundary. What bounds the blast radius: merge still needs
+          # contents:write, which neither this app token (contents:read +
+          # pull-requests:write) nor GITHUB_TOKEN holds; forks run without
+          # secrets (plain `pull_request`); and `allowed_bots` is
+          # dependabot[bot] only.
           #
           # Pin the reviewer to Claude Opus 4.8 with its 1M-token context
           # window. 1M is native to Opus 4.8 (no beta header — the
@@ -130,7 +150,7 @@ jobs:
           # truncation, so the merge verdict is cast over the whole change.
           claude_args: >-
             --model claude-opus-4-8[1m]
-            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh api repos/jfolcini/agaric/*),Read,Grep,Glob"
+            --allowed-tools "Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh pr review:*),Bash(gh pr comment:*),Read,Grep,Glob"
           # claude-code-action refuses to run on bot-triggered PRs by default
           # ("Workflow initiated by non-human actor: dependabot (type: Bot)").
           # Explicitly allow `dependabot[bot]` so weekly bump PRs get the same
