@@ -555,21 +555,21 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     })
   })
 
-  describe('Heading shortcut (Ctrl+1-6)', () => {
-    it('calls handleSlashCommand with heading level for Ctrl+1', () => {
+  describe('Heading shortcut (Ctrl+Alt+1-6)', () => {
+    it('calls handleSlashCommand with heading level for Ctrl+Alt+1', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
-      fireEvent.keyDown(document, { key: '1', ctrlKey: true })
+      fireEvent.keyDown(document, { key: '1', ctrlKey: true, altKey: true })
 
       expect(opts.handleSlashCommand).toHaveBeenCalledWith({ id: 'h1', label: 'Heading 1' })
     })
 
-    it('calls handleSlashCommand with heading level for Ctrl+6', () => {
+    it('calls handleSlashCommand with heading level for Ctrl+Alt+6', () => {
       const opts = makeOptions()
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
-      fireEvent.keyDown(document, { key: '6', ctrlKey: true })
+      fireEvent.keyDown(document, { key: '6', ctrlKey: true, altKey: true })
 
       expect(opts.handleSlashCommand).toHaveBeenCalledWith({ id: 'h6', label: 'Heading 6' })
     })
@@ -585,6 +585,21 @@ describe('useBlockTreeKeyboardShortcuts', () => {
 
     it('does not fire heading shortcut when no block is focused', () => {
       const opts = makeOptions({ focusedBlockId: null })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: '1', ctrlKey: true, altKey: true })
+
+      expect(opts.handleSlashCommand).not.toHaveBeenCalled()
+    })
+
+    // #2679 — the bare `Ctrl+1` chord used to fire the heading handler
+    // whenever a block was focused, silently converting the block instead
+    // of letting the (differently-scoped) `switchSpace1` global hotkey
+    // handle the keystroke. `heading1`-`heading6` now live on
+    // `Ctrl+Alt+1`-`Ctrl+Alt+6`, so the bare `Ctrl+1` chord must no longer
+    // touch the block at all.
+    it('#2679 — bare Ctrl+1 (no Alt) no longer converts the focused block to a heading', () => {
+      const opts = makeOptions()
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: '1', ctrlKey: true })
@@ -837,7 +852,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
     it('heading chord routes to the owning tree only', () => {
       const { treeA, treeB } = renderTwoTrees()
 
-      dispatchKey({ key: '1', ctrlKey: true })
+      dispatchKey({ key: '1', ctrlKey: true, altKey: true })
 
       expect(treeA.handleSlashCommand).toHaveBeenCalledTimes(1)
       expect(treeA.handleSlashCommand).toHaveBeenCalledWith({ id: 'h1', label: 'Heading 1' })
@@ -880,7 +895,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         dispatchKey({ key: '.', ctrlKey: true }),
         dispatchKey({ key: '.', altKey: true }),
         dispatchKey({ key: 'D', ctrlKey: true, shiftKey: true }),
-        dispatchKey({ key: '1', ctrlKey: true }),
+        dispatchKey({ key: '1', ctrlKey: true, altKey: true }),
       ]
 
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()
@@ -913,7 +928,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
       // After unmount, keyboard events should not trigger callbacks
       fireEvent.keyDown(document, { key: '.', ctrlKey: true })
       fireEvent.keyDown(document, { key: 'Enter', ctrlKey: true })
-      fireEvent.keyDown(document, { key: '1', ctrlKey: true })
+      fireEvent.keyDown(document, { key: '1', ctrlKey: true, altKey: true })
 
       expect(opts.toggleCollapse).not.toHaveBeenCalled()
       expect(opts.handleToggleTodo).not.toHaveBeenCalled()

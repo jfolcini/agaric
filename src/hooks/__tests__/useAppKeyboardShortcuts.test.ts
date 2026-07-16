@@ -399,6 +399,33 @@ describe('useAppKeyboardShortcuts — space digit hotkeys', () => {
         input.remove()
       }
     })
+
+    // #2679 — Ctrl+1-6 used to double as the (colliding) default binding
+    // for `heading1`-`heading6`, so a block-focused Ctrl+1 silently
+    // converted the block to a heading instead of switching spaces.
+    // `heading1`-`heading6` now default to `Ctrl+Alt+1`-`Ctrl+Alt+6`
+    // (see `useBlockTreeKeyboardShortcuts.test.ts`), so there is no more
+    // collision to resolve here — the space-switch hotkey keeps its
+    // pre-existing "don't steal keystrokes while typing" behavior: it
+    // stays suppressed with a block (contenteditable) focused, and a bare
+    // Ctrl+1 in that state is now a true no-op rather than a heading
+    // mutation.
+    it('#2679 — Ctrl+1 with a block (contenteditable) focused neither switches space nor mutates the block', () => {
+      seedNineSpaces()
+      const setCurrentSpace = vi.fn()
+      useSpaceStore.setState({ setCurrentSpace })
+      renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
+
+      const block = document.createElement('div')
+      block.setAttribute('contenteditable', 'true')
+      document.body.append(block)
+      try {
+        fireEvent.keyDown(block, { key: '1', ctrlKey: true })
+        expect(setCurrentSpace).not.toHaveBeenCalled()
+      } finally {
+        block.remove()
+      }
+    })
   })
 
   it('Ctrl+1 on the already-active space is a no-op (avoids re-fetch)', () => {

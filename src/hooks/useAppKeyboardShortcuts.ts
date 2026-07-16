@@ -389,10 +389,11 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
   // by name. Out-of-range digits are silent no-ops, matching every other
   // "digit-per-tab" shortcut users already know from Chrome / Slack /
   // iTerm. The handler short-circuits when typing in an INPUT, TEXTAREA,
-  // or `[contenteditable]` so it never steals keystrokes from the editor
-  // (which is also where the documentation-only `heading1`-`heading6`
-  // entries live — they share `Ctrl + 1`-`Ctrl + 6` glyphs but aren't
-  // wired to a global handler, so there is no real collision).
+  // or `[contenteditable]` so it never steals keystrokes from the editor.
+  // #2679 — `heading1`-`heading6` (`useBlockTreeKeyboardShortcuts`) used to
+  // share this exact `Ctrl + 1`-`Ctrl + 6` glyph, silently converting the
+  // focused block to a heading instead of switching spaces; they now
+  // default to `Ctrl + Alt + 1`-`Ctrl + Alt + 6` so the chords never race.
   useEffect(() => {
     function handleSpaceShortcuts(e: KeyboardEvent) {
       // Ignore auto-repeat so holding the chord doesn't
