@@ -278,7 +278,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -312,7 +312,7 @@ jobs:
         # the cargo-tests job (the only consumer); this job needs the
         # lint/audit set. `prek` joined the manifest list upstream so it
         # moved off the cargo-install fallback below.
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           # sqruff pinned: unpinned resolves to latest via cargo-binstall's
           # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
@@ -342,8 +342,17 @@ jobs:
           VERSION=lychee-v0.24.2
           DIR=lychee-x86_64-unknown-linux-gnu
           TARBALL="${DIR}.tar.gz"
+          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
+          # published release checksum (the sibling `${TARBALL}.sha256` asset),
+          # independently reproducible with `sha256sum`. GitHub release assets
+          # are mutable under a tag, so the version pin alone does not prevent
+          # asset replacement; this is the only unverified-binary gap in an
+          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # bumps VERSION or the `sha256sum -c` below fails the job.
+          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
@@ -516,7 +525,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -531,7 +540,7 @@ jobs:
         # Only the tools the reduced doc-hook set needs — no cargo-deny /
         # sqruff / zizmor / taplo / cargo-audit (those gate code, which a
         # docs-only diff does not touch).
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           tool: prek,typos-cli
 
@@ -543,8 +552,17 @@ jobs:
           VERSION=lychee-v0.24.2
           DIR=lychee-x86_64-unknown-linux-gnu
           TARBALL="${DIR}.tar.gz"
+          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
+          # published release checksum (the sibling `${TARBALL}.sha256` asset),
+          # independently reproducible with `sha256sum`. GitHub release assets
+          # are mutable under a tag, so the version pin alone does not prevent
+          # asset replacement; this is the only unverified-binary gap in an
+          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # bumps VERSION or the `sha256sum -c` below fails the job.
+          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
@@ -603,7 +621,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -725,7 +743,7 @@ jobs:
           persist-credentials: false
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -929,7 +947,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -952,7 +970,7 @@ jobs:
         # don't have to swap runners. Output is lcov (industry standard,
         # consumable by Codecov / coveralls / VSCode coverage gutters) plus
         # a JSON summary the step below renders as a markdown table.
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           tool: cargo-nextest,cargo-llvm-cov
 
@@ -1071,7 +1089,7 @@ jobs:
 
       - name: Install Node.js (for the coverage ratchet)
         if: hashFiles('coverage.lcov') != ''
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 
@@ -1179,7 +1197,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
@@ -1192,7 +1210,7 @@ jobs:
       - name: Install cargo-nextest via prebuilt binary (PEND-39 C1)
         # nextest is the test runner for the UDS smoke test below. Prebuilt
         # binary via taiki-e/install-action keeps cold-cache cost tiny.
-        uses: taiki-e/install-action@43aecc8d72668fbcfe75c31400bc4f890f1c5853 # v2.83.2
+        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
         with:
           tool: cargo-nextest
 
