@@ -95,9 +95,13 @@ The RO surface is **vault-wide read-only by design**: an agent given one `space_
 
 ## Testing
 
-- **`tools_ro::tests` + `tools_rw::tests`** cover input validation + happy path + at least one error path per tool. Use `test_pool()` + materializer fixture.
-- **`rmcp_adapter::tests`** covers the adapter end-to-end (parity tests against canonical wire JSON, search round-trip, unknown-tool error mapping).
-- **`server::tests` + `server::tests_rmcp`** cover the lifecycle wrapper (`run_connection`, H-2 shutdown gate, grace period).
+Coverage is split across layers, and **no single test drives the full production stack** (real socket accept loop + rmcp wire framing + a real `ReadOnlyTools`/`ReadWriteTools` registry + DB) in one path — each layer below is well covered individually, but the seams between them are not:
+
+- **`tools_ro::tests` + `tools_rw::tests`** cover input validation + happy path + at least one error path per tool, calling `registry.call_tool()` **directly** against a real `init_pool` DB + materializer fixture (`test_pool()`). No socket, no rmcp framing — this is the real tool logic, exercised in-process.
+- **`rmcp_adapter::tests`** covers rmcp wire framing (parity tests against canonical wire JSON, unknown-tool error mapping) over a `tokio::io::duplex`. Most `call_tool` round-trips run against `MockRoRegistry`; the one test wired to a real `ReadOnlyTools` registry (`rmcp_tools_list_advertises_full_read_only_registry`) drives `tools/list` only, not `call_tool`.
+- **`server::tests` + `server::tests_rmcp`** cover the connection lifecycle (`run_connection`, H-2 shutdown gate, grace period) against a real `UnixListener` / rmcp client — but always with a stub registry (`PlaceholderRegistry` in `server::tests`, `SlowRegistry` in `server::tests_rmcp`), never a real tool registry backed by a DB.
+- The `ci-smoke`-gated `stub_binary_roundtrips_initialize_over_uds` (`mod.rs`) comes closest to end-to-end — it spawns the real `agaric-mcp` binary against a real UDS — but only round-trips `initialize`, still against `PlaceholderRegistry`; it doesn't touch `tools/call`.
+- **`scripts/mcp_smoke.py`** is the only test that exercises a real `tools/call` through the full stack (real client SDK → live `cargo tauri dev` process → real tools/DB). It is intentionally excluded from CI — "Never add this to CI — it depends on a live Tauri process" (see the script's own docstring) — so it only runs manually.
 
 New tools require a matching test in `tools_ro::tests` or `tools_rw::tests`. New protocol-error paths require a test in `server/tests_rmcp.rs`.
 
