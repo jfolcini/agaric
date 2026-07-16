@@ -13,13 +13,24 @@
  * further into the past and refetches the page map for the wider span.
  *
  * Virtualization: every day renders through `DaySection` with `lazyMount`
- * enabled, so a day's heavy `BlockTree` (one TipTap editor) is only mounted
- * once it enters the viewport (one-shot IntersectionObserver inside
- * DaySection). Days scrolled far above the fold keep their already-mounted
- * tree (avoids re-spawn churn), but days never visited never mount one — so
- * the editor count is bounded by what the user has actually scrolled past,
- * not by the size of the loaded window. This reuses the exact mechanism the
- * weekly view already relies on (perf-review Tier 2 item 7).
+ * enabled, so a day's heavy `BlockTree` (one TipTap editor + ~10
+ * document-level keydown listeners, see `useBlockTreeKeyboardShortcuts`) is
+ * only mounted once it enters the viewport — the same IntersectionObserver
+ * mechanism the weekly view relies on (perf-review Tier 2 item 7). Unlike
+ * the weekly view (fixed at 7 days), the stream's day count is bounded only
+ * by `MIN_JOURNAL_DATE` — the entire journal history — so without a further
+ * bound, a long backward-scrolling session would accumulate an unbounded
+ * number of live editors and listeners (#2670).
+ *
+ * Mount window (#2670): `useDayMountWindow` caps the mounted-day set at
+ * `STREAM_MOUNT_WINDOW` (the ~10 days nearest the current scroll position)
+ * via an LRU. Visiting a new day beyond the cap evicts the least-recently-
+ * visible day back to the same height-preserving placeholder `DaySection`
+ * already uses pre-entry, releasing its `BlockTree` (and that tree's
+ * document listeners, via normal effect cleanup) — instead of the old
+ * one-shot-forever gate. A day with focus inside it is protected from
+ * eviction (`canEvictDay` below) so scrolling away mid-edit doesn't silently
+ * drop the cursor; scrolling back to an evicted day remounts it.
  *
  * Empty days: a date with no journal page yet renders its date heading plus
  * the shared `DaySection` empty state (an "Add first block" CTA that creates
@@ -33,6 +44,7 @@ import { useTranslation } from 'react-i18next'
 
 import { DaySection } from '@/components/journal/DaySection'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
+import { useDayMountWindow } from '@/hooks/useDayMountWindow'
 import { useJournalBlockCreation } from '@/hooks/useJournalBlockCreation'
 import { useJournalDateFormat } from '@/hooks/useJournalDateFormat'
 import { STREAM_BATCH_DAYS, useStreamDates } from '@/hooks/useStreamDates'
@@ -41,6 +53,19 @@ import { formatDate, formatJournalTitle } from '@/lib/date-utils'
 
 interface StreamViewProps {
   onNavigateToPage?: ((pageId: string, title?: string) => void) | undefined
+}
+
+/**
+ * Protects a day from eviction (#2670) when it currently has DOM focus
+ * inside it — unmounting a day mid-edit would silently drop the cursor.
+ * Reuses `DaySection`'s existing `id={`journal-${dateStr}`}` on the day's
+ * `<section>` (no new element/id introduced). Guarded for non-DOM
+ * environments (SSR) even though StreamView is client-only today.
+ */
+function canEvictDay(dateStr: string): boolean {
+  if (typeof document === 'undefined') return true
+  const el = document.getElementById(`journal-${dateStr}`)
+  return !(el && document.activeElement && el.contains(document.activeElement))
 }
 
 export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactElement {
@@ -52,6 +77,11 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
     pageMap,
     onPageCreated: addPage,
   })
+
+  // Bounds the mounted-day set to STREAM_MOUNT_WINDOW nearest the current
+  // scroll position (#2670) — see the file header and useDayMountWindow's
+  // doc comment for the full rationale.
+  const mountWindow = useDayMountWindow({ canEvict: canEvictDay })
 
   const makeDayEntry = useCallback(
     (d: Date): DayEntry => {
@@ -129,6 +159,7 @@ export function StreamView({ onNavigateToPage }: StreamViewProps): React.ReactEl
               onNavigateToPage={onNavigateToPage}
               onAddBlock={handleAddBlock}
               lazyMount
+              mountWindow={mountWindow}
             />
           </div>
         )
