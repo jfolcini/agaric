@@ -16,7 +16,7 @@ import {
   DEFAULT_IMAGE_ALIGNMENT,
   type ImageAlignment,
 } from '@/components/editor-toolbar/ImageResizeToolbar'
-import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import { useBatchPropertyRows, useBatchPropertyRowsLoading } from '@/hooks/useBatchPropertyRows'
 import { logger } from '@/lib/logger'
 import { getBatchProperties, type PropertyRow } from '@/lib/tauri'
 
@@ -53,6 +53,7 @@ export function useImageProperties(blockId: string, hasImageAttachments: boolean
   // production mount is under BlockTree, which mounts the provider), fall back
   // to the single-block batched IPC (#543: one call for all three properties).
   const batchProperties = useBatchPropertyRows()
+  const batchPropertiesLoading = useBatchPropertyRowsLoading()
   useEffect(() => {
     if (!hasImageAttachments) return
 
@@ -73,7 +74,7 @@ export function useImageProperties(blockId: string, hasImageAttachments: boolean
     // optimistic width/alignment/caption edit with stale rows; the effect
     // re-runs (the context value identity changes) once fresh data lands.
     if (batchProperties) {
-      if (batchProperties.loading) return
+      if (batchPropertiesLoading) return
       const rows = batchProperties.get(blockId)
       if (rows == null) return
       applyImageProps(rows)
@@ -94,7 +95,7 @@ export function useImageProperties(blockId: string, hasImageAttachments: boolean
     return () => {
       cancelled = true
     }
-  }, [blockId, hasImageAttachments, batchProperties])
+  }, [blockId, hasImageAttachments, batchProperties, batchPropertiesLoading])
 
   return {
     imageWidth,

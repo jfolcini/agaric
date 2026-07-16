@@ -48,16 +48,20 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // StaticBlock now reads attachments from the
 // BatchAttachmentsProvider context instead of `useBlockAttachments`.
+// `useBatchAttachmentsLoading` is the #2701 split-out loading context.
 vi.mock('@/hooks/useBatchAttachments', () => ({
   useBatchAttachments: vi.fn(),
+  useBatchAttachmentsLoading: vi.fn(() => false),
 }))
 
 // #2270 — StaticBlock reads image_width/alignment/caption from the page-wide
 // BatchPropertiesProvider when present. Default mock returns `null` (no
 // provider) so existing tests exercise the per-block getBatchProperties
 // fallback; the #2270 suite below injects a fake provider value.
+// `useBatchPropertyRowsLoading` is the #2701 split-out loading context.
 vi.mock('@/hooks/useBatchPropertyRows', () => ({
   useBatchPropertyRows: vi.fn(() => null),
+  useBatchPropertyRowsLoading: vi.fn(() => false),
 }))
 
 vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
@@ -82,11 +86,15 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
 })
 
 // Lazy-import after mocks are hoisted so we get the mocked version.
-const { useBatchAttachments } = await import('@/hooks/useBatchAttachments')
+const { useBatchAttachments, useBatchAttachmentsLoading } =
+  await import('@/hooks/useBatchAttachments')
 const mockedUseBatchAttachments = vi.mocked(useBatchAttachments)
+const mockedUseBatchAttachmentsLoading = vi.mocked(useBatchAttachmentsLoading)
 
-const { useBatchPropertyRows } = await import('@/hooks/useBatchPropertyRows')
+const { useBatchPropertyRows, useBatchPropertyRowsLoading } =
+  await import('@/hooks/useBatchPropertyRows')
 const mockedUseBatchPropertyRows = vi.mocked(useBatchPropertyRows)
+const mockedUseBatchPropertyRowsLoading = vi.mocked(useBatchPropertyRowsLoading)
 
 /**
  * Convenience: build a fake `BatchPropertiesProvider` context value that maps
@@ -97,9 +105,11 @@ const mockedUseBatchPropertyRows = vi.mocked(useBatchPropertyRows)
 function mockBatchProperties(rows: PropertyRow[] | undefined, options: { loading?: boolean } = {}) {
   mockedUseBatchPropertyRows.mockReturnValue({
     get: (id: string) => (id === 'B1' ? rows : undefined),
-    loading: options.loading ?? false,
     invalidate: vi.fn(),
   })
+  // `loading` is a separate context (#2701) — mocked independently so a
+  // consumer's `useBatchPropertyRowsLoading()` call reflects `options.loading`.
+  mockedUseBatchPropertyRowsLoading.mockReturnValue(options.loading ?? false)
 }
 
 /** Build a single PropertyRow with a text value (image props are all text). */
@@ -124,9 +134,11 @@ function mockBatchAttachments(attachments: AttachmentRow[], options: { loading?:
     get: (id: string) => (id === 'B1' ? attachments : undefined),
     // GetCount derives from the same map.
     getCount: (id: string) => (id === 'B1' ? attachments.length : 0),
-    loading: options.loading ?? false,
     invalidate: vi.fn(),
   })
+  // `loading` is a separate context (#2701) — mocked independently so a
+  // consumer's `useBatchAttachmentsLoading()` call reflects `options.loading`.
+  mockedUseBatchAttachmentsLoading.mockReturnValue(options.loading ?? false)
 }
 
 const { parse } = await import('@/editor/markdown-serializer')
@@ -204,6 +216,7 @@ describe('StaticBlock', () => {
     // Default: no BatchPropertiesProvider → StaticBlock uses the per-block
     // getBatchProperties fallback (the #2270 suite overrides this).
     mockedUseBatchPropertyRows.mockReturnValue(null)
+    mockedUseBatchPropertyRowsLoading.mockReturnValue(false)
     delete (window as unknown as Record<string, unknown>)['__TAURI_INTERNALS__']
   })
 

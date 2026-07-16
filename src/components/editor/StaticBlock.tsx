@@ -22,7 +22,7 @@ import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachmen
 import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useBatchAttachments } from '@/hooks/useBatchAttachments'
+import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
 import { cn } from '@/lib/utils'
 
 export interface StaticBlockProps {
@@ -75,7 +75,7 @@ function StaticBlockInner({
   // pre-fetch state of `useBlockAttachments`.
   const batchAttachments = useBatchAttachments()
   const attachments = batchAttachments?.get(blockId) ?? []
-  const attachmentsLoading = batchAttachments?.loading ?? false
+  const attachmentsLoading = useBatchAttachmentsLoading()
   const hasAttachments = !attachmentsLoading && attachments.length > 0
 
   // The outer wrapper is a passive container — no role, no

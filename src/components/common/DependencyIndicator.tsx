@@ -23,7 +23,7 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import { useBatchPropertyRows, useBatchPropertyRowsLoading } from '@/hooks/useBatchPropertyRows'
 import { logger } from '@/lib/logger'
 import type { PropertyRow } from '@/lib/tauri'
 import { batchResolve, getProperties } from '@/lib/tauri'
@@ -52,6 +52,7 @@ export function DependencyIndicator({
   const [hasBlockedBy, setHasBlockedBy] = useState(false)
 
   const batchProperties = useBatchPropertyRows()
+  const batchPropertiesLoading = useBatchPropertyRowsLoading()
   // Read from the provider (if mounted) — `undefined` means "not in
   // cache yet" (initial fetch still pending or block missing from
   // batch). Empty array means "fetched, no properties".
@@ -70,7 +71,7 @@ export function DependencyIndicator({
           // is absent from its map, the block has no properties.
           if (providerProps !== undefined) {
             props = providerProps
-          } else if (!batchProperties.loading) {
+          } else if (!batchPropertiesLoading) {
             // Batch resolved but this block is absent → no props.
             props = []
           } else {
@@ -130,7 +131,7 @@ export function DependencyIndicator({
     return () => {
       cancelled = true
     }
-  }, [blockId, propertiesCache, batchProperties, providerProps])
+  }, [blockId, propertiesCache, batchProperties, batchPropertiesLoading, providerProps])
 
   if (!hasBlockedBy) return null
 

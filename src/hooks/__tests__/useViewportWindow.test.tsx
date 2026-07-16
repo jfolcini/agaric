@@ -17,7 +17,9 @@
  * output into the single page-wide `BatchPropertiesProvider` (#2288, the real
  * downstream batch owner) and assert the actual IPC payload (`getBatchProperties`
  * args — the tauri-lib IPC boundary) carries only the windowed ids, then that
- * revealing a hidden block fires a fresh IPC with the expanded set.
+ * revealing a hidden block fires a fresh IPC scoped to just the newly-visible
+ * id (#2701 — the provider caches already-fetched ids and delta-fetches only
+ * what's missing, rather than re-issuing the whole expanded window).
  */
 
 import { act, render, renderHook, waitFor } from '@testing-library/react'
@@ -274,7 +276,7 @@ describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
     }
   })
 
-  it('fires a fresh IPC scoped to the expanded set when a hidden block scrolls into view (lazy resolution)', async () => {
+  it('fires a fresh IPC scoped to ONLY the newly-visible id when a hidden block scrolls into view (lazy resolution, #2701 delta fetch)', async () => {
     const blocks = [{ id: 'A' }, { id: 'B' }, { id: 'C' }, { id: 'D' }]
     // Start with B and D off-screen.
     const { viewport, flip } = makeFakeViewport(['B', 'D'])
@@ -290,7 +292,10 @@ describe('useViewportWindow → batch IPC payload scoping (#1268)', () => {
     act(() => flip({ D: false }))
 
     await waitFor(() => {
-      expect(mockedGetBatchProperties).toHaveBeenLastCalledWith(['A', 'C', 'D'])
+      // #2701: A and C are already cached from the initial fetch — the
+      // provider's delta-fetch effect issues the IPC for ONLY the newly-
+      // visible id, not the whole expanded window.
+      expect(mockedGetBatchProperties).toHaveBeenLastCalledWith(['D'])
     })
     // A genuinely new IPC fired for the newly-visible block — not served stale.
     expect(mockedGetBatchProperties.mock.calls.length).toBeGreaterThan(callsBefore)
