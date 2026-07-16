@@ -50,22 +50,16 @@ async function handlePriority(ctx: SlashCommandContext, priority: string): Promi
   }
 }
 
-async function handleAssigneeOrLocation(
-  ctx: SlashCommandContext,
-  key: 'assignee' | 'location',
-  label: string,
-): Promise<void> {
-  try {
-    const resp = await setProperty({ blockId: ctx.blockId, key, valueText: '' })
-    notifyUndo(ctx.rootParentId, resp.op_refs)
-    notify.success(
-      ctx.t('blockTree.addedPropertyMessage', {
-        name: label.split(' — ')[0]?.toLowerCase(),
-      }),
-    )
-  } catch {
-    notify.error(ctx.t('blockTree.addPropertyFailed'))
-  }
+// #2656 — the bare `/assignee` · `/location` commands (and the `Custom…`
+// presets below) collect a FREE-TEXT value from the user. Previously they
+// persisted `setProperty({ valueText: '' })` up front, but the real backend
+// rejects an empty `value_text` (`op.rs` → `set_property.value_text.empty`),
+// so on the shipped app these produced a "Failed to add property" toast and
+// created nothing. Open the property drawer instead so the user enters a value
+// that actually persists (the drawer's add-from-definition flow now creates a
+// draft row and only writes on a non-empty save).
+function handleAssigneeOrLocation(ctx: SlashCommandContext): void {
+  ctx.openPropertyDrawer(ctx.blockId)
 }
 
 async function handleAssigneePreset(
@@ -74,13 +68,9 @@ async function handleAssigneePreset(
   label: string,
 ): Promise<void> {
   if (preset === 'custom') {
-    try {
-      const resp = await setProperty({ blockId: ctx.blockId, key: 'assignee', valueText: '' })
-      notifyUndo(ctx.rootParentId, resp.op_refs)
-      notify.success(ctx.t('blockTree.addedAssigneeProperty'))
-    } catch {
-      notify.error(ctx.t('blockTree.addPropertyFailed'))
-    }
+    // See handleAssigneeOrLocation: route the free-text custom value through
+    // the property drawer rather than an empty `value_text` write.
+    ctx.openPropertyDrawer(ctx.blockId)
     return
   }
   const value = label.split(' — ')[0]?.replace('ASSIGNEE ', '')
@@ -103,13 +93,9 @@ async function handleLocationPreset(
   label: string,
 ): Promise<void> {
   if (preset === 'custom') {
-    try {
-      const resp = await setProperty({ blockId: ctx.blockId, key: 'location', valueText: '' })
-      notifyUndo(ctx.rootParentId, resp.op_refs)
-      notify.success(ctx.t('blockTree.addedLocationProperty'))
-    } catch {
-      notify.error(ctx.t('blockTree.addPropertyFailed'))
-    }
+    // See handleAssigneeOrLocation: route the free-text custom value through
+    // the property drawer rather than an empty `value_text` write.
+    ctx.openPropertyDrawer(ctx.blockId)
     return
   }
   const value = label.split(' — ')[0]?.replace('LOCATION ', '')
@@ -127,19 +113,13 @@ async function handleLocationPreset(
 }
 
 async function handleEffort(ctx: SlashCommandContext, value: string): Promise<void> {
-  // 'Custom…' escape hatch: arbitrary effort values (e.g. `3d`, `45m`,
-  // story-points) aren't covered by the fixed buckets, so route through the
-  // same empty-value → property-editor path as assignee/location custom.
-  if (value === 'custom') {
-    try {
-      const resp = await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: '' })
-      notifyUndo(ctx.rootParentId, resp.op_refs)
-      notify.success(ctx.t('blockTree.addedEffortProperty'))
-    } catch {
-      notify.error(ctx.t('blockTree.addPropertyFailed'))
-    }
-    return
-  }
+  // #2656 — `effort` is a SELECT property with a FIXED option set
+  // (`15m`…`1d`, seeded by migration 0014). Unlike free-text assignee/location,
+  // the backend rejects ANY value outside those options
+  // (`block_ops.rs` select-membership check), so a free-text "Custom…" effort
+  // can never produce a valid value — it was doubly unimplementable (empty
+  // `value_text` AND non-member). The misleading `effort-custom` affordance has
+  // been removed from EFFORT_COMMANDS, so only the fixed buckets reach here.
   try {
     const resp = await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
     notifyUndo(ctx.rootParentId, resp.op_refs)
@@ -264,8 +244,8 @@ export function useSlashCommandProperty(): SlashHandlerTables {
         'priority-high': (ctx) => handlePriority(ctx, '1'),
         'priority-medium': (ctx) => handlePriority(ctx, '2'),
         'priority-low': (ctx) => handlePriority(ctx, '3'),
-        assignee: (ctx, item) => handleAssigneeOrLocation(ctx, 'assignee', item.label),
-        location: (ctx, item) => handleAssigneeOrLocation(ctx, 'location', item.label),
+        assignee: (ctx) => handleAssigneeOrLocation(ctx),
+        location: (ctx) => handleAssigneeOrLocation(ctx),
         attach: (ctx) => handleAttach(ctx),
       },
       prefix: [

@@ -6030,7 +6030,9 @@ describe('BlockTree assignee slash command presets', () => {
     })
   })
 
-  it('assignee-custom preset sets assignee property to empty string', async () => {
+  // #2656 — assignee-custom opens the property drawer for value entry instead
+  // of persisting an empty `value_text` the real backend rejects.
+  it('assignee-custom preset opens the property drawer (no empty set_property)', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
@@ -6055,19 +6057,12 @@ describe('BlockTree assignee slash command presets', () => {
       })
     })
 
+    // The property drawer opens for value entry…
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'A',
-        key: 'assignee',
-        value: {
-          value_text: '',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      })
+      expect(screen.getByText(t('property.drawerTitle'))).toBeInTheDocument()
     })
+    // …and NO empty-value set_property was fired (the old bug).
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 })
 
@@ -6136,7 +6131,9 @@ describe('BlockTree location slash command presets', () => {
     })
   })
 
-  it('location-custom preset sets location property to empty string', async () => {
+  // #2656 — location-custom opens the property drawer for value entry instead
+  // of persisting an empty `value_text` the real backend rejects.
+  it('location-custom preset opens the property drawer (no empty set_property)', async () => {
     const tree = [makeBlock({ id: 'A', content: 'Block' })]
     pageStore.setState({ blocks: tree, loading: false })
     useBlockStore.setState({ focusedBlockId: 'A' })
@@ -6162,18 +6159,9 @@ describe('BlockTree location slash command presets', () => {
     })
 
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'A',
-        key: 'location',
-        value: {
-          value_text: '',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      })
+      expect(screen.getByText(t('property.drawerTitle'))).toBeInTheDocument()
     })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 })
 

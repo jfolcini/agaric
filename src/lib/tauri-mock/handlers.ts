@@ -123,6 +123,39 @@ function validationRejection(message: string): Error & AppError {
 }
 
 /**
+ * #2656 — mirror the real backend's `set_property` value validation
+ * (`op.rs::validate_property_value` + the select-membership check in
+ * `block_ops.rs`). Throws a `validation` rejection when:
+ *   1. `value_text` is `Some` but trims to empty — text/select properties can
+ *      never be created "empty" (`op.rs` → `set_property.value_text.empty`);
+ *   2. a select-typed key carries a `value_text` outside its seeded options.
+ * Keeps the mock honest so the empty-`value_text` picker/slash bug fails in
+ * tests instead of passing silently.
+ */
+function assertValidSetPropertyValue(key: string, valueText: string | null): void {
+  if (typeof valueText === 'string' && valueText.trim() === '') {
+    throw validationRejection('set_property.value_text.empty')
+  }
+  if (valueText === null) return
+  const def = propertyDefs.get(key)
+  if (def?.['value_type'] !== 'select') return
+  const rawOptions = def['options'] as string | null
+  // A NULL options column means "no restriction" — the real backend
+  // (`block_ops.rs`, `if let Some(opts_json) = options_json`) skips the
+  // membership check for a select definition without a declared option set,
+  // so custom select keys stay flexible. Mirror that: only enforce membership
+  // when options are actually declared, else the mock would be stricter than
+  // the backend (a false gate).
+  if (rawOptions === null) return
+  const options = JSON.parse(rawOptions) as string[]
+  if (!options.includes(valueText)) {
+    throw validationRejection(
+      `set_property.value_text.invalid_option: '${valueText}' not in [${options.join(', ')}]`,
+    )
+  }
+}
+
+/**
  * Ref-INCLUSIVE tag set for a block: ATTACHED tags (`block_tags`) ∪ inline tag
  * REFERENCES (`block_tag_refs`). This is the set legacy tag queries
  * (`query_by_tags`, `filtered_blocks_query`) and the rich `TagOrRef` primitive
@@ -3114,6 +3147,9 @@ const HANDLERS_TYPED = {
     const valueDate = (valueArgs?.['value_date'] as string | null) ?? null
     const valueRef = (valueArgs?.['value_ref'] as string | null) ?? null
     const valueBool = (valueArgs?.['value_bool'] as boolean | null) ?? null
+    // #2656 — mirror the real backend's op-log value validation so contract
+    // drift fails e2e/unit instead of storing an invalid value silently.
+    assertValidSetPropertyValue(key, valueText)
     // Capture the prior typed value (if any) so revert can restore it.
     // `from_value: null` signals "property did not exist" — revert removes it.
     const priorRow = properties.get(blockId)?.get(key)

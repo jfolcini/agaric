@@ -180,10 +180,12 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       setDatePickerOpen,
       t,
       // Not used by `applyContentEdit`/`readCurrentContent`; structural inserts
-      // never open the template picker, query builder, or emoji picker.
+      // never open the template picker, query builder, emoji picker, or the
+      // property drawer.
       openTemplatePicker: async () => {},
       openQueryBuilder: () => {},
       openEmojiPicker: () => {},
+      openPropertyDrawer: () => {},
     })
 
     const onOrderedList: BlockCommandHandler = (blockId) => {

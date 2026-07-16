@@ -464,12 +464,9 @@ export const EFFORT_COMMANDS: PickerItem[] = [
     category: 'slashCommand.categories.properties',
     icon: Timer,
   },
-  {
-    id: 'effort-custom',
-    label: 'EFFORT Custom... — Enter custom effort',
-    category: 'slashCommand.categories.properties',
-    icon: Timer,
-  },
+  // #2656 — no `effort-custom`: effort is a fixed-option SELECT (15m…1d), so
+  // the backend rejects any value outside those options. A free-text "Custom…"
+  // effort could never persist, so the misleading affordance was removed.
 ]
 
 export const ASSIGNEE_COMMANDS: PickerItem[] = [

@@ -107,6 +107,7 @@ export function useBlockSlashCommands({
   t,
   openQueryBuilder,
   openEmojiPicker,
+  openPropertyDrawer,
 }: UseBlockSlashCommandsParams): UseBlockSlashCommandsReturn {
   const template = useSlashCommandTemplate({ focusedBlockId, rootParentId, blocks, load, t })
   const date = useSlashCommandDate()
@@ -142,6 +143,7 @@ export function useBlockSlashCommands({
     openTemplatePicker: template.openTemplatePicker,
     openQueryBuilder,
     openEmojiPicker,
+    openPropertyDrawer,
     tables,
   })
   inputsRef.current = {
@@ -155,6 +157,7 @@ export function useBlockSlashCommands({
     openTemplatePicker: template.openTemplatePicker,
     openQueryBuilder,
     openEmojiPicker,
+    openPropertyDrawer,
     tables,
   }
 
