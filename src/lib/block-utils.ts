@@ -10,7 +10,7 @@
  * rather than redeclaring the list inline.
  *
  * Distinct from `NON_DELETABLE_PROPERTIES` in `property-save-utils.ts`,
- * which mirrors `is_builtin_property_key` in `src-tauri/src/op.rs` for
+ * which mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs` for
  * deletion guards. That set is broader (includes `todo_state`, `priority`,
  * `due_date`, `scheduled_date`, `repeat-until`, `repeat-count`).
  *

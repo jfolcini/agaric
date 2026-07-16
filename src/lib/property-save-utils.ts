@@ -17,7 +17,7 @@ export type BuildResult =
 
 /**
  * Properties that the backend considers non-deletable (system-managed).
- * Mirrors `is_builtin_property_key` in `src-tauri/src/op.rs`.
+ * Mirrors `is_builtin_property_key` in `src-tauri/agaric-store/src/op.rs`.
  */
 export const NON_DELETABLE_PROPERTIES = new Set([
   'todo_state',
