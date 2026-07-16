@@ -73,8 +73,11 @@ pub mod tag_inheritance;
 pub mod tag_inheritance_macros;
 pub use agaric_core::tag_norm; // foundation crate (#2621)
 pub mod tag_query;
-pub mod task_locals;
-pub use agaric_core::text_utils; // foundation crate (#2621)
+// `task_locals` moved into `agaric-store` (#2621, wave S3a). Re-exported so
+// every `crate::task_locals::…` path (op_log, mcp::actor, mcp::activity, …)
+// resolves unchanged.
+pub use agaric_core::text_utils;
+pub use agaric_store::task_locals; // foundation crate (#2621)
 pub mod ulid;
 pub use agaric_core::word_diff; // foundation crate (#2621)
 

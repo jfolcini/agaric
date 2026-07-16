@@ -16,3 +16,6 @@ pub mod cancellation;
 // `op` — op-type / op-payload value types (the op-log record shape). Pure:
 // depends only on `agaric-core` (`error`, `hash`, `ulid`) + serde/specta.
 pub mod op;
+// `task_locals` — crate-wide tokio task-locals (op-append provenance + actor
+// identity). Depends only on the sibling `op` module.
+pub mod task_locals;
