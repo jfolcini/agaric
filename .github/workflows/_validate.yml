@@ -342,8 +342,17 @@ jobs:
           VERSION=lychee-v0.24.2
           DIR=lychee-x86_64-unknown-linux-gnu
           TARBALL="${DIR}.tar.gz"
+          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
+          # published release checksum (the sibling `${TARBALL}.sha256` asset),
+          # independently reproducible with `sha256sum`. GitHub release assets
+          # are mutable under a tag, so the version pin alone does not prevent
+          # asset replacement; this is the only unverified-binary gap in an
+          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # bumps VERSION or the `sha256sum -c` below fails the job.
+          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"
@@ -543,8 +552,17 @@ jobs:
           VERSION=lychee-v0.24.2
           DIR=lychee-x86_64-unknown-linux-gnu
           TARBALL="${DIR}.tar.gz"
+          # Known-good SHA256 of the linux-gnu tarball for VERSION above — the
+          # published release checksum (the sibling `${TARBALL}.sha256` asset),
+          # independently reproducible with `sha256sum`. GitHub release assets
+          # are mutable under a tag, so the version pin alone does not prevent
+          # asset replacement; this is the only unverified-binary gap in an
+          # otherwise SHA-pinned toolchain. MUST be updated in the same PR that
+          # bumps VERSION or the `sha256sum -c` below fails the job.
+          SHA256=1f4e0ef7f6554a6ed33dd7ac144fb2e1bbed98598e7af973042fc5cd43951c9a
           curl -fsSL -o /tmp/lychee.tar.gz \
             "https://github.com/lycheeverse/lychee/releases/download/${VERSION}/${TARBALL}"
+          echo "${SHA256}  /tmp/lychee.tar.gz" | sha256sum -c -
           mkdir -p "${HOME}/.local/bin"
           tar -xzf /tmp/lychee.tar.gz -C /tmp "${DIR}/lychee"
           install -m 0755 "/tmp/${DIR}/lychee" "${HOME}/.local/bin/lychee"

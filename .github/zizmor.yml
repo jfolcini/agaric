@@ -9,47 +9,41 @@
 # matching entry from this file.
 #
 # Triage progress (closed entries appear elsewhere, not here):
-#   - template-injection × 6 — defused by MAINT-114 (release-tag.yml
-#     fold routed inputs.version through env: + $INPUT_VERSION).
-#   - artipacked × 6 — fixed by MAINT-193 (added `persist-credentials:
-#     false` to non-pushing checkouts; the bump-version checkout in
-#     release.yml keeps `persist-credentials: true` explicitly to drive
-#     the tag push, see inline comment there).
-#   - excessive-permissions × 1 — fixed by MAINT-193 (workflow-level
-#     `contents: write` in release.yml tightened to `read`; per-job
-#     `contents: write` scoped to bump-version, build-and-release,
-#     android-build-and-release).
+#   - template-injection × 6 — closed: workflow inputs are routed through
+#     `env:` + `$INPUT_*` instead of being interpolated directly into
+#     `run:` scripts.
+#   - artipacked × 6 — closed: every checkout across .github/workflows/
+#     passes `persist-credentials: false` (verified by grep — there is no
+#     longer any checkout that keeps credentials for a tag push).
+#   - excessive-permissions × 1 — closed: release.yml uses workflow-level
+#     `contents: read` with per-job `contents: write` scoped only to the
+#     jobs that actually push.
 #
 # Threat-model context (AGENTS.md): Agaric is single-user, no cloud,
 # no adversarial peers.
 
 rules:
   cache-poisoning:
+    # Re-anchored 2026-07-16 (#2736). The previous baseline pinned to
+    # ci.yml/release.yml line numbers from 2026-05 that had since drifted
+    # onto unrelated content (comment blocks, the AppImage verify step),
+    # and two `:3` entries silently anchored on the `on:` block, acting as
+    # blanket file-wide suppressions of the whole rule. Re-derived by
+    # running `zizmor` with an EMPTY cache-poisoning ignore list: exactly
+    # these 9 cache steps (Swatinem/rust-cache + actions/setup-node with
+    # `cache: npm`) fire, and anchoring to their current lines suppresses
+    # them with none left over. If cache steps move, re-run with an empty
+    # ignore list and re-anchor rather than editing line numbers blind.
     ignore:
-      - ci.yml:192
-      - ci.yml:193
-      - ci.yml:211
-      - ci.yml:212
-      - ci.yml:213
-      - ci.yml:3
-      - ci.yml:78
-      - ci.yml:79
-      - ci.yml:83
-      - ci.yml:84
-      - ci.yml:85
-      - release.yml:169
-      - release.yml:170
-      - release.yml:200
-      - release.yml:201
-      - release.yml:202
-      - release.yml:3
-      - release.yml:415
-      - release.yml:416
-      - release.yml:439
-      - release.yml:440
-      - release.yml:441
-      - release.yml:57
-      - release.yml:58
+      - ci.yml:267
+      - ci.yml:290
+      - ci.yml:410
+      - ci.yml:442
+      - release.yml:132
+      - release.yml:177
+      - release.yml:894
+      - release.yml:926
+      - release.yml:1175
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
