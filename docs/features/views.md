@@ -61,7 +61,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
-- **Filter bar**: filter by op type, by user vs agent, by date range.
+- **Filter bar**: filter by op type, plus an "All spaces" scope toggle. (Agent-authored ops carry a per-row badge; there is no user-vs-agent or date-range filter.)
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
