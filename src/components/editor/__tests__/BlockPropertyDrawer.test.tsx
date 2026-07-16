@@ -1005,6 +1005,30 @@ describe('BlockPropertyDrawer', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 
+  it('drops unsaved draft rows when the drawer switches to a different block', async () => {
+    const user = userEvent.setup()
+    setupMock([], [makeDef('assignee', 'text')])
+
+    const { rerender } = renderWithProvider(
+      <BlockPropertyDrawer blockId="BLOCK_1" open onOpenChange={vi.fn()} />,
+    )
+    await waitFor(() => {
+      expect(screen.queryByTestId('block-property-drawer-loading')).not.toBeInTheDocument()
+    })
+
+    // Start an unsaved draft on BLOCK_1.
+    await user.click(screen.getByRole('button', { name: 'Add property' }))
+    await user.click(await screen.findByText('Assignee'))
+    expect(await screen.findByTestId('property-value-input-assignee')).toBeInTheDocument()
+
+    // Switch the drawer to BLOCK_2: the stale draft must not leak across.
+    rerender(<BlockPropertyDrawer blockId="BLOCK_2" open onOpenChange={vi.fn()} />)
+    await waitFor(() => {
+      expect(screen.queryByTestId('property-value-input-assignee')).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+  })
+
   it('does not crash when reloading properties after ref save fails', async () => {
     const props = [makeProp('linked_page', { value_ref: null })]
     const defs = [makeDef('linked_page', 'ref')]
