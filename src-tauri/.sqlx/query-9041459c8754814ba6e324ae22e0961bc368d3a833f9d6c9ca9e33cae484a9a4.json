@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO peer_refs (peer_id) VALUES (?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "9041459c8754814ba6e324ae22e0961bc368d3a833f9d6c9ca9e33cae484a9a4"
+}
