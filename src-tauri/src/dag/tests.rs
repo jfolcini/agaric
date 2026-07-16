@@ -66,8 +66,11 @@ fn make_remote_record(
 ) -> OpRecord {
     let hash = compute_op_hash(device_id, seq, parent_seqs.as_deref(), op_type, payload);
     // Cache the parsed block_id on the sidecar (mirrors the
-    // production `From<OpTransfer>` path).
-    let block_id = crate::op_log::extract_block_id_from_payload(payload);
+    // production `From<OpTransfer>` path). #2621: op_log's test-only
+    // single-field `extract_block_id_from_payload` is no longer reachable
+    // cross-crate now that op_log lives in `agaric-store`; use the equivalent
+    // production single-pass extractor (its `.0` is the block_id).
+    let (block_id, _) = crate::op_log::extract_indexed_ids_from_payload(payload);
     OpRecord {
         device_id: device_id.to_owned(),
         seq,

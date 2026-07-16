@@ -48,6 +48,12 @@ proptest = "1.11.0"
 # constructors (otherwise `#[cfg(test)]`-only) are available to op's test
 # build — same pattern the app crate uses (#2621).
 agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-util"] }
+# op_log's DB tests build a temp-file-backed migrated pool (the store-local
+# stand-in for the app's `init_pool`). Version mirrors the app crate.
+tempfile = "3.27.0"
+# Two op_log `origin` tests capture `tracing::warn!` output via an in-process
+# subscriber. Version/features mirror the app crate's `tracing-subscriber` dep.
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-diagnostics` members).

@@ -33,8 +33,8 @@ This document is the low-level companion: it does not re-list the op types.
 
 The canonical source is `src-tauri/agaric-core/src/hash.rs` (`compute_op_hash`,
 `verify_op_record`, `verify_op_hash`), the append path in
-`src-tauri/src/op_log/append.rs` (`append_local_op_in_tx`) and
-`src-tauri/src/op_log/payload.rs` (`serialize_inner_payload`),
+`src-tauri/agaric-store/src/op_log/append.rs` (`append_local_op_in_tx`) and
+`src-tauri/agaric-store/src/op_log/payload.rs` (`serialize_inner_payload`),
 the remote-ingest / merge path in `src-tauri/src/dag.rs`
 (`insert_remote_op`, `append_merge_op`), and the payload types in
 `src-tauri/agaric-store/src/op.rs`. Where any detail here is ambiguous, those functions

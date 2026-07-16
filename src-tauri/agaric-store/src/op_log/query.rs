@@ -1,5 +1,5 @@
 use crate::db::ReadPool;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 use super::record::OpRecord;
 

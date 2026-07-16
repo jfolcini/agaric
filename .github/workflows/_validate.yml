@@ -465,6 +465,17 @@ jobs:
           working-directory: src-tauri
           database-url: 'sqlite:ci-sqlx-prepare.db'
 
+      - name: sqlx offline cache check (agaric-store)
+        # #2621 wave S3b-ii: op_log's `query!`/`query_as!` macros moved into
+        # agaric-store, which now carries its own committed `.sqlx/` cache.
+        # A `../migrations` symlink under the crate lets both this action's
+        # `cargo sqlx migrate run` and `sqlx::migrate!` resolve the shared
+        # workspace migrations.
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-store
+          database-url: 'sqlite:ci-sqlx-prepare-store.db'
+
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
   # provably docs-only diff (the full `lint` job is skipped then) and runs

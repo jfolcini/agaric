@@ -1,0 +1,64 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT pc.page_id AS \"page_id!\", pc.inbound_link_count AS \"mat_in!: i64\", pc.child_block_count AS \"mat_ch!: i64\", (SELECT COUNT(DISTINCT bl.source_id) FROM block_links AS bl INNER JOIN blocks AS descendant ON bl.target_id = descendant.id INNER JOIN blocks AS src ON src.id = bl.source_id WHERE descendant.page_id = pc.page_id AND descendant.deleted_at IS NULL AND src.deleted_at IS NULL AND src.page_id IS NOT NULL AND src.page_id != pc.page_id) AS \"calc_in!: i64\", (SELECT COUNT(*) FROM blocks AS descendant WHERE descendant.page_id = pc.page_id AND descendant.deleted_at IS NULL AND descendant.id != pc.page_id) AS \"calc_ch!: i64\" FROM pages_cache AS pc",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "page_id"
+          }
+        }
+      },
+      {
+        "name": "mat_in!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "inbound_link_count"
+          }
+        }
+      },
+      {
+        "name": "mat_ch!: i64",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "child_block_count"
+          }
+        }
+      },
+      {
+        "name": "calc_in!: i64",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": "Expression"
+      },
+      {
+        "name": "calc_ch!: i64",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "72a8e0310a8500d9120e10b83272e014ed6fb1cd39fb72be56d038118bbf8262"
+}

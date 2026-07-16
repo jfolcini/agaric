@@ -18,14 +18,13 @@ mod origin;
 mod payload;
 mod read;
 
-pub(super) use crate::db::{ReadPool, init_pool};
-pub(super) use crate::error::AppError;
-pub(super) use crate::hash::compute_op_hash;
+pub(super) use crate::db::ReadPool;
 pub(super) use crate::op::*;
 pub(super) use crate::op_log::*;
-pub(super) use crate::ulid::BlockId;
+pub(super) use agaric_core::error::AppError;
+pub(super) use agaric_core::hash::compute_op_hash;
+pub(super) use agaric_core::ulid::BlockId;
 pub(super) use sqlx::SqlitePool;
-pub(super) use std::path::PathBuf;
 pub(super) use tempfile::TempDir;
 
 // ── Test fixture constants ──────────────────────────────────────────
@@ -36,11 +35,29 @@ pub(super) const TEST_DEVICE: &str = "test-device";
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
-/// Create a temp-file-backed SQLite pool with migrations applied.
+/// Create a temp-file-backed SQLite pool with the workspace migrations
+/// applied — a store-local stand-in for the app's `crate::db::init_pool`
+/// (#2621, wave S3b-ii).
+///
+/// The app's `init_pool` couples to the app-only `recovery` module
+/// (`ensure_blocks_table_exists` / `recover_derived_state_from_op_log` /
+/// `reproject_blocks_from_engine`), which cannot move down into the store.
+/// The op_log tests never need recovery-derived `blocks` state — only the
+/// migrated schema — so this helper reproduces `init_pool`'s pool shape
+/// minus recovery: `base_connect_options` (WAL journalling + `foreign_keys`)
+/// on a temp file with `max_connections(5)`. WAL + a real file are load-bearing
+/// for the immutability sibling-connection tests (WAL cross-connection snapshot
+/// semantics) and the concurrent-append test (a shared DB across pooled
+/// connections) — an in-memory pool cannot satisfy either.
 pub(super) async fn test_pool() -> (SqlitePool, TempDir) {
     let dir = TempDir::new().unwrap();
-    let db_path: PathBuf = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(5)
+        .connect_with(crate::db::base_connect_options(&db_path))
+        .await
+        .unwrap();
+    sqlx::migrate!("../migrations").run(&pool).await.unwrap();
     (pool, dir)
 }
 

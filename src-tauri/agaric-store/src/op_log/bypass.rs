@@ -1,4 +1,4 @@
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Enable the op_log mutation bypass on `tx`.
 ///

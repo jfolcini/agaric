@@ -29,8 +29,11 @@ pub(super) async fn test_pool() -> (SqlitePool, TempDir) {
 pub(super) fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
     // Cache the parsed block_id sidecar so dispatch consults
     // the field without re-parsing the (possibly intentionally
-    // malformed) payload of these synthetic records.
-    let block_id = crate::op_log::extract_block_id_from_payload(payload);
+    // malformed) payload of these synthetic records. #2621: op_log's
+    // test-only single-field `extract_block_id_from_payload` is no longer
+    // reachable cross-crate now that op_log lives in `agaric-store`; use the
+    // equivalent production single-pass extractor (its `.0` is the block_id).
+    let (block_id, _) = crate::op_log::extract_indexed_ids_from_payload(payload);
     OpRecord {
         device_id: DEV.into(),
         seq: 1,
