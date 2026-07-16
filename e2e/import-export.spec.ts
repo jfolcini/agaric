@@ -1,4 +1,6 @@
-import { expect, openPage, test, waitForBoot } from './helpers'
+import JSZip from 'jszip'
+
+import { expect, getInvokeCalls, installIpcRecorder, openPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for import/export functionality.
@@ -9,12 +11,31 @@ import { expect, openPage, test, waitForBoot } from './helpers'
  *  3. Export preserves block structure — export page with multiple blocks, verify hierarchy
  *  4. Export includes tags and links — verify #[tag_id] and [[block_id]] tokens in export
  *  5. Round-trip fidelity — export a page, verify content matches original blocks
+ *  6. Export all pages as ZIP (#2707) — trigger Settings → Data → "Export All",
+ *     capture the real browser download, and unzip it (via the same `jszip`
+ *     package the app itself uses) to assert the namespace hierarchy round-trips.
+ *  7. Import warning summary (#2707) — the mock's `import_markdown` handler always
+ *     appends one representative parse warning (handlers.ts, "dev-preview mock:
+ *     tags (#tag) and attachments are not imported"); assert the result panel's
+ *     warnings heading + list render it.
  *
  * Seed data (tauri-mock.ts):
  *   PAGE_GETTING_STARTED ("Getting Started") — 5 child blocks, some with [[link]] and #[tag] tokens
  *   PAGE_QUICK_NOTES ("Quick Notes") — 2 child blocks with [[link]] to Getting Started
  *   PAGE_DAILY (today's date) — 5 child blocks with tasks
+ *   PAGE_PROJECTS ("Projects"), PAGE_MEETINGS ("Meetings"), PAGE_TMPL_MEETING
+ *   ("Meeting Notes Template") — also stamped into SPACE_PERSONAL (the mock's
+ *   only/default active space), so all 6 are the pages a ZIP export of the
+ *   active space is expected to contain.
  */
+
+/** Local YYYY-MM-DD, matching `date-utils.formatDate` / the seed's `todayDate()`. */
+function localDateStr(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
 
 // ===========================================================================
 // Helper: open the kebab menu on the current page and click "Export as Markdown"
@@ -98,6 +119,85 @@ test.describe('Export page as markdown', () => {
 })
 
 // ===========================================================================
+// 1b. Export all pages as ZIP (#2707)
+// ===========================================================================
+//
+// `handleExportAll` (DataTab.tsx) calls `exportGraphAsZip` (src/lib/export-graph.ts),
+// which is REAL, unmocked client-side code: it lists pages via the
+// `list_all_pages_in_space` IPC, exports each via `export_page_markdown`, zips
+// them with the real `jszip` package, and triggers a real browser download via
+// an `<a download>` click. None of that is mocked, so — unlike most of this
+// suite — the resulting ZIP is a genuine downloadable artifact Playwright can
+// intercept with `page.waitForEvent('download')` and unzip for real (using the
+// same `jszip` package, imported directly into this Node-side spec).
+
+test.describe('Export all pages as ZIP', () => {
+  test.beforeEach(async ({ page }) => {
+    await waitForBoot(page)
+  })
+
+  test('Export All downloads a ZIP whose entries mirror the page set', async ({ page }) => {
+    await installIpcRecorder(page)
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
+    await page.getByRole('tab', { name: 'Data' }).click()
+    await expect(page.locator('[data-testid="export-panel-title"]')).toBeVisible()
+
+    const [download] = await Promise.all([
+      page.waitForEvent('download'),
+      page.getByRole('button', { name: 'Export All', exact: true }).click(),
+    ])
+
+    // Filename: `agaric-export-<space>-<date>.zip` (DataTab.tsx handleExportAll).
+    // The active (only) mock space is "Personal" -> sanitized "personal".
+    expect(download.suggestedFilename()).toMatch(/^agaric-export-personal-\d{4}-\d{2}-\d{2}\.zip$/)
+
+    // "Export complete" toast (data.exportSuccess).
+    await expect(page.getByText('Export complete')).toBeVisible({ timeout: 5000 })
+
+    // Real IPC calls fired: one page listing, then one export per page.
+    const listCalls = await getInvokeCalls(page, 'list_all_pages_in_space')
+    expect(listCalls.length).toBeGreaterThanOrEqual(1)
+    const exportCalls = await getInvokeCalls(page, 'export_page_markdown')
+    // 6 pages stamped into SPACE_PERSONAL: Getting Started, Quick Notes,
+    // the daily page (today's date), Projects, Meetings, and the "Meeting
+    // Notes Template" page (PAGE_TMPL_MEETING is a real `block_type: 'page'`
+    // row, so it is exported like any other page).
+    expect(exportCalls.length).toBe(6)
+
+    // Unzip the REAL downloaded bytes (not a mock) and assert the namespace
+    // hierarchy round-trips: every page title becomes `<title>.md` at the
+    // ZIP root (none of the seed pages are namespaced with `/`).
+    const stream = await download.createReadStream()
+    expect(stream).not.toBeNull()
+    const chunks: Buffer[] = []
+    await new Promise<void>((resolve, reject) => {
+      stream?.on('data', (chunk: Buffer) => chunks.push(chunk))
+      stream?.on('end', () => resolve())
+      stream?.on('error', reject)
+    })
+    const zip = await JSZip.loadAsync(Buffer.concat(chunks))
+    const todayStr = localDateStr(new Date())
+    const names = Object.keys(zip.files).toSorted()
+    expect(names).toEqual(
+      [
+        'Getting Started.md',
+        'Meeting Notes Template.md',
+        'Meetings.md',
+        'Projects.md',
+        'Quick Notes.md',
+        `${todayStr}.md`,
+      ].toSorted(),
+    )
+
+    // Spot-check one entry's content round-trips the same export the
+    // per-page "Export as Markdown" flow produces.
+    const gettingStarted = await zip.file('Getting Started.md')?.async('string')
+    expect(gettingStarted).toMatch(/^# Getting Started/)
+    expect(gettingStarted).toContain('- Welcome to Agaric!')
+  })
+})
+
+// ===========================================================================
 // 2. Import markdown
 // ===========================================================================
 
@@ -175,6 +275,59 @@ test.describe('Import markdown', () => {
     const importResult = page.locator('[data-testid="import-result"]')
     await expect(importResult).toBeVisible()
     await expect(importResult).toContainText('no-heading-page')
+  })
+
+  // #2707 — the mock's `import_markdown` handler (handlers.ts) unconditionally
+  // appends one representative parse warning to every successful import
+  // ("dev-preview mock: tags (#tag) and attachments are not imported (kept as
+  // literal text)"), so the result panel's warnings summary is exercisable on
+  // ANY import — no special seeding required. This was never asserted despite
+  // every other import test in this file uploading a file that triggers it.
+  test('import result panel shows the warning count and message', async ({ page }) => {
+    await navigateToDataSettings(page)
+
+    const fileInput = page.locator('[data-testid="import-file-input"]')
+    const mdContent = '- A single content block\n'
+    await fileInput.setInputFiles({
+      name: 'warnings-check.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from(mdContent),
+    })
+
+    await expect(page.getByText(/Imported \d+ blocks/)).toBeVisible({ timeout: 5000 })
+
+    const importResult = page.locator('[data-testid="import-result"]')
+    await expect(importResult).toBeVisible()
+
+    // Collapsed <details> — the heading itself is visible without expanding.
+    const detailsToggle = page.getByTestId('import-warnings-heading')
+    await expect(detailsToggle).toBeVisible()
+    await expect(detailsToggle).toHaveText('1 warning')
+
+    // Expand the <details> to reveal the actual warning message.
+    await page.getByTestId('import-result-details').locator('summary').click()
+    const warningItem = page.getByTestId('import-warning-item')
+    await expect(warningItem).toBeVisible()
+    await expect(warningItem).toContainText('tags (#tag) and attachments are not imported')
+  })
+
+  // #2707 — the mock also counts `key:: value` property lines into
+  // `properties_set` (handlers.ts `propertiesSet`), driving the result
+  // summary's ", N properties" suffix. Never asserted.
+  test('import result summary includes the properties-set count', async ({ page }) => {
+    await navigateToDataSettings(page)
+
+    const fileInput = page.locator('[data-testid="import-file-input"]')
+    const mdContent = '- A task with a property\nstatus:: open\n'
+    await fileInput.setInputFiles({
+      name: 'properties-check.md',
+      mimeType: 'text/markdown',
+      buffer: Buffer.from(mdContent),
+    })
+
+    const importResult = page.locator('[data-testid="import-result"]')
+    await expect(importResult).toBeVisible()
+    await expect(importResult).toContainText('1 property')
   })
 })
 
