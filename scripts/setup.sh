@@ -108,6 +108,25 @@ ensure_node() {
     exit 1
   fi
   echo "using node $(node -v) (npm $(npm -v)); nvm default -> Node ${want}"
+
+  # Make the provisioned Node the one EVERY shell sees — not just the ones that
+  # source nvm.sh. Agent tooling and CI steps spawn non-login, non-interactive
+  # shells that read a captured PATH placing the system Node (/opt/node22) ahead
+  # of nvm's shims; nvm only rewrites PATH for shells that source it, so those
+  # shells fall through to the old Node and trip `engine-strict` (Node ${want}
+  # required) on `npm ci` / `npm test`. `~/.local/bin` is already first on PATH
+  # in these environments, so a node/npm/npx symlink there wins everywhere with
+  # no per-command `nvm use`. Idempotent; harmless if ~/.local/bin isn't on PATH.
+  local node_bin shim_dir b
+  node_bin="$(dirname "$(command -v node)")"
+  shim_dir="$HOME/.local/bin"
+  if [ -n "$node_bin" ] && [ -d "$node_bin" ] && [ "$node_bin" != "$shim_dir" ]; then
+    mkdir -p "$shim_dir"
+    for b in node npm npx corepack; do
+      [ -x "$node_bin/$b" ] && ln -sf "$node_bin/$b" "$shim_dir/$b"
+    done
+    echo "shimmed $shim_dir/{node,npm,npx} -> $node_bin (Node ${want} wins on PATH for all shells)"
+  fi
 }
 ensure_node
 
