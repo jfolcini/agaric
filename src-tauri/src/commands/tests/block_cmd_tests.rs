@@ -7106,6 +7106,24 @@ async fn add_attachment_with_bytes_writes_persists_and_reads_back() {
         "read_attachment must return the uploaded bytes"
     );
 
+    // #2654: the `read_attachment` command wraps those bytes in a
+    // `tauri::ipc::Response`, which MUST resolve to a raw octet-stream body
+    // (`InvokeResponseBody::Raw`) — not a JSON `number[]`. That raw body is
+    // what makes `invoke` resolve an ArrayBuffer on the frontend with zero
+    // JSON encoding. Assert the body variant + byte-identity directly (the
+    // command wrapper itself only adds `Response::new(...)` over `read_back`).
+    use tauri::ipc::{InvokeResponseBody, IpcResponse, Response};
+    let response = Response::new(read_back.clone());
+    match IpcResponse::body(response).expect("Response body must resolve") {
+        InvokeResponseBody::Raw(raw) => assert_eq!(
+            raw, bytes,
+            "#2654: read_attachment must ship raw bytes, byte-identical to the upload"
+        ),
+        InvokeResponseBody::Json(json) => panic!(
+            "#2654: read_attachment must ship a Raw body, not JSON number[]; got Json({json})"
+        ),
+    }
+
     mat.shutdown();
 }
 

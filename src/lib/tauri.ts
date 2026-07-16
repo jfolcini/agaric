@@ -1,4 +1,4 @@
-import { Channel } from '@tauri-apps/api/core'
+import { Channel, invoke } from '@tauri-apps/api/core'
 
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
@@ -2340,9 +2340,20 @@ export async function addAttachmentWithBytes(params: {
   )
 }
 
-/** Read an attachment's raw bytes by ID. */
+/**
+ * Read an attachment's raw bytes by ID.
+ *
+ * #2654: the `read_attachment` Tauri command returns a raw-byte
+ * `tauri::ipc::Response`, so `invoke` resolves an `ArrayBuffer` with zero JSON
+ * encoding — no multi-MB `number[]` parse on the main thread. Because a
+ * raw-response command cannot carry a `specta::Type`, it has no generated
+ * `commands.*` binding; this is the sanctioned raw-`invoke` seam (tauri.ts is
+ * exempt from the no-raw-invoke guard). A backend error rejects the promise
+ * with the serialized `AppError`, matching every other wrapper's throw shape.
+ */
 export async function readAttachment(attachmentId: string): Promise<Uint8Array> {
-  return Uint8Array.from(unwrap(await commands.readAttachment(attachmentId)))
+  const buffer = await invoke<ArrayBuffer>('read_attachment', { attachmentId })
+  return new Uint8Array(buffer)
 }
 
 /**

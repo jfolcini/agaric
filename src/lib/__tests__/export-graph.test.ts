@@ -229,7 +229,9 @@ describe('exportGraphAsZip', () => {
         }
       }
       if (cmd === 'read_attachment') {
-        return [1, 2, 3]
+        // #2654: the real command returns a raw-byte `tauri::ipc::Response`,
+        // which `invoke` resolves as an ArrayBuffer (not a JSON number[]).
+        return new Uint8Array([1, 2, 3]).buffer
       }
       return null
     })

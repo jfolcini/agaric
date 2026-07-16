@@ -317,7 +317,10 @@ macro_rules! agaric_commands {
             // Attachments (F-7)
             $crate::commands::attachments::add_attachment,
             $crate::commands::attachments::add_attachment_with_bytes,
-            $crate::commands::attachments::read_attachment,
+            // NOTE: `read_attachment` is intentionally ABSENT here. It returns a
+            // raw-byte `tauri::ipc::Response` (zero JSON encoding, #2654), which
+            // does not implement `specta::Type`, so it cannot be a tauri-specta
+            // command. It is registered directly on the invoke handler in `run()`.
             $crate::commands::attachments::read_attachment_meta,
             $crate::commands::attachments::delete_attachment,
             $crate::commands::attachments::rename_attachment,
@@ -2189,6 +2192,15 @@ pub fn run() {
         // the command starts a fresh root trace, exactly as before.
         .invoke_handler({
             let specta_invoke_handler = builder.invoke_handler();
+            // #2654 — `read_attachment` returns a raw-byte `tauri::ipc::Response`
+            // (see its doc comment) which cannot be a tauri-specta command, so it
+            // lives on its own generated handler and is routed here by command
+            // name. Every other command flows through the tauri-specta handler.
+            let raw_bytes_invoke_handler: Box<
+                dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync,
+            > = Box::new(tauri::generate_handler![
+                crate::commands::attachments::read_attachment
+            ]);
             move |invoke| {
                 use tracing_opentelemetry::OpenTelemetrySpanExt as _;
                 // #2110 M6 — time each IPC command dispatch and record it to the
@@ -2210,15 +2222,25 @@ pub fn run() {
                         std::time::Instant::now(),
                     )
                 });
+                // Route raw-byte commands to their dedicated handler; the command
+                // name is an opaque compile-time identifier (never user data).
+                let is_raw_bytes = invoke.message.command() == "read_attachment";
+                let dispatch = |invoke| {
+                    if is_raw_bytes {
+                        raw_bytes_invoke_handler(invoke)
+                    } else {
+                        specta_invoke_handler(invoke)
+                    }
+                };
                 let response = match observability::extract_trace_context(invoke.message.headers())
                 {
                     Some(parent_cx) => {
                         let span = tracing::info_span!("ipc.frontend");
                         let _ = span.set_parent(parent_cx);
                         let _enter = span.enter();
-                        specta_invoke_handler(invoke)
+                        dispatch(invoke)
                     }
-                    None => specta_invoke_handler(invoke),
+                    None => dispatch(invoke),
                 };
                 if let Some((cmd, started)) = ipc_timing {
                     observability::record_ipc_duration(

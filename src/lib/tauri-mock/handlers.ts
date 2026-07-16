@@ -4482,11 +4482,10 @@ const HANDLERS_TYPED = {
     return row
   },
 
-  // Bytes-over-IPC read. Returns the stored byte array.
-  read_attachment: (args) => {
-    const a = args as Record<string, unknown>
-    return attachmentBytes.get(a['attachmentId'] as string) ?? []
-  },
+  // NOTE: `read_attachment` is NOT here — it returns a raw-byte
+  // `tauri::ipc::Response` (#2654), so tauri-specta emits no binding for it and
+  // it cannot live under the `satisfies TypedHandlers` contract (which is keyed
+  // off `typeof commands`). Its handler lives in `RAW_RESPONSE_HANDLERS` below.
 
   // #1490 — metadata-only read used by the graph export to resolve an inline
   // `attachment:<id>` ref to a portable `assets/<filename>` path.
@@ -5009,7 +5008,24 @@ const HANDLERS_TYPED = {
  * reject; the `Record<string, Handler>` annotation restores that access without
  * weakening the `satisfies` contract enforced on the literal above.
  */
-export const HANDLERS: Record<string, Handler> = HANDLERS_TYPED
+/**
+ * Handlers for raw-byte-response commands (#2654). These return a
+ * `tauri::ipc::Response` on the Rust side, so tauri-specta emits NO `commands.*`
+ * binding for them and they cannot be part of the `satisfies TypedHandlers`
+ * literal (which is keyed off `typeof commands`). They are still routed by
+ * `dispatch()` and appear in `Object.keys(HANDLERS)`, so the mock-drift test
+ * allowlists them via `RAW_RESPONSE_COMMANDS`. `read_attachment` returns an
+ * ArrayBuffer, matching what `invoke` resolves for a real raw-byte response.
+ */
+const RAW_RESPONSE_HANDLERS: Record<string, Handler> = {
+  read_attachment: (args) => {
+    const a = args as Record<string, unknown>
+    const bytes = attachmentBytes.get(a['attachmentId'] as string) ?? []
+    return new Uint8Array(bytes).buffer
+  },
+}
+
+export const HANDLERS: Record<string, Handler> = { ...HANDLERS_TYPED, ...RAW_RESPONSE_HANDLERS }
 
 // ---------------------------------------------------------------------------
 // Plugin commands (`plugin:<name>|<command>`) — #760
