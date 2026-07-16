@@ -61,6 +61,16 @@ describe('NotificationsTab', () => {
     expect(screen.getByTestId('notifications-request-permission-button')).toBeEnabled()
   })
 
+  // #2676 — the copy must not promise automatic due/scheduled-task reminders
+  // (no scheduler exists yet; tracked on #138). Guard the inline notice that
+  // says so explicitly, always visible regardless of the toggle state.
+  it('surfaces an inline notice that automatic reminders are not yet available', () => {
+    render(<NotificationsTab />)
+    expect(screen.getByTestId('notifications-automatic-not-available-notice')).toHaveTextContent(
+      /automatic reminders.*not available/i,
+    )
+  })
+
   it('toggling persists the preference and enables the test button', async () => {
     const user = userEvent.setup()
     render(<NotificationsTab />)

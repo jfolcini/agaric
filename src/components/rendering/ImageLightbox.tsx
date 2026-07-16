@@ -101,6 +101,19 @@ export function ImageLightbox({
   // the translation in CSS px applied before the scale. Both reset whenever the
   // displayed image or open state changes.
   const imgRef = useRef<HTMLImageElement>(null)
+  // Mirrors `imgRef.current` in state so effects can depend on the actual DOM
+  // node identity (#2760). Radix's `Portal` mounts in two passes — it renders
+  // `null` until a `useLayoutEffect` flips an internal "mounted" flag, then
+  // re-renders with the real children — so a plain `useEffect` keyed on
+  // unrelated props (e.g. `current.src`) can fire on the first (portal-less)
+  // commit, see `imgRef.current` as `null`, and never re-run once the image
+  // actually mounts. Setting state from the ref callback guarantees the
+  // wheel-listener effect below re-runs exactly when the node changes.
+  const [imgNode, setImgNode] = useState<HTMLImageElement | null>(null)
+  const setImgNodeRef = useCallback((node: HTMLImageElement | null) => {
+    imgRef.current = node
+    setImgNode(node)
+  }, [])
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [dragging, setDragging] = useState(false)
@@ -219,13 +232,22 @@ export function ImageLightbox({
   }, [open, hasMultiple, zoomed, goPrev, goNext, zoomBy, resetZoom, panBy])
 
   // Wheel-to-zoom — chrome-free and centred on the current view (#294 item 7).
-  const handleWheel = useCallback(
-    (e: React.WheelEvent) => {
+  // Bound via a native `addEventListener` with `{ passive: false }` rather than
+  // JSX `onWheel` (#2760): React's root wheel listener is passive, so
+  // `preventDefault()` inside a synthetic handler is a no-op and Chromium logs
+  // a console error on every wheel tick. Mirrors GraphView's non-passive wheel
+  // binding (see `setupZoomBehavior` in graph-sim-helpers.ts). Depends on
+  // `imgNode` (not e.g. `current.src`) so it re-attaches exactly when the
+  // `<img>` DOM node itself changes — see the `imgNode` comment above.
+  useEffect(() => {
+    if (!imgNode) return
+    const onWheel = (e: WheelEvent): void => {
       e.preventDefault()
       zoomBy(e.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP)
-    },
-    [zoomBy],
-  )
+    }
+    imgNode.addEventListener('wheel', onWheel, { passive: false })
+    return () => imgNode.removeEventListener('wheel', onWheel)
+  }, [imgNode, zoomBy])
 
   // Pointer drag-to-pan, active only while zoomed in.
   const handlePointerDown = useCallback(
@@ -317,7 +339,7 @@ export function ImageLightbox({
         ) : (
           <img
             key={current.src}
-            ref={imgRef}
+            ref={setImgNodeRef}
             src={current.src}
             alt={current.alt}
             className={cn(
@@ -328,7 +350,6 @@ export function ImageLightbox({
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
             }}
-            onWheel={handleWheel}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}

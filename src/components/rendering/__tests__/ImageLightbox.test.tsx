@@ -353,6 +353,22 @@ describe('ImageLightbox', () => {
       expect(screen.getByTestId('lightbox-image').style.transform).toContain('scale(1.25)')
     })
 
+    it('wheel handler is bound as a native non-passive listener (#2760)', () => {
+      // Regression guard: the wheel-zoom handler must be attached via a native
+      // `addEventListener('wheel', ..., { passive: false })`, not JSX `onWheel`
+      // (React's root wheel listener is passive, making `preventDefault()` a
+      // no-op and logging a Chromium console error per wheel tick). A
+      // `cancelable` wheel event dispatched straight at the image should be
+      // canceled — `dispatchEvent` returns `false` once `preventDefault()` has
+      // been called on a cancelable event.
+      renderLightbox()
+      const canceled = fireEvent.wheel(screen.getByTestId('lightbox-image'), {
+        deltaY: -100,
+        cancelable: true,
+      })
+      expect(canceled).toBe(false)
+    })
+
     it('resets zoom when navigating to another image', () => {
       function Harness(): React.ReactElement {
         const [index, setIndex] = React.useState(0)

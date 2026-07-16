@@ -119,13 +119,13 @@ test.describe('Graph view', () => {
   // ---------------------------------------------------------------------
   // Filter bar (#2713) — `GraphFilterBar` narrows the rendered node set.
   //
-  // No "content match" filter test: docs/features/views.md:86 advertises
-  // filtering "by content match", but `GraphFilter` (`src/lib/graph-filters.ts`
-  // lines ~44-52) only has `tag` / `status` / `priority` / `hasDueDate` /
-  // `hasScheduledDate` / `hasBacklinks` / `excludeTemplates` variants — there
-  // is no content/full-text dimension in `GraphFilterBar.tsx` to drive. This
-  // is docs-vs-implementation drift, not a coverage gap this spec can close;
-  // worth its own follow-up issue against the docs (or the missing filter).
+  // No "content match" filter test: there is no content/full-text dimension
+  // in `GraphFilter` (`src/lib/graph-filters.ts` lines ~44-52 — only `tag` /
+  // `status` / `priority` / `hasDueDate` / `hasScheduledDate` /
+  // `hasBacklinks` / `excludeTemplates`) or in `GraphFilterBar.tsx` to drive.
+  // docs/features/views.md previously advertised a "by content match" filter
+  // that never existed; that drift was corrected (#2761) to describe the
+  // real filter surface, so there is nothing left for this spec to cover.
   //
   // Seed data (`src/lib/tauri-mock/seed.ts`) has exactly one templated page,
   // "Meeting Notes Template" (`PAGE_TMPL_MEETING`, flagged via the

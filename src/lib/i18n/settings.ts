@@ -70,10 +70,12 @@ export const settings: Record<string, string> = {
   'settings.tabNotifications': 'Notifications',
   'notifications.title': 'Notifications',
   'notifications.description':
-    'Surface due and scheduled tasks as native OS notifications. Enable notifications, grant the OS permission, then send a test to confirm they reach you.',
+    'Set up native OS notifications and send yourself a test to confirm they reach you.',
+  'notifications.automaticNotAvailable':
+    'Automatic reminders for due and scheduled tasks are not available yet — enabling this only unlocks the test notification below. Scheduled reminders are tracked separately (#138).',
   'notifications.enableLabel': 'Enable notifications',
   'notifications.enableDescription':
-    'When on, Agaric may show native notifications for upcoming tasks. Turn off to silence all notifications without revoking the OS permission.',
+    'When on, you can send yourself a test notification. Turn off to disable the test button without revoking the OS permission.',
   'notifications.permissionLabel': 'OS permission',
   'notifications.permissionDescription':
     'On Android 13+ a one-time permission grant is required. On desktop the grant is automatic — use the test below to confirm.',
