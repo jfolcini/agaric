@@ -36,9 +36,12 @@ describe('<EmojiPicker>', () => {
     expect(within(radiogroup).getAllByRole('radio')).toHaveLength(6)
   })
 
-  it('renders the categorized grid with group headers', () => {
+  it('renders the categorized grid with group headers', async () => {
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     expect(screen.getByRole('grid', { name: /emoji/i })).toBeInTheDocument()
+    // #2671 — the dataset lazy-loads; wait for the first row to mount before
+    // asserting on header content.
+    await screen.findByRole('gridcell', { name: 'grinning' })
     // The first group appears twice: the inline header row and the sticky pin.
     expect(screen.getAllByText('Smileys & Emotion').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('People & Body')).toBeInTheDocument()
@@ -47,7 +50,8 @@ describe('<EmojiPicker>', () => {
   it('pins the current group as a sticky label, hidden while searching', async () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    expect(screen.getByTestId('emoji-sticky-group')).toHaveTextContent('Smileys & Emotion')
+    // #2671 — dataset lazy-loads; findBy awaits it instead of racing.
+    expect(await screen.findByTestId('emoji-sticky-group')).toHaveTextContent('Smileys & Emotion')
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
     expect(screen.queryByTestId('emoji-sticky-group')).not.toBeInTheDocument()
   })
@@ -57,6 +61,8 @@ describe('<EmojiPicker>', () => {
     const onSelect = vi.fn()
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
     const grid = screen.getByRole('grid', { name: /emoji/i })
+    // #2671 — wait for the lazy-loaded dataset's first row before querying cells.
+    await within(grid).findByRole('gridcell', { name: 'grinning' })
     const cells = within(grid).getAllByRole('gridcell')
     // Exactly one cell is tabbable (roving tabindex); it's the first emoji.
     const tabbable = cells.filter((c) => c.getAttribute('tabindex') === '0')
@@ -82,7 +88,8 @@ describe('<EmojiPicker>', () => {
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
     // rocket lives in the Travel group (far down the full set); search to it.
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
-    await user.click(screen.getByRole('gridcell', { name: 'rocket' }))
+    // #2671 — findBy awaits the lazy-loaded dataset rather than racing it.
+    await user.click(await screen.findByRole('gridcell', { name: 'rocket' }))
     expect(onSelect).toHaveBeenCalledWith('\u{1F680}')
   })
 
@@ -90,7 +97,7 @@ describe('<EmojiPicker>', () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
-    expect(screen.getByRole('gridcell', { name: 'rocket' })).toBeInTheDocument()
+    expect(await screen.findByRole('gridcell', { name: 'rocket' })).toBeInTheDocument()
     expect(screen.queryByRole('gridcell', { name: 'grinning' })).not.toBeInTheDocument()
     // Search results have no category headers.
     expect(screen.queryByText('Smileys & Emotion')).not.toBeInTheDocument()
@@ -102,7 +109,7 @@ describe('<EmojiPicker>', () => {
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
     await user.click(screen.getByRole('radio', { name: /^dark$/i }))
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'thumbsup')
-    await user.click(screen.getByRole('gridcell', { name: 'thumbsup' }))
+    await user.click(await screen.findByRole('gridcell', { name: 'thumbsup' }))
     expect(onSelect).toHaveBeenCalledWith('\u{1F44D}\u{1F3FF}')
   })
 
@@ -111,7 +118,9 @@ describe('<EmojiPicker>', () => {
     const onSelect = vi.fn()
     render(<EmojiPicker onSelect={onSelect} autoFocusSearch={false} />)
     await user.click(screen.getByRole('radio', { name: /^dark$/i }))
-    await user.click(screen.getByRole('gridcell', { name: 'grinning' }))
+    // #2671 — findBy awaits the lazy-loaded dataset (no search typed here to
+    // give it "free" time, unlike the tests above).
+    await user.click(await screen.findByRole('gridcell', { name: 'grinning' }))
     expect(onSelect).toHaveBeenCalledWith('\u{1F600}')
   })
 
@@ -166,7 +175,8 @@ describe('<EmojiPicker>', () => {
   it('renders a category tab per emoji group and jumps the grid on click', async () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    const tablist = screen.getByRole('tablist', { name: /emoji categories/i })
+    // #2671 — the category strip is derived from the lazy-loaded dataset.
+    const tablist = await screen.findByRole('tablist', { name: /emoji categories/i })
     // One tab per CLDR group (9), each with a non-empty accessible name + icon.
     const tabs = within(tablist).getAllByRole('tab')
     expect(tabs).toHaveLength(9)
@@ -180,7 +190,8 @@ describe('<EmojiPicker>', () => {
   it('roves focus across category tabs with arrow keys (single tab stop)', async () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    const tablist = screen.getByRole('tablist', { name: /emoji categories/i })
+    // #2671 — the category strip is derived from the lazy-loaded dataset.
+    const tablist = await screen.findByRole('tablist', { name: /emoji categories/i })
     const tabs = within(tablist).getAllByRole('tab')
     // Exactly one tab is tabbable (roving tabindex).
     expect(tabs.filter((t) => t.getAttribute('tabindex') === '0')).toHaveLength(1)
@@ -224,9 +235,11 @@ describe('<EmojiPicker>', () => {
   })
 
   // #2057: interactive controls on coarse pointers must hit the 44px floor.
-  it('applies coarse-pointer touch-target size classes to tabs, swatches, and emoji cells', () => {
+  it('applies coarse-pointer touch-target size classes to tabs, swatches, and emoji cells', async () => {
     pushEmojiRecent('\u{1F525}')
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
+    // #2671 — the tablist/grid rows are derived from the lazy-loaded dataset.
+    await screen.findByRole('gridcell', { name: 'grinning' })
     const tab = within(screen.getByRole('tablist', { name: /emoji categories/i })).getAllByRole(
       'tab',
     )[0]
@@ -247,7 +260,8 @@ describe('<EmojiPicker>', () => {
   it('hides the category strip while searching', async () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
-    expect(screen.getByRole('tablist', { name: /emoji categories/i })).toBeInTheDocument()
+    // #2671 — findBy awaits the lazy-loaded dataset instead of racing it.
+    expect(await screen.findByRole('tablist', { name: /emoji categories/i })).toBeInTheDocument()
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'rocket')
     expect(screen.queryByRole('tablist', { name: /emoji categories/i })).not.toBeInTheDocument()
   })
@@ -256,7 +270,10 @@ describe('<EmojiPicker>', () => {
     const user = userEvent.setup()
     render(<EmojiPicker onSelect={vi.fn()} autoFocusSearch={false} />)
     await user.type(screen.getByRole('searchbox', { name: /search emoji/i }), 'zzzzznotanemojizzzz')
-    expect(screen.getByTestId('emoji-no-results')).toBeInTheDocument()
+    // #2671 — findBy awaits the lazy-loaded dataset: before it resolves this
+    // renders the loading placeholder, not "no results" (`isLoading` gates
+    // `noResults` in the component).
+    expect(await screen.findByTestId('emoji-no-results')).toBeInTheDocument()
   })
 
   it('has no axe violations', async () => {

@@ -21,6 +21,15 @@
  *
  * Rendering surface (dialog vs. mobile bottom-sheet) is the caller's concern —
  * see `EmojiPickerDialog`. This component is the picker body only.
+ *
+ * #2671 — the ~1900-entry dataset is lazy-loaded (`loadEmojiDataset()`) rather
+ * than statically imported, so it's fetched/processed on first open of this
+ * component instead of unconditionally at editor first-paint. The dataset
+ * resolves virtually instantly in practice (it's a same-bundle dynamic
+ * `import()`, not a network fetch — Tauri serves everything from disk), so
+ * this renders a brief "Loading emoji…" placeholder rather than blocking; the
+ * search box, skin-tone swatches, and Recents strip (none of which need the
+ * dataset) still mount immediately.
  */
 
 import { useVirtualizer } from '@tanstack/react-virtual'
@@ -39,14 +48,28 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { groupedEmoji, searchEmoji, type EmojiEntry } from '@/editor/emoji-data'
+import {
+  type EmojiDataset,
+  type EmojiEntry,
+  loadEmojiDataset,
+  matchEmojiQuery,
+} from '@/editor/emoji-data'
 import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
 import { cn } from '@/lib/utils'
 
 import { Input } from '../ui/input'
-import { applySkinTone, SKIN_TONES, supportsSkinTone, type SkinToneId } from './emoji-skin-tone'
+import {
+  applySkinTone,
+  computeTonableBases,
+  SKIN_TONES,
+  supportsSkinTone,
+  type SkinToneId,
+} from './emoji-skin-tone'
+
+/** Stable empty set — the tonable-base set before the dataset resolves. */
+const NO_TONABLE_BASES: ReadonlySet<string> = new Set()
 
 const SKIN_TONE_KEY = 'emoji_skin_tone'
 /** Emoji per grid row. A fixed column count keeps virtualization row-based. */
@@ -86,14 +109,22 @@ const GROUP_ICONS: Readonly<Record<string, LucideIcon>> = {
  * row per group followed by `COLUMNS`-wide emoji rows. Search results are a
  * single unlabeled section (the match order is the relevance order, so group
  * headers would only add noise).
+ *
+ * `dataset` is `null` before `loadEmojiDataset()` resolves (#2671) — callers
+ * render the loading placeholder in that window instead of an empty grid, so
+ * this returns no rows rather than guessing.
  */
-function buildRows(query: string): { rows: GridRow[]; total: number } {
+function buildRows(
+  query: string,
+  dataset: EmojiDataset | null,
+): { rows: GridRow[]; total: number } {
   const rows: GridRow[] = []
   let total = 0
+  if (dataset == null) return { rows, total }
   const trimmed = query.trim()
 
   if (trimmed !== '') {
-    const matches = searchEmoji(trimmed, 200)
+    const matches = matchEmojiQuery(dataset.flat, trimmed, 200)
     total = matches.length
     for (let i = 0; i < matches.length; i += COLUMNS) {
       rows.push({ kind: 'emoji', entries: matches.slice(i, i + COLUMNS), key: `s-${i}` })
@@ -101,7 +132,7 @@ function buildRows(query: string): { rows: GridRow[]; total: number } {
     return { rows, total }
   }
 
-  for (const bucket of groupedEmoji()) {
+  for (const bucket of dataset.grouped) {
     rows.push({ kind: 'header', group: bucket.group, key: `h-${bucket.group}` })
     for (let i = 0; i < bucket.emoji.length; i += COLUMNS) {
       total += Math.min(COLUMNS, bucket.emoji.length - i)
@@ -132,6 +163,26 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
     source: 'EmojiPicker',
   })
 
+  // #2671 — the dataset lazy-loads on mount rather than shipping in the
+  // editor's first-paint bundle. `loadEmojiDataset()` memoizes internally, so
+  // remounting this component (e.g. reopening the dialog) after the first
+  // load resolves this effect near-instantly from the cached promise.
+  const [dataset, setDataset] = useState<EmojiDataset | null>(null)
+  useEffect(() => {
+    let cancelled = false
+    loadEmojiDataset().then((d) => {
+      if (!cancelled) setDataset(d)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
+  const isLoading = dataset == null
+  const tonable = useMemo(
+    () => (dataset == null ? NO_TONABLE_BASES : computeTonableBases(dataset.flat)),
+    [dataset],
+  )
+
   const scrollRef = useRef<HTMLDivElement>(null)
   // #2057: roving tabindex + Arrow/Home/End for the category tablist. The
   // tablist declares role="tablist" (promising arrow-key roving) but used to
@@ -144,7 +195,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
   // toolbar of plain buttons with a single roving tab stop, mirroring
   // SkinToneSelector and the category tablist.
   const frequentRoving = useRovingTabindex()
-  const { rows, total } = useMemo(() => buildRows(query), [query])
+  const { rows, total } = useMemo(() => buildRows(query, dataset), [query, dataset])
   const isSearching = query.trim() !== ''
   const noResults = isSearching && total === 0
 
@@ -195,11 +246,11 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
 
   const handleSelect = useCallback(
     (entry: EmojiEntry) => {
-      const char = applySkinTone(entry.char, skinTone)
+      const char = applySkinTone(entry.char, skinTone, tonable)
       push(char)
       onSelect(char)
     },
-    [onSelect, push, skinTone],
+    [onSelect, push, skinTone, tonable],
   )
 
   const entriesAtRow = useCallback(
@@ -332,7 +383,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
             }
           }}
         />
-        <SkinToneSelector value={skinTone} onChange={setSkinTone} />
+        <SkinToneSelector value={skinTone} onChange={setSkinTone} tonable={tonable} />
       </div>
 
       {/* Category-jump tab strip (#286 polish). Hidden while searching (the
@@ -436,7 +487,15 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
           tabIndex={-1}
           onKeyDown={handleGridKeyDown}
         >
-          {noResults && (
+          {isLoading && (
+            <p
+              data-testid="emoji-loading"
+              className="px-3 py-10 text-center text-sm text-muted-foreground"
+            >
+              {t('emojiPicker.loading')}
+            </p>
+          )}
+          {!isLoading && noResults && (
             <p
               data-testid="emoji-no-results"
               className="px-3 py-10 text-center text-sm text-muted-foreground"
@@ -469,7 +528,7 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
                     /* oxlint-disable jsx-a11y/prefer-tag-over-role -- ARIA grid row + gridcells inside a virtualized absolutely-positioned grid; <table>/<tr>/<td> cannot host the transform-positioned rows the virtualizer requires (mirrors MonthlyView) */
                     <div role="row" className="flex gap-0.5">
                       {row.entries.map((entry, col) => {
-                        const char = applySkinTone(entry.char, skinTone)
+                        const char = applySkinTone(entry.char, skinTone, tonable)
                         const isFocused = vi.index === focusedRowIndex && col === focused.c
                         return (
                           <button
@@ -503,6 +562,12 @@ export function EmojiPicker({ onSelect, className, autoFocusSearch = true }: Emo
 interface SkinToneSelectorProps {
   value: SkinToneId
   onChange: (tone: SkinToneId) => void
+  /**
+   * Tonable-base set (#2671 — derived from the lazily-loaded dataset). Empty
+   * (all swatches render the untoned sample) until `<EmojiPicker>`'s dataset
+   * load resolves.
+   */
+  tonable: ReadonlySet<string>
 }
 
 /**
@@ -510,7 +575,7 @@ interface SkinToneSelectorProps {
  * tones) applied to a sample thumbs-up. Implemented as a `radiogroup` for
  * keyboard + screen-reader parity.
  */
-function SkinToneSelector({ value, onChange }: SkinToneSelectorProps) {
+function SkinToneSelector({ value, onChange, tonable }: SkinToneSelectorProps) {
   const { t } = useTranslation()
   const sample = '\u{1F44D}' // thumbsup — supports skin tone
   // #2057: roving tabindex + Arrow/Home/End for the radiogroup. The container
@@ -546,9 +611,9 @@ function SkinToneSelector({ value, onChange }: SkinToneSelectorProps) {
               value === tone.id && 'bg-accent ring-1 ring-ring',
             )}
           >
-            {tone.id === 'default' || !supportsSkinTone(sample)
+            {tone.id === 'default' || !supportsSkinTone(sample, tonable)
               ? sample
-              : applySkinTone(sample, tone.id)}
+              : applySkinTone(sample, tone.id, tonable)}
           </button>
           /* oxlint-enable jsx-a11y/prefer-tag-over-role */
         )

@@ -25,7 +25,7 @@ import { PluginKey } from '@tiptap/pm/state'
 import { pushEmojiRecent } from '@/hooks/useEmojiRecents'
 import { isEmojiPickerEnabled } from '@/lib/editor-preferences'
 
-import { emojiByShortcode, searchEmoji } from '../emoji-data'
+import { loadEmojiDataset, peekEmojiDataset, searchEmoji } from '../emoji-data'
 import type { PickerItem } from '../SuggestionList'
 import { createPickerPlugin } from './picker-plugin'
 
@@ -54,8 +54,8 @@ export const EmojiPicker = Extension.create({
           return EMOJI_QUERY_RE.test(text)
         },
         editor: this.editor,
-        items: (query) =>
-          searchEmoji(query).map((e) => ({ id: e.name, label: e.name, emoji: e.char })),
+        items: async (query) =>
+          (await searchEmoji(query)).map((e) => ({ id: e.name, label: e.name, emoji: e.char })),
         command: ({ editor, range, props }) => {
           const item = props as PickerItem
           const emoji = item.emoji ?? item.label
@@ -75,6 +75,18 @@ export const EmojiPicker = Extension.create({
    * `:joy:` (Slack/GitHub style) the instant the closing colon is typed. Exact
    * `name` match only (deterministic 1:1), gated by the same enable preference,
    * and it preserves any leading whitespace the boundary regex consumed.
+   *
+   * #2671 — `InputRule.handler` must run synchronously (it mutates the SAME
+   * transaction the input event produced; there's no later point to apply an
+   * async result to), but the dataset is now lazy-loaded. `peekEmojiDataset()`
+   * reads whatever is already cached — which is virtually always populated by
+   * this point, because the suggestion popup above (`allow` + `items`)
+   * already fired on every keystroke since the opening `:` and kicked off the
+   * load. On the (pathological) chance nothing has triggered the load yet —
+   * e.g. a complete `:joy:` pasted in one shot before any `:` was ever typed
+   * interactively — this rule kicks off the load for next time and leaves the
+   * text untouched THIS time rather than block; the leading-`:` typeahead
+   * still resolves correctly a keystroke later either way.
    */
   addInputRules() {
     return [
@@ -86,7 +98,12 @@ export const EmojiPicker = Extension.create({
           if (!isEmojiPickerEnabled()) return null
           const name = match[1]
           if (name == null) return null
-          const emoji = emojiByShortcode(name)
+          const dataset = peekEmojiDataset()
+          if (dataset == null) {
+            void loadEmojiDataset()
+            return null
+          }
+          const emoji = dataset.byShortcode.get(name.toLowerCase()) ?? null
           if (emoji == null) return null
           // Replace only the `:name:` token, not any leading whitespace the
           // boundary alternation matched.

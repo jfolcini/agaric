@@ -208,3 +208,99 @@ describe('EmojiPicker — command chain (deleteRange → insertContent)', () => 
     expect(calls).toEqual(['focus', 'deleteRange:1-4', 'insertContent:FALLBACK', 'run'])
   })
 })
+
+// #2671 — `:shortcode:` closing-colon auto-replace, now backed by the
+// lazily-loaded dataset. `InputRule.handler` must run synchronously, so it
+// reads `peekEmojiDataset()` (whatever is already cached) rather than
+// awaiting `loadEmojiDataset()`.
+describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', () => {
+  type InputRuleHandler = (ctx: {
+    state: { tr: { insertText: (text: string, from: number, to: number) => void } }
+    range: { from: number; to: number }
+    match: RegExpMatchArray
+  }) => unknown
+
+  /** Load a fresh copy of the extension and return its single input rule. */
+  async function loadInputRule(): Promise<{ handler: InputRuleHandler }> {
+    const mod = await import('../extensions/emoji-picker')
+    const rules = (
+      mod.EmojiPicker.config.addInputRules as unknown as (this: unknown) => Array<{
+        handler: InputRuleHandler
+      }>
+    ).call({})
+    expect(rules).toHaveLength(1)
+    const rule = rules[0]
+    if (!rule) throw new Error('input rule was not registered')
+    return rule
+  }
+
+  it('replaces :shortcode: with the emoji once the dataset is already cached', async () => {
+    // Prime the (fresh, per-test) module cache before loading the extension,
+    // so its own `peekEmojiDataset()` read sees an already-resolved dataset —
+    // mirrors the common case where the suggestion popup (`allow`/`items`)
+    // already triggered the load on an earlier keystroke.
+    const { loadEmojiDataset } = await import('../emoji-data')
+    await loadEmojiDataset()
+
+    const rule = await loadInputRule()
+    const insertTextCalls: Array<{ text: string; from: number; to: number }> = []
+    const state = {
+      tr: {
+        insertText: (text: string, from: number, to: number) => {
+          insertTextCalls.push({ text, from, to })
+        },
+      },
+    }
+    // ' :joy:' — the leading space is the whitespace-boundary alternation;
+    // range spans the whole match, `from` must skip past it.
+    const match = [' :joy:', 'joy'] as unknown as RegExpMatchArray
+    const result = rule.handler({ state, range: { from: 0, to: 6 }, match })
+
+    expect(result).toBeUndefined()
+    expect(insertTextCalls).toEqual([{ text: '\u{1F602}', from: 1, to: 6 }])
+  })
+
+  it('returns null (leaves text untouched) for an unknown shortcode once the dataset is cached', async () => {
+    const { loadEmojiDataset } = await import('../emoji-data')
+    await loadEmojiDataset()
+
+    const rule = await loadInputRule()
+    const match = [' :zzznotanemojixyz:', 'zzznotanemojixyz'] as unknown as RegExpMatchArray
+    const result = rule.handler({
+      state: { tr: { insertText: vi.fn() } },
+      range: { from: 0, to: 19 },
+      match,
+    })
+
+    expect(result).toBeNull()
+  })
+
+  it('returns null when the picker is disabled, without ever reading the dataset', async () => {
+    localStorage.setItem(EMOJI_PICKER_ENABLED_KEY, JSON.stringify(false))
+    const rule = await loadInputRule()
+    const match = [' :joy:', 'joy'] as unknown as RegExpMatchArray
+    const insertText = vi.fn()
+    const result = rule.handler({ state: { tr: { insertText } }, range: { from: 0, to: 6 }, match })
+
+    expect(result).toBeNull()
+    expect(insertText).not.toHaveBeenCalled()
+  })
+
+  it('leaves the text untouched and kicks off the load when the dataset is not yet cached', async () => {
+    const dataMod = await import('../emoji-data')
+    // A genuinely cold module in this test's fresh registry epoch — nothing
+    // has called `loadEmojiDataset()` yet.
+    expect(dataMod.peekEmojiDataset()).toBeNull()
+
+    const rule = await loadInputRule()
+    const insertText = vi.fn()
+    const match = [' :joy:', 'joy'] as unknown as RegExpMatchArray
+    const result = rule.handler({ state: { tr: { insertText } }, range: { from: 0, to: 6 }, match })
+
+    // No replacement THIS time — the pathological "never triggered the
+    // popup" path — but the handler kicked off the load for next time.
+    expect(result).toBeNull()
+    expect(insertText).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(dataMod.peekEmojiDataset()).not.toBeNull(), { timeout: 3000 })
+  })
+})
