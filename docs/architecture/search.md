@@ -39,7 +39,7 @@ For page-title-only hits (block with no content body), `snippet()` may return `N
 
 ## IPC shapes
 
-The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes live in `src-tauri/src/commands/queries.rs` and round-trip through `tauri-specta` into `src/lib/bindings.ts`:
+The Tauri command `search_blocks` takes a typed request struct and returns a typed response page. Both shapes are defined in `src-tauri/src/domain/search_types.rs` (and re-exported from `src-tauri/src/commands/queries.rs`, which owns `search_blocks_inner`); they round-trip through `tauri-specta` into `src/lib/bindings.ts`:
 
 ```rust
 // Request — appended to, never re-shaped. Every field carries
@@ -49,7 +49,10 @@ The Tauri command `search_blocks` takes a typed request struct and returns a typ
 pub struct SearchFilter {
     pub parent_id: Option<String>,
     pub tag_ids: Vec<String>,
-    pub space_id: Option<String>,
+    // Typed space scope (#2248 group c): SpaceScope::Active(id) restricts to
+    // one space, Global applies no space filter. Replaced the prior
+    // space_id: Option<String>, whose Some("") silently meant "match nothing".
+    pub scope: SpaceScope,
     // Follow-up plans append fields here, each with #[serde(default)].
 }
 
@@ -158,7 +161,7 @@ A search whose free-text is blank/whitespace but which carries at least one stru
 
 - The cursor path (`fts_fetch_filter_only_page`) paginates on a strictly-less `b.id < ?cursor` predicate (id-only `Cursor::for_id`), derives `has_more` from a `limit + 1` probe, and keys `next_cursor` on the last *returned* (post-truncate) row.
 - The partitioned path (`fts_fetch_filter_only_partitioned`) runs the pages partition (`block_type = 'page'`) and the unrestricted blocks partition, each with its own `limit + 1` probe; the palette doesn't paginate, so no cursor is emitted.
-- `space_id` is always supplied, so it does NOT count as a user filter — a blank query scoped only to a space still returns empty, never the whole space.
+- The space `scope` does NOT count as a user filter — under `SpaceScope::Active` a blank query scoped only to a space still returns empty, never the whole space; `SpaceScope::Global` simply applies no space filter.
 
 ### Caps (all locked-in via module constants)
 
@@ -251,7 +254,8 @@ When ambiguity exists, autocomplete-open wins, then history recall, then result-
 - `src/components/help/SearchHelpDialog.tsx` — in-app `?` help.
 - `src/stores/search-history.ts` — Zustand-persisted per-space history.
 - `src/hooks/useSearchHistoryCycling.ts` — `↑`/`↓` browse state machine.
-- `src-tauri/src/commands/queries.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset`, `search_blocks_inner`.
+- `src-tauri/src/domain/search_types.rs` — `SearchFilter`, `SearchBlockRow`, `MatchOffset` type definitions (re-exported from `commands/queries.rs`).
+- `src-tauri/src/commands/queries.rs` — `search_blocks_inner`.
 - `src-tauri/src/fts/search/` — FTS5 query construction (`fetch.rs`) + `snippet()` projection (`constants.rs`).
 - `src-tauri/src/fts/toggle_filter.rs` — `SearchToggles`, `search_with_toggles`, regex pipeline.
 - `src-tauri/src/fts/glob_filter.rs` — page-name glob parser + brace-expansion.
