@@ -46,6 +46,10 @@ pub mod peer_refs;
 pub mod query;
 pub mod recovery;
 pub mod recurrence;
+// Pure recurrence date-math (interval shift + per-block projection), split out
+// of `recurrence` (#2621) so the store-layer projected-agenda cache can reuse
+// it without depending on the app-layer recurrence module.
+pub(crate) mod recurrence_math;
 pub mod reverse;
 pub mod snapshot;
 pub mod soft_delete;

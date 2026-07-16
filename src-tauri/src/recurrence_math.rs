@@ -1,25 +1,174 @@
-//! Shared per-block recurrence-date projection.
+//! Pure recurrence date-math: interval shifting + per-block occurrence
+//! projection. No DB access, no async, no `AppError` — deterministic
+//! `chrono` math (the `.+`/`++` modes take `today` as a parameter rather
+//! than consulting the clock, so even those are pure here).
 //!
-//! Pure date math, no DB access. Used by both the projected-agenda cache
-//! rebuild (`cache::projected_agenda::project_block_into`) and the
-//! on-the-fly projection (`commands::agenda::list_projected_agenda_on_the_fly`).
-//!
-//! Before the per-block recurrence projection lived inline in
-//! both callsites and silently drifted: the parity test
-//! `projected_agenda_cached_equals_on_the_fly` recorded a 112-vs-110
-//! mismatch on the `.+1w` (dot_plus) surface. Consolidating the logic
-//! here removes the drift surface entirely; every callsite passes
-//! identical inputs to one function and emits via a closure, so the
-//! callsite-specific concerns (Vec append vs cursor/BTreeMap insert)
-//! stay outside the recurrence math.
-//!
-//! Contract: see [`project_block_dates`]. The caller decides
-//! `range_start` / `range_end` and what to do with each emitted
-//! `(date, source_name)` tuple.
-//!
-//! Source-strings are stable: `"due_date"` and `"scheduled_date"`. Both
-//! the cache table and the API model embed those literal strings, so
-//! changing them is a wire-compat break.
+//! Lives BELOW the store layer (#2621) so `cache::projected_agenda` (store)
+//! can project recurrence dates without reaching *up* into the app-layer
+//! `recurrence` module, whose `compute` half is `CommandTx` / `LoroState` /
+//! materializer-coupled. The `recurrence` module re-exports
+//! [`shift_date_once`] and [`project_block_dates`] so
+//! `crate::recurrence::…` call sites resolve unchanged; the `AppError`-typed
+//! string wrapper `recurrence::parser::shift_date` stays up in `recurrence`
+//! and calls [`shift_date_once`] downward.
+
+use chrono::Datelike;
+
+/// (b) — calendar-range bound for `+Nm` / `+Ny` shifts.
+///
+/// Shifts that resolve to a year outside `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR`
+/// return `None` instead of producing garbage dates. The bound is deliberately
+/// loose; it exists to guard against pathological input (e.g. `+99999999y`
+/// underflowing/overflowing the i64 month arithmetic), not to enforce a
+/// product-level calendar range.
+const MIN_CALENDAR_YEAR: i64 = 1900;
+const MAX_CALENDAR_YEAR: i64 = 2200;
+
+/// Return the number of days in the given month of the given year.
+pub(crate) fn days_in_month(year: i32, month: u32) -> u32 {
+    chrono::NaiveDate::from_ymd_opt(
+        if month == 12 { year + 1 } else { year },
+        if month == 12 { 1 } else { month + 1 },
+        1,
+    )
+    .map_or(28, |d| d.pred_opt().unwrap().day())
+}
+
+/// (b) — return `date` only if its year is inside the
+/// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail; otherwise `None`.
+///
+/// The day/week arms (`daily`/`weekly`/`+Nd`/`+Nw`) use this to enforce the
+/// same calendar-year bound that `shift_by_months` enforces for the month/year
+/// arms, so a large count that lands outside `[1900, 2200]` returns `None`
+/// instead of leaking an out-of-rail date.
+fn in_calendar_rail(date: chrono::NaiveDate) -> Option<chrono::NaiveDate> {
+    if (MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR).contains(&i64::from(date.year())) {
+        Some(date)
+    } else {
+        None
+    }
+}
+
+/// (b) — shift `base` forward by `n_days` calendar days using checked
+/// arithmetic, returning `None` on `NaiveDate` overflow (instead of panicking)
+/// and applying the `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail.
+///
+/// Shared by the `daily`/`weekly`/`+Nd`/`+Nw` arms. Mirrors `shift_by_months`:
+/// checked arithmetic + the calendar-year bound, returning `None` rather than a
+/// panic or an out-of-rail date.
+fn shift_by_days(base: chrono::NaiveDate, n_days: i64) -> Option<chrono::NaiveDate> {
+    let shifted = base.checked_add_signed(chrono::Duration::try_days(n_days)?)?;
+    in_calendar_rail(shifted)
+}
+
+/// (b) — shift `base` by `n_months` months, clamping the resulting
+/// day-of-month against the destination month length so e.g. shifting from
+/// `2024-02-29` by 12 months lands on `2025-02-28`.
+///
+/// Shared by the `+Nm` arm (passes `n` directly) and the `+Ny` arm (passes
+/// `n * 12`). Returns `None` if the shifted year falls outside the
+/// `MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR` guard rail or the month
+/// arithmetic overflows i64.
+fn shift_by_months(base: chrono::NaiveDate, n_months: i64) -> Option<chrono::NaiveDate> {
+    let year = base.year();
+    let month = base.month();
+    let day = base.day();
+
+    let total_months = i64::from(year)
+        .checked_mul(12)?
+        .checked_add(i64::from(month) - 1)?
+        .checked_add(n_months)?;
+    let new_year_i64 = total_months.div_euclid(12);
+    let new_month: u32 = u32::try_from(total_months.rem_euclid(12) + 1)
+        .expect("invariant: rem_euclid(12) + 1 is in [1, 12]");
+    if !(MIN_CALENDAR_YEAR..=MAX_CALENDAR_YEAR).contains(&new_year_i64) {
+        return None;
+    }
+    let new_year = i32::try_from(new_year_i64).ok()?;
+    let max_day = days_in_month(new_year, new_month);
+    chrono::NaiveDate::from_ymd_opt(new_year, new_month, day.min(max_day))
+}
+
+/// Shift a `YYYY-MM-DD` date string by a recurrence interval once from
+/// the given base date.
+///
+/// Returns the shifted date or `None` if parsing fails.
+pub(crate) fn shift_date_once(
+    base: chrono::NaiveDate,
+    interval: &str,
+) -> Option<chrono::NaiveDate> {
+    let year = base.year();
+    let month = base.month();
+    let day = base.day();
+
+    let shifted = match interval {
+        "daily" => shift_by_days(base, 1)?,
+        "weekly" => shift_by_days(base, 7)?,
+        "monthly" => {
+            // #679: month-end clamp is INTENTIONALLY sticky (Org-mode
+            // in-place shift semantics). We shift the *given base* by one
+            // month and clamp the day-of-month against the destination
+            // month's length (`day.min(max_day)`). Because each recurrence
+            // step uses the PREVIOUS shifted date as its base (see
+            // `compute.rs` sibling base = previous shifted date), the
+            // original day-of-month is NOT restored once it has been
+            // clamped: Jan-31 → Feb-28 → Mar-28 → Apr-28 … forever, never
+            // back to day-31. This matches Org-mode's behavior, where the
+            // repeater rewrites the timestamp in place and the clamped day
+            // becomes the new anchor. Do NOT "fix" this to re-derive the
+            // day from the series origin without changing the documented
+            // contract and the chain test that pins it
+            // (`monthly_clamp_is_sticky_three_step_chain` in tests.rs).
+            let new_month = if month == 12 { 1 } else { month + 1 };
+            let new_year = if month == 12 { year + 1 } else { year };
+            let max_day = days_in_month(new_year, new_month);
+            // (b): apply the same calendar-year guard rail as the month/year
+            // arms so e.g. `2200-12-01 monthly` (which would roll to 2201)
+            // returns `None` instead of leaking an out-of-rail date.
+            in_calendar_rail(chrono::NaiveDate::from_ymd_opt(
+                new_year,
+                new_month,
+                day.min(max_day),
+            )?)?
+        }
+        _ => {
+            // Parse +Nd, +Nw, +Nm patterns (the leading '+' is already stripped
+            // by the caller for `.+` and `++` modes, but may still be present
+            // for the default `+` mode).
+            let num_unit = interval.strip_prefix('+').unwrap_or(interval);
+            if num_unit.len() < 2 {
+                return None;
+            }
+            let (num_str, unit) = num_unit.split_at(num_unit.len() - 1);
+            let n: i64 = num_str.parse().ok()?;
+            // Org-mode recurrence semantics never go backwards (and
+            // a zero interval would either no-op or, in `++` mode, loop
+            // until the safety limit). Reject negative and zero counts at
+            // parse time.
+            if n <= 0 {
+                return None;
+            }
+            match unit {
+                "d" => shift_by_days(base, n)?,
+                // (b): guard `n * 7` against i64 overflow before handing the
+                // day count to the checked day shift.
+                "w" => shift_by_days(base, n.checked_mul(7)?)?,
+                // (b): `+Nm` and `+Ny` share the leap-day-clamping
+                // month arithmetic via `shift_by_months`; the `y` arm just
+                // Multiplies by 12 first. `+1y` from 2024-02-29 lands
+                // on 2025-02-28 because the helper clamps day against the
+                // destination month length.
+                "m" => shift_by_months(base, n)?,
+                "y" => shift_by_months(base, n.checked_mul(12)?)?,
+                _ => return None,
+            }
+        }
+    };
+
+    Some(shifted)
+}
+
+// --- Per-block occurrence projection (was recurrence/projection.rs) ---
 
 /// Project one repeating block's occurrence dates within
 /// `[range_start, range_end]`.
@@ -183,7 +332,7 @@ pub(crate) fn project_block_dates<F>(
                 let mut c = base;
                 let mut caught_up = false;
                 for _ in 0..10_000 {
-                    c = match crate::recurrence::shift_date_once(c, interval) {
+                    c = match shift_date_once(c, interval) {
                         Some(d) => d,
                         // Single-step overflow: cannot reach a valid
                         // future date, so abandon this source rather than
@@ -252,7 +401,7 @@ pub(crate) fn project_block_dates<F>(
                 break;
             }
 
-            current = match crate::recurrence::shift_date_once(current, interval) {
+            current = match shift_date_once(current, interval) {
                 Some(d) => d,
                 None => break,
             };

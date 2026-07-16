@@ -327,7 +327,7 @@ async fn write_horizon(
 /// repeating block to the caller-owned `out` buffer. The recurrence
 /// semantics (`dot_plus` / `plus_plus` / default modes, `repeat-until` /
 /// `repeat-count` / `repeat-seq` end conditions, the 10 000-iteration
-/// safety bound) are owned by [`crate::recurrence::project_block_dates`]
+/// safety bound) are owned by [`crate::recurrence_math::project_block_dates`]
 /// So the cache rebuild and the on-the-fly fallback see
 /// **identical** recurrence math — this function is now a thin adapter
 /// that wires the shared helper's `emit` closure into the chunk-flush
@@ -368,7 +368,7 @@ fn project_block_into(
     };
 
     let block_id = &block.id;
-    crate::recurrence::project_block_dates(
+    crate::recurrence_math::project_block_dates(
         block.due_date.as_deref(),
         block.scheduled_date.as_deref(),
         rule,
