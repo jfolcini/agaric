@@ -145,9 +145,18 @@ gen-bindings:
     cd src-tauri && cargo test -- specta_tests --ignored
 
 # Regenerate the sqlx offline query cache (.sqlx/) after changing SQL.
+# `--workspace` (both to sqlx and cargo) is REQUIRED: the CI `lint` job runs
+# `cargo clippy --workspace --all-targets` with NO DATABASE_URL, so every
+# workspace member's `query!` sites — including the leaf bin-only
+# `diagnostics` crate that nothing depends on — must be in the shared
+# workspace-root `.sqlx/`. A bare `cargo sqlx prepare` builds only the default
+# member (`agaric`) + its deps and silently drops `diagnostics`'s queries,
+# reddening `lint` on the next non-docs PR. sqlx's own `--workspace` only sets
+# the write location; cargo's `--workspace` (after the `--`) is what forces the
+# leaf crates to actually compile so their queries get captured.
 [group('codegen')]
 gen-sqlx:
-    cd src-tauri && cargo sqlx prepare -- --tests
+    cd src-tauri && cargo sqlx prepare --workspace -- --workspace --tests
 
 # Regenerate emoji data.
 [group('codegen')]

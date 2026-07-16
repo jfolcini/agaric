@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO agenda_cache (date, block_id, source) VALUES (?, ?, ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "34c6e2fc70f9261df31b1cdc927eaf9627b2a6632b2e0ba610b1b4ecba77f9c5"
+}

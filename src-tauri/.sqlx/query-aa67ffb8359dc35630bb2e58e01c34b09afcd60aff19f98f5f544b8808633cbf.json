@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT inbound_link_count AS \"i!: i64\", child_block_count AS \"c!: i64\" FROM pages_cache WHERE page_id = 'PAGE_B'",
+  "describe": {
+    "columns": [
+      {
+        "name": "i!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "inbound_link_count"
+          }
+        }
+      },
+      {
+        "name": "c!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "pages_cache",
+            "name": "child_block_count"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "aa67ffb8359dc35630bb2e58e01c34b09afcd60aff19f98f5f544b8808633cbf"
+}
