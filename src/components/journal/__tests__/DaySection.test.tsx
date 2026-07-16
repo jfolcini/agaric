@@ -890,5 +890,157 @@ describe('DaySection', () => {
       // Empty state still rendered.
       expect(screen.getByTestId('empty-state')).toBeInTheDocument()
     })
+
+    // ── mountWindow: externally-controlled path (StreamView, #2670) ─────
+    describe('mountWindow (externally-controlled path, #2670)', () => {
+      /** A controllable stand-in for `useDayMountWindow`'s return shape. */
+      function makeMountWindow(initialMounted: boolean): {
+        state: { mounted: boolean }
+        isMounted: (key: string) => boolean
+        markVisible: (key: string) => void
+      } {
+        const state = { mounted: initialMounted }
+        const isMounted = vi.fn((_key: string) => state.mounted)
+        const markVisible = vi.fn()
+        return { state, isMounted, markVisible }
+      }
+
+      it('renders the placeholder and reports markVisible on intersection when not yet in the window', () => {
+        const entry = makeDayEntry({
+          pageId: 'PAGE_1',
+          dateStr: '2025-06-15',
+          displayDate: 'Sun, Jun 15, 2025',
+        })
+        const mw = makeMountWindow(false)
+
+        render(
+          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+        )
+
+        expect(screen.getByTestId('day-section-lazy-placeholder')).toBeInTheDocument()
+        expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+        expect(mw.markVisible).not.toHaveBeenCalled()
+
+        const obs = MockIntersectionObserver.instances[0]
+        expect(obs).toBeDefined()
+        act(() => {
+          obs?.enterAll()
+        })
+
+        expect(mw.markVisible).toHaveBeenCalledWith('2025-06-15')
+      })
+
+      it('renders BlockTree (no placeholder, no observer) when the window already reports the day as mounted', () => {
+        const entry = makeDayEntry({ pageId: 'PAGE_1' })
+        const mw = makeMountWindow(true)
+
+        render(
+          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+        )
+
+        expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+        expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+        // Already mounted — nothing to observe for entry.
+        expect(MockIntersectionObserver.instances).toHaveLength(0)
+      })
+
+      it('unmounts back to the placeholder and re-arms the observer when the window evicts the day', () => {
+        const entry = makeDayEntry({
+          pageId: 'PAGE_1',
+          dateStr: '2025-06-15',
+          displayDate: 'Sun, Jun 15, 2025',
+        })
+        // `DaySection` is `React.memo`'d, so a prop-identity change is what
+        // drives the re-render in production too (`useDayMountWindow`
+        // returns a freshly-memoized object whenever its mounted set
+        // changes) — model that here with a NEW object per render rather
+        // than mutating one in place, sharing the `markVisible` spy so calls
+        // across both renders are visible on one assertion target.
+        const markVisible = vi.fn()
+        const mwMounted = { isMounted: vi.fn(() => true), markVisible }
+
+        const { rerender } = render(
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mountWindow={mwMounted}
+            onAddBlock={noop}
+          />,
+        )
+        expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+
+        // The caller's LRU evicts this day (e.g. STREAM_MOUNT_WINDOW other
+        // days were visited since) — isMounted flips to false.
+        const mwEvicted = { isMounted: vi.fn(() => false), markVisible }
+        rerender(
+          <DaySection
+            entry={entry}
+            mode="stream"
+            lazyMount
+            mountWindow={mwEvicted}
+            onAddBlock={noop}
+          />,
+        )
+
+        expect(screen.queryByTestId('block-tree')).not.toBeInTheDocument()
+        const placeholder = screen.getByTestId('day-section-lazy-placeholder')
+        expect(placeholder).toHaveAttribute('data-date', '2025-06-15')
+
+        // A fresh observer is watching for re-entry (no longer disconnected).
+        const obs = MockIntersectionObserver.instances.at(-1)
+        expect(obs).toBeDefined()
+        expect(obs?.observed.size).toBe(1)
+
+        // Scrolling back up re-enters → reports markVisible again (unlike the
+        // self-managed path, this is NOT one-shot-forever).
+        act(() => {
+          obs?.enterAll()
+        })
+        expect(markVisible).toHaveBeenLastCalledWith('2025-06-15')
+      })
+
+      it('does not call markVisible before the day intersects', () => {
+        const entry = makeDayEntry({ pageId: 'PAGE_1', dateStr: '2025-06-15' })
+        const mw = makeMountWindow(false)
+
+        render(
+          <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+        )
+
+        expect(mw.markVisible).not.toHaveBeenCalled()
+      })
+
+      it('eagerly mounts under prefers-reduced-motion even with a mountWindow set', () => {
+        const originalMatchMedia = window.matchMedia
+        try {
+          ;(window as any).matchMedia = (query: string) => ({
+            matches: query === '(prefers-reduced-motion: reduce)',
+            media: query,
+            onchange: null,
+            addListener: () => {},
+            removeListener: () => {},
+            addEventListener: () => {},
+            removeEventListener: () => {},
+            dispatchEvent: () => false,
+          })
+
+          const entry = makeDayEntry({ pageId: 'PAGE_1' })
+          const mw = makeMountWindow(false)
+
+          render(
+            <DaySection entry={entry} mode="stream" lazyMount mountWindow={mw} onAddBlock={noop} />,
+          )
+
+          expect(screen.getByTestId('block-tree')).toBeInTheDocument()
+          expect(screen.queryByTestId('day-section-lazy-placeholder')).not.toBeInTheDocument()
+          // Reduced-motion skips lazy mounting entirely — the window is
+          // never even consulted.
+          expect(mw.markVisible).not.toHaveBeenCalled()
+        } finally {
+          ;(window as any).matchMedia = originalMatchMedia
+        }
+      })
+    })
   })
 })

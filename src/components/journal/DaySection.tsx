@@ -17,6 +17,7 @@ import { AddBlockButton } from '@/components/editor/AddBlockButton'
 import { BlockTree } from '@/components/editor/BlockTree'
 import { PageQuickActions } from '@/components/pages/PageQuickActions'
 import { Button } from '@/components/ui/button'
+import type { DayMountWindow } from '@/hooks/useDayMountWindow'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePrefersReducedMotion } from '@/hooks/usePrefersReducedMotion'
 import { getSourceColor, getSourceLabel } from '@/lib/date-property-colors'
@@ -52,6 +53,20 @@ interface DaySectionProps {
    * `false` — `DailyView` (single day) and tests render eagerly.
    */
   lazyMount?: boolean | undefined
+  /**
+   * External LRU mount-window controller (`useDayMountWindow`, #2670). When
+   * provided, this REPLACES the self-managed one-shot `hasEntered` state
+   * below: mount state comes from `mountWindow.isMounted(entry.dateStr)`,
+   * and the section reports EVERY viewport entry (not just the first) via
+   * `mountWindow.markVisible` so the caller's LRU can track recency and
+   * evict the farthest days back to this same placeholder — bounding the
+   * TipTap-editor + document-listener count an unbounded infinite scroll
+   * would otherwise accumulate. Used by `StreamView`; `WeeklyView` and
+   * `MonthlyView` leave this `undefined` and keep the original
+   * mount-forever-once-entered behavior (their day count is already fixed,
+   * see file header). Only meaningful when `lazyMount` is also `true`.
+   */
+  mountWindow?: DayMountWindow | undefined
 }
 
 /** Placeholder min-height while a lazy day waits to enter the viewport. */
@@ -100,6 +115,59 @@ function useEnteredViewport(
   return [entered, ref]
 }
 
+/**
+ * Same one-shot-while-not-entered observer shape as `useEnteredViewport`
+ * above, but reports every transition into view via `onEnter` instead of
+ * owning local state (#2670). Used by the `mountWindow`-controlled path,
+ * where "entered" comes from the caller's LRU (`mountWindow.isMounted`), not
+ * local state — so a day that scrolls back into view AFTER being evicted can
+ * re-trigger a remount. Only observes while `!hasEntered` (mirrors the
+ * self-managed hook: no need to keep watching an already-mounted day — a day
+ * can only be evicted after `windowSize` OTHER distinct days have been
+ * visited, which requires it to already be well outside the viewport, so a
+ * single "entered" report per unmounted phase is enough — see
+ * `useDayMountWindow`'s doc comment). Re-arms (creates a fresh observer)
+ * whenever `hasEntered` flips back to `false`, i.e. right after eviction.
+ */
+function useControlledViewportEntry(
+  enabled: boolean,
+  hasEntered: boolean,
+  onEnter: () => void,
+  rootMargin = '200px 0px',
+): React.RefObject<HTMLDivElement | null> {
+  const ref = useRef<HTMLDivElement | null>(null)
+  const onEnterRef = useRef(onEnter)
+  onEnterRef.current = onEnter
+
+  useEffect(() => {
+    if (!enabled || hasEntered) return
+    const el = ref.current
+    if (!el) return
+    if (typeof IntersectionObserver === 'undefined') {
+      // Defensive: jsdom/older runtimes — report entered immediately.
+      onEnterRef.current()
+      return
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            onEnterRef.current()
+            return
+          }
+        }
+      },
+      { rootMargin },
+    )
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [enabled, hasEntered, rootMargin])
+
+  return ref
+}
+
 // oxlint-disable-next-line eslint/complexity -- cognitive complexity 26 (max 25). DaySection already orchestrates many props (lazy mount, navigation, focus restoration, agenda counts); refactoring out would require pulling several inter-dependent useEffects apart for one point over.
 function DaySectionInner({
   entry,
@@ -112,6 +180,7 @@ function DaySectionInner({
   onNavigateToPage,
   onAddBlock,
   lazyMount = false,
+  mountWindow,
 }: DaySectionProps): React.ReactElement {
   const { t } = useTranslation()
   const navigateToDate = useJournalStore((s) => s.navigateToDate)
@@ -150,7 +219,62 @@ function DaySectionInner({
   // is not re-evaluated in this render body on every WeeklyView re-render.
   const prefersReducedMotion = usePrefersReducedMotion()
   const shouldLazyMount = lazyMount && !prefersReducedMotion
-  const [hasEntered, lazyRef] = useEnteredViewport(shouldLazyMount)
+  const isWindowControlled = shouldLazyMount && mountWindow != null
+
+  // Self-managed one-shot path (WeeklyView/MonthlyView, no `mountWindow`) —
+  // unchanged from before #2670.
+  const [selfEntered, selfLazyRef] = useEnteredViewport(shouldLazyMount && !isWindowControlled)
+
+  // Externally-controlled LRU path (StreamView, #2670): mount state comes
+  // from the caller's window, and every entry (not just the first) reports
+  // back so a day evicted by the LRU can remount when scrolled back to.
+  const controlledEntered = isWindowControlled
+    ? (mountWindow?.isMounted(entry.dateStr) ?? false)
+    : false
+  const handleControlledEnter = useCallback(() => {
+    mountWindow?.markVisible(entry.dateStr)
+  }, [mountWindow, entry.dateStr])
+  const controlledRef = useControlledViewportEntry(
+    isWindowControlled,
+    controlledEntered,
+    handleControlledEnter,
+  )
+
+  const hasEntered = isWindowControlled ? controlledEntered : selfEntered
+  const lazyRef = isWindowControlled ? controlledRef : selfLazyRef
+
+  // Last-measured rendered height of the mounted BlockTree content, kept in
+  // a ref (not state — no re-render needed) so that when the mount-window
+  // LRU evicts this day back to the placeholder, the placeholder reuses the
+  // day's REAL height instead of the generic `LAZY_PLACEHOLDER_MIN_HEIGHT`
+  // (#2670 follow-up: the fixed-height placeholder was correct for the
+  // pre-entry state — nothing has been rendered yet, so there's no real
+  // height to preserve — but reusing it verbatim for a day that WAS already
+  // rendered, possibly far taller than 200px, shrinks the document above
+  // the viewport and shifts scroll position; `useStreamDates`'s file header
+  // explicitly notes the stream's append-only design was chosen so it would
+  // never need "scroll-anchoring math" — eviction reintroduces exactly that
+  // need, so we preserve height here instead of relying on browser
+  // scroll-anchoring heuristics). Only tracked on the window-controlled path
+  // — the self-managed path never unmounts once entered, so there is
+  // nothing to preserve there.
+  const measuredHeightRef = useRef<number | undefined>(undefined)
+  const contentRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    if (!isWindowControlled || !hasEntered) return
+    const el = contentRef.current
+    if (!el) return
+    if (typeof ResizeObserver === 'undefined') return
+    const observer = new ResizeObserver((entries) => {
+      const box = entries[0]?.contentRect
+      if (box) measuredHeightRef.current = box.height
+    })
+    observer.observe(el)
+    return () => {
+      observer.disconnect()
+    }
+  }, [isWindowControlled, hasEntered])
 
   return (
     <section
@@ -293,17 +417,19 @@ function DaySectionInner({
             ref={lazyRef}
             data-testid="day-section-lazy-placeholder"
             data-date={entry.dateStr}
-            style={{ minHeight: LAZY_PLACEHOLDER_MIN_HEIGHT }}
+            style={{ minHeight: measuredHeightRef.current ?? LAZY_PLACEHOLDER_MIN_HEIGHT }}
             aria-hidden="true"
           />
         ) : (
-          <PageBlockStoreProvider pageId={entry.pageId}>
-            <BlockTree
-              parentId={entry.pageId}
-              onNavigateToPage={onNavigateToPage}
-              autoCreateFirstBlock={mode === 'daily'}
-            />
-          </PageBlockStoreProvider>
+          <div ref={contentRef}>
+            <PageBlockStoreProvider pageId={entry.pageId}>
+              <BlockTree
+                parentId={entry.pageId}
+                onNavigateToPage={onNavigateToPage}
+                autoCreateFirstBlock={mode === 'daily'}
+              />
+            </PageBlockStoreProvider>
+          </div>
         ))}
 
       {/* DuePanel + DonePanel are date-keyed agenda queries — they
