@@ -1810,9 +1810,7 @@ mod tests {
             value_bool: None,
         };
         assert_eq!(
-            p.value_ref
-                .as_ref()
-                .map(super::super::ulid::BlockId::as_str),
+            p.value_ref.as_ref().map(agaric_core::ulid::BlockId::as_str),
             Some("ABC123DEF456GHI789JKL01A"),
             "value_ref BlockId must auto-uppercase the input ULID"
         );
