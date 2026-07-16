@@ -28,6 +28,13 @@ serde_json = "1"
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # `cancellation` uses `tokio::sync::watch` only.
 tokio = { version = "1", features = ["sync"] }
+# `db` — pool structs wrap sqlx pools; the acquire/begin helpers use sqlx types.
+# Version/features mirror the app crate exactly for cargo feature-unification.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+# `db::now_ms` uses `chrono::Utc::now().timestamp_millis()`.
+chrono = { version = "0.4.44", features = ["serde"] }
+# `db` acquire helpers use `tracing::warn!`.
+tracing = { version = "0.1.44", features = ["attributes"] }
 
 [dev-dependencies]
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,

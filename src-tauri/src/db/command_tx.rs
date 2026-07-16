@@ -1,7 +1,7 @@
 use sqlx::{Sqlite, SqlitePool};
 use std::sync::Arc;
 
-use super::pool::begin_immediate_logged;
+use super::begin_immediate_logged;
 
 /// Command-layer transaction wrapper that couples a `BEGIN IMMEDIATE`
 /// SQLite transaction to the materializer-dispatch calls that must fire

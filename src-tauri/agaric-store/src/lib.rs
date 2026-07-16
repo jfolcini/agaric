@@ -19,3 +19,8 @@ pub mod op;
 // `task_locals` — crate-wide tokio task-locals (op-append provenance + actor
 // identity). Depends only on the sibling `op` module.
 pub mod task_locals;
+// `db` — pure, sqlx-free SQLite pool primitives (pool value types, slow-acquire
+// logging helpers, connect-options builder + pragma consts, epoch-ms clocks).
+// The app re-exports it (`pub use agaric_store::db::*;`) so every existing
+// `crate::db::…` path resolves unchanged.
+pub mod db;
