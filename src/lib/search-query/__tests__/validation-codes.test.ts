@@ -31,6 +31,7 @@ describe('ValidationCode (#1061/#2251 shared contract)', () => {
       InvalidDateFilter: 'InvalidDateFilter',
       InvalidFilter: 'InvalidFilter',
       RequiresRefresh: 'RequiresRefresh',
+      PageNotInSpace: 'PageNotInSpace',
     })
   })
 

@@ -67,6 +67,12 @@ pub enum ValidationCode {
     /// Stale pagination cursor (format/sort mismatch) — the client should
     /// retry once without a cursor (see `usePageBrowserData`).
     RequiresRefresh,
+    /// Requested page/root block does not belong to the requesting space
+    /// (`load_page_subtree_inner`, #2810). Distinguishes the "page moved
+    /// to another space" stale-reference case from any other validation
+    /// on that path so the frontend heal (`page-blocks.ts` `load()`)
+    /// keys on this code instead of the generic `kind: "validation"`.
+    PageNotInSpace,
 }
 
 /// Helper struct matching the `{ kind, message, code? }` JSON shape that
@@ -684,12 +690,13 @@ mod tests {
         // The exact strings the old `"<Code>: …"` message prefixes spelled —
         // and the strings the TS `ValidationCode` union in bindings.ts (and
         // its runtime mirror in validation-codes.ts) discriminates on.
-        let cases: [(ValidationCode, &str); 5] = [
+        let cases: [(ValidationCode, &str); 6] = [
             (ValidationCode::InvalidGlob, "InvalidGlob"),
             (ValidationCode::InvalidRegex, "InvalidRegex"),
             (ValidationCode::InvalidDateFilter, "InvalidDateFilter"),
             (ValidationCode::InvalidFilter, "InvalidFilter"),
             (ValidationCode::RequiresRefresh, "RequiresRefresh"),
+            (ValidationCode::PageNotInSpace, "PageNotInSpace"),
         ];
         for (code, expected) in cases {
             assert_eq!(

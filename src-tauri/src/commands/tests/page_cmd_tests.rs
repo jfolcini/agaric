@@ -4851,11 +4851,22 @@ async fn load_page_subtree_rejects_foreign_space() {
         .await
         .expect_err("foreign-space request must error");
     match err {
-        AppError::Validation { message: msg, .. } => assert!(
-            msg.contains("not in current space"),
-            "validation message should explain space mismatch; got: {msg}",
-        ),
-        other => panic!("expected Validation error; got {other:?}"),
+        AppError::Validation {
+            code: Some(code),
+            message: msg,
+        } => {
+            assert_eq!(
+                code,
+                crate::error::ValidationCode::PageNotInSpace,
+                "#2810 — foreign-space rejection must carry PageNotInSpace, not just kind \
+                 'validation', so the frontend heal can key on the structured code"
+            );
+            assert!(
+                msg.contains("not in current space"),
+                "validation message should explain space mismatch; got: {msg}",
+            );
+        }
+        other => panic!("expected coded Validation error; got {other:?}"),
     }
 }
 

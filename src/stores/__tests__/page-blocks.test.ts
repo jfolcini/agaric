@@ -538,9 +538,28 @@ describe('PageBlockStore', () => {
   describe('#2802 stale old-space reference heals on membership rejection', () => {
     const OTHER_SPACE = 'SPACE_OTHER'
 
-    /** The `AppError` wire shape `load_page_subtree` rejects with (backend + mock parity, #2463). */
+    /**
+     * The `AppError` wire shape `load_page_subtree` rejects with (backend +
+     * mock parity, #2463 / #2810) — coded `PageNotInSpace` so the heal below
+     * can key on the structured code rather than the generic `kind`.
+     */
     function membershipRejection(pageId: string): Error {
       const message = `block '${pageId}' not in current space '${TEST_SPACE_ID}'`
+      return Object.assign(new Error(message), {
+        kind: 'validation',
+        code: 'PageNotInSpace',
+        message,
+      })
+    }
+
+    /**
+     * #2810 — a validation rejection that is NOT the space-membership one
+     * (e.g. a different coded validation, or an uncoded one). Proves the
+     * heal discriminates on the specific `PageNotInSpace` code rather than
+     * the generic `kind: 'validation'` — message-regexing was retired in
+     * #2251 and `kind === 'validation'` alone would be equally fragile.
+     */
+    function otherValidationRejection(message: string): Error {
       return Object.assign(new Error(message), { kind: 'validation', message })
     }
 
@@ -650,6 +669,32 @@ describe('PageBlockStore', () => {
 
       await store.getState().load()
 
+      expect(toast.info).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(
+        translate('error.loadBlocksFailed'),
+        expect.objectContaining({ id: 'load-blocks-failed' }),
+      )
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['PAGE_1'])
+      expect(
+        useRecentPagesStore.getState().recentPagesBySpace[TEST_SPACE_ID]?.map((p) => p.pageId),
+      ).toEqual(['PAGE_1'])
+    })
+
+    it('#2810 — keeps the generic error toast (and touches no nav state) for a validation error that is NOT PageNotInSpace-coded', async () => {
+      useTabsStore.setState({
+        tabs: [tab('0', [{ pageId: 'PAGE_1', title: 'Moved page' }])],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
+      })
+      mockedInvoke.mockRejectedValueOnce(otherValidationRejection('some other validation failure'))
+
+      await store.getState().load()
+
+      // Discrimination proof: `kind: 'validation'` alone does NOT trigger
+      // the heal — only the `PageNotInSpace` code does.
       expect(toast.info).not.toHaveBeenCalled()
       expect(toast.error).toHaveBeenCalledWith(
         translate('error.loadBlocksFailed'),

@@ -34,6 +34,8 @@ export const ValidationCode = {
   InvalidFilter: 'InvalidFilter',
   /** Stale pagination cursor — retry once without a cursor. */
   RequiresRefresh: 'RequiresRefresh',
+  /** Requested page/root block does not belong to the requesting space. */
+  PageNotInSpace: 'PageNotInSpace',
 } as const satisfies { [K in GeneratedValidationCode]: K }
 
 /**

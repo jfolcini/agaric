@@ -254,6 +254,16 @@ describe('tauri-mock error-shape conformance (#2463)', () => {
     expect(validationCode(err)).toBe('RequiresRefresh')
   })
 
+  it('load_page_subtree rejects a foreign-space page with validation + PageNotInSpace (#2810)', () => {
+    const err = captureRejection('load_page_subtree', {
+      rootBlockId: PAGE,
+      scope: { kind: 'active', space_id: 'SOME_OTHER_SPACE' },
+    })
+    expect(isAppError(err)).toBe(true)
+    expect(isValidation(err)).toBe(true)
+    expect(validationCode(err)).toBe('PageNotInSpace')
+  })
+
   it('notify_task rejects a blank title with validation (#2251)', () => {
     const err = captureRejection('notify_task', { notification: { title: '   ' } })
     expect(isAppError(err)).toBe(true)

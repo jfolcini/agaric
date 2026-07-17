@@ -1475,9 +1475,15 @@ const HANDLERS_TYPED = {
     const rootProps = properties.get(rootBlockId)
     const rootSpace = rootProps?.get('space')
     if (rootSpace?.['value_ref'] !== spaceId) {
-      // #2463 — mirrors `load_page_subtree_inner`'s `Validation` rejection
-      // (`src-tauri/src/commands/pages/listing.rs`), not `not_found`.
-      throw validationRejection(`block '${rootBlockId}' not in current space '${spaceId}'`)
+      // #2463 / #2810 — mirrors `load_page_subtree_inner`'s `Validation`
+      // rejection (`src-tauri/src/commands/pages/listing.rs`), not
+      // `not_found`; carries the structured `PageNotInSpace` code the
+      // frontend's `page-blocks.ts` `load()` heal keys on.
+      throw appErrorRejection({
+        kind: 'validation',
+        code: 'PageNotInSpace',
+        message: `block '${rootBlockId}' not in current space '${spaceId}'`,
+      })
     }
     const items: Record<string, unknown>[] = []
     for (const b of blocks.values()) {
