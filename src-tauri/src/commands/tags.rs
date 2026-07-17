@@ -281,25 +281,37 @@ async fn apply_tag_to_block_resolved(
                     value_text: None,
                     value_num: None,
                     value_date: None,
-                    value_ref: Some(BlockId::from(space_ref.clone())),
+                    value_ref: Some(BlockId::from(space_ref)),
                     value_bool: None,
                 });
-                op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
+                let set_space_record =
+                    op_log::append_local_op_in_tx(tx, device_id, set_space, crate::db::now_ms())
+                        .await?;
+                // #2674/#2326: route the adopted-space `SetProperty(space)`
+                // through the SHARED projection (`apply_op_projected` →
+                // `apply_set_property_via_loro`) EXACTLY like the `AddTag`
+                // op below — NOT a hand-rolled inline `UPDATE blocks SET
+                // space_id`. The write contract (commands/mod.rs) allows only
+                // the undo family + derived-column fix-ups to bypass the shared
+                // projection; orphan-adoption is NOT one of those exceptions.
+                //
+                // The `space` arm of `apply_set_property_via_loro` runs the
+                // IDENTICAL `project_set_property_to_sql` write —
+                // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`
+                // (same column, same `OR page_id` subtree scope — a tag is
+                // top-level so the `page_id` arm is a no-op — plus the #708
+                // registered-space guard) — AND THEN hydrates the tag block's
+                // subtree into the target space's Loro engine (#2326). The prior
+                // inline UPDATE wrote SQL ONLY, so the adopted tag block never
+                // entered the space engine: for the rest of the session its ops
+                // took the `EngineMissingTarget` fallback and sync shipped engine
+                // state MISSING the tag block, letting peers hold `block_tags`
+                // refs to a tag they lack until a boot replay self-healed (the
+                // #1323 drift class). `advance_cursor = false` — the LOCAL path
+                // leaves the apply cursor put so boot replay stays idempotent
+                // (#1257), matching the `AddTag` call below.
+                crate::materializer::apply_op_projected(tx, &set_space_record, state, false)
                     .await?;
-                // #533 Phase 2: materialise the adopted space into the
-                // `blocks.space_id` column (the sole source of truth) —
-                // NOT a block_properties row (those are gone). A tag is
-                // top-level so the `OR page_id` arm is a no-op; the `id`
-                // arm sets the tag's own space. Mirrors the boot-time
-                // twin `migrate_orphan_tags_to_space`.
-                sqlx::query!(
-                    "UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?",
-                    space_ref,
-                    tag_id,
-                    tag_id,
-                )
-                .execute(&mut ***tx)
-                .await?;
                 // Reflect the adoption in the caller's tag-space handle so a
                 // later block in the SAME batch sees the tag as now-spaced
                 // (sticky adoption — see the doc comment).

@@ -816,6 +816,69 @@ async fn add_tag_adopts_orphan_tag_into_source_space() {
     );
 }
 
+/// #2674 regression: orphan-tag adoption must route its `SetProperty(space)`
+/// through the SHARED projection (`apply_op_projected` →
+/// `apply_set_property_via_loro`), so the adopted tag block is HYDRATED into the
+/// target space's Loro engine (#2326) — not merely stamped into
+/// `blocks.space_id` by a hand-rolled inline UPDATE.
+///
+/// Before the fix the adoption arm wrote SQL only, so the tag block never
+/// entered the space engine: subsequent ops on it took the
+/// `EngineMissingTarget` fallback and sync shipped engine state MISSING the tag
+/// block, letting peers hold `block_tags` refs to a tag they lack (the #1323
+/// drift class, self-healing only at boot replay). This asserts BOTH the SQL
+/// `space_id` (no regression) AND engine membership (the fix).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_tag_orphan_adoption_hydrates_tag_into_space_engine() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await;
+    insert_block(&pool, "F26_BLK", "content", "in test space", None, Some(1)).await;
+    assign_to_space(&pool, "F26_BLK", TEST_SPACE_ID).await;
+    // Orphan tag — deliberately no `space` property. Inserted SQL-only, so it is
+    // absent from every engine at the moment `add_tag` runs.
+    insert_block(&pool, "F26_TAG", "tag", "fresh-tag", None, None).await;
+
+    add_tag_inner(&pool, DEV, &mat, "F26_BLK".into(), "F26_TAG".into())
+        .await
+        .expect("add_tag should adopt the orphan tag, not reject it");
+
+    // (1) SQL: the tag was adopted into the source block's space — no regression
+    // vs the prior inline UPDATE (the projected `space` arm runs the IDENTICAL
+    // `UPDATE blocks SET space_id = ? WHERE id = ? OR page_id = ?`).
+    let space_ref: Option<String> =
+        sqlx::query_scalar::<_, Option<String>>("SELECT space_id FROM blocks WHERE id = ?")
+            .bind("F26_TAG")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        space_ref.as_deref(),
+        Some(TEST_SPACE_ID),
+        "the orphan tag must be adopted into the source block's space (SQL)"
+    );
+
+    // (2) ENGINE: the adopted tag block must now be present in the target
+    // space's Loro engine — THE #2674 fix. Under the old inline-UPDATE path this
+    // read returned `None` (the tag was never hydrated into the engine).
+    let space = crate::space::SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = mat
+        .loro_state()
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space");
+    let tag_in_engine = guard
+        .engine_mut()
+        .read_block("F26_TAG")
+        .expect("read_block")
+        .is_some();
+    assert!(
+        tag_in_engine,
+        "the adopted tag block must be hydrated into the target space's Loro engine (#2674)"
+    );
+}
+
 /// A tag that already belongs to a *different* space is still rejected —
 /// only orphan (space-less) tags are adopted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
