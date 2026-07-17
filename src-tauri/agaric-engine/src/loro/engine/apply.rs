@@ -860,52 +860,68 @@ impl LoroEngine {
     /// entries (matches the SQL purge cascade in
     /// `materializer/handlers.rs::apply_purge_block_tx`).
     ///
-    /// Note: this engine is per-block-id only — it does NOT walk
-    /// descendants.  The materializer's purge cascade enumerates the
-    /// descendant set via the recursive CTE and dispatches one
-    /// `PurgeBlock` per descendant; each descendant's own apply call
-    /// reaches this method. (LoroTree's own `delete` drops a purged
-    /// node's children from the visible tree, but we still dispatch one
-    /// op per descendant so each descendant's properties/tags are purged
-    /// and its SQL row removed.) Per-block scope is correct.
+    /// Note: the purge command emits a *single* `PurgeBlock` op for the
+    /// seed and SQL-cascades its descendants — it does NOT fan a purge op
+    /// per descendant to the engine. So this method must prune the whole
+    /// subtree locally: it collects the seed + descendant `block_id`s
+    /// before `tree.delete` orphans them, then removes each from
+    /// `self.index`/`pending_parent` AND deletes each id's
+    /// `block_properties`/`block_tags` entries. This keeps the per-space
+    /// LoroDoc in parity with the SQL cascade (no leaked descendant
+    /// property/tag entries in the doc/snapshot or exported to peers), and
+    /// matches the inline comment below.
     ///
     /// Idempotent: if the block is already absent (concurrent purge,
     /// or never created), all deletions are no-ops.
     pub fn apply_purge_block(&mut self, block_id: &str) -> Result<(), AppError> {
+        // Ids whose `block_properties`/`block_tags` entries must be purged.
+        // Always includes the seed (even if its tree node is already gone,
+        // for idempotent cleanup of lingering map entries) plus every live
+        // descendant collected before `tree.delete` orphans the subtree.
+        let mut purge_ids: Vec<String> = Vec::new();
         if let Some(node) = self.node_for(block_id) {
             // The purge command emits a single `PurgeBlock` op for the seed
             // and SQL-cascades its descendants — it does *not* fan a purge
             // op per descendant to the engine. `tree.delete(seed)` orphans
             // the seed's children under Loro's Deleted root (they become
             // transitively `is_node_deleted`), so they vanish from the live
-            // tree but linger in `self.index`. Collect the whole subtree's
+            // tree but linger in `self.index` (and their property/tag map
+            // entries linger in the doc). Collect the whole subtree's
             // block_ids *before* deleting and prune them, so the local read
             // surface (`read_block`, `count_alive_blocks`) matches the SQL
-            // cascade and the post-`import` `rebuild_index` state.
+            // cascade and the post-`import` `rebuild_index` state, and no
+            // descendant property/tag entry is leaked into the doc/snapshot.
             let subtree_ids = self.collect_subtree_block_ids(node);
             self.tree().delete(node).map_err(|e| {
                 AppError::validation(format!("loro: purge block {block_id}: tree.delete: {e}"))
             })?;
-            for bid in subtree_ids {
-                self.index.remove(&bid);
-                self.pending_parent.remove(&bid);
+            for bid in &subtree_ids {
+                self.index.remove(bid);
+                self.pending_parent.remove(bid);
             }
+            purge_ids = subtree_ids;
+        }
+        // `collect_subtree_block_ids` includes the seed, but guard against
+        // the already-absent-node case so the seed's map entries are still
+        // cleaned up (idempotency).
+        if !purge_ids.iter().any(|b| b.as_str() == block_id) {
+            purge_ids.push(block_id.to_string());
         }
         let props_root: LoroMap = self.doc.get_map(BLOCK_PROPERTIES_ROOT);
-        if props_root.get(block_id).is_some() {
-            props_root.delete(block_id).map_err(|e| {
-                AppError::validation(format!(
-                    "loro: purge block {block_id}: block_properties.delete: {e}"
-                ))
-            })?;
-        }
         let tags_root: LoroMap = self.doc.get_map(BLOCK_TAGS_ROOT);
-        if tags_root.get(block_id).is_some() {
-            tags_root.delete(block_id).map_err(|e| {
-                AppError::validation(format!(
-                    "loro: purge block {block_id}: block_tags.delete: {e}"
-                ))
-            })?;
+        for id in &purge_ids {
+            if props_root.get(id).is_some() {
+                props_root.delete(id).map_err(|e| {
+                    AppError::validation(format!(
+                        "loro: purge block {id}: block_properties.delete: {e}"
+                    ))
+                })?;
+            }
+            if tags_root.get(id).is_some() {
+                tags_root.delete(id).map_err(|e| {
+                    AppError::validation(format!("loro: purge block {id}: block_tags.delete: {e}"))
+                })?;
+            }
         }
         self.doc.commit();
         Ok(())

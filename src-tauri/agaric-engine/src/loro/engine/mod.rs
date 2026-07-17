@@ -2145,6 +2145,62 @@ mod tree_tests {
         assert_eq!(b.count_alive_blocks().unwrap(), 0);
     }
 
+    /// #2694 — purging the seed must also wipe every DESCENDANT's
+    /// `block_properties` and `block_tags` entries from the LoroDoc, not
+    /// just the seed's. The purge command emits a single seed `PurgeBlock`
+    /// and SQL-cascades descendants; the engine has no per-descendant
+    /// fan-out, so `apply_purge_block` must prune the whole subtree's map
+    /// entries locally or they leak into the doc/snapshot forever (and are
+    /// exported to peers), breaking engine/SQL parity. Fails pre-fix: the
+    /// child's property/tag entries linger after the parent is purged.
+    #[test]
+    fn purge_parent_wipes_descendant_property_and_tag_entries() {
+        // A tag id (raw ULID, as `apply_add_tag` expects).
+        const TAG: &str = "01HZ00000000000000000000T1";
+
+        let mut a = LoroEngine::with_peer_id("DEV-2694").unwrap();
+        a.apply_create_block("p", "page", "P", None, 0).unwrap();
+        a.apply_create_block("c", "content", "C", Some("p"), 0)
+            .unwrap();
+        // Property AND tag live on the CHILD, not the seed.
+        a.apply_set_property("c", "k", Some("v")).unwrap();
+        a.apply_add_tag("c", TAG).unwrap();
+
+        // Precondition: the child's raw map entries exist before the purge.
+        assert!(
+            a.doc.get_map(BLOCK_PROPERTIES_ROOT).get("c").is_some(),
+            "precondition: child must have a block_properties entry"
+        );
+        assert!(
+            a.doc.get_map(BLOCK_TAGS_ROOT).get("c").is_some(),
+            "precondition: child must have a block_tags entry"
+        );
+
+        // Purge the SEED only (mirrors the command's single-op cascade).
+        a.apply_purge_block("p").unwrap();
+
+        // The child's raw map entries must be GONE from the LoroDoc — not
+        // merely the seed's. Without the descendant loop these linger and
+        // bloat the doc/snapshot, and get exported to peers.
+        assert!(
+            a.doc.get_map(BLOCK_PROPERTIES_ROOT).get("c").is_none(),
+            "purged descendant must not leak a block_properties entry"
+        );
+        assert!(
+            a.doc.get_map(BLOCK_TAGS_ROOT).get("c").is_none(),
+            "purged descendant must not leak a block_tags entry"
+        );
+        // The public read surface agrees (both read the raw maps directly).
+        assert!(
+            a.read_property_typed("c", "k").unwrap().is_none(),
+            "purged descendant's property must be unreadable"
+        );
+        assert!(
+            a.read_tags("c").unwrap().is_empty(),
+            "purged descendant's tags must be unreadable"
+        );
+    }
+
     /// A cyclic move skips the reparent; the node keeps its current parent and
     /// sibling slot (review Finding 5). Post-#400, `position` is the dense rank,
     /// so A stays at root rank 1 (B lives under A, not at root).
