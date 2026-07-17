@@ -174,7 +174,8 @@ sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio
 # `thiserror` moved with `error.rs` into `agaric-core` (#2621); `agaric` no
 # longer uses it directly. `similar` likewise moved with `word_diff.rs`.
 ulid = "1.2.1"
-uuid = { version = "1.23.2", features = ["v4"] }
+# `uuid` moved with `device.rs` into `agaric-sync` (#2621, Sync-B); `agaric` no
+# longer uses it directly.
 blake3 = "1.8.5"
 chrono = { version = "0.4.44", features = ["serde"] }
 tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
