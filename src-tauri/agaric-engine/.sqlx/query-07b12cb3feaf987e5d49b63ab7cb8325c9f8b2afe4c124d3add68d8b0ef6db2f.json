@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO fts_blocks(fts_blocks, rank) VALUES('merge', ?)",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "07b12cb3feaf987e5d49b63ab7cb8325c9f8b2afe4c124d3add68d8b0ef6db2f"
+}

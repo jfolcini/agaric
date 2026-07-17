@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "CASE WHEN block_type = 'page' THEN id ELSE page_id END",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "8a65dbc512938b56efc469e6b5099fca6f5c8ac4536c7155aa0046e9501ab43c"
+}

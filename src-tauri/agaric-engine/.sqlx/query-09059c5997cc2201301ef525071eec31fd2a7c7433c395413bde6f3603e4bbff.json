@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT OR IGNORE INTO block_tag_refs (source_id, tag_id) SELECT ?1, je.value FROM json_each(?2) je WHERE EXISTS (SELECT 1 FROM blocks WHERE id = je.value AND block_type = 'tag' AND deleted_at IS NULL) AND (?3 IS NULL OR ?3 = ( SELECT space_id FROM blocks WHERE id = je.value AND deleted_at IS NULL LIMIT 1))",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "09059c5997cc2201301ef525071eec31fd2a7c7433c395413bde6f3603e4bbff"
+}
