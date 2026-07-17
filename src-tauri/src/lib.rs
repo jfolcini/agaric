@@ -43,7 +43,7 @@ pub mod dag;
 // former `commands ⇄ fts` module cycle.
 pub mod db;
 pub mod deeplink;
-pub mod device;
+pub use agaric_sync::device;
 pub mod domain;
 // `draft` — the block-draft autosave writer — moved into `agaric-engine`
 // (#2621, wave E2) as an independent document-domain leaf (deps on
@@ -57,7 +57,7 @@ pub use agaric_core::error;
 // search/query SCC. Re-exported so every `crate::filters::…` path resolves
 // unchanged.
 pub use agaric_store::filters;
-pub mod foreground;
+pub use agaric_sync::foreground;
 // `fts` moved into `agaric-store` (#2621, wave S4d) as part of the search/query
 // SCC. Re-exported so every `crate::fts::…` path resolves unchanged. The
 // partitioned / cursor tests that call app-only command inner functions
@@ -145,7 +145,7 @@ pub use agaric_store::space_filter_canonical;
 pub mod spaces;
 pub use agaric_core::sql_utils; // foundation crate (#2621)
 pub mod sync_cert;
-pub mod sync_constants;
+pub use agaric_sync::sync_constants;
 pub mod sync_daemon;
 // #2621 (agaric-sync split): the Tauri-backed sinks (`TauriEventSink`,
 // `ChannelEventSink`) live here; `sync_events` keeps only the pure event

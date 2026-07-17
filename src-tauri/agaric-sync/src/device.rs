@@ -30,8 +30,8 @@ impl std::fmt::Display for DeviceId {
 ///
 /// Extracted from a `map_err` closure so the formatting code is attributable
 /// in coverage reports (closures inside `map_err` are unreliable for coverage).
-fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> crate::error::AppError {
-    crate::error::AppError::InvalidOperation(format!(
+fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> agaric_core::error::AppError {
+    agaric_core::error::AppError::InvalidOperation(format!(
         "Corrupt device ID file '{}': {}",
         config_path.display(),
         e
@@ -44,7 +44,7 @@ fn corrupt_device_id_error(config_path: &Path, e: &uuid::Error) -> crate::error:
 /// This catch-all arm only triggers for OS errors other than `NotFound`
 /// (e.g. permission denied, device full, `IsADirectory`) which are impractical
 /// to trigger deterministically in unit tests without filesystem mocking.
-fn unexpected_create_error(e: std::io::Error) -> crate::error::AppError {
+fn unexpected_create_error(e: std::io::Error) -> agaric_core::error::AppError {
     e.into()
 }
 
@@ -106,7 +106,7 @@ fn sweep_orphaned_temp_files(config_path: &Path) {
 /// On subsequent launches, the existing UUID is read from disk, validated,
 /// and returned in canonical (lowercase-hyphenated) form. The UUID is never
 /// regenerated — it is the device's permanent identity in the op log.
-pub fn get_or_create_device_id(config_path: &Path) -> Result<String, crate::error::AppError> {
+pub fn get_or_create_device_id(config_path: &Path) -> Result<String, agaric_core::error::AppError> {
     // Ensure parent directory exists
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
@@ -274,7 +274,7 @@ mod tests {
 
         let err = get_or_create_device_id(&path).expect_err("corrupt content should fail");
         assert!(
-            matches!(err, crate::error::AppError::InvalidOperation(_)),
+            matches!(err, agaric_core::error::AppError::InvalidOperation(_)),
             "should return InvalidOperation variant, got: {err:?}"
         );
     }
@@ -313,7 +313,7 @@ mod tests {
 
         let err = get_or_create_device_id(&path).expect_err("unicode content should be rejected");
         assert!(
-            matches!(err, crate::error::AppError::InvalidOperation(_)),
+            matches!(err, agaric_core::error::AppError::InvalidOperation(_)),
             "should return InvalidOperation variant"
         );
     }
@@ -329,7 +329,7 @@ mod tests {
 
         let err = get_or_create_device_id(&path).expect_err("should fail when path is a directory");
         assert!(
-            matches!(err, crate::error::AppError::Io(_)),
+            matches!(err, agaric_core::error::AppError::Io(_)),
             "should return Io variant, got: {err:?}"
         );
     }
@@ -365,7 +365,7 @@ mod tests {
         }
 
         assert!(
-            matches!(result, Err(crate::error::AppError::Io(_))),
+            matches!(result, Err(agaric_core::error::AppError::Io(_))),
             "should return Io variant for permission denied, got: {result:?}"
         );
     }

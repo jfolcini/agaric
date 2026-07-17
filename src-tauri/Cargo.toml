@@ -9,7 +9,7 @@
 # #645 — `diagnostics` holds the two read-only DB inspection bins
 # (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
 # crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
-members = [".", "agaric-core", "agaric-store", "agaric-engine", "diagnostics"]
+members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -139,6 +139,7 @@ agaric-store = { path = "agaric-store", version = "0.1.0" }
 # version so cargo-deny's wildcard ban is satisfied. Wave E0 exposes the
 # query-free `bibliography` leaf, re-exported below via `crate::bibliography`.
 agaric-engine = { path = "agaric-engine", version = "0.1.0" }
+agaric-sync = { path = "agaric-sync", version = "0.1.0" }
 
 # `tracing` feature (#2110 M3): makes Tauri's async `#[command]` wrapper
 # instrument each command future with an `ipc::request::run` span created at
