@@ -182,6 +182,19 @@ cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
 - **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
 - **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at 100K blocks. Per-command budgets live in the bench itself. The scheduled `bench-compile` lane also **smoke-runs every bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf). To reproduce locally before pushing, build once (`cd src-tauri && cargo bench --no-run`) then run each prebuilt `target/release/deps/<bench>-<hash> --test`; the exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
 
+### Mutation testing (nightly)
+
+```bash
+npm run mutation                     # every module (~5-6 min locally)
+npm run mutation -- tokenize filters-model   # only named modules
+```
+
+`#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing, scoped to a handful of pure/deterministic frontend libs (`src/lib/search-query/{tokenize,classify,serialize,to-search-filter,glob-validate,validation-codes}.ts`, `src/lib/agenda-sort.ts`, `src/lib/filters/model.ts`, `src/lib/date-utils.ts`, `src/lib/tree-utils.ts`) — never components or Tauri IPC. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behavior from the original.
+
+Requires Node 24 (`nvm use`; `@stryker-mutator/core` 9.x won't run under the repo's default Node 22). Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — see `stryker.modules.mjs` for the mapping and `stryker.config.mjs` / `stryker.vitest.config.mjs` for why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in 271+ unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
+
+This is a **nightly-only, non-gating** lane (`mutants-frontend` job in `.github/workflows/scheduled-deep-checks.yml`) — surviving mutants are triage signal for occasional audits, not a merge gate. See issue #886 for the full evaluation and rationale.
+
 ## Pre-commit & CI
 
 ```bash

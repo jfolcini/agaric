@@ -26,6 +26,7 @@
     "test:coverage": "vitest run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "mutation": "node scripts/run-mutation.mjs",
     "android:dev": "cargo tauri android dev",
     "android:build": "cargo tauri android build",
     "tauri": "tauri",
@@ -109,6 +110,8 @@
     "@babel/core": "^8.0.1",
     "@playwright/test": "^1.61.1",
     "@rolldown/plugin-babel": "^0.2.3",
+    "@stryker-mutator/core": "9.6.1",
+    "@stryker-mutator/vitest-runner": "9.6.1",
     "@tauri-apps/cli": "2.11.4",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -149,6 +152,7 @@
   "overrides": {
     "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
+    "qs": ">=6.15.2",
     "smol-toml": ">=1.6.1",
     "uuid": "^14.0.0"
   },
