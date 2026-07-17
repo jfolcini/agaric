@@ -53,10 +53,22 @@ export const PAGE_BLOCK_STORE_FAMILY = [
  * `blocks.ts` (global focus) is the documented target of the one-way
  * dependency; `space.ts` (current space) and `undo.ts` (page-level
  * undo/redo) are the family's other two real cross-store dependencies.
+ * `tabs.ts` and `recent-pages.ts` were added for the #2802 stale-space
+ * heal: load()'s space-membership rejection pops the stale active-tab
+ * entry and drops the page from the old space's recents — a forward
+ * edge (page-block store → navigation stores); neither module imports
+ * the family back (the reverse ban plus the import-cycle hook keep it
+ * one-way).
  * Intra-family imports (e.g. `page-blocks.ts` importing
  * `page-blocks-reducers.ts`) are always allowed and don't need listing here.
  */
-export const PAGE_BLOCK_STORE_ALLOWED_IMPORTS = new Set(['blocks.ts', 'space.ts', 'undo.ts'])
+export const PAGE_BLOCK_STORE_ALLOWED_IMPORTS = new Set([
+  'blocks.ts',
+  'space.ts',
+  'undo.ts',
+  'tabs.ts',
+  'recent-pages.ts',
+])
 
 /** Store module that must never import the page-block-store family. */
 export const GLOBAL_FOCUS_STORE = 'blocks.ts'

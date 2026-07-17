@@ -329,4 +329,56 @@ test.describe('Spaces — move a page between spaces', () => {
       page.locator('[data-page-item]').filter({ hasText: 'Getting Started' }),
     ).toBeVisible()
   })
+
+  test('following a stale old-space reference to a moved page heals with a soft notice, not the raw error toast (#2802)', async ({
+    page,
+  }) => {
+    await createSpaceViaDialog(page, 'Work')
+    await closeManageDialog(page)
+
+    // Land on Quick Notes first so the tab stack has a sane page underneath,
+    // then open Getting Started on top of it: stack = [Quick Notes,
+    // Getting Started], and Getting Started enters the recents MRU.
+    await openPage(page, 'Quick Notes')
+    await openPage(page, 'Getting Started')
+
+    // Move Getting Started to Work. #2803's fix navigates back (goBack) —
+    // landing on Quick Notes with NO reload of the moved page (the load
+    // only fires when a stale reference is actually FOLLOWED; the pop
+    // itself is silent).
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
+    await expect(page.getByText('Page moved to Work', { exact: true })).toBeVisible()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+
+    // The old space's "Recently visited" strip STILL offers the moved page —
+    // exactly the stale old-space reference #2802 is about. Follow it: the
+    // navigation pushes the page and its load is rejected by the backend's
+    // space-membership check.
+    await page
+      .getByTestId('quick-access-bar')
+      .getByRole('button', { name: 'Getting Started', exact: true })
+      .click()
+
+    // #2802: the stale reference resolves gracefully — a soft informational
+    // notice, NO raw "Failed to load blocks" toast — and the heal pops the
+    // stale entry, landing back on Quick Notes (the sane previous view).
+    await expect(
+      page.getByText('This page was moved to another space', { exact: true }),
+    ).toBeVisible()
+    await expect(page.getByText('Failed to load blocks', { exact: true })).not.toBeVisible()
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+
+    // The recents strip no longer offers the moved page (the stale MRU entry
+    // was purged by the heal). Scoped to the QuickAccessBar so an unrelated
+    // 'Getting Started' control elsewhere can't confuse the assertion; the
+    // bar unmounts entirely when no visible recents remain, which also
+    // counts as 0.
+    await expect(
+      page
+        .getByTestId('quick-access-bar')
+        .getByRole('button', { name: 'Getting Started', exact: true }),
+    ).toHaveCount(0)
+  })
 })

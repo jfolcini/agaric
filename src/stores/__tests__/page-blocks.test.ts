@@ -1,11 +1,16 @@
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { invoke } from '@tauri-apps/api/core'
 import { act, render } from '@testing-library/react'
 import { createElement, type ReactElement, type ReactNode, useContext, useRef } from 'react'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { t as translate } from '@/lib/i18n'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import { properties, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
+import { useNavigationStore } from '@/stores/navigation'
 import {
   createPageBlockStore,
   type FlatBlock,
@@ -17,7 +22,9 @@ import {
   storeOwnsBlock,
   usePageBlockStore,
 } from '@/stores/page-blocks'
+import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
+import { selectPageStack, selectTabsForSpace, type Tab, useTabsStore } from '@/stores/tabs'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -522,6 +529,237 @@ describe('PageBlockStore', () => {
       // N must NOT be pruned (load-START guard); A survives → no change.
       expect(mockSetSelected).not.toHaveBeenCalled()
       expect(mockGlobalBlockState.selectedBlockIds).toEqual(['A', 'N'])
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #2802 — stale old-space reference (space-membership rejection on load)
+  // ---------------------------------------------------------------------------
+  describe('#2802 stale old-space reference heals on membership rejection', () => {
+    const OTHER_SPACE = 'SPACE_OTHER'
+
+    /** The `AppError` wire shape `load_page_subtree` rejects with (backend + mock parity, #2463). */
+    function membershipRejection(pageId: string): Error {
+      const message = `block '${pageId}' not in current space '${TEST_SPACE_ID}'`
+      return Object.assign(new Error(message), { kind: 'validation', message })
+    }
+
+    function tab(id: string, pageStack: Array<{ pageId: string; title: string }>): Tab {
+      return { id, pageStack, label: pageStack.at(-1)?.title ?? '' }
+    }
+
+    beforeEach(() => {
+      // The tabs / recent-pages / navigation stores are module singletons —
+      // reset them so state from earlier tests (or the previous test in this
+      // block) can't leak into the heal-path assertions.
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [tab('0', [])],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      useRecentPagesStore.setState({ recentPages: [], recentPagesBySpace: {} })
+    })
+
+    afterEach(() => {
+      // The real-dispatch test installs a persistent mockImplementation;
+      // vitest has no global mockReset, so drop it explicitly to keep the
+      // rest of this file's `mockResolvedValueOnce`-style tests isolated.
+      mockedInvoke.mockReset()
+    })
+
+    it('shows the soft moved-notice (not the raw error toast) and pops the stale top-of-stack entry', async () => {
+      useTabsStore.setState({
+        tabs: [
+          tab('0', [
+            { pageId: 'OTHER', title: 'Other page' },
+            { pageId: 'PAGE_1', title: 'Moved page' },
+          ]),
+        ],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: {
+          [TEST_SPACE_ID]: [
+            { pageId: 'PAGE_1', title: 'Moved page' },
+            { pageId: 'KEEP', title: 'Kept page' },
+          ],
+          // A DIFFERENT space's slice referencing the same page — must
+          // survive untouched (the page still legitimately lives there).
+          [OTHER_SPACE]: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        },
+      })
+      mockedInvoke.mockRejectedValueOnce(membershipRejection('PAGE_1'))
+
+      await store.getState().load()
+
+      // Soft notice instead of the generic failure toast.
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageNotInCurrentSpace'),
+        expect.objectContaining({ id: 'page-not-in-space' }),
+      )
+      expect(store.getState().loading).toBe(false)
+
+      // Stale entry popped from the active tab (back to the previous page),
+      // mirroring the delete flow's navigate-away.
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['OTHER'])
+
+      // Old-space recents cleaned; other entries and other spaces untouched.
+      const bySpace = useRecentPagesStore.getState().recentPagesBySpace
+      expect(bySpace[TEST_SPACE_ID]?.map((p) => p.pageId)).toEqual(['KEEP'])
+      expect(bySpace[OTHER_SPACE]?.map((p) => p.pageId)).toEqual(['PAGE_1'])
+    })
+
+    it('leaves the tab stack alone when the rejected page is NOT the active tab top (background reload)', async () => {
+      useTabsStore.setState({
+        tabs: [tab('0', [{ pageId: 'OTHER', title: 'Other page' }])],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
+      })
+      mockedInvoke.mockRejectedValueOnce(membershipRejection('PAGE_1'))
+
+      await store.getState().load()
+
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageNotInCurrentSpace'),
+        expect.objectContaining({ id: 'page-not-in-space' }),
+      )
+      // The active tab shows a DIFFERENT page — goBack must not fire.
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['OTHER'])
+      // The stale recents entry is still cleaned.
+      expect(useRecentPagesStore.getState().recentPagesBySpace[TEST_SPACE_ID]).toEqual([])
+    })
+
+    it('keeps the generic error toast (and touches no nav state) for non-validation failures', async () => {
+      useTabsStore.setState({
+        tabs: [tab('0', [{ pageId: 'PAGE_1', title: 'Moved page' }])],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: { [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }] },
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('network'))
+
+      await store.getState().load()
+
+      expect(toast.info).not.toHaveBeenCalled()
+      expect(toast.error).toHaveBeenCalledWith(
+        translate('error.loadBlocksFailed'),
+        expect.objectContaining({ id: 'load-blocks-failed' }),
+      )
+      expect(selectPageStack(useTabsStore.getState()).map((p) => p.pageId)).toEqual(['PAGE_1'])
+      expect(
+        useRecentPagesStore.getState().recentPagesBySpace[TEST_SPACE_ID]?.map((p) => p.pageId),
+      ).toEqual(['PAGE_1'])
+    })
+
+    it('skips the heal when the active space changed while the rejection was in flight', async () => {
+      // Race: the stale-ref load is scoped to TEST_SPACE_ID, but the user
+      // switches to the page's NEW space before the rejection resolves.
+      // Healing then would operate on the wrong space — `removeRecentPage`
+      // keys on the CURRENT active space and `goBack` pops the CURRENT
+      // active slice — purging a recents entry / tab entry where the page
+      // legitimately lives. The guard must skip the heal entirely (lazy
+      // heal re-fires on the next follow of the still-stale reference).
+      useTabsStore.setState({
+        tabs: [tab('0', [{ pageId: 'PAGE_1', title: 'Moved page' }])],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: {
+          // The page's new home — exactly what a wrong-space heal would purge.
+          [OTHER_SPACE]: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        },
+      })
+      mockedInvoke.mockRejectedValueOnce(membershipRejection('PAGE_1'))
+
+      // Kick off the load (captures spaceId = TEST_SPACE_ID synchronously),
+      // switch spaces BEFORE the rejection lands, then let it settle.
+      const pending = store.getState().load()
+      useSpaceStore.setState({ currentSpaceId: OTHER_SPACE })
+      await pending
+
+      // No heal, no toast of either kind, nothing popped or purged. The
+      // space-switch subscriber flushed the flat mirror into the old space's
+      // slice and pulled OTHER_SPACE's slice into the flat fields — exactly
+      // the state a guard-less heal would corrupt (goBack / removeRecentPage
+      // act on the ACTIVE = OTHER_SPACE partition).
+      expect(toast.info).not.toHaveBeenCalled()
+      expect(toast.error).not.toHaveBeenCalled()
+      // Old space's slice keeps the stale ref (heals lazily on next follow).
+      expect(
+        selectTabsForSpace(useTabsStore.getState(), TEST_SPACE_ID)[0]?.pageStack.map(
+          (p) => p.pageId,
+        ),
+      ).toEqual(['PAGE_1'])
+      // The new (active) space's recents — where the page legitimately
+      // lives — survive untouched.
+      expect(useRecentPagesStore.getState().recentPages.map((p) => p.pageId)).toEqual(['PAGE_1'])
+      expect(store.getState().loading).toBe(false)
+    })
+
+    it('heals end-to-end against the REAL tauri-mock dispatch rejection shape (#2463 parity)', async () => {
+      // Route `invoke` through the real mock handlers so the rejection is
+      // the genuine `load_page_subtree` membership `validation` AppError —
+      // pins the `isValidation` branch to the production wire shape
+      // (pattern from the #2792 PagePropertyTable real-dispatch tests).
+      seedBlocks()
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_PERSONAL' })
+      mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+      const s = createPageBlockStore(SEED_IDS.PAGE_QUICK_NOTES)
+
+      // Sanity: while the page still belongs to Personal, load succeeds.
+      await s.getState().load()
+      expect(s.getState().blocks.length).toBeGreaterThan(0)
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).not.toHaveBeenCalled()
+
+      // Simulate the move: re-stamp the page's `space` ref to another space
+      // (what `set_property` writes under PageHeader.handleMoveToSpace).
+      properties.get(SEED_IDS.PAGE_QUICK_NOTES)?.set('space', {
+        block_id: SEED_IDS.PAGE_QUICK_NOTES,
+        key: 'space',
+        value_text: null,
+        value_num: null,
+        value_date: null,
+        value_ref: 'SPACE_WORK',
+        value_bool: null,
+      })
+
+      // Stale old-space state: the moved page tops the ONLY tab and sits in
+      // the old space's recents.
+      useNavigationStore.getState().setView('page-editor')
+      useTabsStore.setState({
+        tabs: [tab('0', [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }])],
+        activeTabIndex: 0,
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }],
+        recentPagesBySpace: {
+          SPACE_PERSONAL: [{ pageId: SEED_IDS.PAGE_QUICK_NOTES, title: 'Quick Notes' }],
+        },
+      })
+
+      await s.getState().load()
+
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageNotInCurrentSpace'),
+        expect.objectContaining({ id: 'page-not-in-space' }),
+      )
+      // Last tab emptied → tab reset + pages view (same landing as delete).
+      expect(selectPageStack(useTabsStore.getState())).toEqual([])
+      expect(useNavigationStore.getState().currentView).toBe('pages')
+      expect(useRecentPagesStore.getState().recentPagesBySpace['SPACE_PERSONAL']).toEqual([])
     })
   })
 

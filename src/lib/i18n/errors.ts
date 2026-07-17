@@ -35,6 +35,11 @@ export const errors: Record<string, string> = {
   'errorBoundary.section.syncSetup': 'Sync setup',
   'errorBoundary.section.notifications': 'Notifications',
   'error.loadBlocksFailed': 'Failed to load blocks',
+  // #2802 — soft notice for a stale old-space reference (tab stack /
+  // recent-pages entry) to a page that was moved to another space. The
+  // backend rejects the space-scoped load with `validation`; this copy
+  // replaces the raw `error.loadBlocksFailed` toast for that case.
+  'error.pageNotInCurrentSpace': 'This page was moved to another space',
   'error.deleteBlockFailed': 'Failed to delete block',
   'error.reorderBlockFailed': 'Failed to reorder block',
   'error.moveBlockFailed': 'Failed to move block',
