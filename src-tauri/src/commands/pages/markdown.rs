@@ -50,6 +50,34 @@ use super::super::*;
 /// threshold.
 pub(crate) const IMPORT_CHUNK_BLOCKS: usize = 500;
 
+/// #2724 — aggregate attachment-budget check for one import.
+///
+/// Factored out of [`import_markdown_with_progress`] so the caps can be
+/// unit-tested against fabricated `(file_count, total_bytes)` pairs WITHOUT
+/// allocating gigabytes of `VaultFile` bytes. Returns a clear
+/// [`AppError::validation`] when the file COUNT or the aggregate BYTE total
+/// exceeds its cap, and `Ok(())` when within budget. `total_bytes` is
+/// pre-summed by the caller (as `u64`, to avoid any `usize as i64` wrap on a
+/// pathological length). The count check runs first so a huge-count / tiny-byte
+/// payload is rejected on the cheaper predicate.
+fn check_attachment_budget(file_count: usize, total_bytes: u64) -> Result<(), AppError> {
+    if file_count > crate::commands::MAX_ATTACHMENT_FILE_COUNT {
+        return Err(AppError::validation(format!(
+            "import references {file_count} attachment files, exceeding the maximum of {} \
+             per import",
+            crate::commands::MAX_ATTACHMENT_FILE_COUNT
+        )));
+    }
+    let cap = crate::commands::MAX_TOTAL_ATTACHMENT_BYTES as u64;
+    if total_bytes > cap {
+        return Err(AppError::validation(format!(
+            "import attachments total {total_bytes} bytes across {file_count} files, exceeding \
+             the maximum aggregate of {cap} bytes"
+        )));
+    }
+    Ok(())
+}
+
 /// Matches a HUMAN-readable wiki-link token `[[Page Name]]` on import (#1446
 /// Part B). The inner capture is the page NAME (any run of characters that is
 /// neither `]` nor a newline, non-greedy so `[[A]] [[B]]` matches twice). A
@@ -776,6 +804,16 @@ pub async fn export_page_markdown_inner(
 
     let properties: Vec<FrontmatterRow> = property_rows
         .into_iter()
+        // #2722 — never emit a `block_properties` row named `aliases`/`tags` as
+        // a property line: those keys are emitted as frontmatter from their OWN
+        // sources (`page_aliases` rows / `block_tags` associations, read in step
+        // 4b below). A page carrying a legacy stale `aliases`/`tags` TEXT
+        // property (left by a pre-#2722 re-import) would otherwise DOUBLE-emit
+        // the key (a duplicate YAML key). Filtered in Rust — not the SQL `NOT
+        // IN` — so the query string (and its offline `.sqlx` entry) is
+        // unchanged. New imports intercept both keys and never create such rows,
+        // so this is the belt-and-braces guard for pre-existing data.
+        .filter(|r| r.key != "aliases" && r.key != "tags")
         .map(|r| FrontmatterRow {
             key: r.key,
             value_text: r.value_text,
@@ -1009,6 +1047,41 @@ pub async fn export_page_markdown_inner(
     Ok(output)
 }
 
+/// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
+/// keyed by its index in `vault_files`. The result drives the move-vs-clone
+/// decision in the ingest loop: an index whose count is exactly `1` is read by a
+/// single possible ingest attempt, so its bytes may be MOVED out
+/// (`std::mem::take`) instead of cloned; any index with count `> 1` is always
+/// cloned so a later attempt never reads a moved-away (emptied) buffer.
+///
+/// The count is the number of ref OCCURRENCES that resolve to the file, NOT the
+/// number of *distinct* refs — a ref repeated within one block counts once PER
+/// occurrence. This matters because the per-block `block_ingested` cache only
+/// suppresses a re-ingest AFTER a *successful* first ingest; if the first
+/// attempt fails transiently (e.g. `PoolTimedOut`) the second occurrence
+/// re-enters the ingest path. Counting occurrences (not distinct refs) keeps
+/// such a twice-in-one-block file at count `2`, so it is cloned and the retry
+/// still sees full bytes — never a 0-byte buffer left behind by a `mem::take`.
+///
+/// `match_vault_file` keys on `path`/basename (never bytes), so this pre-pass is
+/// stable even as the ingest loop later empties `bytes` via `mem::take`.
+pub(crate) fn ingest_read_counts(
+    pending_attachments: &[(String, Vec<import::AttachmentRef>)],
+    vault_files: &[VaultFile],
+) -> HashMap<usize, usize> {
+    let mut counts: HashMap<usize, usize> = HashMap::new();
+    for (_block_id, refs) in pending_attachments {
+        for att in refs {
+            if let Some((idx, _ambiguous)) =
+                import::match_vault_file(&att.original_ref, vault_files)
+            {
+                *counts.entry(idx).or_insert(0) += 1;
+            }
+        }
+    }
+    counts
+}
+
 /// Import a Logseq-style markdown file as a page with block hierarchy.
 ///
 /// Creates a page from the filename (or first heading), then creates
@@ -1160,6 +1233,24 @@ pub async fn import_markdown_with_progress(
     // a page whose `space` ref disagrees with the case-sensitive
     // `block_properties.value_ref` lookup downstream.
     let space_id = space_id.to_ascii_uppercase();
+
+    // #2724 — AGGREGATE attachment budget, enforced ONCE at the command
+    // boundary before any parsing or ingest. `vault_files` arrives over IPC
+    // with every referenced file's full bytes resident in memory and is
+    // retained for the whole chunked import; the per-file `MAX_ATTACHMENT_SIZE`
+    // guard (applied later, per ingest) does NOTHING to bound the aggregate.
+    // Reject an over-budget payload up front — a clear error, no partial write
+    // and no ingest attempted — rather than let a multi-hundred-MB `Vec` push
+    // the process toward OOM. `None`/empty ⇒ this whole check is a no-op, so
+    // the pre-#2724 no-attachment path is byte-for-byte unchanged. (The
+    // frontend `DataTab` should pre-check the same budget for a nicer UX, but
+    // THIS backend cap is the load-bearing guard — it protects the MCP / test /
+    // scripted paths that never touch the frontend.)
+    if let Some(files) = vault_files.as_ref() {
+        // Sum as u64 to avoid any `usize as i64` wrap on a pathological length.
+        let total_bytes: u64 = files.iter().map(|f| f.bytes.len() as u64).sum();
+        check_attachment_budget(files.len(), total_bytes)?;
+    }
 
     let parse_output = import::parse_logseq_markdown(&content);
 
@@ -1344,6 +1435,65 @@ pub async fn import_markdown_with_progress(
     };
 
     for (key, value) in &parse_output.frontmatter {
+        // #2722 — `aliases` and `tags` are SEMANTIC frontmatter keys the
+        // exporter emits from the `page_aliases` table and `block_tags`
+        // associations (NOT from `block_properties`). The pre-#2722 importer
+        // had no special-casing, so it stamped them as inert TEXT properties
+        // named `aliases`/`tags` — silently killing alias resolution/search
+        // and tag filtering on re-import. Intercept both here so neither is
+        // ever persisted as a misleading text property:
+        //   * `aliases` → real `page_aliases` rows, written below in THIS tx;
+        //   * `tags`    → real `block_tags` associations, written by the
+        //     dedicated frontmatter-tag pre-pass further down (it needs the
+        //     tag resolve-or-create machinery, which is set up after the
+        //     wiki-link pre-pass).
+        if key.as_str() == "aliases" {
+            // The value arrives as a comma-joined scalar (`parse_flow_sequence`
+            // collapses the exported `[a, b]` flow sequence). Split it back
+            // into individual aliases and write real `page_aliases` rows in
+            // this tx — mirroring `set_page_aliases_inner`'s `INSERT OR IGNORE`
+            // (byte-identical SQL, so its offline `.sqlx` entry is reused) but
+            // sharing the import's atomic write. `page_aliases` is its own table
+            // outside the op log (#110), so a direct insert here is the
+            // established pattern. `INSERT OR IGNORE` keeps re-import idempotent
+            // (alias is globally UNIQUE NOCASE) and never duplicates. `page_id`
+            // is the canonical uppercase ULID of the freshly-created page.
+            //
+            // `inserted_here` (ASCII-folded to mirror the NOCASE index) tracks
+            // aliases this loop just wrote, so a duplicate WITHIN the frontmatter
+            // (`[Solo, Solo]`) is a benign idempotent no-op rather than a
+            // spurious collision warning. Any OTHER 0-row insert means the alias
+            // is already held by a DIFFERENT page (the page was created empty in
+            // this very tx, so it owned no aliases before this loop) — a
+            // never-silent degradation, surfaced as a warning.
+            let mut inserted_here: std::collections::HashSet<String> =
+                std::collections::HashSet::new();
+            for alias in value.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+                let res = sqlx::query!(
+                    "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
+                    page_id,
+                    alias,
+                )
+                .execute(&mut **tx)
+                .await?;
+                if res.rows_affected() > 0 {
+                    inserted_here.insert(alias.to_ascii_lowercase());
+                } else if !inserted_here.contains(&alias.to_ascii_lowercase()) {
+                    warnings.push(format!(
+                        "alias '{alias}' is already used by another page; not applied to \
+                         the imported page"
+                    ));
+                }
+            }
+            continue;
+        }
+        if key.as_str() == "tags" {
+            // Handled by the frontmatter-tag pre-pass below (resolve-or-create
+            // the tag block + write a real `block_tags` association). Skip it
+            // here so it is never stamped as a misleading text property.
+            continue;
+        }
+
         // Registry-aware coercion: consult the declared `value_type` (from the
         // batched map above) so a `number` / `boolean` / `date` value
         // round-trips into the right typed column instead of always landing as
@@ -1918,6 +2068,133 @@ pub async fn import_markdown_with_progress(
         }
     }
 
+    // #2722 — apply page-level frontmatter `tags:` as REAL `block_tags`
+    // associations on the imported page, instead of the inert text property the
+    // pre-#2722 importer stamped (which silently disabled tag filtering on
+    // re-import). The historical blocker cited in #1924/#1950 was #1917 (typed
+    // arrays could not be parsed); that is RESOLVED — the exported `[a, b]` flow
+    // sequence now arrives as a comma-joined scalar via `parse_flow_sequence`
+    // (see the frontmatter parser), so the value is available here. Each tag
+    // NAME is resolved-or-created to a tag block, REUSING the inline-tag
+    // pre-pass state (`resolved_tag_norm` for this-pass creations,
+    // `existing_tag_by_norm` for in-space matches) so a name appearing BOTH
+    // inline and in frontmatter converges to ONE tag block. The page→tag
+    // association is then written via `apply_tag_to_block_in_tx` — the SAME
+    // op-log `AddTag` + engine projection `add_tag` uses — so `block_tags` (and
+    // inherited-tag fan-out) end up identical to a hand-applied tag, and
+    // re-import is idempotent (`Ok(None)` when the association already exists).
+    //
+    // Runs in the FIRST chunk's tx (before the block loop opens any new chunk),
+    // sharing the page's atomic write. The page's `space_id` was materialised
+    // in-tx by the `space` property set above (`set_property_in_tx` routes the
+    // reserved `space` key through the projection's `UPDATE blocks SET
+    // space_id`), and every tag we reuse/create is space-scoped to the SAME
+    // space, so the helper's cross-space guard passes without adoption.
+    if let Some((_k, tags_value)) = parse_output
+        .frontmatter
+        .iter()
+        .find(|(k, _)| k.as_str() == "tags")
+    {
+        for tag_name in tags_value
+            .split(',')
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+        {
+            let norm = crate::tag_norm::normalize_tag_name(tag_name);
+
+            // Resolve: this-pass creation → existing in-space snapshot → create.
+            let tag_id: String = if let Some(id) = resolved_tag_norm.get(&norm) {
+                id.clone()
+            } else if let Some(id) = existing_tag_by_norm.get(&norm) {
+                let id = id.clone();
+                resolved_tag_norm.insert(norm.clone(), id.clone());
+                id
+            } else {
+                // Create the missing tag block + stamp its space (mirrors the
+                // inline-tag pre-pass and the importing page). On failure,
+                // degrade: warn and skip this tag's association.
+                match create_block_in_tx(
+                    &mut tx,
+                    materializer.loro_state(),
+                    device_id,
+                    "tag".into(),
+                    tag_name.to_string(),
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok((new_tag, new_tag_op)) => {
+                        tx.enqueue_background(new_tag_op);
+                        let new_tag_id = new_tag.id.clone().into_string();
+                        let (_b, tag_space_op) = set_property_in_tx(
+                            &mut tx,
+                            materializer.loro_state(),
+                            device_id,
+                            new_tag_id.clone(),
+                            "space",
+                            None,
+                            None,
+                            None,
+                            Some(space_id.clone()),
+                            None,
+                        )
+                        .await?;
+                        tx.enqueue_background(tag_space_op);
+                        resolved_tag_norm.insert(norm.clone(), new_tag_id.clone());
+                        new_tag_id
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            name = %tag_name,
+                            error = %e,
+                            "import: frontmatter tag create failed; association skipped (#2722)"
+                        );
+                        warnings.push(format!(
+                            "page tag '{tag_name}' could not be created; not applied"
+                        ));
+                        continue;
+                    }
+                }
+            };
+
+            // Write the real page→tag association via the shared tag-apply
+            // helper (op-log `AddTag` + engine projection). `Ok(Some(op))` is
+            // the op to dispatch post-commit; `Ok(None)` means the association
+            // already exists (idempotent re-import). A cross-space rejection is
+            // impossible here (page and tag share the import's space), but
+            // degrade to a warning rather than aborting the durable import if it
+            // ever occurs.
+            let payload = crate::op::OpPayload::AddTag(crate::op::AddTagPayload {
+                block_id: BlockId::from_trusted(&page_id),
+                tag_id: BlockId::from_trusted(&tag_id),
+            });
+            match crate::commands::tags::apply_tag_to_block_in_tx(
+                &mut tx,
+                materializer.loro_state(),
+                device_id,
+                &page_id,
+                &tag_id,
+                payload,
+            )
+            .await
+            {
+                Ok(Some(op_record)) => tx.enqueue_background(op_record),
+                Ok(None) => { /* association already exists — idempotent */ }
+                Err(e) => {
+                    tracing::warn!(
+                        name = %tag_name,
+                        error = %e,
+                        "import: frontmatter tag association failed; skipped (#2722)"
+                    );
+                    warnings.push(format!(
+                        "page tag '{tag_name}' could not be associated ({e})"
+                    ));
+                }
+            }
+        }
+    }
+
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
@@ -1934,7 +2211,9 @@ pub async fn import_markdown_with_progress(
     // the held `import_markdown` IMMEDIATE tx — so NO attachment ingest runs
     // while any import chunk tx is open. `vault_files` empty/None ⇒ this stays
     // empty and the whole phase is a no-op.
-    let vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
+    // #2724 — `mut` so the post-commit ingest can MOVE each file's bytes out
+    // (`std::mem::take`) on its last ingest instead of cloning them.
+    let mut vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
     let mut pending_attachments: Vec<(String, Vec<import::AttachmentRef>)> = Vec::new();
     // #1932 (OBS-LOG-05) — count committed chunks so a partial import (a
     // mid-chunk abort) leaves a log trail of how many chunks/blocks were
@@ -2423,6 +2702,21 @@ pub async fn import_markdown_with_progress(
     // import into a hard failure and suppress the `Complete` event; every DB
     // op below therefore warn-and-continues instead.
     if !pending_attachments.is_empty() {
+        // #2724 — count how many INGEST ATTEMPTS will read each vault file so a
+        // SINGLE-ATTEMPT file (the overwhelming common case) can have its bytes
+        // MOVED out (`std::mem::take`) at ingest instead of cloned. See
+        // [`ingest_read_counts`]: `ingest_counts[idx] == 1` means exactly one ref
+        // occurrence resolves to that file, so no other ingest attempt (including
+        // a retry of a transiently-failed first attempt within the same block)
+        // can read a moved-away buffer. Any file with count > 1 is always cloned.
+        let mut ingest_counts = ingest_read_counts(&pending_attachments, &vault_files);
+        // Defence-in-depth for the move/clone decision: an index whose bytes were
+        // taken (moved) is recorded here so the clone arm can never re-ingest an
+        // emptied buffer as a 0-byte attachment, even if the count above were ever
+        // wrong. Under a correct `ingest_counts` this set is never consulted on a
+        // reachable path, but it makes "a moved buffer is never re-ingested" total.
+        let mut moved_out: std::collections::HashSet<usize> = std::collections::HashSet::new();
+
         for (block_id, refs) in &pending_attachments {
             // Per-BLOCK cache: original_ref → resolved `attachment:<id>` for
             // refs already ingested for THIS block, so a ref repeated within the
@@ -2456,28 +2750,65 @@ pub async fn import_markdown_with_progress(
                         att.original_ref
                     ));
                 }
-                let vf = &vault_files[idx];
-                let filename = vf
-                    .path
-                    .rsplit(['/', '\\'])
-                    .next()
-                    .unwrap_or(&vf.path)
-                    .to_string();
-                let mime_type = import::guess_attachment_mime(&vf.path);
+                // Extract the path-derived fields + byte length in a SHORT
+                // immutable borrow of `vault_files`, so the mutable
+                // `std::mem::take` below is not blocked by a live `&vf`
+                // spanning the whole ingest (#2724).
+                let (filename, mime_type, size_bytes) = {
+                    let vf = &vault_files[idx];
+                    let filename = vf
+                        .path
+                        .rsplit(['/', '\\'])
+                        .next()
+                        .unwrap_or(&vf.path)
+                        .to_string();
+                    let mime_type = import::guess_attachment_mime(&vf.path);
+                    // `i64::try_from` avoids the `usize as i64` wrap; a length
+                    // that doesn't fit i64 is by definition over the limit.
+                    let size_bytes = i64::try_from(vf.bytes.len()).unwrap_or(i64::MAX);
+                    (filename, mime_type, size_bytes)
+                };
 
                 // Size guard (mirrors the attachment ingest's 50 MB limit). On
-                // an oversized file: warn + skip (leave the original ref).
-                // `i64::try_from` avoids the `usize as i64` wrap; a length that
-                // doesn't fit i64 is by definition over the limit.
-                let size_bytes = i64::try_from(vf.bytes.len()).unwrap_or(i64::MAX);
+                // an oversized file: warn + skip (leave the original ref). This
+                // `continue` fires BEFORE the move/clone below, so a size-skipped
+                // file's bytes are never taken.
                 if size_bytes > crate::commands::MAX_ATTACHMENT_SIZE {
                     warnings.push(format!(
-                        "attachment '{}' ({} bytes) exceeds the maximum size; skipped",
+                        "attachment '{}' ({size_bytes} bytes) exceeds the maximum size; skipped",
                         att.original_ref,
-                        vf.bytes.len()
                     ));
                     continue;
                 }
+
+                // #2724 — MOVE the bytes out for a single-ATTEMPT file so the
+                // buffer is freed right after ingest instead of cloned (a
+                // transient per-file doubling). `ingest_counts[idx] == 1` proves
+                // no other ingest attempt — including a retry of a transiently
+                // failed first attempt within this block — will read this file,
+                // so the move is safe. `remove` flips it out of the single-attempt
+                // set and `moved_out` records the empty buffer. Any file with
+                // count > 1 always clones, exactly as before.
+                //
+                // The clone arm additionally refuses to ingest a buffer whose
+                // bytes were already moved out (`moved_out`): under a correct
+                // count this branch is unreachable, but it guarantees a
+                // `mem::take`-emptied buffer is NEVER re-ingested as a 0-byte
+                // attachment. Such a ref is left un-rewritten (warn) instead.
+                let bytes = if ingest_counts.get(&idx).copied() == Some(1) {
+                    ingest_counts.remove(&idx);
+                    moved_out.insert(idx);
+                    std::mem::take(&mut vault_files[idx].bytes)
+                } else if moved_out.contains(&idx) {
+                    warnings.push(format!(
+                        "attachment '{}' could not be re-imported (source bytes already \
+                         consumed by a prior ingest); left as-is",
+                        att.original_ref
+                    ));
+                    continue;
+                } else {
+                    vault_files[idx].bytes.clone()
+                };
 
                 // Fresh ingest, owned by this content block. A failure
                 // (disallowed mime, write error, transient DB error, etc.)
@@ -2492,7 +2823,7 @@ pub async fn import_markdown_with_progress(
                         BlockId::from_trusted(block_id),
                         filename,
                         mime_type,
-                        vf.bytes.clone(),
+                        bytes,
                     )
                     .await
                     {
@@ -2694,6 +3025,36 @@ pub async fn import_markdown(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #2724 — the aggregate attachment-budget check rejects an over-cap file
+    /// COUNT or aggregate BYTE total and accepts anything within budget,
+    /// including the exact boundary. Exercised against fabricated numbers so
+    /// the byte cap is verified WITHOUT allocating hundreds of MB.
+    #[test]
+    fn check_attachment_budget_enforces_caps_2724() {
+        let byte_cap = crate::commands::MAX_TOTAL_ATTACHMENT_BYTES as u64;
+        let count_cap = crate::commands::MAX_ATTACHMENT_FILE_COUNT;
+
+        // Comfortably within both budgets.
+        assert!(check_attachment_budget(3, 10 * 1024 * 1024).is_ok());
+        // Empty payload is fine.
+        assert!(check_attachment_budget(0, 0).is_ok());
+
+        // Boundaries are inclusive (`> cap` rejects, `== cap` allows).
+        assert!(check_attachment_budget(count_cap, 0).is_ok());
+        assert!(check_attachment_budget(1, byte_cap).is_ok());
+
+        // File count over the cap → Err.
+        assert!(matches!(
+            check_attachment_budget(count_cap + 1, 0),
+            Err(AppError::Validation { .. })
+        ));
+        // Aggregate bytes over the cap → Err (fabricated total, no allocation).
+        assert!(matches!(
+            check_attachment_budget(1, byte_cap + 1),
+            Err(AppError::Validation { .. })
+        ));
+    }
 
     /// #1920 — cross-language parity fixture for the inbound wiki-link regex.
     /// `HUMAN_PAGE_LINK_RE` (the CANONICAL Rust source) must match these exact

@@ -7542,6 +7542,19 @@ async fn import_export_full_round_trip_1916_1917_1918() {
     // 1. Export.
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
 
+    // Free the source page's globally-UNIQUE aliases so the re-imported NEW
+    // page can claim them (#2722): aliases are now real `page_aliases` rows with
+    // a global uniqueness constraint, so while the source still owns them the
+    // re-import would (correctly) refuse and warn. Releasing them here lets the
+    // round-trip genuinely exercise the alias re-import path. Tags are a
+    // resolve-or-create `block_tags` association (no global uniqueness), so the
+    // existing tag block is reused without needing this.
+    sqlx::query("DELETE FROM page_aliases WHERE page_id = ?")
+        .bind(SRC)
+        .execute(&pool)
+        .await
+        .unwrap();
+
     // 2. Re-import as a NEW page.
     let result = import_markdown_inner(
         &pool,
@@ -7634,32 +7647,46 @@ async fn import_export_full_round_trip_1916_1917_1918() {
         "task scheduled_date must round-trip; got {task:?}"
     );
 
-    // 3d. Aliases + tags preserved as page properties (the in-scope #1917
-    // representation: multi-value frontmatter re-imports through property
-    // storage as a single comma-joined value rather than being dropped).
-    let props: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT key, value_text FROM block_properties WHERE block_id = ? \
-         AND key IN ('aliases', 'tags')",
+    // 3d. Aliases + tags round-trip as REAL semantic rows (#2722 supersedes the
+    // earlier #1917 text-property representation): `aliases` re-imports into
+    // `page_aliases` and `tags` into a `block_tags` association — NOT inert
+    // `block_properties` text. The exporter now emits both from their own
+    // sources and the importer intercepts them, so a re-imported page has live
+    // alias resolution and tag filtering rather than a stale text property.
+    let reimported_aliases = get_page_aliases_inner(&pool, &new_page).await.unwrap();
+    // `ORDER BY alias` on the NOCASE `page_aliases.alias` column: "RoundTrip" <
+    // "RTS" (case-insensitive: 'o' < 't').
+    assert_eq!(
+        reimported_aliases,
+        vec!["RoundTrip".to_string(), "RTS".to_string()],
+        "aliases must round-trip as real page_aliases rows; got {reimported_aliases:?}"
+    );
+    // The tag re-imports as a real block_tags association to a tag named
+    // 'important' (resolve-or-create in the import space).
+    let reimported_tags: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+         WHERE bt.block_id = ?",
     )
     .bind(&new_page)
     .fetch_all(&pool)
     .await
     .unwrap();
-    let by_key: std::collections::HashMap<&str, Option<&str>> = props
-        .iter()
-        .map(|(k, v)| (k.as_str(), v.as_deref()))
-        .collect();
-    // Aliases are sorted on export by `ORDER BY alias` and re-imported as a
-    // single comma-joined scalar (the exported fence is `[RoundTrip, RTS]`).
     assert_eq!(
-        by_key.get("aliases").copied().flatten(),
-        Some("RoundTrip, RTS"),
-        "aliases must round-trip (joined); got {props:?}"
+        reimported_tags,
+        vec!["important".to_string()],
+        "tags must round-trip as a real block_tags association; got {reimported_tags:?}"
     );
-    assert_eq!(
-        by_key.get("tags").copied().flatten(),
-        Some("important"),
-        "tags must round-trip; got {props:?}"
+    // Neither is stamped as a misleading text property.
+    let stale_props: Vec<String> = sqlx::query_scalar(
+        "SELECT key FROM block_properties WHERE block_id = ? AND key IN ('aliases', 'tags')",
+    )
+    .bind(&new_page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        stale_props.is_empty(),
+        "aliases/tags must NOT be stamped as text properties; got {stale_props:?}"
     );
 
     mat.shutdown();
@@ -8140,4 +8167,572 @@ fn attachment_ref_detection_and_match_rules_1925() {
         guess_attachment_mime("a.unknownext"),
         "application/octet-stream"
     );
+}
+
+// ======================================================================
+// #2722 — aliases & tags import as REAL associations, never inert text props
+// ======================================================================
+
+/// #2722 — a page exported with `aliases:` frontmatter re-imports its aliases
+/// as REAL `page_aliases` rows (queryable via `get_page_aliases_inner`), NOT as
+/// a misleading `aliases` text property. The source page's globally-unique
+/// aliases are freed before the re-import (simulating import into a fresh vault
+/// where the source doesn't coexist; `page_aliases.alias` is UNIQUE NOCASE).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_aliases_round_trip_to_real_page_aliases_2722() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAKSRC1";
+    insert_block(&pool, SRC_PAGE, "page", "Aliased Source", None, Some(0)).await;
+    assign_to_space(&pool, SRC_PAGE, TEST_SPACE_ID).await;
+    insert_alias(&pool, SRC_PAGE, "Alpha").await;
+    insert_alias(&pool, SRC_PAGE, "Beta").await;
+
+    // Export → frontmatter carrying the aliases.
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(
+        md.contains("aliases:"),
+        "export must emit aliases, got:\n{md}"
+    );
+
+    // Free the globally-unique aliases so the re-import can claim them.
+    sqlx::query("DELETE FROM page_aliases WHERE page_id = ?")
+        .bind(SRC_PAGE)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("AliasReimport.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "AliasReimport");
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'AliasReimport'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Aliases landed as REAL `page_aliases` rows (sorted by `get_page_aliases_inner`).
+    let aliases = get_page_aliases_inner(&pool, &new_page_id).await.unwrap();
+    assert_eq!(
+        aliases,
+        vec!["Alpha".to_string(), "Beta".to_string()],
+        "aliases must re-import as real page_aliases rows"
+    );
+
+    // And NOT as a misleading text property.
+    let alias_prop: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'aliases'",
+    )
+    .bind(&new_page_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        alias_prop.is_none(),
+        "aliases must NOT be stamped as a text property; got {alias_prop:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2722 — importing frontmatter `aliases:` is idempotent: a duplicate alias in
+/// the sequence yields exactly ONE `page_aliases` row (INSERT OR IGNORE + the
+/// `(page_id, alias)` PK), and re-importing a page's own alias never warns.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_aliases_dedup_is_idempotent_2722() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Hand-authored frontmatter with a repeated alias.
+    let md = "# Dup Page\n\n---\naliases: [Solo, Solo]\n---\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("DupAlias.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("Solo")),
+        "a page's own repeated alias must not warn; got {:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'DupAlias'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let aliases = get_page_aliases_inner(&pool, &new_page_id).await.unwrap();
+    assert_eq!(
+        aliases,
+        vec!["Solo".to_string()],
+        "a duplicate alias must collapse to a single page_aliases row"
+    );
+
+    mat.shutdown();
+}
+
+/// #2722 — an alias already owned by ANOTHER page cannot be applied to the
+/// imported page (global UNIQUE constraint) and surfaces a never-silent
+/// warning rather than silently vanishing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_alias_collision_warns_2722() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // A pre-existing page already owns the alias "Taken".
+    const OTHER: &str = "01AAAAAAAAAAAAAAAAAAAOTHR1";
+    insert_block(&pool, OTHER, "page", "Other Page", None, Some(0)).await;
+    assign_to_space(&pool, OTHER, TEST_SPACE_ID).await;
+    insert_alias(&pool, OTHER, "Taken").await;
+
+    let md = "# Claimant\n\n---\naliases: [Taken]\n---\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("Claimant.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w.contains("Taken") && w.contains("already used")),
+        "an alias owned by another page must warn; got {:?}",
+        result.warnings
+    );
+
+    // The imported page got no alias, and the alias still belongs to OTHER.
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Claimant'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        get_page_aliases_inner(&pool, &new_page_id)
+            .await
+            .unwrap()
+            .is_empty(),
+        "collided alias must not be applied to the imported page"
+    );
+    let owner: String =
+        sqlx::query_scalar("SELECT page_id FROM page_aliases WHERE alias = 'Taken'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(owner, OTHER, "alias ownership must be unchanged");
+
+    mat.shutdown();
+}
+
+/// #2722 — a page exported with `tags:` frontmatter re-imports its tags as REAL
+/// `block_tags` associations (resolving the tag by normalized name to the
+/// existing in-space tag block, no duplicate), NOT as a `tags` text property.
+/// This is the tag-side round-trip the historical #1917 blocker prevented.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_tags_round_trip_to_real_block_tags_2722() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAATSRC1";
+    const TAG_A: &str = "01AAAAAAAAAAAAAAAAAATTAGA1";
+    insert_block(&pool, SRC_PAGE, "page", "Tagged Source", None, Some(0)).await;
+    assign_to_space(&pool, SRC_PAGE, TEST_SPACE_ID).await;
+    insert_block(&pool, TAG_A, "tag", "apple", None, None).await;
+    assign_to_space(&pool, TAG_A, TEST_SPACE_ID).await;
+    insert_block_tag(&pool, SRC_PAGE, TAG_A).await;
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(md.contains("tags:"), "export must emit tags, got:\n{md}");
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("TagReimport.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    // The tag resolves to the existing in-space tag block, so no tag warning.
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("apple")),
+        "tag must apply cleanly with no per-tag warning; got {:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'TagReimport'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // A REAL block_tags association to a tag named 'apple' now exists.
+    let tag_names: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id \
+         WHERE bt.block_id = ?",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tag_names,
+        vec!["apple".to_string()],
+        "frontmatter tag must re-import as a real block_tags association"
+    );
+
+    // Reused the EXISTING in-space tag block — no duplicate 'apple' tag.
+    let apple_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'tag' AND content = 'apple' \
+         AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        apple_count, 1,
+        "must reuse the existing tag, not duplicate it"
+    );
+
+    // NOT a text property.
+    let tag_prop: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'tags'",
+    )
+    .bind(&new_page_id)
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        tag_prop.is_none(),
+        "tags must NOT be stamped as a text property; got {tag_prop:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2722 — a frontmatter tag whose name does NOT already exist is
+/// resolve-or-CREATED as a new tag block in the import's space, and the page is
+/// really associated with it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_tags_create_new_tag_2722() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let md = "# Fresh\n\n---\ntags: [brandnew]\n---\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("FreshTag.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("brandnew")),
+        "creating a fresh tag must not warn; got {:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'FreshTag'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let tag_names: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id WHERE bt.block_id = ?",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        tag_names,
+        vec!["brandnew".to_string()],
+        "a new frontmatter tag must be created and associated"
+    );
+
+    mat.shutdown();
+}
+
+// ======================================================================
+// #2724 — aggregate attachment budget at the import command boundary
+// ======================================================================
+
+/// #2724 — an import whose attachment FILE COUNT exceeds the aggregate cap is
+/// rejected up front with a validation error, and does NOT create the page or
+/// attempt any ingest. Uses empty-byte files so the test allocates nothing
+/// large (the count predicate fires before any byte work).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_rejects_excess_attachment_file_count_2724() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // One more than the cap, each with empty bytes (cheap).
+    let vault: Vec<VaultFile> = (0..=crate::commands::MAX_ATTACHMENT_FILE_COUNT)
+        .map(|i| VaultFile {
+            path: format!("assets/f{i}.png"),
+            bytes: Vec::new(),
+        })
+        .collect();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        "- hi ![[f0.png]]".into(),
+        Some("TooMany.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "excess attachment file count must be rejected; got {result:?}"
+    );
+
+    // Rejected before any write — no page was created.
+    let page_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM blocks WHERE block_type = 'page' AND content = 'TooMany'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(page_count, 0, "over-cap import must not create the page");
+    // And no attachments were ingested.
+    let att_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        att_count, 0,
+        "over-cap import must not ingest any attachment"
+    );
+
+    mat.shutdown();
+}
+
+/// #2724 — a within-budget import with attachments still ingests normally (the
+/// aggregate guard is inert below its caps). Also implicitly exercises the
+/// move-not-clone ingest: a wrong `mem::take` would ingest empty/garbage bytes,
+/// which the on-disk byte assertion would catch.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_within_attachment_budget_still_ingests_2724() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 42, 43, 44];
+    let vault = vec![VaultFile {
+        path: "assets/pic.png".into(),
+        bytes: bytes.clone(),
+    }];
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        "- see ![[pic.png]] here".into(),
+        Some("WithinBudget.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert!(result.warnings.is_empty(), "got {:?}", result.warnings);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(rows.len(), 1, "within-budget attachment must ingest");
+    // Bytes on disk match exactly — proves the moved (not corrupted) buffer.
+    let on_disk = std::fs::read(app_data_dir.join(&rows[0].2)).unwrap();
+    assert_eq!(on_disk, bytes, "ingested bytes must match the source file");
+
+    mat.shutdown();
+}
+
+/// #2724 (regression) — the move-vs-clone pre-pass must count ingest ATTEMPT
+/// OCCURRENCES, not DISTINCT refs. The original pre-pass de-duped occurrences
+/// within a block, so a file referenced twice in ONE block was counted `1`,
+/// authorising a `std::mem::take` move of its bytes. If the FIRST ingest then
+/// failed transiently (e.g. `PoolTimedOut`), the second occurrence re-entered
+/// the ingest path against the now-emptied buffer and silently created a 0-BYTE
+/// attachment (a real asset downgraded to nothing).
+///
+/// This is a focused root-cause test: injecting a transient DB failure at the
+/// ingest boundary is impractical, so we assert the invariant the fix
+/// establishes — the count reflects occurrences, keeping a twice-in-one-block
+/// file at `2` (⇒ always cloned ⇒ a retry still sees full bytes), while the
+/// common single-use case stays at `1` (⇒ the `mem::take` fast path is kept).
+#[test]
+fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
+    use crate::commands::pages::markdown::ingest_read_counts;
+    use crate::import::AttachmentRef;
+
+    let vault = vec![VaultFile {
+        path: "assets/a.png".into(),
+        bytes: vec![1, 2, 3, 4],
+    }];
+    let mkref = |orig: &str| AttachmentRef {
+        alt: String::new(),
+        original_ref: orig.to_string(),
+        full_match: format!("![[{orig}]]"),
+    };
+
+    // The defect's trigger: ONE block referencing the SAME file TWICE.
+    // Pre-fix this returned `Some(1)` (distinct-ref dedup) → move authorised.
+    let twice_one_block = vec![("blk-1".to_string(), vec![mkref("a.png"), mkref("a.png")])];
+    assert_eq!(
+        ingest_read_counts(&twice_one_block, &vault)
+            .get(&0)
+            .copied(),
+        Some(2),
+        "same file referenced twice in one block must count 2 (occurrences, not distinct \
+         refs) so it is cloned — a moved buffer would 0-byte a transient-retry ingest"
+    );
+
+    // The common single-use case keeps count 1 so the mem::take fast path applies.
+    let single = vec![("blk-2".to_string(), vec![mkref("a.png")])];
+    assert_eq!(
+        ingest_read_counts(&single, &vault).get(&0).copied(),
+        Some(1),
+        "a single occurrence keeps count 1 so the mem::take optimisation still applies"
+    );
+
+    // Once each across two blocks also counts 2 (two independent per-block
+    // ingests) — always cloned, unchanged from before.
+    let cross_block = vec![
+        ("blk-3".to_string(), vec![mkref("a.png")]),
+        ("blk-4".to_string(), vec![mkref("a.png")]),
+    ];
+    assert_eq!(
+        ingest_read_counts(&cross_block, &vault).get(&0).copied(),
+        Some(2),
+        "two blocks each referencing the file count 2 (per-block ingests), so it is cloned"
+    );
+
+    // A ref matching no vault file contributes no count.
+    let unmatched = vec![("blk-5".to_string(), vec![mkref("missing.png")])];
+    assert!(
+        ingest_read_counts(&unmatched, &vault).is_empty(),
+        "an unmatched ref contributes no ingest-read count"
+    );
+}
+
+/// #2724 (regression) — end-to-end fidelity guard for the twice-in-one-block
+/// case: a single block referencing the same vault file twice ingests exactly
+/// ONE attachment whose on-disk bytes are the FULL source bytes (never a 0-byte
+/// buffer left behind by a `mem::take`). Both occurrences rewrite to that id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_repeated_ref_in_block_ingests_full_bytes_2724() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    let app_data_dir = _dir.path();
+
+    let bytes: Vec<u8> = vec![0x89, b'P', b'N', b'G', 9, 8, 7, 6, 5];
+    let vault = vec![VaultFile {
+        path: "assets/a.png".into(),
+        bytes: bytes.clone(),
+    }];
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        "- here ![[a.png]] and again ![[a.png]] end".into(),
+        Some("RepeatFidelity.md".into()),
+        TEST_SPACE_ID.into(),
+        Some(vault),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    settle(&mat).await;
+
+    let rows = attachment_rows(&pool).await;
+    assert_eq!(
+        rows.len(),
+        1,
+        "one row for a ref repeated in one block, got {rows:?}"
+    );
+
+    // The stored bytes are the full source bytes, NOT a 0-byte downgrade.
+    let on_disk = std::fs::read(app_data_dir.join(&rows[0].2)).unwrap();
+    assert!(
+        !on_disk.is_empty(),
+        "attachment bytes must not be empty (0-byte downgrade)"
+    );
+    assert_eq!(
+        on_disk, bytes,
+        "stored bytes must match the full source file"
+    );
+
+    // No 0-byte attachment row exists anywhere on the page.
+    let att_id = &rows[0].0;
+    let texts = content_block_texts(&pool).await;
+    assert_eq!(
+        texts[0],
+        format!("here ![](attachment:{att_id}) and again ![](attachment:{att_id}) end"),
+        "both occurrences rewrite to the single full-bytes attachment id"
+    );
+
+    mat.shutdown();
 }

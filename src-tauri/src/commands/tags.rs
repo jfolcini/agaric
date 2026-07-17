@@ -171,7 +171,11 @@ pub async fn add_tag_inner(
 /// Pre-conditions the caller MUST have already validated (this helper does
 /// NOT re-check): `block_id` exists + is live, `tag_id` exists + is live +
 /// has `block_type = 'tag'`, and `block_id != tag_id`.
-async fn apply_tag_to_block_in_tx(
+// #2722 — `pub(crate)` so the markdown importer can write a page's frontmatter
+// `tags:` as REAL `block_tags` associations through the SAME op-log + engine
+// projection path `add_tag` uses (single source of truth), instead of stamping
+// an inert text property. Caller must have validated the pre-conditions below.
+pub(crate) async fn apply_tag_to_block_in_tx(
     tx: &mut CommandTx,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
