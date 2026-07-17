@@ -691,6 +691,120 @@ pub async fn restore_deleted_ancestor_chain(
     Ok(RestoredAncestorChain { topmost, chain })
 }
 
+/// Re-derive `page_id` + `space_id` for a moved/restored subtree root and its
+/// non-page active descendants, synchronously and in the caller's IMMEDIATE tx
+/// (#533/#664). The `page_id` + `space_id` rederive CTE previously appeared
+/// four times (`move_ops.rs`, `crud.rs` restore, and the two reverse arms in
+/// `history.rs`); two of them had drifted to skip the `space_id` step (#533),
+/// leaving stale space membership after an undo until the async
+/// `RebuildPageIds` task landed.
+///
+/// Behaviour (mirrors the forward `move_block_inner` template):
+///   1. Compute the new `page_id`: the parent's `page_id` (or the parent's
+///      own `id` if the parent is itself a page) for a non-page root; the
+///      root's own `id` for a page.
+///   2. UPDATE the root's `page_id` (skipped for pages — a page is always
+///      its own `page_id`).
+///   3. Cascade `page_id` to every non-page active descendant.
+///   4. Cascade `space_id` to the root + every non-page active descendant,
+///      deriving it from each row's owning page's `space_id`.
+///
+/// The recursive CTEs filter `deleted_at IS NULL` in both members (a
+/// conflict copy inherits `parent_id` from the original and would otherwise
+/// be reparented under the subtree) and bound `depth < 100` (invariant #9).
+///
+/// Operates on a borrowed `&mut SqliteConnection` (obtained by callers via
+/// `&mut **tx` from their existing `CommandTx` / `Transaction`). Opens no
+/// transaction of its own — it runs inside the caller's IMMEDIATE tx,
+/// preserving the #110 raw-write-tx convention.
+pub async fn rederive_page_and_space_ids(
+    conn: &mut sqlx::SqliteConnection,
+    root: &str,
+) -> Result<(), agaric_core::error::AppError> {
+    // 1. New page_id from the (possibly NULL) parent.
+    let parent_id: Option<String> =
+        sqlx::query_scalar!("SELECT parent_id FROM blocks WHERE id = ?", root)
+            .fetch_one(&mut *conn)
+            .await?;
+    let new_page_id: Option<String> = if let Some(ref pid) = parent_id {
+        sqlx::query_scalar!(
+            "SELECT CASE WHEN block_type = 'page' THEN id ELSE page_id END \
+             FROM blocks WHERE id = ?",
+            pid,
+        )
+        .fetch_optional(&mut *conn)
+        .await?
+        .flatten()
+    } else {
+        None
+    };
+    let is_page: bool = sqlx::query_scalar!("SELECT block_type FROM blocks WHERE id = ?", root)
+        .fetch_one(&mut *conn)
+        .await?
+        == "page";
+
+    // 2. The root itself (pages keep their own id as page_id).
+    if !is_page {
+        sqlx::query!(
+            "UPDATE blocks SET page_id = ? WHERE id = ?",
+            new_page_id,
+            root,
+        )
+        .execute(&mut *conn)
+        .await?;
+    }
+    let effective_page_id = if is_page {
+        Some(root.to_string())
+    } else {
+        new_page_id
+    };
+
+    // 3. Cascade page_id to non-page active descendants.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET page_id = ?2 \
+         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
+        root,
+        effective_page_id,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    // 4. #533: keep space_id in step with the just-refreshed page_id for the
+    //    whole subtree (root + non-page active descendants), synchronously —
+    //    space-scoped lists are read right after commit. Non-page rows derive
+    //    space_id from their owning page; pages keep their own.
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    sqlx::query!(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT b.id, 0 FROM blocks b \
+             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET space_id = ( \
+             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+         ) \
+         WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+           AND block_type != 'page' AND page_id IS NOT NULL",
+        root,
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
