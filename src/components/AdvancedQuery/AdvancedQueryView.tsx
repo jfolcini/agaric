@@ -35,8 +35,8 @@ import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { RenameDialog } from '@/components/dialogs/RenameDialog'
 import { QueryResultList } from '@/components/query/QueryResultList'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
-import { Spinner } from '@/components/ui/spinner'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
 import { notify } from '@/lib/notify'
 import { createBlock, setProperty } from '@/lib/tauri'
@@ -240,12 +240,13 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
           {loading ? t('advancedQuery.searching') : ''}
         </div>
 
-        {/* Initial load only (no previous results to keep on screen): bare
-            spinner. On a refetch the prior results stay mounted (dimmed +
-            aria-busy) below instead of being replaced by this spinner. */}
+        {/* Initial load only (no previous results to keep on screen):
+            list-shaped skeleton mirroring QueryResultList rows. On a refetch
+            the prior results stay mounted (dimmed + aria-busy) below instead
+            of being replaced by this skeleton. */}
         {loading && isEmpty && (
-          <div className="flex justify-center px-3 py-4">
-            <Spinner size="sm" />
+          <div className="px-3 py-2">
+            <LoadingSkeleton count={5} height="h-10" ariaLabel={t('advancedQuery.searching')} />
           </div>
         )}
 

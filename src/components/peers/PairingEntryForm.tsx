@@ -12,6 +12,7 @@ import type React from 'react'
 import { lazy, Suspense, useCallback, useEffect, useId, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -213,11 +214,16 @@ export function PairingEntryForm({
         <div className="pairing-qr-scanner mb-4">
           <Suspense
             fallback={
-              <div className="flex items-center justify-center py-8">
-                <Spinner className="text-muted-foreground" />
-                <span className="ml-2 text-sm text-muted-foreground">
+              <div className="flex flex-col items-center gap-2 py-4">
+                <span className="text-sm text-muted-foreground">
                   {t('pairing.loadingScannerMessage')}
                 </span>
+                <LoadingSkeleton
+                  count={1}
+                  height="h-48"
+                  className="w-48"
+                  ariaLabel={t('pairing.loadingScannerMessage')}
+                />
               </div>
             }
           >

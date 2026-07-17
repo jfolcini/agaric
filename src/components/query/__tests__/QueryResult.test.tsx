@@ -142,8 +142,10 @@ describe('QueryResult', () => {
     mockedInvoke.mockReturnValue(new Promise(() => {})) // never resolves
     const { container } = render(<QueryResult expression="type:tag expr:project" />)
     expect(screen.getByText('...')).toBeInTheDocument()
-    // Spinner component should render via shared Spinner
-    expect(container.querySelector('[data-slot="spinner"]')).toBeInTheDocument()
+    // Loading renders a rows-shaped LoadingSkeleton, not a bare spinner (#2852).
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBe(3)
+    expect(container.querySelector('[data-slot="spinner"]')).not.toBeInTheDocument()
   })
 
   it('renders tag query results', async () => {

@@ -27,6 +27,7 @@ import {
 } from '@/hooks/useJournalDateFormat'
 import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
+import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
@@ -85,6 +86,7 @@ export function AppearanceTab(): React.ReactElement {
   const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
   const { motion, setMotion } = useMotionPreference()
+  const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
   // Surface the previously hidden week-start preference. The hook
   // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
@@ -117,6 +119,13 @@ export function AppearanceTab(): React.ReactElement {
       setMotion(value as MotionPreference)
     },
     [setMotion],
+  )
+
+  const handleTooltipDelayChange = useCallback(
+    (value: string) => {
+      setTooltipDelay(value as TooltipDelay)
+    },
+    [setTooltipDelay],
   )
 
   // Week-start coercion. Select values are strings; the hook
@@ -205,6 +214,27 @@ export function AppearanceTab(): React.ReactElement {
             <SelectItem value="full">{t('settings.motionFull')}</SelectItem>
             <SelectItem value="fast">{t('settings.motionFast')}</SelectItem>
             <SelectItem value="off">{t('settings.motionOff')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </FormField>
+
+      {/* Tooltip delay (#2851). A separate axis from animation speed: how
+          long to hover before a tooltip opens. Only affects the app-level
+          baseline that most tooltips inherit — the deliberate per-surface
+          deviations (sidebar, toolbars, gutter) are unaffected. */}
+      <FormField
+        label={t('settings.tooltipDelayLabel')}
+        htmlFor="tooltip-delay-select"
+        description={t('settings.tooltipDelayHelp')}
+      >
+        <Select value={tooltipDelay} onValueChange={handleTooltipDelayChange}>
+          <SelectTrigger id="tooltip-delay-select" aria-label={t('settings.tooltipDelayLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="instant">{t('settings.tooltipDelayInstant')}</SelectItem>
+            <SelectItem value="fast">{t('settings.tooltipDelayFast')}</SelectItem>
+            <SelectItem value="default">{t('settings.tooltipDelayDefault')}</SelectItem>
           </SelectContent>
         </Select>
       </FormField>

@@ -654,6 +654,41 @@ const MOTION_PREFERENCE: PreferenceDefinition<MotionPreference> = {
   serialize: identity,
 }
 
+/**
+ * Tooltip hover-open delay choices for the global tooltip-latency knob
+ * (`src/hooks/useTooltipDelay.ts`, surfaced in AppearanceTab, #2851).
+ *
+ * - `'default'` — DEFAULT. Resolves to the pre-existing `300` ms baseline
+ *   (`src/main.tsx`), so nothing changes for existing users.
+ * - `'fast'` — `150` ms, a snappier dwell.
+ * - `'instant'` — `0` ms, no hover dwell at all.
+ *
+ * Only affects the app-level `TooltipProvider` baseline that most tooltips
+ * inherit. The deliberate per-surface deviations (sidebar `0`, toolbars
+ * `200`, block gutter `500`) set their own `delayDuration` and are
+ * unaffected by this preference.
+ */
+export type TooltipDelay = 'instant' | 'fast' | 'default'
+
+const ALL_TOOLTIP_DELAYS: ReadonlyArray<TooltipDelay> = ['instant', 'fast', 'default']
+
+/**
+ * `agaric-tooltip-delay` — global tooltip hover-open delay knob
+ * (`src/hooks/useTooltipDelay.ts`). Device-scoped bare-string value
+ * validated against the allowlist; unknown values reset to `'default'`.
+ */
+const TOOLTIP_DELAY_PREFERENCE: PreferenceDefinition<TooltipDelay> = {
+  key: 'agaric-tooltip-delay',
+  scope: 'device',
+  version: 1,
+  defaultValue: 'default',
+  parse: (raw) => {
+    if ((ALL_TOOLTIP_DELAYS as readonly string[]).includes(raw)) return raw as TooltipDelay
+    throw new Error(`invalid tooltip delay: ${raw}`)
+  },
+  serialize: identity,
+}
+
 /** `agaric-font-size` — editor/UI font size (`src/components/settings/AppearanceTab.tsx`). */
 const FONT_SIZE_PREFERENCE: PreferenceDefinition<'small' | 'medium' | 'large'> = {
   key: 'agaric-font-size',
@@ -848,6 +883,7 @@ export const PREFERENCES = {
   sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
   filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,
   motion: MOTION_PREFERENCE,
+  tooltipDelay: TOOLTIP_DELAY_PREFERENCE,
   fontSize: FONT_SIZE_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,

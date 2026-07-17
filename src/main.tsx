@@ -9,9 +9,37 @@ import { App } from '@/App.tsx'
 import { ErrorBoundary } from '@/components/common/ErrorBoundary'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PrimaryFocusProvider } from '@/hooks/usePrimaryFocus'
+import { useTooltipDelay } from '@/hooks/useTooltipDelay'
 import { logger } from '@/lib/logger'
 import { initFrontendObservability } from '@/lib/observability'
 import { queryClient } from '@/lib/query-client'
+
+/**
+ * App-level tooltip baseline (#1094, made user-tunable in #2851). One
+ * provider here means every surface shares a single hover-delay source of
+ * truth instead of each wrapping its own (24 surfaces + the IconButton
+ * primitive used to).
+ *
+ * `main()` below is not a component, so it can't call `useTooltipDelay`
+ * itself — this thin wrapper resolves the preference (default `300` ms,
+ * matching the pre-#2851 constant so nothing changes for existing users)
+ * and threads it into the provider. Surfaces with a deliberate deviation
+ * still set `delayDuration` on their own `<Tooltip>` (sidebar 0, toolbars
+ * 200, gutter 500) so the override stays explicit rather than silently
+ * inheriting this baseline.
+ *
+ * `skipDelayDuration` tracks the same value, keeping the "move between
+ * adjacent tooltips without re-waiting" window consistent with the chosen
+ * dwell.
+ */
+function AppRoot() {
+  const { delayMs } = useTooltipDelay()
+  return (
+    <TooltipProvider delayDuration={delayMs} skipDelayDuration={delayMs}>
+      <App />
+    </TooltipProvider>
+  )
+}
 
 // Global catch-all: capture uncaught errors and unhandled rejections
 // before React mounts, so even early failures are logged persistently.
@@ -75,24 +103,7 @@ async function main() {
          */}
         <QueryClientProvider client={queryClient}>
           <PrimaryFocusProvider>
-            {/*
-             * App-level tooltip baseline (#1094). One provider here means every
-             * surface shares a single hover-delay source of truth instead of each
-             * wrapping its own (24 surfaces + the IconButton primitive used to).
-             *
-             * delayDuration=300 is the standard Radix/UX baseline — a short but
-             * non-zero hover dwell that feels intentional without lagging. It
-             * sits between the old per-surface drift (0 / 200 / 500). Surfaces
-             * with a deliberate deviation set delayDuration on their own
-             * <Tooltip> (sidebar 0, toolbars 200, gutter 500) so the override
-             * stays explicit rather than silently inheriting this baseline.
-             *
-             * skipDelayDuration=300 (Radix default) keeps the "move between
-             * adjacent tooltips without re-waiting" window short.
-             */}
-            <TooltipProvider delayDuration={300} skipDelayDuration={300}>
-              <App />
-            </TooltipProvider>
+            <AppRoot />
           </PrimaryFocusProvider>
         </QueryClientProvider>
       </ErrorBoundary>
