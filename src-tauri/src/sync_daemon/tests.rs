@@ -3115,6 +3115,15 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     // through the select! loop with no production-side signal.
     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
+    // Assert the daemon loop is still alive before shutdown — otherwise
+    // this test cannot distinguish "cancel left the daemon running" from
+    // "cancel wrongly killed the daemon loop", since shutdown() + the
+    // closing wait_for() below would pass identically either way.
+    assert!(
+        daemon.handle.as_ref().is_some_and(|h| !h.is_finished()),
+        "cancel_active_sync must not terminate the daemon loop"
+    );
+
     // Daemon should still be running — shutdown it cleanly
     daemon.shutdown();
     // Poll until the spawned task finishes; 4× cap on the

@@ -872,10 +872,18 @@ async fn begin_immediate_logged_emits_warn_on_slow_acquire() {
         );
     let _guard = tracing::subscriber::set_default(subscriber);
 
+    // Readiness handshake: the holder signals only after it provably
+    // holds the sole connection, so the contender never has to guess a
+    // scheduling window (a fixed pre-sleep can lose the race under CPU
+    // saturation and false-red this test).
+    let (conn_held_tx, conn_held_rx) = tokio::sync::oneshot::channel();
+
     // Hold the single pool slot for longer than SLOW_ACQUIRE_WARN_MS.
     let holder_pool = pool.clone();
     let holder = tokio::spawn(async move {
         let _conn = holder_pool.acquire().await.unwrap();
+        // Connection is now provably held — signal the contender.
+        let _ = conn_held_tx.send(());
         let sleep_ms = u64::try_from(SLOW_ACQUIRE_WARN_MS)
             .expect("invariant: SLOW_ACQUIRE_WARN_MS = 100 fits in u64")
             + 150;
@@ -883,8 +891,8 @@ async fn begin_immediate_logged_emits_warn_on_slow_acquire() {
         // Drop releases the slot.
     });
 
-    // Let the holder task actually start acquiring before we race.
-    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    // Wait for the holder to actually acquire the connection before racing.
+    conn_held_rx.await.unwrap();
 
     // This call must wait for the holder to release the slot, so the
     // acquire crosses the threshold and should emit a warn log.
