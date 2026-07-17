@@ -67,8 +67,8 @@ async fn list_tools_advertises_six_tools() {
     let names: Vec<&str> = descs.iter().map(|d| d.name.as_str()).collect();
     assert_eq!(
         names.len(),
-        6,
-        "ReadWriteTools exposes exactly six v2 tools"
+        7,
+        "ReadWriteTools exposes the six v2 write tools plus #2728's list_spaces"
     );
     assert_eq!(
         names,
@@ -79,8 +79,9 @@ async fn list_tools_advertises_six_tools() {
             "add_tag",
             "create_page",
             "delete_block",
+            "list_spaces",
         ],
-        "tool order is part of the wire contract — do not re-order",
+        "tool order is part of the wire contract — do not re-order (list_spaces appended last)",
     );
 }
 
@@ -936,6 +937,137 @@ async fn delete_block_is_reversible_via_restore() {
     assert!(
         restore.is_ok(),
         "delete_block output must be usable as a restore ref: {restore:?}",
+    );
+}
+
+// -------------------------------------------------------------------
+// #2728 — list_spaces on the RW registry (RW-only space discovery)
+// -------------------------------------------------------------------
+
+/// #2728 happy path: `list_spaces` dispatched through the RW registry
+/// returns the same `{ id, name, is_default }` rows the RO surface
+/// returns, proving the RW dispatcher reaches the shared
+/// `list_spaces_registry_inner` data function rather than a stub. Also
+/// pins the discovery loop the issue is about: an RW-only agent (no RO
+/// socket) can take an id straight out of `list_spaces` and use it as the
+/// `space_id` argument of a genuine write tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
+    // Use a bare pool (not `mk_tools`, which auto-seeds one space) so the
+    // row count/order assertions below match the RO surface's equivalent
+    // test exactly.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tools = ReadWriteTools::new(pool.clone(), mat.clone(), DEV.to_string());
+    crate::spaces::bootstrap_spaces_for_test(&pool, DEV)
+        .await
+        .unwrap();
+
+    let result = tools
+        .call_tool("list_spaces", json!({}), &test_ctx_agent())
+        .await
+        .expect("happy path");
+    let rows = result.as_array().expect("list_spaces returns a JSON array");
+    assert_eq!(rows.len(), 2, "bootstrap seeds exactly two spaces");
+
+    let names: Vec<&str> = rows
+        .iter()
+        .map(|r| r["name"].as_str().expect("name string"))
+        .collect();
+    assert_eq!(names, vec!["Personal", "Work"], "alphabetical by name");
+
+    let personal = &rows[0];
+    assert_eq!(
+        personal["id"].as_str(),
+        Some(crate::spaces::SPACE_PERSONAL_ULID),
+        "Personal carries the reserved seeded ULID",
+    );
+    assert_eq!(
+        personal["is_default"],
+        json!(true),
+        "Personal is the default space",
+    );
+    assert_eq!(
+        rows[1]["is_default"],
+        json!(false),
+        "non-Personal spaces are not default",
+    );
+
+    // The bug this closes: before #2728, an agent connected solely to the
+    // RW socket had no in-band way to learn a `space_id` at all. Prove the
+    // id returned here is directly usable by a real write tool.
+    let space_id = personal["id"].as_str().unwrap().to_string();
+    let page = tools
+        .call_tool(
+            "create_page",
+            json!({"title": "Discovered via RW list_spaces", "space_id": space_id}),
+            &test_ctx_agent(),
+        )
+        .await
+        .expect("a list_spaces id must satisfy a space_id-requiring RW tool");
+    assert_eq!(page["block_type"], "page");
+}
+
+/// #2728 error path: strict boundary — unknown fields are rejected with a
+/// Validation error (→ -32602), same as every other RW tool.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_rw_rejects_unknown_field() {
+    let (tools, _mat, _pool, _space, _dir) = mk_tools().await;
+    let err = tools
+        .call_tool("list_spaces", json!({"bogus": 1}), &test_ctx_agent())
+        .await
+        .expect_err("must reject unknown field");
+    assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
+}
+
+/// #2728: `list_spaces` on the RW registry must remain a PURE READ —
+/// unlike every other tool in this file it must not append any `op_log` /
+/// `blocks` row and must not emit `blocks:changed` /
+/// `block:properties-changed` (every mutating RW tool emits at least one
+/// of those after it commits; see the `#2505` tests above).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn list_spaces_rw_performs_no_mutation() {
+    let (tools, mat, pool, _space, emitter, _dir) = mk_tools_recording().await;
+    settle(&mat).await;
+
+    let blocks_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    tools
+        .call_tool("list_spaces", json!({}), &test_ctx_agent())
+        .await
+        .expect("list_spaces happy path");
+
+    let blocks_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let ops_after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        blocks_before, blocks_after,
+        "list_spaces must not write any block row",
+    );
+    assert_eq!(
+        ops_before, ops_after,
+        "list_spaces must not append any op_log row",
+    );
+    assert!(
+        emitter.blocks_changed().is_empty(),
+        "list_spaces must not emit blocks:changed (pure read)",
+    );
+    assert!(
+        emitter.property_changed().is_empty(),
+        "list_spaces must not emit block:properties-changed (pure read)",
     );
 }
 

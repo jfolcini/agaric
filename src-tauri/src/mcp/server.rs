@@ -307,8 +307,6 @@ async fn serve_pipe<R>(
 where
     R: ToolRegistry + Send + Sync + 'static,
 {
-    use tokio::net::windows::named_pipe::ServerOptions;
-
     // The pipe path is threaded through from the bound listener
     // (captured on the `SocketKind::Pipe` variant) rather than being
     // recovered from `super::MCP_RO_PIPE_PATH`. The previous version
@@ -393,19 +391,66 @@ where
         // Prepare the next server instance before handing off the current
         // connection. Without this, the second client would fail to connect.
         //
-        // I-MCP-2: explicitly pass `first_pipe_instance(false)` even though
-        // it is the `ServerOptions::default` value. The initial bind in
-        // `bind_pipe` (`mcp/mod.rs`) uses `first_pipe_instance(true)` as
-        // the per-process lock that detects double-launches; subsequent
-        // `.create` calls here inherit that namespace ownership and must
-        // NOT re-claim it (re-claiming would either fail spuriously or,
-        // worse, race another instance into accepting a connection meant
-        // for us). Being explicit makes the namespace-ownership contract
-        // visible at the call site so a future maintainer doesn't flip
-        // the flag without understanding it.
-        server = ServerOptions::new()
-            .first_pipe_instance(false)
-            .create(pipe_path)?;
+        // #2720: create the successor with the SAME explicit per-user
+        // security descriptor as the initial bind (via
+        // `create_secured_pipe_instance`) — never fall back to the default
+        // (Everyone/Anonymous-readable) named-pipe DACL on the successor
+        // path.
+        //
+        // #2727: retry transient creation failures with the SAME
+        // log -> capped-backoff -> retry pattern used for `connect()` above,
+        // racing the disconnect signal. The previous code used `?`, so a
+        // single transient `CreateNamedPipe` failure propagated out of the
+        // loop and permanently killed the surface (the marker still reads
+        // "enabled" -> Settings shows the toggle on, yet nothing is
+        // listening). Mirrors the #636 hardening applied to `connect()`.
+        //
+        // I-MCP-2: `first_pipe_instance(false)` — the initial bind in
+        // `bind_socket` (`mcp/mod.rs`) claimed namespace ownership with
+        // `first_pipe_instance(true)` as the per-process double-launch lock;
+        // successors must NOT re-claim it (re-claiming would either fail
+        // spuriously or, worse, race another instance into accepting a
+        // connection meant for us).
+        server = loop {
+            // H-2: honor a disable that arrived while we were retrying.
+            if lifecycle_disabled(lifecycle.as_ref()) {
+                tracing::info!(
+                    target: "mcp",
+                    kind = surface.label(),
+                    "MCP accept loop exiting during successor-instance creation (lifecycle.enabled cleared)",
+                );
+                return Ok(());
+            }
+
+            match super::win_security::create_secured_pipe_instance(pipe_path, false) {
+                Ok(next) => {
+                    accept_failure_count = 0;
+                    break next;
+                }
+                Err(e) => {
+                    accept_failure_count = accept_failure_count.saturating_add(1);
+                    let backoff = compute_accept_backoff_duration(accept_failure_count);
+                    tracing::warn!(
+                        target: "mcp",
+                        kind = surface.label(),
+                        error = %e,
+                        failure_count = accept_failure_count,
+                        backoff_ms = u64::try_from(backoff.as_millis()).unwrap_or(u64::MAX),
+                        "MCP successor pipe create() failed; backing off and retrying",
+                    );
+                    match lifecycle.as_ref() {
+                        Some(lc) => {
+                            let notify = lc.disconnect_signal.clone();
+                            tokio::select! {
+                                () = tokio::time::sleep(backoff) => {}
+                                () = async move { notify.notified().await } => {}
+                            }
+                        }
+                        None => tokio::time::sleep(backoff).await,
+                    }
+                }
+            }
+        };
 
         let registry = registry.clone();
         let activity_ctx = activity_ctx.clone();

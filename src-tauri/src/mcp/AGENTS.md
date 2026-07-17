@@ -80,12 +80,22 @@ Do not lower the cap below 2 s without checking the slowest tool's p95 latency.
 
 ## Read-only vs read-write surfaces
 
-- **`tools_ro.rs`** mounts on the RO socket / pipe. Tools that don't mutate state (search, list, fetch). Lives at one socket path.
+- **`tools_ro.rs`** mounts on the RO socket / pipe. Tools that don't mutate state (search, list, fetch) — **with one documented, bounded exception**, `journal_for_date` (below). Lives at one socket path.
 - **`tools_rw.rs`** mounts on the RW socket / pipe. Tools that DO mutate state (delete, update, create, tag, untag, etc.). Lives at a separate socket path.
 
-Two pipes / two sockets is a deliberate split: an agent can connect to the RO surface only, get a guaranteed-no-mutation contract, and the user can disable the RW surface independently. The H-2 enable/disable gate (`McpLifecycle::enabled`) flips them independently.
+Two pipes / two sockets is a deliberate split: an agent can connect to the RO surface only and the user can disable the RW surface independently (the H-2 enable/disable gate, `McpLifecycle::enabled`, flips them independently). This is **not** a guaranteed-no-mutation contract, though — `journal_for_date` can append a `CreateBlock` op from the RO socket under the bounded conditions described below. Every other RO tool is a pure read.
 
-**Do not cross-pollute.** A read-only tool that needs to write (e.g. caching) goes through a normal command handler; it doesn't grow a mutation path on the RO surface.
+**Do not cross-pollute beyond the one documented carve-out below.** A read-only tool that needs to write (e.g. caching) goes through a normal command handler; it doesn't grow a NEW mutation path on the RO surface. `journal_for_date` is the sole, deliberately bounded exception that predates this rule — do not add a second one without updating this doc and getting explicit sign-off.
+
+### `journal_for_date` — bounded create carve-out (#2719)
+
+`journal_for_date` (`tools_ro.rs`, `handle_journal_for_date`) is the one RO tool with a write side-effect: on a lookup miss it may emit a `CreateBlock` + `SetProperty(space)` op pair (origin `agent:<name>`) for the missing journal page. This is genuinely a write, not a pure read — but it is bounded, not unconditional:
+
+- The page may only be **created** when `date` falls inside a **rolling window of today ± `JOURNAL_CREATE_WINDOW_MONTHS`** (12 months, `tools_ro.rs`). "Today" is `chrono::Local::now().date_naive()`, the same source `commands/agenda.rs` and `recurrence/parser.rs` already use.
+- For a `date` **outside** that window: an existing page is still returned (pure read, no write); a missing page returns `AppError::NotFound` instead of being created. The RO surface never creates a page for an arbitrary far-future or far-past date.
+- Inside the window the behaviour is exactly the pre-#2719 contract: idempotent per `(space_id, date)`, one `CreateBlock` op on the first call for a given pair, a pure lookup on every call after.
+
+Before #2719, `handle_journal_for_date` parsed **any** valid `chrono::NaiveDate` with no range check and delegated straight into the create-or-lookup helper — so an agent connected to the nominally read-only socket could append an unbounded number of `CreateBlock`/`SetProperty` ops to the append-only `op_log` (~3.6M reachable dates per space), none of them reclaimable. The window bound is what closes that: the reachable date range per space is now a ~2-year rolling window, not the full calendar. If you touch `handle_journal_for_date` or `within_journal_create_window`, keep this doc in sync — it is the single place both the code comments and the Settings "Read-only access" tooltip (`agentAccess.roToggleDescription` in `src/lib/i18n/settings.ts`) point back to.
 
 ### Full-vault RO scope (no per-space isolation)
 
