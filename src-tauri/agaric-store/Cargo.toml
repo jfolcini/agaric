@@ -16,6 +16,14 @@ rust-version = "1.95.0"
 license = "GPL-3.0-or-later"
 publish = false
 
+[features]
+# `test-util` exposes the `test_support` module (temp-file WAL `test_pool` +
+# `insert_block` + space helpers) to downstream crates' test builds. The
+# `agaric-engine` loro tests enable it to get a migrated pool in place of the
+# app's `init_pool` (#2621, wave E1). Empty deps: the module only touches
+# already-present store deps (sqlx, tempfile is a dev-dep — see note below).
+test-util = ["dep:tempfile"]
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
@@ -52,6 +60,11 @@ futures-util = { version = "0.3", default-features = false, features = ["sink", 
 # so `regex` is a regular dependency (#2621, wave S4c). Version mirrors the app
 # crate's `regex = "1"`.
 regex = "1"
+# `test_support` (temp-file WAL `test_pool`) needs `tempfile` for its `TempDir`.
+# Optional + gated by the `test-util` feature so downstream test builds
+# (agaric-engine) can compile it; the store's own `cargo test` reaches the same
+# module via the `[dev-dependencies]` `tempfile` below (#2621, wave E1).
+tempfile = { version = "3.27.0", optional = true }
 
 [dev-dependencies]
 # The moved `cancellation` unit tests use `#[tokio::test]`, `tokio::spawn`,

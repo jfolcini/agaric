@@ -52,7 +52,7 @@ Fork the per-space doc, apply the op to the fork, read back from the fork,
 export the promotable delta; on COMMIT import the delta into the canonical doc,
 on abort drop the fork. This is option (b) from the issue.
 
-`fork_staging` (this PR, `src-tauri/src/loro/engine/staging.rs`) is the building
+`fork_staging` (this PR, `src-tauri/agaric-engine/src/loro/engine/staging.rs`) is the building
 block. Two problems surface immediately:
 
 - **Cost.** `LoroDoc::fork` is documented **O(n) in time and space**. A fork per
@@ -149,7 +149,7 @@ per-space doc is exactly the thing that grows. The mechanism MUST be
      `fork_staging`), adopt it as canonical, rebuild the index. `O(n)`, but off
      the hot path.
 
-   Both primitives live in `src-tauri/src/loro/engine/staging.rs` with unit
+   Both primitives live in `src-tauri/agaric-engine/src/loro/engine/staging.rs` with unit
    tests (rewind-to-checkpoint, identity-preserved-and-usable). Chosen over the
    two alternatives: **explicit inverse ops** (must exactly invert CRDT semantics
    — fractional index, tombstones — per op type; more code + edge cases) and
@@ -162,7 +162,7 @@ per-space doc is exactly the thing that grows. The mechanism MUST be
 ## Write-path wiring
 
 The primitives wire into the tx lifecycle via a per-tx **revert log** on
-`LoroState` and an RAII **`RevertScope`** (`src-tauri/src/loro/revert.rs`):
+`LoroState` and an RAII **`RevertScope`** (`src-tauri/agaric-engine/src/loro/revert.rs`):
 
 - **Checkpoint capture.** The mutation handlers acquire their engine through
   `LoroEngineRegistry::for_space_recording`, which — when a `RevertScope` is

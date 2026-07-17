@@ -691,9 +691,9 @@ jobs:
         # this action with a distinct working-directory + database-url. The
         # sqlx-0.9.x `prepare --check` rationale and the `-- --tests`
         # default (query drift in `#[cfg(test)]` modules must not slip
-        # through — prek.toml MAINT-227) live in the action itself. Today
-        # only the `agaric` crate (`src-tauri`) has a cache; the next
-        # consumer is `agaric-store` when it is carved out.
+        # through — prek.toml MAINT-227) live in the action itself. Three
+        # crates now carry a cache: `agaric` (this lane), `agaric-store`, and
+        # `agaric-engine` (the lanes below).
         uses: ./.github/actions/sqlx-offline-check
         with:
           working-directory: src-tauri
@@ -721,6 +721,25 @@ jobs:
         with:
           working-directory: src-tauri/agaric-store
           database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
+
+      - name: sqlx offline cache check (agaric-engine)
+        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
+        # sqlx compile, skipped on a backend-less PR (backend != 'true').
+        if: needs.detect-changes.outputs.backend == 'true'
+        # #2621 wave E1: loro's `query!`/`query_scalar!` macros moved into
+        # agaric-engine, which now carries its own committed `.sqlx/` cache.
+        # A `../migrations` symlink under the crate lets both this action's
+        # `cargo sqlx migrate run` and `sqlx::migrate!` resolve the shared
+        # workspace migrations.
+        #
+        # The `database-url` MUST be absolute for a NON-root workspace member —
+        # see the agaric-store lane's comment above for the relative-path
+        # failure mode (rustc resolves relative sqlite paths from the workspace
+        # root, not the crate dir).
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-engine
+          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
 
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a

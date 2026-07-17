@@ -1,15 +1,15 @@
 # agaric-engine — CRDT / document-domain layer for the layered-workspace split
 # (#2621).
 #
-# Wave E0 establishes the crate with the query-free leaf `bibliography` module
-# (a pure BibTeX / CSL-JSON import parser — no sqlx, no IO; depends only on
-# `agaric-core`'s `error` module + serde_json). Later waves fold in the Loro
-# CRDT runtime + the `dag` materializer. Query-free for now, so the crate stands
-# up NO `.sqlx` offline cache yet — that lands when the DB-touching engine
-# modules move. The `agaric` crate depends on this via a version-pinned path dep
-# and re-exports each module (`pub use agaric_engine::bibliography;` …) so
-# existing `crate::bibliography::…` paths keep resolving unchanged during the
-# transition.
+# Wave E0 established the crate with the query-free leaf `bibliography` module.
+# Wave E1 folds in the Loro CRDT runtime (`loro`) — the first query-bearing
+# engine module, so the crate now carries its own `.sqlx` offline cache
+# (migrations symlink + committed cache + a 3rd `sqlx prepare` CI lane,
+# mirroring `agaric-store`). Later waves fold in the `dag` materializer. The
+# `agaric` crate depends on this via a version-pinned path dep and re-exports
+# each module (`pub use agaric_engine::{bibliography, loro};` …) so existing
+# `crate::bibliography::…` / `crate::loro::…` paths keep resolving unchanged
+# during the transition.
 [package]
 name = "agaric-engine"
 version = "0.1.0"
@@ -19,14 +19,70 @@ rust-version = "1.95.0"
 license = "GPL-3.0-or-later"
 publish = false
 
+[features]
+# `test-util` exposes loro's `projection::reproject_call_spy` invocation counter
+# to downstream crates' test builds. The app crate's
+# `materializer::handlers::import_scaling_tests` enables it (via a dev-dep
+# feature) to assert the deferred-flush reprojection count (#2621, wave E1).
+test-util = []
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
 # `agaric-core` — `bibliography` references `error::AppError`. Path dep pinned
 # with a version (cargo-deny wildcard ban).
 agaric-core = { path = "../agaric-core", version = "0.1.0" }
-# `bibliography` parses the CSL-JSON format via `serde_json::Value`.
+# `agaric-store` — loro's `projection` writer + registry/snapshot reach the DB
+# core (`db`), op payloads (`op`), `space::SpaceId`, and
+# `block_descendants::…`. Path dep pinned with a version (cargo-deny wildcard
+# ban), same as the store's own `agaric-core` pin.
+agaric-store = { path = "../agaric-store", version = "0.1.0" }
+# `bibliography` parses the CSL-JSON format via `serde_json::Value`; loro's
+# projection serializes cohort/tag payloads via `serde_json::Value`.
 serde_json = "1"
+# The Loro CRDT crate — `LoroEngine` wraps `LoroDoc`, `Frontiers`, tree/map
+# containers. Version mirrors the app crate exactly.
+loro = "1.12"
+# `loro/engine/mod.rs` derives peer ids + block-content hashes via `xxh3_64`.
+# Version/features mirror the app crate exactly.
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+# loro's `projection` writer runs `sqlx::query!` macros against the workspace
+# schema (offline-cached under this crate's `.sqlx`). Version/features mirror
+# the app crate exactly for cargo feature-unification.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+# loro's `projection` parses RFC-3339 timestamps via `chrono::DateTime`.
+# Version/features mirror the app crate exactly.
+chrono = { version = "0.4.44", features = ["serde"] }
+# The engine registry + snapshot use `parking_lot` (arc_lock guards, no
+# poisoning). Version/features mirror the app crate exactly.
+parking_lot = { version = "0.12.5", features = ["arc_lock"] }
+# loro logs recovery/migration warnings via `tracing::warn!` / `#[instrument]`.
+# Version/features mirror the app crate exactly.
+tracing = { version = "0.1.44", features = ["attributes"] }
+# `peer_epoch`'s retry backoff (`tokio::time::sleep`) + the periodic-snapshot
+# task's `tokio::time::interval` need tokio's timer in prod. Version mirrors the
+# app crate; `time` is enabled explicitly (the app relies on workspace feature
+# unification to pull it) so the engine builds standalone. The spawner is
+# injected by the caller (see `snapshot::spawn_periodic_snapshot`) so no `rt`
+# runtime coupling leaks into the engine.
+tokio = { version = "1", features = ["time"] }
+
+[dev-dependencies]
+# The moved loro tests use `#[tokio::test]` (single- + multi-thread flavors).
+# Version/features mirror the app crate's `[dev-dependencies]` exactly.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+# `engine_proptest.rs` property tests. Version mirrors the app crate.
+proptest = "1.11.0"
+# One `engine/mod.rs` test captures `tracing::warn!` output via an in-process
+# subscriber (`fmt::MakeWriter`). Version/features mirror the app crate.
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+# The moved DB tests build a migrated temp-file pool via `TempDir`. Version
+# mirrors the app crate.
+tempfile = "3.27.0"
+# The loro DB tests build a migrated pool via `agaric_store::test_support::
+# test_pool` — enable the store's `test-util` feature so that module compiles
+# for this crate's test build (#2621, wave E1).
+agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-util"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-store` members).

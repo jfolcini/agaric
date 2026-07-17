@@ -61,8 +61,13 @@ pub use agaric_core::hash; // foundation crate (#2621)
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
-// Loro CRDT engine — the only materializer path.
-pub mod loro;
+// `loro` — the CRDT engine (the only materializer path) — moved into
+// `agaric-engine` (#2621, wave E1) as the first query-bearing engine module.
+// Re-exported so every `crate::loro::…` path (materializer / merge / snapshot /
+// commands) resolves unchanged. Its pure-CRDT tests moved with it; the app-layer
+// materializer/merge/run couplings live above this crate and reach loro via
+// this re-export.
+pub use agaric_engine::loro;
 pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
@@ -1495,6 +1500,11 @@ fn spawn_background_tasks(
         snapshot_shutdown,
         crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
         Arc::clone(materializer.loro_state()),
+        // `agaric-engine` stays tauri-free (#2621, wave E1): the app injects the
+        // Tauri async runtime as the executor here.
+        |fut| {
+            tauri::async_runtime::spawn(fut);
+        },
     );
 }
 

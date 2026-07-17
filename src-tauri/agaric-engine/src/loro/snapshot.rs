@@ -1,0 +1,1047 @@
+//! Per-space LoroDoc snapshot persistence.
+//!
+//! ## Why this exists
+//!
+//! [`LoroEngineRegistry`] is a process-local
+//! `HashMap<SpaceId, LoroEngine>` that is rebuilt from scratch on
+//! every process restart — engines are instantiated lazily on first
+//! hit and the `LoroDoc` only contains state derived from ops applied
+//! during the current process lifetime. The engine is authoritative:
+//! the materializer projects from `LoroDoc` state into SQL. A
+//! cold-start engine would project an empty doc on top of existing
+//! SQL state, corrupting the user's workspace. We persist per-space
+//! `LoroDoc` snapshots in a `loro_doc_state` SQLite table, rehydrate
+//! on app boot, and periodically re-snapshot in the background.
+//!
+//! ## Surface
+//!
+//! - [`save_snapshot`] — exports the engine's current state via
+//!   [`LoroEngine::export_snapshot`] and writes it to `loro_doc_state`
+//!   under the supplied `space_id`.  Idempotent; an existing row is
+//!   replaced (`INSERT OR REPLACE`).
+//! - [`load_snapshot`] — reads back the bytes for a given `space_id`,
+//!   returning `Ok(None)` if no row exists.
+//! - [`load_all_space_snapshots`] — enumerate every persisted
+//!   `(space_id, snapshot)` pair.  Used by the eager-load boot pass
+//!   that rehydrates the registry without any synchronous-async glue
+//!   in `LoroEngineRegistry::for_space` (see decision note below).
+//! - [`save_all_engines`] — walk the registry, call [`save_snapshot`]
+//!   per space.  Catches and logs per-space errors so one bad space
+//!   never blocks the others.  Used by the periodic scheduler.
+//!
+//! ## Boot rehydration design
+//!
+//! The plan offered three options for getting a snapshot into the
+//! registry on first touch:
+//!
+//! - (a) Make `for_space` async + thread `&SqlitePool` through.
+//!   Invasive — every caller of `merge::engine_apply` would need to
+//!   become async.
+//! - (b) `tokio::task::block_in_place` + `Handle::block_on` inside the
+//!   sync `for_space`.  Hacky and risks deadlocks on single-threaded
+//!   runtimes / nested tokio contexts.
+//! - (c) Eager-load every persisted snapshot during app boot, into the
+//!   registry, before any op-apply runs.  Pure-async path, no
+//!   sync-from-async glue, and the boot cost is bounded by the number
+//!   of spaces × snapshot-size.
+//!
+//! **Decision: option (c).**  Boot already has an async context
+//! (`tauri::async_runtime::spawn` is invoked from the setup closure
+//! around `lib.rs` line ~965), the snapshot table is small (one row
+//! per space), and `LoroEngineRegistry` already exposes
+//! [`LoroEngineRegistry::install_engine`] (added day-6) for the caller
+//! to seed pre-built engines.  `for_space` stays sync and merely pulls
+//! from the now-populated registry; on a space whose snapshot has not
+//! been persisted yet the lazy-instantiate path still creates a fresh
+//! engine, exactly as before.
+//!
+//! ## Failure semantics
+//!
+//! `save_snapshot` and `load_snapshot` return `Result<_, AppError>`.
+//! The periodic scheduler ([`save_all_engines`]) is the place that
+//! must NEVER abort the process: it catches per-space errors and
+//! logs `tracing::warn!`, mirroring the
+//! `flush_task::run_periodic_flush` failure pattern.
+
+use sqlx::SqlitePool;
+
+use crate::loro::engine::LoroEngine;
+use crate::loro::registry::LoroEngineRegistry;
+use agaric_core::error::AppError;
+use agaric_store::space::SpaceId;
+
+/// Wall-clock ms-since-Unix-epoch.  Returns `0` on the
+/// (impossible-in-practice) case where the system clock is before
+/// `UNIX_EPOCH`, matching `parity_sink::default_retention_cutoff_ms`'s
+/// fail-soft convention.
+fn now_ms() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| i64::try_from(d.as_millis()).unwrap_or(i64::MAX))
+}
+
+/// The apply-cursor seq a snapshot taken *now* is guaranteed to reflect
+/// (C2 watermark).
+///
+/// `materializer_apply_cursor.materialized_through_seq` tracks
+/// ENGINE-APPLY progress, NOT SQL-materialization progress. It advances
+/// ONLY via `materializer::handlers::apply::advance_apply_cursor`,
+/// which is called solely inside `apply_op` / the `BatchApplyOps` arm —
+/// i.e. the foreground engine-apply path (boot replay, the test-only
+/// `dispatch_op` helper, remote apply). The live LOCAL command path
+/// (`CommandTx::commit_and_dispatch`) writes the SQL `blocks` row
+/// SYNCHRONOUSLY inside its own tx and then fires only background
+/// cache-rebuild tasks; it NEVER enqueues an `ApplyOp`, never touches the
+/// per-space `LoroEngine`, and therefore never advances this cursor. So
+/// during a live session `op_log.seq` climbs while the cursor stays pinned
+/// at the prior-boot replay watermark (see #1248). Advancing the cursor to
+/// reflect SQL materialization would require routing local ops through
+/// engine-apply — tracked separately in #1257.
+///
+/// What the cursor DOES bound is engine-apply: every op `<= cursor` has
+/// been engine-applied and reprojected. The per-space `LoroEngine`
+/// dispatch for an `ApplyOp` happens INSIDE `apply_op`'s tx (the engine
+/// observes the op before the commit; see `apply_op`), and the foreground
+/// apply queue is serial, so every op `<= cursor` is reflected in its
+/// engine. `cursor - 1` (clamped at 0) is a conservative lower bound on
+/// what every engine reflects; boot replay re-applies the idempotent tail
+/// above it. A read error degrades to `0` (a conservative full rebuild
+/// next boot) rather than risking a watermark that overshoots engine state.
+async fn snapshot_watermark(pool: &SqlitePool) -> i64 {
+    let cursor: i64 = sqlx::query_scalar!(
+        r#"SELECT materialized_through_seq as "seq!: i64" FROM materializer_apply_cursor WHERE id = 1"#,
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap_or(0);
+    (cursor - 1).max(0)
+}
+
+/// Persist the engine's current snapshot to `loro_doc_state`.
+///
+/// Replaces any existing row for `space_id` (`INSERT OR REPLACE`).
+/// `op_count` resets to 0 on every save — the column is reserved for
+/// a future "snapshot every N ops" cadence and is currently unused by
+/// the time-driven scheduler. `applied_through_seq` records the apply
+/// cursor the blob reflects (see [`snapshot_watermark`]) so boot can
+/// detect a stale snapshot.
+pub async fn save_snapshot(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+    engine: &LoroEngine,
+) -> Result<(), AppError> {
+    let bytes = engine.export_snapshot()?;
+    let updated_at = now_ms();
+    let applied_through_seq = snapshot_watermark(pool).await;
+    sqlx::query(
+        "INSERT OR REPLACE INTO loro_doc_state \
+         (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES (?, ?, ?, 0, ?)",
+    )
+    .bind(space_id.as_str())
+    .bind(bytes)
+    .bind(updated_at)
+    .bind(applied_through_seq)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Load the persisted snapshot bytes for `space_id`, or `Ok(None)` if
+/// no row exists.  The bytes are opaque to this layer — the caller
+/// passes them to [`LoroEngine::import`] to apply.
+pub async fn load_snapshot(
+    pool: &SqlitePool,
+    space_id: &SpaceId,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let row: Option<(Vec<u8>,)> =
+        sqlx::query_as("SELECT snapshot FROM loro_doc_state WHERE space_id = ?")
+            .bind(space_id.as_str())
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(b,)| b))
+}
+
+/// Enumerate every persisted snapshot.  Returns `(space_id_string,
+/// snapshot_bytes)` pairs — the caller decides what to do with each
+/// (usually: `LoroEngine::with_peer_id` + `import` + register).
+///
+/// This is the single SELECT used by the boot rehydration pass.  Bounded
+/// by the user's space count (typically O(10)) so a full table scan
+/// is fine.
+pub async fn load_all_space_snapshots(
+    pool: &SqlitePool,
+) -> Result<Vec<(String, Vec<u8>)>, AppError> {
+    let rows: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT space_id, snapshot FROM loro_doc_state")
+            .fetch_all(pool)
+            .await?;
+    Ok(rows)
+}
+
+/// Boot-time rehydration: load every persisted snapshot and seed the
+/// registry with pre-built engines.  Called once during app setup
+/// before any op-apply runs.  Errors per space are logged + continued
+/// — a single corrupt snapshot never blocks the rest of the workspace.
+///
+/// Returns the number of engines successfully rehydrated.
+pub async fn rehydrate_registry(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+) -> usize {
+    let rows = match load_all_space_snapshots(pool).await {
+        Ok(r) => r,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "loro:rehydrate_registry: load_all_space_snapshots failed; \
+                 starting with empty registry",
+            );
+            return 0;
+        }
+    };
+
+    let mut ok = 0usize;
+    for (space_id_str, bytes) in rows {
+        let space_id = SpaceId::from_trusted(&space_id_str);
+        // #792: derive the engine's PeerID from the registry's current
+        // peer-id epoch (installed at boot from `app_settings`, refreshed
+        // by `reload_registry_from_db` after a RESET) so rehydrated
+        // engines and lazily-created ones agree on the device's peer id.
+        let mut engine = match LoroEngine::with_peer_id_epoch(device_id, registry.peer_epoch()) {
+            Ok(e) => e,
+            Err(e) => {
+                tracing::warn!(
+                    space_id = %space_id_str,
+                    error = %e,
+                    "loro:rehydrate_registry: with_peer_id failed; skipping space",
+                );
+                continue;
+            }
+        };
+        if let Err(e) = engine.import(&bytes) {
+            tracing::warn!(
+                space_id = %space_id_str,
+                error = %e,
+                "loro:rehydrate_registry: import failed; skipping space",
+            );
+            continue;
+        }
+        registry.install_engine(space_id, engine);
+        ok += 1;
+    }
+    ok
+}
+
+/// In-process engine reload after a snapshot RESET (#607 / #779).
+///
+/// `snapshot::apply_snapshot` replaces every core SQL table and wipes the
+/// Loro sidecar state (`loro_doc_state`, `loro_sync_inbox`, the apply
+/// cursor) in one transaction — but it has no access to the live engine
+/// registry, so the in-memory engines still hold the pre-reset CRDT
+/// lineage when it returns. Left alone, the next `prepare_outgoing` would
+/// export that stale state to peers and the next periodic / exit-time
+/// `save_all_engines` would persist it straight back into the freshly
+/// wiped `loro_doc_state` (#779's restart scenario).
+///
+/// This is the matching reload primitive: drop every engine, then re-run
+/// the standard boot rehydration against whatever `loro_doc_state` now
+/// holds. After a RESET that table is empty, so the registry ends up
+/// empty — which is the CORRECT post-reset state, not a shortcut: the
+/// snapshot format carries SQL rows only (no CRDT history), and seeding
+/// fresh Loro docs from snapshot SQL would mint an independent history
+/// whose tree nodes would duplicate the peer's on the next loro-sync
+/// merge. An empty engine instead has an empty version vector, so the
+/// next sync session imports the peer's full CRDT state cleanly and
+/// re-converges engine and SQL.
+///
+/// Must be called immediately after `apply_snapshot` returns, before any
+/// further engine access (the production caller is
+/// `sync_daemon::snapshot_transfer::try_receive_snapshot_catchup`).
+/// Returns the number of engines rehydrated (0 after a RESET).
+pub async fn reload_registry_from_db(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+) -> Result<usize, AppError> {
+    // #792: re-read the persisted peer-id epoch BEFORE dropping the
+    // engines. `apply_snapshot` bumps it inside the RESET transaction, so
+    // after a successful RESET this installs the NEW epoch and every
+    // post-reset engine (lazy or rehydrated) mints ops under a fresh
+    // PeerID — counters can restart at 0 without forking the
+    // (peer, counter) space against pre-reset ops still held by peers.
+    // On the failed-apply restore path the tx rolled back, the load
+    // returns the unchanged epoch, and the engines reload onto their
+    // original peer id — exactly matching the restored loro_doc_state.
+    //
+    // #2023: if that read FAILS (after `load_peer_epoch`'s bounded
+    // retry) we must NOT proceed. This runs right after a RESET, where
+    // the persisted epoch was bumped to >= 1; defaulting to 0 (or
+    // leaving the stale in-memory epoch in place) and then rehydrating
+    // would mint engines under the retired pre-reset PeerID — the exact
+    // fork #792 prevents. Propagate the error and leave the registry
+    // untouched (engines NOT cleared / rehydrated) so the caller can
+    // fail the session closed instead of silently forking.
+    let epoch = crate::loro::peer_epoch::load_peer_epoch(pool).await?;
+    if epoch != registry.peer_epoch() {
+        tracing::info!(
+            old_epoch = registry.peer_epoch(),
+            new_epoch = epoch,
+            "loro: peer-id epoch changed across registry reload (#792); \
+             post-reload engines will mint ops under a fresh PeerID"
+        );
+        registry.set_peer_epoch(epoch);
+    }
+    registry.clear();
+    Ok(rehydrate_registry(pool, registry, device_id).await)
+}
+
+/// Walk the registry and persist every engine's current snapshot.  Used
+/// by the periodic scheduler.  Per-space errors are logged + continued
+/// so one bad space never blocks the rest.
+///
+/// Returns the number of spaces successfully snapshotted.
+pub async fn save_all_engines(pool: &SqlitePool, registry: &LoroEngineRegistry) -> usize {
+    // Issue #153 / #2205 / #2201 — `snapshot_dirty_engines` collects the
+    // per-space engine `Arc`s of ONLY the dirty spaces under the registry's
+    // locks, then per space takes that engine's own lock for the O(1)
+    // `LoroDoc` *handle* clone, and runs each (comparatively slow) snapshot
+    // export with no lock held at all. Engine applies are therefore blocked
+    // only for the O(1) handle clone of their own space, never for the
+    // O(spaces x export) serialization. A `LoroDoc` clone is a reference
+    // clone (shared underlying doc), so this does NOT double peak memory —
+    // see `LoroEngineRegistry::snapshot_dirty_engines` for the full
+    // rationale and the (unchanged) cross-space consistency contract.
+    //
+    // #2201 — only spaces mutated since their last successful persist are
+    // re-encoded; a clean space keeps its existing `loro_doc_state` row
+    // (still accurate for its unchanged engine, and backfilled by op-log /
+    // sync-inbox replay on boot regardless).
+    // /C2: read the watermark BEFORE acquiring the engine lock,
+    // so it is a safe lower bound for every engine exported in this pass —
+    // the lock-time cursor can only be >= this value, and each engine
+    // reflects all ops <= (lock-time cursor - 1) >= this watermark.
+    let applied_through_seq = snapshot_watermark(pool).await;
+    // #607 review: capture the clear-generation BEFORE collecting doc
+    // handles. A snapshot RESET (`registry.clear()` +
+    // `apply_snapshot`'s `loro_doc_state` wipe) racing this pass would
+    // otherwise let us persist PRE-reset engine state into the freshly
+    // wiped table — the exact #779 resurrection this save exists to
+    // prevent. Re-checked before every write below.
+    let generation = registry.generation();
+    let pairs = registry.snapshot_dirty_engines();
+
+    let mut ok = 0usize;
+    for (space_id, mark_stamp, bytes_result) in pairs {
+        if registry.generation() != generation {
+            tracing::warn!(
+                space_id = %space_id,
+                "loro:save_all_engines: registry cleared mid-save (snapshot \
+                 RESET, #607); aborting — these handles predate the reset \
+                 and must not be persisted over the wiped loro_doc_state. \
+                 Dirty flags are left set (no per-space clear below), so the \
+                 post-reset engines re-persist on a later tick",
+            );
+            return ok;
+        }
+        let bytes = match bytes_result {
+            Ok(b) => b,
+            Err(e) => {
+                // #2201 — export failed: this space's current state was NOT
+                // persisted, so LEAVE it dirty (skip the conditional clear)
+                // and let the next tick retry.
+                tracing::warn!(
+                    space_id = %space_id,
+                    error = %e,
+                    "loro:save_all_engines: export_snapshot failed; leaving space dirty",
+                );
+                continue;
+            }
+        };
+        let updated_at = now_ms();
+        let res = sqlx::query(
+            "INSERT OR REPLACE INTO loro_doc_state \
+             (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+             VALUES (?, ?, ?, 0, ?)",
+        )
+        .bind(space_id.as_str())
+        .bind(bytes)
+        .bind(updated_at)
+        .bind(applied_through_seq)
+        .execute(pool)
+        .await;
+        match res {
+            Ok(_) => {
+                // #2201 — persist succeeded: clear THIS space's dirty flag,
+                // but only if it was not re-marked since we captured
+                // `mark_stamp` (a racing `for_space` overwrote it with a
+                // strictly greater stamp and must be re-persisted next tick).
+                registry.clear_dirty_if_unchanged(&space_id, mark_stamp);
+                ok += 1;
+            }
+            Err(e) => {
+                // #2201 — INSERT failed: LEAVE the space dirty (skip the
+                // conditional clear) so the next tick retries it.
+                tracing::warn!(
+                    space_id = %space_id,
+                    error = %e,
+                    "loro:save_all_engines: INSERT OR REPLACE failed; leaving space dirty",
+                );
+            }
+        }
+    }
+    ok
+}
+
+/// Default cadence for the periodic snapshot task (5 minutes).
+///
+/// Restored after the parity flush task — which hosted the
+/// `save_all_engines` call on its tick — was deleted, leaving snapshots
+/// unpersisted (the resulting empty `loro_doc_state` + advancing apply
+/// cursor wedged the materializer). The engine applies at human-typing
+/// rates, so a 5-minute snapshot bounds the boot-replay tail to a
+/// handful of ops while keeping the snapshot cost negligible.
+pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
+
+/// Spawn the periodic Loro snapshot task.
+///
+/// Every `interval_secs` it walks the process-global engine registry and
+/// persists each engine's snapshot into `loro_doc_state`, so the next
+/// boot rehydrates without replaying the full op-log. The task runs for
+/// the app's lifetime and stops once `shutdown` flips. Per-space errors
+/// are caught + logged inside [`save_all_engines`], so a transient
+/// SQL/Loro failure never crashes the app.
+/// `spawn` injects the async executor: the app passes
+/// `|fut| { tauri::async_runtime::spawn(fut); }` (so `agaric-engine` stays
+/// tauri-free), tests pass `|fut| { tokio::spawn(fut); }` (#2621, wave E1).
+pub fn spawn_periodic_snapshot(
+    pool: SqlitePool,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    interval_secs: u64,
+    state: std::sync::Arc<crate::loro::shared::LoroState>,
+    spawn: impl FnOnce(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
+) {
+    use std::sync::atomic::Ordering;
+    use std::time::Duration;
+
+    // Fire-and-forget: the task lives for the process lifetime and stops
+    // when `shutdown` flips. The spawned JoinHandle is intentionally discarded
+    // by the caller-supplied `spawn`.
+    spawn(Box::pin(async move {
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
+        // Skip the immediate first tick — `tokio::time::interval` fires
+        // once at construction. Boot rehydrate just ran, so there is
+        // nothing new to persist yet.
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            if shutdown.load(Ordering::Relaxed) {
+                break;
+            }
+            let saved = save_all_engines(&pool, &state.registry).await;
+            if saved > 0 {
+                tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
+            }
+        }
+    }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::loro::engine::PropertyValue;
+    use tempfile::TempDir;
+
+    const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+    const SPACE_B: &str = "01BX5ZZKBKACTAV9WEVGEMMVRZ";
+    /// Distinct space for the periodic-snapshot smoke test. The global
+    /// registry is shared within a test binary, so this ULID must not
+    /// collide with `SPACE_A`/`SPACE_B` above.
+    const SPACE_PERIODIC: &str = "01J0PERIODICSNAP000000TEST";
+
+    async fn fresh_pool() -> (SqlitePool, TempDir) {
+        agaric_store::test_support::test_pool().await
+    }
+
+    #[tokio::test]
+    async fn save_then_load_round_trips() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let mut engine = LoroEngine::with_peer_id("device-1").expect("engine");
+        engine
+            .apply_create_block("BLOCK1", "content", "hello", None, 0)
+            .expect("create");
+
+        save_snapshot(&pool, &space, &engine).await.expect("save");
+
+        let loaded = load_snapshot(&pool, &space)
+            .await
+            .expect("load")
+            .expect("present");
+        let expected = engine.export_snapshot().expect("export for compare");
+        assert_eq!(
+            loaded, expected,
+            "loaded bytes must equal the engine's current snapshot bytes"
+        );
+    }
+
+    #[tokio::test]
+    async fn load_returns_none_for_missing_space() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+        let loaded = load_snapshot(&pool, &space).await.expect("load");
+        assert!(loaded.is_none(), "missing row must yield Ok(None)");
+    }
+
+    #[tokio::test]
+    async fn save_overwrites_existing_row() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let mut engine_v1 = LoroEngine::with_peer_id("device-1").expect("engine1");
+        engine_v1
+            .apply_create_block("BLOCK1", "content", "first", None, 0)
+            .expect("create");
+        save_snapshot(&pool, &space, &engine_v1)
+            .await
+            .expect("save v1");
+
+        // Snapshot a different state.
+        let mut engine_v2 = LoroEngine::with_peer_id("device-1").expect("engine2");
+        engine_v2
+            .apply_create_block("BLOCK1", "content", "first", None, 0)
+            .expect("create");
+        engine_v2
+            .apply_create_block("BLOCK2", "content", "second", None, 1)
+            .expect("create2");
+        save_snapshot(&pool, &space, &engine_v2)
+            .await
+            .expect("save v2");
+
+        let loaded = load_snapshot(&pool, &space)
+            .await
+            .expect("load")
+            .expect("present");
+        let expected = engine_v2.export_snapshot().expect("export v2");
+        assert_eq!(
+            loaded, expected,
+            "INSERT OR REPLACE must leave only the latest row visible"
+        );
+
+        // Single-row invariant: the PRIMARY KEY on `space_id` is the
+        // contract; verify exactly one row exists for this space.
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state WHERE space_id = ?")
+                .bind(space.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("count");
+        assert_eq!(count, 1, "PRIMARY KEY contract: one row per space_id");
+    }
+
+    #[tokio::test]
+    async fn rehydrate_engine_from_snapshot_recovers_state() {
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Engine A: apply some ops, save its snapshot.
+        let mut engine_a = LoroEngine::with_peer_id("device-1").expect("engine_a");
+        engine_a
+            .apply_create_block("BLOCK1", "content", "hello world", None, 0)
+            .expect("create");
+        engine_a
+            .apply_set_property("BLOCK1", "todo_state", Some("DONE"))
+            .expect("set_property");
+        save_snapshot(&pool, &space, &engine_a).await.expect("save");
+
+        // Engine B: fresh, then load + import.  Reads must match.
+        let bytes = load_snapshot(&pool, &space)
+            .await
+            .expect("load")
+            .expect("present");
+        let mut engine_b = LoroEngine::with_peer_id("device-1").expect("engine_b");
+        engine_b.import(&bytes).expect("import");
+
+        let snap = engine_b
+            .read_block("BLOCK1")
+            .expect("read")
+            .expect("present");
+        assert_eq!(snap.content, "hello world");
+
+        let prop = engine_b
+            .read_property_typed("BLOCK1", "todo_state")
+            .expect("read_property_typed");
+        assert_eq!(prop, Some(PropertyValue::Str("DONE".to_string())));
+    }
+
+    #[tokio::test]
+    async fn rehydrate_registry_seeds_engines_from_persisted_snapshots() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Seed two persisted snapshots, one per space.
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+        let mut engine_a = LoroEngine::with_peer_id("device-1").expect("engine_a");
+        engine_a
+            .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+            .expect("create");
+        save_snapshot(&pool, &space_a, &engine_a)
+            .await
+            .expect("save a");
+
+        let mut engine_b = LoroEngine::with_peer_id("device-1").expect("engine_b");
+        engine_b
+            .apply_create_block("BLOCK_B", "content", "in B", None, 0)
+            .expect("create");
+        save_snapshot(&pool, &space_b, &engine_b)
+            .await
+            .expect("save b");
+
+        // Fresh registry: rehydrate.
+        let registry = LoroEngineRegistry::new();
+        let n = rehydrate_registry(&pool, &registry, "device-1").await;
+        assert_eq!(n, 2, "both spaces must rehydrate");
+        assert_eq!(registry.len(), 2);
+
+        // Engines hold the seeded blocks.
+        let mut g = registry.for_space(&space_a, "device-1").expect("a");
+        let snap = g.engine_mut().read_block("BLOCK_A").unwrap().unwrap();
+        assert_eq!(snap.content, "in A");
+        drop(g);
+
+        let mut g = registry.for_space(&space_b, "device-1").expect("b");
+        let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
+        assert_eq!(snap.content, "in B");
+    }
+
+    /// #607 / #779 — `reload_registry_from_db` drops stale engines and
+    /// rehydrates strictly from `loro_doc_state`. Two cases in one walk:
+    /// (a) after a snapshot RESET the table is empty, so the registry
+    /// ends up EMPTY (no pre-reset engine survives in memory, and a
+    /// follow-up `save_all_engines` persists nothing stale); (b) a space
+    /// whose snapshot IS persisted comes back, proving the reload is a
+    /// real rehydrate and not just a clear.
+    #[tokio::test]
+    async fn reload_registry_from_db_drops_stale_engines_and_rehydrates_607() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        // Live engine for A holds pre-reset content; loro_doc_state has
+        // NO row for A (the RESET wiped it). B has a persisted snapshot
+        // (simulating a future format that carries engine state).
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_PRE", "content", "pre-reset", None, 0)
+                .expect("create");
+        }
+        let mut engine_b = LoroEngine::with_peer_id("device-1").expect("engine_b");
+        engine_b
+            .apply_create_block("BLOCK_B", "content", "persisted", None, 0)
+            .expect("create");
+        save_snapshot(&pool, &space_b, &engine_b)
+            .await
+            .expect("save b");
+
+        let n = reload_registry_from_db(&pool, &registry, "device-1")
+            .await
+            .expect("reload");
+        assert_eq!(n, 1, "only the persisted space must rehydrate");
+        assert_eq!(registry.len(), 1, "stale engine for A must be dropped");
+
+        // A: fresh lazy engine, pre-reset block gone.
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("a");
+            assert!(
+                g.engine_mut().read_block("BLOCK_PRE").unwrap().is_none(),
+                "pre-reset content must not survive the reload"
+            );
+        }
+        // B: rehydrated from its persisted snapshot.
+        {
+            let mut g = registry.for_space(&space_b, "device-1").expect("b");
+            let snap = g.engine_mut().read_block("BLOCK_B").unwrap().unwrap();
+            assert_eq!(snap.content, "persisted");
+        }
+
+        // (a) continued: with loro_doc_state now empty for A, a simulated
+        // exit-save persists nothing stale — the #779 boot source stays
+        // clean. (B's row is refreshed, which is fine.)
+        sqlx::query("DELETE FROM loro_doc_state")
+            .execute(&pool)
+            .await
+            .expect("wipe");
+        registry.clear();
+        let n = reload_registry_from_db(&pool, &registry, "device-1")
+            .await
+            .expect("reload");
+        assert_eq!(n, 0, "empty loro_doc_state must rehydrate nothing");
+        assert_eq!(registry.len(), 0);
+        let saved = save_all_engines(&pool, &registry).await;
+        assert_eq!(saved, 0, "exit-save over an empty registry writes nothing");
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_doc_state")
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+        assert_eq!(
+            rows, 0,
+            "loro_doc_state must stay empty after the simulated exit-save"
+        );
+    }
+
+    /// #792 — `reload_registry_from_db` re-reads the persisted peer-id
+    /// epoch before rehydrating, so the post-RESET registry (a) reports
+    /// the bumped epoch and (b) lazily creates engines under the fresh
+    /// salted PeerID instead of the retired pre-reset one.
+    #[tokio::test]
+    async fn reload_registry_from_db_picks_up_bumped_peer_epoch_792() {
+        use crate::loro::engine::{peer_id_for_epoch, peer_id_from_device_id};
+
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        // Pre-reset: epoch 0, legacy peer id.
+        {
+            let mut g = registry.for_space(&space, "device-792").expect("pre");
+            assert_eq!(
+                g.engine_mut().peer_id(),
+                peer_id_from_device_id("device-792")
+            );
+        }
+
+        // Simulate the RESET tx having bumped the persisted epoch
+        // (apply_snapshot does this atomically with the loro_doc_state
+        // wipe; here the table is already empty).
+        let mut tx = pool.begin().await.expect("begin");
+        let bumped = crate::loro::peer_epoch::bump_peer_epoch(&mut tx)
+            .await
+            .expect("bump");
+        tx.commit().await.expect("commit");
+        assert_eq!(bumped, 1);
+
+        let n = reload_registry_from_db(&pool, &registry, "device-792")
+            .await
+            .expect("reload");
+        assert_eq!(n, 0, "loro_doc_state is empty after a RESET");
+        assert_eq!(
+            registry.peer_epoch(),
+            1,
+            "reload must install the new epoch"
+        );
+
+        // Post-reset engines mint under the fresh peer id.
+        {
+            let mut g = registry.for_space(&space, "device-792").expect("post");
+            let got = g.engine_mut().peer_id();
+            assert_eq!(got, peer_id_for_epoch("device-792", 1));
+            assert_ne!(got, peer_id_from_device_id("device-792"));
+        }
+    }
+
+    #[tokio::test]
+    async fn save_all_engines_persists_every_registered_engine() {
+        let (pool, _dir) = fresh_pool().await;
+
+        // Build a registry with two engines populated through the
+        // normal lazy path — write distinct blocks into each.
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+        {
+            let mut g = registry.for_space(&space_b, "device-1").expect("b");
+            g.engine_mut()
+                .apply_create_block("BLOCK_B", "content", "in B", None, 0)
+                .expect("create");
+        }
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 2, "both spaces must snapshot");
+
+        // The persisted bytes must reproduce the engine's state.
+        let bytes = load_snapshot(&pool, &space_a)
+            .await
+            .expect("load")
+            .expect("present");
+        let mut hydrated = LoroEngine::with_peer_id("device-1").expect("engine");
+        hydrated.import(&bytes).expect("import");
+        let snap = hydrated.read_block("BLOCK_A").unwrap().unwrap();
+        assert_eq!(snap.content, "in A");
+    }
+
+    /// #2201 — the periodic tick re-encodes ONLY changed spaces. After both
+    /// spaces are persisted once, mutating A alone must re-encode A and leave
+    /// B's `loro_doc_state` row byte-for-byte untouched (proven via its
+    /// `updated_at`), and the pass reports exactly one space persisted.
+    #[tokio::test]
+    async fn save_all_engines_persists_only_dirty_spaces_2201() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted(SPACE_B);
+
+        for (space, id) in [(&space_a, "BLOCK_A"), (&space_b, "BLOCK_B")] {
+            let mut g = registry.for_space(space, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block(id, "content", id, None, 0)
+                .expect("create");
+        }
+
+        // First pass persists BOTH dirty spaces and clears both flags.
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 2, "first pass persists both dirty spaces");
+        assert_eq!(registry.dirty_count(), 0, "both spaces clean after persist");
+
+        // Capture B's row so a later rewrite would be observable.
+        let b_updated_before: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(space_b.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("b row");
+
+        // `now_ms` is ms-resolution — sleep so a rewrite of B would advance it.
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+
+        // Mutate ONLY space A.
+        {
+            let mut g = registry
+                .for_space(&space_a, "device-1")
+                .expect("for_space a");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A2", "content", "again", None, 1)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 1, "only A dirty after mutating A");
+
+        // Second pass must re-encode ONLY A.
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 1, "second pass persists only the dirty space (A), not B");
+        assert_eq!(registry.dirty_count(), 0, "A clean after its persist");
+
+        let b_updated_after: i64 =
+            sqlx::query_scalar("SELECT updated_at FROM loro_doc_state WHERE space_id = ?")
+                .bind(space_b.as_str())
+                .fetch_one(&pool)
+                .await
+                .expect("b row after");
+        assert_eq!(
+            b_updated_before, b_updated_after,
+            "a clean space must NOT be re-encoded — its row must be untouched"
+        );
+
+        // A's row is present and reflects the new block.
+        let a_bytes = load_snapshot(&pool, &space_a)
+            .await
+            .expect("load a")
+            .expect("a present");
+        let mut probe = LoroEngine::with_peer_id("device-1").expect("probe");
+        probe.import(&a_bytes).expect("import a");
+        assert!(
+            probe.read_block("BLOCK_A2").expect("read").is_some(),
+            "A's re-encoded snapshot must contain the block mutated this tick"
+        );
+    }
+
+    /// #2201 — a per-space persist FAILURE leaves that space dirty so the
+    /// next tick retries it (never silently clears a flag whose state was not
+    /// persisted). The INSERT is forced to fail by dropping the target table;
+    /// the in-memory export still succeeds, only the write fails.
+    #[tokio::test]
+    async fn save_all_engines_persist_failure_keeps_space_dirty_2201() {
+        let (pool, _dir) = fresh_pool().await;
+        let registry = LoroEngineRegistry::new();
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_A", "content", "in A", None, 0)
+                .expect("create");
+        }
+        assert_eq!(registry.dirty_count(), 1, "A dirty after mutation");
+
+        // Force the INSERT OR REPLACE to fail (the watermark read targets a
+        // different table, so collection + export still succeed).
+        sqlx::query("DROP TABLE loro_doc_state")
+            .execute(&pool)
+            .await
+            .expect("drop table");
+
+        let n = save_all_engines(&pool, &registry).await;
+        assert_eq!(n, 0, "no space is counted persisted when the INSERT fails");
+        assert_eq!(
+            registry.dirty_count(),
+            1,
+            "a failed persist must LEAVE the space dirty for the next tick"
+        );
+    }
+
+    /// #2201 — convergence/liveness smoke test: a writer hammers space A while
+    /// save passes run on a multi-thread runtime, exercising the no-deadlock
+    /// guarantee (the registry never holds two of its locks at once) and
+    /// confirming the system converges — after the writer joins, one final
+    /// drained pass persists A's full final state and the loaded snapshot
+    /// contains every block the writer created.
+    ///
+    /// Scope note: this does NOT by itself prove the stamp-race defense (a
+    /// flag wrongly cleared mid-persist would still be masked here, because
+    /// the writer's final `for_space` re-marks A dirty and Loro exports a full
+    /// snapshot each pass, so the final state persists regardless). The actual
+    /// "clear must not drop an unpersisted mark" contract is pinned by the two
+    /// dedicated unit tests — `concurrent_remark_during_persist_keeps_space_dirty_2201`
+    /// and `clear_race_does_not_drop_unpersisted_dirty_flag_2201`. The
+    /// concern-1 durability case (a snapshot never written at all) is not
+    /// testable at this layer: the op_log / loro_sync_inbox WAL is the durable
+    /// source of truth and boot replay backfills any stale/missing snapshot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn save_all_engines_concurrent_mutation_not_lost_2201() {
+        use std::sync::Arc;
+
+        const WRITES: usize = 100;
+
+        let (pool, _dir) = fresh_pool().await;
+        let registry = Arc::new(LoroEngineRegistry::new());
+        let space_a = SpaceId::from_trusted(SPACE_A);
+
+        // Seed + persist so A starts clean.
+        {
+            let mut g = registry.for_space(&space_a, "device-1").expect("seed");
+            g.engine_mut()
+                .apply_create_block("SEED", "content", "seed", None, 0)
+                .expect("create");
+        }
+        save_all_engines(&pool, &registry).await;
+        assert_eq!(registry.dirty_count(), 0, "A clean after seed persist");
+
+        // Writer task: append blocks to A concurrently with the save passes.
+        let writer = {
+            let registry = Arc::clone(&registry);
+            let space_a = space_a.clone();
+            tokio::task::spawn_blocking(move || {
+                for i in 0..WRITES {
+                    let id = format!("W{i:03}");
+                    let position = i64::try_from(i).expect("index fits i64") + 1;
+                    let mut g = registry.for_space(&space_a, "device-1").expect("for_space");
+                    g.engine_mut()
+                        .apply_create_block(&id, "content", &id, None, position)
+                        .expect("create");
+                }
+            })
+        };
+
+        // Interleave save passes with the writer.
+        for _ in 0..20 {
+            let _ = save_all_engines(&pool, &registry).await;
+            tokio::task::yield_now().await;
+        }
+        writer.await.expect("writer task");
+
+        // Final drained pass persists whatever remained dirty.
+        let _ = save_all_engines(&pool, &registry).await;
+        assert_eq!(
+            registry.dirty_count(),
+            0,
+            "no dirty flag may linger after the final drained pass"
+        );
+
+        // The persisted snapshot must reflect the writer's FULL final state.
+        let bytes = load_snapshot(&pool, &space_a)
+            .await
+            .expect("load")
+            .expect("present");
+        let mut probe = LoroEngine::with_peer_id("device-1").expect("probe");
+        probe.import(&bytes).expect("import");
+        assert!(
+            probe.read_block("SEED").expect("read").is_some(),
+            "seed block must survive"
+        );
+        for i in 0..WRITES {
+            assert!(
+                probe
+                    .read_block(&format!("W{i:03}"))
+                    .expect("read")
+                    .is_some(),
+                "the final persisted snapshot must contain every concurrently-written block",
+            );
+        }
+    }
+
+    /// Smoke test for the `#[cfg(test)]` `tokio::spawn` seam in
+    /// [`spawn_periodic_snapshot`]. Drives the real spawned task end to
+    /// end: install the process-global state, register + mutate an
+    /// engine, spawn the periodic task with a 1-second cadence, then poll
+    /// `loro_doc_state` until the engine's snapshot row appears. The task
+    /// skips its first `interval.tick()` and pulls state from
+    /// `crate::loro::shared::get()`, so this exercises the spawn, the tick
+    /// loop, and the `save_all_engines` call the seam exists to cover.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn spawn_periodic_snapshot_persists_engine_state() {
+        use std::sync::Arc;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::time::Duration;
+
+        let (pool, _dir) = fresh_pool().await;
+        let space = SpaceId::from_trusted(SPACE_PERIODIC);
+
+        // Install fresh process-global state and register an engine the
+        // task can find via `crate::loro::shared::get()`. Mutate it so
+        // the exported snapshot is non-trivial.
+        let state = std::sync::Arc::new(crate::loro::shared::LoroState::new());
+        {
+            let mut g = state
+                .registry
+                .for_space(&space, "device-periodic")
+                .expect("for_space");
+            g.engine_mut()
+                .apply_create_block("BLOCK_PERIODIC", "content", "tick", None, 0)
+                .expect("create");
+        }
+
+        // Spawn the periodic task (1s cadence). The first tick is skipped,
+        // so the first persist lands ~1s in.
+        let shutdown = Arc::new(AtomicBool::new(false));
+        spawn_periodic_snapshot(
+            pool.clone(),
+            shutdown.clone(),
+            1,
+            Arc::clone(&state),
+            |fut| {
+                tokio::spawn(fut);
+            },
+        );
+
+        // Poll for the row rather than sleeping a fixed interval: bounded
+        // loop, ~5s total timeout, short sleeps in between. Deterministic
+        // and non-flaky — succeeds as soon as the snapshot lands.
+        let mut persisted = false;
+        for _ in 0..50 {
+            let row = load_snapshot(&pool, &space).await.expect("load");
+            if row.is_some() {
+                persisted = true;
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Stop the task before asserting so a failure doesn't leave it
+        // running against a half-torn-down pool.
+        shutdown.store(true, Ordering::Relaxed);
+
+        assert!(
+            persisted,
+            "periodic snapshot task should persist a loro_doc_state row \
+             for the space within ~5s"
+        );
+    }
+}

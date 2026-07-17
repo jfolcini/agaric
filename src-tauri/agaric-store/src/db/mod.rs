@@ -317,3 +317,38 @@ pub fn base_connect_options(db_path: &Path) -> SqliteConnectOptions {
         .pragma("temp_store", "MEMORY")
         .busy_timeout(std::time::Duration::from_secs(5))
 }
+
+/// Map a reserved property key to the `blocks` column that is its single
+/// source of truth (#534 / migration 0088). Returns `None` for non-reserved
+/// keys, which live in `block_properties`. The returned name is a fixed
+/// internal literal — never user input — so it is safe to interpolate into
+/// the projection / recovery `UPDATE` statements.
+///
+/// Lives here in `agaric-store::db` (#2621, wave E1) because both the app's
+/// `db::recovery` replay and `agaric-engine`'s loro `projection` writer route
+/// column-backed properties through this single helper; the app re-exports it
+/// (`pub(crate) use agaric_store::db::reserved_key_blocks_column;`) so its
+/// existing `crate::db::reserved_key_blocks_column` path resolves unchanged.
+pub fn reserved_key_blocks_column(key: &str) -> Option<&'static str> {
+    // #589: membership is decided by the single source of truth
+    // (`op::COLUMN_BACKED_PROPERTY_KEYS`); this function only adds the
+    // per-key column-name mapping. The four `RESERVED_PROPERTY_KEYS` map to
+    // same-named `blocks` columns; `space` maps to `space_id`.
+    if !crate::op::is_column_backed_property_key(key) {
+        return None;
+    }
+    match key {
+        "todo_state" => Some("todo_state"),
+        "priority" => Some("priority"),
+        "due_date" => Some("due_date"),
+        "scheduled_date" => Some("scheduled_date"),
+        "space" => Some("space_id"),
+        // A key added to COLUMN_BACKED_PROPERTY_KEYS without a mapping arm
+        // here falls through to None. That drift is caught by the app's
+        // `reserved_key_blocks_column_covers_column_backed_set_589` test; at
+        // runtime the un-mapped write would route to `block_properties`,
+        // where the migration-0088 CHECK rejects it loudly rather than
+        // silently corrupting state.
+        _ => None,
+    }
+}
