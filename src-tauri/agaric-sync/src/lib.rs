@@ -23,3 +23,47 @@ pub mod foreground;
 /// Wire-protocol tunables (frame sizes, batch payload caps, handshake / connect
 /// timeouts) shared across the sync stack. Pure constants; no dependencies.
 pub mod sync_constants;
+
+// ---------------------------------------------------------------------------
+// Sync-D (#2621): the mutually-recursive net / protocol / daemon / files
+// cluster + `snapshot`, `apply_host`, and the pure `sync_events` types. The app
+// crate re-exports each (`pub use agaric_sync::X;`, or a test-hosting shim for
+// the directory modules with app-coupled tests) so every `crate::sync_*::…` /
+// `crate::snapshot::…` / `crate::apply_host::…` path resolves unchanged.
+// ---------------------------------------------------------------------------
+
+/// The narrow apply/materialize surface the sync layer needs from the app-side
+/// `Materializer`, expressed as a trait so the sync modules depend DOWN on this
+/// abstraction. The app's `impl ApplyHost for Materializer` stays app-side.
+pub mod apply_host;
+
+/// Pure `SyncEvent` / `SyncProgressUpdate` types + the `SyncEventSink` trait.
+/// Tauri-backed sinks live app-side (`src/sync_event_sinks.rs`).
+pub mod sync_events;
+
+/// Networking primitives: TLS cert gen, mDNS announce/browse, WebSocket
+/// server/client, the unified `SyncConnection`.
+pub mod sync_net;
+
+/// Sync protocol orchestrator: head exchange, Loro-CRDT engine sync, peer-ref
+/// bookkeeping.
+pub mod sync_protocol;
+
+/// Auto-sync daemon: background peer discovery, connection, and sync sessions.
+pub mod sync_daemon;
+
+/// Attachment file transfer over the sync connection.
+pub mod sync_files;
+
+/// Per-peer sync locks, exponential backoff, debounced change notifications.
+pub mod sync_scheduler;
+
+/// Persistent self-signed TLS certificate load/generation for the mTLS sync
+/// handshake.
+pub mod sync_cert;
+
+/// LAN device pairing (passphrase + QR handshake).
+pub mod pairing;
+
+/// Snapshot encoding, crash-safe write, RESET apply, and 90-day compaction.
+pub mod snapshot;

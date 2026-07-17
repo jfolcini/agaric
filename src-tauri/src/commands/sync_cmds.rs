@@ -523,7 +523,20 @@ pub async fn start_sync(
     scheduler: State<'_, Arc<SyncScheduler>>,
     progress: tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>,
 ) -> Result<SyncSessionInfo, AppError> {
-    scheduler.register_channel(&peer_id, progress);
+    // #2621 Sync-D: the scheduler (in `agaric-sync`) stores an opaque
+    // `SessionSinkWrapper` rather than the Tauri channel itself, keeping Tauri
+    // out of the sync layer. Build the wrapper here (where Tauri is available):
+    // it wraps the daemon's base event sink in a `ChannelEventSink` that streams
+    // progress to this command's `progress` channel.
+    scheduler.register_channel(
+        &peer_id,
+        Box::new(move |inner| {
+            std::sync::Arc::new(crate::sync_event_sinks::ChannelEventSink {
+                inner,
+                channel: progress,
+            })
+        }),
+    );
     start_sync_inner(&scheduler, device_id.as_str(), peer_id).map_err(sanitize_internal_error)
 }
 

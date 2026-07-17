@@ -40,6 +40,10 @@ use std::collections::HashSet;
 #[cfg(test)]
 use sqlx::SqlitePool;
 
+// #2621 Sync-D: `insert_replicated_op` (the only non-test consumer of `AppError`
+// here) moved to `agaric-sync`; the remaining users are the `#[cfg(test)]` CTE
+// oracles below, so the import is test-gated to avoid an unused-import warning.
+#[cfg(test)]
 use crate::error::AppError;
 
 /// #2481 phase 1 — ingest a replicated op record as append-only, hash-verified
@@ -61,16 +65,13 @@ use crate::error::AppError;
 /// through Loro CRDT sync. The `is_replicated = 1` stamp keeps the row out of
 /// boot replay (`recovery::replay`), the materializer apply pipeline, and the
 /// apply-cursor bookkeeping — see migration 0099.
-pub async fn insert_replicated_op(
-    pool: &sqlx::SqlitePool,
-    transfer: &crate::sync_protocol::types::OpTransfer,
-) -> Result<bool, AppError> {
-    // `OpRecord::from` drops the transfer-carried `origin` (OpRecord does not
-    // surface it), so thread it through explicitly to the engine core.
-    let origin = transfer.origin.clone();
-    let record: crate::op_log::OpRecord = transfer.clone().into();
-    ingest_replicated_record(pool, &record, &origin).await
-}
+// #2621 Sync-D: `insert_replicated_op` moved DOWN into `agaric-sync`
+// (`sync_protocol::operations`) — it decodes an `OpTransfer` (now an
+// `agaric-sync` type) and calls the engine core `ingest_replicated_record`, so
+// it sits naturally at the sync layer. Re-exported here so every
+// `crate::dag::insert_replicated_op` call site (incl. `dag/tests.rs`) resolves
+// unchanged.
+pub use agaric_sync::sync_protocol::insert_replicated_op;
 
 // ---------------------------------------------------------------------------
 // `#[cfg(test)]` CTE oracles — reference implementations paired against the

@@ -1,42 +1,18 @@
-//! Networking primitives for local-network sync.
+//! #2621 Sync-D: production moved to [`agaric_sync::sync_net`]; this app-side
+//! shim re-exports it so every `crate::sync_net::…` path resolves unchanged, and
+//! hosts the app-coupled tests (`src/sync_net/tests.rs`, which reach into the
+//! daemon / materializer glue that lives above `agaric-sync`).
 //!
-//! This module is self-contained: it provides TLS certificate generation,
-//! mDNS service announcement/discovery, WebSocket server and client, a
-//! unified `SyncConnection` abstraction, and the sync message types.
-//!
-//! The orchestrator (`sync.rs`) wires these into the higher-level sync flow.
+//! The submodules (`connection`, `tls`, `websocket`) are `pub mod` in the moved
+//! crate so the test's `super::<submod>::…` paths resolve through the glob
+//! re-export below. Production module imports the test reaches via `use super::*`
+//! are re-declared under `#[cfg(test)]`.
+#![cfg_attr(test, allow(unused_imports))]
 
-mod connection;
-mod tls;
-mod websocket;
+pub use agaric_sync::sync_net::*;
+
+#[cfg(test)]
+use agaric_core::error::AppError;
 
 #[cfg(test)]
 mod tests;
-
-use crate::error::AppError;
-
-/// Map any networking / TLS / WS error into an `AppError`.
-///
-/// NOTE: Uses `AppError::InvalidOperation` until the orchestrator adds an
-/// `AppError::Internal` variant; swap the variant at that time.
-pub(crate) fn sync_err(msg: impl std::fmt::Display) -> AppError {
-    AppError::InvalidOperation(format!("[sync_net] {msg}"))
-}
-
-/// Parse PEM-encoded data (certificate or key) into raw DER bytes.
-pub(crate) fn pem_to_der(pem: &str) -> Result<Vec<u8>, AppError> {
-    use base64::Engine;
-    let b64: String = pem.lines().filter(|l| !l.starts_with("-----")).collect();
-    base64::engine::general_purpose::STANDARD
-        .decode(b64)
-        .map_err(|e| sync_err(format!("invalid PEM: {e}")))
-}
-
-#[cfg(test)]
-pub use connection::test_connection_pair;
-pub use connection::{SyncConnection, connect_to_peer};
-pub use tls::{SyncCert, generate_self_signed_cert};
-pub use websocket::{
-    DiscoveredPeer, MDNS_BROWSE_TIMEOUT, MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE, MdnsService,
-    ServiceEventKind, SyncServer, parse_service_event,
-};

@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id, key, value_text, value_num, value_date, value_ref, value_bool FROM block_properties",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "key",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_text",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
+      },
+      {
+        "name": "value_num",
+        "ordinal": 3,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_date",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      },
+      {
+        "name": "value_ref",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      },
+      {
+        "name": "value_bool",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_bool"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "01bfcb8aa8105482a7a98f39feeab71c423b96927524c5fd8d10adb6a80efba1"
+}

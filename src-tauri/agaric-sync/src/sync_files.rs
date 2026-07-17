@@ -1,0 +1,1842 @@
+//! Attachment file transfer over the sync protocol.
+//!
+//! After the op-sync phase completes (heads exchange → op streaming → merge),
+//! both peers may have `AddAttachment` ops pointing to `fs_path` values that
+//! don't exist locally.  This module provides the file transfer phase that
+//! sends the actual attachment bytes over the existing WebSocket connection.
+//!
+//! **Protocol flow** (after `SyncComplete` exchange):
+//!
+//! 1. **Initiator** computes missing attachments, sends `FileRequest`.
+//! 2. **Responder** sends `FileOffer` + binary data for each, then
+//!    `FileTransferComplete`.
+//! 3. **Responder** computes missing attachments, sends `FileRequest`.
+//! 4. **Initiator** sends `FileOffer` + binary data for each, then
+//!    `FileTransferComplete`.
+//!
+//! Files ≤ 5 MB are sent in a single binary frame; larger files are chunked
+//! into 5 MB frames.  Integrity is verified via blake3 hash.
+
+use std::path::{Path, PathBuf};
+use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
+
+use futures_util::stream::{self, StreamExt};
+use sqlx::SqlitePool;
+use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
+use crate::sync_net::SyncConnection;
+use crate::sync_protocol::SyncMessage;
+use agaric_core::error::AppError;
+
+// The binary-frame chunk size used by chunked sends/receives lives in
+// `crate::sync_constants::BINARY_FRAME_CHUNK_SIZE` so this module and
+// `sync_daemon::snapshot_transfer` cannot drift apart.
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/// Metadata for an attachment whose file is missing on disk.
+#[derive(Debug, Clone)]
+pub struct MissingAttachment {
+    pub id: String,
+    pub fs_path: String,
+}
+
+/// Counters returned after a file transfer phase.
+#[derive(Debug, Default)]
+pub struct FileTransferStats {
+    pub files_sent: usize,
+    pub files_received: usize,
+    pub bytes_sent: u64,
+    pub bytes_received: u64,
+    pub skipped_not_found: usize,
+    pub skipped_hash_mismatch: usize,
+}
+
+/// Optional progress reporting hook for file-transfer functions.
+///
+/// When `Some(_)`, the file-transfer loops emit
+/// [`SyncEvent::FileProgress`](crate::sync_events::SyncEvent::FileProgress)
+/// before each file and after each 5 MB binary frame so the active
+/// sync's `Channel<SyncProgressUpdate>` (set up by `start_sync`) carries
+/// a real bytes-done signal to the UI. `None` is the test default — no
+/// emission, no `Arc` clone.
+pub struct FileTransferProgress<'a> {
+    pub event_sink: &'a std::sync::Arc<dyn crate::sync_events::SyncEventSink>,
+    pub remote_device_id: &'a str,
+}
+
+impl FileTransferProgress<'_> {
+    fn emit(
+        &self,
+        phase: &str,
+        files_done: u64,
+        files_total: u64,
+        bytes_done: u64,
+        bytes_total: u64,
+    ) {
+        self.event_sink
+            .on_sync_event(crate::sync_events::SyncEvent::FileProgress {
+                phase: phase.to_string(),
+                remote_device_id: self.remote_device_id.to_string(),
+                files_done,
+                files_total,
+                bytes_done,
+                bytes_total,
+            });
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Helper functions
+// ---------------------------------------------------------------------------
+
+/// Validate that an attachment's stored `fs_path` is a safe relative path
+/// under `app_data_dir` and return the resolved absolute path.
+///
+/// Prevents a malformed op record or corrupted row from
+/// redirecting attachment reads/writes to arbitrary filesystem locations
+/// via `..` traversal or absolute paths.  The threat model (`AGENTS.md`)
+/// is not adversarial — sync peers are the user's own devices — but this
+/// guard is a data-integrity defense against buggy frontends, bad imports
+/// and corrupted metadata.
+///
+/// Rejects:
+/// - Empty `fs_path`
+/// - Absolute `fs_path` (any platform)
+/// - Any `..` (`Component::ParentDir`) component anywhere in the path
+/// - Any root-dir component (`/`, drive prefix on Windows)
+///
+/// The check is lexical so it works for paths whose target file does not
+/// exist yet (required by [`write_attachment_file`]). Callers that want
+/// an additional canonicalization check should do so separately.
+///
+/// # Errors
+///
+/// Returns [`AppError::Validation`] when the path escapes or is otherwise
+/// malformed.
+pub fn validate_attachment_fs_path(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<PathBuf, AppError> {
+    check_attachment_fs_path_shape(fs_path)?;
+    Ok(app_data_dir.join(fs_path))
+}
+
+/// Pure lexical check on an attachment `fs_path` — rejects absolute paths,
+/// `..` traversal, root / drive prefixes, and empty strings. Exists so
+/// command-layer inserts can validate without needing to know the current
+/// `app_data_dir`. See [`validate_attachment_fs_path`] for the
+/// full docs.
+///
+/// # Errors
+///
+/// Returns [`AppError::Validation`] when the path escapes or is otherwise
+/// malformed.
+pub fn check_attachment_fs_path_shape(fs_path: &str) -> Result<(), AppError> {
+    use std::path::Component;
+
+    if fs_path.is_empty() {
+        return Err(AppError::validation(
+            "attachment path must not be empty".into(),
+        ));
+    }
+
+    let candidate = Path::new(fs_path);
+    if candidate.is_absolute() {
+        return Err(AppError::validation(
+            "attachment path escapes app data dir".into(),
+        ));
+    }
+
+    // Lexical walk: reject anything that is not a plain named component.
+    // Note: PathBuf::components() normalizes interior `.` but NOT `..`,
+    // so a `..` anywhere in the path will surface as `Component::ParentDir`.
+    // On non-Windows, backslash-separated strings like "..\\foo" are a
+    // single opaque file-name component (harmless on Linux / macOS but
+    // Documented in).
+    for component in candidate.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => {
+                return Err(AppError::validation(
+                    "attachment path escapes app data dir".into(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Query the `attachments` table and return entries whose `fs_path` file
+/// is missing — or corrupted — on disk under `app_data_dir`.
+///
+/// A file is also classified as missing when it exists on disk
+/// but its length disagrees with the authoritative `attachments.size_bytes`
+/// in the DB row. This catches truncated copies left behind by interrupted
+/// downloads, partial writes, or antivirus quarantines that leave a 0-byte
+/// stub — without that check, the existence test alone would treat the
+/// stub as present forever and the next sync cycle would never re-request
+/// the file. The size comparison is the cheap path; a stronger content-hash
+/// verification is the deferred "better path" (tracked in GitHub issues).
+///
+/// If `metadata()` errors at all (file missing, permission denied,
+/// quarantined path), the entry is classified as missing — the most
+/// defensive choice per AGENTS.md's "preventing accidental corruption"
+/// framing, and ensures a re-request rather than a silent skip.
+///
+/// `NotFound` is the expected case (file genuinely absent) and
+/// is logged at debug level only via the resulting re-request flow.
+/// Any other error kind (`PermissionDenied`, `NotADirectory`,
+/// `Other` for EBUSY, …) on the app's own data dir is an ops signal
+/// — antivirus quarantine, sandbox denial, read-only remount — and
+/// is logged at warn level so it surfaces in diagnostics. The entry
+/// is still classified as missing for sync correctness either way.
+///
+/// One concurrent metadata probe result: the attachment row's
+/// `(id, fs_path, size_bytes, content_hash)` paired with the `metadata()`
+/// outcome for its on-disk file.
+type AttachmentProbe = (
+    String,
+    String,
+    i64,
+    Option<String>,
+    std::io::Result<std::fs::Metadata>,
+);
+
+pub async fn find_missing_attachments(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+) -> Result<Vec<MissingAttachment>, AppError> {
+    let rows = sqlx::query_as::<_, (String, String, i64, Option<String>)>(
+        "SELECT id, fs_path, size_bytes, content_hash FROM attachments WHERE deleted_at IS NULL",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    // Issue #112 sub-item 4: probe up to 16 attachment files in parallel via
+    // `buffer_unordered(16)` instead of awaiting each `tokio::fs::metadata`
+    // serially. On a vault with thousands of attachments this turns the
+    // per-row syscall latency (cold-cache fs, mobile flash) into a bounded
+    // concurrent fanout, while still capping the open-fd / outstanding-syscall
+    // count so SMB/NFS/rotational mounts do not thrash. The maintainer fixed
+    // the constant at 16 — measured as the safe cross-environment default
+    // (issue #112 comment 2026-05-28T09:38); local SSD shows no measurable
+    // downside vs 32, and slow shares avoid the saturation seen at 32.
+    //
+    // Prefer the async syscall over std's blocking `Path::exists` so
+    // the daemon's runtime is not stalled on cold-cache filesystems
+    // (notably Android with thousands of attachments).
+    //
+    // Cross-check the on-disk length against the DB's `size_bytes`.
+    // A truncated stub (interrupted download, partial write, antivirus
+    // 0-byte quarantine) would otherwise pass the existence check forever.
+    // Any metadata error (incl. permission denied) is treated as missing
+    // so the file is re-requested.
+    let probes: Vec<AttachmentProbe> = stream::iter(rows)
+        .map(|(id, fs_path, size_bytes, content_hash)| {
+            let full_path = app_data_dir.join(&fs_path);
+            async move {
+                let meta = tokio::fs::metadata(&full_path).await;
+                (id, fs_path, size_bytes, content_hash, meta)
+            }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+
+    let mut missing = Vec::new();
+    for (id, fs_path, size_bytes, content_hash, meta) in probes {
+        let full_path = app_data_dir.join(&fs_path);
+        match meta {
+            Ok(meta) => {
+                let expected = u64::try_from(size_bytes).unwrap_or(0);
+                if meta.len() != expected {
+                    // #1993: before classifying as missing, check whether the
+                    // bytes are already held under a content-addressed blob.
+                    if maybe_link_local_blob(
+                        pool,
+                        app_data_dir,
+                        &id,
+                        content_hash.as_deref(),
+                        &fs_path,
+                    )
+                    .await
+                    {
+                        continue;
+                    }
+                    tracing::warn!(
+                        attachment_id = %id,
+                        path = %full_path.display(),
+                        expected_size = expected,
+                        actual_size = meta.len(),
+                        "attachment file size disagrees with DB row; classifying as missing for re-request"
+                    );
+                    missing.push(MissingAttachment { id, fs_path });
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // #1993: the row's own file is gone, but if a local blob with
+                // this row's content_hash is present we already hold the bytes
+                // under another path — repoint the row and do NOT request it.
+                if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref(), &fs_path)
+                    .await
+                {
+                    continue;
+                }
+                missing.push(MissingAttachment { id, fs_path });
+            }
+            Err(e) => {
+                // Surface non-NotFound errors as a warning instead of
+                // silently treating them as missing. EACCES/EBUSY/ENOTDIR on
+                // the app's own data dir indicate antivirus quarantine,
+                // sandbox denial, or a read-only remount — useful ops signal.
+                // Behaviour is preserved: still classified as missing so the
+                // next sync re-requests the file rather than skipping it.
+                tracing::warn!(
+                    attachment_id = %id,
+                    path = %full_path.display(),
+                    error_kind = ?e.kind(),
+                    error = %e,
+                    "non-NotFound metadata error; treating as missing for sync correctness"
+                );
+                missing.push(MissingAttachment { id, fs_path });
+            }
+        }
+    }
+    Ok(missing)
+}
+
+/// Look up the `fs_path` for a given attachment ID.
+///
+/// #2189: the sender path now fetches `fs_path` + `size_bytes` +
+/// `content_hash` together via [`get_attachment_send_meta`] so it can prefer
+/// the stored hash; this bare single-column lookup remains for its focused
+/// unit test.
+#[cfg(any(test, feature = "test-util"))]
+pub async fn get_attachment_fs_path(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<String>, AppError> {
+    let row = sqlx::query_scalar::<_, String>("SELECT fs_path FROM attachments WHERE id = ?")
+        .bind(attachment_id)
+        .fetch_optional(pool)
+        .await?;
+    Ok(row)
+}
+
+/// Metadata loaded from the `attachments` row on the SENDER path (#2189).
+///
+/// Carries the `fs_path` plus the two columns the offer-hash short-circuit
+/// needs: the DB-authoritative `size_bytes` (the size guard) and the
+/// lazily-backfilled `content_hash` (the blake3 digest already computed on a
+/// prior boot, nullable). See [`resolve_offer_hash`].
+pub struct AttachmentSendMeta {
+    pub fs_path: String,
+    /// DB-authoritative size in bytes. Guards the stored-hash short-circuit:
+    /// if the on-disk file's length disagrees, the file drifted and we must
+    /// re-hash rather than trust a stale `content_hash`.
+    pub size_bytes: i64,
+    /// Persisted blake3 hex digest (migrations 0093/0094), byte-for-byte the
+    /// same value `read_attachment_file_metadata` would recompute. `NULL`
+    /// until the boot-time backfill fills it in, so the caller must fall back
+    /// to a full re-hash when this is `None`.
+    pub content_hash: Option<String>,
+}
+
+/// Look up `fs_path`, `size_bytes`, and `content_hash` for a requested
+/// attachment on the sender path (#2189).
+///
+/// Replaces the bare [`get_attachment_fs_path`] fetch in the send loop so the
+/// stored `content_hash` can populate `FileOffer.blake3_hash` directly instead
+/// of streaming + re-hashing the whole file on every sync round.
+async fn get_attachment_send_meta(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<AttachmentSendMeta>, AppError> {
+    // #2189: compile-checked macro (not runtime `query_as`) so the query is
+    // validated against the schema at build time and lands in the .sqlx cache.
+    let row = sqlx::query_as!(
+        AttachmentSendMeta,
+        r#"SELECT fs_path AS "fs_path!", size_bytes AS "size_bytes!", content_hash
+           FROM attachments WHERE id = ?"#,
+        attachment_id,
+    )
+    .fetch_optional(pool)
+    .await?;
+    Ok(row)
+}
+
+/// Decide the `(size_bytes, blake3_hex)` pair a `FileOffer` should carry,
+/// preferring the DB's stored `content_hash` over a full file re-hash (#2189).
+///
+/// Fast path: when `meta.content_hash` is present AND the on-disk file's size
+/// matches `meta.size_bytes`, the persisted digest is byte-for-byte the value
+/// [`read_attachment_file_metadata`] would recompute, so we return it directly
+/// and skip streaming the whole file through blake3. The advertised
+/// `size_bytes` is the freshly-stat'd on-disk length (which equals the DB size
+/// on this branch), so the receiver's size cross-check is unaffected.
+///
+/// Fall-back (conservative — a mismatch must NEVER ship a stale hash): when
+/// `content_hash IS NULL` (not yet backfilled) OR the size guard fails (the
+/// file changed on disk since the hash was persisted) we defer to the existing
+/// full re-hash via [`read_attachment_file_metadata`]. The receiver re-verifies
+/// the hash mid-stream regardless, so integrity is unchanged either way.
+///
+/// The `attachments` table has no `mtime` column (see migration 0081's schema),
+/// so the drift guard is size-only; the receiver's mid-stream blake3 check is
+/// the backstop against a same-size content change on the stored-hash branch —
+/// but that window is identical to the pre-#2189 two-pass path, where the file
+/// could equally change between the hash pass and the stream pass.
+pub async fn resolve_offer_hash(
+    app_data_dir: &Path,
+    meta: &AttachmentSendMeta,
+) -> Result<(u64, String), AppError> {
+    if let Some(stored_hash) = meta.content_hash.as_ref() {
+        // Stat the file (cheap — no read) to enforce the size guard before
+        // trusting the persisted hash.
+        let full_path = validate_attachment_fs_path(app_data_dir, &meta.fs_path)?;
+        if let Ok(fs_meta) = tokio::fs::metadata(&full_path).await {
+            let on_disk_size = fs_meta.len();
+            if i64::try_from(on_disk_size).map(|s| s == meta.size_bytes) == Ok(true) {
+                // Size matches the DB row → the stored digest is trustworthy;
+                // skip the full-file re-hash entirely.
+                return Ok((on_disk_size, stored_hash.clone()));
+            }
+        }
+        // Stat failed or size drifted: fall through to the full re-hash so we
+        // never advertise a stale hash. (A stat failure also surfaces cleanly
+        // as an open error inside `read_attachment_file_metadata`.)
+    }
+    read_attachment_file_metadata(app_data_dir, &meta.fs_path).await
+}
+
+/// Metadata loaded from the `attachments` row when authorising an inbound
+/// `FileOffer`.
+pub struct AttachmentReceiveMeta {
+    pub fs_path: String,
+    /// Authoritative size from the local DB; an inbound `FileOffer` whose
+    /// `size_bytes` disagrees with this value must be rejected.
+    pub size_bytes: i64,
+}
+
+/// Look up the `fs_path` and `size_bytes` for a given attachment ID.
+///
+/// Combines what `get_attachment_fs_path` returns with the DB-side
+/// `size_bytes` so the receiver can cross-check `FileOffer.size_bytes`
+/// Against the row before allocating any buffer.
+pub async fn get_attachment_receive_meta(
+    pool: &SqlitePool,
+    attachment_id: &str,
+) -> Result<Option<AttachmentReceiveMeta>, AppError> {
+    let row: Option<(String, i64)> =
+        sqlx::query_as("SELECT fs_path, size_bytes FROM attachments WHERE id = ?")
+            .bind(attachment_id)
+            .fetch_optional(pool)
+            .await?;
+    Ok(row.map(|(fs_path, size_bytes)| AttachmentReceiveMeta {
+        fs_path,
+        size_bytes,
+    }))
+}
+
+/// #2200 (Tier-2) — pre-tally `bytes_total` for a progress-enabled send in
+/// ONE `json_each(?)` batch query instead of the former per-attachment N+1
+/// (`get_attachment_receive_meta` once per id).
+///
+/// Tally semantics are preserved exactly:
+/// - Each requested id that resolves to an `attachments` row contributes its
+///   `size_bytes` (clamped to `>= 0`, so a negative/garbage row contributes
+///   `0` — the same as the loop's `u64::try_from(...).unwrap_or(0)`).
+/// - A requested id with no matching row contributes nothing (the loop's
+///   `Ok(None)` arm).
+/// - Duplicate ids in `attachment_ids` are counted once per occurrence: the
+///   list is fanned out via `json_each` and joined to `attachments`, so each
+///   list element that matches yields its own summand — identical to the
+///   loop, which called the lookup once per element.
+///
+/// The whole tally is a best-effort denominator (the doc-comment at the call
+/// site), so returning `0` on a query error keeps the previous behaviour
+/// (the loop swallowed per-id errors via `if let Ok(Some(..))`).
+pub async fn pretally_bytes_total(pool: &SqlitePool, attachment_ids: &[String]) -> u64 {
+    if attachment_ids.is_empty() {
+        return 0;
+    }
+    // sqlx requires a `String` (JSON array text) for `json_each(?)` binds.
+    let Ok(ids_json) = serde_json::to_string(attachment_ids) else {
+        return 0;
+    };
+    // `json_each(?1) je JOIN attachments a ON a.id = je.value` yields one row
+    // per (requested-id occurrence × matching attachment); `MAX(size_bytes, 0)`
+    // clamps negatives to 0 to mirror the loop's saturating `unwrap_or(0)`, and
+    // `COALESCE(SUM(...), 0)` handles the all-missing case (SUM over zero rows
+    // is SQL NULL). Result fits i64 in the DB; we clamp to `u64` in Rust.
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // (get_attachment_receive_meta etc.) and json_each isn't macro-checkable.
+    let row: Result<Option<(i64,)>, _> = sqlx::query_as(
+        r"SELECT COALESCE(SUM(MAX(a.size_bytes, 0)), 0)
+          FROM json_each(?1) je
+          JOIN attachments a ON a.id = je.value",
+    )
+    .bind(&ids_json)
+    .fetch_optional(pool)
+    .await;
+    match row {
+        Ok(Some((total,))) => u64::try_from(total).unwrap_or(0),
+        Ok(None) | Err(_) => 0,
+    }
+}
+
+/// #1993 — if `content_hash` resolves to a locally-present blob, repoint the
+/// attachment row's `fs_path` at that blob file and return `true` (the bytes
+/// are already held locally, so the row is NOT missing). Returns `false` when
+/// there is no usable local blob, so the caller falls back to classifying the
+/// row as missing (full transfer).
+async fn maybe_link_local_blob(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    attachment_id: &str,
+    content_hash: Option<&str>,
+    // #2652: the failing row's own `fs_path`. Belt-and-suspenders so a row can
+    // never self-satisfy from the very file that just failed its size check.
+    own_fs_path: &str,
+) -> bool {
+    let Some(hash) = content_hash else {
+        return false;
+    };
+    let Some(blob_path) = local_blob_path_if_present(pool, app_data_dir, hash).await else {
+        return false;
+    };
+    // #2652: refuse to "link" the row to its own on-disk file. If the candidate
+    // blob path is this row's `fs_path`, the blob is the same file that just
+    // failed the caller's size check — linking it would mask the corruption.
+    // The size check in `local_blob_path_if_present` already guards this, but
+    // this is a cheap explicit backstop.
+    if blob_path == own_fs_path {
+        return false;
+    }
+    // Repoint the row so reads resolve the shared bytes. Best-effort: if the
+    // UPDATE fails we still return false-equivalent by not suppressing the
+    // request would be safer, but the bytes ARE present, so treat as held.
+    // dynamic-sql: runtime query matches this sync module's existing
+    // runtime-query style (get_attachment_fs_path etc.); static SQL.
+    let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+        .bind(&blob_path)
+        .bind(attachment_id)
+        .execute(pool)
+        .await;
+    tracing::debug!(
+        attachment_id,
+        content_hash = hash,
+        "find_missing_attachments: bytes already held under local blob; linked row, not requesting"
+    );
+    true
+}
+
+/// #1993 — return the on-disk path of a local content-addressed blob for
+/// `content_hash` IFF the blob is registered AND its file is actually present
+/// on disk.
+///
+/// Used by both the receiver's skip-transfer path and `find_missing_attachments`
+/// so a file whose bytes we already hold is never requested or re-received. The
+/// on-disk presence check is essential: a blob row whose file vanished must NOT
+/// suppress a transfer, or the bytes would be lost.
+///
+/// #2652: a bare existence check is NOT enough — a truncated or partially
+/// written blob file still `exists`, and reporting it as "held locally" masks
+/// the corruption forever (the attachment is never re-requested and inbound
+/// offers of the correct bytes are drained + discarded). We therefore stat the
+/// file and require its on-disk length to equal the authoritative
+/// `attachment_blobs.size_bytes`. On any metadata error (file gone, permission
+/// denied) or a size mismatch we return `None`, so the caller classifies the
+/// row as missing and the correct bytes are re-fetched from a healthy peer.
+pub async fn local_blob_path_if_present(
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    content_hash: &str,
+) -> Option<String> {
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // and the attachment_blobs table is not yet in the offline .sqlx cache.
+    // #2652: also pull `size_bytes` so we can verify the blob is complete, not
+    // merely present.
+    let (on_disk_path, size_bytes) = sqlx::query_as::<_, (String, i64)>(
+        "SELECT on_disk_path, size_bytes FROM attachment_blobs WHERE content_hash = ?",
+    )
+    .bind(content_hash)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()?;
+    let full = app_data_dir.join(&on_disk_path);
+    // #2652: require the on-disk length to match the recorded `size_bytes`. A
+    // truncated / zero-length stub (interrupted download, partial write, AV
+    // quarantine) would otherwise pass a bare existence check and mask the
+    // corruption forever. Any metadata error → treat as no usable blob.
+    let meta = tokio::fs::metadata(&full).await.ok()?;
+    let expected = u64::try_from(size_bytes).ok()?;
+    if meta.len() == expected {
+        Some(on_disk_path)
+    } else {
+        None
+    }
+}
+
+/// #1993 — register a verified, content-addressed blob (`INSERT OR IGNORE`).
+///
+/// Called after a receive's hash-verified commit. Best-effort: errors are
+/// logged, never propagated — the blob store is a dedup optimization, and the
+/// per-row `fs_path` already resolves the bytes.
+async fn register_received_blob(
+    pool: &SqlitePool,
+    content_hash: &str,
+    on_disk_path: &str,
+    size_bytes: i64,
+) {
+    let now = agaric_store::db::now_ms();
+    // dynamic-sql: static SQL; runtime form matches this sync module's style
+    // and the attachment_blobs table is not yet in the offline .sqlx cache.
+    if let Err(e) = sqlx::query(
+        "INSERT OR IGNORE INTO attachment_blobs \
+         (content_hash, on_disk_path, size_bytes, created_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(content_hash)
+    .bind(on_disk_path)
+    .bind(size_bytes)
+    .bind(now)
+    .execute(pool)
+    .await
+    {
+        tracing::warn!(
+            content_hash,
+            error = %e,
+            "register_received_blob: INSERT OR IGNORE attachment_blobs failed (non-fatal)"
+        );
+    }
+}
+
+/// Read an attachment file from disk and compute its blake3 hash.
+///
+/// Returns `(file_bytes, blake3_hex_hash)`.
+///
+/// The `fs_path` is validated via [`validate_attachment_fs_path`] before
+/// Any I/O is performed. A malformed `fs_path` that attempts to
+/// escape `app_data_dir` (absolute path, `..` traversal, drive prefix on
+/// Windows) is rejected with [`AppError::Validation`].
+///
+/// ** note:** this is the buffered-shape helper kept for utility
+/// callers (and the existing test suite). The production sync sender
+/// path no longer goes through here — see
+/// [`read_attachment_file_metadata`] (path-validate + size + hash via
+/// streaming) and [`open_attachment_for_read`] (async file handle for
+/// frame-by-frame send) for the low-memory path.
+pub fn read_attachment_file(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<(Vec<u8>, String), AppError> {
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    let data = std::fs::read(&full_path).map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("reading attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    let hash = blake3::hash(&data).to_hex().to_string();
+    Ok((data, hash))
+}
+
+/// Write an attachment file to disk, creating parent directories as needed.
+///
+/// The `fs_path` is validated via [`validate_attachment_fs_path`] before
+/// Any I/O is performed.
+///
+/// ** note:** kept for utility callers. The production sync receiver
+/// path uses [`write_attachment_streaming`] which streams chunks to a
+/// `<final>.tmp-<random>` file with a `blake3::Hasher` updated mid-write,
+/// then atomically renames on hash-verified `commit`.
+pub fn write_attachment_file(
+    app_data_dir: &Path,
+    fs_path: &str,
+    data: &[u8],
+) -> Result<(), AppError> {
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    if let Some(parent) = full_path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("creating directory {}: {e}", parent.display()),
+            ))
+        })?;
+    }
+    std::fs::write(&full_path, data).map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("writing attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Streaming helpers (low-memory attachment transfer)
+// ---------------------------------------------------------------------------
+//
+// The buffered helpers above materialise the whole file in a `Vec<u8>` —
+// peak Rust-heap = file size on each side simultaneously. For large
+// attachments (up to 1 GB on Android) that pattern OOMs the device.
+//
+// The contract:
+//
+//   • `read_attachment_file_metadata` is the sender's pre-flight pass.
+//     It validates the path, opens the file once, hashes it through a
+//     fixed-size buffer (`HASH_BUF_SIZE`), and returns
+//     `(size_bytes, blake3_hex)`. The `Vec<u8>` of the file is never
+//     materialised.
+//   • `open_attachment_for_read` is the sender's transmit pass: open
+//     the same file as a `tokio::fs::File` and feed it to
+//     `SyncConnection::send_binary_streaming(file, size, chunk_size)`,
+//     which reads frame-sized chunks off disk and ships them straight
+//     to the wire.
+//   • `write_attachment_streaming` returns a `TempAttachmentWriter` —
+//     an `AsyncWrite` sink that lands chunks in a `<final>.tmp-<rand>`
+//     file under `app_data_dir`, updates a `blake3::Hasher` per
+//     `poll_write`, and on `commit(expected_hash)` either atomically
+//     renames into place or unlinks the temp on hash mismatch /
+//     write error. `Drop` guarantees the temp is unlinked on
+//     abandoned transfers (mid-stream peer drop / cancel).
+//
+// **Trade-off — two-pass hash on the sender side.** The existing
+// `FileOffer` wire message carries the hash AHEAD of the binary
+// stream, so the sender must know the hash before sending the offer.
+// To stay backward-compatible with the wire format (Architectural
+// Stability — no new variants without explicit user approval) we
+// hash the file in pass 1 and stream it in pass 2. This costs one
+// extra read of the file's bytes (sequential, OS page-cache often
+// eats the second read for free on warm files) but keeps the wire
+// protocol unchanged. The alternative — sending the hash AFTER the
+// stream as a `FileOfferAck` / `FileFooter` variant — would be a
+// wire-format change requiring user approval, so we deliberately
+// chose the two-pass path here.
+
+/// Path-validate `fs_path`, open the attachment file once, and compute
+/// `(size_bytes, blake3_hex)` by reading through a fixed-size buffer.
+///
+/// Used as the sender's pass-1: the size + hash populate the
+/// `FileOffer` message, then [`open_attachment_for_read`] is called
+/// for pass-2 (the streaming send). The returned hash matches the
+/// hash a receiver computes mid-stream via `TempAttachmentWriter`,
+/// so the integrity guarantee is unchanged from the buffered shape.
+///
+/// Peak Rust-heap during this call is one `HASH_BUF_SIZE` buffer
+/// (currently 256 KiB) regardless of file size.
+pub async fn read_attachment_file_metadata(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<(u64, String), AppError> {
+    /// Buffer size for the streaming hash pass. Large enough to amortise
+    /// syscall overhead, small enough that a 1 GB attachment never sees
+    /// a memory spike on 4 GB Android devices.
+    const HASH_BUF_SIZE: usize = 256 * 1024;
+
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    let mut file = tokio::fs::File::open(&full_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("opening attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    let size_bytes = file
+        .metadata()
+        .await
+        .map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("metadata on attachment {}: {e}", full_path.display()),
+            ))
+        })?
+        .len();
+
+    let mut hasher = blake3::Hasher::new();
+    let mut buf = vec![0u8; HASH_BUF_SIZE];
+    loop {
+        let n = file.read(&mut buf).await.map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("reading attachment {}: {e}", full_path.display()),
+            ))
+        })?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    let hash = hasher.finalize().to_hex().to_string();
+    Ok((size_bytes, hash))
+}
+
+/// Open an attachment file for streaming send (pass-2).
+///
+/// Path-validates `fs_path`, opens the file as a `tokio::fs::File`,
+/// queries `metadata().len()` for the size, and returns both. The
+/// caller passes the `File` to
+/// [`SyncConnection::send_binary_streaming`](crate::sync_net::SyncConnection::send_binary_streaming)
+/// alongside the size so frames are pulled off disk and pushed to
+/// the wire one at a time.
+///
+/// Returning the size again (despite [`read_attachment_file_metadata`]
+/// already returning it in pass-1) lets the caller assert the file
+/// did not change between passes — a sanity check defended against
+/// a concurrent writer (e.g. user re-imports the same attachment ID
+/// while a sync is in flight). The `FileOffer.size_bytes` advertised
+/// to the receiver is the pass-1 value, so any drift is caught by
+/// The receiver's existing size cross-check.
+pub async fn open_attachment_for_read(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<(tokio::fs::File, u64), AppError> {
+    let full_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    let file = tokio::fs::File::open(&full_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("opening attachment {}: {e}", full_path.display()),
+        ))
+    })?;
+    let size_bytes = file
+        .metadata()
+        .await
+        .map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("metadata on attachment {}: {e}", full_path.display()),
+            ))
+        })?
+        .len();
+    Ok((file, size_bytes))
+}
+
+/// Streaming attachment writer.
+///
+/// Owns a `tokio::fs::File` opened on `<final>.tmp-<random>` plus a
+/// `blake3::Hasher` updated on every successful `poll_write`. On
+/// [`Self::commit`] the hash is finalised and compared to the
+/// caller-supplied `expected_hash`; on match the temp is renamed
+/// atomically to its final path, on mismatch the temp is unlinked
+/// and an [`AppError::InvalidOperation`] with the payload
+/// `hash_mismatch: …` is returned. `Drop` is a best-effort unlink
+/// so an abandoned writer (mid-stream cancel, peer drop, panic)
+/// never leaves a `*.tmp-*` orphan on disk.
+///
+/// **Atomicity:** readers never observe a half-written final file —
+/// `tokio::fs::rename` is atomic within a filesystem on every
+/// platform we ship to (Linux ext4/f2fs, macOS APFS, Windows NTFS,
+/// Android ext4/f2fs). The temp lives in the same directory as the
+/// final file by construction (same parent of the validated
+/// `fs_path`) so the rename never crosses filesystems.
+pub struct TempAttachmentWriter {
+    /// `Some` while writing; taken on `commit` so the file handle is
+    /// closed before `tokio::fs::rename` runs.
+    file: Option<tokio::fs::File>,
+    final_path: PathBuf,
+    temp_path: PathBuf,
+    hasher: blake3::Hasher,
+    /// Set once `commit` (or its error path) has explicitly cleaned
+    /// up the temp file, so `Drop` does not double-unlink.
+    finalised: bool,
+}
+
+impl TempAttachmentWriter {
+    /// Final on-disk path the temp will be renamed to on `commit`.
+    pub fn final_path(&self) -> &Path {
+        &self.final_path
+    }
+
+    /// Path of the in-progress `*.tmp-*` file. Tests use this to
+    /// assert mid-write visibility and post-commit unlinking.
+    pub fn temp_path(&self) -> &Path {
+        &self.temp_path
+    }
+
+    /// Flush + close the temp file, finalise the running blake3
+    /// hash, compare it to `expected_hash`, and on match atomically
+    /// rename the temp into its final location. On mismatch the
+    /// temp is unlinked and [`AppError::InvalidOperation`] is
+    /// returned with the payload `hash_mismatch: expected … got …`.
+    ///
+    /// This is the moment readers gain visibility on the new file —
+    /// before commit, only the temp `*.tmp-*` exists, so a concurrent
+    /// reader observing the final path sees either the previous
+    /// version (if any) or `ENOENT`, never a partial file.
+    pub async fn commit(mut self, expected_hash: &str) -> Result<(), AppError> {
+        // Flush and close the writer so the rename observes a
+        // closed file handle. (On Windows a rename across an open
+        // handle would fail; on Unix it succeeds but readers might
+        // race on the inode.)
+        if let Some(mut f) = self.file.take() {
+            f.flush().await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("flushing attachment {}: {e}", self.temp_path.display()),
+                ))
+            })?;
+            // #2660 — durability: flush() only pushes tokio's userspace
+            // buffer into the kernel page cache. `sync_all()` fsyncs the
+            // file's data *and* metadata to the physical device BEFORE the
+            // rename below. Without it, a power loss can persist the rename
+            // (and the SQLite-durable `attachments`/`attachment_blobs` rows
+            // and the `FileReceived` ACK) while the file's bytes are still
+            // only in the page cache — leaving a zero-length / short file
+            // that every peer now believes is complete.
+            f.sync_all().await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("fsync attachment {}: {e}", self.temp_path.display()),
+                ))
+            })?;
+            // Drop the handle (close the file).
+            drop(f);
+        }
+
+        let actual_hash = self.hasher.finalize().to_hex().to_string();
+        if actual_hash != expected_hash {
+            // Hash mismatch: unlink temp and surface the canonical
+            // error string the receiver loop relies on for stats.
+            let _ = tokio::fs::remove_file(&self.temp_path).await;
+            self.finalised = true;
+            return Err(AppError::InvalidOperation(format!(
+                "hash_mismatch: expected {expected_hash}, got {actual_hash}"
+            )));
+        }
+
+        tokio::fs::rename(&self.temp_path, &self.final_path)
+            .await
+            .map_err(|e| {
+                // Best-effort cleanup of the temp on rename failure
+                // before bubbling the error up — otherwise a failed
+                // rename leaves a `*.tmp-*` orphan.
+                let temp_for_cleanup = self.temp_path.clone();
+                tokio::spawn(async move {
+                    let _ = tokio::fs::remove_file(&temp_for_cleanup).await;
+                });
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "renaming {} → {}: {e}",
+                        self.temp_path.display(),
+                        self.final_path.display()
+                    ),
+                ))
+            })?;
+
+        // #2660 — durability: on ext4/f2fs a rename is not durable until
+        // the *containing directory* is fsynced. `sync_all()` above made the
+        // file's bytes durable; this makes the rename directory entry itself
+        // durable, so a power loss immediately after commit cannot lose the
+        // published file. The temp and final paths share a parent (the temp
+        // is a sibling of `final_path` by construction), so fsyncing the
+        // final path's parent covers the rename source and destination.
+        if let Some(parent) = self.final_path.parent() {
+            fsync_dir(parent).await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("fsync parent dir {}: {e}", parent.display()),
+                ))
+            })?;
+        }
+
+        self.finalised = true;
+        Ok(())
+    }
+}
+
+/// #2660 — fsync a directory so a rename (or file creation) *into* it is
+/// durable. On ext4/f2fs the directory entry produced by
+/// `tokio::fs::rename` is not persisted until the containing directory is
+/// itself fsynced; without this a power loss can lose the rename even
+/// after the renamed file's own `sync_all()` returned.
+///
+/// On Unix (Linux/macOS/Android — every non-Windows platform we ship to)
+/// a directory can be opened read-only and fsynced; that is the standard
+/// durable-rename idiom. On Windows there is no portable directory-fsync:
+/// NTFS journals directory metadata so the entry is durable once the
+/// file's own `sync_all()` has returned, making the directory step a
+/// no-op there.
+async fn fsync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let dir_file = tokio::fs::File::open(dir).await?;
+        dir_file.sync_all().await
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
+        Ok(())
+    }
+}
+
+/// Best-effort temp cleanup on abandoned transfers. We can't `await`
+/// inside `Drop`, so this uses the synchronous `std::fs::remove_file`;
+/// failures (file already gone, permission denied, etc.) are
+/// intentionally ignored — the rename in `commit` is the only path
+/// that gives a strong durability guarantee, and `Drop` exists only
+/// to keep abandoned `*.tmp-*` files from accumulating.
+impl Drop for TempAttachmentWriter {
+    fn drop(&mut self) {
+        // Drop the file handle first so the unlink observes a
+        // closed FD on Windows.
+        let _ = self.file.take();
+        if !self.finalised {
+            let _ = std::fs::remove_file(&self.temp_path);
+        }
+    }
+}
+
+impl AsyncWrite for TempAttachmentWriter {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        // `TempAttachmentWriter: Unpin` (its fields are all Unpin),
+        // so projecting through `Pin<&mut Self>` is just a borrow.
+        let this = self.as_mut().get_mut();
+        let Some(file) = this.file.as_mut() else {
+            return Poll::Ready(Err(std::io::Error::other(
+                "TempAttachmentWriter already committed or dropped",
+            )));
+        };
+        match Pin::new(file).poll_write(cx, buf) {
+            Poll::Ready(Ok(n)) => {
+                // Hash exactly the bytes the underlying writer
+                // accepted — `poll_write` may report a short write,
+                // and we must not feed the hasher bytes the file
+                // never received.
+                this.hasher.update(&buf[..n]);
+                Poll::Ready(Ok(n))
+            }
+            Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.file.as_mut() {
+            Some(f) => Pin::new(f).poll_flush(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        let this = self.as_mut().get_mut();
+        match this.file.as_mut() {
+            Some(f) => Pin::new(f).poll_shutdown(cx),
+            None => Poll::Ready(Ok(())),
+        }
+    }
+}
+
+/// Open a streaming attachment writer for the given `fs_path`.
+///
+/// Validates the path, creates the parent directories if needed, and
+/// opens a temp file at `<final>.tmp-<random>` in the same directory.
+/// The `<random>` suffix is a 128-bit ULID-derived hex blob, so two
+/// concurrent transfers of the same attachment cannot collide.
+///
+/// The returned writer is an `AsyncWrite` sink — callers feed it via
+/// [`SyncConnection::receive_binary_streaming`] then call
+/// [`TempAttachmentWriter::commit`] to atomically publish the file.
+pub async fn write_attachment_streaming(
+    app_data_dir: &Path,
+    fs_path: &str,
+) -> Result<TempAttachmentWriter, AppError> {
+    let final_path = validate_attachment_fs_path(app_data_dir, fs_path)?;
+    if let Some(parent) = final_path.parent() {
+        tokio::fs::create_dir_all(parent).await.map_err(|e| {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!("creating directory {}: {e}", parent.display()),
+            ))
+        })?;
+    }
+
+    // ULID gives us 128 bits of entropy + a monotonic timestamp prefix —
+    // collisions across concurrent transfers of the same attachment
+    // are not practically possible. We render in lower-case hex to
+    // stay portable across filesystems that fold case in unhelpful
+    // ways (NTFS, APFS-default).
+    let suffix = u128::from(ulid::Ulid::new());
+    let temp_path = match final_path.file_name() {
+        Some(name) => {
+            let mut s = std::ffi::OsString::from(name);
+            s.push(format!(".tmp-{suffix:032x}"));
+            final_path.with_file_name(s)
+        }
+        None => {
+            // `validate_attachment_fs_path` already rejects empty /
+            // root-dir paths, so an attachment path always has a
+            // file name. This arm is defensive only.
+            return Err(AppError::validation(
+                "attachment path has no file name component".into(),
+            ));
+        }
+    };
+
+    let file = tokio::fs::File::create(&temp_path).await.map_err(|e| {
+        AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!("creating temp attachment {}: {e}", temp_path.display()),
+        ))
+    })?;
+
+    Ok(TempAttachmentWriter {
+        file: Some(file),
+        final_path,
+        temp_path,
+        hasher: blake3::Hasher::new(),
+        finalised: false,
+    })
+}
+
+// ---------------------------------------------------------------------------
+// File transfer protocol — sender side
+// ---------------------------------------------------------------------------
+
+/// Send files requested by the remote peer.
+///
+/// 1. Receive `FileRequest` from the remote peer.
+/// 2. For each requested attachment: send `FileOffer` + binary data.
+/// 3. Send `FileTransferComplete`.
+///
+/// At the start of every per-file iteration, the cancel flag is
+/// checked. If the user invoked `cancel_active_sync()` during the
+/// transfer, we break out of the per-file loop and fall through to the
+/// existing `FileTransferComplete` send — the receiver sees a clean
+/// "no more files" signal and exits its own loop without protocol error
+/// (the wire format is unchanged: `FileTransferComplete` already means
+/// "I'm done sending"). Cancel is checked between files, not per chunk,
+/// because the per-chunk inner loop is in a private helper and the
+/// granularity at the file boundary already lets a multi-gigabyte
+/// transfer be aborted before the *next* file starts.
+pub async fn receive_request_and_send_files(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
+) -> Result<FileTransferStats, AppError> {
+    let mut stats = FileTransferStats::default();
+
+    // 1. Receive FileRequest
+    let msg: SyncMessage = conn.recv_json().await?;
+    let attachment_ids = match msg {
+        SyncMessage::FileRequest { attachment_ids } => attachment_ids,
+        SyncMessage::FileTransferComplete => {
+            // Remote has no missing files — nothing to do.
+            // But we still need to send our own FileTransferComplete.
+            conn.send_json(&SyncMessage::FileTransferComplete).await?;
+            return Ok(stats);
+        }
+        other => {
+            tracing::warn!(
+                "expected FileRequest during file transfer, got {:?}",
+                std::mem::discriminant(&other)
+            );
+            // Graceful degradation: skip file transfer
+            return Ok(stats);
+        }
+    };
+
+    // Tally totals before the per-file loop so the UI
+    // gets a `bytes_total` denominator on its first tick. If a row is
+    // missing or unreadable here we'll skip it inside the loop too;
+    // the resulting `bytes_total` is a best-effort number that tracks
+    // the same set of files we'll actually try to send.
+    let files_total = attachment_ids.len() as u64;
+    let mut bytes_total: u64 = 0;
+    if progress.is_some() && files_total > 0 {
+        // #2200 (Tier-2): one `json_each(?)` IN query instead of the former
+        // per-attachment N+1. Same tally set + missing-id handling — see
+        // `pretally_bytes_total`.
+        bytes_total = pretally_bytes_total(pool, &attachment_ids).await;
+        if let Some(p) = progress {
+            p.emit("sending", 0, files_total, 0, bytes_total);
+        }
+    }
+
+    // 2. For each requested attachment: send FileOffer + binary data
+    for attachment_id in &attachment_ids {
+        // Stop sending more files when the user cancels mid-round.
+        // Falls through to the FileTransferComplete send below so the
+        // receiver exits cleanly via the normal "no more files" sentinel.
+        if cancel.load(Ordering::Acquire) {
+            tracing::info!(
+                "cancel observed during send loop; stopping after {} of {} files",
+                stats.files_sent,
+                attachment_ids.len()
+            );
+            break;
+        }
+        let Some(send_meta) = get_attachment_send_meta(pool, attachment_id).await? else {
+            tracing::warn!(
+                attachment_id,
+                "requested attachment not found in DB, skipping"
+            );
+            stats.skipped_not_found += 1;
+            continue;
+        };
+        let fs_path = send_meta.fs_path.clone();
+
+        // Pass-1: determine the offer's `(size, hash)`. #2189: prefer the
+        // DB's persisted `content_hash` (migrations 0093/0094) — which is the
+        // SAME blake3 digest a full re-hash would produce — and only stream +
+        // re-hash the whole file when the hash is NULL or the on-disk size
+        // drifted from the DB row. The receiver re-verifies mid-stream either
+        // way, so integrity is unchanged. See the module header for the
+        // two-pass rationale.
+        let (size_bytes, hash) = match resolve_offer_hash(app_data_dir, &send_meta).await {
+            Ok(meta) => meta,
+            Err(e) => {
+                tracing::warn!(
+                    attachment_id,
+                    error = %e,
+                    "could not read attachment file metadata, skipping"
+                );
+                stats.skipped_not_found += 1;
+                continue;
+            }
+        };
+
+        // Send FileOffer metadata. #1993: populate the additive `content_hash`
+        // with the same content-addressed digest as `blake3_hash` so a
+        // forward peer can reason about content-addressing explicitly. The
+        // wire stays back-compatible (the field is `#[serde(default)]`).
+        conn.send_json(&SyncMessage::FileOffer {
+            attachment_id: attachment_id.clone(),
+            size_bytes,
+            blake3_hash: hash.clone(),
+            content_hash: Some(hash),
+        })
+        .await?;
+
+        // Pass-2: re-open the file and stream it frame-by-frame to
+        // the wire. Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
+        // buffer regardless of file size — replaces the old
+        // `Vec<u8>`-of-the-whole-file pattern that OOMed on large
+        // attachments. Empty payload is still delivered as a single
+        // empty frame (zero-byte contract preserved by
+        // `send_binary_streaming`).
+        let (file, reopen_size) = match open_attachment_for_read(app_data_dir, &fs_path).await {
+            Ok(handle) => handle,
+            Err(e) => {
+                // Sender already advertised `size_bytes` + `hash` to
+                // the receiver in the FileOffer — bailing without a
+                // body would desync the wire. Surface this as a
+                // hard error so the session closes; the next sync
+                // cycle re-attempts the file. (We can't increment
+                // `stats.skipped_not_found` and continue here for
+                // the same reason — the receiver is now waiting on
+                // bytes that are never coming.)
+                tracing::error!(
+                    attachment_id,
+                    error = %e,
+                    "could not re-open attachment for streaming send after FileOffer; \
+                     closing connection so the daemon retries"
+                );
+                return Err(e);
+            }
+        };
+        if reopen_size != size_bytes {
+            // The file changed between pass-1 (hash) and pass-2
+            // (stream). Surface a hard error so the session retries —
+            // The receiver's size cross-check would catch this
+            // anyway, but failing here keeps the bad bytes off the
+            // wire entirely.
+            return Err(AppError::InvalidOperation(format!(
+                "attachment {attachment_id} changed during send: \
+                 hash_pass={size_bytes} bytes, stream_pass={reopen_size} bytes"
+            )));
+        }
+        // Per-frame progress: capture the running
+        // bytes-shipped tally for this file so the UI sees movement
+        // mid-transfer on multi-frame attachments. The `bytes_total`
+        // tally above is the denominator across the whole `sending`
+        // phase; we add `bytes_so_far_in_file` to the per-file base.
+        let bytes_base = stats.bytes_sent;
+        if let Some(p) = progress {
+            conn.send_binary_streaming_with_progress(
+                file,
+                size_bytes,
+                BINARY_FRAME_CHUNK_SIZE,
+                |bytes_in_file| {
+                    p.emit(
+                        "sending",
+                        stats.files_sent as u64,
+                        files_total,
+                        bytes_base + bytes_in_file,
+                        bytes_total,
+                    );
+                },
+            )
+            .await?;
+        } else {
+            conn.send_binary_streaming(file, size_bytes, BINARY_FRAME_CHUNK_SIZE)
+                .await?;
+        }
+
+        // Wait for FileReceived acknowledgment
+        let ack: SyncMessage = conn.recv_json().await?;
+        match ack {
+            SyncMessage::FileReceived {
+                attachment_id: ref ack_id,
+            } if ack_id == attachment_id => {
+                stats.files_sent += 1;
+                stats.bytes_sent += size_bytes;
+                if let Some(p) = progress {
+                    p.emit(
+                        "sending",
+                        stats.files_sent as u64,
+                        files_total,
+                        stats.bytes_sent,
+                        bytes_total,
+                    );
+                }
+            }
+            other => {
+                tracing::warn!(
+                    attachment_id,
+                    "expected FileReceived, got {:?}",
+                    std::mem::discriminant(&other)
+                );
+            }
+        }
+    }
+
+    // 3. Send FileTransferComplete
+    conn.send_json(&SyncMessage::FileTransferComplete).await?;
+
+    Ok(stats)
+}
+
+// ---------------------------------------------------------------------------
+// File transfer protocol — receiver side
+// ---------------------------------------------------------------------------
+
+/// Request and receive files from the remote peer.
+///
+/// 1. Compute which attachment files are missing locally.
+/// 2. Send `FileRequest` with the missing attachment IDs.
+/// 3. Receive `FileOffer` + binary data for each, verify, and write to disk.
+/// 4. Until `FileTransferComplete` is received.
+///
+/// At the start of every iteration of the receive loop (before
+/// `recv_json()` for the next `FileOffer`/`FileTransferComplete`), the
+/// cancel flag is checked. If set, we break and return the partial
+/// stats. The remote sender will hit a broken-pipe / connection-close
+/// when its next `send_json` or `send_binary` attempt fails — that
+/// surfaces as a non-fatal warning on the sender side; the next sync
+/// cycle re-attempts the missing files. The wire format is unchanged
+/// (no new message variants).
+pub async fn request_and_receive_files(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
+) -> Result<FileTransferStats, AppError> {
+    let mut stats = FileTransferStats::default();
+
+    // 1. Find missing attachments
+    let missing = find_missing_attachments(pool, app_data_dir).await?;
+    let ids: Vec<String> = missing.iter().map(|m| m.id.clone()).collect();
+
+    if ids.is_empty() {
+        tracing::debug!("no missing attachment files, sending empty FileRequest");
+    }
+
+    // Tally totals from the local DB rows for the
+    // attachments we're about to request. The peer's `FileOffer`
+    // Size_bytes is authoritative on the wire (cross-checks it),
+    // but the DB row is the only place we know `bytes_total` *before*
+    // any FileOffer arrives — and we want a denominator on the very
+    // first tick so the UI doesn't briefly show "?/?".
+    let files_total = ids.len() as u64;
+    let mut bytes_total: u64 = 0;
+    if progress.is_some() && files_total > 0 {
+        for id in &ids {
+            if let Ok(Some(meta)) = get_attachment_receive_meta(pool, id).await {
+                bytes_total =
+                    bytes_total.saturating_add(u64::try_from(meta.size_bytes).unwrap_or(0));
+            }
+        }
+        if let Some(p) = progress {
+            p.emit("receiving", 0, files_total, 0, bytes_total);
+        }
+    }
+
+    // 2. Send FileRequest
+    conn.send_json(&SyncMessage::FileRequest {
+        attachment_ids: ids,
+    })
+    .await?;
+
+    // 3. Receive files until FileTransferComplete
+    //
+    // A `FileReceived` ACK is sent ONLY after the file has been
+    // hash-verified AND written to disk. Any failure on the offer (size
+    // disagreement with the DB row, hash mismatch, write failure)
+    // returns `Err` so the connection is closed and the daemon retries
+    // on the next sync cycle. Stats counters reflect actual receiver
+    // outcomes, never optimistic ACKs.
+    loop {
+        // Check cancel before reading the next FileOffer. Granularity
+        // is per-file (not per-chunk) because the per-chunk inner read
+        // Lives in `SyncConnection::receive_binary_streaming`;
+        // aborting between files lets multi-gigabyte transfers be
+        // interrupted before the *next* file starts streaming.
+        if cancel.load(Ordering::Acquire) {
+            tracing::info!(
+                files_received = stats.files_received,
+                "cancel observed during receive loop; aborting before next FileOffer"
+            );
+            break;
+        }
+        // (#317): the top-of-loop check above only observes a cancel
+        // that is *already* visible when we re-enter the loop. If the peer
+        // has also cancelled and will therefore never send the next
+        // message, a bare `conn.recv_json().await` would block until the
+        // connection closes (up to the nextest 60s timeout — the source of
+        // the flake). Poll cancel while we wait for the next message: wrap
+        // the receive in a short timeout and re-check `cancel` on each
+        // elapsed tick. A message that arrives within the interval is
+        // handled exactly as before — only the *waiting* becomes
+        // cancel-aware, so the normal (non-cancel) path is unchanged.
+        //
+        // 150ms is short enough to abort promptly on the rare cancel race
+        // yet long enough that, on the common path where the next message
+        // is already in flight, we wake at most a handful of times per
+        // multi-gigabyte transfer (no busy-polling).
+        const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+        let msg: SyncMessage = loop {
+            match tokio::time::timeout(CANCEL_POLL_INTERVAL, conn.recv_json()).await {
+                Ok(Ok(msg)) => break msg,
+                Ok(Err(e)) => {
+                    // The receive itself failed. If we're cancelling, a
+                    // peer that has also cancelled may simply drop the
+                    // connection instead of sending another message; that
+                    // surfaces here as a recv error (e.g. "connection
+                    // reset"). Treat it as a clean cancel-driven stop —
+                    // we already hold the files we ACKed — rather than a
+                    // transfer failure. Only when *not* cancelling do we
+                    // propagate the error so the daemon retries.
+                    if cancel.load(Ordering::Acquire) {
+                        tracing::info!(
+                            files_received = stats.files_received,
+                            error = %e,
+                            "peer connection ended while cancelling; aborting receive cleanly"
+                        );
+                        return Ok(stats);
+                    }
+                    return Err(e);
+                }
+                Err(_elapsed) => {
+                    if cancel.load(Ordering::Acquire) {
+                        tracing::info!(
+                            files_received = stats.files_received,
+                            "cancel observed while waiting for next message; aborting receive"
+                        );
+                        return Ok(stats);
+                    }
+                    // Not cancelled — keep waiting for the next message.
+                }
+            }
+        };
+        match msg {
+            SyncMessage::FileOffer {
+                attachment_id,
+                size_bytes,
+                blake3_hash,
+                content_hash,
+            } => {
+                // #1993 Phase 2 — content-addressed skip. The offer carries the
+                // bytes' content hash (`blake3_hash`, mirrored into the optional
+                // `content_hash`). If we ALREADY have a local blob with that
+                // hash whose file is present on disk, we do not need these
+                // bytes: link this attachment row to the existing blob file
+                // (repoint `fs_path` at the blob's `on_disk_path`) and ACK
+                // without writing a duplicate. We still drain the offered binary
+                // frames to keep the wire aligned with the sender's frame
+                // pointer (the protocol streams immediately after the offer with
+                // no accept step). `content_hash` falls back to `blake3_hash` so
+                // an old peer's offer (no `content_hash`) still benefits.
+                let offered_hash = content_hash.as_deref().unwrap_or(blake3_hash.as_str());
+                if let Some(blob_path) =
+                    local_blob_path_if_present(pool, app_data_dir, offered_hash).await
+                {
+                    // Repoint the row at the existing blob file so reads resolve
+                    // the shared bytes. If the row is unknown locally we simply
+                    // discard the offer (the next sync re-derives missing).
+                    // dynamic-sql: static SQL; matches this module's style.
+                    let _ = sqlx::query("UPDATE attachments SET fs_path = ? WHERE id = ?")
+                        .bind(&blob_path)
+                        .bind(&attachment_id)
+                        .execute(pool)
+                        .await;
+                    tracing::debug!(
+                        attachment_id,
+                        content_hash = offered_hash,
+                        "FileOffer skipped: local blob already present; linked row, draining bytes"
+                    );
+                    // Drain the offered bytes (alignment) then ACK.
+                    consume_binary_data(conn, size_bytes).await?;
+                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                        .await?;
+                    continue;
+                }
+
+                // Look up fs_path + DB size_bytes for this attachment
+                let Some(meta) = get_attachment_receive_meta(pool, &attachment_id).await? else {
+                    tracing::warn!(
+                        attachment_id,
+                        "received file offer for unknown attachment, skipping binary data"
+                    );
+                    // Still need to consume the binary data so the stream
+                    // stays aligned with the sender's frame pointer.
+                    consume_binary_data(conn, size_bytes).await?;
+                    // #638: ALWAYS ACK after draining the bytes. Without this
+                    // the sender blocks on its `recv_json` for this offer's
+                    // `FileReceived` until the 180s `RECV_TIMEOUT`, which then
+                    // errors the whole file phase and loses the round's
+                    // remaining files. The protocol has no skip/declined
+                    // variant, so we send `FileReceived` for the offered
+                    // `attachment_id`; the sender's ACK arm treats a matching
+                    // id as "delivered" and moves on to the next file. We
+                    // skipped writing the file locally on purpose (we don't
+                    // have a row for it), but the *next* sync cycle re-derives
+                    // missing attachments from the DB, so nothing is lost by
+                    // ACKing a file we deliberately discarded.
+                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                        .await?;
+                    continue;
+                };
+
+                // Cross-check the offer's size_bytes against the
+                // authoritative DB row. A mismatch is a sender bug
+                // (`u32` truncation, wrong file picked up), so reject
+                // the offer without writing anything and return Err so
+                // the daemon retries.
+                let expected_size_u64 = u64::try_from(meta.size_bytes).unwrap_or(0);
+                if size_bytes != expected_size_u64 {
+                    tracing::error!(
+                        attachment_id,
+                        expected_size = meta.size_bytes,
+                        offered_size = size_bytes,
+                        "FileOffer size_bytes disagrees with attachments DB row, rejecting without ACK"
+                    );
+                    return Err(AppError::InvalidOperation(format!(
+                        "file_offer.size_mismatch: attachment {attachment_id} expected {} bytes, peer offered {size_bytes}",
+                        meta.size_bytes
+                    )));
+                }
+
+                // Stream the binary frames straight to a temp
+                // file under `app_data_dir`, hashing in-place via
+                // `TempAttachmentWriter`'s built-in `blake3::Hasher`.
+                // Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
+                // buffer regardless of file size — no `Vec<u8>` of
+                // the full payload anywhere. On any error we open
+                // the writer (so its `Drop` unlinks the temp) BEFORE
+                // returning so the partial file never lingers.
+                let mut writer = match write_attachment_streaming(app_data_dir, &meta.fs_path).await
+                {
+                    Ok(w) => w,
+                    Err(e) => {
+                        tracing::error!(
+                            attachment_id,
+                            error = %e,
+                            "failed to open temp attachment writer, skipping this file"
+                        );
+                        // #638: same no-ACK stall as the unknown-attachment
+                        // path. We failed to open the temp writer (e.g. a
+                        // create_dir_all/permission error), but the sender has
+                        // already shipped (or is about to ship) the bytes and
+                        // is waiting on `FileReceived`. Drain the offered bytes
+                        // to keep the stream aligned, then ACK so the sender
+                        // unblocks and the round's remaining files still
+                        // transfer instead of erroring on the 180s
+                        // `RECV_TIMEOUT`. We did NOT write the file, so the
+                        // next sync cycle re-requests it (it's still missing
+                        // on disk) — no data is lost by ACKing here.
+                        consume_binary_data(conn, size_bytes).await?;
+                        conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                            .await?;
+                        continue;
+                    }
+                };
+                // Per-frame progress on the receive
+                // path: capture the running bytes-received tally so a
+                // multi-frame attachment ticks the UI mid-transfer.
+                let bytes_base = stats.bytes_received;
+                let recv_result = if let Some(p) = progress {
+                    conn.receive_binary_streaming_with_progress(
+                        &mut writer,
+                        size_bytes,
+                        |bytes_in_file| {
+                            p.emit(
+                                "receiving",
+                                stats.files_received as u64,
+                                files_total,
+                                bytes_base + bytes_in_file,
+                                bytes_total,
+                            );
+                        },
+                    )
+                    .await
+                } else {
+                    conn.receive_binary_streaming(&mut writer, size_bytes).await
+                };
+                if let Err(e) = recv_result {
+                    tracing::error!(
+                        attachment_id,
+                        error = %e,
+                        "failed to stream attachment bytes; temp file will be unlinked on Drop"
+                    );
+                    return Err(e);
+                }
+
+                // + hash verification happens INSIDE
+                // `commit` — the running `blake3::Hasher` is finalised
+                // and compared to the offer's `blake3_hash`. On match
+                // the temp is renamed atomically; on mismatch the
+                // temp is unlinked and `commit` returns
+                // `AppError::InvalidOperation("hash_mismatch: …")`.
+                if let Err(e) = writer.commit(&blake3_hash).await {
+                    tracing::error!(
+                        attachment_id,
+                        expected_hash = blake3_hash,
+                        error = %e,
+                        "attachment commit failed; temp unlinked, no ACK"
+                    );
+                    return Err(e);
+                }
+
+                // #1993 Phase 2 — register the freshly-verified bytes in the
+                // content-addressed blob store so subsequent offers/adds of the
+                // same hash dedup against this file. The commit verified the
+                // bytes match `blake3_hash`, so the blob's key is authoritative.
+                // Best-effort (`INSERT OR IGNORE`): a failure here does not
+                // jeopardise the transfer — the boot-time backfill / next add
+                // reconciles the blob row, and reads still resolve via fs_path.
+                register_received_blob(pool, &blake3_hash, &meta.fs_path, meta.size_bytes).await;
+
+                stats.files_received += 1;
+                stats.bytes_received += size_bytes;
+                if let Some(p) = progress {
+                    p.emit(
+                        "receiving",
+                        stats.files_received as u64,
+                        files_total,
+                        stats.bytes_received,
+                        bytes_total,
+                    );
+                }
+
+                // Only after successful write + hash verify do we ACK.
+                conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                    .await?;
+            }
+            SyncMessage::FileTransferComplete => {
+                tracing::debug!("received FileTransferComplete from remote");
+                break;
+            }
+            other => {
+                tracing::warn!(
+                    "unexpected message during file receive: {:?}",
+                    std::mem::discriminant(&other)
+                );
+                break;
+            }
+        }
+    }
+
+    Ok(stats)
+}
+
+/// Consume and discard binary data for a file we don't need.
+///
+/// Mirrors [`SyncConnection::send_binary_chunked`]: a zero-byte payload
+/// is delivered as a single empty frame, so when `size_bytes == 0` we
+/// still drain exactly one frame off the wire to keep the receiver's
+/// frame pointer aligned with the sender's.
+async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Result<(), AppError> {
+    if size_bytes == 0 {
+        let _ = conn.recv_binary().await?;
+        return Ok(());
+    }
+    let mut received = 0u64;
+    while received < size_bytes {
+        let chunk = conn.recv_binary().await?;
+        received += chunk.len() as u64;
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Top-level file transfer orchestrator
+// ---------------------------------------------------------------------------
+
+/// Run the complete bidirectional file transfer phase.
+///
+/// Called by the **initiator** after `SyncComplete` exchange:
+/// 1. Initiator requests files it's missing.
+/// 2. Initiator responds to responder's file request.
+///
+/// `cancel` is checked at every per-file boundary inside both
+/// helper functions. When set mid-transfer the receiver loop exits early
+/// (partial stats returned) and the sender loop falls through to the
+/// existing `FileTransferComplete` sentinel — both without changing the
+/// wire format.
+pub async fn run_file_transfer_initiator(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
+) -> Result<FileTransferStats, AppError> {
+    let mut stats = FileTransferStats::default();
+
+    // Phase 1: Request our missing files from responder
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
+    stats.files_received += recv_stats.files_received;
+    stats.bytes_received += recv_stats.bytes_received;
+    stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
+    stats.skipped_not_found += recv_stats.skipped_not_found;
+
+    // Phase 2: Respond to responder's file request
+    let send_stats =
+        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
+    stats.files_sent += send_stats.files_sent;
+    stats.bytes_sent += send_stats.bytes_sent;
+    stats.skipped_not_found += send_stats.skipped_not_found;
+    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
+
+    if stats.files_received > 0 || stats.files_sent > 0 {
+        tracing::info!(
+            files_received = stats.files_received,
+            files_sent = stats.files_sent,
+            bytes_received = stats.bytes_received,
+            bytes_sent = stats.bytes_sent,
+            "file transfer complete"
+        );
+    }
+
+    // Emit a final `complete` tick so the UI can flip
+    // its file-transfer phase chip back to idle without waiting for
+    // the next sync session.
+    if let Some(p) = progress {
+        p.emit(
+            "complete",
+            (stats.files_received + stats.files_sent) as u64,
+            (stats.files_received + stats.files_sent) as u64,
+            stats.bytes_received + stats.bytes_sent,
+            stats.bytes_received + stats.bytes_sent,
+        );
+    }
+
+    Ok(stats)
+}
+
+/// Run the complete bidirectional file transfer phase.
+///
+/// Called by the **responder** after `SyncComplete` exchange:
+/// 1. Responder sends files the initiator requested.
+/// 2. Responder requests files it's missing.
+///
+/// `cancel` is threaded through to the inner per-file loops. See
+/// the matching docs on [`run_file_transfer_initiator`] for the rationale
+/// and protocol-compatibility notes.
+pub async fn run_file_transfer_responder(
+    conn: &mut SyncConnection,
+    pool: &SqlitePool,
+    app_data_dir: &Path,
+    cancel: &AtomicBool,
+    progress: Option<&FileTransferProgress<'_>>,
+) -> Result<FileTransferStats, AppError> {
+    let mut stats = FileTransferStats::default();
+
+    // #1605: bail before Phase 1's first blocking `recv` if cancellation
+    // is already pending. Phase 1 (`receive_request_and_send_files`) blocks
+    // on the initiator's `FileRequest` *before* its per-file cancel check;
+    // a slow/hung initiator that finished op-sync but never sends that
+    // message would otherwise pin the responder (and its per-peer lock +
+    // #1581 permit) for the full `RECV_TIMEOUT` (180 s). Checking the
+    // daemon's real shared flag here mirrors the message loop's pre-recv
+    // check and gives a shutdown / user-cancel a prompt abort point.
+    if cancel.load(Ordering::Acquire) {
+        return Err(AppError::InvalidOperation("sync cancelled".into()));
+    }
+
+    // Phase 1: Respond to initiator's file request
+    let send_stats =
+        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
+    stats.files_sent += send_stats.files_sent;
+    stats.bytes_sent += send_stats.bytes_sent;
+    stats.skipped_not_found += send_stats.skipped_not_found;
+    stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
+
+    // Phase 2: Request our missing files from initiator
+    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
+    stats.files_received += recv_stats.files_received;
+    stats.bytes_received += recv_stats.bytes_received;
+    stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
+    stats.skipped_not_found += recv_stats.skipped_not_found;
+
+    if stats.files_received > 0 || stats.files_sent > 0 {
+        tracing::info!(
+            files_received = stats.files_received,
+            files_sent = stats.files_sent,
+            bytes_received = stats.bytes_received,
+            bytes_sent = stats.bytes_sent,
+            "file transfer complete"
+        );
+    }
+
+    if let Some(p) = progress {
+        p.emit(
+            "complete",
+            (stats.files_received + stats.files_sent) as u64,
+            (stats.files_received + stats.files_sent) as u64,
+            stats.bytes_received + stats.bytes_sent,
+            stats.bytes_received + stats.bytes_sent,
+        );
+    }
+
+    Ok(stats)
+}
+
+/// Derive the application data directory from the SQLite pool.
+///
+/// The pool connects to a database file (e.g. `/path/to/app_data/notes.db`);
+/// the parent directory of that file is the app data dir where attachments
+/// are stored.
+pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppError> {
+    let row: (String,) =
+        sqlx::query_as("SELECT file FROM pragma_database_list WHERE name = 'main'")
+            .fetch_one(pool)
+            .await?;
+    let db_path = PathBuf::from(&row.0);
+    db_path
+        .parent()
+        .map(std::path::Path::to_path_buf)
+        .ok_or_else(|| {
+            AppError::InvalidOperation("cannot determine app data dir from database path".into())
+        })
+}
+
+// ===========================================================================
+// Tests — hosted app-side (`src/sync_files/tests.rs`) via the app shim (#2621
+// Sync-D): they reference app-only `Materializer`/`recovery`.
+// ===========================================================================
