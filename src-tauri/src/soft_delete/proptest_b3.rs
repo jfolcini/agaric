@@ -82,6 +82,7 @@ use crate::db::init_pool;
 use crate::materializer::Materializer;
 use crate::ulid::BlockId;
 use proptest::prelude::*;
+use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use tempfile::TempDir;

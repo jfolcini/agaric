@@ -110,6 +110,16 @@ pub mod backlink;
 // grouping / aggregation), built on `filters` + `fts`.
 pub mod query;
 
+// ── Wave S4e (#2621): the two pure, side-effect-free soft-delete query
+// helpers. The app re-exports them (`pub use agaric_store::soft_delete::{…};`)
+// so `crate::soft_delete::{is_deleted,soft_delete_block}` resolve unchanged.
+//
+// `soft_delete` — `is_deleted` + `soft_delete_block`. Pure: pool + AppError +
+// sqlx only (plus the sibling `db::next_delete_ms` clock). The
+// materializer-coupled orchestration (cascade / restore / synthesize) stays in
+// the app crate and reaches these via the re-exports.
+pub mod soft_delete;
+
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4
