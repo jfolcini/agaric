@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT block_id AS \"block_id: crate::ulid::BlockId\", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?",
+  "query": "SELECT block_id AS \"block_id: agaric_core::ulid::BlockId\", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts ORDER BY updated_at ASC",
   "describe": {
     "columns": [
       {
-        "name": "block_id: crate::ulid::BlockId",
+        "name": "block_id: agaric_core::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -60,7 +60,7 @@
       }
     ],
     "parameters": {
-      "Right": 1
+      "Right": 0
     },
     "nullable": [
       false,
@@ -70,5 +70,5 @@
       true
     ]
   },
-  "hash": "eaeb8c453d280be2fc2836fb17c689357a510213acc468309310682affecf760"
+  "hash": "5ea49f02dec545e223c9784ea86c36fd96bcfaeb1c84c982fb668054652650a1"
 }

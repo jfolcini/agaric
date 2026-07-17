@@ -9,11 +9,11 @@
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 
-use crate::db::{CommandTx, now_ms};
-use crate::error::AppError;
-use crate::op::{EditBlockPayload, OpPayload};
-use crate::op_log::{OpRecord, append_local_op_in_tx};
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::db::{begin_immediate_logged, now_ms};
+use agaric_store::op::{EditBlockPayload, OpPayload};
+use agaric_store::op_log::{OpRecord, append_local_op_in_tx};
 
 // ---------------------------------------------------------------------------
 // Types
@@ -22,7 +22,7 @@ use crate::ulid::BlockId;
 /// A single draft row from `block_drafts`.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, specta::Type)]
 pub struct Draft {
-    pub block_id: crate::ulid::BlockId,
+    pub block_id: agaric_core::ulid::BlockId,
     pub content: String,
     /// Epoch-ms (block_drafts.updated_at is INTEGER since migration 0082).
     pub updated_at: i64,
@@ -134,7 +134,7 @@ pub async fn delete_draft_in_tx(
 pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft>, AppError> {
     let draft = sqlx::query_as!(
         Draft,
-        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?"#,
+        r#"SELECT block_id AS "block_id: agaric_core::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?"#,
         block_id,
     )
     .fetch_optional(pool)
@@ -147,7 +147,7 @@ pub async fn get_draft(pool: &SqlitePool, block_id: &str) -> Result<Option<Draft
 pub async fn get_all_drafts(pool: &SqlitePool) -> Result<Vec<Draft>, AppError> {
     let drafts = sqlx::query_as!(
         Draft,
-        r#"SELECT block_id AS "block_id: crate::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts ORDER BY updated_at ASC"#,
+        r#"SELECT block_id AS "block_id: agaric_core::ulid::BlockId", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts ORDER BY updated_at ASC"#,
     )
     .fetch_all(pool)
     .await?;
@@ -197,10 +197,13 @@ pub const ORPHAN_DRAFTS_SWEEP_INTERVAL: std::time::Duration = std::time::Duratio
 /// once at boot and then every `interval` until `shutdown_flag` is set.
 ///
 /// Mirrors the shape of
-/// [`crate::materializer::retry_queue::spawn_sweeper`]:
-/// fire-and-forget, polls the shared shutdown flag on each tick, and
-/// uses `tauri::async_runtime::spawn` in production builds (so the
-/// task is owned by Tauri's runtime) and `tokio::spawn` in tests.
+/// `crate::materializer::retry_queue::spawn_sweeper` (in the app crate):
+/// fire-and-forget, polls the shared shutdown flag on each tick.
+///
+/// `spawn` injects the async executor so `agaric-engine` stays tauri-free
+/// (#2621, wave E2, mirroring `loro::snapshot::spawn_periodic_snapshot`): the
+/// app passes `|fut| { tauri::async_runtime::spawn(fut); }` (so the task is
+/// owned by Tauri's runtime), tests pass `|fut| { tokio::spawn(fut); }`.
 ///
 /// Logs `rows_affected` at `debug!` when the sweep is a no-op and at
 /// `info!` when it removed at least one row — orphans being swept is
@@ -210,15 +213,12 @@ pub fn spawn_orphan_drafts_sweeper(
     pool: SqlitePool,
     interval: std::time::Duration,
     shutdown_flag: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    spawn: impl FnOnce(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
 ) {
-    #[cfg(not(test))]
-    let spawn_fn = tauri::async_runtime::spawn;
-    #[cfg(test)]
-    let spawn_fn = tokio::spawn;
-    // Fire-and-forget: the sweeper runs for the app's lifetime. We
-    // intentionally discard the JoinHandle — the task stops when
+    // Fire-and-forget: the sweeper runs for the app's lifetime. The spawned
+    // task is discarded by the caller-supplied `spawn` — it stops when
     // `shutdown_flag` flips.
-    let _handle = spawn_fn(async move {
+    spawn(Box::pin(async move {
         // Boot one-shot — drains any orphan drafts left by a previous
         // session before the user can encounter "phantom drafts" in the UI.
         run_sweep_once(&pool, "boot").await;
@@ -233,7 +233,7 @@ pub fn spawn_orphan_drafts_sweeper(
             }
             run_sweep_once(&pool, "periodic").await;
         }
-    });
+    }));
 }
 
 /// Helper for [`spawn_orphan_drafts_sweeper`]: run one sweep and log
@@ -290,10 +290,12 @@ pub async fn flush_draft_in_tx(
 /// with additional pre-flight checks (e.g. validating the target block
 /// still exists) should drive [`flush_draft_in_tx`] directly on an outer
 /// transaction.
-// Test-only helper: returns the `OpRecord` for assertions. No production
-// caller (the command path is `commands::drafts::flush_draft_inner`), so it
-// has nothing to dispatch — kept off the raw `begin_with` via `CommandTx` +
-// `commit_without_dispatch`.
+// Test-/bench-only helper: returns the `OpRecord` for assertions. No
+// production caller (the command path is `commands::drafts::flush_draft_inner`,
+// which drives an app-layer `CommandTx`), so it has nothing to dispatch and
+// opens a plain `BEGIN IMMEDIATE` transaction via the store helper, committing
+// directly (no dispatch machinery). Keeping it store-only lets `draft` live in
+// `agaric-engine` without depending on the app-layer `CommandTx`.
 pub async fn flush_draft(
     pool: &SqlitePool,
     device_id: &str,
@@ -301,9 +303,9 @@ pub async fn flush_draft(
     content: &str,
     prev_edit: Option<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
-    let mut tx = CommandTx::begin_immediate(pool, "flush_draft").await?;
+    let mut tx = begin_immediate_logged(pool, "flush_draft").await?;
     let record = flush_draft_in_tx(&mut tx, device_id, block_id, content, prev_edit).await?;
-    tx.commit_without_dispatch().await?;
+    tx.commit().await?;
     Ok(record)
 }
 

@@ -40,6 +40,12 @@ agaric-store = { path = "../agaric-store", version = "0.1.0" }
 # `bibliography` parses the CSL-JSON format via `serde_json::Value`; loro's
 # projection serializes cohort/tag payloads via `serde_json::Value`.
 serde_json = "1"
+# `draft::Draft` derives `Serialize`/`Deserialize` (#2621, wave E2). Version/
+# features mirror the app crate exactly for cargo feature-unification.
+serde = { version = "1", features = ["derive"] }
+# `draft::Draft` derives `specta::Type` (frontend binding generation). Version/
+# features mirror the app crate exactly for cargo feature-unification.
+specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
 # The Loro CRDT crate — `LoroEngine` wraps `LoroDoc`, `Frontiers`, tree/map
 # containers. Version mirrors the app crate exactly.
 loro = "1.12"
@@ -83,6 +89,10 @@ tempfile = "3.27.0"
 # test_pool` — enable the store's `test-util` feature so that module compiles
 # for this crate's test build (#2621, wave E1).
 agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-util"] }
+# Re-declare agaric-core with `test-util` so the `*::test_id` newtype
+# constructors compile for this crate's test build — the moved `draft` tests
+# build synthetic `BlockId::test_id(..)` fixtures (#2621, wave E2).
+agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-util"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-store` members).
