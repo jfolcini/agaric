@@ -378,7 +378,7 @@ impl ChainModel {
         // Walk up from candidate; if we reach target, candidate is below it.
         let mut cur = candidate.to_string();
         for _ in 0..1000 {
-            match self.parents.get(&cur).and_then(|p| p.clone()) {
+            match self.parents.get(&cur).cloned().flatten() {
                 Some(p) if p == target => return true,
                 Some(p) => cur = p,
                 None => return false,
