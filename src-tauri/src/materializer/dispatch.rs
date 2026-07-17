@@ -411,7 +411,7 @@ impl Materializer {
     }
 
     pub fn dispatch_background(&self, record: &OpRecord) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, None)
+        self.enqueue_background_tasks(record, None, None)
     }
 
     /// Dispatch background cache rebuild tasks for `record`, logging a `warn`
@@ -441,7 +441,7 @@ impl Materializer {
         record: &OpRecord,
         block_type: &str,
     ) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, Some(block_type))
+        self.enqueue_background_tasks(record, Some(block_type), None)
     }
 
     /// Dispatch the background fan-out for a `delete_block` / `restore_block`
@@ -460,7 +460,31 @@ impl Materializer {
         record: &OpRecord,
         block_type: &str,
     ) -> Result<(), AppError> {
-        self.enqueue_background_tasks(record, Some(block_type))
+        self.enqueue_background_tasks(record, Some(block_type), None)
+    }
+
+    /// #2700: dispatch the background fan-out for a LOCAL `move_block` op,
+    /// threading whether the move provably kept the block's `page_id`
+    /// (`same_page`) so [`invalidations_for_op`] can skip the three
+    /// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
+    /// `RebuildProjectedAgendaCache`) for a same-parent reorder / same-page
+    /// indent.
+    ///
+    /// `same_page` is computed at the move-command site
+    /// (`commands/blocks/move_ops.rs`) by comparing the moved block's `page_id`
+    /// BEFORE and AFTER the in-tx rederive — the direct, authoritative signal
+    /// for "did this move change page attribution?". Only the LOCAL command
+    /// path carries it; remote replay / inbound-sync / boot dispatch the same
+    /// op via the plain [`Self::dispatch_background_or_warn`] (hint absent →
+    /// `None` → full conservative set), so a cross-device move never
+    /// under-invalidates. When `same_page` is `false` (a cross-page reparent)
+    /// the full set is likewise retained.
+    pub fn dispatch_move_background(
+        &self,
+        record: &OpRecord,
+        same_page: bool,
+    ) -> Result<(), AppError> {
+        self.enqueue_background_tasks(record, None, Some(same_page))
     }
 
     /// Enqueue the full cache-rebuild fan-out that every block-structure
@@ -823,7 +847,7 @@ impl Materializer {
         self.enqueue_foreground(MaterializeTask::ApplyOp(Arc::new(record.clone())))
             .await?;
         self.flush_foreground().await?;
-        self.enqueue_background_tasks(record, None)
+        self.enqueue_background_tasks(record, None, None)
     }
 
     /// Enqueue the background fan-out for `record`, then drive any
@@ -840,8 +864,9 @@ impl Materializer {
         &self,
         record: &OpRecord,
         block_type_hint: Option<&str>,
+        move_same_page: Option<bool>,
     ) -> Result<(), AppError> {
-        for task in invalidations_for_op(record, block_type_hint)? {
+        for task in invalidations_for_op(record, block_type_hint, move_same_page)? {
             self.try_enqueue_background(task)?;
         }
         if record.op_type == "edit_block" {
@@ -896,8 +921,21 @@ impl Materializer {
 }
 
 /// Pure mapping from an [`OpRecord`] (and optional `block_type_hint`
-/// for `edit_block`) to the ordered list of background
-/// [`MaterializeTask`]s that should be enqueued for it.
+/// for `edit_block`, `move_same_page` for `move_block`) to the ordered
+/// list of background [`MaterializeTask`]s that should be enqueued for it.
+///
+/// #2700: `move_same_page` is consulted ONLY by the `MoveBlock` arm. It is
+/// `Some(true)` when the LOCAL move command proved the block's `page_id` is
+/// unchanged by the reparent (a same-parent sibling reorder or a same-page
+/// indent — the command compares the moved block's `page_id` before/after the
+/// in-tx rederive; see `commands/blocks/move_ops.rs`). In that case the three
+/// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
+/// `RebuildProjectedAgendaCache`) are pure waste and are skipped. `None` (every
+/// non-move path, and — crucially — remote replay / inbound-sync / boot, which
+/// never carry the hint) or `Some(false)` (a proven cross-page reparent) keeps
+/// the full conservative set. `RebuildAgendaCache` (#2657) is NOT gated on this
+/// hint — it stays enqueued on a same-page move (out of #2700 scope; a
+/// correct-but-broader rebuild is never stale).
 ///
 /// Lifted out of the former imperative match in
 /// [`Materializer::enqueue_background_tasks`] so the per-op-type cache
@@ -929,6 +967,7 @@ impl Materializer {
 fn invalidations_for_op(
     record: &OpRecord,
     block_type_hint: Option<&str>,
+    move_same_page: Option<bool>,
 ) -> Result<Vec<MaterializeTask>, AppError> {
     let mut tasks: Vec<MaterializeTask> = Vec::new();
     // #1260: parse the raw `op_type` string once into the typed enum and
@@ -1259,7 +1298,31 @@ fn invalidations_for_op(
             // pure O(vault) waste. `RebuildPagesCache` is KEPT and still runs
             // after the in-tx rederive, observing the already-corrected
             // membership.
-            tasks.push(MaterializeTask::RebuildPagesCache);
+            //
+            // #2700: the three rebuilds gated by `!same_page` below
+            // (`RebuildPagesCache`, `RebuildPageLinkCache`,
+            // `RebuildProjectedAgendaCache`) ALL derive purely from `page_id`
+            // (page-row attribution, the source-page `block_links` roll-up, and
+            // the template-page projected-agenda carve-out respectively). A move
+            // the local command proved keeps EVERY moved block's `page_id`
+            // (`move_same_page == Some(true)`) makes all three pure waste, so
+            // they are skipped. That proof lives at the command site
+            // (`move_ops.rs`): the moved root's `page_id` is unchanged AND the
+            // moved subtree contains no NESTED page. Both conjuncts are required
+            // — `rederive_page_and_space_ids` flattens content descendants of a
+            // nested page onto the moved root's page, so a root-only page_id
+            // check is NOT sufficient when a nested page rides along (it would
+            // leave `page_link_cache` / `projected_agenda_cache` stale). With no
+            // nested page in the subtree, an unchanged root `page_id` does imply
+            // unchanged descendant `page_id`s, so the skip is safe.
+            // `None` (remote replay / inbound-sync / boot — the hint is only
+            // threaded on the LOCAL move command) or `Some(false)` (a proven
+            // cross-page reparent) keeps the full conservative set. Note
+            // `RebuildAgendaCache` (#2657) below is deliberately NOT gated here.
+            let same_page = move_same_page == Some(true);
+            if !same_page {
+                tasks.push(MaterializeTask::RebuildPagesCache);
+            }
             // #627: a cross-page move reparents the block's `page_id`, which
             // is the source-page attribution `page_link_cache` rolls up by
             // (`COALESCE(page_id, …)`, `cache/page_links.rs`). Without this
@@ -1269,7 +1332,11 @@ fn invalidations_for_op(
             // A targeted `ReindexBlockLinks` is insufficient — it keys on the
             // block's *current* source page, so the old page's stale rows
             // would survive; the full page-link roll-up is the correct fix.
-            tasks.push(MaterializeTask::RebuildPageLinkCache);
+            // #2700: skipped on a proven same-page move (page_id unchanged →
+            // source-page attribution unchanged).
+            if !same_page {
+                tasks.push(MaterializeTask::RebuildPageLinkCache);
+            }
             // #2657: a move changes the block's `page_id`, and every arm of
             // `DESIRED_AGENDA_SQL` EXCLUDES blocks whose owning page carries a
             // `template` property. Moving a dated block INTO a template page
@@ -1295,7 +1362,12 @@ fn invalidations_for_op(
             // event that can change the owning page's template status, and a
             // correct-but-slightly-broader rebuild is safer than a narrow
             // "did template status change?" check.
-            tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            // #2700: skipped on a proven same-page move — a move that keeps the
+            // block's `page_id` cannot change the owning page's template status
+            // for any block, so the projected-agenda carve-out is unaffected.
+            if !same_page {
+                tasks.push(MaterializeTask::RebuildProjectedAgendaCache);
+            }
         }
         // #1260: attachment ops fan out no cache invalidations. These are
         // explicit empty arms (not a catch-all) so the no-`#[non_exhaustive]`
@@ -1528,7 +1600,7 @@ mod tests {
     fn invalidations_for_op_create_block_with_tag_hint_includes_tags_cache() {
         let payload = r#"{"block_id":"BLK1","block_type":"tag"}"#;
         let r = make_record("create_block", payload, Some("BLK1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -1550,7 +1622,7 @@ mod tests {
     fn invalidations_for_op_create_block_with_page_hint_includes_pages_cache() {
         let payload = r#"{"block_id":"PG1","block_type":"page"}"#;
         let r = make_record("create_block", payload, Some("PG1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         // Page blocks don't get SetBlockPageId: page_id = id is enforced
         // by the page_id_self_for_pages CHECK constraint at INSERT time.
         assert_eq!(
@@ -1567,7 +1639,7 @@ mod tests {
     fn invalidations_for_op_create_block_with_content_hint_skips_typed_caches() {
         let payload = r#"{"block_id":"C1","block_type":"content"}"#;
         let r = make_record("create_block", payload, Some("C1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         // No RebuildTagsCache / RebuildPagesCache for content blocks.
         assert_eq!(
             labels(&tasks),
@@ -1582,7 +1654,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_create_block_propagates_serde_error() {
         let r = make_record("create_block", "not-json", None);
-        let err = invalidations_for_op(&r, None).unwrap_err();
+        let err = invalidations_for_op(&r, None, None).unwrap_err();
         // Preserves the prior `?` propagation — exact variant comes
         // from `From<serde_json::Error> for AppError`; we only need
         // to confirm the error is surfaced, not swallowed.
@@ -1595,7 +1667,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_edit_block_with_tag_hint_includes_tags_cache() {
         let r = make_record("edit_block", r#"{"block_id":"E1"}"#, Some("E1"));
-        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("tag"), None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -1619,7 +1691,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_edit_block_tag_hint_rebuilds_agenda_cache_2658() {
         let r = make_record("edit_block", r#"{"block_id":"E1"}"#, Some("E1"));
-        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("tag"), None).unwrap();
         assert!(
             contains_kind(&tasks, &MaterializeTask::RebuildAgendaCache),
             "edit_block(tag) must enqueue RebuildAgendaCache; got {:?}",
@@ -1630,7 +1702,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_edit_block_with_page_hint_includes_pages_cache() {
         let r = make_record("edit_block", r#"{"block_id":"E2"}"#, Some("E2"));
-        let tasks = invalidations_for_op(&r, Some("page")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("page"), None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -1646,7 +1718,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_edit_block_with_content_hint_skips_global_caches() {
         let r = make_record("edit_block", r#"{"block_id":"E3"}"#, Some("E3"));
-        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
         // Content edits never invalidate the tags/pages/agenda caches —
         // this is the perf carve-out the hint exists for.
         assert_eq!(
@@ -1662,7 +1734,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_edit_block_without_hint_falls_back_to_full_fan_out() {
         let r = make_record("edit_block", r#"{"block_id":"E4"}"#, Some("E4"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -1685,7 +1757,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_delete_block_includes_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(D1)".into());
         assert_eq!(labels(&tasks), want);
@@ -1694,7 +1766,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_restore_block_includes_full_cache_rebuild() {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         let mut want = full_rebuild_labels();
         // Restore re-adds to FTS rather than removing.
         want.push("UpdateFtsBlock(R1)".into());
@@ -1704,7 +1776,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_purge_block_includes_full_cache_rebuild() {
         let r = make_record("purge_block", r#"{"block_id":"P1"}"#, Some("P1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(P1)".into());
         assert_eq!(labels(&tasks), want);
@@ -1729,7 +1801,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_delete_content_block_skips_pages_cache() {
         let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
-        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
         let mut want = content_rebuild_labels();
         want.push("RemoveFtsBlock(D1)".into());
         assert_eq!(
@@ -1764,7 +1836,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_restore_content_block_skips_pages_cache() {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
-        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
         let mut want = content_rebuild_labels();
         want.push("UpdateFtsBlock(R1)".into());
         assert_eq!(labels(&tasks), want);
@@ -1779,7 +1851,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_purge_content_block_skips_pages_cache() {
         let r = make_record("purge_block", r#"{"block_id":"P1"}"#, Some("P1"));
-        let tasks = invalidations_for_op(&r, Some("content")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
         let mut want = content_rebuild_labels();
         want.push("RemoveFtsBlock(P1)".into());
         assert_eq!(labels(&tasks), want);
@@ -1797,7 +1869,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_delete_page_block_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"PG1"}"#, Some("PG1"));
-        let tasks = invalidations_for_op(&r, Some("page")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("page"), None).unwrap();
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(PG1)".into());
         assert_eq!(labels(&tasks), want, "page delete must keep the full set");
@@ -1812,7 +1884,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_delete_tag_block_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"TG1"}"#, Some("TG1"));
-        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        let tasks = invalidations_for_op(&r, Some("tag"), None).unwrap();
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(TG1)".into());
         assert_eq!(labels(&tasks), want, "tag delete must keep the full set");
@@ -1827,12 +1899,12 @@ mod tests {
     #[test]
     fn invalidations_for_op_delete_unknown_hint_keeps_full_cache_rebuild() {
         let r = make_record("delete_block", r#"{"block_id":"U1"}"#, Some("U1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         let mut want = full_rebuild_labels();
         want.push("RemoveFtsBlock(U1)".into());
         assert_eq!(labels(&tasks), want);
         // Also a genuinely-unknown string hint stays full (defensive).
-        let tasks_unknown = invalidations_for_op(&r, Some("widget")).unwrap();
+        let tasks_unknown = invalidations_for_op(&r, Some("widget"), None).unwrap();
         assert_eq!(labels(&tasks_unknown), want);
     }
 
@@ -1929,7 +2001,7 @@ mod tests {
         ];
         for (op_type, payload, hint) in no_counts {
             let r = make_record(op_type, payload, Some("XID"));
-            let tasks = invalidations_for_op(&r, *hint).unwrap();
+            let tasks = invalidations_for_op(&r, *hint, None).unwrap();
             assert!(
                 !contains_kind(&tasks, &probe),
                 "op `{op_type}` (hint {hint:?}) keeps synchronous per-op counts and must \
@@ -1951,7 +2023,7 @@ mod tests {
         ];
         for (op_type, hint) in with_counts {
             let r = make_record(op_type, r#"{"block_id":"X6"}"#, Some("X6"));
-            let tasks = invalidations_for_op(&r, *hint).unwrap();
+            let tasks = invalidations_for_op(&r, *hint, None).unwrap();
             assert!(
                 contains_kind(&tasks, &probe),
                 "#2042: op `{op_type}` (hint {hint:?}) must enqueue the background \
@@ -1981,7 +2053,7 @@ mod tests {
             r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -2020,7 +2092,7 @@ mod tests {
             r#"{"block_id":"BLK1","tag_id":"TAG1"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RefreshTagUsageCount(TAG1)", "RebuildAgendaCache"],
@@ -2052,7 +2124,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_add_tag_missing_tag_id_falls_back_to_full_rebuild() {
         let r = make_record("add_tag", r#"{"block_id":"BLK1"}"#, Some("BLK1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec![
@@ -2082,7 +2154,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"due"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2096,7 +2168,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"due"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2112,7 +2184,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"status","value_text":"done"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(
             tasks.is_empty(),
             "a plain property set must enqueue no cache rebuilds, got {:?}",
@@ -2129,7 +2201,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"repeat","value_text":"FREQ=DAILY"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
     }
 
@@ -2141,7 +2213,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"reminder","value_date":"2026-01-01"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2158,7 +2230,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"status"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(labels(&tasks), vec!["RebuildAgendaCache"]);
     }
 
@@ -2167,7 +2239,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_set_property_corrupt_payload_falls_back() {
         let r = make_record("set_property", r#"{"block_id":"BLK1"}"#, Some("BLK1"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2185,7 +2257,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"due_date","value_text":null,"value_date":null}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2201,7 +2273,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"scheduled_date","value_date":null}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(
             labels(&tasks),
             vec!["RebuildAgendaCache", "RebuildProjectedAgendaCache"],
@@ -2219,7 +2291,7 @@ mod tests {
             r#"{"block_id":"BLK1","key":"todo_state","value_text":"DONE"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert_eq!(labels(&tasks), vec!["RebuildProjectedAgendaCache"]);
     }
 
@@ -2232,7 +2304,7 @@ mod tests {
             r#"{"block_id":"BLK1","new_position":0}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         // #2200: a move re-derives `page_id`/`space_id` for the moved subtree
         // in-tx (`rederive_page_and_space_ids`), so the whole-vault
         // `RebuildPageIds` is dropped. The page-cache rebuild is KEPT and
@@ -2281,12 +2353,92 @@ mod tests {
             r#"{"block_id":"BLK1","new_position":0}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(
             contains_kind(&tasks, &MaterializeTask::RebuildAgendaCache),
             "move_block must enqueue RebuildAgendaCache; got {:?}",
             labels(&tasks),
         );
+    }
+
+    /// #2700: the three `page_id`-derived rebuilds MUST be present when the
+    /// move hint is ABSENT (`None` — the remote-replay / inbound-sync / boot
+    /// path, which never carries the hint). This is the conservative default
+    /// that guarantees a cross-device move can never under-invalidate.
+    #[test]
+    fn invalidations_for_op_move_block_hint_absent_keeps_full_page_set_2700() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
+        for probe in [
+            MaterializeTask::RebuildPagesCache,
+            MaterializeTask::RebuildPageLinkCache,
+            MaterializeTask::RebuildProjectedAgendaCache,
+        ] {
+            assert!(
+                contains_kind(&tasks, &probe),
+                "hint-absent move must keep {probe:?}; got {:?}",
+                labels(&tasks),
+            );
+        }
+    }
+
+    /// #2700: a proven CROSS-PAGE move (`Some(false)`) keeps the full page set
+    /// — the reparent changes `page_id`, so page attribution, the source-page
+    /// link roll-up, and the template carve-out can all go stale.
+    #[test]
+    fn invalidations_for_op_move_block_cross_page_keeps_full_page_set_2700() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None, Some(false)).unwrap();
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "RebuildPagesCache",
+                "RebuildPageLinkCache",
+                "RebuildAgendaCache",
+                "RebuildProjectedAgendaCache",
+            ],
+            "cross-page move must keep the identical full set as the hint-absent path",
+        );
+    }
+
+    /// #2700 (the core skip): a proven SAME-PAGE move (`Some(true)` — a
+    /// same-parent reorder or a same-page indent) MUST skip exactly the three
+    /// `page_id`-derived rebuilds while KEEPING `RebuildAgendaCache` (#2657,
+    /// deliberately out of #2700 scope). This is the sole behavioural change of
+    /// #2700, pinned as data.
+    #[test]
+    fn invalidations_for_op_move_block_same_page_skips_three_page_caches_2700() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None, Some(true)).unwrap();
+        // Exactly `RebuildAgendaCache` survives from the former four-task set.
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildAgendaCache"],
+            "same-page move must skip the three page_id-derived rebuilds and keep only RebuildAgendaCache",
+        );
+        for probe in [
+            MaterializeTask::RebuildPagesCache,
+            MaterializeTask::RebuildPageLinkCache,
+            MaterializeTask::RebuildProjectedAgendaCache,
+        ] {
+            assert!(
+                !contains_kind(&tasks, &probe),
+                "same-page move must NOT enqueue {probe:?}; got {:?}",
+                labels(&tasks),
+            );
+        }
     }
 
     // ── attachments (no fan-out) ─────────────────────────────────────
@@ -2298,14 +2450,14 @@ mod tests {
             r#"{"attachment_id":"ATT1","block_id":"BLK1"}"#,
             Some("BLK1"),
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(tasks.is_empty(), "add_attachment must not enqueue tasks");
     }
 
     #[test]
     fn invalidations_for_op_delete_attachment_returns_empty() {
         let r = make_record("delete_attachment", r#"{"attachment_id":"ATT1"}"#, None);
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(tasks.is_empty(), "delete_attachment must not enqueue tasks");
     }
 
@@ -2320,7 +2472,7 @@ mod tests {
             r#"{"attachment_id":"ATT1","new_name":"x.png"}"#,
             None,
         );
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(tasks.is_empty(), "rename_attachment must not enqueue tasks");
     }
 
@@ -2334,7 +2486,7 @@ mod tests {
     #[test]
     fn invalidations_for_op_unknown_op_returns_empty() {
         let r = make_record("future_unknown_op", "{}", None);
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         assert!(tasks.is_empty(), "unknown op_type must not enqueue tasks");
     }
 
@@ -2381,7 +2533,7 @@ mod tests {
             let payload = r#"{"block_id":"COV1","block_type":"content"}"#;
             let r = make_record(probe.as_str(), payload, Some("COV1"));
             // Must not panic / must return Ok for every known variant.
-            let _ = invalidations_for_op(&r, None).unwrap();
+            let _ = invalidations_for_op(&r, None, None).unwrap();
         }
     }
 
@@ -2393,7 +2545,7 @@ mod tests {
     fn invalidations_for_op_create_block_shares_block_id_arc() {
         let payload = r#"{"block_id":"BLKSHARE","block_type":"content"}"#;
         let r = make_record("create_block", payload, Some("BLKSHARE"));
-        let tasks = invalidations_for_op(&r, None).unwrap();
+        let tasks = invalidations_for_op(&r, None, None).unwrap();
         let fts_arc = tasks.iter().find_map(|t| match t {
             MaterializeTask::UpdateFtsBlock { block_id } => Some(Arc::clone(block_id)),
             _ => None,

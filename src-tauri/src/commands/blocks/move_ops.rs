@@ -304,12 +304,86 @@ async fn move_block_in_tx(
     //    `enqueue_background(op_record)` move below. The returned `ApplyEffects`
     //    is empty for Move (LOCAL move runs no post-commit cohort fan-out), so it
     //    is discarded.
+    // #2700: capture the moved block's `page_id` BEFORE the in-tx rederive so
+    // we can tell whether this move changes page attribution. The
+    // `apply_op_projected` call below re-derives `page_id`/`space_id` for the
+    // moved subtree SYNCHRONOUSLY, in-tx (chunk = None), so re-reading `page_id`
+    // AFTER it returns yields the post-move value. Read via the non-macro
+    // `query_scalar` so no compile-time `.sqlx` entry is needed. `page_id` is a
+    // nullable column (`NULL` for a tag / top-level block with no page
+    // ancestor), so `Option<String>` and `NULL == NULL` (a tag/top-level →
+    // tag/top-level move) counts as "same page".
+    let old_page_id: Option<String> =
+        // dynamic-sql: static single-column page_id read; runtime query_scalar so no `.sqlx` entry.
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(&mut ***tx)
+            .await?
+            .flatten();
+
     crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
+
+    // #2700: re-read the moved block's `page_id` AFTER the rederive. An
+    // unchanged root `page_id` is NECESSARY but — because of the nested-page
+    // flattening described in the carve-out below — NOT sufficient to prove the
+    // whole subtree stayed on one page. Combined with the
+    // `!subtree_has_nested_page` guard it becomes sufficient: a same-parent
+    // sibling reorder or a same-page indent of a nested-page-free subtree hits
+    // this branch and the materializer skips the three `page_id`-derived
+    // rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
+    // `RebuildProjectedAgendaCache`) — see `dispatch_move_background` /
+    // `invalidations_for_op`'s MoveBlock arm. A genuine cross-page reparent
+    // (page_id changed, including → NULL) keeps the full conservative set.
+    let new_page_id: Option<String> =
+        // dynamic-sql: static single-column page_id read; runtime query_scalar so no `.sqlx` entry.
+        sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
+            .bind(&block_id)
+            .fetch_optional(&mut ***tx)
+            .await?
+            .flatten();
+
+    // #2700 (nested-page carve-out): the "root page_id unchanged ⇒ whole
+    // subtree page_ids unchanged" invariant is FALSE when the moved subtree
+    // contains a NESTED page block. `rederive_page_and_space_ids`
+    // (agaric-store `block_descendants`) collects ALL descendants of the moved
+    // root by recursing on `parent_id` with NO `block_type != 'page'` boundary
+    // guard, then `UPDATE … page_id = <moved root's page> WHERE … block_type !=
+    // 'page'` — so a content block sitting UNDER a nested page inside the moved
+    // subtree gets FLATTENED from the nested page onto the moved root's page.
+    // Its `page_id` therefore changes even though the moved root's did not,
+    // which makes `page_link_cache` (source-page roll-up) and
+    // `projected_agenda_cache` (template carve-out) go stale if we skip their
+    // rebuilds. Guard against it: only treat the move as same-page when the
+    // moved subtree (the moved block's descendants) contains no nested page.
+    // The common editor case — reordering/indenting a plain content subtree —
+    // keeps the optimization; any move that drags a nested page along forces
+    // the full conservative rebuild set. Non-macro `query_scalar` → no `.sqlx`
+    // regen. The descendant set is invariant across the move (a move only
+    // reparents the root), so reading it here (post-apply) is equivalent to
+    // pre-apply.
+    // dynamic-sql: static recursive-CTE existence check over the moved subtree; runtime query_scalar so no `.sqlx` entry.
+    let subtree_has_nested_page: bool = sqlx::query_scalar::<_, i64>(
+        "WITH RECURSIVE d(id) AS ( \
+             SELECT id FROM blocks WHERE parent_id = ?1 AND deleted_at IS NULL \
+             UNION ALL \
+             SELECT b.id FROM blocks b JOIN d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL) \
+         SELECT EXISTS( \
+             SELECT 1 FROM blocks \
+             WHERE id IN (SELECT id FROM d) AND block_type = 'page')",
+    )
+    .bind(&block_id)
+    .fetch_one(&mut ***tx)
+    .await?
+        != 0;
+    let same_page = old_page_id == new_page_id && !subtree_has_nested_page;
 
     // 6. Enqueue the op for background dispatch. The CALLER's single
     //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op
-    //    for the single-move path, N for the batch path).
-    tx.enqueue_background(op_record);
+    //    for the single-move path, N for the batch path). #2700: carry the
+    //    proven `same_page` hint so the background fan-out can drop the three
+    //    `page_id`-derived rebuilds on a same-page move.
+    tx.enqueue_move_background(op_record, same_page);
 
     // 7. Return response. `new_position` is the provisional 1-based dense rank;
     // the frontend uses optimistic local splices (R5) and re-reads on navigation.
@@ -477,6 +551,7 @@ pub async fn move_blocks_batch_inner(
     // (no sqlx macro) so no `.sqlx` cache entry is needed.
     let ordered_children: Vec<String> = match new_parent_id.as_deref() {
         Some(pid) => {
+            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
             sqlx::query_scalar::<_, String>(
                 "SELECT id FROM blocks WHERE parent_id = ? AND deleted_at IS NULL \
                  ORDER BY position ASC, id ASC",
@@ -486,6 +561,7 @@ pub async fn move_blocks_batch_inner(
             .await?
         }
         None => {
+            // dynamic-sql: static sibling-ordering read; runtime query_scalar so no `.sqlx` entry.
             sqlx::query_scalar::<_, String>(
                 "SELECT id FROM blocks WHERE parent_id IS NULL AND deleted_at IS NULL \
                  ORDER BY position ASC, id ASC",
