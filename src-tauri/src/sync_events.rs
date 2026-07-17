@@ -149,7 +149,7 @@ pub const EVENT_SYNC_MDNS_DISABLED: &str = "sync:mdns_disabled";
 /// Derived from the [`SyncEvent::MdnsDisabled`] event (whose `reason` field
 /// it mirrors) and returned by the `get_mdns_status` command so a frontend
 /// that mounts after the sync daemon already emitted the event (same boot
-/// race as `recovery:degraded`, see `crate::recovery::RecoveryStatus`)
+/// race as `recovery:degraded`, see [`crate::recovery::RecoveryStatus`])
 /// can still discover the disabled state. `disabled = false` (the default)
 /// means either mDNS is working or the daemon has not attempted to
 /// initialize it yet (e.g. still dormant, waiting for the first pairing).

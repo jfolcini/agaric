@@ -43,3 +43,28 @@ leak-timeout = "30s"
 [[profile.ci.overrides]]
 filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
+
+# The SQL-only-fallback / reproject / recompute observability counters
+# (`agaric_engine::apply::sql_only_fallback` and the coordinator's
+# `reproject_call_spy` / `recompute_call_spy`) are process-global monotonic
+# statics. The convergence / hydration / scaling handler tests assert on
+# before/after counter DELTAS, which are only valid if no *other* test in the
+# same process increments the same counter between the two reads. Under
+# nextest's default all-core parallelism a sibling test in this set could
+# corrupt a peer's delta (~1-2 spurious "flaky" reports per full-suite run,
+# always passing on retry and in isolation). Pin the whole delta-asserting set
+# to a single-threaded test-group so each measures its counter window in
+# isolation; nextest keeps the other cores busy with ungrouped tests, so
+# serialising just this DB-heavy subset costs little wall-clock. (The slow
+# `apply_reproject_proptest` cases also carry the longer slow-timeout above —
+# override settings from both entries layer.)
+[test-groups.spy-counter-serial]
+max-threads = 1
+
+[[profile.default.overrides]]
+filter = 'test(/materializer::handlers::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
+test-group = 'spy-counter-serial'
+
+[[profile.ci.overrides]]
+filter = 'test(/materializer::handlers::(apply_reproject_proptest|create_edit_convergence_tests|delete_restore_convergence_tests|import_scaling_tests|move_convergence_tests|space_hydration_tests|tag_convergence_tests)::/)'
+test-group = 'spy-counter-serial'
