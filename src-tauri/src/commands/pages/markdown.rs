@@ -1448,16 +1448,23 @@ pub async fn import_markdown_with_progress(
         //     tag resolve-or-create machinery, which is set up after the
         //     wiki-link pre-pass).
         if key.as_str() == "aliases" {
-            // The value arrives as a comma-joined scalar (`parse_flow_sequence`
-            // collapses the exported `[a, b]` flow sequence). Split it back
-            // into individual aliases and write real `page_aliases` rows in
-            // this tx — mirroring `set_page_aliases_inner`'s `INSERT OR IGNORE`
-            // (byte-identical SQL, so its offline `.sqlx` entry is reused) but
-            // sharing the import's atomic write. `page_aliases` is its own table
-            // outside the op log (#110), so a direct insert here is the
-            // established pattern. `INSERT OR IGNORE` keeps re-import idempotent
-            // (alias is globally UNIQUE NOCASE) and never duplicates. `page_id`
-            // is the canonical uppercase ULID of the freshly-created page.
+            // The value arrives as a comma-joined scalar (`parse_frontmatter`
+            // collapses the exported `[a, b]` flow/block sequence). Naively
+            // re-splitting that scalar on every `,` is lossy when an alias
+            // itself contains a literal comma — `["Beta, Inc"]` and `["a",
+            // "b"]` join to indistinguishable scalars. `frontmatter_list_items`
+            // (#2829) carries the REAL parsed item boundaries for keys that
+            // arrived as a genuine YAML sequence, so prefer that; only a
+            // plain unbracketed scalar (`aliases: a, b`, no boundary info
+            // available) falls back to the legacy comma-split. Either way,
+            // write real `page_aliases` rows in this tx — mirroring
+            // `set_page_aliases_inner`'s `INSERT OR IGNORE` (byte-identical
+            // SQL, so its offline `.sqlx` entry is reused) but sharing the
+            // import's atomic write. `page_aliases` is its own table outside
+            // the op log (#110), so a direct insert here is the established
+            // pattern. `INSERT OR IGNORE` keeps re-import idempotent (alias is
+            // globally UNIQUE NOCASE) and never duplicates. `page_id` is the
+            // canonical uppercase ULID of the freshly-created page.
             //
             // `inserted_here` (ASCII-folded to mirror the NOCASE index) tracks
             // aliases this loop just wrote, so a duplicate WITHIN the frontmatter
@@ -1468,7 +1475,17 @@ pub async fn import_markdown_with_progress(
             // never-silent degradation, surfaced as a warning.
             let mut inserted_here: std::collections::HashSet<String> =
                 std::collections::HashSet::new();
-            for alias in value.split(',').map(str::trim).filter(|a| !a.is_empty()) {
+            let alias_items: Vec<&str> =
+                if let Some(items) = parse_output.frontmatter_list_items.get(key.as_str()) {
+                    items.iter().map(String::as_str).collect()
+                } else {
+                    value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|a| !a.is_empty())
+                        .collect()
+                };
+            for alias in alias_items {
                 let res = sqlx::query!(
                     "INSERT OR IGNORE INTO page_aliases (page_id, alias) VALUES (?1, ?2)",
                     page_id,
@@ -2073,7 +2090,7 @@ pub async fn import_markdown_with_progress(
     // pre-#2722 importer stamped (which silently disabled tag filtering on
     // re-import). The historical blocker cited in #1924/#1950 was #1917 (typed
     // arrays could not be parsed); that is RESOLVED — the exported `[a, b]` flow
-    // sequence now arrives as a comma-joined scalar via `parse_flow_sequence`
+    // sequence now arrives as a comma-joined scalar via `parse_frontmatter`
     // (see the frontmatter parser), so the value is available here. Each tag
     // NAME is resolved-or-created to a tag block, REUSING the inline-tag
     // pre-pass state (`resolved_tag_norm` for this-pass creations,
@@ -2095,11 +2112,23 @@ pub async fn import_markdown_with_progress(
         .iter()
         .find(|(k, _)| k.as_str() == "tags")
     {
-        for tag_name in tags_value
-            .split(',')
-            .map(str::trim)
-            .filter(|t| !t.is_empty())
-        {
+        // The comma-joined `tags_value` scalar is lossy for a tag name
+        // containing a literal comma (#2829, same failure mode as the
+        // `aliases` interception above): prefer the REAL parsed item
+        // boundaries from `frontmatter_list_items` when this key arrived as a
+        // genuine YAML sequence; a plain unbracketed scalar (no boundary
+        // info) falls back to the legacy comma-split.
+        let tag_items: Vec<&str> =
+            if let Some(items) = parse_output.frontmatter_list_items.get("tags") {
+                items.iter().map(String::as_str).collect()
+            } else {
+                tags_value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|t| !t.is_empty())
+                    .collect()
+            };
+        for tag_name in tag_items {
             let norm = crate::tag_norm::normalize_tag_name(tag_name);
 
             // Resolve: this-pass creation → existing in-space snapshot → create.

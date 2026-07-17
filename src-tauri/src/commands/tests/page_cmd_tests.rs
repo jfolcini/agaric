@@ -8503,6 +8503,92 @@ async fn import_markdown_tags_create_new_tag_2722() {
     mat.shutdown();
 }
 
+/// #2829 — an alias/tag value containing a literal comma must survive import
+/// as a SINGLE item, not be wrongly re-split on every comma. Export already
+/// quotes flow-significant values (`yaml_flow_item("Beta, Inc")` emits
+/// `"Beta, Inc"`) and `parse_frontmatter`'s flow-sequence parser is
+/// quote-aware, but the #2722 aliases/tags import interception used to
+/// re-join the parser's items into one comma-joined scalar and then blindly
+/// re-split it on every `,` — silently splitting `"Beta, Inc"` into TWO
+/// aliases/tags. This pins the fix: the interception now consumes the
+/// parser's REAL item boundaries (`ParseOutput::frontmatter_list_items`)
+/// directly. A second, comma-free item in the same list proves an ordinary
+/// multi-item list still splits into separate items correctly.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_markdown_alias_and_tag_with_embedded_comma_not_split_2829() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // Hand-authored frontmatter mirroring the exporter's quoting shape: a
+    // flow-sequence item containing a literal comma, quoted, alongside a
+    // second, ordinary item — for BOTH `aliases` and `tags`.
+    let md = "# Comma Page\n\n---\naliases: [\"Beta, Inc\", Gamma]\ntags: [\"billing, invoices\", \
+              urgent]\n---\n";
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.into(),
+        Some("CommaPage.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    // Mirrors the narrower per-value check the sibling #2722 tests use for
+    // minimal frontmatter-only pages (e.g. `import_markdown_tags_create_new_tag_2722`)
+    // rather than asserting `warnings.is_empty()` outright.
+    let comma_terms: [&str; 4] = ["Beta", "Gamma", "billing", "urgent"];
+    assert!(
+        !result
+            .warnings
+            .iter()
+            .any(|w| comma_terms.iter().any(|t| w.contains(*t))),
+        "a clean comma-bearing alias/tag import must not warn about any of the \
+         applied aliases/tags; got {:?}",
+        result.warnings
+    );
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'CommaPage'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Exactly 2 aliases: the comma-bearing item survives whole, and the
+    // plain second item proves ordinary multi-item splitting still works.
+    let aliases = get_page_aliases_inner(&pool, &new_page_id).await.unwrap();
+    assert_eq!(
+        aliases,
+        vec!["Beta, Inc".to_string(), "Gamma".to_string()],
+        "an alias containing a literal comma must survive as ONE alias, not be \
+         split on every comma; got {aliases:?}"
+    );
+
+    // Exactly 2 tags, same story.
+    let mut tag_names: Vec<String> = sqlx::query_scalar(
+        "SELECT t.content FROM block_tags bt JOIN blocks t ON t.id = bt.tag_id WHERE bt.block_id = ?",
+    )
+    .bind(&new_page_id)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    tag_names.sort();
+    assert_eq!(
+        tag_names,
+        vec!["billing, invoices".to_string(), "urgent".to_string()],
+        "a tag containing a literal comma must survive as ONE tag, not be split \
+         on every comma; got {tag_names:?}"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #2724 — aggregate attachment budget at the import command boundary
 // ======================================================================

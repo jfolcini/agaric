@@ -93,6 +93,19 @@ pub struct ParseOutput {
     /// (see [`FRONTMATTER_RESERVED_KEYS`]) are filtered out here so they are
     /// never re-imported. Empty when the file has no frontmatter.
     pub frontmatter: Vec<(String, String)>,
+    /// For frontmatter keys whose value arrived as a genuine multi-item YAML
+    /// sequence — an inline flow sequence (`key: [a, "b, c"]`) or a
+    /// block-style sequence (`key:` / `- item` lines) — the exact parsed
+    /// items, in order, BEFORE they are comma-joined into the `frontmatter`
+    /// scalar above (#2829). `frontmatter`'s joined form is lossy when an
+    /// item itself contains a literal comma (`["Beta, Inc"]` and `["a",
+    /// "b"]` both join to `"Beta, Inc, a, b"`-shaped strings that a naive
+    /// re-split on every comma cannot tell apart); consumers that need exact
+    /// item boundaries — e.g. the `aliases`/`tags` import interception —
+    /// must read the key here instead of re-splitting the scalar. A key with
+    /// no entry here either has no frontmatter value or arrived as a plain
+    /// (non-sequence) scalar.
+    pub frontmatter_list_items: std::collections::HashMap<String, Vec<String>>,
     pub warnings: Vec<String>,
 }
 
@@ -486,7 +499,14 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // frontmatter), matching the prior strip behaviour.
     let mut frontmatter_warnings: Vec<String> = Vec::new();
     let mut frontmatter: Vec<(String, String)> = Vec::new();
-    let normalized = strip_frontmatter(&normalized, &mut frontmatter, &mut frontmatter_warnings);
+    let mut frontmatter_list_items: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    let normalized = strip_frontmatter(
+        &normalized,
+        &mut frontmatter,
+        &mut frontmatter_list_items,
+        &mut frontmatter_warnings,
+    );
 
     // #1921 — iterate `normalized.lines()` directly instead of collecting into
     // a `Vec<&str>`. The parse loop only ever reads the CURRENT line in
@@ -697,6 +717,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     ParseOutput {
         blocks,
         frontmatter,
+        frontmatter_list_items,
         warnings,
     }
 }
@@ -704,7 +725,8 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
 /// Excise a leading YAML frontmatter block from already-EOL-normalized
 /// markdown and parse it into page-property pairs (#1432).
 ///
-/// Returns the markdown with the fenced block removed; `frontmatter` and
+/// Returns the markdown with the fenced block removed; `frontmatter`,
+/// `list_items` (#2829 — real item boundaries for sequence-valued keys) and
 /// `warnings` are appended in place. Two fence positions are accepted (see
 /// the call site): the very top of the file, or immediately after a single
 /// leading `# Heading` line (Agaric's own export shape). In the latter case
@@ -713,6 +735,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
 fn strip_frontmatter<'a>(
     normalized: &'a str,
     frontmatter: &mut Vec<(String, String)>,
+    list_items: &mut std::collections::HashMap<String, Vec<String>>,
     warnings: &mut Vec<String>,
 ) -> std::borrow::Cow<'a, str> {
     use std::borrow::Cow;
@@ -721,12 +744,13 @@ fn strip_frontmatter<'a>(
     // closing `\n---` and its line), or `None` if there is no closing fence.
     let parse_fence = |slice: &str,
                        frontmatter: &mut Vec<(String, String)>,
+                       list_items: &mut std::collections::HashMap<String, Vec<String>>,
                        warnings: &mut Vec<String>|
      -> Option<usize> {
         let after_open = slice.strip_prefix("---")?;
         let end = after_open.find("\n---")?; // index within `after_open`
         let yaml = &after_open[..end];
-        frontmatter.extend(parse_frontmatter(yaml, warnings));
+        frontmatter.extend(parse_frontmatter(yaml, list_items, warnings));
         // Consume through the closing fence line. `end + 4` skips the
         // `\n---`; then advance past the rest of the closing line (to its
         // newline, inclusive) so the heading/body that follows starts clean.
@@ -739,7 +763,7 @@ fn strip_frontmatter<'a>(
 
     // Case 1: fence at the very top of the file.
     if normalized.starts_with("---") {
-        if let Some(consumed) = parse_fence(normalized, frontmatter, warnings) {
+        if let Some(consumed) = parse_fence(normalized, frontmatter, list_items, warnings) {
             return Cow::Owned(normalized[consumed..].to_string());
         }
         return Cow::Borrowed(normalized);
@@ -768,11 +792,18 @@ fn strip_frontmatter<'a>(
             // never emits an empty fence). A `---…---` pair containing no
             // scalar pairs is left in place as content.
             let mut scratch_fm: Vec<(String, String)> = Vec::new();
+            let mut scratch_list_items: std::collections::HashMap<String, Vec<String>> =
+                std::collections::HashMap::new();
             let mut scratch_warn: Vec<String> = Vec::new();
-            if let Some(consumed) = parse_fence(trimmed_rest, &mut scratch_fm, &mut scratch_warn)
-                && !scratch_fm.is_empty()
+            if let Some(consumed) = parse_fence(
+                trimmed_rest,
+                &mut scratch_fm,
+                &mut scratch_list_items,
+                &mut scratch_warn,
+            ) && !scratch_fm.is_empty()
             {
                 frontmatter.extend(scratch_fm);
+                list_items.extend(scratch_list_items);
                 warnings.extend(scratch_warn);
                 // Reassemble: heading line + the body after the fence.
                 let after_fence = &trimmed_rest[consumed..];
@@ -787,14 +818,20 @@ fn strip_frontmatter<'a>(
     Cow::Borrowed(normalized)
 }
 
-/// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into a single
-/// comma-joined scalar (#1917). Items are split on top-level commas (commas
-/// inside a quoted item do NOT split), each item is trimmed and unquoted via
-/// [`strip_yaml_quotes`], and empty items are dropped. The result is the
-/// canonical scalar form an exported `aliases: a, b` would carry, so a value
-/// parsed here round-trips identically whether it arrived as a flow sequence
-/// or as a plain scalar.
-fn parse_flow_sequence(raw: &str) -> String {
+/// Parse a YAML inline flow sequence (`[a, b, "c, d"]`) into its individual
+/// items, IN ORDER (#1917, item boundaries preserved for #2829). Items are
+/// split on top-level commas (commas inside a quoted item do NOT split), each
+/// item is trimmed and unquoted via [`strip_yaml_quotes`], and empty items
+/// are dropped.
+///
+/// Callers that only need the canonical display/round-trip scalar (the same
+/// shape an exported `aliases: a, b` would carry) join the returned items
+/// with `", "` themselves — but a caller that needs the REAL item boundaries
+/// (e.g. to write one row per alias/tag) must use the returned `Vec`
+/// directly rather than re-splitting the joined scalar on `,`, which cannot
+/// distinguish an item containing a literal comma (`"Beta, Inc"`) from two
+/// separate items (`"Beta"`, `"Inc"`).
+fn parse_flow_sequence_items(raw: &str) -> Vec<String> {
     let inner = raw
         .strip_prefix('[')
         .and_then(|s| s.strip_suffix(']'))
@@ -833,7 +870,7 @@ fn parse_flow_sequence(raw: &str) -> String {
     if !item.is_empty() {
         items.push(item.to_string());
     }
-    items.join(", ")
+    items
 }
 
 /// One open YAML block scalar (#1590). When a key line ends with a `|` / `>`
@@ -911,7 +948,11 @@ fn commit_block(
 /// which fail the `key: value` scalar test). Reserved/exporter-managed keys
 /// (see [`FRONTMATTER_RESERVED_KEYS`]) are silently filtered. Duplicate keys
 /// keep the FIRST value and warn.
-fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, String)> {
+fn parse_frontmatter(
+    yaml: &str,
+    list_items: &mut std::collections::HashMap<String, Vec<String>>,
+    warnings: &mut Vec<String>,
+) -> Vec<(String, String)> {
     let mut pairs: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut skipped_array = 0usize;
@@ -933,12 +974,18 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
     // Commit a finished block-style sequence into `pairs` (de-dup aware),
     // joining its items into a comma-separated scalar. A sequence with no items
     // (`key:` with nothing following) commits as an empty scalar, matching the
-    // prior `key:` (empty value) behaviour.
+    // prior `key:` (empty value) behaviour. The unjoined items are ALSO
+    // recorded into `list_items` (#2829) so a consumer needing exact item
+    // boundaries (an item may itself contain a literal comma) doesn't have to
+    // re-split the lossy joined scalar.
     macro_rules! commit_seq {
         ($s:expr) => {{
             let s = $s;
             let joined = s.items.join(", ");
             if seen.insert(s.key.clone()) {
+                if !s.items.is_empty() {
+                    list_items.insert(s.key.clone(), s.items);
+                }
                 pairs.push((s.key, joined));
             } else {
                 warnings.push(format!(
@@ -1057,14 +1104,21 @@ fn parse_frontmatter(yaml: &str, warnings: &mut Vec<String>) -> Vec<(String, Str
         // collapse under its INSERT-OR-REPLACE, so multiple pairs are NOT a
         // viable representation — one joined value is). A flow MAPPING
         // (`{a: b}`) has no single sensible scalar projection and stays
-        // skipped-with-warning.
+        // skipped-with-warning. The unjoined items are ALSO recorded into
+        // `list_items` (#2829) so a consumer needing exact item boundaries —
+        // an item may itself contain a literal comma, e.g. `["Beta, Inc"]`
+        // — doesn't have to re-split the lossy joined scalar.
         if value_trimmed.starts_with('[') && value_trimmed.ends_with(']') {
-            let joined = parse_flow_sequence(value_trimmed);
+            let items = parse_flow_sequence_items(value_trimmed);
+            let joined = items.join(", ");
             if !seen.insert(key.to_string()) {
                 warnings.push(format!(
                     "frontmatter key '{key}' appears more than once; keeping the first value"
                 ));
                 continue;
+            }
+            if !items.is_empty() {
+                list_items.insert(key.to_string(), items);
             }
             pairs.push((key.to_string(), joined));
             continue;
@@ -1935,10 +1989,13 @@ bare line ((jkl-012)) too";
     #[test]
     fn strip_frontmatter_after_heading_excises_fence_keeps_heading_1432() {
         let mut fm: Vec<(String, String)> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let mut warns: Vec<String> = Vec::new();
         let body = strip_frontmatter(
             "# My Title\n\n---\ncategory: notes\n---\n\n- body\n",
             &mut fm,
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(fm, vec![("category".to_string(), "notes".to_string())]);
@@ -1962,8 +2019,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_value_with_colon_splits_on_first_only_1432() {
         let mut warns: Vec<String> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let pairs = parse_frontmatter(
             "homepage: https://example.com/path\nstart: 09:00",
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(
@@ -1988,8 +2048,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_quoted_value_is_unquoted_1432() {
         let mut warns: Vec<String> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let pairs = parse_frontmatter(
             "title: \"Quoted Value\"\nalias: 'single quoted'",
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(
@@ -2007,9 +2070,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn strip_frontmatter_unclosed_fence_is_content_1432() {
         let mut fm: Vec<(String, String)> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let mut warns: Vec<String> = Vec::new();
         let input = "---\ncategory: notes\n- a bullet with no closing fence";
-        let body = strip_frontmatter(input, &mut fm, &mut warns);
+        let body = strip_frontmatter(input, &mut fm, &mut list_items, &mut warns);
         assert!(
             fm.is_empty(),
             "an unclosed fence must yield no frontmatter; got {fm:?}"
@@ -2031,7 +2096,9 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_flow_sequence_is_preserved_as_joined_scalar_1917() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("tags: [a, b]\ncategory: notes", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter("tags: [a, b]\ncategory: notes", &mut list_items, &mut warns);
         assert_eq!(
             pairs,
             vec![
@@ -2039,6 +2106,11 @@ bare line ((jkl-012)) too";
                 ("category".to_string(), "notes".to_string()),
             ],
             "a flow sequence must be preserved as a comma-joined scalar; got {pairs:?}"
+        );
+        assert_eq!(
+            list_items.get("tags"),
+            Some(&vec!["a".to_string(), "b".to_string()]),
+            "the real item boundaries must also be recorded; got {list_items:?}"
         );
         assert!(
             warns.is_empty(),
@@ -2048,14 +2120,33 @@ bare line ((jkl-012)) too";
 
     /// #1917 — a flow sequence whose items are quoted (and contain a comma
     /// inside the quotes) is split only on top-level commas and unquoted.
+    /// #2829 — the REAL (unjoined) item boundaries are recorded in
+    /// `list_items`, so a quoted item's inner comma (`"Beta, Inc"`) is
+    /// distinguishable from two separate items even though the legacy
+    /// `pairs` scalar joins them identically.
     #[test]
     fn parse_frontmatter_flow_sequence_quoted_items_split_top_level_only_1917() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter(r#"aliases: [Alpha, "Beta, Inc", Gamma]"#, &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter(
+            r#"aliases: [Alpha, "Beta, Inc", Gamma]"#,
+            &mut list_items,
+            &mut warns,
+        );
         assert_eq!(
             pairs,
             vec![("aliases".to_string(), "Alpha, Beta, Inc, Gamma".to_string())],
             "quoted items must not split on their inner comma; got {pairs:?}"
+        );
+        assert_eq!(
+            list_items.get("aliases"),
+            Some(&vec![
+                "Alpha".to_string(),
+                "Beta, Inc".to_string(),
+                "Gamma".to_string(),
+            ]),
+            "list_items must preserve the 3 REAL items, quoted comma intact; got {list_items:?}"
         );
     }
 
@@ -2064,8 +2155,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_block_sequence_is_preserved_as_joined_scalar_1917() {
         let mut warns: Vec<String> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let pairs = parse_frontmatter(
             "aliases:\n  - First\n  - Second\ncategory: notes",
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(
@@ -2075,6 +2169,11 @@ bare line ((jkl-012)) too";
                 ("category".to_string(), "notes".to_string()),
             ],
             "a block-style sequence must be preserved as a comma-joined scalar; got {pairs:?}"
+        );
+        assert_eq!(
+            list_items.get("aliases"),
+            Some(&vec!["First".to_string(), "Second".to_string()]),
+            "block-style sequence items must also be recorded; got {list_items:?}"
         );
         assert!(
             warns.is_empty(),
@@ -2087,7 +2186,9 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_flow_mapping_is_ignored_with_warning_1917() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("meta: {a: 1}\ncategory: notes", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter("meta: {a: 1}\ncategory: notes", &mut list_items, &mut warns);
         assert_eq!(
             pairs,
             vec![("category".to_string(), "notes".to_string())],
@@ -2105,8 +2206,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_literal_block_scalar_captured_no_invalid_1590() {
         let mut warns: Vec<String> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let pairs = parse_frontmatter(
             "summary: |\n  first line\n  second line\ncategory: notes",
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(
@@ -2129,7 +2233,13 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_folded_block_scalar_captured_no_invalid_1590() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("desc: >\n  one\n  two\n  three", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter(
+            "desc: >\n  one\n  two\n  three",
+            &mut list_items,
+            &mut warns,
+        );
         assert_eq!(
             pairs,
             vec![("desc".to_string(), "one two three".to_string())],
@@ -2146,8 +2256,11 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_block_scalar_chomping_indicators_1590() {
         let mut warns: Vec<String> = Vec::new();
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
         let pairs = parse_frontmatter(
             "lit: |-\n  alpha\n  beta\nfold: >+\n  gamma\n  delta",
+            &mut list_items,
             &mut warns,
         );
         assert_eq!(
@@ -2170,7 +2283,13 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_invalid_non_indented_line_still_warns_1590() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("category: notes\nthis is not yaml", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter(
+            "category: notes\nthis is not yaml",
+            &mut list_items,
+            &mut warns,
+        );
         assert_eq!(
             pairs,
             vec![("category".to_string(), "notes".to_string())],
@@ -2189,7 +2308,9 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_plain_scalars_unaffected_by_block_handling_1590() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("title: Hello\nstatus: draft", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter("title: Hello\nstatus: draft", &mut list_items, &mut warns);
         assert_eq!(
             pairs,
             vec![
@@ -2245,7 +2366,9 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_duplicate_scalar_key_keeps_first_and_warns_1922() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("title: A\ntitle: B", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter("title: A\ntitle: B", &mut list_items, &mut warns);
         assert_eq!(
             pairs,
             vec![("title".to_string(), "A".to_string())],
@@ -2269,7 +2392,9 @@ bare line ((jkl-012)) too";
     #[test]
     fn parse_frontmatter_duplicate_block_scalar_key_keeps_first_and_warns_1922() {
         let mut warns: Vec<String> = Vec::new();
-        let pairs = parse_frontmatter("note: |\n  x\nnote: |\n  y", &mut warns);
+        let mut list_items: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        let pairs = parse_frontmatter("note: |\n  x\nnote: |\n  y", &mut list_items, &mut warns);
         assert_eq!(
             pairs,
             vec![("note".to_string(), "x".to_string())],
