@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT position as \"position: i64\", page_id as \"page_id: crate::ulid::BlockId\" FROM blocks WHERE id = ?",
+  "query": "SELECT position as \"position: i64\", page_id as \"page_id: agaric_core::ulid::BlockId\" FROM blocks WHERE id = ?",
   "describe": {
     "columns": [
       {
@@ -15,7 +15,7 @@
         }
       },
       {
-        "name": "page_id: crate::ulid::BlockId",
+        "name": "page_id: agaric_core::ulid::BlockId",
         "ordinal": 1,
         "type_info": "Text",
         "origin": {
@@ -34,5 +34,5 @@
       true
     ]
   },
-  "hash": "19b3638c4f92eaf82acc8be6ad4ab41073a0c0af01687a479ab3490152fab882"
+  "hash": "32003ee8d6d400cd20a8e10a216219c83194b6f5ef2663e8b3739c5f11c95e93"
 }

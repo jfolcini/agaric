@@ -66,3 +66,13 @@ pub mod merge;
 /// feature (like loro's `reproject_call_spy`) so the app's import-scaling tests
 /// can read it across the crate boundary.
 pub mod apply;
+
+/// Neutral block-write core (#2621 THE INVERSION) — the pure validators / typed
+/// property-arg builders / content caps plus the three in-transaction writers
+/// (`create_block_in_tx`, `set_property_in_tx`,
+/// `set_property_in_tx_with_declaration`). They drive the moved apply kernel
+/// (`apply::kernel::apply_op_projected`) + the store's `cross_space_validation`,
+/// and carry one `query_as!` site. The app re-exports the module
+/// (`pub use agaric_engine::block_ops::*;`) at `crate::domain::block_ops` so the
+/// recurrence / bootstrap / command call sites resolve unchanged.
+pub mod block_ops;
