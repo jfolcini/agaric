@@ -225,7 +225,7 @@ expression: wire
       - end_date
     type: object
   name: get_agenda
-- description: "Creates the page if missing (one `CreateBlock` op with origin `agent:<name>`), then returns the journal page for `space_id` on `date`. Idempotent per `(space_id, date)` after the first call."
+- description: "Creates the page if missing and `date` is within ~12 months of today (one `CreateBlock` op with origin `agent:<name>`), then returns the journal page for `space_id` on `date`. Idempotent per `(space_id, date)` after the first call. Outside that ~12-month window this tool never creates: an existing page is returned as a pure read, and a missing one returns a not-found error."
   inputSchema:
     additionalProperties: false
     properties:

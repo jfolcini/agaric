@@ -10,10 +10,17 @@
 //!
 //! # Threat model
 //!
-//! Single-user, local-only. The socket is kernel-enforced to the current
-//! user via mode `0600` on unix or the default owner-only DACL on Windows
-//! named pipes. There are no bearer tokens, no rate limits, no crypto.
-//! See `AGENTS.md` §Threat Model for the rationale.
+//! Single-user, local-only. On unix the socket is restricted to the
+//! current user via mode `0600`. On Windows the *default* named-pipe DACL
+//! is **not** owner-only — it grants read access to `Everyone` and
+//! `Anonymous` (#2720) — so relying on it would leave the fixed-name MCP
+//! pipes open to any local process. Each pipe instance is therefore
+//! created with an *explicit* security descriptor whose DACL grants
+//! access only to the current process user's SID (plus SYSTEM and the
+//! local Administrators group); see
+//! `win_security::current_user_security_attributes`. There are no
+//! bearer tokens, no rate limits, no crypto. See `AGENTS.md` §Threat
+//! Model for the rationale.
 
 pub mod activity;
 pub mod actor;
@@ -386,8 +393,12 @@ impl std::fmt::Debug for SocketKind {
 ///
 /// On unix this creates the parent directory if missing, binds a
 /// `UnixListener`, and enforces mode `0600` on the resulting socket file.
-/// On Windows this creates the first named-pipe instance; the DACL is the
-/// default owner-only descriptor supplied by `CreateNamedPipeW`.
+/// On Windows this creates the first named-pipe instance with an
+/// **explicit** security descriptor: the default named-pipe DACL is *not*
+/// owner-only (it grants read to `Everyone` + `Anonymous`, #2720), so the
+/// pipe is created via `win_security::create_secured_pipe_instance`,
+/// whose DACL grants access only to the current user's SID (plus SYSTEM /
+/// Administrators).
 ///
 /// If a previous process left a stale socket file behind on unix, it is
 /// removed and re-bound. If another live process already owns the socket
@@ -455,10 +466,303 @@ pub async fn bind_socket(socket_path: &Path, socket_kind: &str) -> Result<Socket
     Ok(SocketKind::Unix(listener))
 }
 
+/// Windows named-pipe security helpers (#2720).
+///
+/// The default DACL on a Windows named pipe is **not** owner-only — it
+/// grants read access to `Everyone` and `Anonymous`. Left unaddressed, any
+/// local process could open the fixed-name MCP pipes
+/// (`\\.\pipe\agaric-mcp-ro` / `-rw`). These helpers build an explicit
+/// security descriptor whose DACL grants access only to the current
+/// process user's SID (plus SYSTEM and the local Administrators group) and
+/// hand it to tokio's `create_with_security_attributes_raw`, so every pipe
+/// instance — the initial bind and every successor the accept loop spins
+/// up — is created with it.
+///
+/// No external Windows crate is a direct dependency of this crate, so the
+/// handful of Win32 entry points are declared inline behind a scoped
+/// `#![allow(unsafe_code)]` (the crate otherwise denies `unsafe_code`).
+/// The SDDL route
+/// (`ConvertStringSecurityDescriptorToSecurityDescriptorW`) is used because
+/// it yields a single self-contained, self-relative descriptor buffer,
+/// avoiding manual `ACL`/`SID` buffer-lifetime juggling.
+#[cfg(windows)]
+pub(crate) mod win_security {
+    #![allow(unsafe_code)]
+    // FFI struct fields are read only by the kernel across the ABI, and the
+    // extern fn names must match the exported symbols verbatim.
+    #![allow(dead_code)]
+    #![allow(non_snake_case)]
+
+    use std::ffi::c_void;
+    use std::io;
+
+    type Handle = *mut c_void;
+    type Bool = i32;
+
+    const TOKEN_QUERY: u32 = 0x0008;
+    /// `TOKEN_INFORMATION_CLASS::TokenUser`.
+    const TOKEN_USER_CLASS: i32 = 1;
+    /// `SDDL_REVISION_1`.
+    const SDDL_REVISION_1: u32 = 1;
+
+    #[repr(C)]
+    struct SidAndAttributes {
+        sid: *mut c_void,
+        attributes: u32,
+    }
+
+    #[repr(C)]
+    struct TokenUser {
+        user: SidAndAttributes,
+    }
+
+    #[repr(C)]
+    struct SecurityAttributes {
+        n_length: u32,
+        lp_security_descriptor: *mut c_void,
+        b_inherit_handle: Bool,
+    }
+
+    #[link(name = "advapi32")]
+    unsafe extern "system" {
+        fn OpenProcessToken(
+            process_handle: Handle,
+            desired_access: u32,
+            token_handle: *mut Handle,
+        ) -> Bool;
+        fn GetTokenInformation(
+            token_handle: Handle,
+            token_information_class: i32,
+            token_information: *mut c_void,
+            token_information_length: u32,
+            return_length: *mut u32,
+        ) -> Bool;
+        fn ConvertSidToStringSidW(sid: *mut c_void, string_sid: *mut *mut u16) -> Bool;
+        fn ConvertStringSecurityDescriptorToSecurityDescriptorW(
+            string_security_descriptor: *const u16,
+            string_sd_revision: u32,
+            security_descriptor: *mut *mut c_void,
+            security_descriptor_size: *mut u32,
+        ) -> Bool;
+    }
+
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> Handle;
+        fn CloseHandle(h_object: Handle) -> Bool;
+        fn LocalFree(h_mem: *mut c_void) -> *mut c_void;
+    }
+
+    /// RAII wrapper closing an access-token handle on drop.
+    struct TokenHandle(Handle);
+    impl Drop for TokenHandle {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: `self.0` is a token handle from `OpenProcessToken`.
+                unsafe { CloseHandle(self.0) };
+            }
+        }
+    }
+
+    /// RAII wrapper freeing a `LocalAlloc`-backed buffer on drop.
+    struct LocalBuf(*mut c_void);
+    impl Drop for LocalBuf {
+        fn drop(&mut self) {
+            if !self.0.is_null() {
+                // SAFETY: `self.0` was allocated by a Win32 API via LocalAlloc.
+                unsafe { LocalFree(self.0) };
+            }
+        }
+    }
+
+    /// Owned `SECURITY_ATTRIBUTES` plus its self-relative security descriptor.
+    ///
+    /// `descriptor` is a single `LocalAlloc`-backed, self-contained
+    /// self-relative buffer produced by
+    /// `ConvertStringSecurityDescriptorToSecurityDescriptorW`. The boxed
+    /// `SecurityAttributes` keeps a stable address for the raw pointer
+    /// handed to `create_with_security_attributes_raw`. Both stay alive
+    /// until this guard drops — callers keep the guard until **after** the
+    /// `create` call returns (the kernel copies the descriptor into the
+    /// pipe object during the call, so freeing afterwards is sound).
+    pub(crate) struct SecurityAttributesGuard {
+        // Freed via `LocalFree` on drop. Also referenced by
+        // `attrs.lp_security_descriptor` — that field is a borrow, not a
+        // second owner, so the buffer is freed exactly once.
+        descriptor: *mut c_void,
+        attrs: Box<SecurityAttributes>,
+    }
+
+    impl SecurityAttributesGuard {
+        /// Raw pointer to the `SECURITY_ATTRIBUTES`, valid while `self` is
+        /// alive. Suitable for `create_with_security_attributes_raw`.
+        fn as_ptr(&self) -> *mut c_void {
+            std::ptr::from_ref(&*self.attrs).cast_mut().cast()
+        }
+    }
+
+    impl Drop for SecurityAttributesGuard {
+        fn drop(&mut self) {
+            if !self.descriptor.is_null() {
+                // SAFETY: `descriptor` was allocated by
+                // `ConvertStringSecurityDescriptorToSecurityDescriptorW`
+                // via LocalAlloc and is freed exactly once here.
+                unsafe { LocalFree(self.descriptor) };
+            }
+        }
+    }
+
+    /// Read a null-terminated UTF-16 string starting at `ptr`.
+    ///
+    /// # Safety
+    /// `ptr` must point at a valid, null-terminated wide string.
+    unsafe fn wide_to_string(ptr: *const u16) -> String {
+        let mut len = 0usize;
+        // SAFETY: caller guarantees the buffer is null-terminated, so the
+        // scan stops at or before the terminator.
+        while unsafe { *ptr.add(len) } != 0 {
+            len += 1;
+        }
+        // SAFETY: `len` scalars precede the terminator and are initialised.
+        let slice = unsafe { std::slice::from_raw_parts(ptr, len) };
+        String::from_utf16_lossy(slice)
+    }
+
+    /// Build a `SECURITY_ATTRIBUTES` whose DACL grants access only to the
+    /// current process user's SID plus SYSTEM and the local Administrators
+    /// group. The returned guard owns the descriptor buffer and must be
+    /// kept alive for the duration of the `create` call that consumes it.
+    pub(crate) fn current_user_security_attributes() -> io::Result<SecurityAttributesGuard> {
+        // 1. Open the current process token for query access.
+        let mut token: Handle = std::ptr::null_mut();
+        // SAFETY: `GetCurrentProcess` returns a pseudo-handle; on success
+        // `OpenProcessToken` writes the opened token handle into `token`.
+        if unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let _token = TokenHandle(token);
+
+        // 2. Probe the required TokenUser buffer size. The first call is
+        //    expected to fail with ERROR_INSUFFICIENT_BUFFER and set `needed`.
+        let mut needed: u32 = 0;
+        // SAFETY: the null-buffer / zero-length form is the documented
+        // size-probe; only `needed` is written.
+        unsafe {
+            GetTokenInformation(
+                token,
+                TOKEN_USER_CLASS,
+                std::ptr::null_mut(),
+                0,
+                &mut needed,
+            );
+        }
+        if needed == 0 {
+            return Err(io::Error::last_os_error());
+        }
+
+        // 3. Fetch the TokenUser payload into a pointer-aligned buffer.
+        //    `Vec<u64>` guarantees 8-byte alignment for the embedded SID
+        //    pointer; a `Vec<u8>` would only be byte-aligned.
+        let cap = usize::try_from(needed).unwrap_or(0).div_ceil(8).max(1);
+        let mut buf: Vec<u64> = vec![0u64; cap];
+        // SAFETY: `buf` is `cap * 8 >= needed` bytes; GetTokenInformation
+        // fills at most `needed` bytes and writes the actual size back.
+        if unsafe {
+            GetTokenInformation(
+                token,
+                TOKEN_USER_CLASS,
+                buf.as_mut_ptr().cast::<c_void>(),
+                needed,
+                &mut needed,
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        // 4. Read the user SID pointer (points inside `buf`).
+        // SAFETY: `buf` now holds a TOKEN_USER laid out by the kernel and is
+        // 8-aligned; `User.Sid` points into the same buffer.
+        let sid = unsafe { (*buf.as_ptr().cast::<TokenUser>()).user.sid };
+        if sid.is_null() {
+            return Err(io::Error::other("token user SID is null"));
+        }
+
+        // 5. Convert the SID to its string form (LocalAlloc'd wide string).
+        let mut sid_str: *mut u16 = std::ptr::null_mut();
+        // SAFETY: `sid` is valid for the lifetime of `buf`; on success the
+        // API LocalAlloc's the wide string into `sid_str`.
+        if unsafe { ConvertSidToStringSidW(sid, &mut sid_str) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let _sid_str = LocalBuf(sid_str.cast::<c_void>());
+        // SAFETY: on success `sid_str` is a valid, null-terminated wide string.
+        let sid_string = unsafe { wide_to_string(sid_str) };
+
+        // 6. Build the SDDL string and convert it to a self-relative
+        //    descriptor:
+        //      D:P            protected DACL (no inherited ACEs)
+        //      (A;;GA;;;SID)  allow GENERIC_ALL to the current user
+        //      (A;;GA;;;SY)   allow GENERIC_ALL to SYSTEM
+        //      (A;;GA;;;BA)   allow GENERIC_ALL to the local Administrators
+        let sddl = format!("D:P(A;;GA;;;{sid_string})(A;;GA;;;SY)(A;;GA;;;BA)");
+        let sddl_wide: Vec<u16> = sddl.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let mut descriptor: *mut c_void = std::ptr::null_mut();
+        // SAFETY: `sddl_wide` is a valid null-terminated wide string; on
+        // success the API LocalAlloc's a self-relative descriptor into
+        // `descriptor`. The size out-param is unused (null).
+        if unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl_wide.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                std::ptr::null_mut(),
+            )
+        } == 0
+        {
+            return Err(io::Error::last_os_error());
+        }
+
+        // 7. Wrap the descriptor in a boxed SECURITY_ATTRIBUTES.
+        let attrs = Box::new(SecurityAttributes {
+            n_length: u32::try_from(std::mem::size_of::<SecurityAttributes>()).unwrap_or(0),
+            lp_security_descriptor: descriptor,
+            b_inherit_handle: 0,
+        });
+
+        Ok(SecurityAttributesGuard { descriptor, attrs })
+    }
+
+    /// Create a named-pipe server instance secured to the current user.
+    ///
+    /// `first_instance` mirrors `ServerOptions::first_pipe_instance`: `true`
+    /// for the initial bind (which also acts as the double-launch / squat
+    /// lock) and `false` for every successor instance the accept loop spins
+    /// up. Both paths use the per-user security descriptor from
+    /// [`current_user_security_attributes`].
+    pub(crate) fn create_secured_pipe_instance(
+        pipe_path: &str,
+        first_instance: bool,
+    ) -> io::Result<tokio::net::windows::named_pipe::NamedPipeServer> {
+        use tokio::net::windows::named_pipe::ServerOptions;
+
+        let sa = current_user_security_attributes()?;
+        // SAFETY: `sa.as_ptr()` points at a `SECURITY_ATTRIBUTES` whose
+        // `lp_security_descriptor` is a valid self-relative descriptor. Both
+        // remain alive until `sa` drops at the end of this function — after
+        // `create_with_security_attributes_raw` returns, by which point the
+        // kernel has copied the descriptor into the new pipe object.
+        unsafe {
+            ServerOptions::new()
+                .first_pipe_instance(first_instance)
+                .create_with_security_attributes_raw(pipe_path, sa.as_ptr())
+        }
+    }
+}
+
 #[cfg(windows)]
 pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKind, AppError> {
-    use tokio::net::windows::named_pipe::ServerOptions;
-
     let pipe_str = pipe_path.to_str().ok_or_else(|| {
         AppError::InvalidOperation(format!(
             "MCP {socket_kind} pipe path is not valid UTF-8: {}",
@@ -466,29 +770,40 @@ pub async fn bind_socket(pipe_path: &Path, socket_kind: &str) -> Result<SocketKi
         ))
     })?;
 
-    let server = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(pipe_str)
-        .map_err(|e| {
-            // ERROR_ACCESS_DENIED (5) / ERROR_PIPE_BUSY (231) / ERROR_ALREADY_EXISTS (183)
-            // all indicate "another instance owns the pipe". Map them to an
-            // explicit InvalidOperation so the caller can log the double-launch
-            // case without crashing.
-            if matches!(e.raw_os_error(), Some(5) | Some(183) | Some(231)) {
-                AppError::InvalidOperation(format!(
-                    "MCP {socket_kind} pipe already bound at {}",
-                    pipe_path.display()
-                ))
-            } else {
-                AppError::Io(e)
-            }
-        })?;
+    // #2720: create the FIRST instance with an explicit per-user DACL (the
+    // default named-pipe DACL grants read to Everyone + Anonymous) and with
+    // `first_pipe_instance(true)`, which also acts as the double-launch /
+    // squat lock.
+    let server = win_security::create_secured_pipe_instance(pipe_str, true).map_err(|e| {
+        // #2720: on the FIRST instance, ERROR_ACCESS_DENIED (5) /
+        // ERROR_ALREADY_EXISTS (183) mean the fixed pipe name is already
+        // held by another local process — i.e. a squatter (a second Agaric
+        // is prevented by the single-instance plugin, so this is not a
+        // legitimate idempotent restart). The previous code mapped this to a
+        // warn-level "already bound" swallow that silently yielded the name.
+        // Return a loud error instead so the surface refuses to attach to a
+        // potentially foreign pipe.
+        if matches!(e.raw_os_error(), Some(5) | Some(183)) {
+            AppError::Io(std::io::Error::new(
+                e.kind(),
+                format!(
+                    "MCP {socket_kind} named pipe {} is already held by another \
+                     process (os error {:?}); refusing to attach to a \
+                     potentially squatted pipe name",
+                    pipe_path.display(),
+                    e.raw_os_error(),
+                ),
+            ))
+        } else {
+            AppError::Io(e)
+        }
+    })?;
 
     tracing::info!(
         target: "mcp",
         kind = socket_kind,
         path = %pipe_path.display(),
-        "MCP named pipe created",
+        "MCP named pipe created with per-user security descriptor",
     );
 
     Ok(SocketKind::Pipe {

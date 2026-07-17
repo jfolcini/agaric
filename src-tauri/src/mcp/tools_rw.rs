@@ -17,6 +17,7 @@
 //! | `add_tag` | [`add_tag_inner`](crate::commands::add_tag_inner) | Tag block must already exist — no tag creation. |
 //! | `create_page` | [`create_block_inner`](crate::commands::create_block_inner) | `block_type = "page"`, `parent_id = None`. |
 //! | `delete_block` | [`delete_block_inner`](crate::commands::delete_block_inner) | Soft delete. Reversible via `reverse.rs`. |
+//! | `list_spaces` | [`list_spaces_registry_inner`](crate::commands::list_spaces_registry_inner) | #2728 — pure read, no `*_inner` mutation. Registered here too (mirroring `tools_ro.rs`) so an RW-only agent can discover the `space_id` every tool above requires. |
 //!
 //! # Actor scoping
 //!
@@ -49,13 +50,13 @@ use super::handler_utils::{
     normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
 };
 use super::registry::{
-    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_SET_PROPERTY,
-    TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
+    TOOL_ADD_TAG, TOOL_APPEND_BLOCK, TOOL_CREATE_PAGE, TOOL_DELETE_BLOCK, TOOL_LIST_SPACES,
+    TOOL_SET_PROPERTY, TOOL_UPDATE_BLOCK_CONTENT, ToolDescription, ToolRegistry,
 };
 use super::view_notify::{NoopViewChangeEmitter, ViewChangeEmitter};
 use crate::commands::{
     add_tag_inner, create_block_inner, create_block_inner_with_space, delete_block_inner,
-    edit_block_inner, set_property_inner,
+    edit_block_inner, list_spaces_registry_inner, set_property_inner,
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -142,6 +143,14 @@ struct DeleteBlockArgs {
     space_id: String,
 }
 
+/// #2728 — `list_spaces` takes no arguments, mirroring the RO surface's
+/// `list_spaces` (`tools_ro.rs`). The empty struct (with
+/// `deny_unknown_fields`) keeps the strict-boundary posture so a typo'd
+/// argument surfaces as `-32602` instead of being silently ignored.
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ListSpacesArgs {}
+
 // ---------------------------------------------------------------------------
 // ReadWriteTools
 // ---------------------------------------------------------------------------
@@ -167,7 +176,10 @@ pub struct ReadWriteTools {
 
 impl ReadWriteTools {
     /// Construct a read-write registry. `pool` must be the *writer* pool
-    /// — the six tools all mutate.
+    /// — the six write tools all mutate. (#2728 added a seventh,
+    /// `list_spaces`, which is a pure read — see `handle_list_spaces` — but
+    /// still runs against this same pool for simplicity; it issues no
+    /// writes.)
     ///
     /// The view-change emitter defaults to a no-op; production callers chain
     /// [`with_view_emitter`](Self::with_view_emitter) to route change
@@ -205,6 +217,13 @@ pub(crate) fn list_tool_descriptions() -> Vec<ToolDescription> {
         tool_desc_add_tag(),
         tool_desc_create_page(),
         tool_desc_delete_block(),
+        // #2728 — appended last so the six-tool wire-contract ordering
+        // above is preserved for existing clients; `list_spaces` is the
+        // one PURE-READ tool on this otherwise-mutating registry (see
+        // `handle_list_spaces`), registered here so an agent connected
+        // solely to the RW socket has an in-band way to discover the
+        // `space_id` every other tool requires.
+        tool_desc_list_spaces(),
     ]
 }
 
@@ -247,6 +266,9 @@ impl ToolRegistry for ReadWriteTools {
                 TOOL_DELETE_BLOCK => {
                     handle_delete_block(&pool, &materializer, &device_id, emitter, args).await
                 }
+                // #2728 — pure read, no mutation: takes only `&pool`, unlike
+                // every other arm above.
+                TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
             }
         })
@@ -399,6 +421,36 @@ fn tool_desc_delete_block() -> ToolDescription {
                     "description": "ULID of the space the agent is operating in. The delete is rejected with a Validation error if `block_id`'s owning page lives in a different space.",
                 },
             },
+        }),
+    }
+}
+
+/// #2728 — space discovery for RW-only agents.
+///
+/// Every tool above requires a `space_id`, but before this fix `list_spaces`
+/// existed ONLY on the read-only registry (`tools_ro.rs`). Since the RO and
+/// RW gates are independent (an operator may run RW-only), an agent
+/// connected solely to the RW socket had no in-band way to learn a valid
+/// `space_id` — every call would fail `validate_block_in_space` /
+/// `SpaceId::from_string`, and the RO tool's own description ("call this
+/// first to discover one") pointed at a tool the RW-only agent cannot see.
+///
+/// Mirrors the RO surface's `tool_desc_list_spaces` (schema + description
+/// text kept identical — same wire contract regardless of which registry
+/// serves the call) so a client that has only the RW socket gets the exact
+/// same discovery affordance.
+fn tool_desc_list_spaces() -> ToolDescription {
+    ToolDescription {
+        name: TOOL_LIST_SPACES.to_string(),
+        description: "List every space as { id, name, is_default }. Every read-write tool (and \
+             search / journal_for_date) requires a space_id — call this first to discover \
+             one. is_default marks the seeded Personal space, the sensible fallback when \
+             no space has been chosen."
+            .to_string(),
+        input_schema: json!({
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {},
         }),
     }
 }
@@ -675,6 +727,23 @@ async fn handle_delete_block(
     // owning page still resolves — the page must reload to drop the block from
     // its rendered tree.
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
+    to_tool_result(&resp)
+}
+
+/// Handle the `list_spaces` MCP tool call on the RW registry (#2728).
+///
+/// Pure read against the canonical `spaces` registry — reuses
+/// [`list_spaces_registry_inner`], the exact same data function the RO
+/// surface's `handle_list_spaces` calls, so there is no duplicated query
+/// logic between the two registries. Takes only `&pool` (no
+/// `materializer` / `device_id` / `emitter`) and performs no write: it
+/// does not call `validate_block_in_space`, does not open a
+/// `BEGIN IMMEDIATE` transaction, and emits no `blocks:changed` /
+/// `block:properties-changed` notification, unlike every other handler in
+/// this file.
+async fn handle_list_spaces(pool: &SqlitePool, args: Value) -> Result<Value, AppError> {
+    let _args: ListSpacesArgs = parse_args(TOOL_LIST_SPACES, args)?;
+    let resp = list_spaces_registry_inner(pool).await?;
     to_tool_result(&resp)
 }
 

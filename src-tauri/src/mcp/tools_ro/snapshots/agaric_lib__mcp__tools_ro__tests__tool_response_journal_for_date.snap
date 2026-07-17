@@ -1,10 +1,9 @@
 ---
-source: src/mcp/tools_ro.rs
-assertion_line: 1910
+source: src/mcp/tools_ro/tests.rs
 expression: result
 ---
 block_type: page
-content: 2025-09-09
+content: "[DATE]"
 deleted_at: ~
 due_date: ~
 id: "[ULID]"

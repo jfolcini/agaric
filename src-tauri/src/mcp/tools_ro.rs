@@ -19,7 +19,7 @@
 //! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated. Limit clamped server-side to 100. |
 //! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated. |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
-//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup. ** carve-out:** on first read-of-the-day this RO tool emits a single `CreateBlock` op (origin `agent:<name>`) for the missing journal page; see the  commentary on [`ReadOnlyTools`] below. |
+//! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and [`handle_journal_for_date`] below. |
 //! | `list_spaces` | [`list_spaces_registry_inner`](crate::commands::list_spaces_registry_inner) | #633 — space discovery for agents. Returns `{ id, name, is_default }` per live space from the canonical `spaces` registry (#804). |
 //!
 //! # Actor scoping
@@ -71,9 +71,10 @@ use super::registry::{
     ToolDescription, ToolRegistry,
 };
 use crate::commands::{
-    get_active_block_inner, get_page_unscoped_inner, journal_for_date_inner,
-    list_backlinks_grouped_inner, list_pages_inner, list_projected_agenda_inner,
-    list_property_defs_inner, list_spaces_registry_inner, list_tags_inner, search_blocks_inner,
+    get_active_block_inner, get_journal_page_by_date_inner, get_page_unscoped_inner,
+    journal_for_date_inner, list_backlinks_grouped_inner, list_pages_inner,
+    list_projected_agenda_inner, list_property_defs_inner, list_spaces_registry_inner,
+    list_tags_inner, search_blocks_inner,
 };
 use crate::error::AppError;
 use crate::materializer::Materializer;
@@ -146,6 +147,54 @@ pub const SEARCH_TERM_BYTES_CAP: usize = crate::commands::MAX_CONTENT_LENGTH;
 /// `MAX_CONTENT_LENGTH` (one block's worth of content) so the total
 /// search-term payload can never exceed a single block body.
 pub const SEARCH_TERM_TOTAL_BYTES_CAP: usize = crate::commands::MAX_CONTENT_LENGTH;
+
+/// #2719 — width, in calendar months on either side of "today", of the
+/// window inside which the read-only `journal_for_date` tool is permitted
+/// to CREATE a missing journal page.
+///
+/// Before this bound, `handle_journal_for_date` parsed **any** valid
+/// `YYYY-MM-DD` string and delegated straight into
+/// [`journal_for_date_inner`], which creates the page unconditionally on
+/// a miss. That meant a prompt-injected agent connected to the nominally
+/// read-only socket could append an unbounded number of `CreateBlock` +
+/// `SetProperty(space)` op pairs to the append-only `op_log` — roughly
+/// 3.6M distinct dates per space, none of them reclaimable. Bounding the
+/// *create* branch to a year on either side of today closes that path
+/// while leaving the documented, intentional carve-out (AGENTS.md
+/// §Read-only vs read-write surfaces) in place for its real use case:
+/// an agent journaling around the current date.
+///
+/// A `date` outside the window is never rejected outright — see
+/// [`handle_journal_for_date`] — it just can't *create*: an existing
+/// page there is still returned (pure read), and a miss becomes
+/// [`AppError::NotFound`] instead of a write.
+pub const JOURNAL_CREATE_WINDOW_MONTHS: u32 = 12;
+
+/// True when `date` falls inside `[today - JOURNAL_CREATE_WINDOW_MONTHS,
+/// today + JOURNAL_CREATE_WINDOW_MONTHS]` (inclusive on both ends).
+///
+/// "Today" is `chrono::Local::now().date_naive()` — the same source
+/// `commands/agenda.rs` (`list_projected_agenda_inner`) and
+/// `recurrence/parser.rs` already use for their own "today" reference,
+/// so this stays consistent with the rest of the journal/agenda surface
+/// rather than inventing a second clock source.
+///
+/// Uses calendar-month arithmetic (`checked_add_months` /
+/// `checked_sub_months`) rather than a flat day count so the window
+/// means "the same day-of-month a year away" regardless of leap years.
+/// Saturates to `NaiveDate::MIN` / `NaiveDate::MAX` on the (practically
+/// unreachable) overflow case so the function stays total.
+fn within_journal_create_window(date: chrono::NaiveDate) -> bool {
+    let today = chrono::Local::now().date_naive();
+    let months = chrono::Months::new(JOURNAL_CREATE_WINDOW_MONTHS);
+    let start = today
+        .checked_sub_months(months)
+        .unwrap_or(chrono::NaiveDate::MIN);
+    let end = today
+        .checked_add_months(months)
+        .unwrap_or(chrono::NaiveDate::MAX);
+    date >= start && date <= end
+}
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -334,24 +383,33 @@ struct JournalForDateArgs {
 ///
 /// `journal_for_date` is the only RO tool with a write side-effect —
 /// it calls `create_block_inner` when the requested date has no existing
-/// page. The reader pool sets `PRAGMA query_only = ON`, so feeding it to
-/// the create path raises `SQLITE_READONLY`. The struct therefore carries
-/// **both** pools: `pool` (reader) is used by the eight pure-read tools
-/// and the lookup branch of `journal_for_date`, while `writer_pool` is
-/// used by `journal_for_date` whenever it has to insert a new page.
+/// page **and** the date falls inside the bounded create window (today ±
+/// [`JOURNAL_CREATE_WINDOW_MONTHS`] months, see
+/// [`within_journal_create_window`] / #2719). The reader pool sets
+/// `PRAGMA query_only = ON`, so feeding it to the create path raises
+/// `SQLITE_READONLY`. The struct therefore carries **both** pools: `pool`
+/// (reader) is used by the eight pure-read tools, `list_spaces`, and the
+/// out-of-window / lookup branches of `journal_for_date`; `writer_pool` is
+/// used only for the in-window create branch of `journal_for_date`.
 ///
-/// Because of the carve-out, **enabling the read-only MCP
-/// server implicitly grants the agent permission to append a single
-/// `CreateBlock` op to `op_log` (origin `agent:<name>`) on the first
-/// read-of-the-day for any space**. The op is reversible (ordinary
-/// `page` block via `create_block_inner`) and shows up in the agent
-/// activity feed like any other agent-authored write, but it is **not**
-/// a pure read. The Settings "Read-only access" tooltip
-/// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and the
-/// Surfaces this carve-out to the
-/// user. Splitting `journal_for_date` into RO+RW halves was rejected as
-/// a public API change requiring explicit user approval — the
-/// docs-only fix preserves the v1 tool surface.
+/// Because of the carve-out, **enabling the read-only MCP server
+/// implicitly grants the agent permission to append a single
+/// `CreateBlock` + `SetProperty(space)` op pair to `op_log` (origin
+/// `agent:<name>`) on the first call for a given `(space_id, date)` pair
+/// — but only when `date` is within the bounded create window.** Outside
+/// the window `journal_for_date` never creates: an existing page there is
+/// still returned as a pure read, and a miss surfaces
+/// [`AppError::NotFound`] instead of a write. The op (when it happens) is
+/// reversible (ordinary `page` block via `create_block_inner`) and shows
+/// up in the agent activity feed like any other agent-authored write, but
+/// it is **not** a pure read. The Settings "Read-only access" tooltip
+/// (`agentAccess.roToggleDescription` in `src/lib/i18n.ts`) and
+/// `src-tauri/src/mcp/AGENTS.md` §Read-only vs read-write surfaces both
+/// surface this bounded carve-out to the user / reader. Splitting
+/// `journal_for_date` into RO+RW halves was rejected as a public API
+/// change requiring explicit user approval — bounding the create window
+/// (#2719) closes the unbounded-mutation risk while preserving the v1
+/// tool surface.
 pub struct ReadOnlyTools {
     pool: SqlitePool,
     /// Writer pool from `DbPools::write` — used exclusively by
@@ -447,15 +505,19 @@ impl ToolRegistry for ReadOnlyTools {
                 TOOL_LIST_PROPERTY_DEFS => handle_list_property_defs(&pool, args).await,
                 TOOL_GET_AGENDA => handle_get_agenda(&pool, args).await,
                 TOOL_JOURNAL_FOR_DATE => {
-                    // Route `journal_for_date` to the writer
-                    // pool because `journal_for_date_inner` opens
-                    // `BEGIN IMMEDIATE` and inserts into `op_log` +
-                    // `blocks` whenever the requested date has no
-                    // existing page. The reader pool's
-                    // `PRAGMA query_only = ON` rejects that path with
-                    // `SQLITE_READONLY`. The other eight tools stay
-                    // on the reader pool.
-                    handle_journal_for_date(&writer_pool, &materializer, &device_id, args).await
+                    // #2719 — the handler needs BOTH pools now: the
+                    // reader pool for the out-of-window / lookup-only
+                    // path (a pure SELECT), and the writer pool for the
+                    // in-window create path, because `journal_for_date_inner`
+                    // opens `BEGIN IMMEDIATE` and inserts into `op_log` +
+                    // `blocks` whenever the requested date has no existing
+                    // page AND falls inside the bounded create window. The
+                    // reader pool's `PRAGMA query_only = ON` rejects that
+                    // INSERT path with `SQLITE_READONLY`, so the create
+                    // branch must stay on the writer pool. The other eight
+                    // tools stay on the reader pool only.
+                    handle_journal_for_date(&pool, &writer_pool, &materializer, &device_id, args)
+                        .await
                 }
                 TOOL_LIST_SPACES => handle_list_spaces(&pool, args).await,
                 other => Err(unknown_tool_error(other)),
@@ -743,12 +805,14 @@ fn tool_desc_journal_for_date() -> ToolDescription {
         // Lead with the side-effect so an LLM agent skimming
         // a tool list does not classify this as read-only based on the
         // file group / leading verb. The tool emits a `CreateBlock` op
-        // With origin `agent:<name>` on first read-of-the-day.
-        description:
-            "Creates the page if missing (one `CreateBlock` op with origin `agent:<name>`), \
-             then returns the journal page for `space_id` on `date`. \
-             Idempotent per `(space_id, date)` after the first call."
-                .to_string(),
+        // With origin `agent:<name>` on first miss inside the bounded
+        // create window (#2719) — never outside it.
+        description: "Creates the page if missing and `date` is within ~12 months of today (one \
+             `CreateBlock` op with origin `agent:<name>`), then returns the journal page for \
+             `space_id` on `date`. Idempotent per `(space_id, date)` after the first call. \
+             Outside that ~12-month window this tool never creates: an existing page is \
+             returned as a pure read, and a missing one returns a not-found error."
+            .to_string(),
         input_schema: json!({
             "type": "object",
             "additionalProperties": false,
@@ -1091,19 +1155,39 @@ async fn handle_get_agenda(pool: &SqlitePool, args: Value) -> Result<Value, AppE
 
 /// Handle the `journal_for_date` MCP tool call.
 ///
-/// **RO tool with a write side-effect.** Despite living on the
-/// read-only [`ReadOnlyTools`] registry, this handler may emit a single
-/// `CreateBlock` op (origin `agent:<name>`) when the requested date
-/// has no existing journal page in the given space. The op lands in
-/// `op_log` via [`journal_for_date_inner`] → `create_block_inner` and
-/// is reversible from the agent activity feed like any other
-/// agent-authored write. The first call for a given (space, date)
-/// pair therefore mutates state; subsequent calls for the same pair
-/// Are pure lookups (idempotent per-space). See the block
-/// on [`ReadOnlyTools`] for the rationale and for why this is wired
-/// to the writer pool instead of the reader pool.
+/// **RO tool with a BOUNDED write side-effect (#2719).** Despite living
+/// on the read-only [`ReadOnlyTools`] registry, this handler may emit a
+/// single `CreateBlock` + `SetProperty(space)` op pair (origin
+/// `agent:<name>`) when the requested date has no existing journal page
+/// in the given space — but ONLY when `date` falls inside
+/// [`within_journal_create_window`] (today ±
+/// [`JOURNAL_CREATE_WINDOW_MONTHS`] months). The op lands in `op_log` via
+/// [`journal_for_date_inner`] → `create_block_inner` and is reversible
+/// from the agent activity feed like any other agent-authored write.
+///
+/// - **In-window + missing:** creates the page (mutates state) via
+///   [`journal_for_date_inner`] on the writer pool. Idempotent per
+///   `(space_id, date)` — only the first call in the window creates;
+///   later calls are pure lookups.
+/// - **In-window + existing:** pure lookup, no write (same
+///   `journal_for_date_inner` call — the lookup branch inside
+///   `resolve_or_create_journal_page` short-circuits before the create).
+/// - **Out-of-window + existing:** pure lookup via
+///   [`get_journal_page_by_date_inner`] on the reader pool — no write,
+///   regardless of how far the date is from today.
+/// - **Out-of-window + missing:** returns [`AppError::NotFound`]. The RO
+///   surface never creates a page for an arbitrary far-future or
+///   far-past date — that was the unbounded-mutation path #2719 closes
+///   (any valid `YYYY-MM-DD` string, ~3.6M reachable dates per space,
+///   each one a free `CreateBlock`+`SetProperty` op into the
+///   non-reclaimable append-only `op_log`).
+///
+/// See the doc block on [`ReadOnlyTools`] for the pool-split rationale
+/// (why the in-window create path needs the writer pool while every
+/// other branch stays on the reader pool).
 async fn handle_journal_for_date(
-    pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    write_pool: &SqlitePool,
     materializer: &Materializer,
     device_id: &str,
     args: Value,
@@ -1120,8 +1204,29 @@ async fn handle_journal_for_date(
     // case-sensitively, so a lowercase ULID previously surfaced as a
     // spurious "space not found" on this one tool.
     let space_id = normalize_ulid_arg(&args.space_id);
-    let resp = journal_for_date_inner(pool, device_id, materializer, date, &space_id).await?;
-    to_tool_result(&resp)
+
+    if within_journal_create_window(date) {
+        // In-window: preserve the pre-#2719 behaviour exactly — lookup
+        // or create, idempotent per (space_id, date), on the writer pool
+        // (required for the create branch; the lookup branch tolerates
+        // the writer pool fine too, it just doesn't need `query_only`).
+        let resp =
+            journal_for_date_inner(write_pool, device_id, materializer, date, &space_id).await?;
+        return to_tool_result(&resp);
+    }
+
+    // #2719 — out-of-window: this tool may NEVER create here. Fall back
+    // to a pure read on the reader pool: return the page if it already
+    // exists, otherwise NotFound rather than creating one.
+    let formatted = date.format("%Y-%m-%d").to_string();
+    match get_journal_page_by_date_inner(read_pool, &formatted, &space_id).await? {
+        Some(row) => to_tool_result(&row),
+        None => Err(AppError::NotFound(format!(
+            "tool `{TOOL_JOURNAL_FOR_DATE}`: no journal page exists for '{formatted}' in space \
+             '{space_id}', and '{formatted}' is outside the {JOURNAL_CREATE_WINDOW_MONTHS}-month \
+             window around today in which this read-only tool is permitted to create one"
+        ))),
+    }
 }
 
 /// Handle the `list_spaces` MCP tool call (#633).
@@ -1231,13 +1336,23 @@ mod tests_m82 {
         // somewhere to scope under.
         let space = mk_space(&tools.writer_pool, &mat, "Personal").await;
 
+        // #2719 — must stay inside the bounded create window (today ±
+        // JOURNAL_CREATE_WINDOW_MONTHS), so compute the date relative to
+        // "today" instead of a fixed literal that would eventually (and,
+        // relative to this repo's current clock, already does) drift
+        // outside the window and start hitting the NotFound branch
+        // instead of the create branch this test targets.
+        let date = (chrono::Local::now().date_naive() + chrono::Days::new(30))
+            .format("%Y-%m-%d")
+            .to_string();
+
         // No journal page exists for this date — the call must hit the
         // create branch, which is the path that previously failed on the
         // query_only=ON reader pool.
         let result = tools
             .call_tool(
                 "journal_for_date",
-                json!({"date": "2025-09-09", "space_id": space}),
+                json!({"date": date, "space_id": space}),
                 &test_ctx(),
             )
             .await;
@@ -1253,7 +1368,7 @@ mod tests_m82 {
         );
         assert_eq!(
             value.get("content").and_then(|v| v.as_str()),
-            Some("2025-09-09"),
+            Some(date.as_str()),
             "expected `content` == requested date, got {value:?}",
         );
     }
@@ -1275,7 +1390,13 @@ mod tests_m82 {
         // ── Wiring A — production split via init_pools() ──────────────
         let (tools_split, mat_split, _dir_split) = mk_split_tools().await;
         let space_split = mk_space(&tools_split.writer_pool, &mat_split, "Personal").await;
-        let date = "2025-09-10";
+        // #2719 — computed relative to "today" so the first `call_tool`
+        // below (which must hit the create branch) stays inside the
+        // bounded create window regardless of when this test runs.
+        let date = (chrono::Local::now().date_naive() + chrono::Days::new(31))
+            .format("%Y-%m-%d")
+            .to_string();
+        let date = date.as_str();
 
         // First call creates the page via the writer pool.
         let first = tools_split
@@ -1361,6 +1482,218 @@ mod tests_m82 {
             combined_resp.get("content").and_then(|v| v.as_str()),
             Some(date),
             "lookup must return the page whose content matches the requested date",
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Tests — #2719: bounded create window for `journal_for_date`
+//
+// Before this fix, `handle_journal_for_date` parsed ANY valid `YYYY-MM-DD`
+// string and delegated straight into `journal_for_date_inner`, which
+// creates the page unconditionally on a miss — an unbounded mutation path
+// on the nominally read-only socket (any of ~3.6M reachable dates per
+// space, each one a free, non-reclaimable `CreateBlock` + `SetProperty`
+// op pair into `op_log`). These tests pin the bounded-window fix:
+//
+//   (a) an in-window MISSING date still creates exactly one page — the
+//       pre-#2719 happy path is unchanged.
+//   (b) an out-of-window MISSING date is rejected with `NotFound` and
+//       appends NO op to `op_log` — the create path stays closed.
+//   (c) an out-of-window EXISTING date is returned as a pure read (no
+//       new op) rather than erroring or trying to re-create it.
+// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests_2719 {
+    use super::*;
+    use crate::commands::create_space_inner;
+    use crate::db::init_pool;
+    use crate::materializer::Materializer;
+    use crate::mcp::actor::{Actor, ActorContext};
+    use serde_json::json;
+    use sqlx::SqlitePool;
+    use std::path::PathBuf;
+    use tempfile::TempDir;
+
+    const DEV: &str = "test-mcp-dev-2719";
+
+    fn test_ctx() -> ActorContext {
+        ActorContext {
+            actor: Actor::Agent {
+                name: "test-agent-2719".to_string(),
+            },
+            request_id: "req-test-2719".to_string(),
+        }
+    }
+
+    async fn test_pool() -> (SqlitePool, TempDir) {
+        let dir = TempDir::new().unwrap();
+        let db_path: PathBuf = dir.path().join("test-2719.db");
+        let pool = init_pool(&db_path).await.unwrap();
+        (pool, dir)
+    }
+
+    /// Combined-pool fixture (mirrors `tools_ro::tests::mk_tools()`) — the
+    /// pool-split (reader `query_only=ON` vs writer) wiring is covered
+    /// separately by `tests_m82`; these tests are only about the window
+    /// gate, so a single combined pool keeps the fixture minimal.
+    async fn mk_tools(pool: &SqlitePool, mat: &Materializer) -> ReadOnlyTools {
+        ReadOnlyTools::new(pool.clone(), pool.clone(), mat.clone(), DEV.to_string())
+    }
+
+    async fn mk_space(pool: &SqlitePool, mat: &Materializer, name: &str) -> String {
+        create_space_inner(pool, DEV, mat, name.into(), None)
+            .await
+            .expect("create_space must succeed")
+            .into_string()
+    }
+
+    /// Count `CreateBlock` ops in `op_log`. Uses the runtime
+    /// (non-`!`-macro) `query_scalar` form deliberately — this is a new
+    /// query text with no pre-generated `.sqlx` cache entry, and the
+    /// `query_scalar!` macro would fail an offline compile without one.
+    async fn create_block_op_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM op_log WHERE op_type = 'create_block'")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// (a) In-window happy path: preserves the pre-#2719 behaviour
+    /// exactly — a missing date inside today ± JOURNAL_CREATE_WINDOW_MONTHS
+    /// creates exactly one page.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn in_window_missing_date_creates_page() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, &mat, "Personal").await;
+        mat.flush_background().await.unwrap();
+        let tools = mk_tools(&pool, &mat).await;
+
+        let date = (chrono::Local::now().date_naive() + chrono::Days::new(60))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        let before = create_block_op_count(&pool).await;
+        let result = tools
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space}),
+                &test_ctx(),
+            )
+            .await
+            .expect("in-window missing date must create the page");
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(result["block_type"], "page");
+        assert_eq!(result["content"], date);
+        let after = create_block_op_count(&pool).await;
+        assert_eq!(
+            after,
+            before + 1,
+            "exactly one CreateBlock op must be appended for the new in-window page"
+        );
+
+        // Idempotent: a second call for the same (space, date) returns
+        // the same page and appends no further op.
+        let again = tools
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space}),
+                &test_ctx(),
+            )
+            .await
+            .expect("second call must succeed (lookup branch)");
+        mat.flush_background().await.unwrap();
+        assert_eq!(again["id"], result["id"], "must be idempotent");
+        assert_eq!(
+            create_block_op_count(&pool).await,
+            after,
+            "idempotent second call must not append another CreateBlock op"
+        );
+    }
+
+    /// (b) Out-of-window MISSING date: must NOT create a page. The tool
+    /// returns `AppError::NotFound` and appends NO op to `op_log`.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn out_of_window_missing_date_returns_not_found_and_creates_no_op() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, &mat, "Personal").await;
+        mat.flush_background().await.unwrap();
+        let tools = mk_tools(&pool, &mat).await;
+
+        // 13 months out guarantees outside the 12-month window regardless
+        // of leap years / month-length edge cases.
+        let date = (chrono::Local::now().date_naive() + chrono::Months::new(13))
+            .format("%Y-%m-%d")
+            .to_string();
+
+        let before = create_block_op_count(&pool).await;
+        let err = tools
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space}),
+                &test_ctx(),
+            )
+            .await
+            .expect_err("out-of-window missing date must be rejected, not created");
+        assert!(
+            matches!(err, AppError::NotFound(_)),
+            "expected AppError::NotFound, got {err:?}"
+        );
+        mat.flush_background().await.unwrap();
+        let after = create_block_op_count(&pool).await;
+        assert_eq!(
+            after, before,
+            "out-of-window miss must not append any CreateBlock op to op_log"
+        );
+    }
+
+    /// (c) Out-of-window date whose page ALREADY EXISTS: returned as a
+    /// pure read rather than erroring or attempting to re-create it. The
+    /// page is seeded directly via the shared `journal_for_date_inner`
+    /// helper (bypassing the RO handler's window gate entirely, the same
+    /// way a page created while still in-window would persist after the
+    /// rolling window has since moved past its date).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn out_of_window_existing_date_is_returned_as_pure_read() {
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+        let space = mk_space(&pool, &mat, "Personal").await;
+        mat.flush_background().await.unwrap();
+        let tools = mk_tools(&pool, &mat).await;
+
+        let naive_date = chrono::Local::now().date_naive() + chrono::Months::new(14);
+        let date = naive_date.format("%Y-%m-%d").to_string();
+
+        let seeded = journal_for_date_inner(&pool, DEV, &mat, naive_date, &space)
+            .await
+            .expect("seed the page directly via the shared inner helper");
+        mat.flush_background().await.unwrap();
+        let seeded_id = seeded.id.into_string();
+
+        let before = create_block_op_count(&pool).await;
+        let result = tools
+            .call_tool(
+                "journal_for_date",
+                json!({"date": date, "space_id": space}),
+                &test_ctx(),
+            )
+            .await
+            .expect("out-of-window EXISTING date must be returned as a pure read");
+        mat.flush_background().await.unwrap();
+
+        assert_eq!(
+            result["id"].as_str(),
+            Some(seeded_id.as_str()),
+            "must return the pre-existing page, not create a new one"
+        );
+        assert_eq!(result["block_type"], "page");
+        let after = create_block_op_count(&pool).await;
+        assert_eq!(
+            after, before,
+            "returning an existing out-of-window page must not append any op"
         );
     }
 }

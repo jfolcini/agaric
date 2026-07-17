@@ -275,6 +275,49 @@ impl Default for McpRwToggleGate {
     }
 }
 
+/// #2721 — bounded wait for the accept loop to actually exit (and
+/// release its listener) after a disable.
+///
+/// [`McpLifecycle::shutdown`] (fired inside the inner disable toggle)
+/// stores `enabled = false` and wakes the parked accept loop, but the
+/// loop clears `task_running` only *after* `serve()` returns —
+/// asynchronously, on the spawned serve task. If the command releases
+/// the toggle gate before that happens, an immediately-following
+/// `mcp_set_enabled(true)` observes `is_running() == true`, skips the
+/// re-spawn, and — because the gate's `enabled = true` re-arm lives only
+/// inside the (now-skipped) spawn helper — the old loop then exits at its
+/// next gate check with `enabled` still `false`. The marker file is
+/// present (so `get_mcp_status` reports `enabled = true`) but nothing is
+/// listening until the user cycles the toggle again.
+///
+/// Holding the toggle gate across this wait forces the next enable to
+/// see `is_running() == false` and spawn a fresh, bound listener. The
+/// wait is **bounded** (`MAX_WAIT`) so a wedged serve loop can never
+/// block the command indefinitely — on timeout we log and proceed, no
+/// worse off than the pre-fix behaviour.
+///
+/// Mirrors what `mcp/server/tests.rs`'s rebind test already does by hand
+/// (waits for `task_running == false` before re-enabling); production
+/// previously lacked that wait.
+async fn await_accept_loop_exit(lifecycle: &McpLifecycle) {
+    const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(10);
+    const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(2);
+
+    let start = std::time::Instant::now();
+    while lifecycle.is_running() {
+        if start.elapsed() >= MAX_WAIT {
+            tracing::warn!(
+                target: "mcp",
+                waited_ms = u64::try_from(MAX_WAIT.as_millis()).unwrap_or(u64::MAX),
+                "MCP accept loop still marked running after disable; releasing \
+                 toggle gate without confirmed listener release (#2721)",
+            );
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
 /// Tauri command: return the current MCP RO status for the Settings tab.
 #[tauri::command]
 #[specta::specta]
@@ -372,6 +415,15 @@ pub async fn mcp_set_enabled(
     let lc = lifecycle.inner().clone();
     let changed =
         mcp_set_enabled_inner(&app_data_dir, &lc, enabled).map_err(sanitize_internal_error)?;
+
+    // #2721: on disable, block (bounded) until the accept loop has
+    // actually exited and dropped its listener before releasing the
+    // toggle gate. Otherwise a rapid disable→enable observes a still-set
+    // `task_running`, skips the re-spawn, and strands the surface
+    // "enabled but unbound". See `await_accept_loop_exit`.
+    if !enabled {
+        await_accept_loop_exit(&lc).await;
+    }
 
     // Start the task if the marker was just created and no serve loop
     // is currently running. `spawn_mcp_ro_task` rechecks the marker file
@@ -529,6 +581,14 @@ pub async fn mcp_rw_set_enabled(
     let lc = lifecycle.inner().0.clone();
     let changed =
         mcp_rw_set_enabled_inner(&app_data_dir, &lc, enabled).map_err(sanitize_internal_error)?;
+
+    // #2721: mirror the RO surface — wait (bounded) for the RW accept
+    // loop to release its listener on disable before releasing the gate,
+    // so a rapid disable→enable re-spawns instead of stranding "enabled
+    // but unbound". See `await_accept_loop_exit`.
+    if !enabled {
+        await_accept_loop_exit(&lc).await;
+    }
 
     if enabled && !lc.is_running() {
         mcp::spawn_mcp_rw_task(
@@ -1213,6 +1273,173 @@ mod tests {
             mcp_ro_enabled(dir.path()),
             *toggles.last().unwrap(),
             "final marker state must match the last toggle",
+        );
+    }
+
+    // ── #2721: rapid disable→enable must re-bind, not strand ──────
+    //
+    // Regression for the "enabled but unbound" stall. `shutdown()`
+    // stores `enabled = false` and wakes the accept loop, but the loop
+    // clears `task_running` only *after* `serve()` returns —
+    // asynchronously. Pre-fix, the disable command released the toggle
+    // gate the instant `shutdown()` returned, so an immediately-following
+    // enable saw `is_running() == true`, skipped the re-spawn, and the
+    // old loop then exited with `enabled` still `false`: marker present
+    // (`get_mcp_status` reports enabled) but nothing listening.
+    //
+    // `await_accept_loop_exit` closes the window by holding the gate until
+    // the loop has dropped its listener. These tests model the real
+    // command body (gate → inner toggle → wait-on-disable → spawn-on-
+    // enable) with a fake serve loop whose `task_running` clears only
+    // *after* `enabled` goes false — reproducing the async teardown.
+
+    /// Spawn a stand-in for the real accept loop: it stays "running"
+    /// (`task_running == true`) while the gate is armed, then — some time
+    /// *after* a disable stores `enabled = false` — drops its listener by
+    /// clearing `task_running`. The post-disable delay is the #2721 race
+    /// window the fix must absorb.
+    fn spawn_fake_accept_loop(lc: McpLifecycle) -> tokio::task::JoinHandle<()> {
+        use std::sync::atomic::Ordering;
+        use std::time::Duration;
+        tokio::spawn(async move {
+            // Poll the gate like the real per-iteration select! loop
+            // (avoids the notify_waiters edge-trigger registration race).
+            while lc.is_enabled() {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            // Model the asynchronous listener teardown: the real serve
+            // loop returns — and only then clears `task_running` — some
+            // time after `shutdown()` returned. 50ms is comfortably
+            // inside `await_accept_loop_exit`'s 2s cap yet long enough
+            // that the disable command observes `is_running() == true`
+            // the instant `shutdown()` returns.
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            lc.task_running.store(false, Ordering::Release);
+        })
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rapid_disable_then_enable_rebinds_ro_2721() {
+        use std::sync::atomic::Ordering;
+
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let gate = std::sync::Arc::new(McpToggleGate::new());
+
+        // Bring the surface up: marker present + a live accept loop.
+        mcp_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        lc.enabled.store(true, Ordering::Release);
+        lc.task_running.store(true, Ordering::Release);
+        let serve_loop = spawn_fake_accept_loop(lc.clone());
+
+        // ---- Disable: mirror the mcp_set_enabled(false) command body ----
+        {
+            let _g = gate.0.lock().await;
+            mcp_set_enabled_inner(dir.path(), &lc, false).unwrap();
+            // The race window: shutdown() has returned but the accept
+            // loop has NOT yet cleared task_running. Pre-fix the command
+            // released the gate right here.
+            assert!(
+                lc.is_running(),
+                "#2721 window: accept loop still marked running the instant \
+                 shutdown() returns",
+            );
+            // The fix: hold the gate until the loop has actually exited.
+            await_accept_loop_exit(&lc).await;
+            assert!(
+                !lc.is_running(),
+                "await_accept_loop_exit must observe the listener drop",
+            );
+        }
+
+        // ---- Enable: mirror the mcp_set_enabled(true) command body ----
+        let mut respawned = false;
+        {
+            let _g = gate.0.lock().await;
+            mcp_set_enabled_inner(dir.path(), &lc, true).unwrap();
+            if !lc.is_running() {
+                // The real spawn helper re-arms `enabled` then flips
+                // `task_running` on bind.
+                lc.enabled.store(true, Ordering::Release);
+                lc.task_running.store(true, Ordering::Release);
+                respawned = true;
+            }
+        }
+
+        serve_loop.await.unwrap();
+
+        assert!(
+            respawned,
+            "enable after a rapid disable must re-spawn the accept loop; \
+             skipping the spawn is the #2721 stall",
+        );
+        assert!(
+            lc.is_running(),
+            "surface must actually be listening after disable→enable",
+        );
+        assert!(
+            lc.is_enabled(),
+            "accept-loop gate must be armed open, not stranded false",
+        );
+        assert!(
+            mcp_ro_enabled(dir.path()),
+            "marker present and the surface truly bound",
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rapid_disable_then_enable_rebinds_rw_2721() {
+        use std::sync::atomic::Ordering;
+
+        let dir = TempDir::new().unwrap();
+        let lc = make_lifecycle();
+        let gate = std::sync::Arc::new(McpRwToggleGate::new());
+
+        mcp_rw_set_enabled_inner(dir.path(), &lc, true).unwrap();
+        lc.enabled.store(true, Ordering::Release);
+        lc.task_running.store(true, Ordering::Release);
+        let serve_loop = spawn_fake_accept_loop(lc.clone());
+
+        {
+            let _g = gate.0.lock().await;
+            mcp_rw_set_enabled_inner(dir.path(), &lc, false).unwrap();
+            assert!(
+                lc.is_running(),
+                "#2721 window (RW): accept loop still marked running the \
+                 instant shutdown() returns",
+            );
+            await_accept_loop_exit(&lc).await;
+            assert!(
+                !lc.is_running(),
+                "await_accept_loop_exit must observe the RW listener drop",
+            );
+        }
+
+        let mut respawned = false;
+        {
+            let _g = gate.0.lock().await;
+            mcp_rw_set_enabled_inner(dir.path(), &lc, true).unwrap();
+            if !lc.is_running() {
+                lc.enabled.store(true, Ordering::Release);
+                lc.task_running.store(true, Ordering::Release);
+                respawned = true;
+            }
+        }
+
+        serve_loop.await.unwrap();
+
+        assert!(
+            respawned,
+            "RW enable after a rapid disable must re-spawn the accept loop",
+        );
+        assert!(
+            lc.is_running(),
+            "RW surface must actually be listening after disable→enable",
+        );
+        assert!(lc.is_enabled(), "RW gate must be armed open");
+        assert!(
+            mcp_rw_enabled(dir.path()),
+            "RW marker present and the surface truly bound",
         );
     }
 }

@@ -14,3 +14,9 @@
 # and blank lines are ignored.
 
 src/sync_daemon/android_multicast.rs
+
+# #2720: Windows named-pipe security descriptor. The `#[cfg(windows)]`
+# `win_security` module uses inline Win32 FFI (advapi32/kernel32) to build a
+# per-user DACL so the MCP pipe is not squattable/readable by other local
+# users. Each unsafe block is justified inline with `// SAFETY:`.
+src/mcp/mod.rs

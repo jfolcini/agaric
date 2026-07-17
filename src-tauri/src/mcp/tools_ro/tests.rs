@@ -1336,23 +1336,30 @@ async fn get_agenda_invalid_date_returns_validation() {
 async fn journal_for_date_happy_path_creates_page() {
     let (tools, mat, _dir) = mk_tools().await;
     let space = mk_space(&tools.pool, "Personal").await;
+    // #2719: the create carve-out is bounded to today ± 12 months, so use
+    // today's date (trivially in-window) rather than a hardcoded literal
+    // that drifts out of the window as the wall clock advances.
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     let result = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-06-15", "space_id": space}),
+            json!({"date": date.clone(), "space_id": space}),
             &test_ctx(),
         )
         .await
         .expect("happy path");
     assert_eq!(result["block_type"], "page");
-    assert_eq!(result["content"], "2025-06-15");
+    assert_eq!(result["content"], date.as_str());
     // Second call must return the same page id (idempotent).
     let first_id = result["id"].as_str().expect("id present").to_string();
     settle(&mat).await;
     let again = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-06-15", "space_id": space}),
+            json!({"date": date.clone(), "space_id": space}),
             &test_ctx(),
         )
         .await
@@ -1449,10 +1456,15 @@ async fn list_spaces_happy_path_returns_spaces_with_default_flag() {
     // list_spaces must be directly usable as the `space_id` argument
     // of a space-requiring tool.
     let space_id = personal["id"].as_str().unwrap().to_string();
+    // #2719: use an in-window date (today) so the create carve-out fires.
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     let journal = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-03-03", "space_id": space_id}),
+            json!({"date": date, "space_id": space_id}),
             &test_ctx(),
         )
         .await
@@ -1534,16 +1546,21 @@ async fn journal_for_date_accepts_lowercase_space_id_694() {
     let lower = space.to_lowercase();
     assert_ne!(lower, space, "fixture space ULID must not be all-lowercase");
 
+    // #2719: use an in-window date (today) so the create carve-out fires.
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     let result = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-06-15", "space_id": lower}),
+            json!({"date": date.clone(), "space_id": lower}),
             &test_ctx(),
         )
         .await
         .expect("lowercase space ULID must be accepted at the MCP boundary (#694)");
     assert_eq!(result["block_type"], "page");
-    assert_eq!(result["content"], "2025-06-15");
+    assert_eq!(result["content"], date.as_str());
 
     // Idempotency must hold across casings: the canonical-case call
     // resolves to the same page the lowercase call created.
@@ -1551,7 +1568,7 @@ async fn journal_for_date_accepts_lowercase_space_id_694() {
     let again = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-06-15", "space_id": space}),
+            json!({"date": date.clone(), "space_id": space}),
             &test_ctx(),
         )
         .await
@@ -2800,10 +2817,17 @@ async fn snapshot_get_agenda_response_shape() {
 async fn snapshot_journal_for_date_response_shape() {
     let (tools, _mat, _dir) = mk_tools().await;
     let space = mk_space(&tools.pool, "Personal").await;
+    // #2719: the create carve-out is bounded to today ± 12 months, so drive
+    // the snapshot with today's date and redact the (now wall-clock-derived)
+    // `content` so the pinned wire shape stays stable across runs.
+    let date = chrono::Local::now()
+        .date_naive()
+        .format("%Y-%m-%d")
+        .to_string();
     let result = tools
         .call_tool(
             "journal_for_date",
-            json!({"date": "2025-09-09", "space_id": space}),
+            json!({"date": date, "space_id": space}),
             &test_ctx(),
         )
         .await
@@ -2811,6 +2835,7 @@ async fn snapshot_journal_for_date_response_shape() {
     insta::assert_yaml_snapshot!("tool_response_journal_for_date", result, {
         ".id" => "[ULID]",
         ".page_id" => "[ULID]",
+        ".content" => "[DATE]",
     });
 }
 
