@@ -45,6 +45,7 @@ import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRes
 import { isFrontendOnlySort, usePageBrowserSort } from '@/hooks/usePageBrowserSort'
 import { usePageCreation } from '@/hooks/usePageCreation'
 import { useStarredPages } from '@/hooks/useStarredPages'
+import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
@@ -308,6 +309,14 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     estimateSize,
     overscan: 5,
   })
+
+  // #2850 — mobile/no-hover prefetch fallback. The virtualizer's own
+  // overscan (5) already limits mounted rows to near-viewport, but touch
+  // devices never fire hover, so this IntersectionObserver (200px
+  // rootMargin, same instance/pattern `BlockTree` uses) lets each
+  // `DensityRow` prefetch its own page as it scrolls within reach, rather
+  // than only warming on the (desktop-only) hover/focus intent.
+  const viewport = useViewportObserver()
 
   // PageBrowser pagination UX (2026-05-14) — sessionStorage-backed
   // scroll restoration (#1263).
@@ -593,6 +602,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
                     density={density}
                     selectedIds={multiSelected}
                     onToggleMultiSelect={handleMultiSelectRowClick}
+                    viewport={viewport}
                   />
                 )
               })}

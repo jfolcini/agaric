@@ -24,8 +24,21 @@ import {
   type PageBrowserRowRendererProps,
 } from '@/components/PageBrowser/PageBrowserRowRenderer'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import type { PageTreeNode } from '@/lib/page-tree'
 import type { BlockRow } from '@/lib/tauri'
+
+/** #2850 — no-op `ViewportObserver` stub (see `DensityRow.test.tsx`). */
+function makeMockViewport(): ViewportObserver {
+  return {
+    createObserveRef: () => () => {},
+    isOffscreen: () => false,
+    getHeight: () => undefined,
+    subscribe: () => () => {},
+    subscribeWindow: () => () => {},
+    getWindowVersion: () => 0,
+  }
+}
 
 /** Minimal `VirtualItem` — only `key`/`index`/`start` are read by the renderer. */
 function virtualRow(index = 0): PageBrowserRowRendererProps['virtualRow'] {
@@ -88,6 +101,7 @@ function baseProps(
     density: 'regular',
     selectedIds: new Set<string>(),
     onToggleMultiSelect: vi.fn(),
+    viewport: makeMockViewport(),
     ...overrides,
   }
 }

@@ -17,8 +17,27 @@ import {
   formatRelativeShort,
 } from '@/components/PageBrowser/DensityRow'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
 
 type RequiredProps = React.ComponentProps<typeof DensityRow>
+
+/**
+ * #2850 — no-op `ViewportObserver` stub. `DensityRow` reads it only to
+ * drive the mobile/no-hover prefetch fallback (per-id `subscribe` +
+ * `isOffscreen` via `useSyncExternalStore`, and `createObserveRef` merged
+ * into the row's ref); none of that is under test here, so every member
+ * is a inert no-op that satisfies the shape.
+ */
+function makeMockViewport(): ViewportObserver {
+  return {
+    createObserveRef: () => () => {},
+    isOffscreen: () => false,
+    getHeight: () => undefined,
+    subscribe: () => () => {},
+    subscribeWindow: () => () => {},
+    getWindowVersion: () => 0,
+  }
+}
 
 function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
   return {
@@ -46,6 +65,7 @@ function baseProps(overrides: Partial<RequiredProps> = {}): RequiredProps {
     onSelect: vi.fn(),
     onToggleStar: vi.fn(),
     onDeleteRequest: vi.fn(),
+    viewport: makeMockViewport(),
     ...overrides,
   }
 }

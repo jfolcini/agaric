@@ -30,6 +30,7 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
+import { consumePrefetchedPageSubtree } from '@/lib/prefetch-page-subtree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { loadPageSubtree } from '@/lib/tauri'
 import { buildFlatTree } from '@/lib/tree-utils'
@@ -177,11 +178,26 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // Single-SELECT descendant load via the materializer-maintained
         // `page_id` index — replaces the recursive per-parent
         // `listBlocks` walk that silently clamped each level to 100.
+        // #2850 — the ONLY seam a speculative hover/focus prefetch gets:
+        // if a live one-shot prefetch promise was parked for this exact
+        // `(spaceId, rootParentId)`, consume (and thereby delete) it instead
+        // of firing a fresh IPC. This is single-consumption — a later
+        // reload (sync/undo/blocks:changed) always finds the entry gone (it
+        // was just consumed, or it expired) and falls through to a fresh
+        // fetch. EVERYTHING below this line is unchanged and runs
+        // identically regardless of which source produced `subtree`: the
+        // `#753` generation guard, focused-block preservation, the #798
+        // selection prune, and the `PageNotInSpace` rejection/heal in the
+        // catch block all still see the exact same snapshot (or rejection)
+        // they would have seen from a fresh `loadPageSubtree` call.
         // #2110 (M4) — trace the page-open data load. `loadPageSubtree`
         // dispatches its IPC synchronously inside the callback, so the backend
         // command + SQLite/materializer spans parent under this interaction.
-        const subtree = await traceInteraction(INTERACTIONS.PAGE_OPEN, () =>
-          loadPageSubtree(rootParentId, spaceId),
+        const subtree = await traceInteraction(
+          INTERACTIONS.PAGE_OPEN,
+          () =>
+            consumePrefetchedPageSubtree(spaceId, rootParentId) ??
+            loadPageSubtree(rootParentId, spaceId),
         )
         const allBlocks = subtree.blocks
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)

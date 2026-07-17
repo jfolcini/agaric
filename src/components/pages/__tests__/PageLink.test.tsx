@@ -5,17 +5,38 @@
  * custom className, and a11y audit.
  */
 
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PageLink } from '@/components/pages/PageLink'
+import {
+  _resetPrefetchPageSubtreeForTest,
+  PAGE_PREFETCH_DWELL_MS,
+  prefetchPageSubtree,
+} from '@/lib/prefetch-page-subtree'
 import { useNavigationStore } from '@/stores/navigation'
+import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
+
+// Spy on `prefetchPageSubtree` without letting it run for real (the real
+// implementation dispatches an IPC via `loadPageSubtree`, which this test
+// file doesn't mock) — keep every other export (the TTL/dwell constants,
+// the test reset) live from the actual module.
+vi.mock('@/lib/prefetch-page-subtree', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/prefetch-page-subtree')>(
+    '@/lib/prefetch-page-subtree',
+  )
+  return { ...actual, prefetchPageSubtree: vi.fn() }
+})
+
+const mockedPrefetchPageSubtree = vi.mocked(prefetchPageSubtree)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.useRealTimers()
+  _resetPrefetchPageSubtreeForTest()
   useNavigationStore.setState({
     currentView: 'journal',
     selectedBlockId: null,
@@ -24,6 +45,11 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
+  useSpaceStore.setState({ currentSpaceId: 'SPACE_TEST' })
+})
+
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('PageLink', () => {
@@ -106,5 +132,79 @@ describe('PageLink', () => {
     const { container } = render(<PageLink pageId="P1" title="My Page" />)
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  // #2850 — hover/focus intent schedules a speculative prefetch after a
+  // short dwell; leaving/blurring before the dwell elapses cancels it.
+  describe('prefetch intent (#2850)', () => {
+    it('schedules a prefetch after the hover dwell elapses', () => {
+      vi.useFakeTimers()
+      render(<PageLink pageId="P1" title="My Page" />)
+      const link = screen.getByRole('link', { name: 'My Page' })
+
+      act(() => {
+        fireEvent.mouseEnter(link)
+      })
+      expect(mockedPrefetchPageSubtree).not.toHaveBeenCalled()
+
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS)
+      })
+      expect(mockedPrefetchPageSubtree).toHaveBeenCalledTimes(1)
+      expect(mockedPrefetchPageSubtree).toHaveBeenCalledWith('SPACE_TEST', 'P1')
+    })
+
+    it('cancels the pending prefetch if the pointer leaves before the dwell elapses', () => {
+      vi.useFakeTimers()
+      render(<PageLink pageId="P1" title="My Page" />)
+      const link = screen.getByRole('link', { name: 'My Page' })
+
+      act(() => {
+        fireEvent.mouseEnter(link)
+      })
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS - 1)
+      })
+      act(() => {
+        fireEvent.mouseLeave(link)
+      })
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS)
+      })
+
+      expect(mockedPrefetchPageSubtree).not.toHaveBeenCalled()
+    })
+
+    it('schedules a prefetch after a keyboard focus dwell, and blur cancels it', () => {
+      vi.useFakeTimers()
+      render(<PageLink pageId="P1" title="My Page" />)
+      const link = screen.getByRole('link', { name: 'My Page' })
+
+      act(() => {
+        fireEvent.focus(link)
+      })
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS)
+      })
+      expect(mockedPrefetchPageSubtree).toHaveBeenCalledTimes(1)
+
+      // A subsequent focus/blur cycle that never dwells long enough must
+      // not fire a second prefetch.
+      mockedPrefetchPageSubtree.mockClear()
+      act(() => {
+        fireEvent.blur(link)
+        fireEvent.focus(link)
+      })
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS - 1)
+      })
+      act(() => {
+        fireEvent.blur(link)
+      })
+      act(() => {
+        vi.advanceTimersByTime(PAGE_PREFETCH_DWELL_MS)
+      })
+      expect(mockedPrefetchPageSubtree).not.toHaveBeenCalled()
+    })
   })
 })

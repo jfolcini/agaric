@@ -83,6 +83,7 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useFailedOnce } from '@/hooks/useFailedOnce'
 import { useGenerationGuard } from '@/hooks/useGenerationGuard'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
@@ -186,6 +187,11 @@ export function PaletteBody({
   const spaceIsReady = useSpaceStore((s) => s.isReady)
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
   const openInNewTab = useTabsStore((s) => s.openInNewTab)
+  // #2850 — warm the highlighted result's page subtree as arrow-key
+  // traversal / mouse hover moves cmdk's active row. Debounced (shared dwell
+  // constant) so fast traversal can't fan out one IPC per row; the
+  // concurrency cap in `prefetch-page-subtree.ts` backstops the same case.
+  const paletteRowPrefetchIntent = usePagePrefetchIntent()
 
   // One `useShallow` selector rather than 8 individual ones: individual
   // selectors each subscribe the component to ANY store change and re-run
@@ -607,6 +613,21 @@ export function PaletteBody({
     return { type: value.slice(0, idx), id: value.slice(idx + 1) }
   }
 
+  // #2850 — cmdk's `onValueChange` fires whenever the active row changes
+  // (arrow keys OR mouse hover, uncontrolled). `page:`/`recent:` values
+  // carry a page id directly; every other row type (`block:` — a search
+  // hit inside a page group, `more:`, `cmd:`, `tag:`, `help:`,
+  // `__escalate__`) is left alone — those either aren't a direct page
+  // navigation or would need an extra id→page lookup this pass doesn't add.
+  function handlePaletteValueChange(value: string): void {
+    const parsed = parseRowValue(value)
+    if (parsed && (parsed.type === 'page' || parsed.type === 'recent')) {
+      paletteRowPrefetchIntent.schedule(parsed.id)
+    } else {
+      paletteRowPrefetchIntent.cancel()
+    }
+  }
+
   // Extracted out of `handleListKeyDown` so the top-level dispatcher
   // stays under oxlint's eslint/complexity budget (≤ 25). Returns true
   // if the Tab was consumed (caller
@@ -860,7 +881,12 @@ export function PaletteBody({
     // shouldFilter={false} — debounced FTS + Rust-side ranking already
     // produced the visible list; cmdk's fuzzy rescore would double-
     // filter and re-order in ways that fight the page-group cap.
-    <Command shouldFilter={false} loop className="search-palette flex flex-col">
+    <Command
+      shouldFilter={false}
+      loop
+      className="search-palette flex flex-col"
+      onValueChange={handlePaletteValueChange}
+    >
       <ModeChipRow mode={mode} setMode={setMode} t={t} />
       <div className="relative">
         <CommandInput
