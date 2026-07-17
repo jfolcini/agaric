@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM pages_cache WHERE page_id NOT IN ( SELECT id FROM blocks WHERE block_type = 'page' AND deleted_at IS NULL AND content IS NOT NULL )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "7b82f0227fc385b61f8ba38d66f31fa9a04cad0ac364650faf322ac818268e30"
+}
