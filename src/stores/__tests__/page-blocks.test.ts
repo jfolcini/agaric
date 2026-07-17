@@ -8,6 +8,11 @@ import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { t as translate } from '@/lib/i18n'
+import {
+  _resetPrefetchPageSubtreeForTest,
+  consumePrefetchedPageSubtree,
+  prefetchPageSubtree,
+} from '@/lib/prefetch-page-subtree'
 import { dispatch } from '@/lib/tauri-mock/handlers'
 import { properties, seedBlocks, SEED_IDS } from '@/lib/tauri-mock/seed'
 import { useNavigationStore } from '@/stores/navigation'
@@ -93,6 +98,9 @@ describe('PageBlockStore', () => {
     // The pre-bootstrap no-op contract is exercised in its own test.
     useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
+    // #2850 — the prefetch map is a module-level singleton; reset it so a
+    // prefetch parked by one test can never leak into the next.
+    _resetPrefetchPageSubtreeForTest()
   })
 
   // ---------------------------------------------------------------------------
@@ -4923,6 +4931,137 @@ describe('PageBlockStore', () => {
         expect(firstSpecContent(batches)).toBe('see [[Dup]]')
         expect(createdPages).toEqual([])
       })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // #2850 — one-shot speculative prefetch handoff. `load()`'s ONLY change is
+  // the SOURCE of the `PageSubtree` (a consumed prefetch promise vs a fresh
+  // `loadPageSubtree` IPC) — every guard downstream (the #753 generation
+  // guard, focused-block preservation, the #798 selection prune, and the
+  // `PageNotInSpace` rejection/heal) must run identically either way.
+  // ---------------------------------------------------------------------------
+  describe('#2850 prefetch integration', () => {
+    it('consumes a live prefetched promise instead of firing a fresh loadPageSubtree IPC', async () => {
+      const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
+      // The ONE invoke resolution here backs the PREFETCH's IPC. If load()
+      // fired a second, fresh IPC it would find no queued response and hang
+      // / reject — proving `mockedInvoke` was called exactly once is the
+      // load-bearing assertion below.
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+
+      prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+      await store.getState().load()
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      expect(store.getState().blocks).toHaveLength(1)
+      expect(store.getState().blocks[0]?.id).toBe('A')
+      expect(store.getState().loading).toBe(false)
+      // Single-consumption — the entry `load()` just consumed is gone; a
+      // second load() call must fetch fresh (falls through to `invoke` again).
+      expect(consumePrefetchedPageSubtree(TEST_SPACE_ID, 'PAGE_1')).toBeNull()
+    })
+
+    it('falls through to a fresh IPC when no prefetch is live for this page', async () => {
+      const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+
+      // No prefetchPageSubtree call — load() has nothing to consume.
+      await store.getState().load()
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      expect(store.getState().blocks).toHaveLength(1)
+    })
+
+    it("a prefetch parked for a DIFFERENT page is not consumed by this page's load()", async () => {
+      const otherPagePromiseNeverResolves = new Promise(() => {})
+      mockedInvoke.mockReturnValueOnce(otherPagePromiseNeverResolves)
+      prefetchPageSubtree(TEST_SPACE_ID, 'SOME_OTHER_PAGE')
+
+      const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
+
+      await store.getState().load()
+
+      // Two distinct IPCs: one for the (unrelated, still-pending) prefetch,
+      // one for this page's own fresh fetch.
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      expect(store.getState().blocks).toHaveLength(1)
+      // The unrelated prefetch is untouched — still there for its own page.
+      expect(consumePrefetchedPageSubtree(TEST_SPACE_ID, 'SOME_OTHER_PAGE')).not.toBeNull()
+    })
+
+    it('a prefetched snapshot still runs the #753 load-generation guard (a newer load wins)', async () => {
+      const staleBlocks = [makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })]
+      const freshBlocks = [makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })]
+
+      let resolveStale: (v: unknown) => void = () => {}
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((res) => {
+          resolveStale = res
+        }),
+      )
+      prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
+
+      // Start a load() that will consume the (still-pending) prefetch.
+      const stalePromise = store.getState().load()
+
+      // A second, newer load() fires a fresh IPC and resolves FIRST.
+      mockedInvoke.mockResolvedValueOnce(subtreeResp(freshBlocks))
+      await store.getState().load()
+      expect(store.getState().blocks[0]?.id).toBe('FRESH')
+
+      // Now let the stale prefetched promise resolve — #753 must discard it
+      // (it started before the newer load claimed the generation).
+      resolveStale(subtreeResp(staleBlocks))
+      await stalePromise
+
+      expect(store.getState().blocks[0]?.id).toBe('FRESH')
+    })
+
+    it('#2802/#2810 — a prefetched snapshot for a page since moved out of the active space still hits the rejection/heal path', async () => {
+      useTabsStore.setState({
+        tabs: [
+          {
+            id: '0',
+            pageStack: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+            label: 'Moved page',
+          },
+        ],
+        activeTabIndex: 0,
+        tabsBySpace: {},
+        activeTabIndexBySpace: {},
+      })
+      useRecentPagesStore.setState({
+        recentPages: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        recentPagesBySpace: {
+          [TEST_SPACE_ID]: [{ pageId: 'PAGE_1', title: 'Moved page' }],
+        },
+      })
+      const membershipRejection = Object.assign(
+        new Error(`block 'PAGE_1' not in current space '${TEST_SPACE_ID}'`),
+        { kind: 'validation', code: 'PageNotInSpace' },
+      )
+      // Backs the PREFETCH's IPC — the prefetch itself is what rejects, not
+      // a fresh fetch inside load().
+      mockedInvoke.mockRejectedValueOnce(membershipRejection)
+
+      prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
+      await store.getState().load()
+
+      // Exactly one IPC fired (the prefetch's) — load() consumed it rather
+      // than dispatching its own, and STILL ran the full heal path on the
+      // rejection it observed from that consumed promise.
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      expect(toast.error).not.toHaveBeenCalled()
+      expect(toast.info).toHaveBeenCalledWith(
+        translate('error.pageNotInCurrentSpace'),
+        expect.objectContaining({ id: 'page-not-in-space' }),
+      )
+      expect(selectPageStack(useTabsStore.getState())).toEqual([])
+      expect(useRecentPagesStore.getState().recentPagesBySpace[TEST_SPACE_ID]).toEqual([])
     })
   })
 })

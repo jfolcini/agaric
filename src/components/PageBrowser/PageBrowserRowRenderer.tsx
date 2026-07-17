@@ -17,6 +17,7 @@ import { DensityRow } from '@/components/PageBrowser/DensityRow'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { PageBrowserRow } from '@/hooks/usePageBrowserGrouping'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import type { PageWithMetadataRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
@@ -50,6 +51,12 @@ export interface PageBrowserRowRendererProps {
    * Phase 3 — active density mode for the `<DensityRow>` body.
    */
   density: DensityMode
+  /**
+   * #2850 — shared viewport-intersection observer (mobile/no-hover
+   * prefetch fallback). Threaded down to `<DensityRow>` leaf rows only;
+   * header/tree-page rows ignore it.
+   */
+  viewport: ViewportObserver
 }
 
 const rowStyle = (start: number): React.CSSProperties => ({
@@ -221,6 +228,7 @@ function DensityPageRow({
   density,
   selectedIds,
   onToggleMultiSelect,
+  viewport,
 }: DensityPageRowProps): React.ReactElement {
   const { page, pageIndex } = row
   const trimmedFilter = filterText.trim()
@@ -281,6 +289,7 @@ function DensityPageRow({
       onSelect={handleSelect}
       onToggleStar={toggleStar}
       onDeleteRequest={onDeleteRequest}
+      viewport={viewport}
     />
   )
 }

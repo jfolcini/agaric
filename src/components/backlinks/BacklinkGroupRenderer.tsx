@@ -25,6 +25,7 @@ import { useTranslation } from 'react-i18next'
 import { CollapsibleGroupList } from '@/components/common/CollapsibleGroupList'
 import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
+import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BacklinkGroup, BlockRow } from '@/lib/tauri'
@@ -116,6 +117,18 @@ function BacklinkRowInner({
   const resolveTagNameRef = useRef(resolveTagName)
   resolveTagNameRef.current = resolveTagName
 
+  // #2850 — hover/focus intent for the page this reference row navigates
+  // to. Mirrors `handleBlockClick`'s own target (`block.page_id`, NOT the
+  // group's) so a prefetch always warms exactly the page a click lands on.
+  // `block.page_id` is nullable in the wire type (root/page blocks carry
+  // `null`); a reference row's block always belongs to some page in
+  // practice, but the guard keeps `schedule` from ever seeing a bad id.
+  const prefetchIntent = usePagePrefetchIntent()
+  const targetPageId = block.page_id
+  const handleRowEnter = () => {
+    if (targetPageId) prefetchIntent.schedule(targetPageId)
+  }
+
   const resolveVersion = useResolveStore((s) => s.version)
   const richContent = useMemo(
     () =>
@@ -145,6 +158,10 @@ function BacklinkRowInner({
       tabIndex={0}
       onClick={() => onBlockClickRef.current(block)}
       onKeyDown={(e) => onBlockKeyDownRef.current(e, block)}
+      onMouseEnter={handleRowEnter}
+      onMouseLeave={prefetchIntent.cancel}
+      onFocus={handleRowEnter}
+      onBlur={prefetchIntent.cancel}
     >
       <Badge tone="secondary" className="linked-reference-item-type shrink-0">
         {block.block_type}

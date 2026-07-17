@@ -10,6 +10,7 @@
 
 import type React from 'react'
 
+import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { cn } from '@/lib/utils'
 import { useTabsStore } from '@/stores/tabs'
 
@@ -31,6 +32,10 @@ export function PageLink({
   children,
 }: PageLinkProps): React.ReactElement {
   const navigateToPage = useTabsStore((s) => s.navigateToPage)
+  // #2850 — hover/focus intent: warm this page's block subtree a beat
+  // before the click actually lands. `schedule` debounces internally, and
+  // `cancel` on leave/blur drops a hover that never dwelled long enough.
+  const prefetchIntent = usePagePrefetchIntent()
 
   const handleClick = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -52,6 +57,10 @@ export function PageLink({
       tabIndex={0}
       onClick={handleClick}
       onKeyDown={handleKeyDown}
+      onMouseEnter={() => prefetchIntent.schedule(pageId)}
+      onMouseLeave={prefetchIntent.cancel}
+      onFocus={() => prefetchIntent.schedule(pageId)}
+      onBlur={prefetchIntent.cancel}
       className={cn(
         'cursor-pointer hover:underline focus-ring-visible focus-visible:rounded-sm',
         className,

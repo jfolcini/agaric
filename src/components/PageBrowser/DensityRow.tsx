@@ -24,13 +24,15 @@
 
 import { FileText, Star, Trash2 } from 'lucide-react'
 import type React from 'react'
-import { memo } from 'react'
+import { memo, useCallback, useEffect, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { HighlightMatch } from '@/components/common/HighlightMatch'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
+import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
+import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { cn } from '@/lib/utils'
 
 export interface DensityRowProps {
@@ -108,6 +110,15 @@ export interface DensityRowProps {
    * the parent's dialog target (kept for API parity with the legacy
    * `PageRow` callback). */
   onDeleteRequest: (target: { id: string; name: string } | null) => void
+
+  // ── Prefetch (#2850) ─────────────────────────────────────────────────
+  /**
+   * Shared viewport-intersection observer instantiated once by the parent
+   * list. Drives the mobile/no-hover prefetch fallback — this row schedules
+   * a speculative prefetch as it scrolls within `rootMargin` of the
+   * viewport, alongside the desktop hover/focus intent.
+   */
+  viewport: ViewportObserver
 }
 
 // ── Relative-time helper ────────────────────────────────────────────
@@ -228,11 +239,50 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
     onSelect,
     onToggleStar,
     onDeleteRequest,
+    viewport,
   } = props
 
   const title = rawTitle ?? t('pageBrowser.untitled')
   const trimmedFilter = filterText.trim()
   const focused = focusedIndex === pageIndex
+
+  // #2850 — hover/focus + viewport-approach prefetch intent, sharing one
+  // dwell timer (both trigger sources debounce onto the same schedule/cancel
+  // pair, so a hover AND a viewport-entry for the same row within the dwell
+  // window still fire at most one prefetch).
+  const prefetchIntent = usePagePrefetchIntent()
+
+  // Mobile/no-hover fallback (#2850): mirrors the `SortableBlockWrapper`
+  // per-id subscription pattern against the SAME shared `viewport` instance
+  // (one IntersectionObserver for the whole list, not one per row). When
+  // this row's page comes within `rootMargin` of the viewport, schedule the
+  // dwell-debounced prefetch; leaving the margin cancels a still-pending one
+  // (a fast scroll-past must not fire N prefetches for rows never lingered
+  // on).
+  const offscreen = useSyncExternalStore(
+    useCallback((onChange) => viewport.subscribe(pageId, onChange), [viewport, pageId]),
+    () => viewport.isOffscreen(pageId),
+  )
+  useEffect(() => {
+    if (offscreen) {
+      prefetchIntent.cancel()
+    } else {
+      prefetchIntent.schedule(pageId)
+    }
+    // `prefetchIntent` itself is NOT a dep — `schedule`/`cancel` are
+    // identity-stable for the hook's lifetime (see `useDebouncedCallback`),
+    // so this only needs to re-run when the offscreen membership or the
+    // page id actually changes.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [offscreen, pageId])
+
+  const observeRef = useCallback(
+    (el: HTMLElement | null) => {
+      viewport.createObserveRef(pageId)(el)
+      measureElement?.(el)
+    },
+    [viewport, pageId, measureElement],
+  )
 
   // Metadata pieces, computed once so the compact-tooltip path and the
   // regular/expanded rendering reuse the same strings.
@@ -269,7 +319,7 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       // can point at this row when keyboard nav lands on it.
       id={`page-row-${pageId}`}
       data-index={virtualRowIndex}
-      ref={measureElement}
+      ref={observeRef}
       // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- CSS-grid row inside role="grid"; a real <tr> needs a <table> and breaks the flex layout
       role="row"
       aria-selected={focused}
@@ -278,6 +328,11 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
       data-starred={starred}
       data-selected={multiSelected}
       tabIndex={-1}
+      // #2850 — hover intent anywhere on the row; the inner title button
+      // carries the matching onFocus/onBlur (it's the actual focusable
+      // element for keyboard nav).
+      onMouseEnter={() => prefetchIntent.schedule(pageId)}
+      onMouseLeave={prefetchIntent.cancel}
       className={cn(
         'group flex w-full items-center gap-3 rounded-lg px-3 text-left text-sm transition-colors hover:bg-accent/50',
         density === 'compact' && 'py-1',
@@ -330,6 +385,10 @@ function DensityRowInner(props: DensityRowProps): React.ReactElement {
             density === 'expanded' ? 'flex-col items-start gap-1' : 'items-center gap-3',
           )}
           onClick={() => onSelect(pageId, title)}
+          // #2850 — keyboard focus intent (mirrors the row's hover intent
+          // above); this button is the row's actual focusable element.
+          onFocus={() => prefetchIntent.schedule(pageId)}
+          onBlur={prefetchIntent.cancel}
         >
           <span
             className={cn('flex items-center gap-3 min-w-0', density === 'expanded' && 'w-full')}
