@@ -2,7 +2,7 @@
 //!
 //! This module is the neutral home for task-locals that are populated
 //! by core modules (e.g. [`crate::op_log`]) and read by integration
-//! modules (e.g. [`crate::mcp`]). Putting them here removes the
+//! modules (e.g. `crate::mcp`). Putting them here removes the
 //! dependency-direction inversion that the previous home
 //! (`crate::mcp::last_append`) introduced — `op_log` is a core
 //! abstraction and `mcp` is an integration on top, so the task-local
@@ -279,7 +279,7 @@ impl Actor {
     ///
     /// Consumed by [`crate::op_log::append_local_op_in_tx`] via
     /// [`current_actor`] + the `ACTOR` task-local. Outside an
-    /// [`ACTOR::scope`] the default `current_actor()` returns
+    /// `ACTOR::scope` the default `current_actor()` returns
     /// `Actor::User`, which yields `"user"` — matching the column
     /// default in migration 0033 so un-wrapped call sites (frontend
     /// commands, sync merges, snapshot/compaction) are observationally
