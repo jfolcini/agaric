@@ -36,21 +36,31 @@ pub async fn flush_draft_inner(
 ) -> Result<(), AppError> {
     let block_id_str = block_id.as_str();
     let mut tx = CommandTx::begin_immediate(pool, "flush_draft").await?;
+    // #2651 — arm rollback-safe engine apply: the in-tx `apply_op_projected`
+    // below mutates the per-space Loro engine in place; if this tx aborts the
+    // engine is rewound so it never stays ahead of the rolled-back SQL
+    // (mirrors `edit_block_inner`).
+    tx.arm_engine_rollback(materializer.loro_state());
 
-    // 1. Look up the stored draft content inside the tx. No row → no-op.
-    let stored_content = sqlx::query_scalar!(
-        "SELECT content FROM block_drafts WHERE block_id = ?",
+    // 1. Look up the stored draft (content + monotonic supersession anchor)
+    //    inside the tx. No row → no-op.
+    let stored = sqlx::query!(
+        "SELECT content, draft_anchor_seq, draft_anchor_device \
+         FROM block_drafts WHERE block_id = ?",
         block_id_str,
     )
     .fetch_optional(&mut **tx)
     .await?;
-    let Some(content) = stored_content else {
+    let Some(draft_row) = stored else {
         // Nothing to flush. Nothing was written, but commit cleanly so the
         // BEGIN IMMEDIATE write-lock is released promptly rather than
         // dropped/rolled back. No record enqueued → no dispatch.
         tx.commit_without_dispatch().await?;
         return Ok(());
     };
+    let content = draft_row.content;
+    let draft_anchor_seq = draft_row.draft_anchor_seq;
+    let draft_anchor_device = draft_row.draft_anchor_device;
 
     // 2. H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops `tx`
     //    without commit, so the row stays — the user can edit it down.
@@ -64,23 +74,62 @@ pub async fn flush_draft_inner(
 
     // 3. H-12a: verify the target block exists and is not soft-deleted.
     //    If absent, drop the orphan draft inside the same tx and bail.
-    let target_alive = sqlx::query!(
-        "SELECT id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    //    Also read `block_type` so the post-commit dispatch below can use
+    //    the block-type-aware `enqueue_edit_background` (matching
+    //    `edit_block_inner`'s narrower cache-rebuild fan-out).
+    let target = sqlx::query!(
+        "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id_str,
     )
     .fetch_optional(&mut **tx)
-    .await?
-    .is_some();
-    if !target_alive {
-        sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
-            .bind(block_id_str)
-            .execute(&mut **tx)
-            .await?;
+    .await?;
+    let Some(target) = target else {
+        draft::delete_draft_in_tx(&mut tx, block_id_str).await?;
         // Orphan drop appends no op → nothing to dispatch.
         tx.commit_without_dispatch().await?;
         tracing::warn!(
             block_id = %block_id,
             "flush_draft: target block missing or soft-deleted; dropped orphan draft"
+        );
+        return Ok(());
+    };
+    let block_type = target.block_type;
+
+    // 3b. #2651 — SUPERSESSION GUARD (mirrors
+    //    `recovery::draft_recovery::recover_single_draft`). Unlike boot
+    //    draft-recovery, the flush path previously had NO supersession check:
+    //    a stale stored draft flushed AFTER a newer `edit_block`/`create_block`
+    //    would land as the newest edit head and REGRESS the block's content on
+    //    the next boot replay. The draft carries a MONOTONIC anchor
+    //    `(draft_anchor_device, draft_anchor_seq)` — the local device's op-log
+    //    high-water at save time (migration 0092). The draft is SUPERSEDED iff a
+    //    block-scoped op exists with `device_id = <anchor device>` and
+    //    `seq > draft_anchor_seq` (an op the draft's view had not yet seen —
+    //    a pure per-device integer compare, clock-independent). A NULL anchor
+    //    device (legacy/backfill) falls back to the recovering `device_id`, and
+    //    the backfill anchor seq `0` means any existing op supersedes — the safe
+    //    bias that defers to existing ops. When superseded we drop the stale
+    //    draft row and append/apply NOTHING.
+    let anchor_device = draft_anchor_device.as_deref().unwrap_or(device_id);
+    let bid_upper = block_id_str.to_ascii_uppercase();
+    let superseding: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM op_log \
+         WHERE block_id = ?1 \
+         AND op_type IN ('edit_block', 'create_block') \
+         AND device_id = ?2 \
+         AND seq > ?3",
+        bid_upper,
+        anchor_device,
+        draft_anchor_seq
+    )
+    .fetch_one(&mut **tx)
+    .await?;
+    if superseding > 0 {
+        draft::delete_draft_in_tx(&mut tx, block_id_str).await?;
+        tx.commit_without_dispatch().await?;
+        tracing::info!(
+            block_id = %block_id,
+            "flush_draft: draft superseded by a newer edit; dropped stale draft"
         );
         return Ok(());
     }
@@ -91,11 +140,25 @@ pub async fn flush_draft_inner(
     let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, block_id_str).await?;
 
     // 5. Append the edit_block op + delete the draft row, on the outer tx.
-    //    `flush_draft_in_tx` returns the `OpRecord` so we can queue it for
-    //    post-commit dispatch — coupling the flush to a cache rebuild.
+    //    `flush_draft_in_tx` returns the `OpRecord`. #2651: mirror
+    //    `edit_block_inner` — route the just-appended record through the SINGLE
+    //    collapsed apply-projection entry point (`apply_op_projected`) IN this
+    //    same tx so `blocks.content` is written and the per-space Loro engine
+    //    is updated ATOMICALLY with the op append. `advance_cursor = false`:
+    //    the LOCAL path leaves the apply cursor put so boot replay re-applies
+    //    idempotently (#1257). Without this the op sat unmaterialized until the
+    //    next boot replay — SQL/engine stayed stale after an unmount flush
+    //    (typing appeared reverted on navigate-back; FTS/link reindex indexed
+    //    the pre-flush text). The returned `ApplyEffects` is empty for Edit, so
+    //    it is discarded.
     let record =
         draft::flush_draft_in_tx(&mut tx, device_id, block_id_str, &content, prev_edit).await?;
-    tx.enqueue_background(record);
+    crate::materializer::apply_op_projected(&mut tx, &record, materializer.loro_state(), false)
+        .await?;
+    // Block-type-aware dispatch (matches `edit_block_inner`): the background
+    // `ReindexBlockLinks` task is the sole writer of the `page_link_cache`
+    // rollup that the in-tx `apply_op_projected` does NOT maintain.
+    tx.enqueue_edit_background(record, block_type);
 
     tx.commit_and_dispatch(materializer).await?;
     Ok(())
@@ -167,6 +230,11 @@ pub async fn flush_all_drafts_inner(
     materializer: &Materializer,
 ) -> Result<FlushAllDraftsResult, AppError> {
     let mut tx = CommandTx::begin_immediate(pool, "flush_all_drafts").await?;
+    // #2651 — arm rollback-safe engine apply. Each live draft's
+    // `apply_op_projected` below mutates the per-space Loro engine in place; if
+    // any draft errors and the whole batch rolls back, every in-place engine
+    // mutation made so far is rewound (mirrors `edit_block_inner`).
+    tx.arm_engine_rollback(materializer.loro_state());
 
     // 1. Read every draft inside the same tx. Ordering is stable
     //    (`updated_at ASC`) so the `edit_block` ops land in a
@@ -189,7 +257,8 @@ pub async fn flush_all_drafts_inner(
     const FLUSH_ALL_DRAFTS_CAP: i64 = 1000;
     const FLUSH_ALL_DRAFTS_CAP_USIZE: usize = 1000;
     let drafts = sqlx::query!(
-        "SELECT block_id, content FROM block_drafts ORDER BY updated_at ASC LIMIT ?",
+        "SELECT block_id, content, draft_anchor_seq, draft_anchor_device \
+         FROM block_drafts ORDER BY updated_at ASC LIMIT ?",
         FLUSH_ALL_DRAFTS_CAP,
     )
     .fetch_all(&mut **tx)
@@ -207,6 +276,8 @@ pub async fn flush_all_drafts_inner(
     for row in drafts {
         let block_id = row.block_id;
         let content = row.content;
+        let draft_anchor_seq = row.draft_anchor_seq;
+        let draft_anchor_device = row.draft_anchor_device;
 
         // H-12b: enforce MAX_CONTENT_LENGTH. Returning Err here drops
         // `tx` without commit, so every draft row stays — the user can
@@ -223,22 +294,49 @@ pub async fn flush_all_drafts_inner(
         // H-12a: verify the target block exists and is not soft-deleted.
         // If absent, drop the orphan draft inside the same tx and skip
         // the op append — same shape as `flush_draft_inner` modulo the
-        // shared tx.
-        let target_alive = sqlx::query!(
-            "SELECT id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+        // shared tx. Also read `block_type` for the block-type-aware
+        // post-commit dispatch below.
+        let target = sqlx::query!(
+            "SELECT block_type FROM blocks WHERE id = ? AND deleted_at IS NULL",
             block_id,
         )
         .fetch_optional(&mut **tx)
-        .await?
-        .is_some();
-        if !target_alive {
-            sqlx::query("DELETE FROM block_drafts WHERE block_id = ?")
-                .bind(&block_id)
-                .execute(&mut **tx)
-                .await?;
+        .await?;
+        let Some(target) = target else {
+            draft::delete_draft_in_tx(&mut tx, &block_id).await?;
             tracing::warn!(
                 block_id = %block_id,
                 "flush_all_drafts: target block missing or soft-deleted; dropped orphan draft"
+            );
+            flushed += 1;
+            continue;
+        };
+        let block_type = target.block_type;
+
+        // #2651 — SUPERSESSION GUARD (mirrors `flush_draft_inner` step 3b /
+        // `recovery::draft_recovery::recover_single_draft`). If a newer
+        // block-scoped op exists past this draft's monotonic anchor seq, the
+        // stored draft is stale — drop the row and append/apply nothing so it
+        // can't regress content on the next boot replay.
+        let anchor_device = draft_anchor_device.as_deref().unwrap_or(device_id);
+        let bid_upper = block_id.to_ascii_uppercase();
+        let superseding: i64 = sqlx::query_scalar!(
+            "SELECT COUNT(*) FROM op_log \
+             WHERE block_id = ?1 \
+             AND op_type IN ('edit_block', 'create_block') \
+             AND device_id = ?2 \
+             AND seq > ?3",
+            bid_upper,
+            anchor_device,
+            draft_anchor_seq
+        )
+        .fetch_one(&mut **tx)
+        .await?;
+        if superseding > 0 {
+            draft::delete_draft_in_tx(&mut tx, &block_id).await?;
+            tracing::info!(
+                block_id = %block_id,
+                "flush_all_drafts: draft superseded by a newer edit; dropped stale draft"
             );
             flushed += 1;
             continue;
@@ -250,13 +348,17 @@ pub async fn flush_all_drafts_inner(
         // `Transaction` (`**tx`).
         let prev_edit = super::blocks::find_prev_edit_in_tx(&mut tx, &block_id).await?;
 
-        // Append the edit_block op + delete the draft row, on the outer
-        // tx. `flush_draft_in_tx` returns the `OpRecord` so we can
-        // queue it for post-commit dispatch. Signature takes
-        // `&mut Transaction<'_, Sqlite>`, so deref one level (`*tx`).
+        // Append the edit_block op + delete the draft row, on the outer tx.
+        // #2651: mirror `edit_block_inner` — materialize `blocks.content` +
+        // the per-space Loro engine IN this same tx via `apply_op_projected`
+        // (`advance_cursor = false` on the LOCAL path), instead of leaving the
+        // op unmaterialized until boot replay. Block-type-aware dispatch so the
+        // `page_link_cache` rollup (not maintained in-tx) still gets rebuilt.
         let record =
             draft::flush_draft_in_tx(&mut tx, device_id, &block_id, &content, prev_edit).await?;
-        tx.enqueue_background(record);
+        crate::materializer::apply_op_projected(&mut tx, &record, materializer.loro_state(), false)
+            .await?;
+        tx.enqueue_edit_background(record, block_type);
         flushed += 1;
     }
 
