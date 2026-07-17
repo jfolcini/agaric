@@ -19,6 +19,7 @@ import type React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
 import type { DayEntry } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
 
@@ -34,6 +35,14 @@ vi.mock('@/hooks/useBatchCounts', () => ({
 }))
 
 // ── Mock DaySection ─────────────────────────────────────────────────
+// #2770: also surfaces `useRescheduleDragSourceEnabled()` as a data
+// attribute. In production this is read several layers deeper (inside
+// BlockTree → SortableBlock, which WeeklyView never renders directly — it
+// mounts DaySection, which mounts BlockTree). Reading the SAME context here,
+// from a component standing in for that whole subtree, verifies WeeklyView
+// actually wraps its per-day content in `RescheduleDragSourceProvider` (see
+// SortableBlock.reschedule-drag.test.tsx for the row-level drag-payload
+// behavior once that context is enabled).
 vi.mock('@/components/journal/DaySection', () => ({
   DaySection: (props: Record<string, unknown>) => {
     const entry = props['entry'] as DayEntry
@@ -45,6 +54,7 @@ vi.mock('@/components/journal/DaySection', () => ({
         data-mode={props['mode'] as string}
         data-has-navigate={String(!!props['onNavigateToPage'])}
         data-lazy-mount={String(!!props['lazyMount'])}
+        data-reschedule-drag-enabled={String(useRescheduleDragSourceEnabled())}
         aria-label={`Journal for ${entry.displayDate}`}
       >
         <span>{entry.displayDate}</span>
@@ -258,6 +268,25 @@ describe('WeeklyView', () => {
       // DaySection should be inside the drop zone
       const daySection = screen.getByTestId(`day-section-${dateStr}`)
       expect(dropZone).toContainElement(daySection)
+    }
+  })
+
+  // #2770 — the shipped app had no way to REACH the F-32 reschedule-by-drag
+  // handler: RescheduleDropZone (above) has accepted the
+  // `application/x-block-reschedule` payload since #2708, but nothing set
+  // it from a row a real user could co-render it with. WeeklyView now wraps
+  // its per-day content in `RescheduleDragSourceProvider` so every day's
+  // block rows (rendered several layers below, via DaySection → BlockTree →
+  // SortableBlock) become native drag sources. See
+  // SortableBlock.reschedule-drag.test.tsx for the row-level drag-payload
+  // assertion once that context is enabled.
+  it('opts every day into being a reschedule drag source (RescheduleDragSourceProvider)', () => {
+    render(<WeeklyView makeDayEntry={makeDayEntry} onAddBlock={vi.fn()} />)
+
+    const sections = screen.getAllByTestId(/^day-section-/)
+    expect(sections).toHaveLength(7)
+    for (const section of sections) {
+      expect(section).toHaveAttribute('data-reschedule-drag-enabled', 'true')
     }
   })
 })
