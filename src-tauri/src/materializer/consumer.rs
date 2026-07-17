@@ -29,7 +29,7 @@ use tracing::{Instrument, instrument};
 use super::FOREGROUND_CAPACITY;
 use super::MaterializeTask;
 use super::dedup::dedup_tasks;
-use super::handlers::{handle_background_task, handle_foreground_task};
+use super::handlers::{handle_background_task_metered, handle_foreground_task};
 use super::metrics::QueueMetrics;
 
 pub(super) fn log_consumer_result(
@@ -713,6 +713,11 @@ pub(super) async fn run_background(
                     let rp = rp_ref.cloned();
                     let app_data_dir = app_data_dir.clone();
                     let task = task.clone();
+                    // #2831: hand the metered handler the queue metrics so the
+                    // durable `RefreshTagUsageCount` obligation seeded by the
+                    // `ReindexBlockTagRefs` arm keeps `pending_retry_rows`
+                    // accurate for `clear_on_success`'s fast-path.
+                    let metrics = metrics.clone();
                     retry_with_backoff(
                         "bg",
                         MAX_RETRIES,
@@ -725,9 +730,17 @@ pub(super) async fn run_background(
                             let rp = rp.clone();
                             let app_data_dir = app_data_dir.clone();
                             let task = task.clone();
+                            let metrics = metrics.clone();
                             async move {
                                 let dir = app_data_dir.get().map(PathBuf::as_path);
-                                handle_background_task(&pool, &task, rp.as_ref(), dir).await
+                                handle_background_task_metered(
+                                    &pool,
+                                    &task,
+                                    rp.as_ref(),
+                                    dir,
+                                    &metrics,
+                                )
+                                .await
                             }
                         },
                     )

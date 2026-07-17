@@ -293,6 +293,145 @@ async fn handle_bg_reindex_block_tag_refs_refreshes_usage_count_2659() {
     );
 }
 
+/// #2831: the `usage_count` refresh owed by a `ReindexBlockTagRefs` must be a
+/// DURABLE, idempotent obligation — not coupled to the transient reindex diff.
+///
+/// Before the fix, the handler refreshed only the tags whose ref set changed
+/// *this run*. If that refresh was lost (WAL error / crash mid-loop) the task
+/// was re-enqueued, but by then the `block_tag_refs` diff had already
+/// committed, so the retry's diff was EMPTY, the refresh loop ran zero times,
+/// and `usage_count` stayed stale — the retry was a silent no-op.
+///
+/// This test reconstructs that post-crash state (diff committed, `usage_count`
+/// stale, durable obligation seeded exactly as the handler seeds it inside the
+/// diff transaction), proves that a bare `ReindexBlockTagRefs` retry is a
+/// no-op for `usage_count` (empty diff), and then proves the durable
+/// obligation heals it: the sweeper re-enqueues the persisted
+/// `RefreshTagUsageCount`, and after it runs `usage_count` equals the correct
+/// DISTINCT-live-block count and the obligation row is cleared.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reindex_block_tag_refs_usage_count_recovers_via_durable_obligation_2831() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let tag = "01HBTRTAG28310000000000001";
+    let src = "01HBTRBLK28310000000000001";
+    insert_block_direct(&pool, tag, "tag", "recover-2831").await;
+    insert_block_direct(&pool, src, "content", &format!("owes a refresh #[{tag}]")).await;
+
+    // --- Reconstruct the state a FIRST reindex leaves when its usage_count
+    // refresh is LOST after the block_tag_refs diff commits: the ref row is
+    // present (so a retry's diff is empty), usage_count is stale (no cache
+    // row), and the durable RefreshTagUsageCount obligation was seeded INSIDE
+    // the diff transaction (exactly what the handler does). ---
+    sqlx::query!(
+        "INSERT INTO block_tag_refs (source_id, tag_id) VALUES (?, ?)",
+        src,
+        tag,
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    {
+        let mut tx = crate::db::begin_immediate_logged(&pool, "test_2831_seed")
+            .await
+            .unwrap();
+        let inserted =
+            crate::materializer::retry_queue::seed_refresh_tag_usage_count_obligation_tx(
+                &mut tx, tag,
+            )
+            .await
+            .unwrap();
+        assert!(inserted, "a fresh durable obligation row must be inserted");
+        tx.commit().await.unwrap();
+        // Mirror the handler's post-commit gauge bump so the consumer's
+        // gauge-gated `clear_on_success` fast-path actually clears the row.
+        mat.metrics().note_retry_row_inserted();
+    }
+
+    // Precondition: usage_count is stale — no tags_cache row yet.
+    let stale = sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+        .bind(tag)
+        .fetch_optional(&pool)
+        .await
+        .unwrap();
+    assert!(
+        stale.is_none(),
+        "precondition: usage_count is stale (a refresh is owed but was lost)"
+    );
+
+    // The durable obligation must be present and due for the sweeper.
+    let owed = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+    )
+    .bind(tag)
+    .bind("RefreshTagUsageCount")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        owed, 1,
+        "the durable RefreshTagUsageCount obligation survived"
+    );
+
+    // --- Prove the retry-of-reindex is a NO-OP for usage_count: the ref row
+    // already exists, so the reindex diff is empty and cannot heal the count.
+    // This is the #2831 hole the durable obligation closes. ---
+    let changed = crate::cache::reindex_block_tag_refs(&pool, src)
+        .await
+        .unwrap();
+    assert!(
+        changed.is_empty(),
+        "the retry's reindex diff is empty — reindex alone cannot heal usage_count (#2831)"
+    );
+    let after_reindex =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert!(
+        after_reindex.is_none(),
+        "reindex retry did NOT heal usage_count — the obligation is the only recovery path"
+    );
+
+    // --- Recovery: the sweeper re-enqueues the persisted obligation onto the
+    // background queue; draining it heals usage_count to the correct count. ---
+    let re_enqueued = crate::materializer::retry_queue::sweep_once(&pool, &pool, &mat)
+        .await
+        .unwrap();
+    assert_eq!(
+        re_enqueued, 1,
+        "the sweeper re-enqueues the durable RefreshTagUsageCount obligation"
+    );
+    mat.flush_background().await.unwrap();
+
+    let healed =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        healed, 1,
+        "the durable obligation drove the refresh to completion: usage_count healed to the \
+         DISTINCT-live-block count (#2831)"
+    );
+
+    // The obligation is cleared on durable success (retry is no longer owed).
+    let remaining = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+    )
+    .bind(tag)
+    .bind("RefreshTagUsageCount")
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "the durable obligation is cleared once the refresh durably succeeds"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_edit_block_enqueues_reindex_block_tag_refs() {
     // Verifies that the edit_block dispatch arm enqueues
