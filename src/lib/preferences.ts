@@ -622,6 +622,38 @@ const FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE: PreferenceDefinition<boolean> 
   serialize: () => '1',
 }
 
+/**
+ * Animation-speed choices for the global motion knob
+ * (`src/hooks/useMotionPreference.ts`, surfaced in AppearanceTab).
+ *
+ * - `'system'` — DEFAULT. Write no inline `--motion-scale`; the CSS
+ *   `prefers-reduced-motion` media query governs (full motion normally, none
+ *   when the OS asks for reduced motion). Nothing changes for existing users.
+ * - `'full'` — force full-speed motion (scale 1), overriding the OS flag.
+ * - `'fast'` — half-duration motion (scale 0.5) for a snappier feel.
+ * - `'off'` — instant, no motion (scale 0 + `data-motion='off'`).
+ */
+export type MotionPreference = 'system' | 'full' | 'fast' | 'off'
+
+const ALL_MOTION_PREFERENCES: ReadonlyArray<MotionPreference> = ['system', 'full', 'fast', 'off']
+
+/**
+ * `agaric-motion` — global animation-speed knob
+ * (`src/hooks/useMotionPreference.ts`). Device-scoped bare-string value
+ * validated against the allowlist; unknown values reset to `'system'`.
+ */
+const MOTION_PREFERENCE: PreferenceDefinition<MotionPreference> = {
+  key: 'agaric-motion',
+  scope: 'device',
+  version: 1,
+  defaultValue: 'system',
+  parse: (raw) => {
+    if ((ALL_MOTION_PREFERENCES as readonly string[]).includes(raw)) return raw as MotionPreference
+    throw new Error(`invalid motion preference: ${raw}`)
+  },
+  serialize: identity,
+}
+
 /** `agaric-font-size` — editor/UI font size (`src/components/settings/AppearanceTab.tsx`). */
 const FONT_SIZE_PREFERENCE: PreferenceDefinition<'small' | 'medium' | 'large'> = {
   key: 'agaric-font-size',
@@ -815,6 +847,7 @@ export const PREFERENCES = {
   quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
   sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
   filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,
+  motion: MOTION_PREFERENCE,
   fontSize: FONT_SIZE_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,

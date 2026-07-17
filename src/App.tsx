@@ -25,6 +25,7 @@ import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
 import { useIsMobile } from '@/hooks/useIsMobile'
+import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
 import { usePrimaryFocusRegistry } from '@/hooks/usePrimaryFocus'
 import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
@@ -141,6 +142,9 @@ function App() {
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
+  // Apply the global animation-speed preference app-wide from boot (the Settings
+  // Select mounts the same hook for the control). #animation-speed-tuning
+  useMotionPreference()
   const { syncing, syncAll } = useSyncTrigger()
   // Mutual-exclusion gates for the App-level search overlays. When
   // the mobile search sheet is showing a given segment it mounts the

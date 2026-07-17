@@ -53,6 +53,13 @@ export const settings: Record<string, string> = {
   'settings.fontSizeSmall': 'Small',
   'settings.fontSizeMedium': 'Medium',
   'settings.fontSizeLarge': 'Large',
+  'settings.motionLabel': 'Animations',
+  'settings.motionHelp':
+    'One knob for animation speed. System follows your OS reduced-motion setting, Fast makes everything snappier, and Off disables animations.',
+  'settings.motionSystem': 'System',
+  'settings.motionFull': 'Full',
+  'settings.motionFast': 'Fast',
+  'settings.motionOff': 'Off',
   'settings.tabKeyboard': 'Keyboard',
   'settings.quickCapture.label': 'Quick capture shortcut',
   'settings.quickCapture.description':

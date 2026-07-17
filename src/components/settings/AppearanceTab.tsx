@@ -25,6 +25,7 @@ import {
   type JournalDateFormat,
   useJournalDateFormat,
 } from '@/hooks/useJournalDateFormat'
+import { type MotionPreference, useMotionPreference } from '@/hooks/useMotionPreference'
 import { type ThemePreference, useTheme } from '@/hooks/useTheme'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
@@ -83,6 +84,7 @@ function selectToTheme(value: string): ThemePreference {
 export function AppearanceTab(): React.ReactElement {
   const { t } = useTranslation()
   const { theme, setTheme } = useTheme()
+  const { motion, setMotion } = useMotionPreference()
   const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
   // Surface the previously hidden week-start preference. The hook
   // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
@@ -109,6 +111,13 @@ export function AppearanceTab(): React.ReactElement {
     setFontSize(size)
     writePreference(PREFERENCES.fontSize, size)
   }, [])
+
+  const handleMotionChange = useCallback(
+    (value: string) => {
+      setMotion(value as MotionPreference)
+    },
+    [setMotion],
+  )
 
   // Week-start coercion. Select values are strings; the hook
   // and underlying localStorage key are typed `0 | 1`. We accept only
@@ -175,6 +184,27 @@ export function AppearanceTab(): React.ReactElement {
             <SelectItem value="small">{t('settings.fontSizeSmall')}</SelectItem>
             <SelectItem value="medium">{t('settings.fontSizeMedium')}</SelectItem>
             <SelectItem value="large">{t('settings.fontSizeLarge')}</SelectItem>
+          </SelectContent>
+        </Select>
+      </FormField>
+
+      {/* Animation speed. A single knob over the design-system `--motion-scale`
+          token (see `useMotionPreference`): System follows the OS reduced-motion
+          setting, Fast halves every duration, Off disables animations. */}
+      <FormField
+        label={t('settings.motionLabel')}
+        htmlFor="motion-select"
+        description={t('settings.motionHelp')}
+      >
+        <Select value={motion} onValueChange={handleMotionChange}>
+          <SelectTrigger id="motion-select" aria-label={t('settings.motionLabel')}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="system">{t('settings.motionSystem')}</SelectItem>
+            <SelectItem value="full">{t('settings.motionFull')}</SelectItem>
+            <SelectItem value="fast">{t('settings.motionFast')}</SelectItem>
+            <SelectItem value="off">{t('settings.motionOff')}</SelectItem>
           </SelectContent>
         </Select>
       </FormField>
