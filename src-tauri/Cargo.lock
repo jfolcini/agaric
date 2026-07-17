@@ -21,6 +21,7 @@ dependencies = [
  "agaric-core",
  "agaric-engine",
  "agaric-store",
+ "agaric-sync",
  "aho-corasick",
  "async-trait",
  "base64 0.22.1",
@@ -81,7 +82,6 @@ dependencies = [
  "tracing-subscriber",
  "ulid",
  "url",
- "uuid",
  "wiremock",
  "x509-parser",
  "zstd",
@@ -161,6 +161,16 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "ulid",
+]
+
+[[package]]
+name = "agaric-sync"
+version = "0.1.0"
+dependencies = [
+ "agaric-core",
+ "tempfile",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -4,8 +4,8 @@
 //! dependencies): the shared [`LifecycleHooks`] flag/wake pair and the
 //! pure [`derive_app_state`] discrimination logic are consumed by lower
 //! layers (the sync daemon, the materializer) as well as the app shell.
-//! The app-layer Tauri managed-state wrapper lives in
-//! [`crate::lifecycle`], which depends *down* on this module. Keeping the
+//! The app-layer Tauri managed-state wrapper lives in the app crate's
+//! `lifecycle` module, which depends *down* on this module. Keeping the
 //! primitive here means the sync/store layers gate periodic work on a
 //! foundation type rather than reaching up into app wiring (part of the
 //! layered-workspace split, #2621).
