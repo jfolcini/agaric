@@ -39,7 +39,18 @@ const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 2; // 499
 /// row whose tag gets purged stays (FK ON DELETE CASCADE handles it at
 /// purge time). Soft-deleted source blocks clear their rows as their
 /// content is unreadable under the `WHERE deleted_at IS NULL` filter.
-pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result<(), AppError> {
+///
+/// #2659: returns the set of tag ids whose ref set changed (the symmetric
+/// difference of the block's old and new inline `#[ULID]` targets — i.e.
+/// `to_insert ∪ to_delete`). The `ReindexBlockTagRefs` handler feeds these
+/// into the scoped `refresh_tag_usage_count` (#676) so each affected tag's
+/// `tags_cache.usage_count` is recomputed; this function itself only
+/// rewrites the `block_tag_refs` TABLE and never touches `tags_cache`. An
+/// empty vec means the refs were already correct (no count refresh needed).
+pub async fn reindex_block_tag_refs(
+    pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_reindex").await?;
 
     let row = sqlx::query!(
@@ -94,7 +105,8 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
 
     if to_delete.is_empty() && to_insert.is_empty() {
         // No changes — transaction rolls back on drop (no commit needed).
-        return Ok(());
+        // No tag's usage_count can have shifted, so nothing to refresh.
+        return Ok(Vec::new());
     }
 
     // Batch DELETE/INSERT via `json_each` — one round-trip per
@@ -154,7 +166,17 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
     }
 
     tx.commit().await?;
-    Ok(())
+
+    // #2659: report the changed tags (added ∪ removed) so the caller can
+    // refresh exactly their `usage_count`. Computed AFTER commit but from
+    // the same in-memory diff sets, so it costs nothing extra. A candidate
+    // that turned out not to be a live tag (stray `#[ULID]`, cross-space,
+    // purged) is harmless: `refresh_tag_usage_count` no-ops for it.
+    let changed_tags: Vec<String> = new_targets
+        .symmetric_difference(&old_targets)
+        .cloned()
+        .collect();
+    Ok(changed_tags)
 }
 
 /// Read/write split variant of [`reindex_block_tag_refs`].
@@ -162,11 +184,14 @@ pub async fn reindex_block_tag_refs(pool: &SqlitePool, block_id: &str) -> Result
 /// Reads content and existing rows from `read_pool`; diffs and applies
 /// inserts/deletes on `write_pool`. Matches the shape of
 /// [`super::reindex_block_links_split`].
+///
+/// #2659: returns the changed tag ids (symmetric difference of old/new
+/// targets), same contract as [`reindex_block_tag_refs`].
 pub async fn reindex_block_tag_refs_split(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
     block_id: &str,
-) -> Result<(), AppError> {
+) -> Result<Vec<String>, AppError> {
     // Read phase from read_pool.
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
@@ -210,7 +235,7 @@ pub async fn reindex_block_tag_refs_split(
     };
 
     if to_delete.is_empty() && to_insert.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     // Write phase on write_pool.
@@ -265,7 +290,14 @@ pub async fn reindex_block_tag_refs_split(
     }
 
     tx.commit().await?;
-    Ok(())
+
+    // #2659: same as the single-pool variant — report changed tags so the
+    // handler can refresh their `usage_count`.
+    let changed_tags: Vec<String> = new_targets
+        .symmetric_difference(&old_targets)
+        .cloned()
+        .collect();
+    Ok(changed_tags)
 }
 
 // ---------------------------------------------------------------------------
