@@ -780,7 +780,14 @@ function SortableBlockInner({
   // are scoped to the grip handle button only (`BlockGutterControls`), which
   // explicitly opts itself OUT of native drag (`draggable={false}`) so the
   // two systems never race on the same element.
-  const rescheduleDragEnabled = useRescheduleDragSourceEnabled() && !isTouchDevice
+  // #2825 — reschedule-by-drag sets a `due_date`, which is only meaningful on
+  // a task block. Require `todoState` (non-null/undefined) so plain text /
+  // heading rows stay reorder-only and can't be dragged into acquiring a due
+  // date they have no field for. A block with a `dueDate` but no `todoState`
+  // is not possible today (due dates are task metadata), so this predicate
+  // doesn't need to special-case that combination.
+  const rescheduleDragEnabled =
+    useRescheduleDragSourceEnabled() && !isTouchDevice && todoState != null
   const handleRescheduleDragStart = useCallback(
     (e: React.DragEvent<HTMLDivElement>) => {
       e.dataTransfer.setData(RESCHEDULE_DRAG_TYPE, blockId)
