@@ -1,7 +1,12 @@
 use super::*;
 use crate::db::{ReadPool, init_pool};
 use crate::hash::compute_op_hash;
-use crate::op_log::append_local_op_at;
+// #2621 (dag inversion): the op / op_log names these fixtures build on used to
+// arrive through `super::*` from the pre-inversion `dag.rs` production imports.
+// The core now lives in `agaric_engine::dag`, so import the store types the
+// tests construct directly from their `crate::…` re-export paths.
+use crate::op::*;
+use crate::op_log::{OpRecord, append_local_op_at, get_op_by_seq};
 use crate::ulid::BlockId;
 use std::path::PathBuf;
 use tempfile::TempDir;
