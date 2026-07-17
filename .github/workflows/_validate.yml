@@ -1232,8 +1232,14 @@ jobs:
         # count:N/2` is nextest's stable hash partition (forwarded through
         # `cargo llvm-cov nextest`). `--no-fail-fast` mirrors plain nextest so
         # the coverage map shape is pass/fail-independent.
+        #
+        # `--workspace` (#2817): without it, only the ROOT package's tests ran
+        # under llvm-cov — and since this is CI's only Rust unit/integration
+        # job, the #2621 library crates' suites (agaric-core/store/engine)
+        # were silently not executing in CI at all, and every module wave
+        # showed a phantom coverage drop as its tests left the measured set.
         run: |
-          cargo llvm-cov nextest --profile ci --no-fail-fast \
+          cargo llvm-cov nextest --workspace --profile ci --no-fail-fast \
             --partition count:${{ matrix.shard }}/2 --no-report
           cargo llvm-cov report --lcov \
             --output-path coverage-${{ matrix.shard }}.lcov
@@ -1248,7 +1254,7 @@ jobs:
         # adoption grows, which is why the convention is pure helpers only.
         if: matrix.shard == 1
         working-directory: src-tauri
-        run: cargo test --doc
+        run: cargo test --doc --workspace
 
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
