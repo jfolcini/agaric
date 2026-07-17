@@ -120,6 +120,14 @@ pub mod query;
 // the app crate and reaches these via the re-exports.
 pub mod soft_delete;
 
+// #2621 (THE INVERSION): cross-space reference validation. Store-clean —
+// blocks/spaces SQL over `cache` (regex REs), `db` (`MAX_SQL_PARAMS`), `space`
+// (`resolve_block_space`), and `op` (`SPACE_PROPERTY_KEY`); no engine/loro/Tauri
+// deps. The app re-exports it (`pub use agaric_store::cross_space_validation;`)
+// so every existing `crate::spaces::cross_space_validation::…` path resolves
+// unchanged.
+pub mod cross_space_validation;
+
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4

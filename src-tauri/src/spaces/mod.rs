@@ -16,7 +16,10 @@
 //! the hash preimage) but the derived-state row converges on the ULID.
 
 pub mod bootstrap;
-pub mod cross_space_validation;
+// #2621 (THE INVERSION): `cross_space_validation` is store-clean blocks/spaces
+// SQL, so it moved DOWN into `agaric-store`. This re-export keeps every existing
+// `crate::spaces::cross_space_validation::…` call site compiling unchanged.
+pub use agaric_store::cross_space_validation;
 
 pub use bootstrap::{
     MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
