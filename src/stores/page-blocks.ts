@@ -181,22 +181,34 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // #2850 — the ONLY seam a speculative hover/focus prefetch gets:
         // if a live one-shot prefetch promise was parked for this exact
         // `(spaceId, rootParentId)`, consume (and thereby delete) it instead
-        // of firing a fresh IPC. This is single-consumption — a later
-        // reload (sync/undo/blocks:changed) always finds the entry gone (it
-        // was just consumed, or it expired) and falls through to a fresh
-        // fetch. EVERYTHING below this line is unchanged and runs
-        // identically regardless of which source produced `subtree`: the
-        // `#753` generation guard, focused-block preservation, the #798
-        // selection prune, and the `PageNotInSpace` rejection/heal in the
-        // catch block all still see the exact same snapshot (or rejection)
-        // they would have seen from a fresh `loadPageSubtree` call.
+        // of firing a fresh IPC.
+        //
+        // CRITICAL — consume ONLY on the initial navigation load
+        // (`generation === 1`). `load()` is ALSO the reload path driven by
+        // sync/remote `blocks:changed` (`useSyncEvents`), undo/redo
+        // (`useUndoShortcuts`), header ops, and post-move. A prefetch can be
+        // parked for the CURRENTLY-OPEN page (palette-highlight its recents
+        // row then Escape — which cancels only the dwell timer, not an
+        // already-fired prefetch; a viewport/hover auto-prefetch of the open
+        // row; a self-link), and it lives up to `PREFETCH_TTL_MS`. Serving
+        // that pre-mutation snapshot to a reload fired precisely to show the
+        // NEW state (e.g. Ctrl+Z, or a just-synced remote edit) would render
+        // stale content for one cycle. Gating on `generation === 1` (the
+        // store's first-ever real load, i.e. genuine navigation — reloads
+        // reuse the store at generation >= 2) confines the handoff to the
+        // first-open latency it was designed for; a prefetch left parked for
+        // the open page simply expires unconsumed. EVERYTHING below this line
+        // is unchanged and runs identically regardless of which source
+        // produced `subtree`: the `#753` generation guard, focused-block
+        // preservation, the #798 selection prune, and the `PageNotInSpace`
+        // rejection/heal in the catch block.
         // #2110 (M4) — trace the page-open data load. `loadPageSubtree`
         // dispatches its IPC synchronously inside the callback, so the backend
         // command + SQLite/materializer spans parent under this interaction.
         const subtree = await traceInteraction(
           INTERACTIONS.PAGE_OPEN,
           () =>
-            consumePrefetchedPageSubtree(spaceId, rootParentId) ??
+            (generation === 1 ? consumePrefetchedPageSubtree(spaceId, rootParentId) : null) ??
             loadPageSubtree(rootParentId, spaceId),
         )
         const allBlocks = subtree.blocks
