@@ -100,8 +100,16 @@ pub struct ParseOutput {
 /// deliberately strips from the YAML frontmatter
 /// (`export_page_markdown_inner`, #384). The import path filters the same
 /// keys so a round-tripped file can never re-import a space-membership,
-/// template, or lifecycle marker as a user-visible page property. Kept in
-/// sync with the `NOT IN (...)` list in the exporter's frontmatter query.
+/// template, or lifecycle marker as a user-visible page property.
+///
+/// Mostly mirrors the `NOT IN (...)` list in the exporter's frontmatter query,
+/// with ONE deliberate divergence (#2722): the exporter also excludes
+/// `aliases`/`tags` from its `block_properties` scan, but they are NOT filtered
+/// here — they must reach the importer's frontmatter apply loop so it can
+/// INTERCEPT them and write real `page_aliases` rows / `block_tags`
+/// associations. Filtering them here (like the reserved keys) would silently
+/// drop the semantic round-trip, so they are handled by interception, not
+/// exclusion.
 const FRONTMATTER_RESERVED_KEYS: &[&str] = &[
     "space",
     "is_space",

@@ -231,6 +231,31 @@ pub(crate) use crate::pagination::ensure_batch_within_cap;
 /// bytes-based attachment ingest, which re-checks against the same constant.
 pub(crate) const MAX_ATTACHMENT_SIZE: i64 = 50 * 1024 * 1024;
 
+/// Maximum AGGREGATE size (bytes) of ALL attachment bytes accepted in a single
+/// `import_markdown` call (#2724).
+///
+/// The per-file [`MAX_ATTACHMENT_SIZE`] (50 MB) cap bounds ONE attachment, but
+/// the importer receives the whole `Vec<VaultFile>` over IPC with every
+/// referenced file's bytes resident in memory at once and retains it for the
+/// entire chunked import (attachments are ingested only after the writer tx
+/// commits). With no aggregate ceiling a vault referencing hundreds of large
+/// assets could drive the process toward OOM before the per-file guard — which
+/// runs per ingest — ever fires. 512 MB ≈ 10 files at the 50 MB per-file max,
+/// or many thousands of typical sub-MB screenshots — comfortably beyond any
+/// realistic single-import working set while staying an order of magnitude
+/// under the memory a desktop build can absorb transiently. Enforced ONCE at
+/// the command boundary (before any ingest), so an over-budget import is
+/// rejected up front rather than partially applied.
+pub(crate) const MAX_TOTAL_ATTACHMENT_BYTES: i64 = 512 * 1024 * 1024;
+
+/// Maximum NUMBER of attachment files accepted in a single `import_markdown`
+/// call (#2724). Independent of the byte budget: a pathological payload of very
+/// many tiny files still costs per-file ingest work (a fresh writer tx, blake3
+/// hash, disk write) and unbounded `Vec` capacity even while well under the
+/// byte cap. 10_000 comfortably exceeds any real vault's referenced-asset set
+/// for one import while bounding the worst case.
+pub(crate) const MAX_ATTACHMENT_FILE_COUNT: usize = 10_000;
+
 /// Allowed MIME type patterns for attachments.
 /// Patterns ending with `/*` match any subtype under that top-level type.
 const ALLOWED_MIME_PATTERNS: &[&str] = &[
