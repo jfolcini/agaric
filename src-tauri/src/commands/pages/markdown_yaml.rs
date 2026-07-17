@@ -98,6 +98,99 @@ pub(crate) fn yaml_flow_sequence(items: &[String]) -> String {
     format!("[{}]", inner.join(", "))
 }
 
+/// `true` when a single-line frontmatter scalar `value` is unambiguously a
+/// plain string that re-imports (via `import::parse_frontmatter`) to itself
+/// when emitted verbatim as `key: value` — i.e. none of the importer's
+/// value transforms (leading/trailing `trim`, one-layer quote stripping via
+/// `strip_yaml_quotes`, block-scalar / flow-sequence / flow-mapping detection)
+/// would alter it. Anything that fails these tests is emitted quoted or as a
+/// block scalar by [`yaml_scalar_emit`]. Conservative by design: a value it
+/// rejects is merely quoted (never mis-emitted), so over-rejection is harmless.
+fn yaml_scalar_is_plain_safe(value: &str) -> bool {
+    !value.is_empty()
+        // Surrounding whitespace is eaten by the importer's `trim`.
+        && value == value.trim()
+        // A leading YAML indicator changes how the value re-parses (block
+        // scalar `|`/`>`, flow `[`/`{`, quote, comment, anchor, tag, the
+        // `-`/`?`/`:` document/mapping indicators, …).
+        && !value.starts_with([
+            '-', '?', ':', ',', '[', ']', '{', '}', '#', '&', '*', '!', '|', '>', '\'', '"',
+            '%', '@', '`', ' ',
+        ])
+        // A quote char anywhere risks a one-layer strip; a `: ` reads oddly to
+        // a human and (defensively) is quoted; control chars force quoting.
+        && !value.contains(['"', '\''])
+        && !value.contains(": ")
+        && !value.chars().any(char::is_control)
+}
+
+/// #2715 — emit one frontmatter `key: value` line (terminated with `\n`) that
+/// re-imports to the byte-identical `value`. Three shapes, in agreement with
+/// the import-side `parse_frontmatter` grammar:
+///
+/// * `value` contains a newline → a YAML **literal block scalar** (`key: |`
+///   then each line indented two spaces). `parse_frontmatter` re-joins the
+///   literal-block lines with `\n` after stripping the uniform two-space
+///   content indent, recovering `value` exactly. This is the shape that stops
+///   an embedded `\n---` from breaking out of the frontmatter fence, or an
+///   embedded `\nkey: v` from injecting a spurious property (#2715).
+/// * single-line but not [`yaml_scalar_is_plain_safe`] → a **double-quoted**
+///   scalar, emitted WITHOUT escaping the interior. The import-side inverse
+///   ([`strip_yaml_quotes`](agaric_core::text_utils::strip_yaml_quotes))
+///   removes exactly the outer quote pair and decodes nothing, so a verbatim
+///   double-wrapped value round-trips for ANY single-line interior — colons,
+///   quotes, backslashes, a leading `---`, surrounding spaces.
+/// * otherwise → verbatim `key: value`.
+///
+/// NOTE (reconciliation): the importer's block-scalar reader auto-detects the
+/// content indent from the FIRST continuation line and its continuation branch
+/// cannot preserve leading whitespace on a value's first line. Values whose
+/// first line begins with whitespace therefore do not round-trip their leading
+/// whitespace; such values are pathological for a page property and are not a
+/// regression target here.
+pub(crate) fn yaml_scalar_emit(key: &str, value: &str) -> String {
+    if value.contains('\n') {
+        let mut out = format!("{key}: |\n");
+        for line in value.split('\n') {
+            out.push_str("  ");
+            out.push_str(line);
+            out.push('\n');
+        }
+        out
+    } else if yaml_scalar_is_plain_safe(value) {
+        format!("{key}: {value}\n")
+    } else {
+        format!("{key}: \"{value}\"\n")
+    }
+}
+
+/// `true` when `line` (a `key:: value` candidate) matches the importer's
+/// property-line shape: a `:: `-separated pair whose key matches the same
+/// `^[A-Za-z0-9_-]{1,64}$` alphabet `import::is_property_key` enforces. Kept in
+/// lockstep with that importer predicate so the export escape and the import
+/// classification agree.
+fn looks_like_property_line(line: &str) -> bool {
+    line.split_once(":: ").is_some_and(|(k, _)| {
+        let k = k.trim();
+        !k.is_empty()
+            && k.len() <= 64
+            && k.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    })
+}
+
+/// #2716/#2725 — `true` when `line`, taken verbatim as a block-content
+/// CONTINUATION line, would be MISCLASSIFIED by the importer's line grammar:
+/// it opens a list bullet (`- ` / a bare `-`) or matches the `key:: value`
+/// property shape. The exporter backslash-escapes such a continuation line
+/// (outside code fences) so `import::parse_logseq_markdown` folds it as literal
+/// continuation instead of spawning a new block / property; the importer's
+/// continuation branch reverses the escape. Shared by the two export-side bugs.
+pub(crate) fn content_line_is_ambiguous(line: &str) -> bool {
+    let t = line.trim_start();
+    t == "-" || t.starts_with("- ") || looks_like_property_line(t)
+}
+
 // #2621 (wave E4-import) — the `strip_yaml_quotes` frontmatter helper moved
 // into `agaric_core::text_utils` (a pure string helper) so the query-free
 // import parser can reach it without depending on the app crate. The remaining
@@ -174,6 +267,58 @@ mod tests {
         let emitted = yaml_flow_item("Beta, Inc");
         assert_eq!(emitted, "\"Beta, Inc\"");
         assert_eq!(strip_yaml_quotes(&emitted), "Beta, Inc");
+    }
+
+    /// #2715 — `yaml_scalar_emit` produces a shape that `parse_frontmatter`
+    /// re-imports byte-identically. Here we assert the EMITTED text (the DB
+    /// round-trip is pinned in `page_cmd_tests`), plus the quote/unquote
+    /// symmetry for single-line ambiguous values.
+    #[test]
+    fn yaml_scalar_emit_shapes_2715() {
+        // Plain value: emitted verbatim.
+        assert_eq!(yaml_scalar_emit("k", "plain"), "k: plain\n");
+        assert_eq!(yaml_scalar_emit("k", "2026-03-04"), "k: 2026-03-04\n");
+        assert_eq!(yaml_scalar_emit("k", "true"), "k: true\n");
+        assert_eq!(yaml_scalar_emit("k", "Linked Target"), "k: Linked Target\n");
+
+        // Colon-bearing → double-quoted; `strip_yaml_quotes` recovers it.
+        let colon = yaml_scalar_emit("k", "ratio 3: 2");
+        assert_eq!(colon, "k: \"ratio 3: 2\"\n");
+        assert_eq!(strip_yaml_quotes("\"ratio 3: 2\""), "ratio 3: 2");
+
+        // Leading `---` → double-quoted (a would-be document/fence marker).
+        let dashes = yaml_scalar_emit("k", "---");
+        assert_eq!(dashes, "k: \"---\"\n");
+        assert_eq!(strip_yaml_quotes("\"---\""), "---");
+
+        // Quote-bearing → double-wrapped WITHOUT interior escaping; the
+        // one-layer `strip_yaml_quotes` inverse recovers the exact interior.
+        let quoted = yaml_scalar_emit("k", "he said \"hi\"");
+        assert_eq!(quoted, "k: \"he said \"hi\"\"\n");
+        assert_eq!(strip_yaml_quotes("\"he said \"hi\"\""), "he said \"hi\"");
+
+        // Newline-bearing → literal block scalar; each line indented two
+        // spaces, which `parse_frontmatter` strips + re-joins with `\n`.
+        let multi = yaml_scalar_emit("k", "line one\n---\ntail: end");
+        assert_eq!(multi, "k: |\n  line one\n  ---\n  tail: end\n");
+    }
+
+    /// #2716 — `content_line_is_ambiguous` flags exactly the continuation
+    /// lines the importer would misclassify (bullets + `key:: value`
+    /// properties), and nothing else.
+    #[test]
+    fn content_line_is_ambiguous_2716() {
+        assert!(content_line_is_ambiguous("- looks like a bullet"));
+        assert!(content_line_is_ambiguous("-"));
+        assert!(content_line_is_ambiguous("  - indented bullet"));
+        assert!(content_line_is_ambiguous("key:: value"));
+        assert!(content_line_is_ambiguous("todo_state:: TODO"));
+        // Not ambiguous: plain prose, a mid-line colon-colon that isn't a
+        // valid key, an already-escaped bullet.
+        assert!(!content_line_is_ambiguous("just prose"));
+        assert!(!content_line_is_ambiguous("see http://x :: y")); // key has spaces
+        assert!(!content_line_is_ambiguous("\\- already escaped"));
+        assert!(!content_line_is_ambiguous("dash-in-middle - here"));
     }
 
     /// #1920 — `yaml_flow_sequence` joins quoted/bare items with `, ` inside

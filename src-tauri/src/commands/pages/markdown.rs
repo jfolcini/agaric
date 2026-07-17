@@ -884,7 +884,7 @@ pub async fn export_page_markdown_inner(
     // *any* string. Legacy scalar property values keep their verbatim
     // emission below. #1920 — the emit helpers now live in `markdown_yaml`
     // (symmetric with the import-side `strip_yaml_quotes`).
-    use super::markdown_yaml::yaml_flow_sequence;
+    use super::markdown_yaml::{yaml_flow_sequence, yaml_scalar_emit};
 
     if !properties.is_empty() || !aliases.is_empty() || !tag_names_fm.is_empty() {
         output.push_str("---\n");
@@ -918,7 +918,13 @@ pub async fn export_page_markdown_inner(
             } else {
                 ""
             };
-            output.push_str(&format!("{}: {value}\n", prop.key));
+            // #2715 — route the scalar through the YAML emit helper so a value
+            // carrying a newline, a leading `---`, quotes, or other
+            // YAML-significant content is quoted / block-scalar-encoded instead
+            // of written verbatim (which could inject keys or break out of the
+            // frontmatter fence). `yaml_scalar_emit` is symmetric with the
+            // import-side `parse_frontmatter` re-parse.
+            output.push_str(&yaml_scalar_emit(&prop.key, value));
         }
         output.push_str("---\n\n");
     }
@@ -986,7 +992,7 @@ pub async fn export_page_markdown_inner(
         let indent = "  ".repeat(depth);
         let content = block.content.as_deref().unwrap_or("");
         let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
-        output.push_str(&format!("{indent}- {resolved}\n"));
+        push_block_bullet(&mut output, &indent, &resolved);
 
         // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
         // dates) lives in the reserved `blocks` columns, not in
@@ -1031,7 +1037,7 @@ pub async fn export_page_markdown_inner(
         }
         let content = block.content.as_deref().unwrap_or("");
         let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
-        output.push_str(&format!("- {resolved}\n"));
+        push_block_bullet(&mut output, "", &resolved);
         for (key, value) in [
             ("todo_state", block.todo_state.as_deref()),
             ("priority", block.priority.as_deref()),
@@ -1045,6 +1051,55 @@ pub async fn export_page_markdown_inner(
     }
 
     Ok(output)
+}
+
+/// `true` when `line` is a fenced-code delimiter (three-or-more backticks),
+/// tolerating a leading `- ` bullet marker — mirrors the fence probe in
+/// `import::parse_logseq_markdown` so the exporter and importer agree on where
+/// a code fence opens/closes. Used by [`push_block_bullet`] to suppress the
+/// continuation-line escape inside code (#2716/#2725).
+fn is_fence_delimiter(line: &str) -> bool {
+    let t = line.trim_start();
+    t.strip_prefix("- ").unwrap_or(t).starts_with("```")
+}
+
+/// #2716 — append a block's (already ULID-resolved) `content` as a Logseq
+/// bullet. The first line is written after the `- ` marker; every subsequent
+/// line is a CONTINUATION line indented two spaces under the bullet (never
+/// re-prefixed with `- `), which `import::parse_logseq_markdown` folds back
+/// into the same block. A continuation line that would otherwise be
+/// misclassified on re-import — it opens a bullet or matches the `key:: value`
+/// property shape ([`content_line_is_ambiguous`]) — is backslash-escaped so the
+/// importer's continuation branch keeps it literal (and reverses the escape).
+///
+/// Lines inside a fenced code block (```` ``` ````) are emitted verbatim: the
+/// importer's #2725 fence guard folds them without an escape, and code must not
+/// gain stray backslashes.
+fn push_block_bullet(output: &mut String, indent: &str, resolved: &str) {
+    use super::markdown_yaml::content_line_is_ambiguous;
+
+    let mut lines = resolved.split('\n');
+    let first = lines.next().unwrap_or("");
+    output.push_str(indent);
+    output.push_str("- ");
+    output.push_str(first);
+    output.push('\n');
+
+    // The first line can itself open a fence (`- ```rust`); track the state so
+    // continuation lines inside code are emitted verbatim.
+    let mut in_fence = is_fence_delimiter(first);
+    let cont_indent = format!("{indent}  ");
+    for line in lines {
+        output.push_str(&cont_indent);
+        if !in_fence && content_line_is_ambiguous(line) {
+            output.push('\\');
+        }
+        output.push_str(line);
+        output.push('\n');
+        if is_fence_delimiter(line) {
+            in_fence = !in_fence;
+        }
+    }
 }
 
 /// #2724 — count how many attachment INGEST ATTEMPTS will read each vault file,
