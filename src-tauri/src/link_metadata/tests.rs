@@ -5,8 +5,8 @@ use super::html_parser::{
     extract_domain, extract_meta_refresh_url, extract_origin, resolve_url, truncate_str,
 };
 use super::{
-    LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached, read_body_limited,
-    upsert,
+    LinkMetadata, MAX_BODY_SIZE, cleanup_stale, fetch_metadata, get_cached, is_blocked_ip,
+    read_body_limited, upsert,
 };
 use crate::db::init_pool;
 use crate::db::now_ms;
@@ -1236,4 +1236,240 @@ async fn redirected_error_result_cache_hits_on_second_lookup() {
         .expect("second lookup by requested url must be a cache hit (#628)");
     assert!(cached.auth_required, "auth flag must be served from cache");
     assert_eq!(cached.url, requested);
+}
+
+// ======================================================================
+// #2661 — SSRF + IP-leak protection
+//
+// `fetch_metadata` fires automatically on link hover, including links in
+// synced / pasted content the user never authored. Without guards it
+// beacons the user's IP to an arbitrary host and can probe loopback /
+// LAN / cloud-metadata services from the desktop process. These tests
+// pin the `is_blocked_ip` classifier, the scheme allow-list, and the
+// literal-private-IP up-front reject.
+// ======================================================================
+
+use std::net::IpAddr;
+
+/// Parse an IP literal for the tests. Panics on a bad literal (test-only).
+fn ip(s: &str) -> IpAddr {
+    s.parse().expect("test IP literal must parse")
+}
+
+#[test]
+fn is_blocked_ip_blocks_loopback() {
+    assert!(is_blocked_ip(ip("127.0.0.1")), "127.0.0.1 loopback");
+    assert!(is_blocked_ip(ip("127.255.255.254")), "127/8 loopback");
+    assert!(is_blocked_ip(ip("::1")), "::1 IPv6 loopback");
+}
+
+#[test]
+fn is_blocked_ip_blocks_rfc1918_private() {
+    assert!(is_blocked_ip(ip("10.0.0.1")), "10/8 private");
+    assert!(is_blocked_ip(ip("10.255.255.255")), "10/8 private");
+    assert!(is_blocked_ip(ip("172.16.0.1")), "172.16/12 private");
+    assert!(is_blocked_ip(ip("172.31.255.255")), "172.16/12 private");
+    assert!(is_blocked_ip(ip("192.168.0.1")), "192.168/16 private");
+    assert!(is_blocked_ip(ip("192.168.1.1")), "192.168/16 private");
+}
+
+#[test]
+fn is_blocked_ip_blocks_link_local_and_cloud_metadata() {
+    assert!(is_blocked_ip(ip("169.254.0.1")), "169.254/16 link-local");
+    assert!(
+        is_blocked_ip(ip("169.254.169.254")),
+        "169.254.169.254 cloud-metadata endpoint MUST be blocked"
+    );
+    assert!(is_blocked_ip(ip("fe80::1")), "fe80::/10 IPv6 link-local");
+}
+
+#[test]
+fn is_blocked_ip_blocks_ula_ipv6() {
+    assert!(is_blocked_ip(ip("fc00::1")), "fc00::/7 unique-local");
+    assert!(is_blocked_ip(ip("fd00::1")), "fd00::/8 unique-local");
+    assert!(
+        is_blocked_ip(ip("fdff:ffff::1")),
+        "upper end of fc00::/7 unique-local"
+    );
+}
+
+#[test]
+fn is_blocked_ip_blocks_unspecified() {
+    assert!(is_blocked_ip(ip("0.0.0.0")), "0.0.0.0 unspecified");
+    assert!(is_blocked_ip(ip("0.1.2.3")), "0.0.0.0/8 this-network");
+    assert!(is_blocked_ip(ip("::")), ":: IPv6 unspecified");
+}
+
+#[test]
+fn is_blocked_ip_blocks_cgnat() {
+    assert!(is_blocked_ip(ip("100.64.0.1")), "100.64/10 CGNAT");
+    assert!(
+        is_blocked_ip(ip("100.127.255.255")),
+        "100.64/10 CGNAT upper"
+    );
+    // Just outside the CGNAT range: 100.63.x and 100.128.x are public.
+    assert!(!is_blocked_ip(ip("100.63.255.255")), "100.63/x is public");
+    assert!(!is_blocked_ip(ip("100.128.0.1")), "100.128/x is public");
+}
+
+#[test]
+fn is_blocked_ip_blocks_documentation_and_reserved() {
+    assert!(is_blocked_ip(ip("192.0.2.1")), "192.0.2/24 TEST-NET-1");
+    assert!(
+        is_blocked_ip(ip("198.51.100.1")),
+        "198.51.100/24 TEST-NET-2"
+    );
+    assert!(is_blocked_ip(ip("203.0.113.1")), "203.0.113/24 TEST-NET-3");
+    assert!(is_blocked_ip(ip("240.0.0.1")), "240/4 reserved");
+    assert!(
+        is_blocked_ip(ip("255.255.255.255")),
+        "255.255.255.255 broadcast"
+    );
+    assert!(is_blocked_ip(ip("198.18.0.1")), "198.18/15 benchmarking");
+    assert!(is_blocked_ip(ip("192.0.0.1")), "192.0.0/24 protocol assign");
+    assert!(is_blocked_ip(ip("192.88.99.1")), "192.88.99/24 6to4 relay");
+    assert!(is_blocked_ip(ip("2001:db8::1")), "2001:db8::/32 doc IPv6");
+    assert!(is_blocked_ip(ip("224.0.0.1")), "224/4 multicast");
+    assert!(is_blocked_ip(ip("ff02::1")), "ff00::/8 IPv6 multicast");
+}
+
+#[test]
+fn is_blocked_ip_blocks_ipv6_transition_ranges() {
+    // 6to4 (2002::/16): embedded IPv4 is re-checked, so one wrapping a
+    // private/loopback v4 is blocked...
+    assert!(
+        is_blocked_ip(ip("2002:7f00:1::")),
+        "6to4 wrapping 127.0.0.1 must be blocked"
+    );
+    assert!(
+        is_blocked_ip(ip("2002:c0a8:0101::")),
+        "6to4 wrapping 192.168.1.1 must be blocked"
+    );
+    // ...but a 6to4 address wrapping a PUBLIC IPv4 is allowed (policy:
+    // extract + recheck the embedded v4, block only the dangerous ones).
+    assert!(
+        !is_blocked_ip(ip("2002:0808:0808::")),
+        "6to4 wrapping public 8.8.8.8 is allowed (embedded-v4 recheck policy)"
+    );
+
+    // NAT64 (64:ff9b::/96): embedded IPv4 is the low 32 bits, re-checked.
+    assert!(
+        is_blocked_ip(ip("64:ff9b::7f00:1")),
+        "NAT64 wrapping 127.0.0.1 must be blocked"
+    );
+    assert!(
+        is_blocked_ip(ip("64:ff9b::a00:1")),
+        "NAT64 wrapping 10.0.0.1 must be blocked"
+    );
+    // NAT64 local-use prefix 64:ff9b:1::/48, same embedded-v4 rule.
+    assert!(
+        is_blocked_ip(ip("64:ff9b:1::a9fe:a9fe")),
+        "NAT64 local-use wrapping 169.254.169.254 must be blocked"
+    );
+    assert!(
+        !is_blocked_ip(ip("64:ff9b::808:808")),
+        "NAT64 wrapping public 8.8.8.8 is allowed (embedded-v4 recheck policy)"
+    );
+
+    // Teredo (2001::/32): prefix-blocked outright (deprecated; embedded
+    // encoding is fiddly), regardless of the embedded IPv4.
+    assert!(
+        is_blocked_ip(ip("2001::1")),
+        "Teredo 2001::/32 prefix blocked"
+    );
+    assert!(
+        is_blocked_ip(ip("2001:0:4136:e378:8000:63bf:3fff:fdd2")),
+        "a realistic Teredo address is blocked by the /32 prefix"
+    );
+}
+
+#[test]
+fn is_blocked_ip_blocks_ipv4_mapped_bypass() {
+    // A private v4 wrapped as an IPv4-mapped IPv6 address must NOT sneak
+    // through as a "public" v6 address.
+    assert!(
+        is_blocked_ip(ip("::ffff:127.0.0.1")),
+        "IPv4-mapped loopback must be blocked"
+    );
+    assert!(
+        is_blocked_ip(ip("::ffff:169.254.169.254")),
+        "IPv4-mapped cloud-metadata must be blocked"
+    );
+}
+
+#[test]
+fn is_blocked_ip_allows_public_addresses() {
+    assert!(!is_blocked_ip(ip("8.8.8.8")), "8.8.8.8 is public");
+    assert!(!is_blocked_ip(ip("1.1.1.1")), "1.1.1.1 is public");
+    assert!(!is_blocked_ip(ip("93.184.216.34")), "example.com is public");
+    assert!(
+        !is_blocked_ip(ip("2606:4700:4700::1111")),
+        "public IPv6 (Cloudflare) is allowed"
+    );
+    assert!(
+        !is_blocked_ip(ip("2001:4860:4860::8888")),
+        "public IPv6 (Google DNS) is allowed"
+    );
+    // Just outside 172.16/12 (private is 172.16-172.31); 172.32 is public.
+    assert!(!is_blocked_ip(ip("172.32.0.1")), "172.32/x is public");
+    assert!(!is_blocked_ip(ip("172.15.255.255")), "172.15/x is public");
+}
+
+#[tokio::test]
+async fn fetch_metadata_rejects_non_http_schemes() {
+    for bad in ["file:///etc/passwd", "ftp://example.com/x", "gopher://x/1"] {
+        let err = fetch_metadata(bad)
+            .await
+            .expect_err("non-HTTP(S) scheme must be rejected before any network call");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard"),
+            "{bad} must be rejected by the SSRF guard, got: {msg}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn fetch_metadata_rejects_literal_private_ip_hosts() {
+    // NOTE: loopback (127.0.0.1 / ::1) is intentionally NOT tested here.
+    // `is_blocked_ip` (unit-tested above) reports it blocked in production,
+    // but the ENFORCEMENT path relaxes loopback in `#[cfg(test)]` builds so
+    // the wiremock mock servers (bound on 127.0.0.1) can drive the non-SSRF
+    // logic. Every other private / link-local / cloud-metadata range stays
+    // enforced even in tests, which is what this test asserts.
+    for bad in [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://192.168.1.1/",
+        "http://10.0.0.1/",
+        "http://172.16.0.1/",
+        "http://[fd00::1]/",
+    ] {
+        let err = fetch_metadata(bad)
+            .await
+            .expect_err("literal private IP host must be rejected without a live fetch");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("SSRF guard"),
+            "{bad} must be rejected by the SSRF guard, got: {msg}"
+        );
+    }
+}
+
+/// A public-host URL must pass the up-front guard (scheme + literal-IP
+/// checks). We assert the guard ACCEPTS it — we do NOT perform a live
+/// fetch (no real network in the test sandbox); actual connect-time IP
+/// filtering is covered by the `is_blocked_ip` unit tests.
+#[test]
+fn validate_url_target_accepts_public_host() {
+    let ok = url::Url::parse("https://example.com/page").unwrap();
+    assert!(
+        super::validate_url_target(&ok).is_ok(),
+        "a public https domain URL must pass the up-front SSRF guard"
+    );
+    // A literal public IP host also passes.
+    let ok_ip = url::Url::parse("http://8.8.8.8/").unwrap();
+    assert!(
+        super::validate_url_target(&ok_ip).is_ok(),
+        "a literal public IP host must pass the up-front SSRF guard"
+    );
 }
