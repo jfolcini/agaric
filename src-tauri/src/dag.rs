@@ -29,9 +29,9 @@
 //!   calling into the engine's `pub` surface.
 
 pub use agaric_engine::dag::{
-    MAX_LCA_STEPS, WalkOutcome, append_merge_op, find_lca, get_block_edit_heads, has_merge_for_heads,
-    ingest_replicated_record, insert_remote_op, parse_parent_seqs_canonical, text_at,
-    walk_edit_chain,
+    MAX_LCA_STEPS, WalkOutcome, append_merge_op, find_lca, get_block_edit_heads,
+    has_merge_for_heads, ingest_replicated_record, insert_remote_op, parse_parent_seqs_canonical,
+    text_at, walk_edit_chain,
 };
 
 #[cfg(test)]
@@ -84,9 +84,7 @@ pub async fn insert_replicated_op(
 /// - `create_block` → returns `None` (root of the edit chain)
 /// - anything else → `AppError::InvalidOperation`
 #[cfg(test)]
-fn extract_prev_edit(
-    record: &crate::op_log::OpRecord,
-) -> Result<Option<(String, i64)>, AppError> {
+fn extract_prev_edit(record: &crate::op_log::OpRecord) -> Result<Option<(String, i64)>, AppError> {
     match record.op_type.as_str() {
         "edit_block" => {
             let payload: crate::op::EditBlockPayload = serde_json::from_str(&record.payload)?;

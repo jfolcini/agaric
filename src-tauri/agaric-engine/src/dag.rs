@@ -30,9 +30,9 @@ use std::collections::HashSet;
 
 use sqlx::SqlitePool;
 
-use agaric_store::db::ReadPool;
 use agaric_core::error::AppError;
 use agaric_core::hash::{compute_op_hash, verify_op_hash};
+use agaric_store::db::ReadPool;
 use agaric_store::op::*;
 use agaric_store::op_log::{
     OpRecord, extract_indexed_ids_from_payload, get_op_by_seq, serialize_inner_payload,
@@ -810,7 +810,6 @@ pub async fn find_lca(
         WalkOutcome::Completed(_) => Ok(None),
     }
 }
-
 
 /// Extract the text content at a given op.
 ///
