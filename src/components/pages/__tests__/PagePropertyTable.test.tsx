@@ -548,7 +548,16 @@ describe('PagePropertyTable add property flow', () => {
     })
   })
 
-  it('"Create definition" flow: creates def then adds property', async () => {
+  // #2804 — a brand-new text def created via this flow has no valid empty
+  // initializer (the backend rejects an empty `value_text`), so
+  // `handleCreateDef` now routes text/select defs through the same draft-row
+  // path as `handleAddFromDef` (#2792) instead of init-persisting. This test
+  // only pins that the def is created and a draft row appears WITHOUT an
+  // init `set_property` call; the full draft → non-empty-save round trip
+  // (and the empty-draft-dropped case) is covered against the real
+  // tauri-mock in the "create-def flow against the real tauri-mock (#2804)"
+  // describe block below.
+  it('"Create definition" flow: creates def then adds a draft row (no empty set_property)', async () => {
     const user = userEvent.setup()
     // Start with no definitions so "Create" button appears
     const props: PropertyRow[] = []
@@ -601,19 +610,14 @@ describe('PagePropertyTable add property flow', () => {
       })
     })
 
+    // A draft row for the new definition renders locally…
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('set_property', {
-        blockId: 'PAGE_1',
-        key: 'newfield',
-        value: {
-          value_text: '',
-          value_num: null,
-          value_date: null,
-          value_ref: null,
-          value_bool: null,
-        },
-      })
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'newfield' })),
+      ).toBeInTheDocument()
     })
+    // …without ever init-persisting an empty `value_text`.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
   it('shows ref option in the property type dropdown', async () => {
     const user = userEvent.setup()
@@ -920,13 +924,17 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
 
   it('set_property rejection during handleCreateDef shows error toast', async () => {
     const user = userEvent.setup()
+    // #2804 — text/select defs no longer init-persist on create (see the
+    // "creates a draft row" tests), so this exercises the init-persist
+    // failure path with a number def instead, which still calls
+    // `set_property` immediately after creation.
     mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
       const a = args as Record<string, unknown> | undefined
       if (cmd === 'get_properties') return []
       if (cmd === 'list_property_defs')
         return { items: [], next_cursor: null, has_more: false, total_count: null }
       if (cmd === 'create_property_def')
-        return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'text')
+        return makeDef((a?.['key'] as string) ?? 'myprop', (a?.['valueType'] as string) ?? 'number')
       if (cmd === 'set_property') throw new Error('set failed after create')
       return null
     })
@@ -943,6 +951,12 @@ describe('PagePropertyTable error paths (mockRejectedValue)', () => {
       expect(screen.getByText(/Create "myprop"/)).toBeInTheDocument()
     })
     await user.click(screen.getByText(/Create "myprop"/))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(t('pageProperty.valueTypeLabel'))).toBeInTheDocument()
+    })
+    const select = screen.getByLabelText(t('pageProperty.valueTypeLabel')) as HTMLSelectElement
+    await user.selectOptions(select, 'number')
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /create definition/i })).toBeInTheDocument()
@@ -1555,5 +1569,120 @@ describe('PagePropertyTable add-from-definition against the real tauri-mock (#27
       expect(properties.get(PAGE_ID)?.get('is_featured')?.['value_bool']).toBe(0)
     })
     expect(mockedToastError).not.toHaveBeenCalled()
+  })
+})
+
+// ── #2804 — create-definition flow against the REAL tauri-mock ─────────────
+//
+// #2792 fixed the empty-`value_text` bug for `handleAddFromDef` (adding an
+// EXISTING def); `handleCreateDef` (defining a brand-new def via the
+// "Create definition" flow, which defaults to type `text`) had the same
+// root cause and is fixed here. Mirrors the "add-from-definition against the
+// real tauri-mock (#2792)" block above: the mocked `invoke` routes through
+// the real `dispatch()` so `assertValidSetPropertyValue` enforces the
+// empty-value rule the hand-rolled stubs above never modeled.
+describe('PagePropertyTable create-def flow against the real tauri-mock (#2804)', () => {
+  const PAGE_ID = SEED_IDS.PAGE_QUICK_NOTES
+
+  beforeEach(() => {
+    seedBlocks()
+    // Clear the seeded `space` ref property so this page starts from a
+    // clean, deterministic property list (mirrors the #2792 block above).
+    properties.set(PAGE_ID, new Map())
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => dispatch(cmd, args))
+  })
+
+  /** Drives the popover through "Create '<key>'" up to clicking "Create definition" (type stays the default: text). */
+  async function createTextDef(user: ReturnType<typeof userEvent.setup>, key: string) {
+    await waitFor(() => {
+      expect(screen.getByLabelText(t('pageProperty.searchLabel'))).toBeInTheDocument()
+    })
+    await user.type(screen.getByLabelText(t('pageProperty.searchLabel')), key)
+
+    await waitFor(() => {
+      expect(screen.getByText(new RegExp(`Create "${key}"`))).toBeInTheDocument()
+    })
+    await user.click(screen.getByText(new RegExp(`Create "${key}"`)))
+
+    await waitFor(() => {
+      expect(screen.getByLabelText(t('pageProperty.valueTypeLabel'))).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /create definition/i }))
+  }
+
+  it('creates a text def and adds a draft row WITHOUT an empty set_property', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await createTextDef(user, 'newfield')
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith('create_property_def', {
+        key: 'newfield',
+        valueType: 'text',
+        options: null,
+      })
+    })
+    expect(propertyDefs.get('newfield')).toBeTruthy()
+
+    // A draft row renders for value entry…
+    await waitFor(() => {
+      expect(
+        screen.getByLabelText(t('pageProperty.valueLabel', { key: 'newfield' })),
+      ).toBeInTheDocument()
+    })
+    // …and NO empty-value set_property was fired. Without the #2804 fix this
+    // calls `set_property` with `value_text: ''`, which the real mock's
+    // `assertValidSetPropertyValue` rejects (mirroring the backend).
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('persists a non-empty draft save after create-def, persisting both the def and the value', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await createTextDef(user, 'newfield')
+
+    const input = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'newfield' }))
+    await user.type(input, 'work')
+    await user.tab()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'set_property',
+        expect.objectContaining({
+          blockId: PAGE_ID,
+          key: 'newfield',
+          value: expect.objectContaining({ value_text: 'work' }),
+        }),
+      )
+    })
+    // Both the definition and the value actually landed in the mock store,
+    // not just the invoke call.
+    expect(propertyDefs.get('newfield')).toMatchObject({ key: 'newfield', value_type: 'text' })
+    expect(properties.get(PAGE_ID)?.get('newfield')?.['value_text']).toBe('work')
+    expect(mockedToastError).not.toHaveBeenCalled()
+  })
+
+  it('drops an empty draft on blur after create-def without any set_property call', async () => {
+    const user = userEvent.setup()
+    render(<PagePropertyTable pageId={PAGE_ID} forceExpanded />)
+
+    await createTextDef(user, 'newfield')
+
+    const input = await screen.findByLabelText(t('pageProperty.valueLabel', { key: 'newfield' }))
+    input.focus()
+    await user.tab() // blur with no value entered → draft dropped
+
+    await waitFor(() => {
+      expect(
+        screen.queryByLabelText(t('pageProperty.valueLabel', { key: 'newfield' })),
+      ).not.toBeInTheDocument()
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    // The def itself was still created — only the value write was skipped.
+    expect(propertyDefs.get('newfield')).toBeTruthy()
+    expect(properties.get(PAGE_ID)?.get('newfield')).toBeUndefined()
   })
 })
