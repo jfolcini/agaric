@@ -38,23 +38,22 @@
  *     wait) — the #770 gap-3 "genuine clear" branch in
  *     useDraftAutosave.ts.
  *
- * FINDING (documented, not asserted as a test — a real behaviour
- * discovered while probing this spec, not a defect in the spec itself):
- * pressing Enter to commit-and-split fires NEITHER `delete_draft` NOR
- * `flush_draft` for the departed block, even when that block already had
- * a persisted draft row (typed, waited past the 2000ms debounce so
- * `save_draft` fired, THEN pressed Enter — probed directly, no IPC
- * showed up for either command in the following 3s beyond the `Enter`'s
- * own `edit_block`). This means Enter-driven commits do not clean up a
- * pre-existing draft row for the block they just committed — it is left
- * for the NEXT `flushAllDrafts()` boot sweep to reconcile (harmlessly,
- * since by then the draft's content and the committed content are
- * identical). This contradicts `useDraftAutosave`'s own doc comment,
- * which describes Effect B as unconditionally flushing on "block
- * switch" — that branch is structurally unreachable through the current
- * per-block wiring (see above), and Enter does not go through
- * `useEditorBlur`'s blur-discard path either. Worth a follow-up issue;
- * out of scope to fix here (attribute-only test hooks only).
+ * SUPERSEDED FINDING (#2786, was previously documented here as an open
+ * gap): pressing Enter to CARET-SPLIT a block (mid-content caret, text
+ * both before and after it) now DOES discard the departed (split-source)
+ * block's pre-existing draft — via `delete_draft`, never `flush_draft` —
+ * immediately after the caret-split branch's `edit()` commits the
+ * before-caret text (`useBlockKeyboardHandlers.ts` `handleEnterSave`'s
+ * explicit `discardDraft(focusedBlockId)` call, added by #2786 alongside
+ * the #2803 spaces-move fix). Before #2786, the same repro (type, wait
+ * past the 2000ms debounce so `save_draft` fired, THEN press Enter
+ * mid-content) showed neither `delete_draft` nor `flush_draft` firing for
+ * that block, leaving a stale pre-split draft row for the NEXT
+ * `flushAllDrafts()` boot sweep to (harmlessly, by luck) reconcile. See
+ * "Enter caret-splits a block" below — reverting #2786 fails that test.
+ * The Enter-AT-THE-END path (no caret split, `handleFlush()` + empty
+ * `createBelow`) is unaffected by #2786 and still does not exercise
+ * `discardDraft` — out of scope here, not asserted either way.
  *
  * BLOCKED, documented, not faked — the headline "reload mid-edit
  * restores the unsaved text at boot" crash-recovery round trip:
@@ -95,6 +94,7 @@
 
 import {
   blurEditors,
+  clearInvokeCalls,
   expect,
   focusBlock,
   getInvokeCalls,
@@ -214,5 +214,80 @@ test.describe('Draft autosave', () => {
     // The debounced save never got a chance to fire empty content.
     const saveCalls = await getInvokeCalls(page, 'save_draft')
     expect(saveCalls.some((c) => c['blockId'] === blockId && c['content'] === '')).toBe(false)
+  })
+
+  // #2813 (#2786 fix) — Enter caret-splitting a block must not strand the
+  // departed block's pre-existing draft row. `list_drafts` / `save_draft` /
+  // `flush_draft` / `delete_draft` are all pure no-op stubs in the mock
+  // (src/lib/tauri-mock/handlers.ts, grepped: `returnNull` / `returnEmptyArray`
+  // / `{ flushed: 0 }` — no in-memory drafts map at all), so there is no
+  // observable draft ROW to assert absent, and a `page.reload()` cannot
+  // distinguish fixed-vs-buggy behaviour either: nothing the mock ever
+  // "persists" survives a reload regardless of which code path ran (see
+  // this file's own header — `setupMock()` wipes all module-scoped mock
+  // state on every fresh load). The only substrate that actually
+  // discriminates the fix is the OUTGOING IPC call the discard makes,
+  // which is exactly what every other test in this file already asserts
+  // on — so this test follows suit instead of reaching for a reload.
+  test("Enter caret-splits a block: the departed block's pre-existing draft is discarded via delete_draft, not flushed (#2786)", async ({
+    page,
+  }) => {
+    await openPage(page, PAGE)
+    const editor = await focusBlock(page, 0)
+    const blockId = await liveEditorBlockId(page)
+
+    // Build "helloworld" with the caret deterministically between the two
+    // halves, same recipe as block-keyboard-fundamentals.spec.ts's caret-split
+    // test (typing the whole word in one go and confirming it committed
+    // avoids a mid-stream caret-move race under CI's tighter timing).
+    await editor.press('Control+a')
+    await editor.pressSequentially('helloworld')
+    await expect(editor).toHaveText('helloworld')
+
+    // Let the debounced save_draft actually land BEFORE the split, so a
+    // real (already-persisted) draft row exists for the split to discard —
+    // this is the exact repro this file's header comment cites for #2786.
+    await expect
+      .poll(async () => (await lastCall(page, 'save_draft'))?.['content'], { timeout: 8000 })
+      .toBe('helloworld')
+    expect((await lastCall(page, 'save_draft'))?.['blockId']).toBe(blockId)
+
+    // Drive the caret to sit between "hello" and "world" (offset 5),
+    // polling the DOM selection so the split position never depends on a
+    // single keystroke winning a race.
+    await editor.press('End')
+    await expect
+      .poll(async () => {
+        const offset = await page.evaluate(() => {
+          const sel = window.getSelection()
+          return sel !== null && sel.isCollapsed ? sel.anchorOffset : -1
+        })
+        if (offset > 5) {
+          await editor.press('ArrowLeft')
+        }
+        return offset
+      })
+      .toBe(5)
+
+    await clearInvokeCalls(page)
+    await editor.press('Enter')
+
+    // The split committed "hello" into the SAME block id (the new block
+    // created below holds "world") — confirm the split actually happened
+    // before trusting the draft-discard assertion below.
+    await expect.poll(async () => (await lastCall(page, 'edit_block'))?.toText).toBe('hello')
+
+    // #2786 — the caret-split branch now discards the departed block's
+    // stale ("helloworld") draft via delete_draft immediately after the
+    // edit() commit, mirroring persistUnmount's contract on every other
+    // programmatic block switch.
+    await expect
+      .poll(async () => (await getInvokeCalls(page, 'delete_draft')).map((c) => c['blockId']))
+      .toContain(blockId)
+
+    // Deliberately NOT a flush — flushing the stale FULL pre-split text
+    // would append a second edit_block that clobbers the split just made.
+    const flushedIds = (await getInvokeCalls(page, 'flush_draft')).map((c) => c['blockId'])
+    expect(flushedIds).not.toContain(blockId)
   })
 })
