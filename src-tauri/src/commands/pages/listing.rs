@@ -14,6 +14,7 @@ use tauri::State;
 use crate::commands::tags::MAX_FILTER_TAG_IDS;
 use crate::db::ReadPool;
 use crate::error::AppError;
+use crate::error::ValidationCode;
 use crate::pagination::{
     self, BlockRow, NULL_POSITION_SENTINEL, PageRequest, PageResponse, position_keyset_binds,
     split_position_keyset_page,
@@ -539,8 +540,12 @@ pub async fn load_page_subtree_inner(
     BlockId::from_string(root_block_id)?;
 
     // Phase 7 — enforce space membership. A request whose root
-    // page does not carry `space = ?space_id` is rejected with
-    // `Validation`, matching `get_page_inner`.
+    // page does not carry `space = ?space_id` is rejected with a
+    // `ValidationCode::PageNotInSpace`-coded `Validation` error (#2810),
+    // matching `get_page_inner`. The frontend heal in
+    // `src/stores/page-blocks.ts` `load()` keys on this specific code
+    // (not the generic `kind: "validation"`) to distinguish "page moved
+    // to another space" staleness from any other validation on this path.
     let space_match = sqlx::query_scalar!(
         r#"SELECT 1 AS "ok!: i32" FROM blocks
            WHERE id = ? AND space_id = ?"#,
@@ -550,9 +555,10 @@ pub async fn load_page_subtree_inner(
     .fetch_optional(pool)
     .await?;
     if space_match.is_none() {
-        return Err(AppError::validation(format!(
-            "block '{root_block_id}' not in current space '{space_id}'"
-        )));
+        return Err(AppError::validation_coded(
+            ValidationCode::PageNotInSpace,
+            format!("block '{root_block_id}' not in current space '{space_id}'"),
+        ));
     }
 
     let rows = sqlx::query_as!(

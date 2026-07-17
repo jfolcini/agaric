@@ -25,11 +25,12 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
-import { isValidation } from '@/lib/app-error'
+import { validationCode } from '@/lib/app-error'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
+import { ValidationCode } from '@/lib/search-query/validation-codes'
 import { loadPageSubtree } from '@/lib/tauri'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -265,9 +266,10 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // `loading: true` (or double-toast for a snapshot nobody wants).
         if (generation !== loadGeneration) return
         set({ loading: false })
-        // #2802 — space-membership rejection. `load_page_subtree` scopes the
-        // fetch to the ACTIVE space and rejects with a `validation` AppError
-        // ("block '…' not in current space '…'", `load_page_subtree_inner` in
+        // #2802 / #2810 — space-membership rejection. `load_page_subtree`
+        // scopes the fetch to the ACTIVE space and rejects with a
+        // `ValidationCode.PageNotInSpace`-coded AppError ("block '…' not in
+        // current space '…'", `load_page_subtree_inner` in
         // src-tauri/src/commands/pages/listing.rs; the tauri-mock mirrors the
         // shape) when the page no longer belongs to it — i.e. the page was
         // moved to another space and a stale old-space reference (a surviving
@@ -285,15 +287,18 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // at move time: page deletion doesn't purge tabs/recent-pages either,
         // so stale refs heal lazily here at the rejection point. The active
         // space is NOT switched to follow the page (see #2785's note in
-        // PageHeader.handleMoveToSpace). Breadth check: on this command the
-        // membership rejection is the ONLY reachable `validation` — a
-        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), and the
+        // PageHeader.handleMoveToSpace). #2810 — key the heal on the
+        // structured `PageNotInSpace` code rather than the generic
+        // `kind: 'validation'` (message-regexing was retired in #2251): a
+        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), the
         // `require_active` Global-scope rejection can't fire because
-        // `requireActiveScope` always dispatches an active scope. A
-        // well-formed id that matches NO row (page hard-purged) surfaces the
-        // same membership rejection — an equally dead reference for which
+        // `requireActiveScope` always dispatches an active scope, and any
+        // future uncoded/differently-coded validation on this command path
+        // must NOT silently reroute into this heal. A well-formed id that
+        // matches NO row (page hard-purged) surfaces the same
+        // `PageNotInSpace` rejection — an equally dead reference for which
         // this cleanup is the sane outcome.
-        if (isValidation(err)) {
+        if (validationCode(err) === ValidationCode.PageNotInSpace) {
           // Heal only when the space this load was SCOPED to is still the
           // active space. The rejection can land after the user already
           // switched spaces (e.g. followed the page into its new home) —
