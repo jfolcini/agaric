@@ -76,3 +76,17 @@ pub mod apply;
 /// (`pub use agaric_engine::block_ops::*;`) at `crate::domain::block_ops` so the
 /// recurrence / bootstrap / command call sites resolve unchanged.
 pub mod block_ops;
+
+/// The recurrence-sibling core (#2621 THE INVERSION) — the transaction-scoped
+/// inner core of the recurring-task flow: `build_recurrence_sibling_in_tx`
+/// reads a block's `repeat` properties, evaluates the end conditions, and
+/// creates the next sibling occurrence plus its recurrence properties, plus the
+/// pure `shift_date` rule-string parser. Builds on the sibling `block_ops`
+/// writers (`create_block_in_tx` / `set_property_in_tx` / `is_valid_iso_date`)
+/// and the store's pure interval math (`agaric_store::recurrence_math`); carries
+/// the recurrence `sqlx::query!` sites. The app keeps the `CommandTx` /
+/// `Materializer` orchestration behind unchanged shims
+/// (`crate::recurrence::compute::handle_recurrence` / `handle_recurrence_in_tx`)
+/// and re-exports `shift_date` at `crate::recurrence::…` so those call sites
+/// resolve unchanged.
+pub mod recurrence;
