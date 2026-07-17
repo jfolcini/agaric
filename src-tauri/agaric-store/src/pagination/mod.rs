@@ -147,9 +147,12 @@ const CURRENT_CURSOR_VERSION: u8 = 1;
 //
 // Schema reminder (migration 0086):
 // * `blocks.space_id` — nullable FK to the owning space block's id. NULL
-//   means the block is unscoped (visible in every space). A page block and
-//   its content blocks carry the same `space_id`; space blocks themselves
-//   carry `is_space = 'true'`.
+//   means the block is unscoped: it never satisfies `b.space_id = ?N` for
+//   any specific space, so it is EXCLUDED from every space-scoped list —
+//   it only surfaces when the filter itself is inactive (`?N IS NULL`,
+//   i.e. an unscoped/cross-space read with no active space). A page block
+//   and its content blocks carry the same `space_id`; space blocks
+//   themselves carry `is_space = 'true'`.
 
 /// Sentinel substituted for NULL `position` in keyset comparisons.
 ///
