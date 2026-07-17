@@ -33,13 +33,13 @@
 //!   callers (journal/pages/spaces/properties) are unchanged.
 
 use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 use agaric_store::op::{
     CreateBlockPayload, OpPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
     is_reserved_property_key, validate_set_property,
 };
 use agaric_store::op_log;
 use agaric_store::pagination::BlockRow;
-use agaric_core::ulid::BlockId;
 
 /// Maximum block-content size (bytes) enforced at the IPC layer
 /// (`create_block_in_tx`, `edit_block_inner`, drafts). `pub(crate)` so

@@ -223,7 +223,8 @@ pub async fn apply_move_block_sql_only(
     // #383 / #1323: shared cycle probe (see helper docstring). No-op-warn (not
     // error) on this sync-replay fallback arm.
     if let Some(parent) = new_parent_str.as_deref()
-        && agaric_store::block_descendants::move_would_cycle(&mut *conn, block_id_str, parent).await?
+        && agaric_store::block_descendants::move_would_cycle(&mut *conn, block_id_str, parent)
+            .await?
     {
         tracing::warn!(
             block_id = %block_id_str,
@@ -341,4 +342,3 @@ pub async fn apply_delete_property_sql_only(
 ) -> Result<(), AppError> {
     crate::loro::projection::project_delete_property_to_sql(conn, p.block_id.as_str(), &p.key).await
 }
-
