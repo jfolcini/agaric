@@ -479,10 +479,14 @@ where
                     );
                     match lifecycle.as_ref() {
                         Some(lc) => {
-                            let notify = lc.disconnect_signal.clone();
+                            // #2824 — race the back-off `sleep` against the
+                            // level-triggered shutdown wake so a disable during
+                            // successor-pipe back-off tears the loop down
+                            // promptly (the wake cannot be missed even mid-FFI,
+                            // unlike the edge-triggered `disconnect_signal`).
                             tokio::select! {
                                 () = tokio::time::sleep(backoff) => {}
-                                () = async move { notify.notified().await } => {}
+                                () = shutdown_requested(lc.shutdown_signal.subscribe()) => {}
                             }
                         }
                         None => tokio::time::sleep(backoff).await,
