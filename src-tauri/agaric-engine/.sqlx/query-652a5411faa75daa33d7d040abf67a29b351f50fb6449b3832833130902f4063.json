@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM page_link_cache",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "652a5411faa75daa33d7d040abf67a29b351f50fb6449b3832833130902f4063"
+}

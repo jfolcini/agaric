@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT target_id AS \"target_id!\" FROM (\n             SELECT DISTINCT bl.target_id\n             FROM block_links bl\n             JOIN blocks sb ON sb.id = bl.source_id\n             WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1\n               AND sb.deleted_at IS NULL\n             UNION\n             SELECT target_page_id AS target_id\n             FROM page_link_cache\n             WHERE source_page_id = ?1\n         )",
+  "describe": {
+    "columns": [
+      {
+        "name": "target_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "page_link_cache",
+            "name": "target_page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "164a1557243fcf2ab70814f1b3b2d7c80b8d3e7872088c5eb0571f525aaf71c9"
+}

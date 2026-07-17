@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM fts_blocks",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "674ce7d7244cc60b8b734f347cc7303937bdb4ac0ad8c6d8f4e695beb4e4a1a6"
+}
