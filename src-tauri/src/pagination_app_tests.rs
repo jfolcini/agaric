@@ -575,8 +575,15 @@ mod block_row_canonical_conformance {
             ),
             // #882: the `set_property_in_tx` core (with its
             // `query_as!(BlockRow, …)` existence probe) moved here from
-            // `commands/blocks/crud.rs`. Net site count is unchanged.
-            ("domain/block_ops.rs", include_str!("domain/block_ops.rs")),
+            // `commands/blocks/crud.rs`. #2621 (inversion): the block_ops
+            // writers then moved into `agaric-engine`, so the site now lives
+            // at `agaric-engine/src/block_ops.rs`, reached across the crate
+            // boundary via `../agaric-engine/…` (like the pagination sites).
+            // Net site count is unchanged.
+            (
+                "agaric-engine/src/block_ops.rs",
+                include_str!("../agaric-engine/src/block_ops.rs"),
+            ),
             (
                 "commands/blocks/queries.rs",
                 include_str!("commands/blocks/queries.rs"),

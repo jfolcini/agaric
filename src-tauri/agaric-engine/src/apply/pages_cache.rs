@@ -524,7 +524,8 @@ pub async fn maintain_pages_cache_counts_after_op(
                 // page_id-only reparent did NO `space_id` maintenance, so a
                 // cross-space move left `space_id` stale until the background
                 // rebuild ran.
-                agaric_store::block_descendants::rederive_page_and_space_ids(conn, block_id).await?;
+                agaric_store::block_descendants::rederive_page_and_space_ids(conn, block_id)
+                    .await?;
                 // Old owning page loses the moved subtree's descendants.
                 if let Some(src) = src_page {
                     affected.insert(src.clone());
@@ -696,7 +697,8 @@ pub async fn refresh_inbound_counts_after_reindex(
     // instead of stalling mid-tx under SQLite's default DEFERRED
     // isolation. Mirrors the convention in `apply_op` / `apply_op` batch.
     let mut tx =
-        agaric_store::db::begin_immediate_logged(pool, "materializer_pages_cache_inbound_refresh").await?;
+        agaric_store::db::begin_immediate_logged(pool, "materializer_pages_cache_inbound_refresh")
+            .await?;
     let mut affected: HashSet<String> = HashSet::new();
     for p in pre {
         affected.insert(p.clone());

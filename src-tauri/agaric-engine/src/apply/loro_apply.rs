@@ -76,7 +76,8 @@ pub async fn apply_create_block_via_loro(
         Some(parent) => parent.clone(),
         None => p.block_id.clone(),
     };
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
+    let Some(space_id) =
+        agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
         super::sql_only_fallback::record(
             "create_block",
@@ -207,7 +208,8 @@ pub async fn apply_edit_block_via_loro(
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "edit_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -286,14 +288,17 @@ pub async fn apply_set_property_via_loro(
     // (legitimate but now avoidable) SpaceUnresolved fallback.
     if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
         projection::project_set_property_to_sql(conn, p).await?;
-        if let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? {
+        if let Some(space_id) =
+            agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+        {
             hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &space_id)
                 .await?;
         }
         return Ok(());
     }
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "set_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -557,7 +562,8 @@ pub async fn apply_delete_block_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "delete_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -614,7 +620,8 @@ pub async fn apply_move_block_via_loro(
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "move_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -636,7 +643,10 @@ pub async fn apply_move_block_via_loro(
             .registry
             .for_space_recording(&space_id, device_id, &state.revert)?;
         let engine = guard.engine_mut();
-        let new_parent = p.new_parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
+        let new_parent = p
+            .new_parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str);
         // #2250 (#1257 reconciliation): this per-space engine can only apply
         // the move when BOTH the block and — for a reparent — its target
         // parent live in THIS space's tree. It cannot when (a) the block was
@@ -772,7 +782,8 @@ pub async fn apply_restore_block_via_loro(
         Some(parent) => BlockId::from_trusted(&parent),
         None => p.block_id.clone(),
     };
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
+    let Some(space_id) =
+        agaric_store::space::resolve_block_space(&mut *conn, &resolution_anchor).await?
     else {
         super::sql_only_fallback::record(
             "restore_block",
@@ -864,7 +875,8 @@ pub async fn apply_purge_block_via_loro(
     device_id: &str,
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "purge_block",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1109,7 +1121,8 @@ pub async fn apply_add_tag_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "add_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1151,7 +1164,8 @@ pub async fn apply_remove_tag_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "remove_tag",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1190,7 +1204,8 @@ pub async fn apply_delete_property_via_loro(
 ) -> Result<(), AppError> {
     use crate::loro::projection;
 
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await? else {
+    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    else {
         super::sql_only_fallback::record(
             "delete_property",
             super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
@@ -1229,4 +1244,3 @@ pub async fn apply_delete_property_via_loro(
 // synthetic ops through `apply_op` against bare-block fixtures with
 // no space chain.
 // ---------------------------------------------------------------------------
-

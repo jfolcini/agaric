@@ -14,7 +14,6 @@ pub(crate) use agaric_engine::apply::kernel::{
     collect_delete_cohort, collect_restore_cohort,
 };
 
-
 /// RAII timer that records the elapsed wall-clock of one [`apply_op`] to the
 /// `agaric.materializer.op_apply.duration` histogram on drop — so every exit
 /// path (success AND the `?`-propagated errors) is captured without threading a
@@ -142,7 +141,6 @@ pub(super) async fn apply_op(
 
     Ok(())
 }
-
 
 /// Fan out `RestoreBlock` for the full cohort the SQL cascade
 /// restored (seed + every descendant). The engine's
@@ -454,4 +452,3 @@ pub(crate) async fn dispatch_delete_descendants(
         );
     }
 }
-
