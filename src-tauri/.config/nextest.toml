@@ -29,8 +29,17 @@ leak-timeout = "30s"
 #     import_and_project rounds (one per seeded inbox row, spanning 2 replay
 #     chunks); ~50s alone on a dev box, so full-suite CPU contention pushes it
 #     past the 60s kill on the first attempt.
+#   * issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path — pushes an
+#     oversized Loro snapshot through the full chunked-wire catch-up path
+#     (>30s under the full suite). It carried NO timeout override, so under the
+#     `cargo-coverage` build's llvm-cov instrumentation (2-3× slower) it could
+#     terminate on the first attempt and DROP the coverage of the large
+#     snapshot-transfer path it exercises — a spurious `cargo-coverage` ratchet
+#     failure whose likelihood shifts with nextest's per-run partition layout.
+#     Give it (and `replay_streams`, previously only covered in the default
+#     profile) the same extended leash under CI so coverage is stable.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci]
@@ -40,8 +49,13 @@ slow-timeout = { period = "60s", terminate-after = 2 }
 leak-timeout = "30s"
 
 # Same headroom in CI (3×60s=180s) — see the default-profile override above.
+# Every test flagged SLOW (>30s) in a full-suite sweep is listed here so the
+# llvm-cov `cargo-coverage` build (2-3× slower) can never terminate one on the
+# first attempt and lose its coverage: apply_reproject_proptest,
+# perf26_draft_recovery, replay_streams_all_rows…_1574, and
+# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path.
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters
