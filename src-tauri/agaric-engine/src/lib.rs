@@ -18,6 +18,16 @@
 
 pub mod bibliography;
 
+/// The Logseq/Markdown import parser (#2621, wave E4-import) — parses indented
+/// markdown into a flat list of blocks plus the import-outcome specta types
+/// (`ImportResult` / `ImportProgressUpdate` / `VaultFile`). Query-free: pure
+/// string/regex parsing with no sqlx, no IO, no app-layer coupling; depends
+/// only on `agaric-core` (`text_utils::strip_yaml_quotes`) and `agaric-store`
+/// (`block_descendants::MAX_BLOCK_DEPTH`). The `agaric` crate re-exports it
+/// (`pub use agaric_engine::import;`) so every existing `crate::import::…` path
+/// resolves unchanged.
+pub mod import;
+
 /// The block draft writer — the autosave buffer for in-progress editor edits
 /// (`block_drafts` table). An independent document-domain leaf: depends only on
 /// `agaric-store` (db/op/op_log) and `agaric-core` (error/ulid), with two

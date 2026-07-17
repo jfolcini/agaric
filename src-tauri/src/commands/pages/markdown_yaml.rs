@@ -98,27 +98,16 @@ pub(crate) fn yaml_flow_sequence(items: &[String]) -> String {
     format!("[{}]", inner.join(", "))
 }
 
-/// Strip a single layer of matching surrounding quotes (`"…"` or `'…'`)
-/// from a frontmatter scalar value — the symmetric counterpart of
-/// [`yaml_flow_item`]'s quoting. YAML quoting is preserved on export only when
-/// a value needs it; Agaric's exporter currently emits bare scalars, but
-/// accepting quoted values keeps the importer tolerant of hand-edited /
-/// third-party frontmatter without pulling in a YAML crate.
-pub(crate) fn strip_yaml_quotes(value: &str) -> &str {
-    let bytes = value.as_bytes();
-    if bytes.len() >= 2
-        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
-    {
-        &value[1..value.len() - 1]
-    } else {
-        value
-    }
-}
+// #2621 (wave E4-import) — the `strip_yaml_quotes` frontmatter helper moved
+// into `agaric_core::text_utils` (a pure string helper) so the query-free
+// import parser can reach it without depending on the app crate. The remaining
+// consumers here are this module's own round-trip tests (which import it
+// directly from `agaric_core`).
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use agaric_core::text_utils::strip_yaml_quotes;
 
     /// #1920 — the quote/unquote pair must round-trip: a value that
     /// `yaml_flow_item` decides to QUOTE (because it is a special token) must
@@ -201,17 +190,5 @@ mod tests {
             "x y".to_string(),
         ]);
         assert_eq!(seq, "[Alpha, \"42\", \"a, b\", x y]");
-    }
-
-    /// #1920 — `strip_yaml_quotes` only strips a MATCHING pair; mismatched or
-    /// single-sided quotes are left verbatim (mirrors the import-side test).
-    #[test]
-    fn strip_yaml_quotes_only_strips_matching_pair() {
-        assert_eq!(strip_yaml_quotes("\"abc\""), "abc");
-        assert_eq!(strip_yaml_quotes("'abc'"), "abc");
-        assert_eq!(strip_yaml_quotes("\"abc'"), "\"abc'");
-        assert_eq!(strip_yaml_quotes("\"abc"), "\"abc");
-        assert_eq!(strip_yaml_quotes("\""), "\"");
-        assert_eq!(strip_yaml_quotes("plain"), "plain");
     }
 }

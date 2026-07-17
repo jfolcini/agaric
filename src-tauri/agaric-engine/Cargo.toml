@@ -40,6 +40,9 @@ agaric-store = { path = "../agaric-store", version = "0.1.0" }
 # `bibliography` parses the CSL-JSON format via `serde_json::Value`; loro's
 # projection serializes cohort/tag payloads via `serde_json::Value`.
 serde_json = "1"
+# `import`'s markdown parser compiles a handful of `LazyLock<Regex>` patterns
+# (wiki-link / block-ref / frontmatter scanning). Version mirrors the app crate.
+regex = "1"
 # `draft::Draft` derives `Serialize`/`Deserialize` (#2621, wave E2). Version/
 # features mirror the app crate exactly for cargo feature-unification.
 serde = { version = "1", features = ["derive"] }

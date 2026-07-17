@@ -54,6 +54,15 @@
 //! the last three copies. If sqlx ever learns to accept `concat!()`, migrate
 //! those sites too.
 
+/// Maximum block-tree nesting depth enforced by the block-create path — the
+/// *product* depth invariant. A new block whose parent already sits at depth
+/// `MAX_BLOCK_DEPTH` is rejected (`domain::block_ops` in the app crate spells
+/// the check `parent_depth + 1 > MAX_BLOCK_DEPTH`). Lives here beside the
+/// looser [`DESCENDANT_DEPTH_CAP`] runaway-safety net so the two depth bounds
+/// share one home; the query-free import parser (`agaric_engine::import`)
+/// derives its own import-specific clamp from this value.
+pub const MAX_BLOCK_DEPTH: i64 = 20;
+
 /// Recursion-depth safety cap shared by every block-tree recursive CTE in
 /// this crate. Each recursive arm carries `WHERE … depth < 100` to bound the
 /// walk against runaway recursion on a corrupted `parent_id` chain — AGENTS.md
@@ -72,7 +81,7 @@
 ///
 /// # Relationship to `MAX_BLOCK_DEPTH` (= 20)
 ///
-/// `crate::domain::block_ops::MAX_BLOCK_DEPTH` (= 20) is the *product*
+/// [`MAX_BLOCK_DEPTH`] (= 20) is the *product*
 /// invariant: block creation rejects a new block whose nesting would exceed
 /// depth 20. This `DESCENDANT_DEPTH_CAP` of 100 is a much looser
 /// *runaway-safety net* sitting well above that product limit — it exists only
