@@ -2205,6 +2205,14 @@ pub fn run() {
                 sync_events::MdnsStatus::default(),
             )));
 
+            // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
+            // `app_data_dir` by a previous process that died mid-receive
+            // (SIGKILL / OOM / power-loss, where `SnapshotTempFile::Drop`
+            // never ran). Safe to delete unconditionally here because it
+            // runs BEFORE `wire_sync_daemon` below starts accepting inbound
+            // connections, so no snapshot receive can be in flight yet.
+            crate::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
+
             // Install rustls + spawn the SyncDaemon (#382/#383/#278).
             let daemon_wiring = SyncDaemonWiring {
                 cancel_flag,

@@ -68,6 +68,9 @@ pub(crate) use session_supervisor::{
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
 pub(crate) use server::{CertVerifyResult, handle_incoming_sync, verify_peer_cert};
+// #2696 — boot-time cleanup of orphaned `snapshot-recv-*.tmp` files,
+// called from the app `setup` hook before the daemon accepts connections.
+pub(crate) use snapshot_transfer::sweep_orphaned_snapshot_temps;
 
 // ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound
