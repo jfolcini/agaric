@@ -1,10 +1,10 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT id as \"id!: crate::ulid::BlockId\", block_type, content, parent_id as \"parent_id: crate::ulid::BlockId\", position, deleted_at,  todo_state, priority,\n                  due_date, scheduled_date, page_id as \"page_id: crate::ulid::BlockId\"\n           FROM blocks WHERE id = ?",
+  "query": "SELECT id as \"id!: agaric_core::ulid::BlockId\", block_type, content, parent_id as \"parent_id: agaric_core::ulid::BlockId\", position, deleted_at,  todo_state, priority,\n                  due_date, scheduled_date, page_id as \"page_id: agaric_core::ulid::BlockId\"\n           FROM blocks WHERE id = ?",
   "describe": {
     "columns": [
       {
-        "name": "id!: crate::ulid::BlockId",
+        "name": "id!: agaric_core::ulid::BlockId",
         "ordinal": 0,
         "type_info": "Text",
         "origin": {
@@ -37,7 +37,7 @@
         }
       },
       {
-        "name": "parent_id: crate::ulid::BlockId",
+        "name": "parent_id: agaric_core::ulid::BlockId",
         "ordinal": 3,
         "type_info": "Text",
         "origin": {
@@ -114,7 +114,7 @@
         }
       },
       {
-        "name": "page_id: crate::ulid::BlockId",
+        "name": "page_id: agaric_core::ulid::BlockId",
         "ordinal": 10,
         "type_info": "Text",
         "origin": {
@@ -142,5 +142,5 @@
       true
     ]
   },
-  "hash": "c6698ca1ac35eaca712f6063ab2bb76a2ce0fad595b90d111be955446d8ede39"
+  "hash": "7977799ace80899f7629de0ad4eb27e8530ad174f50d8629bb16df7276388b5a"
 }
