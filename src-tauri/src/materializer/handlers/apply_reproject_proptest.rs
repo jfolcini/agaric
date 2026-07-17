@@ -52,8 +52,8 @@ use crate::db::init_pool;
 use crate::loro::projection::reproject_dense_positions;
 use crate::loro::registry::LoroEngineRegistry;
 use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
-use crate::op_log::{OpRecord, append_local_op};
-use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain};
+use crate::op_log::{OpRecord, append_local_op_at};
+use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain, ts_for};
 use crate::space::SpaceId;
 use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
 use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
@@ -170,12 +170,26 @@ async fn seed_page_via_engine(
 ///
 /// Kept ops — the ones that drive the **position-reprojection** pipeline these
 /// tests target: `CreateBlock`, `EditBlock`, `MoveBlock`, `SetProperty`,
-/// `DeleteProperty`. Every root create / root move (`parent_id == None`) is
-/// re-anchored under [`PAGE_ID`] so `resolve_block_space` always succeeds and
-/// the op routes through `apply_*_via_loro` rather than the SQL-only fallback.
+/// `DeleteProperty`, and — **#2681** — `DeleteBlock` / `RestoreBlock`. Every
+/// root create / root move (`parent_id == None`) is re-anchored under
+/// [`PAGE_ID`] so `resolve_block_space` always succeeds and the op routes
+/// through `apply_*_via_loro` rather than the SQL-only fallback.
 ///
-/// Dropped ops, and why (all harness artifacts of the op-log-only B1 surface,
-/// NOT #891-class reprojection bugs):
+/// **#2681 — delete/restore are no longer dropped.** They used to be excluded
+/// because the harness minted `RestoreBlock` with a placeholder
+/// `deleted_at_ref = 0` (a no-op un-delete) and a restore could drop to the
+/// SQL-only fallback when its space failed to resolve. The harness now (a)
+/// cascades deletes in its `ChainModel` and only restores a *deleted seed whose
+/// parent is live*, so `apply_restore_block_via_loro` resolves the space via the
+/// live parent and STAYS on the engine path (the per-case zero-fallback guard
+/// still holds), and (b) mints the REAL `deleted_at_ref = ts_for(delete_step)`.
+/// The driver appends every op with `ts_for(step)`, so the `deleted_at` a
+/// `DeleteBlock` stamps matches the ref a later `RestoreBlock` carries — the
+/// restore is a genuine cohort un-delete. Soft-deleted blocks keep their tree
+/// node + `position` in both the engine and SQL, so the dense-rank / convergence
+/// assertions stay honest across the tombstone window.
+///
+/// Dropped ops, and why (harness artifacts, NOT #891-class reprojection bugs):
 ///
 /// * `AddTag` / `RemoveTag` — the harness draws `tag_id` from the SAME ULID pool
 ///   as block ids, so a tag edge can reference a pool id that was never created.
@@ -187,20 +201,19 @@ async fn seed_page_via_engine(
 ///   **#2325/#2250:** the B5 LOCAL-vs-REMOTE parity property DOES now cover
 ///   tags — it uses [`prepare_chain_b5`] instead, which RETAINS the tag ops and
 ///   remaps their `tag_id` to the seeded [`TAG_ID`].
-/// * `DeleteBlock` / `RestoreBlock` — soft-delete + restore in this synthetic
-///   single-page setup repeatedly drops to the SQL-only fallback: a restore's
-///   space resolves via the block's own (deleted, space-unresolvable) row or a
-///   cascade-orphaned anchor, and the harness mints `RestoreBlock` with a
-///   placeholder `deleted_at_ref = 0` that no-ops the SQL un-delete. Tombstone /
-///   cohort-ref lifecycle is its own concern — the harness cannot mint a valid
-///   runtime `deleted_at_ref`, so delete/restore LOCAL-vs-REMOTE parity is
-///   covered by the dedicated fixture test
-///   [`delete_restore_local_matches_remote`] (which captures the REAL
-///   `deleted_at` a `DeleteBlock` stamps and feeds it back to the restore),
-///   NOT by this proptest. Excluding it here keeps EVERY op on the engine path
-///   so the dense-rank / convergence assertions stay honest. With both dropped,
-///   every block stays live for the whole chain, so the harness `ChainModel`'s
-///   validity (which assumed them) is not violated by their removal.
+/// * `PurgeBlock` — purge is gated on a *soft-deleted* block, but
+///   `apply_purge_block_via_loro` resolves the space via the block's OWN
+///   (now `deleted_at IS NOT NULL`) row, which `resolve_block_space` filters
+///   out, so purge ALWAYS takes the SQL-only cascade for the engine side by
+///   design. It therefore cannot satisfy these tests' zero-fallback engine-path
+///   guard. Purge coverage lives at the engine layer
+///   (`loro::engine_proptest`'s `Purge` arm exercises `apply_purge_block`) and
+///   in the B1 NonReversible classification.
+/// * `AddAttachment` / `DeleteAttachment` — attachment apply writes the
+///   `attachments` table + touches the filesystem (`fs_path`) and does not
+///   affect `parent_id` / `position` / `block_links` / `block_properties`, so it
+///   is orthogonal to the reprojection pipeline these tests target. Attachment
+///   coverage lives in the B1 inverse-law property.
 fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
     payloads
         .into_iter()
@@ -209,8 +222,9 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
                 p,
                 OpPayload::AddTag(_)
                     | OpPayload::RemoveTag(_)
-                    | OpPayload::DeleteBlock(_)
-                    | OpPayload::RestoreBlock(_)
+                    | OpPayload::PurgeBlock(_)
+                    | OpPayload::AddAttachment(_)
+                    | OpPayload::DeleteAttachment(_)
             )
         })
         .map(|p| match p {
@@ -237,14 +251,27 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
 /// the harness always targets a live block (`ChainModel::live_ids()`), and by
 /// the time an `AddTag` runs that block is stamped with `page_id`/`space_id`
 /// (both drivers stamp on create), so `resolve_block_space` succeeds and the tag
-/// stays on the ENGINE path (no `sql_only` fallback). `DeleteBlock`/
-/// `RestoreBlock` are still dropped for the same reason as [`prepare_chain`]
-/// (the harness cannot mint a valid `deleted_at_ref`); B5 asserts a zero
-/// `sql_only_fallback` delta, so a stray fallback would fail the property.
+/// stays on the ENGINE path (no `sql_only` fallback).
+///
+/// **#2681:** `DeleteBlock` / `RestoreBlock` are now RETAINED (the harness mints
+/// valid `deleted_at_ref`s and the driver appends with `ts_for(step)` so the
+/// LOCAL and REMOTE drives stamp the SAME deterministic `deleted_at`, keeping
+/// the `read_blocks_full` `deleted_at` column byte-identical between the two
+/// paths). Only `PurgeBlock` (always SQL-only for the engine side — see
+/// [`prepare_chain`]) and the attachment ops (FS-touching, off the projection
+/// path) are dropped; B5 asserts a zero `sql_only_fallback` delta, so a stray
+/// fallback would fail the property.
 fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
     payloads
         .into_iter()
-        .filter(|p| !matches!(p, OpPayload::DeleteBlock(_) | OpPayload::RestoreBlock(_)))
+        .filter(|p| {
+            !matches!(
+                p,
+                OpPayload::PurgeBlock(_)
+                    | OpPayload::AddAttachment(_)
+                    | OpPayload::DeleteAttachment(_)
+            )
+        })
         .map(|p| match p {
             OpPayload::CreateBlock(mut c) if c.parent_id.is_none() => {
                 c.parent_id = Some(BlockId::from_trusted(PAGE_ID));
@@ -298,13 +325,58 @@ struct ChainDriver {
     /// peers distinct Loro op-spaces so their independent edits merge cleanly
     /// (a shared device id would fork — #792 — and request snapshot fallback).
     device_id: String,
+    /// #2681: per-op chain step, incremented on every `drive` / `drive_local`
+    /// call. Each op is appended with `ts_for(step)` so its `created_at` — and,
+    /// for `DeleteBlock`, the `deleted_at` it stamps — is DETERMINISTIC and
+    /// identical across boots (B3) and across the LOCAL/REMOTE drives (B5). This
+    /// is what makes a later `RestoreBlock`'s `deleted_at_ref` (minted by the
+    /// harness as `ts_for(delete_step)`) match the stamped `deleted_at`, so the
+    /// restore is a real cohort un-delete rather than a silent no-op. The
+    /// counter is the driver's own POST-filter op index (`prepare_chain` drops
+    /// some ops after the model resolved them, so this need not equal the
+    /// harness `ChainModel::step`). Because of that decoupling the restore's
+    /// `deleted_at_ref` is patched at drive time from [`Self::delete_ts`] rather
+    /// than trusted from the payload.
+    step: usize,
+    /// #2681: the deterministic `deleted_at` (`ts_for(step)`) the driver stamped
+    /// for the most recent `DeleteBlock` of each block id. A following
+    /// `RestoreBlock` for that id has its `deleted_at_ref` OVERWRITTEN with this
+    /// value so the SQL cohort restore's `WHERE deleted_at = ?` guard matches
+    /// the row the delete actually stamped — turning the restore from a silent
+    /// no-op into a real un-delete. Identical across boots (B3) and across the
+    /// LOCAL/REMOTE drives (B5) because both replay the SAME filtered payload
+    /// list with the SAME `ts_for(index)` schedule.
+    delete_ts: BTreeMap<String, i64>,
 }
 
 impl ChainDriver {
     fn new(device_id: &str) -> Self {
         Self {
             device_id: device_id.to_owned(),
+            step: 0,
+            delete_ts: BTreeMap::new(),
         }
+    }
+
+    /// Assign the deterministic `created_at` for the next op (advancing the
+    /// step), and reconcile delete/restore timestamps: record the stamp a
+    /// `DeleteBlock` will apply, and patch a `RestoreBlock`'s `deleted_at_ref`
+    /// to the stamp its target's delete used.
+    fn next_ts(&mut self, payload: &mut OpPayload) -> i64 {
+        let ts = ts_for(self.step);
+        self.step += 1;
+        match payload {
+            OpPayload::DeleteBlock(p) => {
+                self.delete_ts.insert(p.block_id.as_str().to_owned(), ts);
+            }
+            OpPayload::RestoreBlock(p) => {
+                if let Some(&stamped) = self.delete_ts.get(p.block_id.as_str()) {
+                    p.deleted_at_ref = stamped;
+                }
+            }
+            _ => {}
+        }
+        ts
     }
 
     /// Append `payload` to the op_log and apply it through `apply_op_tx` in its
@@ -315,8 +387,9 @@ impl ChainDriver {
         &mut self,
         pool: &SqlitePool,
         state: &crate::loro::shared::LoroState,
-        payload: OpPayload,
+        mut payload: OpPayload,
     ) {
+        let ts = self.next_ts(&mut payload);
         let created: Option<(String, String)> = match &payload {
             OpPayload::CreateBlock(c) => Some((
                 c.block_id.as_str().to_owned(),
@@ -327,15 +400,34 @@ impl ChainDriver {
             _ => None,
         };
 
-        let record = append_local_op(pool, &self.device_id, payload)
+        let record = append_local_op_at(pool, &self.device_id, payload, ts)
             .await
             .expect("append op");
 
         let mut tx = pool.begin().await.expect("begin apply");
-        apply_op_tx(&mut tx, &record, None, state)
+        let effects = apply_op_tx(&mut tx, &record, None, state)
             .await
             .expect("apply op");
         tx.commit().await.expect("commit apply");
+
+        // #2681: mirror `apply_op`'s post-commit engine cohort fan-out. The
+        // in-tx `apply_*_via_loro` delete/restore is per-block-id only (it
+        // touches just the SEED in the engine), while the SQL projection cascades
+        // to the whole descendant cohort (and, for restore, the #1884 ancestor
+        // chain). Without replaying that cascade onto the engine, a
+        // cascade-deleted descendant stays engine-LIVE while SQL-deleted — which
+        // the #1257 outbound freshness gate (B4's snapshot export) correctly
+        // REFUSES. Running the same three fan-outs `apply_op` runs keeps the
+        // engine and SQL cohort state in agreement.
+        dispatch_restore_descendants(pool, &record, &effects.restored_cohort, state).await;
+        dispatch_restore_ancestors(pool, &record, &effects.restored_ancestors, state).await;
+        dispatch_delete_descendants(
+            &record,
+            &effects.deleted_cohort,
+            effects.delete_space_id.as_ref(),
+            state,
+        )
+        .await;
 
         if let Some((id, parent)) = created {
             // The engine read-back projected at create time can leave
@@ -373,10 +465,11 @@ impl ChainDriver {
         &mut self,
         pool: &SqlitePool,
         state: &crate::loro::shared::LoroState,
-        payload: OpPayload,
+        mut payload: OpPayload,
     ) {
         use super::loro_apply;
 
+        let ts = self.next_ts(&mut payload);
         let created: Option<(String, String)> = match &payload {
             OpPayload::CreateBlock(c) => Some((
                 c.block_id.as_str().to_owned(),
@@ -389,7 +482,11 @@ impl ChainDriver {
 
         // Append for parity with the REMOTE driver (keeps the op_log identical);
         // the LOCAL path does not consult the cursor and does not advance it.
-        append_local_op(pool, &self.device_id, payload.clone())
+        // #2681: same deterministic `ts_for(step)` as `drive`, so a `DeleteBlock`
+        // stamps an IDENTICAL `deleted_at` on both the LOCAL and REMOTE pools
+        // (B5 compares that column byte-for-byte). `ts` was assigned (and the
+        // restore ref patched) by `next_ts` above.
+        append_local_op_at(pool, &self.device_id, payload.clone(), ts)
             .await
             .expect("append op");
 
@@ -421,6 +518,23 @@ impl ChainDriver {
                 loro_apply::apply_delete_property_via_loro(&mut tx, state, &self.device_id, p)
                     .await
                     .expect("local delete_property");
+            }
+            // #2681: delete/restore on the LOCAL command path are bare
+            // `apply_*_via_loro` calls too. `DeleteBlock` stamps `deleted_at`
+            // from the passed `now` (the same deterministic `ts` the REMOTE
+            // `apply_op_tx` reads off `record.created_at`), and `RestoreBlock`
+            // reads its `deleted_at_ref` from the payload — identical to the
+            // dispatcher path — so the projected `deleted_at` cascade is
+            // byte-identical between LOCAL and REMOTE.
+            OpPayload::DeleteBlock(p) => {
+                loro_apply::apply_delete_block_via_loro(&mut tx, state, &self.device_id, p, ts)
+                    .await
+                    .expect("local delete_block");
+            }
+            OpPayload::RestoreBlock(p) => {
+                loro_apply::apply_restore_block_via_loro(&mut tx, state, &self.device_id, p)
+                    .await
+                    .expect("local restore_block");
             }
             // #2325/#2250: the LOCAL AddTag/RemoveTag command path IS a bare
             // `apply_*_via_loro` call (now routed via `apply_op_projected`,

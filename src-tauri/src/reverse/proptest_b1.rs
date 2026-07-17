@@ -244,13 +244,32 @@ async fn assert_inverse_law(
                 reverse
             );
         }
-        // The generator never emits these; if it ever does, fail loudly.
-        OpPayload::PurgeBlock(_)
-        | OpPayload::AddAttachment(_)
-        | OpPayload::DeleteAttachment(_)
-        | OpPayload::RenameAttachment(_) => {
+        // #2681: the harness now emits attachment add/delete. Their reverse is
+        // op-log-derived (add→delete carries the id forward; delete→add
+        // reconstructs the prior add row), so assert the structural inverse.
+        OpPayload::AddAttachment(p) => {
+            prop_assert!(
+                matches!(&reverse, OpPayload::DeleteAttachment(r) if r.attachment_id == p.attachment_id),
+                "reverse of add_attachment must be DeleteAttachment(same id); got {:?}",
+                reverse
+            );
+        }
+        OpPayload::DeleteAttachment(p) => {
+            // The harness only deletes an attachment it previously added, so the
+            // prior-add lookup must succeed and reverse to AddAttachment(same id).
+            prop_assert!(
+                matches!(&reverse, OpPayload::AddAttachment(r) if r.attachment_id == p.attachment_id),
+                "reverse of delete_attachment must be AddAttachment(same id); got {:?}",
+                reverse
+            );
+        }
+        // #2681: `PurgeBlock` reaches `compute_reverse` but is unconditionally
+        // NonReversible, so it is handled by the early `Err(NonReversible)` arm
+        // above and never lands here. `RenameAttachment` is not emitted by the
+        // generator. Either arriving here (as an `Ok` reverse) is a real bug.
+        OpPayload::PurgeBlock(_) | OpPayload::RenameAttachment(_) => {
             return Err(TestCaseError::fail(format!(
-                "harness emitted an op it should not: {payload:?}"
+                "harness emitted an op whose reverse should not reach here: {payload:?}"
             )));
         }
     }
