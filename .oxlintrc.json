@@ -115,7 +115,7 @@
       }
     },
     {
-      "files": ["src/main.tsx", "*.config.ts"],
+      "files": ["src/main.tsx", "*.config.ts", "stryker.config.mjs", "stryker.vitest.config.mjs"],
       "rules": {
         "import/no-default-export": "off"
       }
