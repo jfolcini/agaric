@@ -44,9 +44,9 @@ ignored = [
     # here is used by app production code (or shared TLS/crypto) but sits behind
     # conditional compilation the static analyzer can't see under the default
     # feature set.
-    "rand",       # crypto-quality random used outside the sync cluster; also transitive.
-    "rustls",     # pure-Rust TLS stack. Direct dep + transitive via reqwest 0.13, hyper-rustls, tauri-plugin-updater.
-    "sha2",       # SHA-256 hashing used outside the sync cluster; also transitive.
+    "rand",         # crypto-quality random used outside the sync cluster; also transitive.
+    "rustls",       # pure-Rust TLS stack. Direct dep + transitive via reqwest 0.13, hyper-rustls, tauri-plugin-updater.
+    "sha2",         # SHA-256 hashing used outside the sync cluster; also transitive.
     "futures-util", # Stream / Sink combinators. Direct dep + transitive via futures, sqlx-core, reqwest, hyper-util, gio, glib.
 ]
 
