@@ -5,7 +5,11 @@ pub mod appimage_integration;
 // unchanged. Its insta snapshots moved with it (`agaric-store/src/backlink/
 // snapshots/`, renamed to the `agaric_store__` crate prefix).
 pub use agaric_store::backlink;
-pub mod bibliography;
+// `bibliography` moved into `agaric-engine` (#2621, wave E0) as the first
+// query-free document-domain leaf. Re-exported so every `crate::bibliography::…`
+// path (commands::pages::bibliography) resolves unchanged. Its inline parser
+// tests moved with it (no app-layer coupling).
+pub use agaric_engine::bibliography;
 // `block_descendants` moved into `agaric-store` (#2621, wave S4a). Re-exported
 // so every `crate::block_descendants::…` path resolves unchanged. Its
 // `#[macro_export]` CTE macros (`descendants_cte_*!`, `ancestors_cte_*!`) land
