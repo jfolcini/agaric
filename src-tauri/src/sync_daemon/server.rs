@@ -1,3 +1,4 @@
+use crate::apply_host::ApplyHost;
 use crate::error::AppError;
 use crate::peer_refs;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
@@ -143,7 +144,11 @@ pub(crate) async fn handle_incoming_sync(
     conn: SyncConnection,
     pool: sqlx::SqlitePool,
     device_id: String,
-    materializer: crate::materializer::Materializer,
+    // #2621 (agaric-sync inversion): accept a `Materializer` (tests) or an
+    // already-erased `Arc<dyn ApplyHost>` (production) uniformly, then hand the
+    // `Arc<dyn ApplyHost>` to the responder session — the concrete coordinator
+    // is never named here.
+    materializer: impl Into<std::sync::Arc<dyn ApplyHost>>,
     scheduler: std::sync::Arc<SyncScheduler>,
     event_sink: std::sync::Arc<dyn SyncEventSink>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -157,6 +162,7 @@ pub(crate) async fn handle_incoming_sync(
     // instead of embedding the large `_inner` future inline, so the
     // delegation does not push the already-large responder future over the
     // `clippy::large_futures` threshold at the spawn sites.
+    let materializer: std::sync::Arc<dyn ApplyHost> = materializer.into();
     Box::pin(handle_incoming_sync_inner(
         conn,
         pool,
@@ -174,7 +180,7 @@ async fn handle_incoming_sync_inner(
     mut conn: SyncConnection,
     pool: sqlx::SqlitePool,
     device_id: String,
-    materializer: crate::materializer::Materializer,
+    materializer: std::sync::Arc<dyn ApplyHost>,
     scheduler: std::sync::Arc<SyncScheduler>,
     event_sink: std::sync::Arc<dyn SyncEventSink>,
     cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,

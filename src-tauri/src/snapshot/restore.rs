@@ -2,54 +2,43 @@ use sqlx::SqlitePool;
 
 use super::codec::decode_snapshot;
 use super::types::SnapshotData;
+use crate::apply_host::ApplyHost;
 use crate::db::MAX_SQL_PARAMS;
 use crate::error::AppError;
-use crate::materializer::{MaterializeTask, Materializer};
 
-/// (d): single inventory of cache tables paired with their rebuild
-/// task. The wipe loop iterates over `.0` to issue `DELETE FROM <table>`;
-/// the rebuild loop iterates over `.1` to enqueue the materializer task
-/// that repopulates the same table. Co-locating both sides means a new
-/// cache table cannot be wiped without a matching rebuild (or vice-versa)
-/// — adding it requires a single edit to this list.
+/// (d): inventory of cache tables wiped by the RESET path. The wipe loop
+/// issues `DELETE FROM <table>` for each entry.
 ///
-/// Note: `RebuildPageIds` is intentionally NOT in this list — it has no
-/// dedicated cache table (it backfills `blocks.page_id` instead) and must
-/// Be enqueued ahead of agenda rebuilds. It is enqueued separately
-/// at the head of the rebuild fan-out below.
+/// #2621 (agaric-sync inversion): this list used to pair each table with the
+/// `MaterializeTask` that repopulates it, but naming `MaterializeTask` (an
+/// app-only type) here made `snapshot::restore` depend UP on the materializer.
+/// The rebuild half moved to `Materializer::enqueue_post_snapshot_rebuilds`
+/// (invoked via `ApplyHost::enqueue_post_snapshot_rebuilds` after the commit
+/// below), whose task list mirrors this one in order — a new cache table still
+/// requires paired edits, now in two files instead of one.
 ///
-/// `block_tag_refs` is the inline-tag-ref cache and is wiped
-/// alongside the other caches (the wipe used to be inline among the core
-/// tables purely as a sequencing artifact; FK ordering does not matter
-/// because `PRAGMA defer_foreign_keys = ON` is set at the top of the
-/// transaction).
-const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
-    ("agenda_cache", MaterializeTask::RebuildAgendaCache),
-    ("pages_cache", MaterializeTask::RebuildPagesCache),
-    ("tags_cache", MaterializeTask::RebuildTagsCache),
-    (
-        "block_tag_inherited",
-        MaterializeTask::RebuildTagInheritanceCache,
-    ),
-    (
-        "projected_agenda_cache",
-        MaterializeTask::RebuildProjectedAgendaCache,
-    ),
-    ("fts_blocks", MaterializeTask::RebuildFtsIndex),
-    // Inline `#[ULID]` tag-ref cache. Purely derived — repopulated
-    // by `RebuildBlockTagRefsCache` below.
-    ("block_tag_refs", MaterializeTask::RebuildBlockTagRefsCache),
-    // #617/#794: the page-level link roll-up (migration 0065). Both of its
-    // columns carry `REFERENCES blocks(id) ON DELETE CASCADE`, so the
-    // `DELETE FROM blocks` below wiped it IMPLICITLY — defeating this
-    // inventory's "a cache table cannot be wiped without a matching
-    // rebuild" guarantee: after a RESET the links/backlinks UI stayed
-    // empty until an unrelated delete/restore/purge triggered the next
-    // full fan-out. Listing it here makes the wipe explicit (idempotent
-    // with the cascade) and pairs it with its rebuild task. The rebuild
-    // consults `blocks.page_id`, which is why `RebuildPageIds` is
-    // enqueued ahead of this list (see the note above).
-    ("page_link_cache", MaterializeTask::RebuildPageLinkCache),
+/// Note: `RebuildPageIds` has no dedicated cache table (it backfills
+/// `blocks.page_id`) and so was never in this list; it is enqueued at the head
+/// of the rebuild fan-out in the materializer.
+///
+/// `block_tag_refs` is the inline-tag-ref cache and is wiped alongside the
+/// other caches (the wipe used to be inline among the core tables purely as a
+/// sequencing artifact; FK ordering does not matter because
+/// `PRAGMA defer_foreign_keys = ON` is set at the top of the transaction).
+///
+/// `page_link_cache` (#617/#794, migration 0065): both of its columns carry
+/// `REFERENCES blocks(id) ON DELETE CASCADE`, so the `DELETE FROM blocks` below
+/// wiped it IMPLICITLY — listing it here makes the wipe explicit (idempotent
+/// with the cascade) so a RESET can never leave the links/backlinks UI stale.
+const CACHE_TABLES: &[&str] = &[
+    "agenda_cache",
+    "pages_cache",
+    "tags_cache",
+    "block_tag_inherited",
+    "projected_agenda_cache",
+    "fts_blocks",
+    "block_tag_refs",
+    "page_link_cache",
 ];
 
 /// Apply a snapshot (RESET path). Wipes all core + cache tables, inserts
@@ -139,7 +128,7 @@ const CACHE_TABLES: &[(&str, MaterializeTask)] = &[
 #[tracing::instrument(skip_all, err)]
 pub async fn apply_snapshot<R: std::io::Read>(
     pool: &SqlitePool,
-    materializer: &Materializer,
+    host: &dyn ApplyHost,
     compressed_reader: R,
 ) -> Result<SnapshotData, AppError> {
     // #2200: the CPU-bound zstd+CBOR decode is offloaded to a blocking
@@ -181,7 +170,7 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // (d): wipe every cache table from the single inventory.
     // FK ordering is moot under `defer_foreign_keys = ON`; iteration order
     // matches `CACHE_TABLES` for reviewability.
-    for (table, _rebuild_task) in CACHE_TABLES {
+    for table in CACHE_TABLES {
         let sql = format!("DELETE FROM {table}");
         sqlx::query(sqlx::AssertSqlSafe(sql.as_str()))
             .execute(&mut *tx)
@@ -699,87 +688,19 @@ pub async fn apply_snapshot<R: std::io::Read>(
 
     tx.commit().await?;
 
-    // Enqueue the full cache-rebuild set. Without this, the UI
-    // sees empty agenda / tag list / page list / search until the next
-    // unrelated op triggers rebuilds by side-effect.
+    // Enqueue the full cache-rebuild set. Without this, the UI sees empty
+    // agenda / tag list / page list / search until the next unrelated op
+    // triggers rebuilds by side-effect.
     //
-    // Use the awaiting `enqueue_background` variant. The previous
-    // `try_enqueue_background` shed tasks when the bounded background
-    // channel was saturated (a `warn!` was emitted but otherwise lost) —
-    // and this is exactly the moment when stale caches matter most:
-    // there is no boot-time recheck, so any dropped task left FTS /
-    // agenda_cache / pages_cache / tags_cache empty until an unrelated
-    // edit triggered the next rebuild. The awaiting variant blocks until
-    // queue space is available, ensuring no rebuild is dropped. Its only
-    // error mode is channel-closed (shutdown-in-progress); we log at
-    // `error!` ("should never happen" at this point — the materializer
-    // is by definition alive, we just used it) and continue so the
-    // caller still sees the durable `SnapshotData`.
-    //
-    // `RebuildPageIds` MUST be enqueued first so it is processed
-    // before `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both
-    // Agenda rebuilds consult `b.page_id` to apply the
-    // template-page exclusion (`NOT EXISTS (... tp.block_id = b.page_id
-    // AND tp.key = 'template')`). The background consumer processes
-    // tasks sequentially in enqueue order, so enqueuing it ahead of
-    // `CACHE_TABLES` guarantees the agenda sees populated `page_id`s on
-    // first rebuild — otherwise template-tagged pages' blocks would
-    // leak into the agenda until something else triggered another
-    // rebuild. (`RebuildPageIds` has no dedicated cache table, so it
-    // does not appear in `CACHE_TABLES`.)
-    if let Err(e) = materializer
-        .enqueue_background(MaterializeTask::RebuildPageIds)
-        .await
-    {
-        tracing::error!(
-            task = "RebuildPageIds",
-            error = %e,
-            "failed to enqueue cache rebuild task after apply_snapshot \
-             (channel closed; shutdown-in-progress?). snapshot applied but \
-             cache rebuilds could not be enqueued; restart the app to repair caches"
-        );
-    }
-    for (table, task) in CACHE_TABLES {
-        if let Err(e) = materializer.enqueue_background(task.clone()).await {
-            tracing::error!(
-                cache_table = table,
-                error = %e,
-                "failed to enqueue cache rebuild task after apply_snapshot \
-                 (channel closed; shutdown-in-progress?). snapshot applied but \
-                 cache rebuilds could not be enqueued; restart the app to repair caches"
-            );
-        }
-    }
-
-    // #417: recompute the two `pages_cache` count columns AFTER
-    // `RebuildPagesCache` has re-inserted every page row. The RESET wipe
-    // above leaves both columns at DEFAULT 0, and the per-op count
-    // maintenance that ordinary edits rely on never fires here (a snapshot
-    // apply is not an op fan-out). This is the ONLY production path that
-    // enqueues `RebuildPagesCacheCounts` — gating it out of the per-op
-    // `RebuildPagesCache` (the redundant O(pages) correlated-subquery pass)
-    // is exactly issue #417.
-    //
-    // Ordering: enqueued separately at the TAIL (mirroring how
-    // `RebuildPageIds` is enqueued separately at the HEAD) so the count
-    // recompute observes the freshly-rebuilt `pages_cache` rows. The
-    // background consumer processes tasks in strict enqueue order, so this
-    // runs strictly after `RebuildPagesCache` from the `CACHE_TABLES` loop.
-    // (Dedup keys global tasks by discriminant — `RebuildPagesCache` and
-    // `RebuildPagesCacheCounts` are distinct discriminants, so neither
-    // collapses the other and the relative order is preserved.)
-    if let Err(e) = materializer
-        .enqueue_background(MaterializeTask::RebuildPagesCacheCounts)
-        .await
-    {
-        tracing::error!(
-            task = "RebuildPagesCacheCounts",
-            error = %e,
-            "failed to enqueue cache rebuild task after apply_snapshot \
-             (channel closed; shutdown-in-progress?). snapshot applied but \
-             pages_cache counts could not be enqueued; restart the app to repair caches"
-        );
-    }
+    // #2621 (agaric-sync inversion): the concrete enqueue fan-out (RebuildPageIds
+    // at the head, the `CACHE_TABLES` rebuild tasks, RebuildPagesCacheCounts at
+    // the tail — all via the awaiting `enqueue_background` variant, log-and-
+    // continue on channel-closed) moved into
+    // `Materializer::enqueue_post_snapshot_rebuilds` so this RESET path no
+    // longer names the app-only `MaterializeTask`. The method logs any
+    // shutdown-in-progress enqueue failure internally and returns `Ok(())`,
+    // so `?` here never faults the already-durable restore.
+    host.enqueue_post_snapshot_rebuilds().await?;
 
     Ok(data)
 }

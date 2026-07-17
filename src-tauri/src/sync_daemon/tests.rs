@@ -842,10 +842,12 @@ async fn try_sync_with_peer_respects_backoff_gate() {
         "peer must be in backoff after failure"
     );
 
+    let apply_host_ctx_845: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_DEV",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_845,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -893,10 +895,12 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_UNREACHABLE")];
 
+    let apply_host_ctx_896: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_DEV",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_896,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1119,12 +1123,14 @@ async fn run_sync_session_respects_cancel_flag() {
     // 2. conn.send_json(...)           (succeeds, message is buffered)
     // 3. while !is_terminal():
     //      cancel.load() → true → return Err("sync cancelled by user")
+    let run_session_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let result = run_sync_session(
         &mut orch,
         &mut client_conn,
         &cancel,
         &pool,
-        &materializer,
+        &run_session_host,
         &event_sink,
     )
     .await;
@@ -1168,10 +1174,12 @@ async fn try_sync_with_peer_skips_peer_with_no_addresses() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
+    let apply_host_ctx_1171: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1171,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1216,10 +1224,12 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     // Acquire the per-peer lock before calling try_sync_with_peer
     let _guard = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
+    let apply_host_ctx_1219: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1219,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1348,10 +1358,12 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_FAIL")];
 
+    let apply_host_ctx_1351: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_DEV",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1351,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1418,10 +1430,12 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
         "peer must be in backoff"
     );
 
+    let apply_host_ctx_1421: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1421,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1460,10 +1474,12 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     // Hold the per-peer lock so the function returns early
     let _lock = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
+    let apply_host_ctx_1463: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1463,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -1498,10 +1514,12 @@ async fn s11_cancel_preserved_on_no_addresses_early_exit() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
+    let apply_host_ctx_1501: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_1501,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -4058,7 +4076,7 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_A".into(),
-        materializer: mat.clone(),
+        materializer: mat.clone().into(),
         scheduler,
         cert,
         event_sink: sink,
@@ -4105,7 +4123,7 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_B".into(),
-        materializer: mat.clone(),
+        materializer: mat.clone().into(),
         scheduler,
         cert,
         event_sink: sink,
@@ -5157,6 +5175,8 @@ async fn run_one_real_loopback_session_2129(
     let init_cancel = AtomicBool::new(false);
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
+    let init_run_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(init_mat.clone());
     let init_result = tokio::time::timeout(
         timeout,
         run_sync_session(
@@ -5164,7 +5184,7 @@ async fn run_one_real_loopback_session_2129(
             &mut client_conn,
             &init_cancel,
             init_pool,
-            init_mat,
+            &init_run_host,
             &init_sink,
         ),
     )
@@ -7137,10 +7157,12 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
     };
     let refs = vec![make_peer_ref("PEER_M46_FAIL")];
 
+    let apply_host_ctx_7140: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_M46",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_7140,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -7190,10 +7212,12 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     scheduler.record_failure("PEER_M46_BACK");
     assert!(!scheduler.may_retry("PEER_M46_BACK"));
 
+    let apply_host_ctx_7193: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_M46_B",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_7193,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -7259,10 +7283,12 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
         let cancel = cancel.clone();
         let cert = cert.clone();
         tokio::spawn(async move {
+            let apply_host_ctx_7262: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+                std::sync::Arc::new(materializer.clone());
             let ctx = SyncSessionContext {
                 pool: &pool,
                 device_id: "LOCAL_637",
-                materializer: &materializer,
+                materializer: &apply_host_ctx_7262,
                 scheduler: &scheduler,
                 event_sink: &event_sink,
                 cancel: &cancel,
@@ -7338,10 +7364,12 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     // cancel check fires and returns Err("sync cancelled by user").
     let cancel = AtomicBool::new(true);
 
+    let apply_host_ctx_7341: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_637_OWNS",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_7341,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -7426,10 +7454,12 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
     // No cancel pending.
     let cancel = AtomicBool::new(false);
 
+    let apply_host_ctx_7429: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_637_NORM",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_7429,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -8922,10 +8952,12 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
+    let apply_host_ctx_8925: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL_2538",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_8925,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
@@ -9152,10 +9184,12 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
     let scheduler = Arc::new(SyncScheduler::new());
     let cancel = AtomicBool::new(false);
 
+    let apply_host_ctx_9155: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(init_mat.clone());
     let ctx = SyncSessionContext {
         pool: &init_pool,
         device_id: INIT_DEV,
-        materializer: &init_mat,
+        materializer: &apply_host_ctx_9155,
         scheduler: &scheduler,
         event_sink: &init_sink_dyn,
         cancel: &cancel,
@@ -9309,10 +9343,12 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
+    let apply_host_ctx_9312: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
         device_id: "LOCAL2539CU",
-        materializer: &materializer,
+        materializer: &apply_host_ctx_9312,
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,

@@ -38,9 +38,9 @@ use sqlx::SqlitePool;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
+use crate::apply_host::ApplyHost;
 use crate::error::AppError;
 use crate::foreground::LifecycleHooks;
-use crate::materializer::Materializer;
 use crate::peer_refs;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::SyncCert;
@@ -177,7 +177,7 @@ impl SyncDaemon {
     pub async fn start_if_peers_exist(
         pool: SqlitePool,
         device_id: String,
-        materializer: Materializer,
+        materializer: impl Into<Arc<dyn ApplyHost>>,
         scheduler: Arc<SyncScheduler>,
         cert: SyncCert,
         event_sink: Arc<dyn SyncEventSink>,
@@ -186,7 +186,7 @@ impl SyncDaemon {
         Self::start_if_peers_exist_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
-            materializer,
+            materializer: materializer.into(),
             scheduler,
             cert,
             event_sink,
@@ -320,7 +320,7 @@ impl SyncDaemon {
     pub async fn start(
         pool: SqlitePool,
         device_id: String,
-        materializer: Materializer,
+        materializer: impl Into<Arc<dyn ApplyHost>>,
         scheduler: Arc<SyncScheduler>,
         cert: SyncCert,
         event_sink: Arc<dyn SyncEventSink>,
@@ -329,7 +329,7 @@ impl SyncDaemon {
         Self::start_with_lifecycle(SyncDaemonContext {
             pool,
             device_id,
-            materializer,
+            materializer: materializer.into(),
             scheduler,
             cert,
             event_sink,

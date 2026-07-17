@@ -49,9 +49,9 @@ use sqlx::SqlitePool;
 use tokio::sync::Notify;
 use tracing::instrument;
 
+use crate::apply_host::ApplyHost;
 use crate::error::AppError;
 use crate::foreground::LifecycleHooks;
-use crate::materializer::Materializer;
 use crate::peer_refs::{self, PeerRef};
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnection, SyncServer};
@@ -89,7 +89,11 @@ use super::wire;
 pub struct SyncDaemonContext {
     pub pool: SqlitePool,
     pub device_id: String,
-    pub materializer: Materializer,
+    // #2621 (agaric-sync inversion): `Arc<dyn ApplyHost>`, not the concrete
+    // `Materializer`, so this sync-layer context depends DOWN on the trait.
+    // Production wraps the real coordinator (`Arc::new(materializer)`); the
+    // field name is kept for call-site stability.
+    pub materializer: Arc<dyn ApplyHost>,
     pub scheduler: Arc<SyncScheduler>,
     pub cert: SyncCert,
     pub event_sink: Arc<dyn SyncEventSink>,
@@ -635,7 +639,10 @@ async fn try_connect_each_address(
 pub(crate) struct SyncSessionContext<'a> {
     pub pool: &'a SqlitePool,
     pub device_id: &'a str,
-    pub materializer: &'a Materializer,
+    // #2621: borrow of the daemon's `Arc<dyn ApplyHost>` (kept a reference so
+    // the struct stays `Copy`); `try_sync_with_peer` clones the `Arc` to build
+    // the session orchestrator.
+    pub materializer: &'a Arc<dyn ApplyHost>,
     pub scheduler: &'a SyncScheduler,
     pub event_sink: &'a Arc<dyn SyncEventSink>,
     pub cancel: &'a AtomicBool,
@@ -853,7 +860,7 @@ pub(crate) async fn try_sync_with_peer(
 
     let mut event_sink_arc = Arc::clone(ctx.event_sink);
     if let Some(channel) = ctx.scheduler.take_channel(peer_id) {
-        event_sink_arc = Arc::new(crate::sync_events::ChannelEventSink {
+        event_sink_arc = Arc::new(crate::sync_event_sinks::ChannelEventSink {
             inner: event_sink_arc,
             channel,
         });
@@ -1029,7 +1036,7 @@ pub(crate) async fn run_sync_session(
     conn: &mut SyncConnection,
     cancel: &AtomicBool,
     pool: &SqlitePool,
-    materializer: &crate::materializer::Materializer,
+    materializer: &Arc<dyn ApplyHost>,
     event_sink: &Arc<dyn SyncEventSink>,
 ) -> Result<(), AppError> {
     // Initiator sends first message
@@ -1105,7 +1112,7 @@ pub(crate) async fn run_sync_session(
         match snapshot_transfer::try_receive_snapshot_catchup(
             conn,
             pool,
-            materializer,
+            materializer.as_ref(),
             event_sink,
             &peer_id,
             expected_remote_id.as_deref(),
