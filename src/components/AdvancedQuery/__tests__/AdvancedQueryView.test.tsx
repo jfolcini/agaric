@@ -80,6 +80,23 @@ afterEach(() => {
 })
 
 describe('AdvancedQueryView', () => {
+  // #2852 — initial load (no prior results to keep on screen) renders a
+  // list-shaped LoadingSkeleton mirroring QueryResultList rows, not a bare
+  // centered spinner.
+  it('shows a list-shaped loading skeleton on initial load', () => {
+    mockedInvoke.mockImplementation(() => new Promise(() => {})) // never resolves
+
+    const { container } = render(<AdvancedQueryView />)
+
+    // Scope to the results pane — SavedViews (out of scope for #2852) has its
+    // own unrelated loading spinner that's also pending in this test.
+    const resultsPane = container.querySelector('.advanced-query-results')
+    expect(resultsPane).toBeTruthy()
+    const skeletons = resultsPane?.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons?.length).toBe(5)
+    expect(resultsPane?.querySelector('[data-slot="spinner"]')).not.toBeInTheDocument()
+  })
+
   it('runs the engine on mount with an empty conjunction and shows the empty state', async () => {
     render(<AdvancedQueryView />)
 
