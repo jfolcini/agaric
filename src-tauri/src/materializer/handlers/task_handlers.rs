@@ -350,13 +350,32 @@ pub(crate) async fn handle_background_task(
             .await
         }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
-            dispatch_split_or_single(
+            // #2659: the reindex rewrites the `block_tag_refs` TABLE for this
+            // block's inline `#[ULID]` refs but does NOT recompute
+            // `tags_cache.usage_count` — that column counts DISTINCT live blocks
+            // referencing each tag via `block_tags ∪ block_tag_refs`
+            // (`DESIRED_TAGS_SQL`). So an inline-ref content edit that gains or
+            // loses a ref would leave the affected tags' `usage_count` stale
+            // until an unrelated AddTag/RemoveTag/full-rebuild healed it. Refresh
+            // exactly the tags whose ref set changed (the reindex returns
+            // `to_insert ∪ to_delete`), reusing the scoped #676
+            // `refresh_tag_usage_count` — the same per-tag recompute AddTag /
+            // RemoveTag enqueue — rather than the expensive O(vault)
+            // `RebuildTagsCache` the invariant notes deliberately avoid on the
+            // content path. The refresh reads the just-committed `block_tag_refs`
+            // rows from the write `pool`, so it must run AFTER the reindex tx
+            // commits (single-pool refresh per the #676 rationale).
+            let changed_tags = dispatch_split_or_single(
                 pool,
                 read_pool,
                 |w, r| cache::reindex_block_tag_refs_split(w, r, block_id),
                 |p| cache::reindex_block_tag_refs(p, block_id),
             )
-            .await
+            .await?;
+            for tag_id in &changed_tags {
+                cache::refresh_tag_usage_count(pool, tag_id).await?;
+            }
+            Ok(())
         }
         MaterializeTask::UpdateFtsBlock { block_id } => {
             // Load tag/page reference maps scoped to THIS block's own refs and

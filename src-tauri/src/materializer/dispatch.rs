@@ -897,6 +897,19 @@ fn invalidations_for_op(
             match block_type_hint {
                 Some("tag") => {
                     tasks.push(MaterializeTask::RebuildTagsCache);
+                    // #2658: `DESIRED_AGENDA_SQL`'s tag source projects agenda
+                    // dates straight from tag CONTENT (`SUBSTR(t.content, 6)` for
+                    // `date/YYYY-MM-DD` tags). Renaming a date-tag therefore
+                    // changes which agenda rows should exist, so the tag-block
+                    // edit must invalidate `agenda_cache`. Enqueued
+                    // UNCONDITIONALLY (not narrowed to date-shaped from/to text):
+                    // this arm reads only the cached `block_id` sidecar and never
+                    // parses the edit's from/to content, tag renames are rare, and
+                    // over-invalidation is a safe full rebuild while
+                    // under-invalidation is the bug. Matches the unconditional
+                    // `RebuildAgendaCache` in the no-hint fallback and the
+                    // AddTag/RemoveTag arms.
+                    tasks.push(MaterializeTask::RebuildAgendaCache);
                     if !block_id.is_empty() {
                         tasks.push(MaterializeTask::ReindexFtsReferences {
                             block_id: Arc::from(block_id),
@@ -1090,6 +1103,17 @@ fn invalidations_for_op(
             // block's *current* source page, so the old page's stale rows
             // would survive; the full page-link roll-up is the correct fix.
             tasks.push(MaterializeTask::RebuildPageLinkCache);
+            // #2657: a move changes the block's `page_id`, and every arm of
+            // `DESIRED_AGENDA_SQL` EXCLUDES blocks whose owning page carries a
+            // `template` property. Moving a dated block INTO a template page
+            // must drop its agenda rows, and moving one OUT must (re)add them —
+            // so `agenda_cache` goes stale on a template-boundary move unless it
+            // is rebuilt here. Enqueue it unconditionally, mirroring the sibling
+            // `RebuildProjectedAgendaCache` push below (a move is exactly the
+            // event that can flip the owning page's template status; a
+            // correct-but-broader full rebuild is safer than a narrow
+            // "did template status change?" check).
+            tasks.push(MaterializeTask::RebuildAgendaCache);
             // #2196: a reparent can flip the moved subtree's owning page
             // between template and non-template. `projected_agenda_cache`
             // deliberately EXCLUDES repeating blocks whose `page_id` owns a
@@ -1347,9 +1371,28 @@ mod tests {
                 "ReindexBlockLinks(E1)",
                 "ReindexBlockTagRefs(E1)",
                 "RebuildTagsCache",
+                // #2658: a tag-block edit can rename a `date/YYYY-MM-DD` tag,
+                // which `DESIRED_AGENDA_SQL` projects agenda dates from — so
+                // `agenda_cache` must be rebuilt.
+                "RebuildAgendaCache",
                 "ReindexFtsReferences(E1)",
                 "UpdateFtsBlock(E1)",
             ],
+        );
+    }
+
+    /// #2658 focused sentinel: an `edit_block` with the `tag` hint MUST
+    /// enqueue `RebuildAgendaCache` (a date-tag rename changes which agenda
+    /// rows exist). Kept separate from the exact-order pin above so the
+    /// intent survives future reordering of the tag sub-arm.
+    #[test]
+    fn invalidations_for_op_edit_block_tag_hint_rebuilds_agenda_cache_2658() {
+        let r = make_record("edit_block", r#"{"block_id":"E1"}"#, Some("E1"));
+        let tasks = invalidations_for_op(&r, Some("tag")).unwrap();
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildAgendaCache),
+            "edit_block(tag) must enqueue RebuildAgendaCache; got {:?}",
+            labels(&tasks),
         );
     }
 
@@ -1945,6 +1988,10 @@ mod tests {
                 "RebuildTagInheritanceCache",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
+                // #2657: a move changes `page_id`; `DESIRED_AGENDA_SQL` excludes
+                // template-page blocks, so a move across the template boundary
+                // must rebuild the (non-projected) agenda cache too.
+                "RebuildAgendaCache",
                 // #2196: a move can flip the owning page's template status,
                 // so the projected-agenda cache must be rebuilt to stay
                 // authoritative (it excludes template-page repeating blocks).
@@ -1956,6 +2003,24 @@ mod tests {
         assert!(
             !contains_kind(&tasks, &MaterializeTask::RebuildPageIds),
             "move_block must not enqueue the vault-wide RebuildPageIds (#2200)",
+        );
+    }
+
+    /// #2657 focused sentinel: `move_block` MUST enqueue `RebuildAgendaCache`
+    /// — a cross-page move can move a dated block into or out of a `template`
+    /// page, which every arm of `DESIRED_AGENDA_SQL` carves out.
+    #[test]
+    fn invalidations_for_op_move_block_rebuilds_agenda_cache_2657() {
+        let r = make_record(
+            "move_block",
+            r#"{"block_id":"BLK1","new_position":0}"#,
+            Some("BLK1"),
+        );
+        let tasks = invalidations_for_op(&r, None).unwrap();
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildAgendaCache),
+            "move_block must enqueue RebuildAgendaCache; got {:?}",
+            labels(&tasks),
         );
     }
 

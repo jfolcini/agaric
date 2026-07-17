@@ -207,6 +207,92 @@ async fn handle_bg_reindex_block_tag_refs_split_path() {
     assert_eq!(count, 1, "split-pool reindex path produces the same row");
 }
 
+/// #2659: the `ReindexBlockTagRefs` handler must refresh `tags_cache.usage_count`
+/// for the tags whose inline-ref set changed. Before the fix the handler only
+/// rewrote the `block_tag_refs` TABLE, leaving `usage_count` stale on an inline
+/// `#[ULID]` content edit (it was healed only by AddTag/RemoveTag or a full
+/// rebuild). Here: adding an inline ref must bump the tag's count to 1, and
+/// removing it must drop the count back to 0 — both via the scoped
+/// `refresh_tag_usage_count` (#676) the handler now runs for each changed tag.
+#[tokio::test]
+async fn handle_bg_reindex_block_tag_refs_refreshes_usage_count_2659() {
+    let (pool, _dir) = test_pool().await;
+    let tag = "01HBTRTAG26590000000000001";
+    let src = "01HBTRBLK26590000000000001";
+    insert_block_direct(&pool, tag, "tag", "date/2026-07-17").await;
+    // Content block that references the tag inline via `#[ULID]`.
+    insert_block_direct(&pool, src, "content", &format!("scheduled #[{tag}]")).await;
+
+    // Reindex the source block: it gains the inline ref, so the tag's
+    // usage_count must be recomputed to 1.
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: src.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let usage: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        usage, 1,
+        "gaining an inline #[ULID] ref must refresh the tag's usage_count to 1 (#2659)"
+    );
+
+    // Now rewrite the source content to DROP the inline ref, then reindex
+    // again: the tag lost its only referencing block, so usage_count → 0.
+    sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+        .bind("scheduled (ref removed)")
+        .bind(src)
+        .execute(&pool)
+        .await
+        .unwrap();
+    handle_background_task(
+        &pool,
+        &MaterializeTask::ReindexBlockTagRefs {
+            block_id: src.into(),
+        },
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+
+    let usage_after: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT usage_count FROM tags_cache WHERE tag_id = ?")
+            .bind(tag)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        usage_after, 0,
+        "losing the inline #[ULID] ref must refresh the tag's usage_count to 0 (#2659)"
+    );
+
+    // The block_tag_refs TABLE itself must also be empty now (unchanged
+    // behaviour — this pins that the count refresh did not disturb it).
+    let ref_count = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM block_tag_refs WHERE source_id = ? AND tag_id = ?",
+    )
+    .bind(src)
+    .bind(tag)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ref_count, 0,
+        "the inline ref row must be gone after removal"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn dispatch_edit_block_enqueues_reindex_block_tag_refs() {
     // Verifies that the edit_block dispatch arm enqueues
