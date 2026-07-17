@@ -1253,3 +1253,367 @@ async fn undo_property_converges_engine_2655() {
         "#2655: undo of a property change must restore the prior value in the engine map"
     );
 }
+
+// ======================================================================
+// #2838 — engine-convergence tests for AddTag / RemoveTag / DeleteProperty
+// undo (follow-up to #2655, which covered DeleteBlock / RestoreBlock /
+// EditBlock / SetProperty). The AddTag/RemoveTag/DeleteProperty reverse
+// arms in `apply_reverse_in_tx` (`drive_reverse_engine(..., "add_tag", ...)`
+// / `"remove_tag"` / `"delete_property"`) mirror the forward
+// `apply_add_tag_via_loro` / `apply_remove_tag_via_loro` /
+// `apply_delete_property_via_loro` engine paths — these tests lock in that
+// undo (and, for AddTag, redo) converges the engine's `block_tags` map /
+// property map with the SQL projection, the same way the #2655 tests do
+// for the other reverse arms.
+// ======================================================================
+
+/// `block_tags` presence check, used by both the AddTag and RemoveTag
+/// convergence tests below.
+async fn sql_has_block_tag(pool: &SqlitePool, block_id: &str, tag_id: &str) -> bool {
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(block_id)
+            .bind(tag_id)
+            .fetch_one(pool)
+            .await
+            .expect("sql_has_block_tag query");
+    n > 0
+}
+
+/// `block_properties.value_text` read, used by the DeleteProperty
+/// convergence test below. `None` covers BOTH "no row" (key absent /
+/// deleted) and is never ambiguous with a present-but-empty value since
+/// the forward/reverse paths here only ever write non-empty text values.
+async fn sql_property_value_text(pool: &SqlitePool, block_id: &str, key: &str) -> Option<String> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = ?",
+    )
+    .bind(block_id)
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .expect("sql_property_value_text query")
+}
+
+/// #2838 — undo of an `add_tag` must remove the tag from the engine's
+/// `block_tags` map (reverse `RemoveTag`), and a subsequent redo (the
+/// reverse of THAT undo is `AddTag` again) must re-add it — in BOTH the
+/// engine and SQL.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_redo_add_tag_converges_engine_2838() {
+    use crate::op::{AddTagPayload, CreateBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2838A00000000000000PAG";
+    const BLK: &str = "01HZ2838A00000000000000BLK";
+    const TAG: &str = "01HZ2838A00000000000000TAG";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "taggable".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(TAG),
+            block_type: "tag".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(1),
+            content: "important".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Forward add_tag through the production engine pipeline.
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(BLK),
+            tag_id: BlockId::from_trusted(TAG),
+        }),
+    )
+    .await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_has_tag = |state: &crate::loro::shared::LoroState| -> bool {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        g.engine_mut()
+            .read_tags(BLK)
+            .expect("read_tags")
+            .iter()
+            .any(|t| t == TAG)
+    };
+
+    assert!(
+        engine_has_tag(state),
+        "sanity: engine holds the forward tag"
+    );
+    assert!(
+        sql_has_block_tag(&pool, BLK, TAG).await,
+        "sanity: SQL holds the forward tag"
+    );
+
+    // Undo the add_tag → reverse RemoveTag → tag gone from BOTH engine and SQL.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo add_tag");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "add_tag");
+    assert!(
+        !engine_has_tag(state),
+        "#2838: undo of add_tag must remove the tag from the engine's block_tags map"
+    );
+    assert!(
+        !sql_has_block_tag(&pool, BLK, TAG).await,
+        "#2838: undo of add_tag must remove the SQL block_tags row"
+    );
+
+    // Redo → reverse of the undo's RemoveTag is AddTag → tag restored in BOTH.
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect("redo add_tag");
+    settle(&mat).await;
+    assert!(redo.is_redo);
+    assert!(
+        engine_has_tag(state),
+        "#2838: redo of add_tag must re-add the tag in the engine"
+    );
+    assert!(
+        sql_has_block_tag(&pool, BLK, TAG).await,
+        "#2838: redo of add_tag must re-add the SQL block_tags row"
+    );
+}
+
+/// #2838 — undo of a `remove_tag` must restore the tag in the engine's
+/// `block_tags` map (reverse `AddTag`), converging with SQL.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_remove_tag_converges_engine_2838() {
+    use crate::op::{AddTagPayload, CreateBlockPayload, OpPayload, RemoveTagPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2838R00000000000000PAG";
+    const BLK: &str = "01HZ2838R00000000000000BLK";
+    const TAG: &str = "01HZ2838R00000000000000TAG";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "taggable".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(TAG),
+            block_type: "tag".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(1),
+            content: "important".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Forward add_tag, then forward remove_tag — both through the engine.
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted(BLK),
+            tag_id: BlockId::from_trusted(TAG),
+        }),
+    )
+    .await;
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::from_trusted(BLK),
+            tag_id: BlockId::from_trusted(TAG),
+        }),
+    )
+    .await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_has_tag = |state: &crate::loro::shared::LoroState| -> bool {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        g.engine_mut()
+            .read_tags(BLK)
+            .expect("read_tags")
+            .iter()
+            .any(|t| t == TAG)
+    };
+
+    assert!(
+        !engine_has_tag(state),
+        "sanity: engine holds no tag after the forward remove_tag"
+    );
+    assert!(
+        !sql_has_block_tag(&pool, BLK, TAG).await,
+        "sanity: SQL holds no tag after the forward remove_tag"
+    );
+
+    // Undo the remove_tag → reverse AddTag → tag restored in BOTH engine and SQL.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo remove_tag");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "remove_tag");
+    assert!(
+        engine_has_tag(state),
+        "#2838: undo of remove_tag must restore the tag in the engine's block_tags map"
+    );
+    assert!(
+        sql_has_block_tag(&pool, BLK, TAG).await,
+        "#2838: undo of remove_tag must restore the SQL block_tags row"
+    );
+}
+
+/// #2838 — undo of a `delete_property` must restore the prior value into the
+/// engine's property map (reverse `SetProperty`), converging with SQL.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_delete_property_converges_engine_2838() {
+    use crate::op::{CreateBlockPayload, DeletePropertyPayload, OpPayload, SetPropertyPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2838P00000000000000PAG";
+    const BLK: &str = "01HZ2838P00000000000000BLK";
+    const KEY: &str = "importance";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "task".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Forward set_property, then forward delete_property — both through the
+    // engine.
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::SetProperty(SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLK),
+            key: KEY.into(),
+            value_text: Some("urgent".into()),
+            value_num: None,
+            value_date: None,
+            value_ref: None,
+            value_bool: None,
+        }),
+    )
+    .await;
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::DeleteProperty(DeletePropertyPayload {
+            block_id: BlockId::from_trusted(BLK),
+            key: KEY.into(),
+        }),
+    )
+    .await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_prop = |state: &crate::loro::shared::LoroState| -> Option<String> {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        match g
+            .engine_mut()
+            .read_property_typed(BLK, KEY)
+            .expect("read_property_typed")
+        {
+            None => None,
+            Some(crate::loro::engine::PropertyValue::Str(s)) => Some(s),
+            other => panic!("expected a Str property or None, got {other:?}"),
+        }
+    };
+
+    assert_eq!(
+        engine_prop(state),
+        None,
+        "sanity: engine property cleared after the forward delete_property"
+    );
+    assert_eq!(
+        sql_property_value_text(&pool, BLK, KEY).await,
+        None,
+        "sanity: SQL property row gone after the forward delete_property"
+    );
+
+    // Undo the delete_property → reverse SetProperty(prior "urgent") →
+    // restored in BOTH the engine and SQL.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo delete_property");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "delete_property");
+    assert_eq!(
+        engine_prop(state).as_deref(),
+        Some("urgent"),
+        "#2838: undo of delete_property must restore the prior value in the engine map"
+    );
+    assert_eq!(
+        sql_property_value_text(&pool, BLK, KEY).await.as_deref(),
+        Some("urgent"),
+        "#2838: undo of delete_property must restore the SQL block_properties row"
+    );
+}

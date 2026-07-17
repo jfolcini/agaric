@@ -27,7 +27,7 @@ propose new behavior. The canonical source is the code, primarily:
 - `src-tauri/src/sync_daemon/snapshot_transfer.rs` — the snapshot catch-up
   sub-flow.
 - `src-tauri/src/sync_files.rs` — the attachment-transfer sub-protocol.
-- `src-tauri/src/sync_constants.rs` and `src-tauri/src/sync_net/connection.rs`
+- `src-tauri/agaric-sync/src/sync_constants.rs` and `src-tauri/src/sync_net/connection.rs`
   — shared transport constants.
 
 ## Envelope encoding
@@ -53,7 +53,7 @@ each frame at most `BINARY_FRAME_CHUNK_SIZE` (5 MB) — see
 
 ### Transport limits
 
-Defined in `src-tauri/src/sync_constants.rs` and (per-connection) in
+Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-connection) in
 `src-tauri/src/sync_net/connection.rs`:
 
 | Constant | Value | Meaning |
