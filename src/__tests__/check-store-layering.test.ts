@@ -60,8 +60,9 @@ describe('check-store-layering checkLayering', () => {
   })
 
   it('reports one violation per disallowed import, not just the first', () => {
-    const graph = new Map([['page-blocks-reducers.ts', ['navigation.ts', 'tabs.ts', 'undo.ts']]])
-    // undo.ts is allowed; navigation.ts and tabs.ts are not.
+    const graph = new Map([['page-blocks-reducers.ts', ['navigation.ts', 'journal.ts', 'undo.ts']]])
+    // undo.ts is allowed; navigation.ts and journal.ts are not (tabs.ts and
+    // recent-pages.ts became allowed edges with the #2802 stale-space heal).
     expect(checkLayering(graph)).toHaveLength(2)
   })
 })
