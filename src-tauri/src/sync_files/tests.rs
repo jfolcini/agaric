@@ -1600,7 +1600,7 @@ async fn find_missing_attachments_all_files_present() {
 
 /// #1993 regression: a DANGLING `attachment_blobs` row (the blob is
 /// registered but its on-disk file has vanished) must NOT suppress a transfer.
-/// `local_blob_path_if_present`'s `try_exists` check is what guards this — a
+/// `local_blob_path_if_present`'s on-disk check is what guards this — a
 /// blob whose file is gone is treated as not-present, so the row whose own
 /// file is also missing is still classified as missing and a full transfer is
 /// requested. Without the on-disk check the bytes would be lost forever.
@@ -3059,6 +3059,179 @@ async fn find_missing_skips_when_local_blob_present_1993() {
         fs_path, blob_path,
         "row must be repointed at the local blob"
     );
+}
+
+// ── #2652: local_blob_path_if_present size verification ──────────────
+//
+// A bare existence check masks a truncated/corrupt blob as "held locally"
+// forever. `local_blob_path_if_present` now stats the file and requires its
+// on-disk length to equal the recorded `attachment_blobs.size_bytes`.
+
+/// #2652 (a) happy path: a blob file whose on-disk length MATCHES the recorded
+/// `size_bytes` is returned as present (behaviour unchanged for healthy blobs).
+#[tokio::test]
+async fn local_blob_present_when_size_matches_2652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let bytes = b"complete blob contents".to_vec(); // 22 bytes
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let size = i64::try_from(bytes.len()).unwrap();
+
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let blob_path = "attachments/blob_ok.bin";
+    std::fs::write(dir.path().join(blob_path), &bytes).unwrap();
+    insert_blob_row(&pool, &hash, blob_path, size).await;
+
+    let got = local_blob_path_if_present(&pool, dir.path(), &hash).await;
+    assert_eq!(
+        got.as_deref(),
+        Some(blob_path),
+        "a blob whose on-disk length matches size_bytes must be reported present"
+    );
+}
+
+/// #2652 (b) truncated blob: a blob file shorter than the recorded `size_bytes`
+/// is treated as NOT present by `local_blob_path_if_present`, AND the attachment
+/// whose only candidate is that truncated blob is classified as missing (so it
+/// WILL be re-requested from a healthy peer). This is the core bug fix.
+#[tokio::test]
+async fn local_blob_absent_when_truncated_and_attachment_re_requested_2652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let full = b"the full and correct attachment payload".to_vec(); // 39 bytes
+    let hash = blake3::hash(&full).to_hex().to_string();
+    let size = i64::try_from(full.len()).unwrap();
+
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    // Blob row registered with the CORRECT size, but its file on disk is a
+    // truncated stub (interrupted download / partial write).
+    let blob_path = "attachments/blob_trunc.bin";
+    std::fs::write(dir.path().join(blob_path), b"short").unwrap(); // 5 bytes
+    insert_blob_row(&pool, &hash, blob_path, size).await;
+
+    // Direct: the truncated blob must not be reported present.
+    assert!(
+        local_blob_path_if_present(&pool, dir.path(), &hash)
+            .await
+            .is_none(),
+        "a truncated blob (len < size_bytes) must be treated as NOT present"
+    );
+
+    // find_missing_attachments: a row whose own file is absent and whose only
+    // blob candidate is the truncated stub must be classified as missing.
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES ('ATT1', 'BLK1', 'application/octet-stream', 'f.bin', ?, 'attachments/att1.bin', 1736942400000, ?)",
+    )
+    .bind(size)
+    .bind(&hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+    assert_eq!(
+        missing.len(),
+        1,
+        "truncated blob must not mask the attachment"
+    );
+    assert_eq!(
+        missing[0].id, "ATT1",
+        "attachment backed only by a truncated blob must be re-requested"
+    );
+
+    // And the row must NOT have been repointed at the truncated blob.
+    let fs_path: String = sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        fs_path, "attachments/att1.bin",
+        "row must not be repointed at a truncated blob"
+    );
+}
+
+/// #2652 (c) zero-length stub: a 0-byte blob file (the classic antivirus /
+/// interrupted-write artefact) is likewise treated as NOT present.
+#[tokio::test]
+async fn local_blob_absent_when_zero_length_stub_2652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let full = b"non-empty expected contents".to_vec(); // 27 bytes
+    let hash = blake3::hash(&full).to_hex().to_string();
+    let size = i64::try_from(full.len()).unwrap();
+
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let blob_path = "attachments/blob_zero.bin";
+    std::fs::write(dir.path().join(blob_path), b"").unwrap(); // 0 bytes
+    insert_blob_row(&pool, &hash, blob_path, size).await;
+
+    assert!(
+        local_blob_path_if_present(&pool, dir.path(), &hash)
+            .await
+            .is_none(),
+        "a zero-length blob stub must be treated as NOT present"
+    );
+}
+
+/// #2652 self-path hardening: a row must never self-satisfy from the very file
+/// that just failed its size check. Here the blob's recorded `size_bytes`
+/// MATCHES the truncated on-disk length (so the size check in
+/// `local_blob_path_if_present` would pass), but because the blob's
+/// `on_disk_path` equals the attachment's own `fs_path`, `maybe_link_local_blob`
+/// refuses to link and the attachment stays classified as missing.
+#[tokio::test]
+async fn find_missing_does_not_self_satisfy_from_own_failing_file_2652() {
+    let dir = TempDir::new().unwrap();
+    let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
+
+    let hash = "self0path0hash0deadbeefcafe";
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    // The attachment's OWN file exists but is truncated (5 bytes) vs the DB's
+    // authoritative size_bytes (24) → triggers the size-mismatch branch.
+    let fs_path = "attachments/self.bin";
+    std::fs::write(dir.path().join(fs_path), b"short").unwrap(); // 5 bytes
+
+    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK1', 'content', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO attachments (id, block_id, mime_type, filename, size_bytes, fs_path, created_at, content_hash) \
+         VALUES ('ATT1', 'BLK1', 'application/octet-stream', 'f.bin', 24, ?, 1736942400000, ?)",
+    )
+    .bind(fs_path)
+    .bind(hash)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // Blob row points at the SAME file, and its recorded size_bytes (5) matches
+    // the truncated on-disk length — so only the self-path guard can save us.
+    insert_blob_row(&pool, hash, fs_path, 5).await;
+
+    let missing = find_missing_attachments(&pool, dir.path()).await.unwrap();
+    assert_eq!(
+        missing.len(),
+        1,
+        "row must not self-satisfy from its own failing file"
+    );
+    assert_eq!(missing[0].id, "ATT1");
+
+    // Row must NOT have been repointed (it already pointed there, but assert the
+    // link path did not "succeed" and suppress the request).
+    let after: String = sqlx::query_scalar("SELECT fs_path FROM attachments WHERE id = 'ATT1'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(after, fs_path);
 }
 
 /// #1993 end-to-end skip: the receiver already has the blob → it issues NO

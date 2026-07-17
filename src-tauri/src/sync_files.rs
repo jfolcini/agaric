@@ -259,7 +259,14 @@ pub async fn find_missing_attachments(
                 if meta.len() != expected {
                     // #1993: before classifying as missing, check whether the
                     // bytes are already held under a content-addressed blob.
-                    if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref()).await
+                    if maybe_link_local_blob(
+                        pool,
+                        app_data_dir,
+                        &id,
+                        content_hash.as_deref(),
+                        &fs_path,
+                    )
+                    .await
                     {
                         continue;
                     }
@@ -277,7 +284,9 @@ pub async fn find_missing_attachments(
                 // #1993: the row's own file is gone, but if a local blob with
                 // this row's content_hash is present we already hold the bytes
                 // under another path — repoint the row and do NOT request it.
-                if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref()).await {
+                if maybe_link_local_blob(pool, app_data_dir, &id, content_hash.as_deref(), &fs_path)
+                    .await
+                {
                     continue;
                 }
                 missing.push(MissingAttachment { id, fs_path });
@@ -493,6 +502,9 @@ async fn maybe_link_local_blob(
     app_data_dir: &Path,
     attachment_id: &str,
     content_hash: Option<&str>,
+    // #2652: the failing row's own `fs_path`. Belt-and-suspenders so a row can
+    // never self-satisfy from the very file that just failed its size check.
+    own_fs_path: &str,
 ) -> bool {
     let Some(hash) = content_hash else {
         return false;
@@ -500,6 +512,14 @@ async fn maybe_link_local_blob(
     let Some(blob_path) = local_blob_path_if_present(pool, app_data_dir, hash).await else {
         return false;
     };
+    // #2652: refuse to "link" the row to its own on-disk file. If the candidate
+    // blob path is this row's `fs_path`, the blob is the same file that just
+    // failed the caller's size check — linking it would mask the corruption.
+    // The size check in `local_blob_path_if_present` already guards this, but
+    // this is a cheap explicit backstop.
+    if blob_path == own_fs_path {
+        return false;
+    }
     // Repoint the row so reads resolve the shared bytes. Best-effort: if the
     // UPDATE fails we still return false-equivalent by not suppressing the
     // request would be safer, but the bytes ARE present, so treat as held.
@@ -526,6 +546,15 @@ async fn maybe_link_local_blob(
 /// so a file whose bytes we already hold is never requested or re-received. The
 /// on-disk presence check is essential: a blob row whose file vanished must NOT
 /// suppress a transfer, or the bytes would be lost.
+///
+/// #2652: a bare existence check is NOT enough — a truncated or partially
+/// written blob file still `exists`, and reporting it as "held locally" masks
+/// the corruption forever (the attachment is never re-requested and inbound
+/// offers of the correct bytes are drained + discarded). We therefore stat the
+/// file and require its on-disk length to equal the authoritative
+/// `attachment_blobs.size_bytes`. On any metadata error (file gone, permission
+/// denied) or a size mismatch we return `None`, so the caller classifies the
+/// row as missing and the correct bytes are re-fetched from a healthy peer.
 async fn local_blob_path_if_present(
     pool: &SqlitePool,
     app_data_dir: &Path,
@@ -533,17 +562,25 @@ async fn local_blob_path_if_present(
 ) -> Option<String> {
     // dynamic-sql: static SQL; runtime form matches this sync module's style
     // and the attachment_blobs table is not yet in the offline .sqlx cache.
-    let row = sqlx::query_scalar::<_, String>(
-        "SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?",
+    // #2652: also pull `size_bytes` so we can verify the blob is complete, not
+    // merely present.
+    let (on_disk_path, size_bytes) = sqlx::query_as::<_, (String, i64)>(
+        "SELECT on_disk_path, size_bytes FROM attachment_blobs WHERE content_hash = ?",
     )
     .bind(content_hash)
     .fetch_optional(pool)
     .await
     .ok()
     .flatten()?;
-    let full = app_data_dir.join(&row);
-    if tokio::fs::try_exists(&full).await.unwrap_or(false) {
-        Some(row)
+    let full = app_data_dir.join(&on_disk_path);
+    // #2652: require the on-disk length to match the recorded `size_bytes`. A
+    // truncated / zero-length stub (interrupted download, partial write, AV
+    // quarantine) would otherwise pass a bare existence check and mask the
+    // corruption forever. Any metadata error → treat as no usable blob.
+    let meta = tokio::fs::metadata(&full).await.ok()?;
+    let expected = u64::try_from(size_bytes).ok()?;
+    if meta.len() == expected {
+        Some(on_disk_path)
     } else {
         None
     }
