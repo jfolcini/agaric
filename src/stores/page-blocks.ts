@@ -25,6 +25,7 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
+import { isValidation } from '@/lib/app-error'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -35,7 +36,9 @@ import { useBlockStore } from '@/stores/blocks'
 import { buildBlocksById } from '@/stores/page-blocks-map'
 import { createReducers } from '@/stores/page-blocks-reducers'
 import type { PageBlockState } from '@/stores/page-blocks-types'
+import { useRecentPagesStore } from '@/stores/recent-pages'
 import { useSpaceStore } from '@/stores/space'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
 // #2254 — `PageBlockState` and `FlatBlock` now live in `page-blocks-types.ts`;
@@ -262,6 +265,55 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // `loading: true` (or double-toast for a snapshot nobody wants).
         if (generation !== loadGeneration) return
         set({ loading: false })
+        // #2802 — space-membership rejection. `load_page_subtree` scopes the
+        // fetch to the ACTIVE space and rejects with a `validation` AppError
+        // ("block '…' not in current space '…'", `load_page_subtree_inner` in
+        // src-tauri/src/commands/pages/listing.rs; the tauri-mock mirrors the
+        // shape) when the page no longer belongs to it — i.e. the page was
+        // moved to another space and a stale old-space reference (a surviving
+        // tab-stack entry or recent-pages item) was just followed. That is
+        // expected staleness, not a load failure: show a soft notice instead
+        // of the raw error toast, and self-heal the stale state the same way
+        // the delete flow handles "this page is no longer valid in the
+        // current view" (`usePageDeleteAction` → `onBack`, and #2803's move
+        // handler): drop the page from the active space's recent-pages MRU
+        // (the click itself just re-recorded it via `recordVisit`) and, when
+        // this page sits on top of the active tab's stack, pop it via the
+        // existing `goBack()` — which also closes the tab / falls back to the
+        // pages view when the stack empties, exactly like delete. There is
+        // deliberately NO eager purge sweep across the old space's tab stacks
+        // at move time: page deletion doesn't purge tabs/recent-pages either,
+        // so stale refs heal lazily here at the rejection point. The active
+        // space is NOT switched to follow the page (see #2785's note in
+        // PageHeader.handleMoveToSpace). Breadth check: on this command the
+        // membership rejection is the ONLY reachable `validation` — a
+        // malformed id is `kind: 'ulid'` (`BlockId::from_string`), and the
+        // `require_active` Global-scope rejection can't fire because
+        // `requireActiveScope` always dispatches an active scope. A
+        // well-formed id that matches NO row (page hard-purged) surfaces the
+        // same membership rejection — an equally dead reference for which
+        // this cleanup is the sane outcome.
+        if (isValidation(err)) {
+          // Heal only when the space this load was SCOPED to is still the
+          // active space. The rejection can land after the user already
+          // switched spaces (e.g. followed the page into its new home) —
+          // `removeRecentPage` keys on the CURRENT active space and
+          // `goBack()` pops the CURRENT active slice, so healing then would
+          // purge a legitimate recents entry / pop a legitimate tab in the
+          // wrong space. Skipping is safe: the heal is lazy by design and
+          // re-fires the next time the stale reference is followed.
+          if (useSpaceStore.getState().currentSpaceId !== spaceId) return
+          logger.warn('page-blocks', 'page not in current space — healing stale reference', {
+            rootParentId: rootParentId ?? '',
+          })
+          notify.info(i18n.t('error.pageNotInCurrentSpace'), { id: 'page-not-in-space' })
+          useRecentPagesStore.getState().removeRecentPage(rootParentId)
+          const tabsState = useTabsStore.getState()
+          if (selectPageStack(tabsState).at(-1)?.pageId === rootParentId) {
+            tabsState.goBack()
+          }
+          return
+        }
         logger.error(
           'page-blocks',
           'Failed to load blocks',

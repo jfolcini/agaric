@@ -13,7 +13,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 - **Change a space's accent colour** — pick from seven swatches (emerald, blue, violet, amber, rose, slate, orange) in *Manage Spaces…*. The colour shows up in the sidebar header, the 3 px top stripe, the badge in collapsed mode, and the OS window title.
 - **Set a per-space journal template** — paste markdown into the *Journal template* textarea inside *Manage Spaces…*. New daily pages in that space are pre-populated with the template's child blocks.
 - **Delete a space** — only available when the space contains no live pages (and never for the last remaining space). Confirmation required. To delete a non-empty space: first use *Move to space* on each page (or batch-move from the Pages view), then return to *Manage Spaces…* and delete.
-- **Move a page between spaces** — open the page's **PageHeaderMenu** (kebab) → *Move to space* → pick the destination.
+- **Move a page between spaces** — open the page's **PageHeaderMenu** (kebab) → *Move to space* → pick the destination. The editor navigates back (the moved page is no longer valid in the origin space); the active space does **not** switch to follow the page. Stale references left behind in the origin space — an old tab still holding the page, or its *Recently visited* entry — heal lazily: following one shows a soft *"This page was moved to another space"* notice, drops the stale entry, and lands you back on a valid view instead of raising an error.
 
 ## What the user sees
 

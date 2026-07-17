@@ -9,7 +9,7 @@ State lives in Zustand stores under `src/stores/`. One store per concern:
 
 - `boot.ts` — boot lifecycle (`booting` / `ready` / `error`).
 - `blocks.ts` — global block focus + multi-selection. Holds `focusedBlockId` and `selectedBlockIds: string[]`. Edit/select-mode exclusivity and the selection-clear-on-navigation lifecycle are pinned mechanically by `src/stores/__tests__/store-invariants.test.ts` (#2465).
-- `page-blocks.ts` — **per-page factory**. `createPageBlockStore(pageId)` mints an independent store wrapped in `PageBlockStoreProvider`; the module-level `pageBlockRegistry` lets siblings reach in by `pageId`. Dependencies flow one way: page-block stores → global focus, never the reverse — enforced mechanically by the `store-layering` prek hook (`scripts/check-store-layering.mjs`, #2465).
+- `page-blocks.ts` — **per-page factory**. `createPageBlockStore(pageId)` mints an independent store wrapped in `PageBlockStoreProvider`; the module-level `pageBlockRegistry` lets siblings reach in by `pageId`. Dependencies flow one way: page-block stores → global focus, never the reverse — enforced mechanically by the `store-layering` prek hook (`scripts/check-store-layering.mjs`, #2465). The allowlisted forward edges to `tabs.ts` and `recent-pages.ts` exist for the #2802 stale-space heal (a rejected cross-space load pops the stale tab entry and prunes the old space's recents); the reverse direction stays banned.
 - `journal.ts` — date cursor + mode (`daily` / `weekly` / `monthly` / `agenda`). Per-space slice: `currentDateBySpace`, `modeBySpace`.
 - `navigation.ts` — `currentView`, `selectedBlockId`, `currentViewBySpace`. (Tab state lives in `tabs.ts`.)
 - `tabs.ts` — page-stack per tab + active tab. Per-space slice: `tabsBySpace`.
