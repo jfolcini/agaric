@@ -1,5 +1,5 @@
 {
-  "_comment": "Coverage ratchet baseline — total LINE coverage % per suite, MEASURED from a real CI-equivalent run. The coverage-ratchet script compares each run against these (NOISE_TOLERANCE_PP slack). vitest: informational signal (the vitest.config thresholds are the hard gate). rust: HARD-GATED (the rust ratchet call passes --gate; a drop beyond tolerance fails the cargo-coverage job, which is in validate-all's needs) and measured WORKSPACE-wide since #2817. Re-baseline on main with `--update` after a deliberate change.",
+  "_comment": "Coverage ratchet baseline — total LINE coverage % per suite, MEASURED from a real CI-equivalent run. The coverage-ratchet script compares each run against these (NOISE_TOLERANCE_PP slack). vitest: informational signal (the vitest.config thresholds are the hard gate). rust: HARD-GATED (the rust ratchet call passes --gate; a drop beyond tolerance fails the cargo-coverage job, which is in validate-all's needs) and measured WORKSPACE-wide since #2817. Re-baseline on main with `--update` after a deliberate change. rust last re-baselined 91.61→90.6 for #2621 Sync-C-prep: lifting the inline `#[cfg(test)]` sync test modules into sibling `*_tests.rs` files reproducibly shifted the llvm-cov measurement down ~1pp with ZERO production-code change — the same class of extraction-shifted measurement re-baselined for the loro extraction in c13e6d2.",
   "vitest": 91.58,
-  "rust": 91.61
+  "rust": 90.6
 }
