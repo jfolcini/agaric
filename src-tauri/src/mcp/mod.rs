@@ -103,13 +103,18 @@ impl McpSurface {
 /// Shared runtime handle surfaced to the Tauri command layer
 /// (`mcp_disconnect_all`, `mcp_set_enabled`, `get_mcp_status`).
 ///
-/// - `disconnect_signal`: notified once per `mcp_disconnect_all` call. The
-///   serve loop watches this signal in addition to its `accept()` future,
-///   and each spawned per-connection task `select!`s on it, returning
-///   early when the signal fires. Subsequent connects succeed — the
-///   signal only kicks in-flight connections, not the listener itself.
-///   The accept loop also wakes from this signal so [`shutdown`] can
-///   pull it out of `accept().await` and have it re-check [`enabled`].
+/// - `disconnect_signal`: notified once per `mcp_disconnect_all` call.
+///   Each spawned per-connection task `select!`s on it, returning early
+///   when the signal fires. Subsequent connects succeed — the signal only
+///   kicks in-flight connections, not the listener itself. Edge-triggered
+///   (`notify_waiters`), which is correct here: the per-connection kick
+///   always has a live parked waiter by construction.
+/// - `shutdown_signal`: #2824 level-triggered `watch` channel the accept
+///   loop races against its `accept()` / `connect()` / back-off `sleep`,
+///   so [`shutdown`] can pull it out of the FFI call and have it re-check
+///   [`enabled`] — and, being level-triggered, without any risk of a
+///   missed wake if `shutdown` fires while the loop is mid-FFI. See the
+///   field doc for the full rationale.
 /// - `active_connections`: incremented by each per-connection task on
 ///   entry and decremented on exit via an RAII guard. `get_mcp_status`
 ///   reads this for the Settings activity-feed badge.
@@ -128,6 +133,27 @@ impl McpSurface {
 #[derive(Debug, Clone)]
 pub struct McpLifecycle {
     pub disconnect_signal: Arc<Notify>,
+    /// #2824 — **level-triggered** shutdown wake for the accept loop(s).
+    ///
+    /// The accept loops (`serve_unix` / `serve_pipe`) race their blocking
+    /// `accept()` / `connect()` / back-off `sleep` against this channel so
+    /// a [`shutdown`](McpLifecycle::shutdown) pulls them out of the FFI
+    /// call immediately. It is a `watch` channel (not the edge-triggered
+    /// `disconnect_signal` `Notify`) precisely so the wake **cannot be
+    /// missed**: `watch` stores the level, so a `shutdown` that fires
+    /// while a loop is mid-FFI (not currently parked in the select arm)
+    /// is still observed on the loop's next poll. The previous
+    /// `notify_waiters()` approach stored no permit and dropped such a
+    /// wake, leaving the loop blocked until an incoming connection or the
+    /// (≤30s) back-off elapsed — the disable latency this field closes.
+    ///
+    /// `true` == shutdown requested. `shutdown` sets it; the
+    /// `spawn_*_task_with_registry` helpers reset it to `false` alongside
+    /// `enabled` before each re-spawn so a prior shutdown does not leak
+    /// across enable/disable cycles (the lifecycle — and thus this
+    /// channel — is reused, not recreated). Wrapped in `Arc` because
+    /// `watch::Sender` is not `Clone` and `McpLifecycle` is.
+    pub shutdown_signal: Arc<tokio::sync::watch::Sender<bool>>,
     pub active_connections: Arc<AtomicUsize>,
     pub task_running: Arc<std::sync::atomic::AtomicBool>,
     /// H-2 gate consulted by the accept loop. Defaults to `true` so a
@@ -143,6 +169,8 @@ impl McpLifecycle {
     pub fn new() -> Self {
         Self {
             disconnect_signal: Arc::new(Notify::new()),
+            // #2824 — starts `false` (no shutdown pending).
+            shutdown_signal: Arc::new(tokio::sync::watch::channel(false).0),
             active_connections: Arc::new(AtomicUsize::new(0)),
             task_running: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             enabled: Arc::new(std::sync::atomic::AtomicBool::new(true)),
@@ -190,13 +218,24 @@ impl McpLifecycle {
     /// H-2: tear the accept loop down cleanly.
     ///
     /// Stores `false` into [`enabled`] so the loop's per-iteration gate
-    /// observes the disable, then fires `disconnect_signal.notify_waiters()`
-    /// so any task currently parked inside `listener.accept().await`
-    /// (or each per-connection handler's `select!`) wakes immediately.
-    /// On wake the loop re-checks the gate, drops the listener (the OS
-    /// port / socket file is released), and returns. The next
-    /// `mcp_set_enabled(true)` call sees `task_running == false` and
-    /// re-spawns a fresh task on a freshly-bound listener.
+    /// observes the disable, then wakes the accept loop **two ways**:
+    ///
+    /// 1. [`shutdown_signal`] is flipped to `true` (a `watch` send). This
+    ///    is the **level-triggered** wake for the accept loop
+    ///    (`serve_unix` / `serve_pipe`): it stores the level, so even if
+    ///    the loop is mid-FFI (not parked in its `select!` shutdown arm)
+    ///    when this fires, the loop still observes the flip on its next
+    ///    poll and cannot miss it (#2824). On wake the loop re-checks the
+    ///    gate, drops the listener (the OS port / socket file is
+    ///    released), and returns. The next `mcp_set_enabled(true)` call
+    ///    sees `task_running == false` and re-spawns a fresh task on a
+    ///    freshly-bound listener.
+    /// 2. `disconnect_signal.notify_waiters()` (edge-triggered) kicks any
+    ///    per-connection handler currently parked in its grace-period
+    ///    `select!`, so in-flight clients are torn down too. This
+    ///    preserves the pre-#2824 behavior; only the *accept-loop* wake
+    ///    moved to the level-triggered channel (the per-connection kick
+    ///    has a live waiter by construction, so edge-triggered is fine).
     ///
     /// Distinct from [`disconnect_all`](McpLifecycle::disconnect_all),
     /// which only kicks in-flight connections without affecting the
@@ -204,8 +243,13 @@ impl McpLifecycle {
     /// a toggle.
     ///
     /// [`enabled`]: McpLifecycle#structfield.enabled
+    /// [`shutdown_signal`]: McpLifecycle#structfield.shutdown_signal
     pub fn shutdown(&self) {
         self.enabled.store(false, Ordering::Release);
+        // #2824 — level-triggered wake for the accept loop (cannot be
+        // missed even if the loop is not currently parked in its select).
+        self.shutdown_signal.send_replace(true);
+        // Edge-triggered kick for in-flight per-connection handlers.
         self.disconnect_signal.notify_waiters();
     }
 }
@@ -911,6 +955,12 @@ pub fn spawn_mcp_ro_task_with_registry<R>(
         // bind failure does not leave the gate stuck at `false`.
         if let Some(ref lc) = lifecycle {
             lc.enabled.store(true, std::sync::atomic::Ordering::Release);
+            // #2824 — reset the level-triggered shutdown gate too, so a
+            // prior shutdown's stored `true` does not immediately tear
+            // down the freshly-spawned accept loop. Reset alongside
+            // `enabled` (before bind) so a bind failure cannot leave it
+            // stuck at `true`.
+            lc.shutdown_signal.send_replace(false);
         }
         match bind_socket(&socket_path, "RO").await {
             Ok(socket) => {
@@ -1022,6 +1072,12 @@ pub fn spawn_mcp_rw_task_with_registry<R>(
         // binding the new listener.
         if let Some(ref lc) = lifecycle {
             lc.enabled.store(true, std::sync::atomic::Ordering::Release);
+            // #2824 — reset the level-triggered shutdown gate too, so a
+            // prior shutdown's stored `true` does not immediately tear
+            // down the freshly-spawned accept loop. Reset alongside
+            // `enabled` (before bind) so a bind failure cannot leave it
+            // stuck at `true`.
+            lc.shutdown_signal.send_replace(false);
         }
         match bind_socket(&socket_path, "RW").await {
             Ok(socket) => {

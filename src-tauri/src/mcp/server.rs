@@ -151,10 +151,12 @@ where
 /// `disconnect_signal.notified()` so the `mcp_disconnect_all` command
 /// can kick every in-flight client at once. The accept loop itself
 /// also consults `lifecycle.enabled` on every iteration and races
-/// `accept().await` against `disconnect_signal.notified()` so a
-/// `mcp_set_enabled(false)` (H-2) wakes the loop, observes the cleared
-/// gate, and returns — releasing the listener so the OS port / socket
-/// file is freed and a subsequent re-enable can re-bind cleanly.
+/// `accept().await` against the level-triggered `shutdown_signal` watch
+/// channel (#2824) so a `mcp_set_enabled(false)` (H-2) wakes the loop —
+/// even if the disable fired while the loop was mid-FFI — whereupon it
+/// observes the cleared gate and returns, releasing the listener so the
+/// OS port / socket file is freed and a subsequent re-enable can re-bind
+/// cleanly.
 pub async fn serve<R>(
     socket: SocketKind,
     registry: std::sync::Arc<R>,
@@ -183,6 +185,33 @@ where
 /// until it is `abort()`ed.
 fn lifecycle_disabled(lifecycle: Option<&McpLifecycle>) -> bool {
     lifecycle.is_some_and(|lc| !lc.is_enabled())
+}
+
+/// #2824 — level-triggered shutdown wake for the accept loops.
+///
+/// Resolves as soon as [`McpLifecycle::shutdown`] has flipped the
+/// `shutdown_signal` `watch` channel to `true`, **including the case
+/// where the flip happened before this future was first polled**. That
+/// is the whole point: `watch` stores the level, so unlike the
+/// edge-triggered `Notify::notify_waiters` used previously, a shutdown
+/// that fires while the accept loop is mid-FFI (not parked in this
+/// future) is not lost — the first poll observes the stored level and
+/// returns immediately. The caller then re-checks [`lifecycle_disabled`]
+/// and returns, releasing the listener.
+///
+/// `rx` is a fresh subscriber, so `borrow_and_update` first reflects the
+/// value at subscribe time; if that is already `true` we return without
+/// awaiting. `changed()` errors only once the sender is dropped (the
+/// lifecycle is gone) — treated as shutdown so the loop still exits.
+async fn shutdown_requested(mut rx: tokio::sync::watch::Receiver<bool>) {
+    if *rx.borrow_and_update() {
+        return;
+    }
+    while rx.changed().await.is_ok() {
+        if *rx.borrow_and_update() {
+            return;
+        }
+    }
 }
 
 #[cfg(unix)]
@@ -223,10 +252,13 @@ where
         let outcome: Option<std::io::Result<(tokio::net::UnixStream, _)>> = match lifecycle.as_ref()
         {
             Some(lc) => {
-                let notify = lc.disconnect_signal.clone();
+                // #2824 — race `accept()` against the level-triggered
+                // shutdown wake, not the edge-triggered disconnect signal,
+                // so a `shutdown` that fired while we were mid-FFI is still
+                // observed here and cannot be missed.
                 tokio::select! {
                     res = listener.accept() => Some(res),
-                    () = async move { notify.notified().await } => None,
+                    () = shutdown_requested(lc.shutdown_signal.subscribe()) => None,
                 }
             }
             None => Some(listener.accept().await),
@@ -258,10 +290,13 @@ where
                 );
                 match lifecycle.as_ref() {
                     Some(lc) => {
-                        let notify = lc.disconnect_signal.clone();
+                        // #2824 — race the back-off `sleep` against the
+                        // level-triggered shutdown wake so a disable during
+                        // back-off tears the loop down promptly (the wake
+                        // cannot be missed even mid-FFI).
                         tokio::select! {
                             () = tokio::time::sleep(backoff) => {}
-                            () = async move { notify.notified().await } => {}
+                            () = shutdown_requested(lc.shutdown_signal.subscribe()) => {}
                         }
                     }
                     None => tokio::time::sleep(backoff).await,
@@ -331,10 +366,11 @@ where
 
         let outcome: Option<std::io::Result<()>> = match lifecycle.as_ref() {
             Some(lc) => {
-                let notify = lc.disconnect_signal.clone();
+                // #2824 — race `connect()` against the level-triggered
+                // shutdown wake (see `serve_unix`).
                 tokio::select! {
                     res = server.connect() => Some(res),
-                    () = async move { notify.notified().await } => None,
+                    () = shutdown_requested(lc.shutdown_signal.subscribe()) => None,
                 }
             }
             None => Some(server.connect().await),
@@ -363,10 +399,13 @@ where
                 );
                 match lifecycle.as_ref() {
                     Some(lc) => {
-                        let notify = lc.disconnect_signal.clone();
+                        // #2824 — race the back-off `sleep` against the
+                        // level-triggered shutdown wake so a disable during
+                        // back-off tears the loop down promptly (the wake
+                        // cannot be missed even mid-FFI).
                         tokio::select! {
                             () = tokio::time::sleep(backoff) => {}
-                            () = async move { notify.notified().await } => {}
+                            () = shutdown_requested(lc.shutdown_signal.subscribe()) => {}
                         }
                     }
                     None => tokio::time::sleep(backoff).await,

@@ -194,6 +194,10 @@ async fn re_enable_rebinds_listener_after_shutdown() {
     lifecycle
         .enabled
         .store(true, std::sync::atomic::Ordering::Release);
+    // #2824 — mirror `spawn_*_task_with_registry`: reset the
+    // level-triggered shutdown gate too, else the first disable's stored
+    // `true` would tear the second loop down immediately (or spin it).
+    lifecycle.shutdown_signal.send_replace(false);
     lifecycle
         .task_running
         .store(true, std::sync::atomic::Ordering::Release);
@@ -454,4 +458,96 @@ fn lifecycle_shutdown_clears_enabled_and_fires_signal() {
                 "shutdown must clear lifecycle.enabled so the accept loop's gate fires",
             );
         });
+}
+
+// ──────────────────────────────────────────────────────────────────────
+// #2824 — the shutdown wake for the accept loop must be LEVEL-triggered
+//
+// The bug: `shutdown()` used to wake the accept loop via
+// `disconnect_signal.notify_waiters()`, which is edge-triggered and
+// stores no permit. If the disable fired while the loop was mid-FFI
+// (between park points, NOT parked in the select! shutdown arm) the
+// wake was lost, and the loop stayed blocked in `accept()` / the
+// back-off `sleep` (≤30s) until an unrelated event unblocked it — the
+// disable-latency this fix removes. The fix routes the accept-loop wake
+// through the `shutdown_signal` `watch` channel, which stores the level
+// so a signal-before-park is still observed.
+//
+// These tests pin the primitive directly (deterministic — no reliance
+// on OS accept timing): a flag flipped BEFORE the waiter parks must be
+// observed immediately.
+// ──────────────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn shutdown_requested_returns_immediately_when_signalled_before_park_2824() {
+    let lc = super::super::McpLifecycle::new();
+
+    // Simulate the exact missed-wakeup window: `shutdown()` fires FIRST
+    // (flipping the level), and only THEN does the accept loop reach its
+    // select! and subscribe + await the wake.
+    lc.shutdown();
+
+    // Must resolve well within a short budget — proving it did NOT block
+    // for the (≤30s) accept back-off. 500ms keeps it non-flaky on a
+    // loaded CI runner while still an order of magnitude below the cap.
+    tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        shutdown_requested(lc.shutdown_signal.subscribe()),
+    )
+    .await
+    .expect(
+        "level-triggered shutdown wake must return immediately even though it \
+         was signalled before the waiter parked (the #2824 missed-wakeup window)",
+    );
+}
+
+#[tokio::test]
+async fn shutdown_requested_parks_until_shutdown_fires_2824() {
+    let lc = super::super::McpLifecycle::new();
+
+    // No shutdown pending yet: the waiter must PARK, not spuriously
+    // return (otherwise the accept loop would spin instead of blocking
+    // in `accept()`).
+    let waiter = shutdown_requested(lc.shutdown_signal.subscribe());
+    tokio::pin!(waiter);
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(50), &mut waiter)
+            .await
+            .is_err(),
+        "shutdown_requested must park while no shutdown is pending",
+    );
+
+    // Fire shutdown — the SAME parked waiter must wake promptly.
+    lc.shutdown();
+    tokio::time::timeout(std::time::Duration::from_millis(500), &mut waiter)
+        .await
+        .expect("a parked waiter must wake once shutdown fires");
+}
+
+#[tokio::test]
+async fn shutdown_signal_reset_clears_level_across_reenable_2824() {
+    let lc = super::super::McpLifecycle::new();
+
+    lc.shutdown();
+    assert!(
+        *lc.shutdown_signal.subscribe().borrow(),
+        "shutdown must set the level-triggered watch flag to true",
+    );
+
+    // Mirror `spawn_*_task_with_registry`'s re-enable reset.
+    lc.shutdown_signal.send_replace(false);
+
+    // A fresh waiter must now PARK again — proving a prior shutdown does
+    // not leak across enable/disable cycles (the lifecycle, and thus the
+    // watch channel, is reused rather than recreated).
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(50),
+            shutdown_requested(lc.shutdown_signal.subscribe()),
+        )
+        .await
+        .is_err(),
+        "after the re-enable reset the shutdown level must be cleared so the \
+         fresh accept loop parks in accept() instead of exiting immediately",
+    );
 }
