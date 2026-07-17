@@ -330,6 +330,103 @@ test.describe('Spaces — move a page between spaces', () => {
     ).toBeVisible()
   })
 
+  // #2813 — #2803's `handleMoveToSpace` fix calls `onBack()` (tabs.ts
+  // `goBack`) instead of reloading under the stale old-space scope. `goBack`
+  // has two distinct landing branches depending on the ACTIVE TAB's stack
+  // depth at the moment of the move (tabs.ts:460-494): popping to a
+  // still-non-empty stack lands on the new top entry (the parent page,
+  // within the same tab); popping the last entry of a single tab switches
+  // the navigation view to Pages. The test above only exercises the
+  // "editor closes, no error toast" surface — it never asserts WHICH view
+  // is landed on. The two tests below pin both landing branches explicitly.
+  //
+  // Landing-state assertions ALONE do not discriminate this fix: verified
+  // empirically (reverting `handleMoveToSpace` back to its pre-#2803
+  // `await pageStore.getState().load()` shape) that `page-blocks.ts`'s own
+  // `#2802` catch block ALSO calls `goBack()` when that reload's
+  // space-membership check rejects — landing on the identical page/view as
+  // #2803's direct `onBack()` call. The one observable that DOES
+  // discriminate: #2802's fallback path additionally fires the
+  // `error.pageNotInCurrentSpace` soft notice ("This page was moved to
+  // another space") as a side effect of the rejected reload; #2803's direct
+  // navigation never calls `load()` in the first place, so that notice never
+  // fires. Both tests below assert its absence for that reason — dropping it
+  // would let a #2803 revert hide behind #2802's safety net and still pass.
+
+  test('moving a page opened from a parent page pops back to the parent within the tab (#2803)', async ({
+    page,
+  }) => {
+    await createSpaceViaDialog(page, 'Work')
+    await closeManageDialog(page)
+
+    // Stack depth 2: Quick Notes underneath, Getting Started opened on top
+    // of it (the `openPage` helper always navigates via the Pages view, so
+    // each call pushes one entry onto the active tab's stack via
+    // tabs.ts's `navigateToPage`).
+    await openPage(page, 'Quick Notes')
+    await openPage(page, 'Getting Started')
+
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
+    await expect(page.getByText('Page moved to Work', { exact: true })).toBeVisible()
+
+    // The discriminating assertion — see the block comment above. A plain
+    // `.not.toBeVisible()` does NOT work here: Playwright's `.not` matchers
+    // retry-poll up to the assertion timeout, and the soft notice is a
+    // transient, auto-dismissing toast — polling would just wait it out
+    // and pass once it disappears on its own, regardless of whether it
+    // ever rendered. Take a single non-retrying snapshot instead, taken
+    // immediately after the move toast (both toasts, when the fallback
+    // path fires, are queued within the same synchronous-ish handler tick,
+    // so this is not a race against the notice's OWN appearance — only
+    // against its later auto-dismiss, which this sidesteps entirely).
+    expect(
+      await page.getByText('This page was moved to another space', { exact: true }).isVisible(),
+    ).toBe(false)
+
+    // `goBack` pops one entry off a 2-deep stack — the new top entry (Quick
+    // Notes) is still there, so it lands back on the PARENT page within the
+    // same tab, not the Pages view and not a closed tab. No stale-scope
+    // reload of the moved page means no error toast either.
+    await expect(page.locator('[aria-label="Page title"]')).toHaveText('Quick Notes')
+    await expect(page.getByText('Failed to load blocks', { exact: true })).not.toBeVisible()
+  })
+
+  test('moving a page that is the only entry on the tab stack lands on the Pages view (#2803)', async ({
+    page,
+  }) => {
+    await createSpaceViaDialog(page, 'Work')
+    await closeManageDialog(page)
+
+    // Stack depth 1: a single `openPage` call from a fresh boot makes the
+    // moved page the tab's ONLY stack entry.
+    await openPage(page, 'Getting Started')
+
+    await page.getByRole('button', { name: 'Page actions', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Move to space', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Work', exact: true }).click()
+    await expect(page.getByText('Page moved to Work', { exact: true })).toBeVisible()
+
+    // The discriminating assertion — see the block comment above the
+    // preceding test (single non-retrying snapshot, not `.not.toBeVisible()`
+    // — the notice is a transient auto-dismissing toast that a polling
+    // matcher would just wait out and pass regardless of which code path
+    // actually ran).
+    expect(
+      await page.getByText('This page was moved to another space', { exact: true }).isVisible(),
+    ).toBe(false)
+
+    // `goBack` pops the LAST entry off a single tab's stack — tabs.ts's
+    // `newStack.length === 0` branch takes the "switch to Pages view"
+    // path when there is only one tab open (the sibling "close this tab"
+    // path requires a second tab, not exercised here). The editor closes
+    // and no error toast appears.
+    await expect(page.locator('[aria-label="Page title"]')).not.toBeVisible()
+    await expect(page.getByRole('grid')).toBeVisible()
+    await expect(page.getByText('Failed to load blocks', { exact: true })).not.toBeVisible()
+  })
+
   test('following a stale old-space reference to a moved page heals with a soft notice, not the raw error toast (#2802)', async ({
     page,
   }) => {
