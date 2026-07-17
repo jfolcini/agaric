@@ -75,7 +75,11 @@ pub use agaric_engine::loro;
 pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
-pub mod merge;
+// `merge` — the query-free CRDT divergence/apply dispatch — moved into
+// `agaric-engine` (#2621, wave E3-merge). Engine-clean (0 sqlx queries, no
+// app-layer coupling); depends only on loro/op/space/ulid. Re-exported so every
+// `crate::merge::…` path resolves unchanged.
+pub use agaric_engine::merge;
 // OpenTelemetry trace observability (#2110, M1a). Backend traces to a LOCAL
 // FILE only — zero network egress, gated OFF by default (AGARIC_OTEL unset).
 pub mod observability;

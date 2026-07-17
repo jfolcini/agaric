@@ -50,11 +50,11 @@ pub(crate) mod divergence;
 ///
 /// Returns nothing.  Errors `tracing::warn!` and never propagate —
 /// the engine dispatch must not break the materializer hot path.
-pub(crate) fn engine_apply(
+pub fn engine_apply(
     op_id: &str,
-    op: &crate::op::OpPayload,
+    op: &agaric_store::op::OpPayload,
     device_id: &str,
-    space_id: &crate::space::SpaceId,
+    space_id: &agaric_store::space::SpaceId,
     op_created_at: &str,
     state: &crate::loro::shared::LoroState,
 ) {
@@ -89,9 +89,9 @@ pub(crate) fn engine_apply(
     // RemoveTag / RestoreBlock / PurgeBlock / DeleteProperty).
     // AddAttachment / DeleteAttachment log+skip — those are file-blob
     // ops and the file lives outside the CRDT state.
-    let dispatch_result: Result<(), crate::error::AppError> = match op {
-        crate::op::OpPayload::CreateBlock(p) => {
-            let parent = p.parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+    let dispatch_result: Result<(), agaric_core::error::AppError> = match op {
+        agaric_store::op::OpPayload::CreateBlock(p) => {
+            let parent = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
             // #400/#603 routing — MUST mirror
             // `materializer::handlers::apply_create_block_via_loro` exactly:
             // new-scheme ops carry a 0-based `index` (slot-based apply);
@@ -116,14 +116,17 @@ pub(crate) fn engine_apply(
                 ),
             }
         }
-        crate::op::OpPayload::EditBlock(p) => {
+        agaric_store::op::OpPayload::EditBlock(p) => {
             engine.apply_edit_via_diff_splice(p.block_id.as_str(), &p.to_text)
         }
-        crate::op::OpPayload::DeleteBlock(p) => {
+        agaric_store::op::OpPayload::DeleteBlock(p) => {
             engine.apply_delete_block(p.block_id.as_str(), op_created_at)
         }
-        crate::op::OpPayload::MoveBlock(p) => {
-            let parent = p.new_parent_id.as_ref().map(crate::ulid::BlockId::as_str);
+        agaric_store::op::OpPayload::MoveBlock(p) => {
+            let parent = p
+                .new_parent_id
+                .as_ref()
+                .map(agaric_core::ulid::BlockId::as_str);
             // #400/#603 routing — MUST mirror
             // `materializer::handlers::apply_move_block_via_loro` exactly:
             // route on `new_index` when present (new-scheme op), else the
@@ -137,7 +140,7 @@ pub(crate) fn engine_apply(
                 None => engine.apply_move_block(p.block_id.as_str(), parent, p.new_position),
             }
         }
-        crate::op::OpPayload::SetProperty(p) => {
+        agaric_store::op::OpPayload::SetProperty(p) => {
             // Store the value with its NATIVE type so the
             // engine is type-lossless. This must mirror
             // `materializer::handlers::apply_set_property_via_loro` exactly
@@ -196,15 +199,17 @@ pub(crate) fn engine_apply(
             let value = PropertyValue::from(p);
             engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)
         }
-        crate::op::OpPayload::AddTag(p) => {
+        agaric_store::op::OpPayload::AddTag(p) => {
             engine.apply_add_tag(p.block_id.as_str(), p.tag_id.as_str())
         }
-        crate::op::OpPayload::RemoveTag(p) => {
+        agaric_store::op::OpPayload::RemoveTag(p) => {
             engine.apply_remove_tag(p.block_id.as_str(), p.tag_id.as_str())
         }
-        crate::op::OpPayload::RestoreBlock(p) => engine.apply_restore_block(p.block_id.as_str()),
-        crate::op::OpPayload::PurgeBlock(p) => engine.apply_purge_block(p.block_id.as_str()),
-        crate::op::OpPayload::DeleteProperty(p) => {
+        agaric_store::op::OpPayload::RestoreBlock(p) => {
+            engine.apply_restore_block(p.block_id.as_str())
+        }
+        agaric_store::op::OpPayload::PurgeBlock(p) => engine.apply_purge_block(p.block_id.as_str()),
+        agaric_store::op::OpPayload::DeleteProperty(p) => {
             engine.apply_delete_property(p.block_id.as_str(), &p.key)
         }
         // AddAttachment / DeleteAttachment are out of scope:
