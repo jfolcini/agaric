@@ -1,0 +1,74 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id: agaric_core::ulid::BlockId\", content, updated_at, draft_anchor_seq, draft_anchor_device FROM block_drafts ORDER BY updated_at ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id: agaric_core::ulid::BlockId",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "content",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "updated_at",
+        "ordinal": 2,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "updated_at"
+          }
+        }
+      },
+      {
+        "name": "draft_anchor_seq",
+        "ordinal": 3,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_seq"
+          }
+        }
+      },
+      {
+        "name": "draft_anchor_device",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_device"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "5ea49f02dec545e223c9784ea86c36fd96bcfaeb1c84c982fb668054652650a1"
+}

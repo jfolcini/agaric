@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id ASC, tag_id ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "source_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_refs",
+            "name": "source_id"
+          }
+        }
+      },
+      {
+        "name": "tag_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_tag_refs",
+            "name": "tag_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "cb508c0bbb3d7a57b0f02f3cec25cf44ce99febf86817cdb097e9acd5ed3daf2"
+}

@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT value_ref FROM block_properties WHERE block_id = ?1 AND key = 'repeat-origin'",
+  "describe": {
+    "columns": [
+      {
+        "name": "value_ref",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "3b60605e94ab355c10cea66a0c5dc04d659fc53c287d4373fe49e8618b98309c"
+}
