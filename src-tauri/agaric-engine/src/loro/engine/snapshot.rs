@@ -186,7 +186,7 @@ impl LoroEngine {
     pub fn import_with_changed_blocks(
         &mut self,
         bytes: &[u8],
-    ) -> Result<Vec<crate::ulid::BlockId>, AppError> {
+    ) -> Result<Vec<agaric_core::ulid::BlockId>, AppError> {
         // Thin wrapper over the changed+purged variant — discard the purged
         // delta so existing callers keep their `Vec<BlockId>` contract. The
         // shared body lives in `import_with_changed_and_purged_blocks` so the
@@ -219,7 +219,13 @@ impl LoroEngine {
     pub fn import_with_changed_and_purged_blocks(
         &mut self,
         bytes: &[u8],
-    ) -> Result<(Vec<crate::ulid::BlockId>, Vec<crate::ulid::BlockId>), AppError> {
+    ) -> Result<
+        (
+            Vec<agaric_core::ulid::BlockId>,
+            Vec<agaric_core::ulid::BlockId>,
+        ),
+        AppError,
+    > {
         // Thin compatibility wrapper — discard the tag-inheritance scope. The
         // shared body lives in `import_with_changed_purged_tagscope`.
         self.import_with_changed_purged_tagscope(bytes)
@@ -265,8 +271,8 @@ impl LoroEngine {
         bytes: &[u8],
     ) -> Result<
         (
-            Vec<crate::ulid::BlockId>,
-            Vec<crate::ulid::BlockId>,
+            Vec<agaric_core::ulid::BlockId>,
+            Vec<agaric_core::ulid::BlockId>,
             TagScope,
         ),
         AppError,
@@ -335,9 +341,9 @@ impl LoroEngine {
         let before: std::collections::HashSet<String> = self.index.keys().cloned().collect();
         self.rebuild_index();
         let after: std::collections::HashSet<String> = self.index.keys().cloned().collect();
-        let purged: Vec<crate::ulid::BlockId> = before
+        let purged: Vec<agaric_core::ulid::BlockId> = before
             .difference(&after)
-            .map(|s| crate::ulid::BlockId::from_trusted(s))
+            .map(|s| agaric_core::ulid::BlockId::from_trusted(s))
             .collect();
 
         if cap.fallback || migrated {
@@ -360,7 +366,7 @@ impl LoroEngine {
     /// crashed SQL projection), the import diff is empty and says nothing
     /// about SQL state — the caller reprojects this full set instead of
     /// trusting the no-op.
-    pub fn live_blocks_preorder(&self) -> Vec<crate::ulid::BlockId> {
+    pub fn live_blocks_preorder(&self) -> Vec<agaric_core::ulid::BlockId> {
         self.enumerate_live_preorder()
     }
 
@@ -368,16 +374,16 @@ impl LoroEngine {
     /// pre-order (the historical sync-pull projection driver; also the #2036
     /// fast-path fallback). The FK-ordered caller relies on a parent's row
     /// being projected before any child's.
-    fn enumerate_live_preorder(&self) -> Vec<crate::ulid::BlockId> {
+    fn enumerate_live_preorder(&self) -> Vec<agaric_core::ulid::BlockId> {
         let tree = self.tree();
-        let mut out: Vec<crate::ulid::BlockId> = Vec::with_capacity(self.index.len());
+        let mut out: Vec<agaric_core::ulid::BlockId> = Vec::with_capacity(self.index.len());
         let mut stack: Vec<TreeID> = tree.roots();
         stack.reverse();
         while let Some(node) = stack.pop() {
             if let Ok(meta) = tree.get_meta(node)
                 && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
             {
-                out.push(crate::ulid::BlockId::from_trusted(&bid));
+                out.push(agaric_core::ulid::BlockId::from_trusted(&bid));
             }
             if let Some(mut children) = tree.children(TreeParentId::Node(node)) {
                 children.reverse();
@@ -392,7 +398,7 @@ impl LoroEngine {
     /// parent is projected before its created child — the caller's `parent_id`
     /// self-FK demands it). Purged ids are excluded (handled by the purged
     /// delta + caller Pass D).
-    fn resolve_changed_blocks(&self, cap: &DiffCapture) -> Vec<crate::ulid::BlockId> {
+    fn resolve_changed_blocks(&self, cap: &DiffCapture) -> Vec<agaric_core::ulid::BlockId> {
         let tree = self.tree();
         let mut set: std::collections::HashSet<String> = cap.block_id_keys.clone();
         for tid in &cap.node_ids {
@@ -425,7 +431,7 @@ impl LoroEngine {
         ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
         ranked
             .into_iter()
-            .map(|(_, b)| crate::ulid::BlockId::from_trusted(&b))
+            .map(|(_, b)| agaric_core::ulid::BlockId::from_trusted(&b))
             .collect()
     }
 
@@ -434,7 +440,7 @@ impl LoroEngine {
     /// (their subtree re-inherits a new ancestor chain). Deduplicated to the
     /// TOP-MOST roots so a snapshot-shaped import recomputes each tree once
     /// rather than once per node.
-    fn resolve_tag_scope(&self, cap: &DiffCapture) -> Vec<crate::ulid::BlockId> {
+    fn resolve_tag_scope(&self, cap: &DiffCapture) -> Vec<agaric_core::ulid::BlockId> {
         let tree = self.tree();
         let mut set: std::collections::HashSet<String> = std::collections::HashSet::new();
         for b in &cap.tag_changed {
@@ -456,7 +462,7 @@ impl LoroEngine {
         owned
             .into_iter()
             .filter(|b| !self.has_ancestor_in(b, &set, &tree))
-            .map(|b| crate::ulid::BlockId::from_trusted(&b))
+            .map(|b| agaric_core::ulid::BlockId::from_trusted(&b))
             .collect()
     }
 
@@ -537,7 +543,7 @@ impl LoroEngine {
 pub enum TagScope {
     /// Recompute inherited-tag rows only for these subtree roots' subtrees
     /// (top-most roots; deduped). An empty vector means nothing to recompute.
-    Subtrees(Vec<crate::ulid::BlockId>),
+    Subtrees(Vec<agaric_core::ulid::BlockId>),
     /// The import could not be resolved incrementally — rebuild the whole
     /// inherited-tag cache.
     Global,
@@ -869,7 +875,7 @@ mod incremental_detection_tests {
     //! [`TagScope`] for each block-mutation type.
     use super::*;
 
-    fn ids(v: &[crate::ulid::BlockId]) -> Vec<String> {
+    fn ids(v: &[agaric_core::ulid::BlockId]) -> Vec<String> {
         let mut s: Vec<String> = v.iter().map(|b| b.as_str().to_string()).collect();
         s.sort();
         s

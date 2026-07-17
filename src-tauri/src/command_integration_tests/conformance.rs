@@ -670,7 +670,7 @@ async fn conformance_fixtures_match_backend() {
 
 /// #928 f7 — FE-`newIndex` ↔ engine-clamp parity at the sibling-group TAIL.
 ///
-/// The engine's `move_block_impl` (`src/loro/engine.rs`) clamps a SAME-PARENT
+/// The engine's `move_block_impl` (`agaric-engine/src/loro/engine/`) clamps a SAME-PARENT
 /// (already-child) move's slot to `count - 1`: the node vacates its own slot
 /// first, so the addressable range among the OTHER children shrinks by one.
 /// The FE replicates the symmetric slot math separately — `moveDown`

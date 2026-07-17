@@ -193,7 +193,11 @@ impl LoroEngine {
     /// `Ok(Some(value))` for any present scalar. Production property
     /// reads go through SQL / `read_all_properties_typed`; this exists
     /// for parity-checking in tests and proptests.
-    #[cfg(test)]
+    ///
+    /// Exposed via the `test-util` feature (not just `#[cfg(test)]`) so the
+    /// app crate's engine/materializer parity tests reach it across the crate
+    /// boundary (#2621, wave E1).
+    #[cfg(any(test, feature = "test-util"))]
     pub fn read_property_typed(
         &self,
         block_id: &str,

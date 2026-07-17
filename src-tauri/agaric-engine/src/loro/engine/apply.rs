@@ -648,7 +648,7 @@ impl LoroEngine {
     }
     /// Resolve the [`BLOCK_TAGS_ROOT`] map key under which `tag_id`'s
     /// association is stored: the tag block's normalized name
-    /// ([`crate::tag_norm::normalize_tag_name`] over its `content`),
+    /// ([`agaric_core::tag_norm::normalize_tag_name`] over its `content`),
     /// degrading to the raw `tag_id` when the tag block is absent from
     /// this doc or its normalized name is empty. See the
     /// [`BLOCK_TAGS_ROOT`] docstring for the namespace-collision
@@ -658,7 +658,7 @@ impl LoroEngine {
             && let Ok(meta) = self.tree().get_meta(node)
             && let Ok(name) = read_text(&meta, FIELD_CONTENT)
         {
-            let key = crate::tag_norm::normalize_tag_name(&name);
+            let key = agaric_core::tag_norm::normalize_tag_name(&name);
             if !key.is_empty() {
                 return key;
             }

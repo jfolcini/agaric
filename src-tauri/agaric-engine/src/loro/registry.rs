@@ -10,7 +10,7 @@
 //! mutate the doc whose space they belong to. Cross-space ops are
 //! impossible by construction (every op carries a `block_id` whose
 //! owning page resolves to exactly one space — see
-//! [`crate::space::resolve_block_space`]).
+//! [`agaric_store::space::resolve_block_space`]).
 //!
 //! ## Lifetime
 //!
@@ -80,9 +80,9 @@ use loro::{ExportMode, LoroDoc};
 use parking_lot::lock_api::ArcMutexGuard;
 use parking_lot::{Mutex, RawMutex};
 
-use crate::error::AppError;
 use crate::loro::engine::LoroEngine;
-use crate::space::SpaceId;
+use agaric_core::error::AppError;
+use agaric_store::space::SpaceId;
 
 /// A per-space engine slot: the map stores `Arc<Mutex<LoroEngine>>` so
 /// the (long) engine critical section is taken WITHOUT the map lock —

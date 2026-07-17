@@ -35,11 +35,11 @@
 use proptest::prelude::*;
 
 use crate::loro::engine::{LoroEngine, PropertyValue};
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
     OpPayload, RemoveTagPayload, SetPropertyPayload,
 };
-use crate::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Block-id pool.
@@ -303,7 +303,10 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
 /// in `merge::engine_apply`. Returns `Ok(())` on success; the proptest
 /// body asserts no errors fire (well-formed streams must always
 /// succeed against a fresh engine).
-fn apply_to_engine(engine: &mut LoroEngine, op: &OpPayload) -> Result<(), crate::error::AppError> {
+fn apply_to_engine(
+    engine: &mut LoroEngine,
+    op: &OpPayload,
+) -> Result<(), agaric_core::error::AppError> {
     match op {
         OpPayload::CreateBlock(p) => {
             let parent = p.parent_id.as_ref().map(BlockId::as_str);

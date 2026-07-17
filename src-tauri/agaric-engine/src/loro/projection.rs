@@ -43,10 +43,10 @@
 
 use sqlx::SqliteConnection;
 
-use crate::db::reserved_key_blocks_column;
-use crate::error::AppError;
 use crate::loro::engine::BlockSnapshot;
-use crate::op::{
+use agaric_core::error::AppError;
+use agaric_store::db::reserved_key_blocks_column;
+use agaric_store::op::{
     SPACE_PROPERTY_KEY, SetPropertyPayload, is_column_backed_property_key, is_reserved_property_key,
 };
 
@@ -125,17 +125,27 @@ pub async fn project_create_block_to_sql(
 /// #2200 test-only invocation counter for [`reproject_dense_positions`]. Lets
 /// the import-scaling tests assert the deferred flush reprojects each touched
 /// parent ONCE per chunk instead of once per imported block.
-#[cfg(test)]
-pub(crate) mod reproject_call_spy {
+///
+/// Exposed via the `test-util` feature (not just `#[cfg(test)]`) because its
+/// consumer — the app crate's `materializer::handlers::import_scaling_tests`
+/// — is a downstream crate whose test build sees `agaric-engine` as a normal
+/// (non-`cfg(test)`) dependency, so a `#[cfg(test)]` gate would hide it
+/// (#2621, wave E1).
+#[cfg(any(test, feature = "test-util"))]
+pub mod reproject_call_spy {
     use std::sync::atomic::{AtomicUsize, Ordering};
     static CALLS: AtomicUsize = AtomicUsize::new(0);
-    pub(crate) fn bump() {
+    pub fn bump() {
         CALLS.fetch_add(1, Ordering::Relaxed);
     }
-    pub(crate) fn reset() {
+    // `reset`/`count` are consumed only by the downstream app crate's tests,
+    // so they read as dead code from within this crate.
+    #[allow(dead_code)]
+    pub fn reset() {
         CALLS.store(0, Ordering::Relaxed);
     }
-    pub(crate) fn count() -> usize {
+    #[allow(dead_code)]
+    pub fn count() -> usize {
         CALLS.load(Ordering::Relaxed)
     }
 }
@@ -151,7 +161,7 @@ pub async fn reproject_dense_positions(
     if ordered_block_ids.is_empty() {
         return Ok(());
     }
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-util"))]
     reproject_call_spy::bump();
     // Build the `[{"id","rank"}, …]` value list once. rank is 1-based,
     // matching the pre-#400 convention; `saturating_add` mirrors the old
@@ -568,7 +578,7 @@ pub async fn project_purge_blocks_to_sql(
 /// **Depth (R27).** The walk is depth-UNBOUNDED: it batches the capped
 /// descendant CTE (invariant #9 — `d.depth < 100` per batch) and
 /// re-anchors at the cap boundary via
-/// [`crate::block_descendants::collect_subtree_ids_unbounded`], so a
+/// [`agaric_store::block_descendants::collect_subtree_ids_unbounded`], so a
 /// merged sync tree deeper than the cap no longer silently truncates
 /// its cascade (pre-R27 the sub-cap descendants stayed live under a
 /// tombstoned ancestor). Crossing the cap warns loudly in the
@@ -587,10 +597,10 @@ pub async fn project_delete_block_to_sql(
     block_id: &str,
     deleted_at: i64,
 ) -> Result<Vec<String>, AppError> {
-    let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
         &mut *conn,
         block_id,
-        crate::block_descendants::DescendantWalkFilter::Active,
+        agaric_store::block_descendants::DescendantWalkFilter::Active,
     )
     .await?;
     let payload = serde_json::Value::from(cohort.clone()).to_string();
@@ -656,7 +666,7 @@ pub async fn project_move_block_to_sql(
 /// it live under a still-tombstoned parent.
 ///
 /// The cohort timestamp is non-monotonic wall-clock ms
-/// (`crate::db::now_ms`), so two independent deletes CAN collide on the
+/// (`agaric_store::db::now_ms`), so two independent deletes CAN collide on the
 /// same value; scoping to a contiguous parent-chain from the seed makes
 /// cohort identity robust against that collision for every case except a
 /// fully-contiguous same-ms nested re-delete (seed and the nested
@@ -686,10 +696,10 @@ pub async fn project_restore_block_to_sql(
     // each batch's recursive arm only descends through `deleted_at = ?`
     // children, and continuation batches re-anchor only at rows that
     // matched the cohort filter.
-    let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+    let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
         &mut *conn,
         block_id,
-        crate::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
+        agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
     )
     .await?;
     let payload = serde_json::Value::from(cohort).to_string();
@@ -722,7 +732,7 @@ pub async fn project_restore_block_to_sql(
     // divergence). The page/space re-derivation from the topmost id runs in the
     // via-loro arm; this projection only owns the `deleted_at` clear.
     let restored_ancestors =
-        crate::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id)
+        agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut *conn, block_id)
             .await?
             .chain;
 
@@ -878,8 +888,8 @@ pub async fn project_remove_tag_to_sql(
 ///   path with proper semantics via the per-op projection helpers.
 pub async fn project_block_full_to_sql(
     conn: &mut SqliteConnection,
-    space_id: &crate::space::SpaceId,
-    block_id: &crate::ulid::BlockId,
+    space_id: &agaric_store::space::SpaceId,
+    block_id: &agaric_core::ulid::BlockId,
     snapshot: Option<&crate::loro::engine::BlockSnapshot>,
 ) -> Result<(), AppError> {
     if let Some(snap) = snapshot {
@@ -1004,10 +1014,10 @@ pub async fn project_block_full_to_sql(
 /// read path filters by `deleted_at`).  The agenda/projected-agenda
 /// caches that read `due_date`/`scheduled_date`/`todo_state` are rebuilt
 /// by the inbound-sync cache fan-out
-/// ([`crate::materializer::Materializer::enqueue_inbound_sync_rebuilds`]).
+/// (the app-layer `materializer::Materializer::enqueue_inbound_sync_rebuilds`).
 pub async fn reproject_block_properties_from_engine(
     conn: &mut SqliteConnection,
-    block_id: &crate::ulid::BlockId,
+    block_id: &agaric_core::ulid::BlockId,
     props: &[(String, crate::loro::engine::PropertyValue)],
     value_types: &std::collections::HashMap<String, String>,
 ) -> Result<(), AppError> {
@@ -1243,7 +1253,7 @@ pub async fn reproject_block_properties_from_engine(
 /// the sync.
 pub async fn reproject_block_tags_from_engine(
     conn: &mut SqliteConnection,
-    block_id: &crate::ulid::BlockId,
+    block_id: &agaric_core::ulid::BlockId,
     tag_ids: &[String],
 ) -> Result<(), AppError> {
     let block_id_str = block_id.as_str();
@@ -1356,7 +1366,7 @@ pub async fn reproject_block_tags_from_engine(
 /// #1257 outbound freshness gate.
 pub async fn reproject_block_deleted_at_from_engine(
     conn: &mut SqliteConnection,
-    block_id: &crate::ulid::BlockId,
+    block_id: &agaric_core::ulid::BlockId,
     engine_deleted_at: Option<&str>,
 ) -> Result<Vec<(String, i64)>, AppError> {
     if let Some(ts) = engine_deleted_at {
@@ -1416,7 +1426,8 @@ pub async fn reproject_block_deleted_at_from_engine(
     // the delete seed, so a `None` engine slot under a tombstoned ancestor
     // means "descendant of a live cohort", never "restore me".
     let tombstoned_ancestor =
-        crate::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id_str).await?;
+        agaric_store::block_descendants::nearest_tombstoned_ancestor(&mut *conn, block_id_str)
+            .await?;
 
     match (sql_deleted_at, tombstoned_ancestor) {
         // Genuine seed restore: clear the cohort (seed + descendants
@@ -1458,10 +1469,9 @@ pub async fn reproject_block_deleted_at_from_engine(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::db::init_pool;
     use crate::loro::engine::PropertyValue;
-    use crate::op::SetPropertyPayload;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::SetPropertyPayload;
     use sqlx::SqlitePool;
 
     /// Test helper: a `Str`-valued engine property.
@@ -1486,10 +1496,7 @@ mod tests {
     const TAG_C: &str = "01HZ00000000000000000000C3";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().expect("tempdir");
-        let db_path = dir.path().join("projection_test.db");
-        let pool = init_pool(&db_path).await.expect("init_pool");
-        (pool, dir)
+        agaric_store::test_support::test_pool().await
     }
 
     fn snapshot(
@@ -2201,7 +2208,7 @@ mod tests {
             .expect("project delete");
         // The standard depth-only CTE is invariant to the soft-delete
         // having run, so it still detects the saturation post-UPDATE.
-        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+        let saturated = agaric_store::block_descendants::cascade_depth_saturated(&mut *conn, root)
             .await
             .expect("saturation probe");
         drop(conn);
@@ -2225,7 +2232,7 @@ mod tests {
         project_delete_block_to_sql(&mut conn, root, deleted_at)
             .await
             .expect("project delete");
-        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+        let saturated = agaric_store::block_descendants::cascade_depth_saturated(&mut *conn, root)
             .await
             .expect("saturation probe");
         drop(conn);
@@ -2256,7 +2263,7 @@ mod tests {
         project_restore_block_to_sql(&mut conn, root, cohort_ts)
             .await
             .expect("project restore");
-        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+        let saturated = agaric_store::block_descendants::cascade_depth_saturated(&mut *conn, root)
             .await
             .expect("saturation probe");
         drop(conn);
@@ -2283,7 +2290,7 @@ mod tests {
         project_restore_block_to_sql(&mut conn, root, cohort_ts)
             .await
             .expect("project restore");
-        let saturated = crate::block_descendants::cascade_depth_saturated(&mut *conn, root)
+        let saturated = agaric_store::block_descendants::cascade_depth_saturated(&mut *conn, root)
             .await
             .expect("saturation probe");
         drop(conn);
@@ -3023,7 +3030,7 @@ mod tests {
 
         // Project an engine snapshot that changes the content + position
         // (mirrors a remote edit arriving via apply_remote).
-        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
         let bid = BlockId::from_trusted(BLOCK_A);
         let snap = snapshot(BLOCK_A, "content", "edited-by-remote", None, 7);
         let mut conn = pool.acquire().await.expect("acquire");
@@ -3110,7 +3117,7 @@ mod tests {
         .await
         .unwrap();
 
-        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
         let mut conn = pool.acquire().await.expect("acquire");
         // Inbound edit to the parent, then the bulk re-projection of the child.
         let parent_snap = snapshot(BLOCK_A, "content", "parent-edited", None, 0);
@@ -3152,7 +3159,7 @@ mod tests {
         // A block not yet present in SQL (created on a remote peer) is
         // inserted via the INSERT side of the upsert.
         let (pool, _dir) = fresh_pool().await;
-        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
         let bid = BlockId::from_trusted(BLOCK_A);
         let snap = snapshot(BLOCK_A, "content", "remote-created", None, 4);
 
@@ -3182,7 +3189,7 @@ mod tests {
         // `SetBlockPageId` task is skipped for pages), else the page lands
         // NULL-owned and drops out of every `page_id`-scoped read.
         let (pool, _dir) = fresh_pool().await;
-        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
         let bid = BlockId::from_trusted(BLOCK_A);
         let snap = snapshot(BLOCK_A, "page", "Synced Page", None, 0);
 
@@ -3227,7 +3234,7 @@ mod tests {
         .await
         .unwrap();
 
-        let space = crate::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ00000000000000000000S1");
         let bid = BlockId::from_trusted(BLOCK_A);
         let snap = snapshot(BLOCK_A, "content", "child-edited", None, 3);
         let mut conn = pool.acquire().await.expect("acquire");
@@ -3392,7 +3399,7 @@ mod tests {
             .await
             .unwrap();
 
-        let space = crate::space::SpaceId::from_trusted(SPACE);
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE);
         let bid = BlockId::from_trusted(BLOCK_A);
 
         // A — full-block projection stamps space_id from the doc's space.

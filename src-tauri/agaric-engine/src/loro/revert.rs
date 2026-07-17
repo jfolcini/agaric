@@ -10,7 +10,7 @@
 //! COMMIT failure (or crash) between the engine apply and the SQL COMMIT leaves
 //! the engine AHEAD of committed SQL — the divergence class #2603's
 //! crash-injection test pins. For the REMOTE / single-op path
-//! ([`apply_op`](crate::materializer::handlers)) that divergence does NOT
+//! (`apply_op`, in the app-layer `materializer::handlers`) that divergence does NOT
 //! self-heal at runtime (only a `reproject_blocks_from_engine` recovery pass
 //! reconciles it); the LOCAL command path self-heals via boot replay.
 //!
@@ -22,8 +22,8 @@
 //! the rare abort. This module wires them into the tx lifecycle:
 //!
 //! 1. The tx owner ARMS the log right after `BEGIN IMMEDIATE` — the REMOTE
-//!    single-op path ([`apply_op`]) via a [`RevertScope`], the LOCAL command
-//!    path via [`CommandTx::arm_engine_rollback`](crate::db::CommandTx::arm_engine_rollback),
+//!    single-op path (`apply_op`) via a [`RevertScope`], the LOCAL command
+//!    path via [`CommandTx::arm_engine_rollback`](agaric_store::db::CommandTx::arm_engine_rollback),
 //!    which detaches inside its own commit/rollback/`Drop` rather than a scope.
 //! 2. Each mutation handler's
 //!    [`for_space_recording`](crate::loro::registry::LoroEngineRegistry::for_space_recording)
@@ -51,13 +51,12 @@
 //! and trips a debug assert.
 //!
 //! [`checkpoint_frontiers`]: crate::loro::engine::LoroEngine::checkpoint_frontiers
-//! [`apply_op`]: crate::materializer::handlers
 
 use loro::Frontiers;
 use parking_lot::Mutex;
 
 use crate::loro::registry::SharedEngine;
-use crate::space::SpaceId;
+use agaric_store::space::SpaceId;
 
 /// One recorded rollback checkpoint: the exact engine `Arc` a speculative op was
 /// applied through, plus the op-log frontier to rewind it to on abort.
@@ -117,7 +116,11 @@ impl RevertLog {
 
     /// Arm the log for a new in-flight tx. Debug-asserts it was not already
     /// armed (a nested write tx would violate the single-in-flight invariant).
-    pub(crate) fn arm(&self) {
+    ///
+    /// `pub` (not `pub(crate)`) so the app-crate LOCAL command path
+    /// (`db::command_tx`) can arm the log directly across the crate boundary
+    /// (#2621, wave E1).
+    pub fn arm(&self) {
         let mut slot = self.inner.lock();
         debug_assert!(
             slot.is_none(),
@@ -130,14 +133,18 @@ impl RevertLog {
     /// Lift the recorded checkpoints out of the log, disarming it, for an
     /// explicit commit/abort decision — the direct-`RevertLog` counterpart of
     /// [`RevertScope::detach`] used by the LOCAL command path
-    /// ([`CommandTx`](crate::db::CommandTx)), which arms the log itself rather
+    /// ([`CommandTx`](agaric_store::db::CommandTx)), which arms the log itself rather
     /// than through a `RevertScope`.
     ///
     /// Like [`RevertScope::detach`], MUST be called while the caller's
     /// `BEGIN IMMEDIATE` write lock is still held. If the log was never armed
     /// (a non-engine tx) the returned [`DetachedRevert`] is empty and both
     /// dropping it and calling `revert` are no-ops.
-    pub(crate) fn detach(&self) -> DetachedRevert {
+    ///
+    /// `pub` (not `pub(crate)`) so the app-crate LOCAL command path
+    /// (`db::command_tx`) can lift the checkpoints directly across the crate
+    /// boundary (#2621, wave E1).
+    pub fn detach(&self) -> DetachedRevert {
         DetachedRevert {
             entries: self.take().unwrap_or_default(),
         }

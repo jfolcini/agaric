@@ -40,7 +40,6 @@ dependencies = [
  "opentelemetry-appender-tracing",
  "opentelemetry-otlp",
  "opentelemetry_sdk",
- "parking_lot",
  "proptest",
  "qrcode",
  "rand 0.10.2",
@@ -84,7 +83,6 @@ dependencies = [
  "uuid",
  "wiremock",
  "x509-parser",
- "xxhash-rust",
  "zstd",
 ]
 
@@ -124,7 +122,18 @@ name = "agaric-engine"
 version = "0.1.0"
 dependencies = [
  "agaric-core",
+ "agaric-store",
+ "chrono",
+ "loro",
+ "parking_lot",
+ "proptest",
  "serde_json",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "xxhash-rust",
 ]
 
 [[package]]

@@ -14,10 +14,10 @@ pub use agaric_store::db::*;
 pub use pool::*;
 // #1893: the reserved-key→`blocks`-column mapping (`reserved_key_blocks_column`)
 // is the single drift-tested source of truth and is reused by the op-log
-// projection (`loro::projection`) as well as recovery. Re-export it so that
-// cross-module caller can reach it without exposing the whole `recovery`
-// module.
-pub(crate) use recovery::reserved_key_blocks_column;
+// projection (`loro::projection`, now in agaric-engine) as well as recovery.
+// It moved down into `agaric_store::db` (#2621, wave E1) so both the app and
+// the engine can reach it; the `pub use agaric_store::db::*;` glob above
+// re-exports it, so `crate::db::reserved_key_blocks_column` resolves unchanged.
 // Other recovery helpers are crate-internal. Non-test callers reach them via
 // their module path (`super::recovery::…` inside `db`); this glob exists only so
 // the `tests` module (`db/tests.rs`) — which uses `super::*` per repo

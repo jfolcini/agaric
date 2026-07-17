@@ -17,7 +17,7 @@
 //!   the top of setup, BEFORE the materializer or recovery exist, so
 //!   boot ordering holds by construction (constructor argument, not
 //!   sequencing). The same `Arc` is
-//!   - held by the [`Materializer`](crate::materializer::Materializer)
+//!   - held by the `Materializer` (the app-layer `materializer::Materializer`)
 //!     (its consumers thread it into `apply_op` / `apply_op_tx` →
 //!     `apply_*_via_loro`, and LOCAL command paths reach it through the
 //!     `&Materializer` they already carry),
@@ -167,8 +167,8 @@ impl Default for LoroState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::space::SpaceId;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 

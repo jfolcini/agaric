@@ -6,7 +6,7 @@
 //! to drive the per-space `LoroEngine`:
 //!
 //! * [`engine::LoroEngine`] — the CRDT engine, using
-//!   [`crate::error::AppError`] for fallible operations.
+//!   [`agaric_core::error::AppError`] for fallible operations.
 //! * [`engine::BlockSnapshot`] — the read-back projection of a block
 //!   from the Loro doc.
 //! * [`engine::peer_id_from_device_id`] — derives a stable Loro

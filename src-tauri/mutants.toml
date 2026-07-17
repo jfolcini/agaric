@@ -21,7 +21,7 @@ examine_globs = [
     "agaric-store/src/op.rs",
     "agaric-store/src/op_log/**",
     "src/reverse/**",
-    "src/loro/engine.rs",
+    "agaric-engine/src/loro/engine/**",
 ]
 
 # Never mutate test code or proptest harnesses — they are the oracle, not

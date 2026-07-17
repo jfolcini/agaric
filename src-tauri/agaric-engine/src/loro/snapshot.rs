@@ -65,10 +65,10 @@
 
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
 use crate::loro::engine::LoroEngine;
 use crate::loro::registry::LoroEngineRegistry;
-use crate::space::SpaceId;
+use agaric_core::error::AppError;
+use agaric_store::space::SpaceId;
 
 /// Wall-clock ms-since-Unix-epoch.  Returns `0` on the
 /// (impossible-in-practice) case where the system clock is before
@@ -413,23 +413,23 @@ pub const SNAPSHOT_INTERVAL_SECS: u64 = 300;
 /// the app's lifetime and stops once `shutdown` flips. Per-space errors
 /// are caught + logged inside [`save_all_engines`], so a transient
 /// SQL/Loro failure never crashes the app.
+/// `spawn` injects the async executor: the app passes
+/// `|fut| { tauri::async_runtime::spawn(fut); }` (so `agaric-engine` stays
+/// tauri-free), tests pass `|fut| { tokio::spawn(fut); }` (#2621, wave E1).
 pub fn spawn_periodic_snapshot(
     pool: SqlitePool,
     shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
     interval_secs: u64,
     state: std::sync::Arc<crate::loro::shared::LoroState>,
+    spawn: impl FnOnce(std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>>),
 ) {
     use std::sync::atomic::Ordering;
     use std::time::Duration;
 
-    #[cfg(not(test))]
-    let spawn_fn = tauri::async_runtime::spawn;
-    #[cfg(test)]
-    let spawn_fn = tokio::spawn;
-
     // Fire-and-forget: the task lives for the process lifetime and stops
-    // when `shutdown` flips. The JoinHandle is intentionally discarded.
-    let _handle = spawn_fn(async move {
+    // when `shutdown` flips. The spawned JoinHandle is intentionally discarded
+    // by the caller-supplied `spawn`.
+    spawn(Box::pin(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(interval_secs.max(1)));
         // Skip the immediate first tick — `tokio::time::interval` fires
         // once at construction. Boot rehydrate just ran, so there is
@@ -445,7 +445,7 @@ pub fn spawn_periodic_snapshot(
                 tracing::debug!(spaces = saved, "loro: periodic snapshot persisted");
             }
         }
-    });
+    }));
 }
 
 #[cfg(test)]
@@ -462,12 +462,7 @@ mod tests {
     const SPACE_PERIODIC: &str = "01J0PERIODICSNAP000000TEST";
 
     async fn fresh_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().expect("tempdir");
-        let db_path = dir.path().join("snapshot_test.db");
-        let pool = crate::db::init_pool(&db_path)
-            .await
-            .expect("init_pool migrations");
-        (pool, dir)
+        agaric_store::test_support::test_pool().await
     }
 
     #[tokio::test]
@@ -1016,7 +1011,15 @@ mod tests {
         // Spawn the periodic task (1s cadence). The first tick is skipped,
         // so the first persist lands ~1s in.
         let shutdown = Arc::new(AtomicBool::new(false));
-        spawn_periodic_snapshot(pool.clone(), shutdown.clone(), 1, Arc::clone(&state));
+        spawn_periodic_snapshot(
+            pool.clone(),
+            shutdown.clone(),
+            1,
+            Arc::clone(&state),
+            |fut| {
+                tokio::spawn(fut);
+            },
+        );
 
         // Poll for the row rather than sleeping a fixed interval: bounded
         // loop, ~5s total timeout, short sleeps in between. Deterministic

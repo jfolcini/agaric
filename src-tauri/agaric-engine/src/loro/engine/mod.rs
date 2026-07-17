@@ -36,7 +36,7 @@
 //!
 //! 1. **Error type.**  The spike uses `anyhow::Result` because it's
 //!    throwaway code.  Production maps every fallible call into
-//!    [`crate::error::AppError`].  Validation-style failures (block
+//!    [`agaric_core::error::AppError`].  Validation-style failures (block
 //!    not found, range out of bounds, container-shape mismatch) use
 //!    [`AppError::Validation`].  This matches the convention in
 //!    `merge/`, where input rejection paths are `Validation`.
@@ -64,7 +64,7 @@ use loro::{
     LoroTreeError, LoroValue, PeerID, TreeID, TreeParentId, VersionVector,
 };
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Map an external `device_id` string (production uses a canonical
 /// UUID-v4 — see `src/device.rs:83-99`) into a `loro::PeerID` (`u64`).
@@ -195,14 +195,14 @@ const BLOCK_PROPERTIES_ROOT: &str = "block_properties";
 /// ## Current shape (#622 fix / #709 Phase 1): name-keyed LoroMap
 ///
 /// Each value is a `LoroMap` keyed by the tag's **normalized name**
-/// ([`crate::tag_norm::normalize_tag_name`] over the tag block's
+/// ([`agaric_core::tag_norm::normalize_tag_name`] over the tag block's
 /// `content` at apply time), whose entry value is the `tag_id` ULID
 /// string (what SQL `block_tags.tag_id` needs until the #709 Phase-2
 /// re-key). When the tag block is not present in this doc (cross-space
 /// tag, purged tag block, out-of-order replay) or its normalized name
 /// is empty, the key degrades to the raw `tag_id` — keys can't collide
 /// across the two namespaces because normalized names carry no ASCII
-/// uppercase while ULIDs minted by `crate::ulid` are uppercase
+/// uppercase while ULIDs minted by `agaric_core::ulid` are uppercase
 /// Crockford base32 (worst case on a freak collision: two same-key
 /// tags coalesce, which is the #709 end-state semantics anyway).
 ///
@@ -318,7 +318,7 @@ pub enum PropertyValue {
     Null,
 }
 
-impl From<&crate::op::SetPropertyPayload> for PropertyValue {
+impl From<&agaric_store::op::SetPropertyPayload> for PropertyValue {
     /// Coerce a `SetProperty` payload's typed value fields into the engine's
     /// native [`PropertyValue`] by precedence (text→num→date→ref→bool); no
     /// field set ⇒ an explicit [`PropertyValue::Null`] clear. text/date/ref all
@@ -331,7 +331,7 @@ impl From<&crate::op::SetPropertyPayload> for PropertyValue {
     /// mirror" (#2043). Callers that need to observe a multi-value-field op
     /// (e.g. `engine_apply`'s #2026 divergence warn) inspect the payload
     /// themselves; this mapping just applies the precedence coercion.
-    fn from(p: &crate::op::SetPropertyPayload) -> Self {
+    fn from(p: &agaric_store::op::SetPropertyPayload) -> Self {
         if let Some(v) = &p.value_text {
             PropertyValue::Str(v.clone())
         } else if let Some(v) = p.value_num {
@@ -573,7 +573,9 @@ mod reads;
 /// Snapshot import/export I/O and the legacy-v1 rejection (#332).
 mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
-pub(crate) use snapshot::TagScope;
+/// `pub` (not `pub(crate)`) so the app-crate sync/materializer callers reach it
+/// as `crate::loro::engine::TagScope` across the crate boundary (#2621, E1).
+pub use snapshot::TagScope;
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;

@@ -5,7 +5,7 @@
 //! [`crate::loro::engine::peer_id_from_device_id`] maps the device id
 //! to a deterministic Loro `PeerID` — deliberately stable across boots
 //! so a device's op history stays credited to one peer. A snapshot
-//! RESET (#607, [`crate::snapshot::apply_snapshot`]) breaks
+//! RESET (#607, the app-layer `snapshot::apply_snapshot`) breaks
 //! the assumption behind that stability: it wipes `loro_doc_state`, so
 //! the engines reload EMPTY and restart op counters at 0 under the
 //! SAME peer id, forking the `(peer, counter)` space against this
@@ -37,7 +37,7 @@ use std::time::Duration;
 
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// `app_settings` key holding the current peer-id epoch as a decimal
 /// string. Absent row == epoch `0` (the legacy mapping).
@@ -167,7 +167,7 @@ where
 /// which a wiped vault could boot back onto the old peer id and fork
 /// the `(peer, counter)` space (#792).
 pub async fn bump_peer_epoch(tx: &mut Transaction<'_, Sqlite>) -> Result<u64, AppError> {
-    let now = crate::db::now_ms();
+    let now = agaric_store::db::now_ms();
     let new_value: String = sqlx::query_scalar(
         "INSERT INTO app_settings (key, value, updated_at) \
          VALUES (?, '1', ?) \
@@ -194,11 +194,7 @@ mod tests {
     use tempfile::TempDir;
 
     async fn test_pool() -> (SqlitePool, TempDir) {
-        let dir = TempDir::new().expect("tempdir");
-        let pool = crate::db::init_pool(&dir.path().join("test.db"))
-            .await
-            .expect("init_pool");
-        (pool, dir)
+        agaric_store::test_support::test_pool().await
     }
 
     /// A vault that never went through a RESET has no epoch row —

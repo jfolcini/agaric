@@ -123,6 +123,9 @@ pub mod soft_delete;
 // `test_support` — recovery-free test scaffolding (temp-file WAL `test_pool`
 // + `insert_block` + space helpers) that the moved tests use in place of the
 // app's `crate::db::init_pool` / `crate::commands::tests::common`. Later S4
-// waves reuse it. Compiled only for the store's own test build.
-#[cfg(test)]
+// waves reuse it. Compiled for the store's own test build AND, via the
+// `test-util` feature, for downstream crates' test builds — `agaric-engine`'s
+// moved loro tests call `test_support::test_pool` in place of `init_pool`
+// (#2621, wave E1).
+#[cfg(any(test, feature = "test-util"))]
 pub mod test_support;
