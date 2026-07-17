@@ -625,6 +625,16 @@ mod block_row_canonical_conformance {
                 "recurrence/compute.rs",
                 include_str!("recurrence/compute.rs"),
             ),
+            // #2621 (inversion): the recurrence sibling-compute core — with its
+            // `query_as!(BlockRow, …)` sibling lookup — moved into
+            // `agaric-engine`, so the production site now lives at
+            // `agaric-engine/src/recurrence/compute.rs`, reached across the
+            // crate boundary via `../agaric-engine/…` (like the block_ops and
+            // pagination sites). Net site count is unchanged.
+            (
+                "agaric-engine/src/recurrence/compute.rs",
+                include_str!("../agaric-engine/src/recurrence/compute.rs"),
+            ),
         ];
 
         // Match `query_as!(\s*BlockRow\s*,\s*<string-literal opener>SELECT
