@@ -1,0 +1,21 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT COALESCE(MIN(device_id) = MAX(device_id), 1) AS \"single!: bool\"\n                   FROM op_log WHERE is_replicated = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "single!: bool",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "f0d1ae5db73c84b7e1fd35a2592ff49a20eb21af03333cb3fc9d9d6680c351d3"
+}
