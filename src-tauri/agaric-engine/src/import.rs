@@ -466,6 +466,12 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // counting it here surfaces an aggregate warning so an import that drops
     // block-refs is diagnosable from the returned warnings / logs.
     let mut stripped_block_ref_count: usize = 0;
+    // #2725: count `- `-prefixed lines that appeared STRICTLY INSIDE an open
+    // fenced code block and were therefore folded into the owning block's
+    // content instead of (mis)spawning a new block. Mirrors the other lossy /
+    // corrected-parse counters so a fenced code sample carrying list-like lines
+    // is diagnosable from the returned warnings rather than silently reshaped.
+    let mut fence_split_avoided_count: usize = 0;
 
     // Normalize line endings BEFORE any other parsing. The frontmatter strip
     // below uses `find("\n---")`, which is fragile against CRLF (works only
@@ -550,12 +556,25 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
 
+        // #2725 — a `- `-prefixed line STRICTLY INSIDE an open code fence (i.e.
+        // not itself a fence delimiter) is literal code content, NOT a new list
+        // item. `line_is_code` is also true on the fence-DELIMITER line (`- ```rust`
+        // opens the code block's own bullet), so guarding on `line_is_code`
+        // would wrongly swallow that opening bullet; guard on `in_code_body`
+        // instead — true only for lines between (not on) the delimiters. Such a
+        // line falls through to the continuation branch (folded into the fenced
+        // block's content), mirroring the already-guarded property branch below.
+        let in_code_body = in_fence && !is_fence_delim;
+        if in_code_body && (trimmed == "-" || trimmed.starts_with("- ")) {
+            fence_split_avoided_count += 1;
+        }
+
         // Check if this is a list item (- prefix). #1917: a bare `-` with no
         // trailing space is an EMPTY bullet (Logseq/Obsidian emit these for an
         // empty list item) — it must spawn its own empty block, not fold into
         // the previous block's content as a continuation line. Handle both the
         // `- text` and the bare `-` forms here.
-        if trimmed == "-" {
+        if !in_code_body && trimmed == "-" {
             blocks.push(ParsedBlock {
                 content: String::new(),
                 depth,
@@ -563,7 +582,7 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
                 is_code: line_is_code,
                 block_anchor: None,
             });
-        } else if let Some(text) = trimmed.strip_prefix("- ") {
+        } else if !in_code_body && let Some(text) = trimmed.strip_prefix("- ") {
             // Strip ((uuid)) block references -> plain text
             let (cleaned, removed) = strip_block_refs_counted(text);
             stripped_block_ref_count += removed;
@@ -629,7 +648,40 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
             // bullet. Append it (newline-joined) to the owning block's content
             // instead of spawning a separate block, matching how Logseq stores
             // multi-line bullet bodies.
-            let (cleaned, removed) = strip_block_refs_counted(trimmed);
+            // #2716 — reverse the exporter's continuation-line escape: a
+            // NON-code continuation line the exporter had to guard (it opens a
+            // bullet or matches `key:: value`) was emitted with a single
+            // leading `\` so it would land HERE (folded) instead of spawning a
+            // block / property. Strip that one backslash — but ONLY when the
+            // escaped payload really is such an ambiguous line, so an ordinary
+            // continuation line that legitimately begins with `\` (e.g. a LaTeX
+            // command) is preserved verbatim. Skipped inside a code fence
+            // (`line_is_code`): code is emitted verbatim and must keep its
+            // backslashes intact.
+            let unescaped = if !line_is_code
+                && let Some(rest) = trimmed.strip_prefix('\\')
+                && {
+                    // The exporter escapes based on the line's TRIMMED shape
+                    // (`content_line_is_ambiguous`) and anchors the `\` BEFORE
+                    // the continuation line's own leading whitespace, so an
+                    // INDENTED ambiguous line reaches here as `\<ws><token>`
+                    // (`  - sub` → wire `  \  - sub`, `trimmed` = `\  - sub`).
+                    // Match the same TRIMMED shape — otherwise the untrimmed
+                    // `rest.starts_with("- ")` misses it and the `\` leaks into
+                    // the folded content as a spurious character. (Interior
+                    // indentation itself is still normalised away downstream by
+                    // `strip_block_refs_counted`'s trim, exactly as it is for a
+                    // non-ambiguous indented continuation line; the point of the
+                    // un-escape is only to strip the escape marker, never to
+                    // inject one.)
+                    let body = rest.trim_start();
+                    body == "-" || body.starts_with("- ") || line_is_property_shaped(body)
+                } {
+                rest
+            } else {
+                trimmed
+            };
+            let (cleaned, removed) = strip_block_refs_counted(unescaped);
             stripped_block_ref_count += removed;
             // #1924 — a continuation line inside a fence makes the owning block
             // code (e.g. the fenced body lines that follow a `- ```rust` bullet,
@@ -711,6 +763,15 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         warnings.push(format!(
             "{stripped_block_ref_count} ((block-ref)) reference(s) were stripped from imported \
              content and could not be preserved"
+        ));
+    }
+    if fence_split_avoided_count > 0 {
+        // #2725: surface that list-like lines inside a code fence were folded
+        // into the fenced block (not split into new blocks) — the corrected
+        // behaviour, but observable so a reshaped code sample is diagnosable.
+        warnings.push(format!(
+            "{fence_split_avoided_count} list-like line(s) inside a code fence were kept as \
+             literal code content instead of new blocks"
         ));
     }
 
@@ -1333,6 +1394,16 @@ fn is_property_key(s: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
+/// #2716 — `true` when `line` matches the `key:: value` property shape (a
+/// `:: `-separated pair whose LHS is a valid [`is_property_key`]). Used by the
+/// continuation-branch un-escape to recognise a property-shaped line the
+/// exporter backslash-escaped, symmetric with the export-side
+/// `markdown_yaml::content_line_is_ambiguous`.
+fn line_is_property_shaped(line: &str) -> bool {
+    line.split_once(":: ")
+        .is_some_and(|(k, _)| is_property_key(k.trim()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1382,6 +1453,83 @@ mod tests {
             "a block covering the fenced region must be flagged code: {:?}",
             output.blocks
         );
+    }
+
+    /// #2725 — a fenced code block whose body contains list-like (`- item`) and
+    /// property-like (`key:: value`) lines must parse as ONE block: those lines
+    /// are literal code content, folded into the fenced block (not split into
+    /// new blocks / properties). The corrected fold is surfaced via a warning.
+    #[test]
+    fn parse_fenced_code_with_list_and_property_lines_stays_one_block_2725() {
+        // The exact shape the exporter emits for a block whose content is a
+        // fenced code sample: the opening fence is the bullet, the interior
+        // list/property lines + closing fence are continuation lines.
+        let md = "- ```\n  - not a real bullet\n  key:: not a real property\n  ```";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "the whole fenced code block must be ONE block; got {:?}",
+            output.blocks
+        );
+        let block = &output.blocks[0];
+        assert!(block.is_code, "the fenced block must be flagged code");
+        assert_eq!(
+            block.content, "```\n- not a real bullet\nkey:: not a real property\n```",
+            "interior list/property lines must survive verbatim inside the block content"
+        );
+        assert!(
+            block.properties.is_empty(),
+            "the `key:: value` line inside the fence must NOT become a property; got {:?}",
+            block.properties
+        );
+        assert!(
+            output
+                .warnings
+                .iter()
+                .any(|w| w.contains("code fence") && w.contains("literal code")),
+            "the fold must be surfaced via a warning; got {:?}",
+            output.warnings
+        );
+    }
+
+    /// #2716 — an INDENTED continuation line that is ALSO ambiguous (an indented
+    /// bullet `  - sub`, a bare indented dash `  -`, or an indented property
+    /// `  key:: v`) must have its exporter escape `\` STRIPPED, not leaked into
+    /// content. The exporter anchors the `\` before the line's own indentation
+    /// (wire form `  \  - sub`), so the un-escape matches the TRIMMED shape.
+    /// (Interior indentation is separately normalised away by the importer's
+    /// long-standing `strip_block_refs_counted` trim, exactly as it is for a
+    /// non-ambiguous indented continuation line — the regression this pins is
+    /// the SPURIOUS `\`, not the indent.)
+    #[test]
+    fn parse_unescapes_indented_ambiguous_continuation_2716() {
+        // Wire form the exporter emits for a block whose content is
+        // "intro\n  - sub" (cont-indent `  `, escape `\`, then the raw line).
+        // The `\` must NOT survive; before the fix the folded line was
+        // "\ - sub" (escape leaked, double space collapsed).
+        let bullet = parse_logseq_markdown("- intro\n  \\  - sub");
+        assert_eq!(bullet.blocks.len(), 1);
+        assert_eq!(bullet.blocks[0].content, "intro\n- sub");
+        assert!(!bullet.blocks[0].content.contains('\\'));
+
+        // Indented bare dash.
+        let dash = parse_logseq_markdown("- intro\n  \\  -");
+        assert_eq!(dash.blocks.len(), 1);
+        assert_eq!(dash.blocks[0].content, "intro\n-");
+
+        // Indented property-shaped line stays literal content (NOT a property),
+        // with no leaked `\`.
+        let prop = parse_logseq_markdown("- intro\n  \\  key:: v");
+        assert_eq!(prop.blocks.len(), 1);
+        assert_eq!(prop.blocks[0].content, "intro\nkey:: v");
+        assert!(prop.blocks[0].properties.is_empty());
+
+        // A NON-ambiguous line that legitimately begins with `\` keeps its
+        // backslash (no spurious un-escape).
+        let latex = parse_logseq_markdown("- intro\n  \\alpha");
+        assert_eq!(latex.blocks[0].content, "intro\n\\alpha");
     }
 
     #[test]
