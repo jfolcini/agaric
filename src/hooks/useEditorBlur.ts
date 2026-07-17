@@ -22,6 +22,8 @@ import { flushSync } from 'react-dom'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
+import { bumpFlushSeq, commitInlineProperties } from '@/lib/inline-property-commit'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 
 /**
@@ -62,8 +64,11 @@ export function useEditorBlur(params: {
    * persisted draft row is only deleted AFTER the save committed — on
    * failure the row is the last surviving copy of the typed text. */
   discardDraft: (saveOutcome?: Promise<boolean | void>, failedContent?: string) => void
+  /** Page root — keys the undo entry seeded for #2675 inline property
+   * commits (`useUndoStore.onNewAction`). `null` skips the seed. */
+  rootParentId?: string | null
 }): { handleBlur: (e: React.FocusEvent) => void } {
-  const { blockId, edit, splitBlock, setFocused, discardDraft } = params
+  const { blockId, edit, splitBlock, setFocused, discardDraft, rootParentId = null } = params
 
   // Store rovingEditor in a ref to avoid stale closures — the handle's
   // object identity changes on every render.
@@ -156,17 +161,40 @@ export function useEditorBlur(params: {
       let saveOutcome: Promise<boolean | void> | undefined
       if (changed !== null) {
         if (shouldSplitOnBlur(changed)) {
+          bumpFlushSeq(blockId)
           const outcome = flushSync(() => splitBlock(blockId, changed))
           if (outcome) saveOutcome = outcome
-        } else if (changed !== earlyPersisted) {
-          // #1062: skip the duplicate edit() when unmount returned the exact
-          // content Step 3 already persisted (the fresh-block plain-blur case).
-          const outcome = flushSync(() => edit(blockId, changed))
-          if (outcome) saveOutcome = outcome
-        } else if (earlyPersistOutcome) {
-          // #1062 skip path — Step 3's edit is the one save of this blur, so
-          // its outcome is what must gate the discard.
-          saveOutcome = earlyPersistOutcome
+        } else {
+          // #2675 — the documented `key:: value` flow commits at SAVE time,
+          // and DOM blur is the dominant save path (clicking another block,
+          // the sidebar, anywhere outside the editor). Route property-bearing
+          // content through the shared commit flow: each parsed line is
+          // written via the typed property API and stripped from the
+          // committed content ONLY after its write succeeds. This runs even
+          // when Step 3 already early-persisted the same literal content —
+          // the flow's final edit() supersedes that crash-safety copy.
+          const inlineProps = parseInlineProperties(changed)
+          if (inlineProps.length > 0) {
+            const mySeq = bumpFlushSeq(blockId)
+            saveOutcome = commitInlineProperties({
+              blockId,
+              content: changed,
+              inlineProps,
+              mySeq,
+              edit,
+              rootParentId,
+            })
+          } else if (changed !== earlyPersisted) {
+            // #1062: skip the duplicate edit() when unmount returned the exact
+            // content Step 3 already persisted (the fresh-block plain-blur case).
+            bumpFlushSeq(blockId)
+            const outcome = flushSync(() => edit(blockId, changed))
+            if (outcome) saveOutcome = outcome
+          } else if (earlyPersistOutcome) {
+            // #1062 skip path — Step 3's edit is the one save of this blur, so
+            // its outcome is what must gate the discard.
+            saveOutcome = earlyPersistOutcome
+          }
         }
       }
       // Always discard draft on blur — even when content is unchanged, a
@@ -177,7 +205,7 @@ export function useEditorBlur(params: {
       logger.debug('editor', 'blur', { blockId })
       setFocused(null)
     },
-    [blockId, edit, splitBlock, setFocused, discardDraft],
+    [blockId, edit, splitBlock, setFocused, discardDraft, rootParentId],
   )
 
   return { handleBlur }

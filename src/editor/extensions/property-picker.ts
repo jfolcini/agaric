@@ -2,9 +2,11 @@
  * TipTap extension: :: property picker (property name autocomplete).
  *
  * Intercepts the :: keystroke and opens a suggestion popup with
- * existing property names. On selection, inserts `key:: ` text
- * and calls the onSelect callback so the parent can create the
- * property (set_property op with empty value).
+ * existing property names. On selection, inserts `key:: ` text and
+ * calls the onSelect callback (a no-op today — see BlockTree #2656).
+ * The user types the value after the inserted text; #2675's save-time
+ * parser (`useBlockFlush` → `inline-property-parse.ts`) commits the
+ * `key:: value` line to the property system when the block flushes.
  *
  * Follows the same pattern as AtTagPicker, BlockLinkPicker, and SlashCommand.
  */

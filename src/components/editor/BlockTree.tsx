@@ -664,8 +664,9 @@ export function BlockTree({
   // text; it no longer fires `setProperty({ valueText: '' })` (the real backend
   // rejects an empty value_text, so that produced a "Failed to set property"
   // toast and created nothing on the shipped app). No `propertySelect` handler
-  // is registered — the value is entered inline after `key::`, and the block's
-  // properties can be filled from the property drawer (context-menu / toolbar).
+  // is registered — the value is entered inline after `key:: `, and #2675's
+  // save-time parser in `useBlockFlush` commits the `key:: value` line to the
+  // property system (stripping it from the content) when the block flushes.
   // The default no-op `propertySelect` thunk stays wired via `onPropertySelect`.
   // beforeCollapse — rescue focus (flush + clear) when the collapsing subtree
   // contains the focused block.

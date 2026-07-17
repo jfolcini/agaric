@@ -1,4 +1,4 @@
-import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+import { expect, focusBlock, openPage, reopenPage, test, waitForBoot } from './helpers'
 
 /**
  * E2E tests for the :: property picker.
@@ -15,6 +15,10 @@ import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
  *   - Selecting an item inserts `key:: ` (key + double-colon + space)
  *   - Escape dismisses without inserting
  *   - Typing further characters after :: filters the list
+ *   - #2675: a line that is EXACTLY `key:: value` commits the property at
+ *     save time (blur/flush) via the typed property API and the line is
+ *     stripped from the block content; `key:: ` with no value stays literal
+ *     and writes nothing.
  */
 
 // ---------------------------------------------------------------------------
@@ -147,5 +151,70 @@ test.describe('Property picker — :: trigger', () => {
     await page.keyboard.press('ArrowDown')
     await expect(items.nth(1)).toHaveAttribute('aria-selected', 'true')
     await expect(items.first()).toHaveAttribute('aria-selected', 'false')
+  })
+
+  // -------------------------------------------------------------------------
+  // #2675 — pick key → type value → blur commits the property
+  // -------------------------------------------------------------------------
+  test('typing a value after a picked key commits the property on blur (#2675)', async ({
+    page,
+  }) => {
+    // A property line must be a WHOLE line (import.rs line-level semantics),
+    // so start a fresh empty block below the first one.
+    const editor = await focusBlock(page)
+    await editor.press('End')
+    await editor.press('Enter')
+
+    // Pick `context` (a seeded free-text property) from the :: picker.
+    await page.keyboard.type('::', { delay: 30 })
+    const popup = page.locator('[data-testid="suggestion-popup"]')
+    await expect(popup).toBeVisible()
+    await page.keyboard.type('con', { delay: 30 })
+    const list = page.locator('[data-testid="suggestion-list"]')
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'context' }),
+    ).toBeVisible()
+    await page.keyboard.press('Enter')
+    await expect(popup).not.toBeVisible()
+
+    // Type the value, then blur — ArrowUp switches the roving editor, which
+    // flushes the block and runs the save-time `key:: value` parser.
+    await page.keyboard.type('home', { delay: 30 })
+    await page.keyboard.press('ArrowUp')
+
+    // The typed value reached the property system: a chip renders after the
+    // properties re-fetch (same reopenPage pattern as slash-command-properties).
+    await reopenPage(page, 'Getting Started')
+    const chip = page.locator('[data-testid="property-chip"]').filter({ hasText: 'home' })
+    await expect(chip).toBeVisible()
+    // …and the property line was stripped from the committed block text.
+    await expect(page.getByText('context:: home')).toHaveCount(0)
+  })
+
+  test('a picked key with NO value stays literal text and writes no property (#2675)', async ({
+    page,
+  }) => {
+    const editor = await focusBlock(page)
+    await editor.press('End')
+    await editor.press('Enter')
+
+    await page.keyboard.type('::', { delay: 30 })
+    await expect(page.locator('[data-testid="suggestion-popup"]')).toBeVisible()
+    await page.keyboard.type('con', { delay: 30 })
+    await page.keyboard.press('Enter')
+
+    // Blur immediately — the value was never typed. The backend rejects empty
+    // property values, so the text must survive literally (nothing lost, no
+    // property written).
+    await page.keyboard.press('ArrowUp')
+
+    await reopenPage(page, 'Getting Started')
+    await expect(page.getByText('context::')).toBeVisible()
+    // No chip carries a bare `context` value on the new block — the seeded
+    // context chips (@office/@remote) live on OTHER pages' blocks, so the
+    // Getting Started page shows no context chip at all.
+    await expect(page.locator('[data-testid="property-chip"]', { hasText: 'context' })).toHaveCount(
+      0,
+    )
   })
 })

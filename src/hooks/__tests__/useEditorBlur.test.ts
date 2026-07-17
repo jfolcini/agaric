@@ -14,18 +14,23 @@
  */
 
 import { act, renderHook } from '@testing-library/react'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { EDITOR_PORTAL_SELECTOR, useEditorBlur } from '@/hooks/useEditorBlur'
-import { deleteDraft, saveDraft } from '@/lib/tauri'
+import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri'
 
 // Only used by the findings-2/48 integration tests (real useDraftAutosave
-// composed with useEditorBlur); the useEditorBlur unit tests never reach IPC.
+// composed with useEditorBlur) and the #2675 inline-property tests (the
+// commit flow's getPropertyDef/setProperty IPCs); the plain useEditorBlur
+// unit tests never reach IPC.
 vi.mock('@/lib/tauri', () => ({
   saveDraft: vi.fn(() => Promise.resolve()),
   flushDraft: vi.fn(() => Promise.resolve()),
   deleteDraft: vi.fn(() => Promise.resolve()),
+  getPropertyDef: vi.fn(() => Promise.resolve(null)),
+  setProperty: vi.fn(() => Promise.resolve({ op_refs: [] })),
 }))
 
 /**
@@ -1384,6 +1389,139 @@ describe('useEditorBlur', () => {
 
       expect(vi.mocked(deleteDraft)).toHaveBeenCalledTimes(1)
       expect(vi.mocked(deleteDraft)).toHaveBeenCalledWith('B1')
+    })
+  })
+
+  // -- #2675: inline `key:: value` property commit on the blur path ---------
+
+  describe('#2675 — inline property lines commit through the blur path', () => {
+    const flushMicrotasks = async () => {
+      await act(async () => {
+        await Promise.resolve()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+    }
+
+    beforeEach(() => {
+      // Re-arm the IPC mocks after the file-level clearAllMocks (which only
+      // clears call records) so each test starts from the success defaults.
+      vi.mocked(getPropertyDef).mockResolvedValue(null)
+      vi.mocked(setProperty).mockResolvedValue({ op_refs: [] } as never)
+    })
+
+    it('commits the property via setProperty and edits with the line STRIPPED', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'context:: home'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      // The typed value reached the typed property API (text def → valueText).
+      expect(vi.mocked(setProperty)).toHaveBeenCalledExactlyOnceWith({
+        blockId: 'B1',
+        key: 'context',
+        valueText: 'home',
+      })
+      // The committed content has the succeeded property line stripped.
+      expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', '')
+      // The discard is gated on the WHOLE commit flow's outcome (a promise),
+      // with the unmounted content forwarded as the failure re-save copy.
+      expect(mockDiscardDraft).toHaveBeenCalledTimes(1)
+      const [outcome, failedContent] = mockDiscardDraft.mock.calls[0] as [
+        Promise<boolean> | undefined,
+        string | undefined,
+      ]
+      expect(failedContent).toBe('context:: home')
+      await expect(outcome).resolves.toBe(true)
+    })
+
+    it('on a REJECTED property write keeps the line literal (no strip, nothing lost)', async () => {
+      vi.mocked(setProperty).mockRejectedValue(new Error('Validation'))
+      const mockEdit = vi.fn(() => Promise.resolve(true))
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'context:: home'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      // Data-loss invariant: a failed write NEVER strips its line.
+      expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', 'context:: home')
+      expect(vi.mocked(toast.error)).toHaveBeenCalledExactlyOnceWith('Failed to set property')
+      // The commit flow still resolves true — the literal text IS durable.
+      const [outcome] = mockDiscardDraft.mock.calls[0] as [Promise<boolean> | undefined, unknown]
+      await expect(outcome).resolves.toBe(true)
+    })
+
+    it('resolves false (draft row survives) when the final content edit fails', async () => {
+      const mockEdit = vi.fn(() => Promise.resolve(false))
+      const mockDiscardDraft = vi.fn()
+
+      const roving = makeRovingEditor({
+        activeBlockId: 'B1',
+        unmount: vi.fn<() => string | null>(() => 'context:: home'),
+      })
+
+      const { result } = renderHook(() =>
+        useEditorBlur({
+          rovingEditor: roving,
+          blockId: 'B1',
+          edit: mockEdit,
+          splitBlock: vi.fn(),
+          setFocused: vi.fn(),
+          discardDraft: mockDiscardDraft,
+        }),
+      )
+
+      act(() => {
+        result.current.handleBlur(makeFocusEvent())
+      })
+      await flushMicrotasks()
+
+      // The property write succeeded, but the content edit failed — the
+      // outcome must resolve false so discardDraft KEEPS the draft row (the
+      // last surviving copy of the typed text).
+      const [outcome, failedContent] = mockDiscardDraft.mock.calls[0] as [
+        Promise<boolean> | undefined,
+        string | undefined,
+      ]
+      expect(failedContent).toBe('context:: home')
+      await expect(outcome).resolves.toBe(false)
     })
   })
 })
