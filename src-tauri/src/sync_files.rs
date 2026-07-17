@@ -845,6 +845,20 @@ impl TempAttachmentWriter {
                     format!("flushing attachment {}: {e}", self.temp_path.display()),
                 ))
             })?;
+            // #2660 — durability: flush() only pushes tokio's userspace
+            // buffer into the kernel page cache. `sync_all()` fsyncs the
+            // file's data *and* metadata to the physical device BEFORE the
+            // rename below. Without it, a power loss can persist the rename
+            // (and the SQLite-durable `attachments`/`attachment_blobs` rows
+            // and the `FileReceived` ACK) while the file's bytes are still
+            // only in the page cache — leaving a zero-length / short file
+            // that every peer now believes is complete.
+            f.sync_all().await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("fsync attachment {}: {e}", self.temp_path.display()),
+                ))
+            })?;
             // Drop the handle (close the file).
             drop(f);
         }
@@ -880,7 +894,48 @@ impl TempAttachmentWriter {
                 ))
             })?;
 
+        // #2660 — durability: on ext4/f2fs a rename is not durable until
+        // the *containing directory* is fsynced. `sync_all()` above made the
+        // file's bytes durable; this makes the rename directory entry itself
+        // durable, so a power loss immediately after commit cannot lose the
+        // published file. The temp and final paths share a parent (the temp
+        // is a sibling of `final_path` by construction), so fsyncing the
+        // final path's parent covers the rename source and destination.
+        if let Some(parent) = self.final_path.parent() {
+            fsync_dir(parent).await.map_err(|e| {
+                AppError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!("fsync parent dir {}: {e}", parent.display()),
+                ))
+            })?;
+        }
+
         self.finalised = true;
+        Ok(())
+    }
+}
+
+/// #2660 — fsync a directory so a rename (or file creation) *into* it is
+/// durable. On ext4/f2fs the directory entry produced by
+/// `tokio::fs::rename` is not persisted until the containing directory is
+/// itself fsynced; without this a power loss can lose the rename even
+/// after the renamed file's own `sync_all()` returned.
+///
+/// On Unix (Linux/macOS/Android — every non-Windows platform we ship to)
+/// a directory can be opened read-only and fsynced; that is the standard
+/// durable-rename idiom. On Windows there is no portable directory-fsync:
+/// NTFS journals directory metadata so the entry is durable once the
+/// file's own `sync_all()` has returned, making the directory step a
+/// no-op there.
+async fn fsync_dir(dir: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let dir_file = tokio::fs::File::open(dir).await?;
+        dir_file.sync_all().await
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = dir;
         Ok(())
     }
 }

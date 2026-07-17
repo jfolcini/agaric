@@ -1228,6 +1228,75 @@ impl Drop for SnapshotTempFile {
     }
 }
 
+/// #2696 — boot-time sweep of orphaned snapshot-receive temp files.
+///
+/// [`receive_snapshot_to_temp`] streams each in-flight catch-up blob into
+/// a `<app_data_dir>/snapshot-recv-<ulid>.tmp` file guarded by
+/// [`SnapshotTempFile`], whose `Drop` unlinks it on every normal exit
+/// path (apply success, decode error, peer drop, cancel). But `Drop`
+/// never runs on `SIGKILL` / OOM-kill / power-loss, so a process death
+/// mid-receive strands the temp — potentially up to `MAX_SNAPSHOT_SIZE`
+/// (256 MB) — directly in `app_data_dir` with no other GC path
+/// reclaiming it.
+///
+/// This sweep removes every `snapshot-recv-*.tmp` file directly under
+/// `app_data_dir`. It is deliberately called **once at startup, before
+/// the sync daemon begins accepting inbound connections**, which is what
+/// makes an unconditional delete (no age gate) safe: at boot no receive
+/// can be in flight yet, so every matching file is by construction an
+/// orphan left by a previous process — there is no live temp to race.
+///
+/// Best-effort: an unreadable `app_data_dir` or an individual unlink
+/// failure is logged and skipped so boot never fails on cleanup. Returns
+/// the number of files removed (used by tests and boot logging).
+pub(crate) fn sweep_orphaned_snapshot_temps(app_data_dir: &Path) -> usize {
+    let rd = match std::fs::read_dir(app_data_dir) {
+        Ok(rd) => rd,
+        Err(e) => {
+            tracing::warn!(
+                dir = %app_data_dir.display(),
+                error = %e,
+                "snapshot-temp sweep: could not read app_data_dir; skipping",
+            );
+            return 0;
+        }
+    };
+
+    let mut removed = 0usize;
+    for entry in rd.filter_map(Result::ok) {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        // Match the exact prefix + suffix `receive_snapshot_to_temp`
+        // produces so we never touch an unrelated file.
+        if !(name.starts_with("snapshot-recv-") && name.ends_with(".tmp")) {
+            continue;
+        }
+        // Only unlink regular files — never recurse into or remove a
+        // directory that happens to match the name pattern.
+        match entry.file_type() {
+            Ok(ft) if ft.is_file() => {}
+            _ => continue,
+        }
+        let path = entry.path();
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                removed += 1;
+                tracing::debug!(path = %path.display(), "swept orphaned snapshot temp");
+            }
+            Err(e) => tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "snapshot-temp sweep: failed to remove orphan",
+            ),
+        }
+    }
+
+    if removed > 0 {
+        tracing::info!(removed, "swept orphaned snapshot-recv temp files at boot");
+    }
+    removed
+}
+
 /// #706 item 2 — stream a file through a blake3 hasher and return the
 /// lowercase hex digest. Reads in `BINARY_FRAME_CHUNK_SIZE` chunks so the
 /// integrity check inherits the same bounded-memory profile as the
@@ -3042,6 +3111,64 @@ mod tests {
                 .count(),
             Err(_) => 0,
         }
+    }
+
+    /// #2696 — the boot-time sweep must remove stale
+    /// `snapshot-recv-*.tmp` orphans (left by a process that died before
+    /// `SnapshotTempFile::Drop` ran) while leaving every non-matching
+    /// entry untouched: unrelated files, a `snapshot-recv-*` name without
+    /// the `.tmp` suffix, and a directory that happens to match the
+    /// pattern.
+    #[test]
+    fn sweep_removes_only_orphaned_snapshot_temps_2696() {
+        let dir = TempDir::new().unwrap();
+        let root = dir.path();
+
+        // Two stale orphans matching the real `receive_snapshot_to_temp`
+        // naming scheme.
+        let orphan_a = root.join("snapshot-recv-0123456789abcdef0123456789abcdef.tmp");
+        let orphan_b = root.join("snapshot-recv-fedcba9876543210fedcba9876543210.tmp");
+        std::fs::write(&orphan_a, b"stale partial snapshot A").unwrap();
+        std::fs::write(&orphan_b, b"stale partial snapshot B").unwrap();
+
+        // Must-survive entries:
+        //  * the real database and an unrelated temp,
+        //  * a `snapshot-recv-*` file WITHOUT the `.tmp` suffix,
+        //  * a directory whose name matches the pattern.
+        let db = root.join("notes.db");
+        let unrelated = root.join("something-else.tmp");
+        let no_suffix = root.join("snapshot-recv-partialname");
+        std::fs::write(&db, b"db").unwrap();
+        std::fs::write(&unrelated, b"unrelated").unwrap();
+        std::fs::write(&no_suffix, b"no suffix").unwrap();
+        let matching_dir = root.join("snapshot-recv-lookslikeatemp.tmp");
+        std::fs::create_dir(&matching_dir).unwrap();
+
+        let removed = super::sweep_orphaned_snapshot_temps(root);
+
+        assert_eq!(removed, 2, "exactly the two orphaned temps must be removed");
+        assert!(!orphan_a.exists(), "orphan A must be swept");
+        assert!(!orphan_b.exists(), "orphan B must be swept");
+        assert!(db.exists(), "the database must never be swept");
+        assert!(unrelated.exists(), "unrelated .tmp must survive");
+        assert!(
+            no_suffix.exists(),
+            "a snapshot-recv name without .tmp must survive"
+        );
+        assert!(
+            matching_dir.is_dir(),
+            "a directory matching the pattern must not be removed"
+        );
+    }
+
+    /// #2696 — a sweep over a directory that does not exist must not
+    /// panic and must report zero removals (defensive: boot can race
+    /// `create_dir_all`).
+    #[test]
+    fn sweep_missing_dir_is_noop_2696() {
+        let dir = TempDir::new().unwrap();
+        let missing = dir.path().join("does-not-exist");
+        assert_eq!(super::sweep_orphaned_snapshot_temps(&missing), 0);
     }
 
     // -----------------------------------------------------------------

@@ -2739,6 +2739,57 @@ async fn attachment_receive_writes_to_temp_then_renames_m51() {
     assert_eq!(std::fs::read(&final_path).unwrap(), payload);
 }
 
+/// #2660 — the durable write→sync_all→rename→fsync(parent) path must
+/// still commit successfully end-to-end and produce the exact bytes on
+/// disk. This guards the fsync ordering added for power-loss durability:
+/// a broken ordering (e.g. fsyncing a closed/renamed handle, or fsyncing
+/// a directory that no longer exists) would surface here as a commit
+/// error, and a corrupted write would surface as a byte mismatch. The
+/// attachment is written into a nested subdirectory so the parent-dir
+/// fsync in `commit` exercises the real (non-root) directory path.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn attachment_commit_durable_write_then_rename_2660() {
+    let dir = TempDir::new().unwrap();
+    let mut writer = write_attachment_streaming(dir.path(), "attachments/sub/durable.bin")
+        .await
+        .expect("opening temp writer must succeed");
+
+    // A payload spanning multiple internal buffer flushes so the
+    // sync_all() in commit has real data to persist.
+    let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    writer.write_all(&payload).await.unwrap();
+    writer.flush().await.unwrap();
+
+    let expected_hash = blake3::hash(&payload).to_hex().to_string();
+    // commit runs: flush → sync_all(temp) → rename → fsync(parent dir).
+    // Any breakage in that ordering fails the commit here.
+    writer
+        .commit(&expected_hash)
+        .await
+        .expect("durable commit must succeed");
+
+    let final_path = dir.path().join("attachments/sub/durable.bin");
+    assert!(
+        final_path.exists(),
+        "renamed file must exist after a durable commit"
+    );
+    assert_eq!(
+        std::fs::read(&final_path).unwrap(),
+        payload,
+        "committed file bytes must match the written payload exactly"
+    );
+    // The temp sibling must be consumed by the rename.
+    let leftover_temps: Vec<_> = std::fs::read_dir(dir.path().join("attachments/sub"))
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+        .collect();
+    assert!(
+        leftover_temps.is_empty(),
+        "no `.tmp-*` orphan may remain after a durable commit, found {leftover_temps:?}"
+    );
+}
+
 /// Hash mismatch on commit must unlink the temp and surface
 /// an `AppError::InvalidOperation("hash_mismatch: …")`. The final
 /// file must NOT exist.
