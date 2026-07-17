@@ -32,3 +32,11 @@ pub mod draft;
 /// tag_norm) and `agaric-store` (db/op/space/block_descendants) plus the `loro`
 /// CRDT crate; carries `sqlx::query!` macros against the workspace schema.
 pub mod loro;
+
+/// CRDT merge dispatch — applies an inbound `OpPayload` to a space's
+/// `LoroState` (`engine_apply`) and counts divergence between local/remote
+/// frontiers (`divergence`). Query-free and engine-clean: depends only on
+/// sibling `loro` plus `agaric-store` (op/space) and `agaric-core` (ulid/error).
+/// The `agaric` crate re-exports it (`pub use agaric_engine::merge;`) so every
+/// existing `crate::merge::…` path resolves unchanged (#2621, wave E3-merge).
+pub mod merge;

@@ -15,13 +15,13 @@
 mod engine_apply_unit_tests {
     use crate::loro::shared::LoroState;
     use crate::merge::engine_apply;
-    use crate::op::{
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
         AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload,
         EditBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
         SetPropertyPayload,
     };
-    use crate::space::SpaceId;
-    use crate::ulid::BlockId;
+    use agaric_store::space::SpaceId;
 
     /// Two valid ULIDs reused across these tests.
     const SPACE_A: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
@@ -417,7 +417,7 @@ mod engine_apply_unit_tests {
         // Move B (currently last) to slot 0. The legacy breadcrumb
         // `new_position` is deliberately set to a junk trailing value so
         // a regression that routes on it is caught.
-        let mv = OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        let mv = OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(CHILD_B),
             new_parent_id: Some(BlockId::from_trusted(PARENT)),
             new_position: 99,
@@ -467,7 +467,7 @@ mod engine_apply_unit_tests {
         // legacy `apply_move_block` arm whose `node_for` miss is the
         // deterministic error.
         let missing = "01HZ00000000000000000000ZZ";
-        let mv = OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        let mv = OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(missing),
             new_parent_id: None,
             new_position: 0,
