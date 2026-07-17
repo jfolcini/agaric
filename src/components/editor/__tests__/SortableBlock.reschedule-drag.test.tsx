@@ -36,6 +36,10 @@
  *     provider (native HTML5 DnD is desktop-only; touch already owns a
  *     separate gesture vocabulary on this row).
  *  5. A11y: no new violations when the row is a drag source.
+ *  6. (#2825) Only task-like rows (non-null `todoState`) become a drag
+ *     source — a plain text / heading row inside the provider stays
+ *     reorder-only, since dropping it on a `RescheduleDropZone` would set a
+ *     `due_date` on a block with no task metadata to hold it.
  */
 
 import { fireEvent, render, screen } from '@testing-library/react'
@@ -128,6 +132,7 @@ describe('SortableBlock reschedule-drag source (#2770)', () => {
         content="hello"
         isFocused={false}
         rovingEditor={makeRovingEditor()}
+        todoState="TODO"
       />,
     )
 
@@ -150,6 +155,7 @@ describe('SortableBlock reschedule-drag source (#2770)', () => {
           content="Buy groceries"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
         />
       </RescheduleDragSourceProvider>,
     )
@@ -184,6 +190,7 @@ describe('SortableBlock reschedule-drag source (#2770)', () => {
           content="hello"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
         />
       </RescheduleDragSourceProvider>,
     )
@@ -221,6 +228,7 @@ describe('SortableBlock reschedule-drag source (#2770)', () => {
           content="hello"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
         />
       </RescheduleDragSourceProvider>,
     )
@@ -236,11 +244,39 @@ describe('SortableBlock reschedule-drag source (#2770)', () => {
           content="hello"
           isFocused={false}
           rovingEditor={makeRovingEditor()}
+          todoState="TODO"
         />
       </RescheduleDragSourceProvider>,
     )
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+
+  it('is NOT a native drag source for a non-task row, even inside RescheduleDragSourceProvider (#2825)', () => {
+    render(
+      <RescheduleDragSourceProvider>
+        <SortableBlock
+          blockId="BLOCK_NON_TASK"
+          content="Just a note, not a task"
+          isFocused={false}
+          rovingEditor={makeRovingEditor()}
+          // No `todoState` — a plain text / heading row has no task
+          // metadata, so it must not become a reschedule drag source (that
+          // would set a `due_date` the block can't semantically hold).
+        />
+      </RescheduleDragSourceProvider>,
+    )
+
+    const row = screen.getByTestId('sortable-block')
+    expect(row).not.toHaveAttribute('draggable', 'true')
+
+    const setData = vi.fn()
+    const dataTransfer = { setData, effectAllowed: 'uninitialized' }
+    fireEvent.dragStart(row, { dataTransfer })
+
+    // No onDragStart wired for non-task rows — the reschedule payload is
+    // never set.
+    expect(setData).not.toHaveBeenCalled()
   })
 })
