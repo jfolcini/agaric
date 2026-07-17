@@ -168,8 +168,10 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
-/// #2265: the derived-cache rebuild set for an INBOUND sync import —
-/// [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildTagInheritanceCache`.
+/// #2265 / #2667: the GLOBAL derived-cache rebuild set for an INBOUND sync
+/// import — [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildTagInheritanceCache`
+/// (#2265) minus `RebuildBlockTagRefsCache` (#2667, now driven per-changed-
+/// block — see below).
 ///
 /// `apply_remote` → `import_and_project` refreshes `block_tag_inherited`
 /// synchronously, scoped to exactly the subtrees whose tag edges or tree
@@ -178,15 +180,59 @@ const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 8] = [
 /// cache is therefore already correct by the time the inbound fan-out is
 /// enqueued; re-running the full-vault DELETE + recursive-CTE recompute here
 /// (deltas arrive at typing cadence) would turn every remote keystroke back
-/// into an O(vault) writer-lock rebuild and defeat the scoping. Everything
-/// else in the full set is RETAINED — the per-block projection touches only
-/// base tables, so every derived cache (tag/page rows + counts, agenda,
-/// `page_id` — which is how a moved subtree's descendants get their new
-/// `page_id` — block-tag refs, page links) still needs its rebuild.
+/// into an O(vault) writer-lock rebuild and defeat the scoping.
+///
+/// ## #2667 — `block_tag_refs` narrowed per-changed-block (NOT in this set)
+///
+/// `RebuildBlockTagRefsCache` is EXCLUDED here and instead driven from the
+/// exact `changed_blocks` set — one `ReindexBlockTagRefs` per block below a
+/// threshold, a single full rebuild above it — by
+/// [`inbound_sync_block_tag_refs_tasks`], the direct structural analog of the
+/// #421 FTS narrowing ([`inbound_sync_fts_tasks`]) in the SAME function.
+/// `block_tag_refs` is a purely per-block-content-derived cache: a block's
+/// rows are the inline `#[ULID]` tag tokens in ITS OWN content, filtered to
+/// live same-space tag blocks. `cache::compute_desired_pairs` (the full
+/// rebuild) is DESIGNED to be the union over live blocks of exactly what
+/// `cache::reindex_block_tag_refs` computes per block (same `deleted_at IS
+/// NULL`, tag-block, and source-space filters — pinned by #375/#678), so the
+/// per-block fan-out over `changed_blocks` equals the full rebuild — and, by
+/// construction, matches the local-edit path (which drives the identical
+/// `reindex_block_tag_refs`). The one asymmetry is the transient
+/// tag-space-propagation-gap edge (a tag whose own `space_id` is NULL but whose
+/// page carries a space): there the per-block path yields a subset (never
+/// extra rows), self-healing on any `FULL_CACHE_REBUILD_TASKS`. It carries no
+/// move-staleness gap (a MOVE never changes a block's
+/// own inline tokens — the local `MoveBlock` invalidation matrix touches
+/// neither `block_tag_refs` nor its rebuild) and no cross-block aggregate
+/// roll-up (unlike `page_link_cache`, which #627 proves a per-block
+/// `ReindexBlockLinks` cannot narrow for cross-page moves). Purges need no
+/// task at all: the `block_tag_refs` FKs are `ON DELETE CASCADE` on both
+/// `source_id` and `tag_id` (migration 0034), so a purge removes the rows
+/// synchronously — exactly why `inbound_sync_fts_tasks` also ignores
+/// `purged_blocks`.
+///
+/// ## Why the OTHER seven stay global (#2667 — correctness over the perf win)
+///
+/// Everything else in the full set is RETAINED — no existing scoped helper
+/// reproduces the global rebuild's effect from the block-id `changed_blocks`
+/// set alone, and a wrong narrowing silently under-invalidates:
+///   * `RebuildTagsCache` — `usage_count` aggregates `block_tags` ∪
+///     `block_tag_refs` across CONTENT blocks; the only scoped variant
+///     (`RefreshTagUsageCount { tag_id }`) needs tag ids `changed_blocks`
+///     does not carry and cannot insert/rename tag ROWS.
+///   * `RebuildPagesCache` / `RebuildPagesCacheCounts` — no per-block task
+///     variant; the count recompute is a page-level aggregate.
+///   * `RebuildAgendaCache` / `RebuildProjectedAgendaCache` — no per-block
+///     scoped task exists (the #2657/#2658/#2659 work refined move/tag
+///     invalidation, it did NOT add a per-block agenda task).
+///   * `RebuildPageIds` — a moved subtree's DESCENDANTS need re-derivation;
+///     the only scoped task (`SetBlockPageId`) is leaf-create-only and does
+///     not walk descendants. This is how a moved subtree's descendants
+///     converge on their new `page_id`.
 ///
 /// Exact-membership invariant pinned by
-/// `inbound_sync_set_is_full_minus_tag_inheritance`.
-const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
+/// `inbound_sync_set_is_full_minus_tag_inheritance_and_block_tag_refs`.
+const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
     MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCache,
     // Must stay AFTER `RebuildPagesCache` (count UPDATE only touches
@@ -195,7 +241,6 @@ const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 8] = [
     MaterializeTask::RebuildAgendaCache,
     MaterializeTask::RebuildProjectedAgendaCache,
     MaterializeTask::RebuildPageIds,
-    MaterializeTask::RebuildBlockTagRefsCache,
     MaterializeTask::RebuildPageLinkCache,
 ];
 
@@ -291,6 +336,57 @@ fn inbound_sync_fts_tasks(changed_blocks: &[crate::ulid::BlockId]) -> Vec<Materi
         changed_blocks
             .iter()
             .map(|block_id| MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::from(block_id.as_str()),
+            })
+            .collect()
+    }
+}
+
+/// #2667: inbound-sync `block_tag_refs`-reindex strategy threshold. Same
+/// queue-safety bound and rationale as the #421 FTS threshold
+/// ([`SYNC_FTS_PER_BLOCK_MAX`]) — NOT a measured perf crossover: each
+/// `ReindexBlockTagRefs` is one task in the bounded background channel, and
+/// [`Materializer::enqueue_inbound_sync_rebuilds`] enqueues it non-blocking
+/// (`try_enqueue_background`, shed-safe: `ReindexBlockTagRefs` IS persisted to
+/// `materializer_retry_queue`, so a saturation drop self-heals via the
+/// sweeper). Deliberately aliased to the FTS bound because the SAME
+/// `changed_blocks` set drives BOTH per-block fan-outs in one call: gating
+/// them on one threshold makes a large import cross into single-full-rebuild
+/// territory for BOTH at once, keeping the combined per-block fan-out at
+/// ≤ `2 * BACKGROUND_CAPACITY/4 = BACKGROUND_CAPACITY/2` and leaving half the
+/// channel as headroom for the 7-task global fan-out + concurrent work.
+const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
+
+/// #2667: choose the `block_tag_refs`-reindex task(s) for an inbound-sync
+/// import that changed `changed_blocks`. The direct structural analog of the
+/// #421 [`inbound_sync_fts_tasks`]: empty set → no work; small set → one
+/// targeted `ReindexBlockTagRefs` per block (O(changed)); large set → a single
+/// full `RebuildBlockTagRefsCache` (snapshot/boot re-sync — see
+/// [`SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX`] for the queue-safety fallback).
+///
+/// Pure (no queue/IO) so the strategy is unit-testable. Correctness: a block's
+/// `block_tag_refs` rows derive ONLY from its own content's inline `#[ULID]`
+/// tokens (filtered to live same-space tag blocks); the full rebuild
+/// (`cache::compute_desired_pairs`) is by design the union over live blocks of
+/// exactly what `cache::reindex_block_tag_refs` computes per block, so the
+/// per-block fan-out over `changed_blocks` equals the full rebuild (and matches
+/// the local-edit reindex path; proven by the `#2667` equivalence integration
+/// tests), modulo the transient tag-space-propagation-gap subset noted on
+/// [`inbound_sync_block_tag_refs_tasks`]. `purged_blocks` is intentionally
+/// ignored: the `block_tag_refs` FKs `ON DELETE CASCADE` (migration 0034)
+/// remove a purged block's / purged tag's rows synchronously — same reason
+/// [`inbound_sync_fts_tasks`] ignores it.
+fn inbound_sync_block_tag_refs_tasks(
+    changed_blocks: &[crate::ulid::BlockId],
+) -> Vec<MaterializeTask> {
+    if changed_blocks.is_empty() {
+        Vec::new()
+    } else if changed_blocks.len() > SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX {
+        vec![MaterializeTask::RebuildBlockTagRefsCache]
+    } else {
+        changed_blocks
+            .iter()
+            .map(|block_id| MaterializeTask::ReindexBlockTagRefs {
                 block_id: Arc::from(block_id.as_str()),
             })
             .collect()
@@ -434,7 +530,12 @@ impl Materializer {
     /// A purge-only import (`changed_blocks` empty, `purged_blocks` not)
     /// MUST still fan out: Pass D removed rows from the base tables, and the
     /// aggregate caches (`tags_cache.usage_count`, `pages_cache` counts,
-    /// page links, …) only converge through these rebuilds.
+    /// page links, …) only converge through the debounced global rebuilds.
+    /// #2667: the per-changed-block `block_tag_refs` path below correctly
+    /// enqueues NOTHING for a purge-only import (`changed_blocks` empty) —
+    /// the `block_tag_refs` FKs `ON DELETE CASCADE` (migration 0034) already
+    /// removed the purged block's / purged tag's rows synchronously, so no
+    /// rebuild is owed (same reason the FTS path enqueues nothing here).
     ///
     /// Non-fatal by convention at the call site: a queue-closed / serialization
     /// error must not unwind the sync session (the per-block projection has
@@ -461,14 +562,15 @@ impl Materializer {
         if changed_blocks.is_empty() && purged_blocks.is_empty() {
             return Ok(());
         }
-        // #2291: instead of fanning out the 8 global full-vault rebuilds on
-        // EVERY inbound drain (~8 O(vault) scans per import), ARM a trailing
+        // #2291: instead of fanning out the 7 global full-vault rebuilds on
+        // EVERY inbound drain (~7 O(vault) scans per import), ARM a trailing
         // debounce. The driver loop fires the identical
         // `INBOUND_SYNC_CACHE_REBUILD_TASKS` set exactly once after a burst
-        // settles (bounded by max-wait). Each of those 8 tasks is
+        // settles (bounded by max-wait). Each of those 7 tasks is
         // argument-less and reads current SQL state, so one fire covers
-        // every coalesced import. The FTS path below is UNCHANGED — it is
-        // already changed-set-driven (O(changed), not O(vault)).
+        // every coalesced import. The FTS and `block_tag_refs` paths below
+        // are UNCHANGED by the debounce — both are already changed-set-driven
+        // (O(changed), not O(vault)) and enqueued inline here per import.
         self.arm_inbound_rebuild_debounce();
         // FTS is not in `FULL_CACHE_REBUILD_TASKS` (local edits reindex
         // per-block via `UpdateFtsBlock`). #421: drive FTS from the exact
@@ -498,6 +600,27 @@ impl Materializer {
                     self.try_enqueue_background(task)?;
                 }
             }
+        }
+        // #2667: `block_tag_refs` is likewise NOT in the debounced global set
+        // (see [`INBOUND_SYNC_CACHE_REBUILD_TASKS`]) — it is driven from the
+        // same exact `changed_blocks` set, exactly like FTS above. A block's
+        // rows derive only from its own content's inline `#[ULID]` tokens, and
+        // the full rebuild is by design the per-block union, so below the
+        // threshold one `ReindexBlockTagRefs` per changed block equals the old
+        // global `RebuildBlockTagRefsCache` (matching the local-edit reindex
+        // path; modulo the transient tag-space-propagation-gap subset noted on
+        // the selector) — turning O(vault) into O(changed); above it a single
+        // full rebuild avoids
+        // saturating the bounded queue. UNLIKE the FTS `RebuildFtsIndex`,
+        // BOTH tasks this can produce (`ReindexBlockTagRefs` AND
+        // `RebuildBlockTagRefsCache`) are persistable via `RetryKind::from_task`
+        // (the latter under the `'__GLOBAL__'` sentinel), so a saturation shed
+        // self-heals through the retry sweeper — the plain non-blocking
+        // `try_enqueue_background` is correct for both (no blocking enqueue
+        // needed). The selection is the pure, unit-tested
+        // [`inbound_sync_block_tag_refs_tasks`].
+        for task in inbound_sync_block_tag_refs_tasks(changed_blocks) {
+            self.try_enqueue_background(task)?;
         }
         Ok(())
     }
@@ -1335,6 +1458,70 @@ mod tests {
         );
     }
 
+    // ── #2667 inbound_sync_block_tag_refs_tasks (mirrors the FTS strategy) ──
+
+    /// An empty changed set (no-op / purge-only import) enqueues NO
+    /// `block_tag_refs` work — a purge is handled by the `ON DELETE CASCADE`
+    /// FKs (migration 0034), not a rebuild.
+    #[test]
+    fn inbound_sync_block_tag_refs_tasks_empty_is_noop() {
+        assert!(inbound_sync_block_tag_refs_tasks(&[]).is_empty());
+    }
+
+    /// A small incremental import reindexes per-block via `ReindexBlockTagRefs`
+    /// (one per changed block, carrying the right id) — NOT a full rebuild.
+    #[test]
+    fn inbound_sync_block_tag_refs_tasks_small_set_is_per_block() {
+        let changed = [
+            crate::ulid::BlockId::test_id("B1"),
+            crate::ulid::BlockId::test_id("B2"),
+        ];
+        let tasks = inbound_sync_block_tag_refs_tasks(&changed);
+        assert_eq!(
+            labels(&tasks),
+            vec![
+                "ReindexBlockTagRefs(B1)".to_string(),
+                "ReindexBlockTagRefs(B2)".to_string()
+            ],
+            "small set must reindex per-block, not full-rebuild",
+        );
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildBlockTagRefsCache),
+            "small set must NOT enqueue a full RebuildBlockTagRefsCache",
+        );
+    }
+
+    /// At the threshold the per-block path still applies (boundary is `>`).
+    #[test]
+    fn inbound_sync_block_tag_refs_tasks_at_threshold_is_per_block() {
+        let changed: Vec<_> = (0..SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX)
+            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_block_tag_refs_tasks(&changed);
+        assert_eq!(tasks.len(), SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX);
+        assert!(
+            tasks
+                .iter()
+                .all(|t| matches!(t, MaterializeTask::ReindexBlockTagRefs { .. }))
+        );
+    }
+
+    /// Above the threshold (snapshot/boot re-sync) a SINGLE full
+    /// `RebuildBlockTagRefsCache` is enqueued instead of N per-block tasks, so
+    /// the bounded background queue cannot be saturated by the fan-out.
+    #[test]
+    fn inbound_sync_block_tag_refs_tasks_large_set_is_single_full_rebuild() {
+        let changed: Vec<_> = (0..=SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX)
+            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .collect();
+        let tasks = inbound_sync_block_tag_refs_tasks(&changed);
+        assert_eq!(
+            labels(&tasks),
+            vec!["RebuildBlockTagRefsCache".to_string()],
+            "above threshold must collapse to one full rebuild",
+        );
+    }
+
     // ── create_block ─────────────────────────────────────────────────
 
     #[test]
@@ -1673,14 +1860,15 @@ mod tests {
         );
     }
 
-    /// #2265 — the inbound-sync fan-out is FULL minus only
-    /// `RebuildTagInheritanceCache` (already refreshed synchronously — and
-    /// scoped — by `import_and_project`'s `TagScope` handling), preserving
-    /// order. `RebuildPageIds` in particular MUST stay: it is how a moved
-    /// subtree's descendants converge on their new `page_id` after an
-    /// inbound structural move.
+    /// #2265 / #2667 — the DEBOUNCED global inbound-sync fan-out is FULL minus
+    /// `RebuildTagInheritanceCache` (#2265, already refreshed synchronously and
+    /// scoped by `import_and_project`'s `TagScope` handling) AND minus
+    /// `RebuildBlockTagRefsCache` (#2667, now driven per-changed-block by
+    /// `inbound_sync_block_tag_refs_tasks`), preserving order. `RebuildPageIds`
+    /// in particular MUST stay: it is how a moved subtree's descendants
+    /// converge on their new `page_id` after an inbound structural move.
     #[test]
-    fn inbound_sync_set_is_full_minus_tag_inheritance() {
+    fn inbound_sync_set_is_full_minus_tag_inheritance_and_block_tag_refs() {
         let full: Vec<String> = full_rebuild_labels();
         let narrowed: Vec<String> = INBOUND_SYNC_CACHE_REBUILD_TASKS
             .iter()
@@ -1688,17 +1876,26 @@ mod tests {
             .collect();
         let expected: Vec<String> = full
             .iter()
-            .filter(|l| l.as_str() != "RebuildTagInheritanceCache")
+            .filter(|l| {
+                l.as_str() != "RebuildTagInheritanceCache"
+                    && l.as_str() != "RebuildBlockTagRefsCache"
+            })
             .cloned()
             .collect();
         assert_eq!(
             narrowed, expected,
             "INBOUND_SYNC_CACHE_REBUILD_TASKS must be FULL minus only the \
-             tag-inheritance rebuild, preserving order",
+             tag-inheritance rebuild (#2265) and the block-tag-refs rebuild \
+             (#2667, now per-changed-block), preserving order",
         );
         assert!(
             narrowed.iter().any(|l| l == "RebuildPageIds"),
             "RebuildPageIds MUST be retained (inbound move → descendants' page_id)",
+        );
+        assert!(
+            !narrowed.iter().any(|l| l == "RebuildBlockTagRefsCache"),
+            "#2667: RebuildBlockTagRefsCache MUST NOT be in the global set \
+             (it is driven per-changed-block by inbound_sync_block_tag_refs_tasks)",
         );
     }
 
