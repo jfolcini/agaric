@@ -75,13 +75,23 @@ function isLive(entry: PrefetchEntry | undefined, now: number): entry is Prefetc
   return entry != null && entry.expiresAt > now
 }
 
-/** Count of currently-live (non-expired) parked entries, for the concurrency cap. */
-function countLiveEntries(now: number): number {
-  let count = 0
-  for (const entry of prefetchMap.values()) {
-    if (entry.expiresAt > now) count += 1
+/**
+ * Delete every expired entry, then return the count of what remains (all
+ * live). This is the ONLY place the concurrency cap is measured, and it
+ * DELETES rather than merely counting — otherwise an entry that is prefetched,
+ * expires after {@link PREFETCH_TTL_MS}, and is never re-hovered nor consumed
+ * would linger in the Map forever, pinning a full `Promise<PageSubtree>`
+ * (#2850 review: unbounded growth while scrolling a long Pages list or
+ * hovering many inline links over a long-lived session). Because
+ * `prefetchPageSubtree` calls this before every park, the resident set is
+ * bounded to {@link MAX_INFLIGHT_PREFETCHES} live entries plus at most the
+ * handful parked since the last call once the user goes idle.
+ */
+function sweepExpiredAndCountLive(now: number): number {
+  for (const [key, entry] of prefetchMap) {
+    if (entry.expiresAt <= now) prefetchMap.delete(key)
   }
-  return count
+  return prefetchMap.size
 }
 
 /**
@@ -102,10 +112,13 @@ function countLiveEntries(now: number): number {
  */
 export function prefetchPageSubtree(spaceId: string, pageId: string): void {
   const now = Date.now()
+  // Sweep expired entries first so the Map can't grow unbounded with
+  // parked-but-never-consumed pages, and so the cap/dedup below see only
+  // live entries.
+  const liveCount = sweepExpiredAndCountLive(now)
   const key = keyFor(spaceId, pageId)
-  const existing = prefetchMap.get(key)
-  if (isLive(existing, now)) return // dedup — already in flight or parked
-  if (countLiveEntries(now) >= MAX_INFLIGHT_PREFETCHES) return // cap — drop this intent
+  if (prefetchMap.has(key)) return // dedup — post-sweep, any present entry is live
+  if (liveCount >= MAX_INFLIGHT_PREFETCHES) return // cap — drop this intent
 
   const promise = loadPageSubtree(pageId, spaceId)
   promise.catch((err: unknown) => {
@@ -150,4 +163,9 @@ export function consumePrefetchedPageSubtree(
  */
 export function _resetPrefetchPageSubtreeForTest(): void {
   prefetchMap.clear()
+}
+
+/** Test-only: current number of parked entries (live + not-yet-swept). */
+export function _prefetchMapSizeForTest(): number {
+  return prefetchMap.size
 }

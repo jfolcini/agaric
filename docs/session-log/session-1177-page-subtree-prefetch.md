@@ -75,9 +75,17 @@ Hover (`onMouseEnter`) + keyboard (`onFocus`) schedule; `onMouseLeave`/`onBlur` 
 
 Reviewed by a separate stronger-model reviewer (adversarial). All six load-bearing checks
 verified true — guard preservation, drift-free single-consumption, late-prefetch vs
-generation-guard race, structurally-impossible concurrency-slot leak, per-surface intent
-wiring, non-vacuous tests. No defects; no fixes needed. Full frontend suite **15255 tests
-pass**, `tsc --noEmit -p tsconfig.app.json` exit 0, `oxlint` clean. `docs/FEATURE-MAP.md`
-updated with the (correctly framed) one-shot handoff entry.
+generation-guard race, per-surface intent wiring, non-vacuous tests. Full frontend suite
+**15255 tests pass**, `tsc --noEmit -p tsconfig.app.json` exit 0, `oxlint` clean.
+`docs/FEATURE-MAP.md` updated with the (correctly framed) one-shot handoff entry.
+
+The PR's `agaric-reviewer` then caught one real defect both prior reviewers missed:
+**unbounded map growth** — `countLiveEntries` only *counted* expired entries, never
+deleting them, so a page prefetched (e.g. auto-parked while scrolling the Pages list or
+hovering inline links) but never clicked lingered in the Map indefinitely, pinning a full
+`Promise<PageSubtree>`. Fixed by making the pre-park scan `sweepExpiredAndCountLive` DELETE
+every expired entry, bounding the resident set to `MAX_INFLIGHT_PREFETCHES` live entries;
+added a `_prefetchMapSizeForTest` regression test asserting the map stays bounded across
+TTL expiry (the earlier tests missed it because each called `_resetPrefetchPageSubtreeForTest`).
 
 Closes #2850.

@@ -21,6 +21,7 @@ vi.mock('@/lib/tauri', () => ({
 }))
 
 import {
+  _prefetchMapSizeForTest,
   _resetPrefetchPageSubtreeForTest,
   consumePrefetchedPageSubtree,
   MAX_INFLIGHT_PREFETCHES,
@@ -168,6 +169,29 @@ describe('prefetch-page-subtree', () => {
         vi.advanceTimersByTime(PREFETCH_TTL_MS + 1)
         prefetchPageSubtree('SPACE_A', 'PAGE_NEW')
         expect(mockedLoadPageSubtree).toHaveBeenCalledTimes(MAX_INFLIGHT_PREFETCHES + 1)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('sweeps expired entries out of the map (bounded — no unbounded growth)', () => {
+      vi.useFakeTimers()
+      try {
+        mockedLoadPageSubtree.mockReturnValue(new Promise(() => {}))
+        // Park the cap's worth of entries, none ever consumed or re-hovered.
+        for (let i = 0; i < MAX_INFLIGHT_PREFETCHES; i++) {
+          prefetchPageSubtree('SPACE_A', `PAGE_${i}`)
+        }
+        expect(_prefetchMapSizeForTest()).toBe(MAX_INFLIGHT_PREFETCHES)
+
+        // They all expire but are NOT touched again by consume/re-park.
+        vi.advanceTimersByTime(PREFETCH_TTL_MS + 1)
+        // A single new intent must sweep every expired entry (delete, not just
+        // skip) — otherwise the map would grow to MAX_INFLIGHT_PREFETCHES + 1
+        // and keep growing over a long session (regression guard for the
+        // #2850 unbounded-growth review finding).
+        prefetchPageSubtree('SPACE_A', 'PAGE_NEW')
+        expect(_prefetchMapSizeForTest()).toBe(1)
       } finally {
         vi.useRealTimers()
       }
