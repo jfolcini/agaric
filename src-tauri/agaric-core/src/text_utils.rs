@@ -56,9 +56,56 @@ pub fn nfc_normalise(input: &str) -> String {
     input.nfc().collect()
 }
 
+/// Strip a single layer of matching surrounding quotes (`"…"` or `'…'`)
+/// from a frontmatter scalar value — the symmetric counterpart of the
+/// exporter's `yaml_flow_item` quoting. YAML quoting is preserved on export
+/// only when a value needs it; Agaric's exporter currently emits bare scalars,
+/// but accepting quoted values keeps the importer tolerant of hand-edited /
+/// third-party frontmatter without pulling in a YAML crate.
+///
+/// Moved into `agaric-core` (#2621, wave E4-import) as a pure string helper so
+/// the query-free import parser (`agaric_engine::import`) can reach it without
+/// depending on the app crate. The app's `commands::pages::markdown_yaml`
+/// re-exports it so its existing call sites resolve unchanged.
+#[must_use]
+pub fn strip_yaml_quotes(value: &str) -> &str {
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        &value[1..value.len() - 1]
+    } else {
+        value
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// #1920 — `strip_yaml_quotes` only strips a MATCHING pair; mismatched or
+    /// unbalanced quotes are left verbatim so a value is never corrupted.
+    /// #1922 (`no-direct-helper-unit-tests`) — this helper is otherwise only
+    /// exercised transitively, so its edge cases are pinned directly here.
+    #[test]
+    fn strip_yaml_quotes_only_strips_matching_pair() {
+        // Matching pairs are stripped, one layer.
+        assert_eq!(strip_yaml_quotes("\"abc\""), "abc");
+        assert_eq!(strip_yaml_quotes("'abc'"), "abc");
+        // Empty quoted values collapse to empty.
+        assert_eq!(strip_yaml_quotes("\"\""), "");
+        assert_eq!(strip_yaml_quotes("''"), "");
+        // Mismatched quotes are left verbatim.
+        assert_eq!(strip_yaml_quotes("\"abc'"), "\"abc'");
+        assert_eq!(strip_yaml_quotes("'abc\""), "'abc\"");
+        // Unbalanced / single quote characters survive untouched.
+        assert_eq!(strip_yaml_quotes("\"abc"), "\"abc");
+        assert_eq!(strip_yaml_quotes("abc\""), "abc\"");
+        assert_eq!(strip_yaml_quotes("\""), "\"");
+        assert_eq!(strip_yaml_quotes("x"), "x");
+        assert_eq!(strip_yaml_quotes("plain"), "plain");
+    }
 
     #[test]
     fn short_input_passes_through_unchanged() {

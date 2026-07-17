@@ -127,6 +127,7 @@ dependencies = [
  "loro",
  "parking_lot",
  "proptest",
+ "regex",
  "serde",
  "serde_json",
  "specta",

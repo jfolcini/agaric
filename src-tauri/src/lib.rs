@@ -62,6 +62,12 @@ pub use agaric_store::fts;
 #[cfg(test)]
 mod fts_app_tests;
 pub use agaric_core::hash; // foundation crate (#2621)
+// `import` — the query-free markdown→spec parser moved into `agaric-engine`
+// (#2621, wave E4-import). This thin app-side shim re-exports the engine module
+// (`pub use agaric_engine::import::*;`) so every `crate::import::…` path resolves
+// unchanged, and additionally hosts the Tauri-integration seam
+// (`ImportProgressSink` + its `tauri::ipc::Channel` impl) which cannot live in
+// the framework-free engine crate.
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;

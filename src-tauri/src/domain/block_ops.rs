@@ -40,7 +40,14 @@ pub(crate) const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 
 /// Maximum allowed nesting depth for the block tree.
 /// Prevents pathological recursion and keeps recursive CTEs bounded.
-pub(crate) const MAX_BLOCK_DEPTH: i64 = 20;
+///
+/// #2621 (wave E4-import) — the value now lives in
+/// [`agaric_store::block_descendants::MAX_BLOCK_DEPTH`], beside the looser
+/// `DESCENDANT_DEPTH_CAP` runaway net, so the query-free import parser (which
+/// moved into `agaric-engine`) can reach it without depending on the app
+/// crate. Re-exported here so every existing
+/// `crate::domain::block_ops::MAX_BLOCK_DEPTH` call site resolves unchanged.
+pub(crate) use agaric_store::block_descendants::MAX_BLOCK_DEPTH;
 
 /// Validate that `s` parses as a calendar-valid `YYYY-MM-DD` date.
 ///
