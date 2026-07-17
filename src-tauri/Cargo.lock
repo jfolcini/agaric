@@ -19,6 +19,7 @@ name = "agaric"
 version = "0.7.2"
 dependencies = [
  "agaric-core",
+ "agaric-engine",
  "agaric-store",
  "aho-corasick",
  "base64 0.22.1",
@@ -116,6 +117,14 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "agaric-engine"
+version = "0.1.0"
+dependencies = [
+ "agaric-core",
+ "serde_json",
 ]
 
 [[package]]

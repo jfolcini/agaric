@@ -43,7 +43,7 @@
 //! listing them. Invalid JSON fails the parse with `AppError::Validation`
 //! (serde's message carries line/column info).
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// One parsed bibliography entry, format-independent.
 #[derive(Debug, Clone, PartialEq)]
