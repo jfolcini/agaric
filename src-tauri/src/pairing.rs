@@ -4,7 +4,7 @@
 //!
 //! Pairing is split across three modules with distinct responsibilities:
 //!
-//! - [`crate::commands::sync_cmds`] — Tauri-IPC orchestration: generates
+//! - `crate::commands::sync_cmds` — Tauri-IPC orchestration: generates
 //!   the QR payload via this module, opens the pairing WebSocket via
 //!   [`crate::sync_net`], drives the peer through `DeviceOffer` /
 //!   `DeviceAccept`, and on success calls
@@ -207,8 +207,8 @@ const PAIRING_PROOF_DOMAIN: &[u8] = b"agaric-pairing-proof-v1";
 /// [`crate::sync_protocol::SyncMessage::HeadExchange::pairing_proof`] (#855).
 ///
 /// Both devices independently store this value in their pending-pairing marker
-/// when they arm ([`crate::commands::sync_cmds::start_pairing_armed_inner`]) or
-/// confirm ([`crate::commands::sync_cmds::confirm_pairing_inner`]) a pairing;
+/// when they arm (`crate::commands::sync_cmds::start_pairing_armed_inner`) or
+/// confirm (`crate::commands::sync_cmds::confirm_pairing_inner`) a pairing;
 /// the initiator echoes it in its `HeadExchange`, and the responder compares it
 /// to its own stored value before it TOFU-pins an unpaired device
 /// ([`crate::sync_daemon::server`]).

@@ -1,5 +1,10 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
+// #2621 (agaric-sync inversion): the narrow apply/materialize surface the sync
+// layer needs from the app-side `Materializer`, expressed as a trait so the
+// sync modules depend DOWN on this abstraction instead of UP on the concrete
+// coordinator. `Materializer` impls it in `materializer/coordinator.rs`.
+pub mod apply_host;
 // `backlink` moved into `agaric-store` (#2621, wave S4d) as part of the
 // search/query SCC. Re-exported so every `crate::backlink::…` path resolves
 // unchanged. Its insta snapshots moved with it (`agaric-store/src/backlink/
@@ -142,6 +147,10 @@ pub use agaric_core::sql_utils; // foundation crate (#2621)
 pub mod sync_cert;
 pub mod sync_constants;
 pub mod sync_daemon;
+// #2621 (agaric-sync split): the Tauri-backed sinks (`TauriEventSink`,
+// `ChannelEventSink`) live here; `sync_events` keeps only the pure event
+// types + `SyncEventSink` trait, free of any Tauri dependency.
+pub mod sync_event_sinks;
 pub mod sync_events;
 pub mod sync_files;
 pub mod sync_net;
@@ -1706,7 +1715,10 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
             sync_daemon::SyncDaemonContext {
                 pool: w.pool,
                 device_id: w.device_id,
-                materializer: w.materializer,
+                // #2621 (agaric-sync inversion): erase the concrete coordinator
+                // to `Arc<dyn ApplyHost>` at the app→sync boundary so the daemon
+                // context never names `Materializer`.
+                materializer: Arc::new(w.materializer),
                 scheduler: w.scheduler,
                 cert: w.cert,
                 event_sink: w.sink,
@@ -2162,7 +2174,7 @@ pub fn run() {
                 materializer: materializer.clone(),
                 scheduler: scheduler.clone(),
                 cert: sync_cert.clone(),
-                sink: std::sync::Arc::new(sync_events::TauriEventSink(app.handle().clone())),
+                sink: std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
                 app_handle: app.handle().clone(),
                 lifecycle: lifecycle.clone(),
                 // `cancel_flag` is filled in below from the value

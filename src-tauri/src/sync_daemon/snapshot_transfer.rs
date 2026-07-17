@@ -104,9 +104,9 @@ use std::sync::Arc;
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
+use crate::apply_host::ApplyHost;
 use crate::error::AppError;
 use crate::loro::registry::LoroEngineRegistry;
-use crate::materializer::Materializer;
 use crate::peer_refs;
 use crate::snapshot::apply_snapshot;
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
@@ -664,7 +664,7 @@ pub(crate) enum CatchupOutcome {
 pub(crate) async fn try_receive_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
-    materializer: &Materializer,
+    materializer: &dyn ApplyHost,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
     expected_remote_id: Option<&str>,
@@ -1048,7 +1048,7 @@ pub(crate) async fn try_receive_snapshot_catchup(
 async fn receive_loro_snapshot_catchup(
     conn: &mut SyncConnection,
     pool: &SqlitePool,
-    materializer: &Materializer,
+    materializer: &dyn ApplyHost,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
     expected_remote_id: Option<&str>,

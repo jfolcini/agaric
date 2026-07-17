@@ -1197,6 +1197,134 @@ impl Materializer {
     }
 }
 
+/// #2621 (agaric-sync inversion): manual `Debug` so `Materializer` satisfies
+/// the `ApplyHost: std::fmt::Debug` bound. The struct holds a
+/// `JoinSet<()>` (`tasks`) which is not `Debug`, so a derive is impossible;
+/// this opaque impl is enough for the trait bound and for any `{:?}` on an
+/// `Arc<dyn ApplyHost>`.
+impl std::fmt::Debug for Materializer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Materializer").finish_non_exhaustive()
+    }
+}
+
+/// #2621 (agaric-sync inversion): the fixed cache-rebuild task set enqueued
+/// after a snapshot restore replaces vault state wholesale, paired with the
+/// cache table each task repopulates (used only for the per-task error log).
+/// The order mirrors `snapshot::restore`'s wipe inventory; the tables
+/// themselves are wiped there. `RebuildPageIds` (head) and
+/// `RebuildPagesCacheCounts` (tail) are enqueued separately in
+/// [`Materializer::enqueue_post_snapshot_rebuilds`] — see that method for the
+/// ordering rationale.
+const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
+    ("agenda_cache", MaterializeTask::RebuildAgendaCache),
+    ("pages_cache", MaterializeTask::RebuildPagesCache),
+    ("tags_cache", MaterializeTask::RebuildTagsCache),
+    (
+        "block_tag_inherited",
+        MaterializeTask::RebuildTagInheritanceCache,
+    ),
+    (
+        "projected_agenda_cache",
+        MaterializeTask::RebuildProjectedAgendaCache,
+    ),
+    ("fts_blocks", MaterializeTask::RebuildFtsIndex),
+    ("block_tag_refs", MaterializeTask::RebuildBlockTagRefsCache),
+    ("page_link_cache", MaterializeTask::RebuildPageLinkCache),
+];
+
+#[async_trait::async_trait]
+impl crate::apply_host::ApplyHost for Materializer {
+    fn loro_state(&self) -> Arc<crate::loro::shared::LoroState> {
+        std::sync::Arc::clone(self.loro_state())
+    }
+
+    async fn enqueue_inbound_sync_rebuilds(
+        &self,
+        changed_blocks: &[crate::ulid::BlockId],
+        purged_blocks: &[crate::ulid::BlockId],
+    ) -> Result<(), AppError> {
+        Materializer::enqueue_inbound_sync_rebuilds(self, changed_blocks, purged_blocks).await
+    }
+
+    async fn enqueue_post_snapshot_rebuilds(&self) -> Result<(), AppError> {
+        // #2621: this is the enqueue block moved out of `snapshot::restore`
+        // (RESET path). It enqueues the full cache-rebuild set after a
+        // snapshot apply commits. Behaviour-preserving: same tasks, same
+        // order, same awaiting `enqueue_background` variant, same
+        // log-and-continue on channel-closed errors (the snapshot itself is
+        // already durable, so a shutdown-in-progress enqueue failure must not
+        // fault the restore — hence this always returns `Ok(())`).
+        //
+        // `RebuildPageIds` MUST be enqueued first so it is processed before
+        // `RebuildAgendaCache` / `RebuildProjectedAgendaCache`. Both agenda
+        // rebuilds consult `b.page_id` to apply the template-page exclusion.
+        // The background consumer processes tasks sequentially in enqueue
+        // order, so enqueuing it ahead of the cache set guarantees the agenda
+        // sees populated `page_id`s on first rebuild. (`RebuildPageIds` has no
+        // dedicated cache table, so it does not appear in
+        // `POST_SNAPSHOT_CACHE_REBUILDS`.)
+        if let Err(e) = self
+            .enqueue_background(MaterializeTask::RebuildPageIds)
+            .await
+        {
+            tracing::error!(
+                task = "RebuildPageIds",
+                error = %e,
+                "failed to enqueue cache rebuild task after apply_snapshot \
+                 (channel closed; shutdown-in-progress?). snapshot applied but \
+                 cache rebuilds could not be enqueued; restart the app to repair caches"
+            );
+        }
+        for (table, task) in POST_SNAPSHOT_CACHE_REBUILDS {
+            if let Err(e) = self.enqueue_background(task.clone()).await {
+                tracing::error!(
+                    cache_table = table,
+                    error = %e,
+                    "failed to enqueue cache rebuild task after apply_snapshot \
+                     (channel closed; shutdown-in-progress?). snapshot applied but \
+                     cache rebuilds could not be enqueued; restart the app to repair caches"
+                );
+            }
+        }
+
+        // #417: recompute the two `pages_cache` count columns AFTER
+        // `RebuildPagesCache` has re-inserted every page row. The RESET wipe
+        // leaves both columns at DEFAULT 0, and the per-op count maintenance
+        // that ordinary edits rely on never fires here (a snapshot apply is not
+        // an op fan-out). Enqueued separately at the TAIL (mirroring how
+        // `RebuildPageIds` is enqueued at the HEAD) so the count recompute
+        // observes the freshly-rebuilt `pages_cache` rows.
+        if let Err(e) = self
+            .enqueue_background(MaterializeTask::RebuildPagesCacheCounts)
+            .await
+        {
+            tracing::error!(
+                task = "RebuildPagesCacheCounts",
+                error = %e,
+                "failed to enqueue cache rebuild task after apply_snapshot \
+                 (channel closed; shutdown-in-progress?). snapshot applied but \
+                 pages_cache counts could not be enqueued; restart the app to repair caches"
+            );
+        }
+        Ok(())
+    }
+
+    async fn flush(&self) -> Result<(), AppError> {
+        Materializer::flush(self).await
+    }
+}
+
+/// #2621 (agaric-sync inversion): lets the sync layer's constructors accept a
+/// `Materializer` (tests) or an already-erased `Arc<dyn ApplyHost>`
+/// (production) uniformly via `impl Into<Arc<dyn ApplyHost>>`, wrapping the
+/// concrete coordinator exactly once with no double indirection.
+impl From<Materializer> for Arc<dyn crate::apply_host::ApplyHost> {
+    fn from(materializer: Materializer) -> Self {
+        Arc::new(materializer)
+    }
+}
+
 /// Abstraction over `sync_scheduler::SyncScheduler` so
 /// [`Materializer::status_with_scheduler`] can be called from tests without
 /// pulling in the real scheduler or from command handlers that have a

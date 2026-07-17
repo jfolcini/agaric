@@ -18,7 +18,7 @@
 //!   `DeviceAccept`; the peer side calls [`verify_device_exchange`]
 //!   ([`crate::pairing::verify_device_exchange`]) and receives the
 //!   remote `(device_id, cert_hash)` pair.
-//! - [`crate::commands::sync_cmds`] then hands that `cert_hash` to
+//! - `crate::commands::sync_cmds` then hands that `cert_hash` to
 //!   [`crate::peer_refs::upsert_peer_ref_with_cert`], persisting the
 //!   pin in `peer_refs.cert_hash` for use by the verifier on every
 //!   subsequent reconnection (TOFU model — Trust On First Use).

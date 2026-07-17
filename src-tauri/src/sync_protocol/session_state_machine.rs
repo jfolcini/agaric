@@ -54,11 +54,12 @@
 
 use sqlx::SqlitePool;
 use std::collections::VecDeque;
+use std::sync::Arc;
 
 use super::operations::*;
 use super::types::*;
+use crate::apply_host::ApplyHost;
 use crate::error::AppError;
-use crate::materializer::Materializer;
 use crate::peer_refs;
 
 // ---------------------------------------------------------------------------
@@ -115,10 +116,14 @@ pub struct SyncOrchestrator {
     /// state directly via
     /// [`crate::sync_protocol::loro_sync::apply_remote`] (which writes the
     /// per-block SQL projection inside its own tx); `handle_message` then
-    /// enqueues [`Materializer::enqueue_inbound_sync_rebuilds`] so the
-    /// global derived caches (tags / pages / agenda / page-ids /
-    /// block-tag-refs / page-links / FTS) converge to the imported state.
-    materializer: Materializer,
+    /// enqueues `ApplyHost::enqueue_inbound_sync_rebuilds` so the global
+    /// derived caches (tags / pages / agenda / page-ids / block-tag-refs /
+    /// page-links / FTS) converge to the imported state.
+    ///
+    /// #2621 (agaric-sync inversion): held as `Arc<dyn ApplyHost>` (the app-side
+    /// `Materializer` impls the trait) so the sync layer depends DOWN on the
+    /// abstraction instead of UP on the concrete coordinator.
+    host: Arc<dyn ApplyHost>,
     pub(crate) state: SyncState,
     session: SyncSession,
     /// Always `None` under the current loro-vv protocol (#490 M1).
@@ -207,7 +212,11 @@ pub struct SyncOrchestrator {
 }
 
 impl SyncOrchestrator {
-    pub fn new(pool: SqlitePool, device_id: String, materializer: Materializer) -> Self {
+    /// #2621: accepts anything convertible into `Arc<dyn ApplyHost>` — a
+    /// concrete `Materializer` (tests, via `From<Materializer>`) or an
+    /// already-erased `Arc<dyn ApplyHost>` (production) — so no call site has
+    /// to wrap the coordinator by hand.
+    pub fn new(pool: SqlitePool, device_id: String, host: impl Into<Arc<dyn ApplyHost>>) -> Self {
         Self {
             session: SyncSession {
                 state: SyncState::Idle,
@@ -219,7 +228,7 @@ impl SyncOrchestrator {
             },
             pool,
             device_id,
-            materializer,
+            host: host.into(),
             state: SyncState::Idle,
             last_sent_hash: None,
             pending_loro_messages: VecDeque::new(),
@@ -252,7 +261,7 @@ impl SyncOrchestrator {
     /// state into the snapshot catch-up so the post-RESET engine
     /// reload (#607) hits the same registry the session syncs against.
     pub(crate) fn loro_state(&self) -> std::sync::Arc<crate::loro::shared::LoroState> {
-        std::sync::Arc::clone(self.materializer.loro_state())
+        self.host.loro_state()
     }
 
     /// Incremental sync: collect this device's per-space Loro version
@@ -700,7 +709,7 @@ impl SyncOrchestrator {
                                 // already committed — so log + continue
                                 // (mirrors `dispatch_background_or_warn`).
                                 if let Err(e) = self
-                                    .materializer
+                                    .host
                                     .enqueue_inbound_sync_rebuilds(&changed_blocks, &purged_blocks)
                                     .await
                                 {
@@ -1348,7 +1357,7 @@ impl SyncOrchestrator {
         // data). The unresolved-parent-gap case is already handled inside
         // `insert_replicated_op` under the Audit profile (warn-and-land).
         if !self.pending_ingest_records.is_empty() {
-            if let Err(e) = self.materializer.flush().await {
+            if let Err(e) = self.host.flush().await {
                 tracing::warn!(
                     device_id = %self.device_id,
                     error = %e,
