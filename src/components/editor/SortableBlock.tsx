@@ -39,6 +39,7 @@ import {
   type BlockPropertyEditorProps,
 } from '@/components/editor/BlockPropertyEditor'
 import { EditableBlock } from '@/components/editor/EditableBlock'
+import { RESCHEDULE_DRAG_TYPE } from '@/components/journal/RescheduleDropZone'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useBatchAttachments } from '@/hooks/useBatchAttachments'
 import { useBlockActions } from '@/hooks/useBlockActions'
@@ -49,6 +50,7 @@ import { useBlockTouchLongPress } from '@/hooks/useBlockTouchLongPress'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
+import { useRescheduleDragSourceEnabled } from '@/hooks/useRescheduleDragSource'
 import { performActivePageUndo } from '@/hooks/useUndoShortcuts'
 import { announce } from '@/lib/announcer'
 import { detectBlockType } from '@/lib/block-type-convert'
@@ -497,6 +499,13 @@ function SortableBlockBody(props: SortableBlockBodyProps): React.ReactElement {
             // treatment and tightens the negative space left of the text.
             isClosedTask && !isFocused ? 'line-through opacity-50' : 'no-underline opacity-100',
           )}
+          // #2770 — explicitly opt the editable text OUT of the row's native
+          // reschedule-drag (see `rescheduleDragEnabled` on the outer row
+          // div). Without this, starting a mouse-drag to SELECT text inside
+          // the ProseMirror editor could instead be interpreted as the start
+          // of a native HTML5 drag from the row ancestor in browsers that
+          // resolve drag-vs-select ambiguously.
+          draggable={false}
         >
           <EditableBlock
             blockId={blockId}
@@ -757,6 +766,29 @@ function SortableBlockInner({
   // #1349: stable id for the sr-only swipe-gesture description (per block).
   const swipeRowDescId = `swipe-row-desc-${blockId}`
 
+  // #2770 — F-32 reschedule-by-drag, reachable from a real row. Only the
+  // ROW ITSELF (this component's outer element, below) becomes a native
+  // HTML5 drag source, and only inside `WeeklyView`'s
+  // `RescheduleDragSourceProvider` (default `false` everywhere else —
+  // DailyView, the page editor, StreamView, MonthlyView are unaffected).
+  // Native drag is desktop-only ("Drag-and-drop is intentionally
+  // pointer-only", RescheduleDropZone.tsx): touch already has its own
+  // gesture vocabulary here (swipe-to-delete/indent/outdent, long-press
+  // context menu, dnd-kit reorder via the collapse chevron), so gating this
+  // off on `isTouchDevice` avoids adding a THIRD gesture system to that mix.
+  // dnd-kit's own pointer-based reorder drag is unaffected: its listeners
+  // are scoped to the grip handle button only (`BlockGutterControls`), which
+  // explicitly opts itself OUT of native drag (`draggable={false}`) so the
+  // two systems never race on the same element.
+  const rescheduleDragEnabled = useRescheduleDragSourceEnabled() && !isTouchDevice
+  const handleRescheduleDragStart = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.dataTransfer.setData(RESCHEDULE_DRAG_TYPE, blockId)
+      e.dataTransfer.effectAllowed = 'move'
+    },
+    [blockId],
+  )
+
   useEffect(() => {
     isDraggingRef.current = isDragging
     if (isDragging) {
@@ -788,6 +820,14 @@ function SortableBlockInner({
       style={style}
       data-block-id={blockId}
       data-testid="sortable-block"
+      // #2770 — native HTML5 reschedule-drag source (WeeklyView only, see
+      // `rescheduleDragEnabled` above). `undefined` rather than `false` when
+      // disabled so this never overrides an ancestor's own `draggable`
+      // (there isn't one today, but this keeps the row's default browser
+      // draggability — none, for a plain `<div>` — intact rather than
+      // pinning it to `false`).
+      draggable={rescheduleDragEnabled || undefined}
+      onDragStart={rescheduleDragEnabled ? handleRescheduleDragStart : undefined}
       // B (#216): describe the swipe-to-delete gesture for assistive tech.
       // The swipe handlers only do anything on coarse pointers and only
       // when a delete handler is wired up, so scope the description the same way.

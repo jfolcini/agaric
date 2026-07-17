@@ -216,6 +216,13 @@ export const BlockGutterControls = React.memo(
         // `handleCloseWithFocus`. The drag handle is the only
         // gutter button guaranteed to render on every block.
         data-context-trigger="true"
+        // #2770 — in WeeklyView the ROW this handle sits in is itself a
+        // native HTML5 drag source (reschedule-by-drag). Explicitly opt this
+        // button OUT of native drag so a press on the grip always resolves
+        // to dnd-kit's own pointer-based reorder drag (`dragAttributes`/
+        // `dragListeners` below), never a competing native `dragstart` from
+        // the row ancestor.
+        draggable={false}
         {...dragAttributes}
         {...dragListeners}
         // #966 — capture pre-drag focus before the press-blur clears it. Must
