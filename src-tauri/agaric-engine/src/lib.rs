@@ -50,3 +50,19 @@ pub mod loro;
 /// The `agaric` crate re-exports it (`pub use agaric_engine::merge;`) so every
 /// existing `crate::merge::…` path resolves unchanged (#2621, wave E3-merge).
 pub mod merge;
+
+/// The per-op apply kernel (#2621 THE INVERSION) — the projection kernel that
+/// turns one op-log record into materialised SQL + drives the per-space Loro
+/// engine: `apply_op_projected` / `apply_op_tx` / `advance_apply_cursor`, the
+/// `ApplyEffects` / `ChunkAccumulator` types, the descendant-cohort collectors,
+/// the engine-routed `apply_*_via_loro` handlers, the `apply_*_sql_only`
+/// fallbacks, the `pages_cache` count maintenance, and the three attachment
+/// writers. Builds on `agaric-store` (Pieces A+B: `rederive_page_and_space_ids`,
+/// `cross_space_validation`) plus the sibling `loro` / `merge` modules; carries
+/// the bulk of the crate's `sqlx::query!` sites. The app re-exports each
+/// submodule through shims at the old `crate::materializer::handlers::…` paths
+/// so the coordinator / queue / command sites compile unchanged. The
+/// `recompute_call_spy` invocation counter is exposed via the `test-util`
+/// feature (like loro's `reproject_call_spy`) so the app's import-scaling tests
+/// can read it across the crate boundary.
+pub mod apply;

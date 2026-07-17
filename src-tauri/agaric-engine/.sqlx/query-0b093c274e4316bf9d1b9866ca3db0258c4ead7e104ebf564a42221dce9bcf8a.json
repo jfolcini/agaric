@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT b.page_id AS \"page_id!\" FROM block_links bl JOIN blocks b ON b.id = bl.target_id WHERE bl.source_id = ? AND b.page_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "0b093c274e4316bf9d1b9866ca3db0258c4ead7e104ebf564a42221dce9bcf8a"
+}

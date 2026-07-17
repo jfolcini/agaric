@@ -19,16 +19,17 @@
 //! - `sql_only`: the `apply_*_sql_only` projection fallbacks.
 //! - `attachments`: attachment apply handlers + orphan-cleanup (C-3c).
 
+// #2621 (THE INVERSION): the apply kernel moved DOWN into `agaric-engine`; the
+// submodule files below are now thin re-export shims (plus the app-side
+// coordinator glue that stays: `apply_op` + the `dispatch_*` fan-out,
+// `task_handlers`, the attachment GC, the two metric counters). The shared
+// prelude is trimmed to only what that staying code still uses unqualified via
+// `use super::*;`.
 use super::MaterializeTask;
 use crate::cache;
 use crate::error::AppError;
 use crate::fts;
-use crate::op::{
-    AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
-    DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpType,
-    PurgeBlockPayload, RemoveTagPayload, RenameAttachmentPayload, RestoreBlockPayload,
-    SetPropertyPayload,
-};
+use crate::op::{DeleteBlockPayload, OpType};
 use crate::op_log::OpRecord;
 use crate::tag_inheritance;
 use sqlx::SqlitePool;
@@ -44,14 +45,21 @@ mod sql_only;
 pub(crate) mod sql_only_fallback;
 mod task_handlers;
 
-// Private glob re-exports so sibling submodules can resolve cross-module
-// calls through their own `use super::*;` (e.g. `apply::apply_op_tx`
-// calling `loro_apply::apply_create_block_via_loro`). All item names are
-// unique across submodules, so the globs never collide.
+// Private glob re-exports so the STAYING sibling submodules (`apply`'s
+// `apply_op` + fan-out, `task_handlers`) resolve the re-exported kernel items
+// through their own `use super::*;` (e.g. `task_handlers` calling `apply_op_tx`
+// / `ChunkAccumulator` / `recompute_pages_cache_counts_for_pages`). The
+// engine-routed `loro_apply` / `sql_only` / `attachments` submodules are now
+// shims that nothing app-side calls unqualified, so their globs are gone.
 use apply::*;
-use attachments::*;
-use loro_apply::*;
 use pages_cache::*;
+// The engine-routed `apply_*_via_loro` / `apply_*_sql_only` handlers are called
+// by the moved kernel INSIDE `agaric-engine`; app-side, only the engine-path
+// convergence tests reach them unqualified via `use super::*;`. Gate the shim
+// globs to the test build so they don't warn as unused in the production lib.
+#[cfg(test)]
+use loro_apply::*;
+#[cfg(test)]
 use sql_only::*;
 
 // External re-exports — preserve the pre-split paths so callers outside
@@ -62,28 +70,11 @@ pub(crate) use attachments::cleanup_orphaned_attachments;
 // `materializer/mod.rs` can surface them to the OTel metrics pipeline.
 pub(crate) use descendant_fanout_dropped::count as descendant_fanout_dropped_count;
 pub(crate) use sql_only_fallback::count as sql_only_fallback_count;
-// #1257 the LOCAL create_block command path drives the engine-apply +
-// dense-position projection through this helper IN-TRANSACTION (without
-// advancing the apply cursor — that stays a boot-replay / dispatch_op concern),
-// so a fresh local create is engine-fresh and densely-positioned immediately
-// instead of waiting for the next boot replay (#1245 / #1249).
-pub(crate) use loro_apply::apply_create_block_via_loro;
-// #1257 the LOCAL edit_block / set_property / delete_property / add_tag /
-// remove_tag command paths drive their engine-apply + projection (and tag
-// inheritance fan-out for add/remove_tag) through these helpers IN-TRANSACTION,
-// without advancing the apply cursor (boot-replay re-applies idempotently — the
-// safety net). None touch `position`, so there is no dense-reprojection step.
-pub(crate) use loro_apply::{
-    apply_add_tag_via_loro, apply_delete_property_via_loro, apply_edit_block_via_loro,
-    apply_remove_tag_via_loro, apply_set_property_via_loro,
-};
-// #1257 the LOCAL move_block command path drives the engine-move +
-// dense-position reprojection (of BOTH the source and target sibling groups)
-// through this helper IN-TRANSACTION (without advancing the apply cursor — that
-// stays a boot-replay / dispatch_op concern), so a fresh local move is
-// engine-fresh and densely-positioned in both parents immediately instead of
-// waiting for the next boot replay (#1245 / #1249).
-pub(crate) use loro_apply::apply_move_block_via_loro;
+// #2621: the LOCAL command paths now route their engine-apply through the moved
+// kernel `apply_op_projected` (see `domain::block_ops`), not these per-op
+// `apply_*_via_loro` helpers directly. The engine-path convergence tests reach
+// the handlers unqualified via the `#[cfg(test)] use loro_apply::*;` glob above,
+// so no explicit per-fn re-export is needed here any longer.
 // #1257 the LOCAL delete / restore / purge command paths PRE-CAPTURE each
 // root's subtree COHORT + SPACE below the SQL soft-delete (these collectors)
 // and then drive the captured cohort onto the per-space Loro engine via the
@@ -112,6 +103,7 @@ pub(crate) use apply::apply_op_projected;
 // `materializer/mod.rs`).
 #[cfg(test)]
 pub(crate) use loro_apply::purge_block_sql_cascade;
+#[cfg(test)]
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
 pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
 

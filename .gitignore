@@ -42,6 +42,13 @@ __pycache__/
 # SQLx dev database (offline cache .sqlx/ is tracked)
 src-tauri/dev.db
 src-tauri/dev.db-*
+# Per-member sqlx dev databases (agaric-engine / agaric-store carry their own
+# `.sqlx` offline cache + a `../migrations` symlink; the CI sqlx-prepare lanes
+# create these fresh, so they are local build artifacts — never committed).
+src-tauri/agaric-engine/dev.db
+src-tauri/agaric-engine/dev.db-*
+src-tauri/agaric-store/dev.db
+src-tauri/agaric-store/dev.db-*
 src-tauri/.env
 coverage/
 # Per-shard vitest coverage dirs + the merged output produced by
