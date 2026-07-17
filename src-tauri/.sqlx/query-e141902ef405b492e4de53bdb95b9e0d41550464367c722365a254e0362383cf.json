@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT content, draft_anchor_seq, draft_anchor_device FROM block_drafts WHERE block_id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "content",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "content"
+          }
+        }
+      },
+      {
+        "name": "draft_anchor_seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_seq"
+          }
+        }
+      },
+      {
+        "name": "draft_anchor_device",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "draft_anchor_device"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "e141902ef405b492e4de53bdb95b9e0d41550464367c722365a254e0362383cf"
+}
