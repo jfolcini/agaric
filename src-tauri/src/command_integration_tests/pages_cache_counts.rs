@@ -938,3 +938,381 @@ async fn batch_delete_multi_root_varying_depth_cascades_all() {
         );
     }
 }
+
+// ======================================================================
+// #2700 — same-page moves skip the three page_id-derived background
+// rebuilds (RebuildPagesCache / RebuildPageLinkCache /
+// RebuildProjectedAgendaCache) via the `same_page` dispatch hint. These
+// tests prove the skip leaves NO stale state: after the reduced fan-out
+// settles, forcing the FULL rebuild of each of the three caches must be a
+// byte-for-byte NO-OP. (The dispatch-matrix behaviour — same-page skips
+// exactly these three, cross-page / hint-absent keep them — is pinned by
+// the pure `invalidations_for_op_move_block_*_2700` unit tests in
+// `materializer::dispatch`.)
+// ======================================================================
+
+/// Canonical, order-stable dump of the three `page_id`-derived cache tables.
+/// Each table is flattened to one newline-joined string so a single equality
+/// proves byte-for-byte parity against a subsequent full rebuild.
+async fn dump_page_caches(pool: &sqlx::SqlitePool) -> (String, String, String) {
+    let pages = sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(group_concat(r, char(10)), '') FROM ( \
+             SELECT page_id || '|' || COALESCE(title, char(0)) || '|' || updated_at \
+                    || '|' || inbound_link_count || '|' || child_block_count AS r \
+             FROM pages_cache ORDER BY page_id)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let links = sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(group_concat(r, char(10)), '') FROM ( \
+             SELECT source_page_id || '|' || target_page_id || '|' || edge_count \
+                    || '|' || src_deleted || '|' || tgt_deleted || '|' || tgt_is_page AS r \
+             FROM page_link_cache ORDER BY source_page_id, target_page_id)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let projected = sqlx::query_scalar::<_, String>(
+        "SELECT COALESCE(group_concat(r, char(10)), '') FROM ( \
+             SELECT block_id || '|' || projected_date || '|' || source AS r \
+             FROM projected_agenda_cache ORDER BY block_id, projected_date, source)",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    (pages, links, projected)
+}
+
+struct SamePageScene {
+    pool: SqlitePool,
+    _dir: TempDir,
+    mat: Materializer,
+    /// Page A (owns the linker, the repeating block, and the plain sibling).
+    page_a: String,
+    /// Content block on A carrying an inline `[[B]]` cross-page link →
+    /// populates `page_link_cache` with the A→B edge.
+    linker: String,
+    /// Repeating dated content block on A (repeat=daily + due_date) →
+    /// populates `projected_agenda_cache`.
+    repeater: String,
+    /// Plain content sibling on A, used as the reorder subject.
+    sib: String,
+}
+
+/// Build a page A holding a cross-page linker, a repeating dated block, and a
+/// plain sibling — so all three `page_id`-derived caches are NON-empty and the
+/// equivalence assertion is non-trivial.
+async fn build_same_page_scene() -> SamePageScene {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    let a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // Cross-page link A→B: linker lives on A, targets page B.
+    let linker = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("see [[{}]]", b.id),
+        Some(a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Repeating dated block on A → projected_agenda rows.
+    let repeater = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "standup".into(),
+        Some(a.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        repeater.id.as_str().into(),
+        "repeat".into(),
+        Some("daily".into()),
+        None,
+        None,
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    set_property_inner(
+        &pool,
+        DEV,
+        &mat,
+        repeater.id.as_str().into(),
+        "due_date".into(),
+        None,
+        None,
+        Some("2026-08-01".into()),
+        None,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Plain sibling on A (reorder subject).
+    let sib = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "sib".into(),
+        Some(a.id.clone()),
+        Some(3),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Establish a fully-correct, populated baseline for all three
+    // `page_id`-derived caches. A fresh `create` does NOT enqueue
+    // `ReindexBlockLinks` (only `edit_block` does), so `page_link_cache` is
+    // otherwise unpopulated at this point even though the inline `[[B]]` edge
+    // exists in `block_links`. Normalising the baseline here lets the tests
+    // assert the sharper property: a same-page move PRESERVES a correct cache,
+    // rather than merely "an empty cache stays empty".
+    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+    crate::cache::rebuild_page_link_cache(&pool).await.unwrap();
+    crate::cache::rebuild_projected_agenda_cache(&pool)
+        .await
+        .unwrap();
+
+    SamePageScene {
+        pool,
+        _dir,
+        mat,
+        page_a: a.id.into_string(),
+        linker: linker.id.into_string(),
+        repeater: repeater.id.into_string(),
+        sib: sib.id.into_string(),
+    }
+}
+
+/// Assert the current three-cache dump is IDENTICAL to what a full rebuild of
+/// each cache would produce — i.e. the same-page skip left no stale state.
+async fn assert_no_stale_page_caches(pool: &sqlx::SqlitePool, ctx: &str) {
+    let before = dump_page_caches(pool).await;
+    crate::cache::rebuild_pages_cache(pool).await.unwrap();
+    crate::cache::rebuild_page_link_cache(pool).await.unwrap();
+    crate::cache::rebuild_projected_agenda_cache(pool)
+        .await
+        .unwrap();
+    let after = dump_page_caches(pool).await;
+    assert_eq!(
+        before.0, after.0,
+        "pages_cache diverged from a full rebuild after {ctx}"
+    );
+    assert_eq!(
+        before.1, after.1,
+        "page_link_cache diverged from a full rebuild after {ctx}"
+    );
+    assert_eq!(
+        before.2, after.2,
+        "projected_agenda_cache diverged from a full rebuild after {ctx}"
+    );
+}
+
+/// #2700 — a SAME-PARENT sibling reorder (page_id provably unchanged) skips the
+/// three page_id-derived rebuilds without leaving stale cache state.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_page_reorder_skips_three_rebuilds_without_stale_state_2700() {
+    let s = build_same_page_scene().await;
+
+    // Precondition: the caches we prove stay-correct are actually populated.
+    let (_p0, links0, projected0) = dump_page_caches(&s.pool).await;
+    assert!(
+        !links0.is_empty(),
+        "page_link_cache must hold the A→B edge before the move (test would be vacuous)"
+    );
+    assert!(
+        !projected0.is_empty(),
+        "projected_agenda_cache must hold the repeating block before the move (test would be vacuous)"
+    );
+
+    // Same-parent reorder: move the plain sibling to slot 0 under A. Parent
+    // unchanged → page_id unchanged → same_page hint → 3 rebuilds skipped.
+    move_block_inner(
+        &s.pool,
+        DEV,
+        &s.mat,
+        s.sib.clone().into(),
+        Some(s.page_a.clone().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&s.mat).await;
+
+    assert_no_stale_page_caches(&s.pool, "a same-parent sibling reorder").await;
+}
+
+/// #2700 — a SAME-PAGE indent (parent changes, but the block stays on the same
+/// page so page_id is unchanged) skips the three page_id-derived rebuilds
+/// without leaving stale cache state. This is the case #2200's same-parent
+/// early-out does NOT cover, so it exercises the page_id before/after check.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_page_indent_skips_three_rebuilds_without_stale_state_2700() {
+    let s = build_same_page_scene().await;
+
+    let (_p0, links0, projected0) = dump_page_caches(&s.pool).await;
+    assert!(
+        !links0.is_empty(),
+        "page_link_cache must be populated (test would be vacuous)"
+    );
+    assert!(
+        !projected0.is_empty(),
+        "projected_agenda_cache must be populated (test would be vacuous)"
+    );
+
+    // Indent: nest the repeating block UNDER the linker — both live on page A,
+    // so the parent changes (A → linker) while page_id stays A → same_page.
+    move_block_inner(
+        &s.pool,
+        DEV,
+        &s.mat,
+        s.repeater.clone().into(),
+        Some(s.linker.clone().into()),
+        0,
+    )
+    .await
+    .unwrap();
+    settle(&s.mat).await;
+
+    assert_no_stale_page_caches(&s.pool, "a same-page indent").await;
+}
+
+/// #2700 (nested-page carve-out regression) — a same-page INDENT whose moved
+/// subtree CONTAINS a nested page must NOT skip the page_id-derived rebuilds:
+/// `rederive_page_and_space_ids` flattens the nested page's content descendants
+/// onto the moved root's page, changing their `page_id` even though the moved
+/// root's `page_id` is unchanged. Without the `!subtree_has_nested_page` guard
+/// the reduced fan-out leaves `page_link_cache` stale (the demonstrable
+/// stale-backlink-source repro); with it, the move is treated as cross-page and
+/// the full set runs. This test FAILS on the un-guarded code and PASSES with it.
+///
+/// Tree: `P(page) → R(content) → Q(page,nested) → B(content, links [[X]])`,
+/// plus sibling `S(content)` on P. Indent R under S (both on P): R.page_id
+/// stays P, but B.page_id flips Q→P, so the page_link_cache edge must move from
+/// `Q→X` to `P→X`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_page_indent_with_nested_page_forces_full_rebuild_2700() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // P: container page. X: separate link-target page.
+    let p = create_block_inner(&pool, DEV, &mat, "page".into(), "P".into(), None, Some(1))
+        .await
+        .unwrap();
+    settle(&mat).await;
+    let x = create_block_inner(&pool, DEV, &mat, "page".into(), "X".into(), None, Some(2))
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // R: moved root (content on P). S: sibling on P to indent R beneath.
+    let r = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "R".into(),
+        Some(p.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let s = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "S".into(),
+        Some(p.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Q: nested page under R. B: content under Q linking to page X.
+    let q = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "Q".into(),
+        Some(r.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let _b = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        format!("ref [[{}]]", x.id),
+        Some(q.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // Establish a correct, populated baseline for all three caches.
+    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+    crate::cache::rebuild_page_link_cache(&pool).await.unwrap();
+    crate::cache::rebuild_projected_agenda_cache(&pool)
+        .await
+        .unwrap();
+
+    // Precondition: the B→X edge exists, rolled up under source page Q.
+    let (_p0, links0, _pr0) = dump_page_caches(&pool).await;
+    assert!(
+        !links0.is_empty(),
+        "page_link_cache must hold the nested B→X edge before the move (test would be vacuous)"
+    );
+
+    // Indent R under S. Both are content on page P, so R.page_id stays P and a
+    // root-only check would (wrongly) treat this as same-page — but B (under
+    // nested page Q) flips Q→P, so the guard must force the full rebuild set.
+    move_block_inner(&pool, DEV, &mat, r.id.clone(), Some(s.id.clone()), 0)
+        .await
+        .unwrap();
+    settle(&mat).await;
+
+    // With the guard, the reduced fan-out ran the full RebuildPageLinkCache, so
+    // page_link_cache already reflects B's new source page P — forcing another
+    // rebuild changes nothing. Without the guard, the reduced fan-out skipped
+    // the rebuild, page_link_cache still carries the stale Q→X edge, and this
+    // forced rebuild flips it to P→X → the assertion fails.
+    assert_no_stale_page_caches(&pool, "a same-page indent dragging a nested page").await;
+}

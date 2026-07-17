@@ -328,6 +328,11 @@ export function PaletteBody({
   const linkMode = mode === 'search' && isPageLinkMode(query)
   const linkQuery = useMemo(() => (linkMode ? pageLinkQuery(query).trim() : ''), [linkMode, query])
   const effectiveQuery = linkMode ? linkQuery : debouncedQuery
+  // Hoisted above the IPC effect (was declared alongside the empty-state
+  // gates further down) — #2853 needs it both for the live local-ranking
+  // query below AND the recents-visibility gate near the bottom of this
+  // component.
+  const trimmedQuery = query.trim()
 
   // ── IPC ──────────────────────────────────────────────────────────
   // One `searchBlocksPartitioned` round-trip returns both partitions
@@ -427,10 +432,23 @@ export function PaletteBody({
     t,
   ])
 
+  // #2853 — rank against the LIVE query, not the debounced
+  // `effectiveQuery`. The IPC fetch above stays keyed on `effectiveQuery`
+  // (debounced), but rendering must not wait on it: already-loaded
+  // `pages`/`blocks` (from the previous keystroke's response, or a still
+  // in-flight one) re-rank/re-fuzzy against `liveQuery` synchronously on
+  // every keystroke, so the panel never freezes on stale ordering while a
+  // fresh FTS response streams in. When it lands, `setPages`/`setBlocks`
+  // above replace the arrays this memo reads and the same live query
+  // re-ranks the new rows — that's the merge point. In `linkMode`,
+  // `linkQuery` is already derived from the live `query` (not debounced),
+  // so it doubles as the live query there too.
+  const liveQuery = linkMode ? linkQuery : trimmedQuery
+
   // Merge → group → blended FTS+fuzzy ranking → cap.
   const groups = useMemo(
-    () => mergeAndRankGroups(pages, blocks, effectiveQuery),
-    [pages, blocks, effectiveQuery],
+    () => mergeAndRankGroups(pages, blocks, liveQuery),
+    [pages, blocks, liveQuery],
   )
 
   // Recent pages — empty-state list when no query. #1149 — sourced from the
@@ -767,13 +785,43 @@ export function PaletteBody({
     handleBlockRowAction(actionId, rowId, newTab)
   }
 
+  // #2853 — local substring filter over the in-memory recents, applied
+  // whenever the recents/recent-searches groups are shown mid-typing (see
+  // `showRecents`/`showRecentSearches` below). `.includes('')` is `true`
+  // for any string, so this is a no-op filter on the cold-open (empty
+  // query) path — one expression covers both branches.
+  const liveQueryLower = trimmedQuery.toLowerCase()
+  const filteredRecents = recents.filter((p) => p.title.toLowerCase().includes(liveQueryLower))
+  const filteredRecentSearches = recentSearches.filter((term) =>
+    term.toLowerCase().includes(liveQueryLower),
+  )
+
   // Empty / no-result detection for the search-mode placeholder.
-  const showRecents = mode === 'search' && query.length === 0 && recents.length > 0
-  // #131 — recent search terms, mobile-only, only on a cold (empty) input.
+  // #2853 — recents used to hard-gate on `query.length === 0` (vanishing
+  // the instant the user typed a character, with nothing local to replace
+  // them until the debounced FTS settled). Now they also stay up
+  // (filtered by `liveQueryLower` above) through the
+  // `loading && groups.length === 0` window — debounce-fired, IPC
+  // in-flight, no local rows re-ranked into `groups` yet — so the panel
+  // has a non-blank first frame sourced entirely from memory. The moment
+  // real `groups` land (local re-rank or fresh FTS), `groups.length > 0`
+  // flips this off and the real results take over. `!linkMode` keeps this
+  // scoped to plain search — link-autocomplete has its own
+  // `showNoLinkMatch` empty state.
+  const showRecents =
+    mode === 'search' &&
+    !linkMode &&
+    (query.length === 0 || (loading && groups.length === 0)) &&
+    filteredRecents.length > 0
+  // #131 — recent search terms, mobile-only. Same relaxed gate as
+  // `showRecents` above (#2853).
   const showRecentSearches =
-    isMobile && mode === 'search' && query.length === 0 && recentSearches.length > 0
+    isMobile &&
+    mode === 'search' &&
+    !linkMode &&
+    (query.length === 0 || (loading && groups.length === 0)) &&
+    filteredRecentSearches.length > 0
   const showNoLinkMatch = linkMode && groups.length === 0 && linkQuery.length > 0
-  const trimmedQuery = query.trim()
   // Distinguish "welcome state" (cold open, no query, no
   // recents) from "no results for query" (user typed something, got
   // Nothing). lumped both into one blank panel.
@@ -902,7 +950,7 @@ export function PaletteBody({
           <>
             {showRecentSearches && (
               <RecentSearchesGroup
-                recentSearches={recentSearches}
+                recentSearches={filteredRecentSearches}
                 onRun={handleRecentSearchClick}
                 onClear={handleClearRecentSearches}
                 t={t}
@@ -910,7 +958,7 @@ export function PaletteBody({
             )}
             {showRecents && (
               <RecentPagesGroup
-                recents={recents}
+                recents={filteredRecents}
                 onSelect={handleRecentClick}
                 onTogglePin={togglePinRecentPage}
                 t={t}

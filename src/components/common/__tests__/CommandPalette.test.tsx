@@ -1720,3 +1720,147 @@ describe('CommandPalette —  regressions', () => {
     })
   })
 })
+
+// ───────────────────────────────────────────────────────────────────
+// #2853 — instant local rendering (decoupled from the debounced IPC)
+// ───────────────────────────────────────────────────────────────────
+
+describe('CommandPalette — instant local rendering (#2853)', () => {
+  it('re-ranks already-loaded rows against the LIVE query before the debounced IPC for the new query resolves', async () => {
+    vi.useFakeTimers()
+    try {
+      // Both pages are already loaded (from the first keystroke's
+      // resolved IPC) before the ranking-sensitive second keystroke.
+      mockedSearchBlocksPartitioned.mockResolvedValue(
+        partitionedResp(
+          [makePageRow('PAGE_ALLY', 'Ally'), makePageRow('PAGE_ALLYSON', 'Allyson')],
+          [],
+        ),
+      )
+      render(<CommandPalette />)
+      openPalette()
+      const input = screen.getByTestId('command-palette-input')
+
+      // First keystroke: let the debounce + IPC round-trip settle so
+      // `pages`/`blocks` are populated with both rows.
+      fireEvent.change(input, { target: { value: 'ally' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      // `waitFor` polls via real timers internally, which deadlocks
+      // under `vi.useFakeTimers()` — the state is already flushed
+      // synchronously by the `act` above, so assert directly.
+      expect(screen.getByTestId('palette-page-header-PAGE_ALLY')).toBeInTheDocument()
+      expect(screen.getByTestId('palette-page-header-PAGE_ALLYSON')).toBeInTheDocument()
+      // "ally" exact-matches "Ally" (band 4) and only prefix-matches
+      // "Allyson" (band 3) — Ally ranks first.
+      const allyHeaderBefore = screen.getByTestId('palette-page-header-PAGE_ALLY')
+      const allysonHeaderBefore = screen.getByTestId('palette-page-header-PAGE_ALLYSON')
+      expect(
+        allyHeaderBefore.compareDocumentPosition(allysonHeaderBefore) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+
+      mockedSearchBlocksPartitioned.mockClear()
+      // Second keystroke — type past "ally" to "allyson" WITHOUT
+      // advancing the fake timers. The debounced IPC for "allyson" has
+      // not fired yet (still inside the 80ms window), so `pages`/
+      // `blocks` still hold the "ally"-fetched rows.
+      fireEvent.change(input, { target: { value: 'allyson' } })
+      expect(mockedSearchBlocksPartitioned).not.toHaveBeenCalled()
+
+      // The already-loaded rows must have re-ranked SYNCHRONOUSLY
+      // against the live "allyson" query: "Allyson" is now the exact
+      // match (band 4) and "Ally" no longer matches at all (band 1) —
+      // the order flips before any new IPC response exists.
+      const allyHeaderAfter = screen.getByTestId('palette-page-header-PAGE_ALLY')
+      const allysonHeaderAfter = screen.getByTestId('palette-page-header-PAGE_ALLYSON')
+      expect(
+        allysonHeaderAfter.compareDocumentPosition(allyHeaderAfter) &
+          Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps recents visible (filtered by the live prefix) during the loading window, then replaces them once FTS groups arrive', async () => {
+    vi.useFakeTimers()
+    try {
+      seedRecentPagesStore([
+        { pageId: 'PAGE_APPLE', title: 'Apple Notes', visitedAt: '2026-05-01T00:00:00Z' },
+        { pageId: 'PAGE_BANANA', title: 'Banana Bread', visitedAt: '2026-05-02T00:00:00Z' },
+      ])
+      let resolveIpc: (v: PartitionedResp) => void = () => {}
+      mockedSearchBlocksPartitioned.mockImplementation(
+        () =>
+          new Promise<PartitionedResp>((resolve) => {
+            resolveIpc = resolve
+          }),
+      )
+      render(<CommandPalette />)
+      openPalette()
+      // Cold open — unfiltered recents.
+      expect(screen.getByTestId('palette-recents-group')).toBeInTheDocument()
+      expect(screen.getByTestId('palette-recent-PAGE_APPLE')).toBeInTheDocument()
+      expect(screen.getByTestId('palette-recent-PAGE_BANANA')).toBeInTheDocument()
+
+      const input = screen.getByTestId('command-palette-input')
+      fireEvent.change(input, { target: { value: 'app' } })
+      // Flush the debounce so the IPC fires (and hangs on `resolveIpc`),
+      // flipping `loading` true with no groups yet.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      // `waitFor` polls via real timers internally, which deadlocks
+      // under `vi.useFakeTimers()` — the state is already flushed
+      // synchronously by the `act` above, so assert directly.
+      expect(screen.getByTestId('palette-loading-status')).toHaveTextContent('Searching…')
+      // Recents are STILL shown during this debounce+IPC window — but
+      // now filtered by the live "app" prefix: "Apple Notes" matches,
+      // "Banana Bread" does not.
+      expect(screen.getByTestId('palette-recents-group')).toBeInTheDocument()
+      expect(screen.getByTestId('palette-recent-PAGE_APPLE')).toBeInTheDocument()
+      expect(screen.queryByTestId('palette-recent-PAGE_BANANA')).not.toBeInTheDocument()
+
+      // The FTS response lands — real groups supersede the local
+      // recents. Switch to real timers before `waitFor` (which polls
+      // via `setTimeout`) so it can actually settle.
+      vi.useRealTimers()
+      resolveIpc(partitionedResp([makePageRow('PAGE_APP', 'App Store')], []))
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-page-header-PAGE_APP')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('palette-recents-group')).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('passes a vitest-axe scan while recents render during the loading window', async () => {
+    vi.useFakeTimers()
+    try {
+      seedRecentPagesStore([
+        { pageId: 'PAGE_APPLE', title: 'Apple Notes', visitedAt: '2026-05-01T00:00:00Z' },
+      ])
+      mockedSearchBlocksPartitioned.mockImplementation(() => new Promise(() => {}))
+      const { container } = render(<CommandPalette />)
+      openPalette()
+      const input = screen.getByTestId('command-palette-input')
+      fireEvent.change(input, { target: { value: 'app' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(100)
+      })
+      // Assert directly — `waitFor` polls via real timers and deadlocks
+      // under `vi.useFakeTimers()`; the state above is already flushed.
+      expect(screen.getByTestId('palette-recent-PAGE_APPLE')).toBeInTheDocument()
+      // `axe` relies on real async scheduling internally — switch back
+      // before invoking it.
+      vi.useRealTimers()
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

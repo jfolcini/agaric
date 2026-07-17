@@ -9,10 +9,10 @@ import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
 import { QueryResultList } from '@/components/query/QueryResultList'
 import type { TableColumn } from '@/components/query/QueryResultTable'
 import { QueryResultTable } from '@/components/query/QueryResultTable'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
-import { Spinner } from '@/components/ui/spinner'
 import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
@@ -297,8 +297,8 @@ export function QueryResult({
       {!collapsed && (
         <div className="border-t border-dashed border-muted-foreground/20">
           {loading && (
-            <div className="flex justify-center px-3 py-2">
-              <Spinner size="sm" />
+            <div className="px-3 py-2">
+              <LoadingSkeleton count={3} height="h-8" />
             </div>
           )}
           {error && (

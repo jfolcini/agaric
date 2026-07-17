@@ -398,6 +398,10 @@ describe('PairingDialog', () => {
       const loadingEl = document.querySelector('.pairing-loading')
       expect(loadingEl).toBeTruthy()
       expect(loadingEl?.textContent).toContain('Starting pairing...')
+      // #2852 — a shaped LoadingSkeleton placeholder replaces the bare
+      // centered spinner; the "starting" label text is preserved.
+      expect(loadingEl?.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0)
+      expect(loadingEl?.querySelector('[data-slot="spinner"]')).toBeFalsy()
     })
   })
 

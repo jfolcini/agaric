@@ -102,6 +102,20 @@ enum PendingDispatch {
         record: Arc<crate::op_log::OpRecord>,
         block_type: String,
     },
+    /// #2700: `move_block` dispatch with a proven `same_page` hint — invokes
+    /// [`Materializer::dispatch_move_background`] and warns on error. When
+    /// `same_page` is `true` (a same-parent reorder or same-page indent, proven
+    /// at the command site by comparing the moved block's `page_id`
+    /// before/after the in-tx rederive) the materializer skips the three
+    /// `page_id`-derived rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
+    /// `RebuildProjectedAgendaCache`). A cross-page move (`false`) keeps the
+    /// full set. Only the LOCAL move command enqueues this variant; remote
+    /// replay / sync use the plain [`PendingDispatch::Background`] path (hint
+    /// absent → full conservative set).
+    MoveBackground {
+        record: Arc<crate::op_log::OpRecord>,
+        same_page: bool,
+    },
 }
 
 pub struct CommandTx {
@@ -265,6 +279,29 @@ impl CommandTx {
         });
     }
 
+    /// #2700: queue a LOCAL `move_block` op with a proven `same_page` hint for
+    /// post-commit dispatch.
+    ///
+    /// Invokes [`Materializer::dispatch_move_background`] during
+    /// `commit_and_dispatch`. Dispatch failures are logged at warn level
+    /// (matching the `_or_warn` convention) rather than propagated — the op has
+    /// already committed, so a missed cache rebuild is recoverable.
+    ///
+    /// `same_page` is `true` iff the move provably kept the block's `page_id`
+    /// (a same-parent reorder or a same-page indent), in which case the
+    /// materializer skips the three `page_id`-derived rebuilds. Same
+    /// `Into<Arc<…>>` shape as [`Self::enqueue_background`].
+    pub fn enqueue_move_background(
+        &mut self,
+        record: impl Into<Arc<crate::op_log::OpRecord>>,
+        same_page: bool,
+    ) {
+        self.pending.push(PendingDispatch::MoveBackground {
+            record: record.into(),
+            same_page,
+        });
+    }
+
     /// Commit the transaction, then drain the pending queue into the
     /// materializer in enqueue order.
     ///
@@ -341,6 +378,18 @@ impl CommandTx {
                             block_type = %block_type,
                             error = %e,
                             "failed to dispatch lifecycle background cache task"
+                        );
+                    }
+                }
+                PendingDispatch::MoveBackground { record, same_page } => {
+                    if let Err(e) = materializer.dispatch_move_background(&record, same_page) {
+                        tracing::warn!(
+                            op_type = %record.op_type,
+                            seq = record.seq,
+                            device_id = %record.device_id,
+                            same_page,
+                            error = %e,
+                            "failed to dispatch move background cache task"
                         );
                     }
                 }

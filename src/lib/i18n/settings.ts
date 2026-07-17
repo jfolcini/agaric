@@ -60,6 +60,12 @@ export const settings: Record<string, string> = {
   'settings.motionFull': 'Full',
   'settings.motionFast': 'Fast',
   'settings.motionOff': 'Off',
+  'settings.tooltipDelayLabel': 'Tooltip delay',
+  'settings.tooltipDelayHelp':
+    'How long to hover before a tooltip opens. Instant shows tooltips immediately; Fast shortens the wait; Default is the standard dwell.',
+  'settings.tooltipDelayInstant': 'Instant',
+  'settings.tooltipDelayFast': 'Fast',
+  'settings.tooltipDelayDefault': 'Default',
   'settings.tabKeyboard': 'Keyboard',
   'settings.quickCapture.label': 'Quick capture shortcut',
   'settings.quickCapture.description':

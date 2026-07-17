@@ -65,6 +65,22 @@ const defaultProps = {
 }
 
 describe('PairingEntryForm', () => {
+  // #2852 — the Suspense fallback for the lazy-loaded QR scanner renders a
+  // shaped LoadingSkeleton placeholder (label text preserved) instead of a
+  // bare centered spinner. Must run before any other test triggers
+  // `entryMode="scan"` — React.lazy() caches the dynamic import's promise at
+  // the module level, so once any earlier test resolves it, later renders
+  // mount the (mocked) scanner synchronously and never show the fallback.
+  it('shows a shaped loading skeleton while the QR scanner loads (Suspense fallback)', () => {
+    const { container } = render(<PairingEntryForm {...defaultProps} entryMode="scan" />)
+
+    // The Suspense fallback renders synchronously; the lazy import resolves
+    // on a later microtask, so it's still showing right after render().
+    const skeletons = container.querySelectorAll('[data-slot="skeleton"]')
+    expect(skeletons.length).toBeGreaterThan(0)
+    expect(container.querySelector('[data-slot="spinner"]')).not.toBeInTheDocument()
+  })
+
   it('renders 4 word input fields in manual mode', () => {
     render(<PairingEntryForm {...defaultProps} />)
 

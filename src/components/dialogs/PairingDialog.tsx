@@ -24,10 +24,10 @@ import { UnpairConfirmDialog } from '@/components/dialogs/UnpairConfirmDialog'
 import { PairingEntryForm } from '@/components/peers/PairingEntryForm'
 import { PairingPeersList } from '@/components/peers/PairingPeersList'
 import { PairingQrDisplay } from '@/components/peers/PairingQrDisplay'
+import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { DialogBody } from '@/components/ui/dialog'
 import { SheetBody } from '@/components/ui/sheet'
-import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
@@ -516,13 +516,22 @@ export function PairingDialog({
                 </div>
               )}
 
-              {/* Loading state */}
+              {/* Loading state — QR-shaped square placeholder + entry-row
+                  placeholders instead of a bare centered spinner, mirroring
+                  the PairingQrDisplay + PairingEntryForm layout that
+                  replaces it once the pairing session starts. */}
               {loading && (
-                <div className="pairing-loading flex items-center justify-center py-8">
-                  <Spinner className="text-muted-foreground" />
-                  <span className="ml-2 text-sm text-muted-foreground">
+                <div className="pairing-loading flex flex-col items-center gap-3 py-6">
+                  <span className="text-sm text-muted-foreground">
                     {t('pairing.startingMessage')}
                   </span>
+                  <LoadingSkeleton
+                    count={1}
+                    height="h-40"
+                    className="w-40"
+                    ariaLabel={t('pairing.startingMessage')}
+                  />
+                  <LoadingSkeleton count={2} height="h-10" loading={false} className="w-full" />
                 </div>
               )}
 
