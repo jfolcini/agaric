@@ -350,6 +350,52 @@ fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
     }
 }
 
+/// #2655: drive a reverse op's settled effect into the shared per-space Loro
+/// engine, mirroring the engine-convergence block of [`reverse_move_block`].
+///
+/// The reverse-apply path ([`apply_reverse_in_tx`]) never enters `apply_op_tx`,
+/// so — exactly like the reverse MOVE arm (#1553) — every OTHER reverse op type
+/// must fan its effect onto the per-space engine itself or the engine goes stale
+/// after an undo/redo/revert. The staleness is not cosmetic: an undo-of-create
+/// that tombstones the row in SQL but leaves the engine node LIVE trips the
+/// #1257 sync-export freshness gate (`prepare_outgoing` sees an engine-live
+/// block SQL has soft-deleted → `Ok(None)`), silently suspending p2p sync for
+/// the WHOLE space until the app restarts (#2655).
+///
+/// `space_id` MUST be resolved by the caller at the correct moment: BEFORE a
+/// soft-delete (`resolve_block_space` filters tombstones, so a post-delete
+/// resolve returns `None`), AFTER a restore (once the block is live again), or
+/// while the block is live for edit/property/tag reverses. A `None` space warns
+/// and leaves the SQL write as the durable outcome — identical to the
+/// reverse-move fallback (boot replay reconciles).
+///
+/// `apply` runs the SYNCHRONOUS engine mutation(s) under the recording guard
+/// (the #2604 rollback checkpoint, armed by the caller via
+/// `tx.arm_engine_rollback`); it must NOT `.await` — the `EngineGuard` is
+/// `!Send` and cannot cross an await point.
+fn drive_reverse_engine(
+    state: &crate::loro::shared::LoroState,
+    device_id: &str,
+    space_id: Option<crate::space::SpaceId>,
+    op_label: &str,
+    apply: impl FnOnce(&mut crate::loro::engine::LoroEngine) -> Result<(), AppError>,
+) -> Result<(), AppError> {
+    let Some(space_id) = space_id else {
+        tracing::warn!(
+            op = op_label,
+            "reverse {op_label}: space unresolved; SQL reversed without engine \
+             convergence (boot replay reconciles)",
+        );
+        return Ok(());
+    };
+    let mut guard = state
+        .registry
+        .for_space_recording(&space_id, device_id, &state.revert)?;
+    apply(guard.engine_mut())?;
+    drop(guard);
+    Ok(())
+}
+
 /// Apply the materialized effect of a reverse [`OpPayload`] to the blocks/tags/properties
 /// tables inside an existing transaction.
 ///
@@ -365,9 +411,28 @@ fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
 /// Undo/redo applies the *reverse* effect via bespoke reverse SQL (it is NOT an
 /// op replayed through `apply_op_projected`/`apply_op_tx`); this is a documented,
 /// permanent exception (Stage 3), NOT a site to route through the collapsed
-/// projection. Leave it as reverse SQL. (The MoveBlock arm additionally drives
-/// the settled reverse move into the per-space engine so the engine's sibling
-/// order converges with the reverse SQL — see [`reverse_move_block`].)
+/// projection. Leave the SQL projection as reverse SQL.
+///
+/// #2655 — but the SQL write alone is not enough: the per-space Loro engine is
+/// what sync exports, so EVERY engine-modeled reverse arm additionally fans its
+/// settled effect onto the engine (via [`drive_reverse_engine`], mirroring the
+/// MoveBlock arm's #1553 convergence). Without this the engine goes stale after
+/// an undo/redo/revert — and an undo-of-create leaves an engine-live block SQL
+/// has soft-deleted, tripping the #1257 sync-export freshness gate and silently
+/// suspending p2p sync for the whole space until reboot (#2655). The engine
+/// drives here:
+///   * DeleteBlock (undo-of-create / reverse-of-restore) — tombstone the cohort;
+///   * RestoreBlock (undo-of-delete / redo-of-create) — restore the cohort + the
+///     restored ancestor chain;
+///   * EditBlock — diff-splice back to the prior text;
+///   * SetProperty / DeleteProperty — set/clear the engine property (the
+///     column-backed `space` key is EXCLUDED, exactly as the forward path
+///     `apply_set_property_via_loro` never stores it in the engine property map);
+///   * AddTag / RemoveTag — mirror the tag association.
+///
+/// Attachment reverses (DeleteAttachment / RenameAttachment / AddAttachment) stay
+/// SQL-only: attachments are NOT modeled in the engine, so there is nothing to
+/// converge and they cannot trip the block-scoped #1257 gate.
 ///
 /// `op_created_at` is the SAME timestamp the caller bound as the reverse op's
 /// `op_log.created_at` (mint it via [`reverse_op_timestamp`]). The DeleteBlock
@@ -434,7 +499,15 @@ pub async fn apply_reverse_in_tx(
                 crate::block_descendants::DescendantWalkFilter::Active,
             )
             .await?;
-            let cohort_json = serde_json::Value::from(cohort).to_string();
+            // #2655: resolve the space from the seed BEFORE the cascade tombstones
+            // it — `resolve_block_space` filters `deleted_at IS NULL`, so a
+            // post-delete resolve returns None. Mirrors the forward delete path
+            // (`apply_delete_block_via_loro`), which likewise resolves first.
+            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            // Borrowed serialization (`to_string(&cohort)`) so `cohort` stays
+            // alive for the engine fan-out below; `serde_json::Error` converts to
+            // `AppError::Json`.
+            let cohort_json = serde_json::to_string(&cohort)?;
             // dynamic-sql: json_each id-list UPDATE over the walked cohort;
             // single bound JSON parameter, immune to the SQLite variable limit.
             sqlx::query(
@@ -445,6 +518,26 @@ pub async fn apply_reverse_in_tx(
             .bind(now)
             .execute(&mut **tx)
             .await?;
+
+            // #2655: tombstone the SAME cohort in the per-space engine so its
+            // `live_block_ids()` no longer holds a block SQL has soft-deleted —
+            // the exact #1257 freshness-gate divergence that suspends sync. The
+            // per-id present-guard mirrors the forward path (engine
+            // `apply_delete_block` errors on an absent node); stamp the SAME
+            // `op_created_at` the SQL cascade wrote (engine `deleted_at` is a
+            // String slot, #109 Phase 2), matching `apply_delete_block_via_loro`.
+            // `cohort` was collected with the `Active` filter, so it holds only
+            // currently-live ids — identical membership to the `deleted_at IS
+            // NULL` SQL guard above.
+            let deleted_at_str = now.to_string();
+            drive_reverse_engine(state, device_id, space_id, "delete_block", |engine| {
+                for id in &cohort {
+                    if engine.read_block(id)?.is_some() {
+                        engine.apply_delete_block(id, &deleted_at_str)?;
+                    }
+                }
+                Ok(())
+            })?;
         }
         OpPayload::RestoreBlock(p) => {
             // Cascade restore (same as restore_block_inner).
@@ -460,7 +553,9 @@ pub async fn apply_reverse_in_tx(
                 crate::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
             )
             .await?;
-            let cohort_json = serde_json::Value::from(cohort).to_string();
+            // #2655: borrowed serialization keeps `cohort` alive for the engine
+            // fan-out at the end of this arm.
+            let cohort_json = serde_json::to_string(&cohort)?;
             // dynamic-sql: json_each id-list UPDATE over the walked cohort;
             // single bound JSON parameter, immune to the SQLite variable limit.
             sqlx::query(
@@ -484,10 +579,14 @@ pub async fn apply_reverse_in_tx(
             // preserving the batch-undo idempotency policy above.
             // (`&mut Transaction` deref-coerces to `&mut SqliteConnection`,
             // so pass `tx` directly — clippy::explicit_auto_deref.)
-            let restored_ancestor_top =
+            // #2655: keep the FULL restored chain (`chain`), not only `topmost`
+            // — the engine fan-out below re-clears `deleted_at` on every restored
+            // ancestor so the CRDT converges with the SQL UPDATE (mirrors the
+            // forward path's `dispatch_restore_ancestors`, #2017).
+            let restored_chain =
                 crate::block_descendants::restore_deleted_ancestor_chain(tx, p.block_id.as_str())
-                    .await?
-                    .topmost;
+                    .await?;
+            let restored_ancestor_top = restored_chain.topmost.clone();
 
             // Idempotency guard: the reverse of a delete may target a block
             // that was since PURGED (row gone). The cohort UPDATE above
@@ -524,6 +623,24 @@ pub async fn apply_reverse_in_tx(
                 if let Some(ref top) = restored_ancestor_top {
                     crate::commands::block_cleanup::rederive_page_and_space_ids(tx, top).await?;
                 }
+
+                // #2655: converge the per-space engine with the SQL restore. The
+                // seed is now LIVE again (its `deleted_at` cleared above), so
+                // `resolve_block_space` — which filters tombstones — resolves it.
+                // `apply_restore_block` is idempotent and silently no-ops on an
+                // absent node, so re-clearing an already-live cohort/chain member
+                // (or one never in the engine) is harmless. Restoring the cohort
+                // clears the engine tombstones the reverse-of-restore / redo path
+                // set; restoring the ancestor chain mirrors the forward path's
+                // `dispatch_restore_ancestors` (#2017) so a later reproject does
+                // not re-delete the reconnected ancestors in SQL.
+                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+                drive_reverse_engine(state, device_id, space_id, "restore_block", |engine| {
+                    for id in cohort.iter().chain(restored_chain.chain.iter()) {
+                        engine.apply_restore_block(id)?;
+                    }
+                    Ok(())
+                })?;
             }
         }
         OpPayload::EditBlock(p) => {
@@ -541,6 +658,21 @@ pub async fn apply_reverse_in_tx(
                     p.block_id
                 )));
             }
+
+            // #2655: splice the prior text into the per-space engine's `LoroText`
+            // so the CRDT matches the SQL content, mirroring the forward
+            // `apply_edit_block_via_loro`. `apply_edit_via_diff_splice` computes
+            // the minimal diff from the engine's CURRENT content to `to_text`,
+            // and the block is live (the UPDATE matched a row), so it resolves a
+            // space. The present-guard mirrors the forward path's block-absent
+            // fallback.
+            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            drive_reverse_engine(state, device_id, space_id, "edit_block", |engine| {
+                if engine.read_block(block_id_str)?.is_some() {
+                    engine.apply_edit_via_diff_splice(block_id_str, &p.to_text)?;
+                }
+                Ok(())
+            })?;
         }
         OpPayload::MoveBlock(p) => {
             // #1553: the preflight + raw write + both sibling-group reprojections
@@ -564,6 +696,17 @@ pub async fn apply_reverse_in_tx(
             )
             .execute(&mut **tx)
             .await?;
+
+            // #2655: mirror the tag association into the per-space engine's
+            // `block_tags` map (idempotent, per-key LWW), matching the forward
+            // `apply_add_tag_via_loro`, so the exported CRDT carries the tag.
+            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            drive_reverse_engine(state, device_id, space_id, "add_tag", |engine| {
+                if engine.read_block(block_id_str)?.is_some() {
+                    engine.apply_add_tag(block_id_str, tag_id_str)?;
+                }
+                Ok(())
+            })?;
         }
         OpPayload::RemoveTag(p) => {
             let block_id_str = p.block_id.as_str();
@@ -575,6 +718,17 @@ pub async fn apply_reverse_in_tx(
             )
             .execute(&mut **tx)
             .await?;
+
+            // #2655: mirror the tag removal into the per-space engine (idempotent
+            // — no-ops when the tag is absent), matching the forward
+            // `apply_remove_tag_via_loro`.
+            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            drive_reverse_engine(state, device_id, space_id, "remove_tag", |engine| {
+                if engine.read_block(block_id_str)?.is_some() {
+                    engine.apply_remove_tag(block_id_str, tag_id_str)?;
+                }
+                Ok(())
+            })?;
         }
         OpPayload::SetProperty(p) => {
             // #604: route through the same projection as the forward paths.
@@ -589,6 +743,29 @@ pub async fn apply_reverse_in_tx(
             // every branch (UPDATE / INSERT OR REPLACE), preserving the
             // batch-undo idempotency policy documented above.
             crate::loro::projection::project_set_property_to_sql(tx, p).await?;
+
+            // #2655: mirror the property write into the per-space engine's
+            // property map, matching the forward `apply_set_property_via_loro`.
+            // The `space` key is EXCLUDED: it is column-backed in `blocks` (not a
+            // `block_properties` row) and its forward handling is the subtree
+            // hydration special-case — the forward path NEVER stores `space` in
+            // the engine property map, so applying it here would inject a spurious
+            // property. `space`-key reverses stay SQL-only (they cannot trip the
+            // block-scoped #1257 gate). Reserved non-space keys (todo_state /
+            // priority / due_date / scheduled_date) DO enter the engine map on the
+            // forward path, so they are driven here too. `PropertyValue::from(p)`
+            // recovers the native typed value by the same precedence the forward
+            // path uses.
+            if p.key != crate::op::SPACE_PROPERTY_KEY {
+                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+                drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
+                    if engine.read_block(p.block_id.as_str())?.is_some() {
+                        let value = crate::loro::engine::PropertyValue::from(p);
+                        engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
+                    }
+                    Ok(())
+                })?;
+            }
         }
         OpPayload::DeleteProperty(p) => {
             // #604: same routing note as SetProperty above — reserved keys
@@ -601,6 +778,21 @@ pub async fn apply_reverse_in_tx(
                 &p.key,
             )
             .await?;
+
+            // #2655: clear the key from the per-space engine property map
+            // (idempotent — no-ops when the key is absent), matching the forward
+            // `apply_delete_property_via_loro`. The `space` key is EXCLUDED for
+            // the same reason as the SetProperty arm above (column-backed; never
+            // in the engine property map).
+            if p.key != crate::op::SPACE_PROPERTY_KEY {
+                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+                drive_reverse_engine(state, device_id, space_id, "delete_property", |engine| {
+                    if engine.read_block(p.block_id.as_str())?.is_some() {
+                        engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
+                    }
+                    Ok(())
+                })?;
+            }
         }
         OpPayload::DeleteAttachment(p) => {
             // C7 (#345): hard-DELETE the row to match the runtime /

@@ -894,3 +894,362 @@ async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
         drop(guard);
     }
 }
+
+// ======================================================================
+// #2655 — reverse ops must drive the per-space Loro ENGINE, not just SQL
+// ======================================================================
+//
+// The undo/redo/revert family applied reverse ops via bespoke reverse SQL only
+// (`apply_reverse_in_tx`) and never told the per-space engine (what sync
+// exports), so the engine went stale after an undo. The worst case: an
+// undo-of-create tombstoned the row in SQL but left the engine node LIVE, which
+// trips the #1257 sync-export freshness gate — `prepare_outgoing` refuses to
+// export the space (`Ok(None)`), silently suspending p2p sync for the WHOLE
+// space until reboot. These tests drive create/edit/delete/property undo+redo
+// through the production engine pipeline and assert the engine converges with
+// SQL, plus the gate-refusal regression directly.
+
+/// #2655 CORE REGRESSION. Undo-of-create must tombstone the block in the engine
+/// too; afterwards the #1257 freshness gate must NOT refuse export.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
+    use crate::op::{CreateBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2655000000000000000PAG";
+    const BLK: &str = "01HZ26550000000000000000BB";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "to be undone".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+
+    // PRECONDITION: reproduce the bug's trigger — the block is engine-live.
+    {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        assert!(
+            g.engine_mut()
+                .live_block_ids()
+                .expect("live")
+                .iter()
+                .any(|id| id == BLK),
+            "sanity: engine holds the created block as live before undo"
+        );
+    }
+
+    // Undo the create → reverse DeleteBlock.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo create");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "create_block");
+
+    // (a) the engine node is now TOMBSTONED (present but soft-deleted), so
+    // `live_block_ids` excludes it — matching SQL's soft-delete.
+    {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        assert!(
+            g.engine_mut().read_deleted(BLK).expect("read_deleted"),
+            "#2655: undo-of-create must tombstone the block in the engine"
+        );
+        assert!(
+            !g.engine_mut()
+                .live_block_ids()
+                .expect("live")
+                .iter()
+                .any(|id| id == BLK),
+            "#2655: the undone block must no longer be engine-live"
+        );
+    }
+
+    // (b) THE REGRESSION: the freshness gate no longer refuses the space.
+    let msg = crate::sync_protocol::loro_sync::prepare_outgoing_for_pool(
+        &pool,
+        &state.registry,
+        &space,
+        DEV,
+        None,
+    )
+    .await
+    .expect("prepare_outgoing must not error");
+    assert!(
+        msg.is_some(),
+        "#2655/#1257: after undo-of-create the engine matches SQL, so the \
+         freshness gate must NOT refuse export (Ok(None) ⇒ sync suspended)"
+    );
+}
+
+/// #2655 — undo AND redo of an edit must drive the engine's `LoroText` so the
+/// exported CRDT content matches SQL in both directions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_redo_edit_converges_engine_2655() {
+    use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2655E00000000000000PAG";
+    const BLK: &str = "01HZ2655E0000000000000EDBB";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "original".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Forward edit → "modified".
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            to_text: "modified".into(),
+            prev_edit: None,
+        }),
+    )
+    .await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_content = |state: &crate::loro::shared::LoroState| -> Option<String> {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        g.engine_mut()
+            .read_block_content(BLK)
+            .expect("read_block_content")
+    };
+    assert_eq!(
+        engine_content(state).as_deref(),
+        Some("modified"),
+        "sanity: engine holds the forward edit"
+    );
+
+    // Undo → engine content back to "original".
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo edit");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "edit_block");
+    assert_eq!(
+        engine_content(state).as_deref(),
+        Some("original"),
+        "#2655: undo of edit must splice the engine content back to 'original'"
+    );
+
+    // Redo → engine content re-applies to "modified".
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect("redo edit");
+    settle(&mat).await;
+    assert!(redo.is_redo);
+    assert_eq!(
+        engine_content(state).as_deref(),
+        Some("modified"),
+        "#2655: redo of edit must re-apply the engine content to 'modified'"
+    );
+}
+
+/// #2655 — undo of a delete (RestoreBlock) must un-tombstone the engine node,
+/// and a subsequent redo (DeleteBlock) must re-tombstone it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_redo_delete_converges_engine_2655() {
+    use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2655D00000000000000PAG";
+    const BLK: &str = "01HZ2655D0000000000000DLBB";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "doomed".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    // Forward delete through the engine path (tombstones in both engine + SQL).
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::DeleteBlock(DeleteBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+        }),
+    )
+    .await;
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_deleted = |state: &crate::loro::shared::LoroState| {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        g.engine_mut().read_deleted(BLK).expect("read_deleted")
+    };
+    assert!(
+        engine_deleted(state),
+        "sanity: engine tombstoned after delete"
+    );
+
+    // Undo the delete → reverse RestoreBlock → engine node LIVE again.
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo delete");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "delete_block");
+    assert!(
+        !engine_deleted(state),
+        "#2655: undo of delete must clear the engine tombstone (RestoreBlock)"
+    );
+    // SQL agrees: the row is live again.
+    let sql_deleted: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(BLK)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(sql_deleted.is_none(), "sanity: SQL row live after undo");
+
+    // Redo → reverse of the RestoreBlock undo is DeleteBlock → engine re-tombstoned.
+    let redo = redo_page_op_inner(
+        &pool,
+        DEV,
+        &mat,
+        undo.new_op_ref.device_id.clone(),
+        undo.new_op_ref.seq,
+    )
+    .await
+    .expect("redo delete");
+    settle(&mat).await;
+    assert!(redo.is_redo);
+    assert!(
+        engine_deleted(state),
+        "#2655: redo must re-tombstone the block in the engine (DeleteBlock)"
+    );
+}
+
+/// #2655 — undo of a property change must write the prior value into the engine
+/// property map so the exported CRDT carries it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn undo_property_converges_engine_2655() {
+    use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
+    use crate::ulid::BlockId;
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    const PAGE: &str = "01HZ2655P00000000000000PAG";
+    const BLK: &str = "01HZ2655P0000000000000PRBB";
+
+    seed_block_both(&pool, state, PAGE, "page", "page", None, 1).await;
+    assign_all_to_test_space(&pool).await;
+
+    dispatch_via_engine(
+        &pool,
+        &mat,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(BLK),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE)),
+            position: None,
+            index: Some(0),
+            content: "task".into(),
+        }),
+    )
+    .await;
+    assign_all_to_test_space(&pool).await;
+
+    for value in ["low", "high"] {
+        dispatch_via_engine(
+            &pool,
+            &mat,
+            OpPayload::SetProperty(SetPropertyPayload {
+                block_id: BlockId::from_trusted(BLK),
+                key: "importance".into(),
+                value_text: Some(value.into()),
+                value_num: None,
+                value_date: None,
+                value_ref: None,
+                value_bool: None,
+            }),
+        )
+        .await;
+    }
+
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let engine_prop = |state: &crate::loro::shared::LoroState| -> Option<String> {
+        let mut g = state.registry.for_space(&space, DEV).expect("for_space");
+        match g
+            .engine_mut()
+            .read_property_typed(BLK, "importance")
+            .expect("read_property_typed")
+        {
+            Some(crate::loro::engine::PropertyValue::Str(s)) => Some(s),
+            other => panic!("expected a Str property, got {other:?}"),
+        }
+    };
+    assert_eq!(
+        engine_prop(state).as_deref(),
+        Some("high"),
+        "sanity: engine holds the forward property 'high'"
+    );
+
+    // Undo the "high" set → reverse SetProperty("low") → engine property "low".
+    let undo = undo_page_op_inner(&pool, DEV, &mat, PAGE.to_owned(), 0)
+        .await
+        .expect("undo property");
+    settle(&mat).await;
+    assert_eq!(undo.reversed_op_type, "set_property");
+    assert_eq!(
+        engine_prop(state).as_deref(),
+        Some("low"),
+        "#2655: undo of a property change must restore the prior value in the engine map"
+    );
+}
