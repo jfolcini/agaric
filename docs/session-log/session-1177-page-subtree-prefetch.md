@@ -88,4 +88,16 @@ every expired entry, bounding the resident set to `MAX_INFLIGHT_PREFETCHES` live
 added a `_prefetchMapSizeForTest` regression test asserting the map stays bounded across
 TTL expiry (the earlier tests missed it because each called `_resetPrefetchPageSubtreeForTest`).
 
+A second review pass then caught a deeper correctness bug: `load()` is **also the reload
+path** (sync/remote `blocks:changed`, undo/redo, header ops, post-move), so a prefetch
+parked for the *currently-open* page (palette-highlight its recents row then Escape — which
+cancels only the dwell timer, not an already-fired prefetch; a viewport/self-link
+auto-prefetch) could be consumed by a reload fired precisely to show post-mutation state,
+rendering stale content for one cycle (repro: prefetch the open page → Ctrl+Z within the
+8s TTL → the undo shows the old state). This falsified the design's "no invalidation
+needed" premise. Fixed by gating consumption on the **initial navigation load only**
+(`generation === 1`; the per-store `#753` counter is ≥ 2 on every reload) — a prefetch left
+parked for the open page simply expires unconsumed. Added a regression test proving a
+reload fetches fresh and never serves the parked snapshot.
+
 Closes #2850.

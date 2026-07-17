@@ -4964,6 +4964,37 @@ describe('PageBlockStore', () => {
       expect(consumePrefetchedPageSubtree(TEST_SPACE_ID, 'PAGE_1')).toBeNull()
     })
 
+    it('a RELOAD (sync/undo) never consumes a prefetch parked for the already-open page — fetches fresh', async () => {
+      // Regression guard (PR #2864 review): `load()` is ALSO the reload path
+      // (useSyncEvents/useUndoShortcuts). A prefetch parked for the CURRENTLY
+      // OPEN page (palette-highlight its recents row then Escape, viewport
+      // auto-prefetch of the open row, a self-link) must NOT be served to a
+      // reload fired precisely to show post-mutation state — otherwise Ctrl+Z
+      // or a just-synced remote edit would render the pre-mutation snapshot
+      // for one cycle. Consumption is gated on the first navigation load only.
+      mockedInvoke
+        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'A', parent_id: 'PAGE_1' })])) // load 1 (fresh)
+        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'STALE', parent_id: 'PAGE_1' })])) // parked prefetch
+        .mockResolvedValueOnce(subtreeResp([makeBlock({ id: 'FRESH', parent_id: 'PAGE_1' })])) // reload (fresh)
+
+      // Initial navigation load — populates the store (generation 1).
+      await store.getState().load()
+      expect(store.getState().blocks[0]?.id).toBe('A')
+
+      // A prefetch for the SAME (open) page gets parked before the reload.
+      prefetchPageSubtree(TEST_SPACE_ID, 'PAGE_1')
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+
+      // Reload (generation 2 — e.g. sync:complete / Ctrl+Z) must fetch fresh,
+      // NOT serve the stale parked snapshot.
+      await store.getState().load()
+      expect(mockedInvoke).toHaveBeenCalledTimes(3) // reload fired its own IPC
+      expect(store.getState().blocks[0]?.id).toBe('FRESH') // fresh, not STALE
+      // The reload left the parked prefetch untouched (it never consumed it);
+      // it simply lingers until TTL/sweep.
+      expect(consumePrefetchedPageSubtree(TEST_SPACE_ID, 'PAGE_1')).not.toBeNull()
+    })
+
     it('falls through to a fresh IPC when no prefetch is live for this page', async () => {
       const blocks = [makeBlock({ id: 'A', parent_id: 'PAGE_1' })]
       mockedInvoke.mockResolvedValueOnce(subtreeResp(blocks))
