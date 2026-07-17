@@ -518,3 +518,177 @@ async fn agenda_cache_after_set_property() {
         "agenda source should indicate the property key"
     );
 }
+
+/// #2667 helper: pad a short seed into a 26-char, `[0-9A-Z]`-only ULID-shaped
+/// id so the `#[ULID]` inline-tag-ref regex (`TAG_REF_RE`) matches it.
+fn ulid26_2667(seed: &str) -> String {
+    let s = format!("{:0<26}", seed.to_ascii_uppercase());
+    assert_eq!(s.len(), 26, "seed too long for a 26-char ULID");
+    s
+}
+
+/// #2667 helper: snapshot the whole `block_tag_refs` table as an ordered
+/// `Vec<(source_id, tag_id)>` so two states can be compared for byte-identity.
+async fn snapshot_block_tag_refs(pool: &SqlitePool) -> Vec<(String, String)> {
+    sqlx::query_as::<_, (String, String)>(
+        "SELECT source_id, tag_id FROM block_tag_refs ORDER BY source_id, tag_id",
+    )
+    .fetch_all(pool)
+    .await
+    .expect("snapshot block_tag_refs")
+}
+
+/// #2667 — EQUIVALENCE: a below-threshold inbound delta drives `block_tag_refs`
+/// per changed block (`ReindexBlockTagRefs`), NOT the global rebuild. Prove the
+/// scoped path is byte-identical to the global `RebuildBlockTagRefsCache` (no
+/// under-invalidation): apply a small delta, snapshot `block_tag_refs`, then run
+/// the FULL rebuild on the same pool and assert the table is unchanged. Mirrors
+/// the #2669 equivalence approach and the #421 FTS narrowing this parallels.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_block_tag_refs_scoped_equals_global_rebuild_2667() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let tag_a = ulid26_2667("TAGA");
+    let tag_b = ulid26_2667("TAGB");
+    let note1 = ulid26_2667("NOTE1");
+    let note2 = ulid26_2667("NOTE2");
+    // A block that references a tag but is SOFT-DELETED — its rows must be
+    // cleared by the per-block reindex (content is unreadable under the
+    // `deleted_at IS NULL` filter), exactly as the full rebuild excludes it.
+    let note_del = ulid26_2667("NOTEDEL");
+    // An inline `#[ULID]` pointing at a NON-tag (content) block: matches the
+    // regex but must produce NO row in either path.
+    let note3 = ulid26_2667("NOTE3");
+    let plain = ulid26_2667("PLAIN");
+
+    // Per-block SQL projection an inbound apply_remote would have written.
+    insert_block_direct(&pool, &tag_a, "tag", "urgent").await;
+    insert_block_direct(&pool, &tag_b, "tag", "later").await;
+    insert_block_direct(&pool, &note1, "content", &format!("see #[{tag_a}] now")).await;
+    insert_block_direct(
+        &pool,
+        &note2,
+        "content",
+        &format!("#[{tag_a}] and #[{tag_b}] here"),
+    )
+    .await;
+    insert_block_direct(&pool, &note_del, "content", &format!("gone #[{tag_a}]")).await;
+    insert_block_direct(&pool, &plain, "content", "not a tag target").await;
+    // note3 references `plain` (a content block) — must be filtered out.
+    insert_block_direct(&pool, &note3, "content", &format!("stray #[{plain}]")).await;
+    soft_delete_block_direct(&pool, &note_del).await;
+
+    // Below threshold → per-block `ReindexBlockTagRefs`, enqueued inline.
+    let changed = [
+        crate::ulid::BlockId::test_id(&tag_a),
+        crate::ulid::BlockId::test_id(&tag_b),
+        crate::ulid::BlockId::test_id(&note1),
+        crate::ulid::BlockId::test_id(&note2),
+        crate::ulid::BlockId::test_id(&note_del),
+        crate::ulid::BlockId::test_id(&note3),
+    ];
+    // This 6-block delta is far below the per-block threshold
+    // (`SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX` = BACKGROUND_CAPACITY/4 = 256), so
+    // it takes the scoped per-block path, not the global fallback.
+    mat.enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .expect("enqueue inbound sync rebuilds");
+    // Drains the inline per-block `ReindexBlockTagRefs` (and fires the global
+    // 7-task debounced set, which does NOT include block_tag_refs).
+    mat.flush_inbound_rebuild_debounce().await;
+
+    let scoped = snapshot_block_tag_refs(&pool).await;
+
+    // The scoped path must have produced the expected rows: note1→tag_a,
+    // note2→{tag_a,tag_b}; note_del cleared (soft-deleted); note3→plain dropped
+    // (non-tag target).
+    let expected: Vec<(String, String)> = {
+        let mut v = vec![
+            (note1.clone(), tag_a.clone()),
+            (note2.clone(), tag_a.clone()),
+            (note2.clone(), tag_b.clone()),
+        ];
+        v.sort();
+        v
+    };
+    assert_eq!(
+        scoped, expected,
+        "scoped per-block reindex produced the wrong block_tag_refs rows",
+    );
+
+    // CRUX: run the FULL global rebuild on the same pool. If the scoped path
+    // under-invalidated ANY row, the table would change here.
+    agaric_store::cache::rebuild_block_tag_refs_cache(&pool)
+        .await
+        .expect("global RebuildBlockTagRefsCache");
+    let after_global = snapshot_block_tag_refs(&pool).await;
+
+    assert_eq!(
+        scoped, after_global,
+        "#2667: per-changed-block ReindexBlockTagRefs must be BYTE-IDENTICAL to \
+         the global RebuildBlockTagRefsCache — a difference means the scoped \
+         path under- or over-invalidated block_tag_refs",
+    );
+}
+
+/// #2667 — a PURGE-only inbound import (`changed_blocks` empty) enqueues NO
+/// `block_tag_refs` task: the `ON DELETE CASCADE` FKs (migration 0034) already
+/// removed the purged block's / tag's rows, and the resulting table still
+/// matches a full rebuild. Guards the `inbound_sync_block_tag_refs_tasks`
+/// empty-set branch end-to-end.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inbound_block_tag_refs_purge_only_matches_global_2667() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let tag_a = ulid26_2667("PTAGA");
+    let note1 = ulid26_2667("PNOTE1");
+    insert_block_direct(&pool, &tag_a, "tag", "urgent").await;
+    insert_block_direct(&pool, &note1, "content", &format!("ref #[{tag_a}]")).await;
+
+    // Establish the live rows via a normal small delta.
+    let changed = [
+        crate::ulid::BlockId::test_id(&tag_a),
+        crate::ulid::BlockId::test_id(&note1),
+    ];
+    mat.enqueue_inbound_sync_rebuilds(&changed, &[])
+        .await
+        .expect("seed inbound rebuild");
+    mat.flush_inbound_rebuild_debounce().await;
+    assert_eq!(
+        snapshot_block_tag_refs(&pool).await,
+        vec![(note1.clone(), tag_a.clone())],
+        "row should exist before the purge",
+    );
+
+    // Hard-purge note1 (FK ON DELETE CASCADE removes its block_tag_refs rows).
+    sqlx::query("DELETE FROM blocks WHERE id = ?")
+        .bind(&note1)
+        .execute(&pool)
+        .await
+        .expect("purge note1");
+
+    // Purge-only import: changed empty, purged non-empty. Must enqueue NOTHING
+    // for block_tag_refs (cascade already swept the row).
+    let purged = [crate::ulid::BlockId::test_id(&note1)];
+    mat.enqueue_inbound_sync_rebuilds(&[], &purged)
+        .await
+        .expect("purge-only inbound rebuild");
+    mat.flush_inbound_rebuild_debounce().await;
+
+    let after_scoped = snapshot_block_tag_refs(&pool).await;
+    assert!(
+        after_scoped.is_empty(),
+        "cascade should have removed the purged block's block_tag_refs row",
+    );
+
+    agaric_store::cache::rebuild_block_tag_refs_cache(&pool)
+        .await
+        .expect("global rebuild after purge");
+    assert_eq!(
+        snapshot_block_tag_refs(&pool).await,
+        after_scoped,
+        "#2667: purge-only path (cascade, no task) must match a full rebuild",
+    );
+}
