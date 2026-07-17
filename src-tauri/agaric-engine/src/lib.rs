@@ -105,3 +105,18 @@ pub mod recurrence;
 /// `migrate_orphan_tags_to_space` at `crate::spaces::…` so those call sites
 /// resolve unchanged.
 pub mod spaces;
+
+/// The op-log DAG-traversal core (#2621 THE INVERSION) — the edit-chain /
+/// merge primitives over the op_log: hash-verified remote-op ingest
+/// (`insert_remote_op` + the shared `ingest_remote_record` core, and the
+/// `ingest_replicated_record` audit entry the app's `OpTransfer` shim decodes
+/// into), multi-parent merge-op creation (`append_merge_op`), the recursive-CTE
+/// edit-chain walker (`walk_edit_chain` / `WalkOutcome` / `MAX_LCA_STEPS`),
+/// Lowest-Common-Ancestor (`find_lca`), `text_at`, `get_block_edit_heads`,
+/// `has_merge_for_heads`, and the read-side `parse_parent_seqs_canonical`.
+/// Builds only on `agaric-store` (`op` / `op_log` / `db`) and `agaric-core`
+/// (`hash` / `error`); carries the DAG `sqlx::query!` sites. The app keeps the
+/// wire-typed `insert_replicated_op(&OpTransfer)` shim plus the `#[cfg(test)]`
+/// CTE oracles app-side and re-exports the rest at `crate::dag::…` so every
+/// existing call site resolves unchanged.
+pub mod dag;
