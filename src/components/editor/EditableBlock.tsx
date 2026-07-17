@@ -23,6 +23,8 @@ import { useScrollCaretAboveKeyboard } from '@/hooks/useScrollCaretAboveKeyboard
 import { retryOnPoolBusy } from '@/lib/app-error'
 import { attachmentRef } from '@/lib/attachment-ref'
 import { extractFileInfo, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
+import { bumpFlushSeq, commitInlineProperties } from '@/lib/inline-property-commit'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
@@ -65,6 +67,7 @@ function persistUnmount(
   prevId: string,
   editFn: (id: string, content: string) => Promise<boolean> | void,
   splitBlockFn: (id: string, content: string) => Promise<boolean> | void,
+  rootParentId: string | null,
 ): string | null {
   const changed = re.unmount()
   // #770 gap 1 — drop the previous block's draft row so it can't resurrect at
@@ -84,9 +87,33 @@ function persistUnmount(
     deletePrevDraft()
     return changed
   }
-  const outcome = shouldSplitOnBlur(changed)
-    ? splitBlockFn(prevId, changed)
-    : editFn(prevId, changed)
+  // #2675 — programmatic focus moves (Enter-to-create, auto-mount) are a
+  // first-class save path, so property-bearing content must route through the
+  // shared inline-property commit flow here exactly like the blur and
+  // imperative-flush paths (see inline-property-commit.ts). Every branch
+  // bumps the block's flush sequence token so a stale in-flight async save
+  // cannot clobber this newer one.
+  let outcome: Promise<boolean> | void
+  if (shouldSplitOnBlur(changed)) {
+    bumpFlushSeq(prevId)
+    outcome = splitBlockFn(prevId, changed)
+  } else {
+    const inlineProps = parseInlineProperties(changed)
+    if (inlineProps.length > 0) {
+      const mySeq = bumpFlushSeq(prevId)
+      outcome = commitInlineProperties({
+        blockId: prevId,
+        content: changed,
+        inlineProps,
+        mySeq,
+        edit: editFn,
+        rootParentId,
+      })
+    } else {
+      bumpFlushSeq(prevId)
+      outcome = editFn(prevId, changed)
+    }
+  }
   // #2409 — defer the delete until the appended op resolves. Keep the row on a
   // failed save (`ok === false`) so the typed text survives for boot recovery.
   void Promise.resolve(outcome)
@@ -238,7 +265,9 @@ function EditableBlockInner({
   onSelect,
 }: EditableBlockProps): React.ReactElement {
   const setFocused = useBlockStore((s) => s.setFocused)
-  const { edit, splitBlock } = usePageBlockStoreApi().getState()
+  // `rootParentId` is immutable for the lifetime of a per-page store (#753),
+  // so reading it once alongside the stable store actions is safe.
+  const { edit, splitBlock, rootParentId } = usePageBlockStoreApi().getState()
   const prioritySelector = useCallback(
     (s: PageBlockState) => s.blocksById.get(blockId)?.priority ?? null,
     [blockId],
@@ -350,11 +379,11 @@ function EditableBlockInner({
     if (isFocused && re.activeBlockId !== blockId) {
       // Unmount from previous block if any (mirrors handleFocus logic)
       if (re.activeBlockId) {
-        persistUnmount(re, re.activeBlockId, editRef.current, splitBlockRef.current)
+        persistUnmount(re, re.activeBlockId, editRef.current, splitBlockRef.current, rootParentId)
       }
       re.mount(blockId, contentRef.current)
     }
-  }, [isFocused, blockId])
+  }, [isFocused, blockId, rootParentId])
 
   const handleFocus = useCallback(
     (id: string) => {
@@ -365,6 +394,7 @@ function EditableBlockInner({
           rovingEditorRef.current.activeBlockId,
           editRef.current,
           splitBlockRef.current,
+          rootParentId,
         )
       }
       // Mount into the new block
@@ -372,7 +402,7 @@ function EditableBlockInner({
       setFocused(id)
       rovingEditorRef.current.mount(id, content)
     },
-    [content, setFocused],
+    [content, setFocused, rootParentId],
   )
 
   const { handleBlur } = useEditorBlur({
@@ -382,6 +412,7 @@ function EditableBlockInner({
     splitBlock,
     setFocused,
     discardDraft,
+    rootParentId,
   })
 
   const { t } = useTranslation()

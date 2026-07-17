@@ -138,6 +138,64 @@ describe('useDebouncedContentCommit (#2600)', () => {
     expect(markCommitted).not.toHaveBeenCalled()
   })
 
+  it('defers to the flush parser while an inline `key:: value` property line is present (#2675)', async () => {
+    // Committing mid-typing would rebase the baseline (markCommitted), so the
+    // eventual blur unmount() would report a null delta and the save-time
+    // property parser in useBlockFlush would never run — the property line
+    // would silently stay literal. The debounce must skip, leaving both the
+    // commit and the baseline to the property-aware blur flush.
+    const { handle, markCommitted, state } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'context:: home',
+      original: '',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    renderHook(() =>
+      useDebouncedContentCommit({
+        isFocused: true,
+        blockId: 'B1',
+        liveContent: 'context:: home',
+        rovingEditorRef,
+        edit,
+      }),
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).not.toHaveBeenCalled()
+    expect(markCommitted).not.toHaveBeenCalled()
+    expect(state.original).toBe('')
+  })
+
+  it('still commits `::`-bearing text that is NOT a property line (#2675)', async () => {
+    const { handle, markCommitted } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'use std::vector<int> here',
+      original: '',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    renderHook(() =>
+      useDebouncedContentCommit({
+        isFocused: true,
+        blockId: 'B1',
+        liveContent: 'use std::vector<int> here',
+        rovingEditorRef,
+        edit,
+      }),
+    )
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'use std::vector<int> here')
+    expect(markCommitted).toHaveBeenCalledExactlyOnceWith('use std::vector<int> here')
+  })
+
   it('does not commit when the active block switched away (stale fire)', async () => {
     const { handle } = makeHandle({ activeBlockId: 'OTHER', markdown: 'x', original: '' })
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)

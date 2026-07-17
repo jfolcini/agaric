@@ -11,7 +11,7 @@ Inline pickers let you reference other content or insert structure without leavi
 | `@` | **TagPicker** | An inline tag-reference chip (e.g. `@urgent`). | Lightweight tagging inline in a sentence |
 | `((` | **BlockRefPicker** | A *block reference* — embeds the contents of another block, kept live (edit-in-place). | Quote yourself; pull a definition into context |
 | `/` | **SlashMenu** | Varies — task, date, structure, property, query, repeat-rule. See full catalog below. | Insert structure or quickly set metadata |
-| `::` | **PropertyPicker** | Inserts `key::` text; selecting an existing key wires the value to the property system. | Set a custom property in flow |
+| `::` | **PropertyPicker** | Inserts `key::` text (plus a trailing space); type the value after it — when the block is saved (blur/focus switch), a line that is exactly `key:: value` is committed to the property system and stripped from the text. See [properties.md](properties.md) → Inline syntax. | Set a custom property in flow |
 
 All five popups share the same look (the `SuggestionList` component) and the same keyboard model: `↑ ↓` to move, `Enter` or click to pick, `Esc` to cancel. The popup positions itself near the trigger character and flips to stay on screen.
 

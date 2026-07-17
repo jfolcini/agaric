@@ -55,6 +55,7 @@ import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 
 /** Trailing idle-debounce window (ms) before a mid-typing content commit. */
@@ -83,6 +84,16 @@ export function useDebouncedContentCommit(params: {
     if (md === null) return
     // Nothing new since the last commit (or since mount) — skip.
     if (md === re.originalMarkdown) return
+    // #2675 — defer to the flush parser while the block contains inline
+    // `key:: value` property lines. The save-time parser in `useBlockFlush`
+    // only runs when blur's `unmount()` reports a delta; committing here would
+    // rebase the baseline (`markCommitted`) so a user who pauses >the debounce
+    // window before blurring would get a null delta at flush and the property
+    // line would silently stay literal with nothing written. Skipping keeps
+    // the baseline unrebased — blur re-commits through the property-aware
+    // flush path. Cost: mid-typing CRDT commits pause only while a parseable
+    // property line is present in the block.
+    if (parseInlineProperties(md).length > 0) return
 
     edit(blockId, md)
       .then((ok) => {

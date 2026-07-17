@@ -30,6 +30,13 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { dispatch } from '@/lib/tauri-mock/handlers'
+import {
+  blocks as mockBlocks,
+  makeBlock as makeMockBlock,
+  properties as mockProperties,
+  seedBlocks,
+} from '@/lib/tauri-mock/seed'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 // Force the multi-block detector to see a single block so flush takes the
@@ -261,5 +268,283 @@ describe('useBlockFlush — checkbox markdown', () => {
     })
     expect(mockedInvoke).not.toHaveBeenCalledWith('set_todo_state', expect.anything())
     expect(pageStore.getState().blocksById.get('BLK')?.todo_state).toBeNull()
+  })
+})
+
+// ===========================================================================
+// #2675 — inline `key:: value` property lines
+//
+// These tests wire `invoke` to the REAL tauri-mock `dispatch` (the #2656
+// pattern) so the mock's `set_property` validation — empty-value rejection +
+// select-option membership — is actually enforced, instead of a per-command
+// stub that would pass an invalid write silently. The seeded definitions used:
+//   context → text (free-form)
+//   project → select, options ["alpha","beta","gamma"]
+// ===========================================================================
+
+describe('useBlockFlush — inline `key:: value` properties (#2675)', () => {
+  // 26-char mock-convention id, distinct from the seeded fixture blocks.
+  const BLK = 'BLK2675'.padStart(26, '0')
+
+  beforeEach(() => {
+    // Route every IPC through the real mock dispatch + reseed the fixture
+    // (property definitions for `context` / `project` live in the seed).
+    mockedInvoke.mockImplementation(
+      async (cmd: string, args?: unknown) => dispatch(cmd, args) as never,
+    )
+    seedBlocks()
+    mockBlocks.set(BLK, makeMockBlock(BLK, 'block', '', null, 0))
+    // Mirror the block into the page store so `edit()` has a row to update.
+    pageStore.setState({ blocks: [makeBlock({ id: BLK, content: '', todo_state: null })] })
+  })
+
+  it('commits the typed value via set_property and strips the line from the content', async () => {
+    const handle = makeHandle(BLK, 'context:: home')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    // The property landed in the (validation-enforcing) mock store.
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('context')?.['value_text']).toBe('home')
+    })
+    // The property line was stripped from the committed content.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: '' }),
+      )
+    })
+    expect(pageStore.getState().blocksById.get(BLK)?.content).toBe('')
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('strips only the property line, preserving surrounding content lines', async () => {
+    const handle = makeHandle(BLK, 'notes for today\ncontext:: home')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('context')?.['value_text']).toBe('home')
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'notes for today' }),
+      )
+    })
+  })
+
+  it('handles serialized hard breaks: `\\`-suffixed lines parse clean values and strip clean', async () => {
+    // Shift+Enter serializes as `\` + newline. The marker must not leak into
+    // the stored value, and stripping the final line must not leave the
+    // preceding line with a dangling `\`.
+    const handle = makeHandle(BLK, 'notes for today\\\ncontext:: home')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('context')?.['value_text']).toBe('home')
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'notes for today' }),
+      )
+    })
+  })
+
+  it('on a REJECTED write (select membership) leaves the line literal and toasts once', async () => {
+    // `project` is a select with options alpha/beta/gamma — 'delta' is invalid,
+    // so the mock's #2656 validation rejects the set_property call.
+    const handle = makeHandle(BLK, 'project:: delta')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set property')
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
+    // Nothing stored; the typed text survives verbatim.
+    expect(mockProperties.get(BLK)?.get('project')).toBeUndefined()
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'project:: delta' }),
+      )
+    })
+    expect(pageStore.getState().blocksById.get(BLK)?.content).toBe('project:: delta')
+  })
+
+  it('partial success: the succeeded line is stripped, the rejected line stays literal', async () => {
+    const handle = makeHandle(BLK, 'context:: home\nproject:: delta')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('context')?.['value_text']).toBe('home')
+    })
+    expect(mockProperties.get(BLK)?.get('project')).toBeUndefined()
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'project:: delta' }),
+      )
+    })
+    await waitFor(() => {
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('Failed to set property')
+    })
+    expect(vi.mocked(toast.error)).toHaveBeenCalledTimes(1)
+  })
+
+  it('a valid select value IS committed (option membership passes)', async () => {
+    const handle = makeHandle(BLK, 'project:: beta')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('project')?.['value_text']).toBe('beta')
+    })
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: '' }),
+      )
+    })
+  })
+
+  it('updates an EXISTING value on the block (set_property upsert, drawer parity)', async () => {
+    if (!mockProperties.has(BLK)) mockProperties.set(BLK, new Map())
+    mockProperties.get(BLK)?.set('context', {
+      key: 'context',
+      value_text: '@office',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
+    })
+
+    const handle = makeHandle(BLK, 'context:: @remote')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockProperties.get(BLK)?.get('context')?.['value_text']).toBe('@remote')
+    })
+  })
+
+  it('an empty value (`key:: ` then blur) writes NO property and keeps the text literal', async () => {
+    const handle = makeHandle(BLK, 'context:: ')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    // Sync plain-edit path: no set_property dispatch at all.
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'context:: ' }),
+      )
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
+    expect(mockProperties.get(BLK)?.get('context')).toBeUndefined()
+    expect(vi.mocked(toast.error)).not.toHaveBeenCalled()
+  })
+
+  it('a newer SYNC plain flush supersedes an in-flight property flush (no stale clobber)', async () => {
+    // Blur (property flush, set_property in flight) → quick refocus → the
+    // user deletes the property line and types prose → blur (plain sync
+    // flush). The plain path bumps the shared seq token, so when the stale
+    // property run's IPC finally resolves it must BAIL instead of committing
+    // its stripped OLD content over the newer prose.
+    let releaseSet: () => void = () => {}
+    const gate = new Promise<void>((res) => {
+      releaseSet = res
+    })
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'set_property') {
+        await gate // hold the property write in flight
+      }
+      return dispatch(cmd, args) as never
+    })
+
+    const ref = { current: makeHandle(BLK, 'context:: home') }
+    const { result } = renderHook(() =>
+      useBlockFlush(makeParams(ref.current, { rovingEditorRef: ref })),
+    )
+
+    await act(async () => {
+      result.current() // flush 1 — async property path, gated in flight
+      await Promise.resolve()
+    })
+
+    // Newer editing session on the same block, no property lines → sync path.
+    ref.current = makeHandle(BLK, 'rewritten prose')
+    await act(async () => {
+      result.current() // flush 2 — bumps the seq token and commits
+    })
+    await waitFor(() => {
+      expect(pageStore.getState().blocksById.get(BLK)?.content).toBe('rewritten prose')
+    })
+
+    // Release the stale run — it must bail without calling edit().
+    await act(async () => {
+      releaseSet()
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(pageStore.getState().blocksById.get(BLK)?.content).toBe('rewritten prose')
+    expect(mockedInvoke).not.toHaveBeenCalledWith(
+      'edit_block',
+      expect.objectContaining({ blockId: BLK, toText: '' }),
+    )
+  })
+
+  it('non-property `::` text (std::vector, mid-sentence ::) saves verbatim with no writes', async () => {
+    const handle = makeHandle(BLK, 'use std::vector<int> here')
+    const { result } = renderHook(() => useBlockFlush(makeParams(handle)))
+
+    await act(async () => {
+      result.current()
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'edit_block',
+        expect.objectContaining({ blockId: BLK, toText: 'use std::vector<int> here' }),
+      )
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
   })
 })

@@ -69,7 +69,20 @@ Set properties appear as chips on the block:
 
 ## Inline syntax (`::`)
 
-Type `::` (or any prefix you've already typed) inside a block to open the **PropertyPicker**. Pick an existing property key, then type its value. This commits the property without leaving flow.
+Type `::` inside a block to open the **PropertyPicker**. Pick an existing property key (this inserts the text `key::` plus a trailing space), then type its value. When the block is saved — on blur, or when focus moves to another block — any line that is *exactly* `key:: value` is committed to the property system and the line is stripped from the block's text.
+
+The parsing rules match the Logseq/Markdown importer, so inline entry and file import agree on what a property line is:
+
+- The whole line (after trimming) must be `key:: value`. A `::`-plus-space appearing mid-sentence, or `::` without a following space (`std::vector`), never matches.
+- Keys are 1–64 characters of letters, digits, `-`, `_` — the same alphabet the backend enforces.
+- The value is stored per the key's **definition type**: text and select keys store the text (select values must be one of the defined options); number keys parse the value as a number; date keys require the `YYYY-MM-DD` shape; boolean keys accept exactly `true` or `false`. A value that doesn't fit the key's type leaves the line as literal text. Ref-typed keys cannot be set inline (use the drawer's page picker). An unknown key is created as a text property.
+- If the key already has a value on the block, the inline write **updates** it (same upsert as the drawer).
+- A line is stripped **only after its property write succeeds.** If the write is rejected (invalid select option, unparseable number, backend error), the line stays as literal text — nothing you typed is lost — and a single "Failed to set property" toast appears.
+- **Empty values are not committed.** `key::` (with the trailing space but no value) followed by blur writes nothing and the text stays literal (the backend rejects empty property values).
+- Reserved, exporter-managed keys (`space`, `template`, `created_at`, the `repeat-*` family, …) are never parsed inline; those lines stay literal.
+- Lines inside fenced code blocks are never treated as property lines.
+
+Multiple property lines in one block (soft line breaks via Shift+Enter) are supported — each is committed and stripped independently. Pasted multi-paragraph content is split into separate blocks before saving and is not property-parsed; the importer handles property lines in imported files.
 
 ## Property change events
 

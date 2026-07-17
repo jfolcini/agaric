@@ -11,7 +11,12 @@
  *   4. Otherwise checks for inline checkbox markdown (`[ ]` / `[x]`); when
  *      present, persists the todo state via the thin command and saves the
  *      cleaned content.
- *   5. Otherwise saves the changed content via `edit`.
+ *   5. Otherwise parses inline `key:: value` property lines (#2675 — the
+ *      `::` picker's documented "pick a key, type its value, it commits"
+ *      flow). Each parsed property is written via the typed property API and
+ *      its line is stripped from the committed content ONLY after the write
+ *      succeeds; a rejected write leaves the line literal so nothing is lost.
+ *   6. Otherwise saves the changed content via `edit`.
  *
  * The hook is intentionally thin (a single `useCallback`) and the returned
  * function preserves the previous `() => string | null` signature so the
@@ -29,11 +34,13 @@
 
 import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
-import { useCallback, useRef } from 'react'
+import { useCallback } from 'react'
 
 import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { processCheckboxSyntax } from '@/lib/block-utils'
+import { bumpFlushSeq, commitInlineProperties, readFlushSeq } from '@/lib/inline-property-commit'
+import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setTodoState as setTodoStateCmd } from '@/lib/tauri'
@@ -70,12 +77,16 @@ export function useBlockFlush({
   pageStore,
   t,
 }: UseBlockFlushParams): () => string | null {
-  // Per-block sequence token. Each flush that takes the detached async
-  // checkbox path bumps the block's token before awaiting the IPC. After the
-  // await, the IIFE re-reads the token: if a newer flush on the SAME block has
-  // bumped it in the meantime, this stale run bails BEFORE touching the store
-  // or calling `edit()`, so a late-resolving edit cannot clobber a newer one.
-  const checkboxSeqRef = useRef<Map<string, number>>(new Map())
+  // Per-block sequence token — `bumpFlushSeq` / `readFlushSeq` from
+  // inline-property-commit.ts. Each flush that takes a detached async path
+  // (checkbox #1591, inline properties #2675) bumps the block's token before
+  // awaiting the IPC. After the await, the async run re-reads the token: if a
+  // newer flush on the SAME block has bumped it in the meantime, the stale run
+  // bails BEFORE touching the store or calling `edit()`, so a late-resolving
+  // edit cannot clobber a newer one. SHARED across the checkbox and property
+  // paths (mutual supersession) AND with the blur/programmatic-unmount save
+  // paths in EditableBlock/useEditorBlur, which commit the same blocks — see
+  // the inline-property-commit module docstring.
 
   return useCallback((): string | null => {
     const handle = rovingEditorRef.current
@@ -88,6 +99,10 @@ export function useBlockFlush({
       const doc = parse(changed)
       const blockCount = doc.content?.length ?? 0
       if (blockCount > 1) {
+        // Invalidate any in-flight async flush (checkbox/property) on this
+        // block: this sync commit is newer and owns the final content, so a
+        // late-resolving stale run must bail instead of clobbering the split.
+        bumpFlushSeq(blockId)
         splitBlock(blockId, changed)
       } else {
         // Check for checkbox markdown syntax before saving
@@ -107,16 +122,14 @@ export function useBlockFlush({
           // #1591 — guard against a rapid second flush on the same block
           // clobbering this one. Bump + capture the block's token now; the
           // post-await re-check bails if a newer flush superseded this run.
-          const seqMap = checkboxSeqRef.current
-          const mySeq = (seqMap.get(blockId) ?? 0) + 1
-          seqMap.set(blockId, mySeq)
+          const mySeq = bumpFlushSeq(blockId)
           void (async () => {
             try {
               const echo = await setTodoStateCmd(blockId, todoState)
               // A newer flush on this block superseded us while the IPC was in
               // flight — bail without applying so we don't clobber it. The
               // newer run owns the block's final content + todo_state.
-              if (checkboxSeqRef.current.get(blockId) !== mySeq) return
+              if (readFlushSeq(blockId) !== mySeq) return
               // Adopt the backend echo for `todo_state` the way `edit()` adopts
               // the content echo (#753): the optimistic write below records the
               // state we SENT; prefer the canonical value the backend returned
@@ -134,7 +147,7 @@ export function useBlockFlush({
             } catch (err: unknown) {
               // A newer flush on this block superseded us — don't clobber it
               // with this stale run's raw content, but still surface the error.
-              if (checkboxSeqRef.current.get(blockId) !== mySeq) {
+              if (readFlushSeq(blockId) !== mySeq) {
                 logger.error(
                   'BlockTree',
                   'Failed to set task state from checkbox syntax (superseded)',
@@ -161,10 +174,38 @@ export function useBlockFlush({
             }
           })()
         } else {
-          edit(blockId, changed)
+          // #2675 — inline `key:: value` property lines. Parse per the
+          // import.rs rules (valid key alphabet, non-empty value, reserved
+          // keys skipped, code fences ignored — see inline-property-parse.ts)
+          // and commit each parsed property via the typed property API in
+          // `commitInlineProperties` (shared with the blur / programmatic
+          // unmount save paths). A property line is stripped from the
+          // committed content ONLY after its write succeeds; a rejected write
+          // (select-membership, unparseable number, backend error, …) leaves
+          // the line literal so the typed text is never lost. Same
+          // fire-and-track async + sequence-token guard as the checkbox path.
+          const inlineProps = parseInlineProperties(changed)
+          if (inlineProps.length > 0) {
+            const mySeq = bumpFlushSeq(blockId)
+            void commitInlineProperties({
+              blockId,
+              content: changed,
+              inlineProps,
+              mySeq,
+              edit,
+              rootParentId,
+            })
+          } else {
+            // Invalidate any in-flight async flush (checkbox/property) on
+            // this block — same reasoning as the split branch above: without
+            // the bump, a stale run's post-await `edit()` would clobber this
+            // newer sync commit (blur → quick refocus → retype → blur race).
+            bumpFlushSeq(blockId)
+            edit(blockId, changed)
+          }
         }
       }
     }
     return changed
-  }, [edit, splitBlock, rootParentId, t, pageStore, rovingEditorRef, checkboxSeqRef])
+  }, [edit, splitBlock, rootParentId, t, pageStore, rovingEditorRef])
 }
