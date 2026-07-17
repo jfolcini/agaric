@@ -40,7 +40,11 @@ pub mod db;
 pub mod deeplink;
 pub mod device;
 pub mod domain;
-pub mod draft;
+// `draft` — the block-draft autosave writer — moved into `agaric-engine`
+// (#2621, wave E2) as an independent document-domain leaf (deps on
+// agaric-store/agaric-core only). Re-exported so every `crate::draft::…` path
+// (commands::drafts / recovery::draft_recovery / benches) resolves unchanged.
+pub use agaric_engine::draft;
 // Foundation-crate re-export (#2621): `error` now lives in `agaric-core`.
 // The `pub use` keeps every `crate::error::…` path (142 files) resolving.
 pub use agaric_core::error;
@@ -1301,6 +1305,11 @@ fn spawn_background_tasks(
         pools.write.clone(),
         draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
         orphan_drafts_shutdown,
+        // #2621 (wave E2): `draft` is tauri-free, so the app injects Tauri's
+        // runtime spawner (mirrors `loro::snapshot::spawn_periodic_snapshot`).
+        |fut| {
+            tauri::async_runtime::spawn(fut);
+        },
     );
 
     // Issue #157 — MaintenanceDaemon, wired with its full job

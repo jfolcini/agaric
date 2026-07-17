@@ -3,8 +3,7 @@
 //! the conditional-write optimisation in `save_draft_if_changed`.
 
 use super::*;
-use crate::db::{ReadPool, init_pool};
-use std::path::PathBuf;
+use agaric_store::db::ReadPool;
 use tempfile::TempDir;
 
 // ── Deterministic test fixtures ─────────────────────────────────────
@@ -24,9 +23,7 @@ const CONTENT_V2: &str = "draft version 2";
 /// in this module. Tests that need additional ad-hoc block ids must
 /// insert them via [`seed_block`] before saving the draft.
 async fn test_pool() -> (SqlitePool, TempDir) {
-    let dir = TempDir::new().unwrap();
-    let db_path: PathBuf = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
+    let (pool, dir) = agaric_store::test_support::test_pool().await;
     for id in [BLOCK_A, BLOCK_B] {
         seed_block(&pool, id).await;
     }
@@ -549,7 +546,7 @@ async fn flush_draft_is_atomic_op_and_draft_delete_share_transaction() {
         .unwrap();
 
     // Op committed
-    let op = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), DEVICE, record.seq)
+    let op = agaric_store::op_log::get_op_by_seq(&ReadPool(pool.clone()), DEVICE, record.seq)
         .await
         .unwrap();
     assert_eq!(op.op_type, "edit_block", "op must be committed");
@@ -564,7 +561,7 @@ async fn flush_draft_is_atomic_op_and_draft_delete_share_transaction() {
 
 #[tokio::test]
 async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
-    use crate::op_log::{append_local_op_in_tx, get_latest_seq};
+    use agaric_store::op_log::{append_local_op_in_tx, get_latest_seq};
 
     let (pool, _dir) = test_pool().await;
 
@@ -586,7 +583,7 @@ async fn flush_draft_rollback_neither_op_nor_draft_deleted() {
         });
 
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-        append_local_op_in_tx(&mut tx, DEVICE, op, crate::db::now_ms())
+        append_local_op_in_tx(&mut tx, DEVICE, op, agaric_store::db::now_ms())
             .await
             .unwrap();
         delete_draft_in_tx(&mut tx, BLOCK_A).await.unwrap();
@@ -632,7 +629,7 @@ async fn flush_draft_sequential_flushes_produce_chained_ops() {
 
     // Both ops are in the log, no drafts remain
     assert_eq!(draft_count(&pool).await.unwrap(), 0);
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
         .await
         .unwrap();
     assert_eq!(ops.len(), 2, "both ops must be persisted");
@@ -677,7 +674,7 @@ async fn flush_draft_when_delete_draft_fails_after_op_commit() {
     );
 
     // Verify both ops exist in the log
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEVICE, 0)
         .await
         .unwrap();
     assert_eq!(
@@ -807,6 +804,9 @@ async fn spawn_orphan_drafts_sweeper_runs_boot_one_shot() {
         pool.clone(),
         std::time::Duration::from_secs(3600),
         shutdown.clone(),
+        |fut| {
+            tokio::spawn(fut);
+        },
     );
 
     // Poll for the orphan to be gone — the spawn task runs concurrently.

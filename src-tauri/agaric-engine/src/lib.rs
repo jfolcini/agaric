@@ -18,6 +18,14 @@
 
 pub mod bibliography;
 
+/// The block draft writer — the autosave buffer for in-progress editor edits
+/// (`block_drafts` table). An independent document-domain leaf: depends only on
+/// `agaric-store` (db/op/op_log) and `agaric-core` (error/ulid), with two
+/// `sqlx::query!` sites captured in this crate's `.sqlx` cache. The `agaric`
+/// crate re-exports it (`pub use agaric_engine::draft;`) so every existing
+/// `crate::draft::…` path resolves unchanged.
+pub mod draft;
+
 /// The Loro CRDT engine — per-space `LoroEngine` runtime, the block-projection
 /// writer (`projection`), the engine registry, snapshot persistence, revert,
 /// and peer-epoch bookkeeping. Depends on `agaric-core` (error/ulid/hash/
