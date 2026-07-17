@@ -289,12 +289,22 @@
   --elevation-resting: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
   --elevation-floating: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
   --elevation-overlay: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  /* Animation/transition tokens */
-  --duration-fast: 100ms;
-  --duration-normal: 150ms;
-  --duration-moderate: 200ms;
-  --duration-slow: 300ms;
-  --duration-slower: 500ms;
+  /* Animation/transition tokens.
+   *
+   * `--motion-scale` is the single global speed knob (Settings → Appearance →
+   * Animations, `src/hooks/useMotionPreference.ts`). Every duration token below
+   * is `base * scale`, so ONE value re-times all token-driven motion:
+   *   1    → normal (default)     0.5  → "Fast" (snappy)     0 → "Off" (instant)
+   * The `useMotionPreference` hook writes an inline `--motion-scale` on
+   * `documentElement` for explicit choices; leaving it on "System" writes no
+   * inline value, so the `prefers-reduced-motion` block below (which sets the
+   * scale to 0) governs. `var(--motion-scale, 1)` keeps a missing value safe. */
+  --motion-scale: 1;
+  --duration-fast: calc(100ms * var(--motion-scale, 1));
+  --duration-normal: calc(150ms * var(--motion-scale, 1));
+  --duration-moderate: calc(200ms * var(--motion-scale, 1));
+  --duration-slow: calc(300ms * var(--motion-scale, 1));
+  --duration-slower: calc(500ms * var(--motion-scale, 1));
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
@@ -1831,16 +1841,30 @@
   transition: transform var(--duration-fast) ease;
 }
 
-/* ── Accessibility: prefers-reduced-motion ─────────────────────────── */
+/* ── Accessibility / preference: no motion ─────────────────────────────
+ *
+ * Two triggers collapse motion to zero and share the same reset:
+ *   1. `@media (prefers-reduced-motion: reduce)` — the OS accessibility flag,
+ *      honoured whenever the in-app Animations setting is "System" (the
+ *      default; no inline `--motion-scale` is written, so the media query's
+ *      `:root { --motion-scale: 0 }` wins).
+ *   2. `:root[data-motion='off']` — the in-app "Off" choice, which also sets
+ *      an inline `--motion-scale: 0`. This attribute path lets a user kill
+ *      motion even when the OS flag is unset.
+ *
+ * Setting the SCALE to 0 already zeroes every design-token duration (they are
+ * `base * var(--motion-scale)`). The blanket `*` reset + hard-kill list below
+ * additionally neutralise motion that ISN'T token-driven: hardcoded
+ * transitions, tw-animate-css enter/exit (`.animate-in` / `.animate-out`,
+ * used by Radix dialogs, popovers, menus, toasts), and the
+ * animation-shorthand spinners. */
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --duration-fast: 0ms;
-    --duration-normal: 0ms;
-    --duration-moderate: 0ms;
-    --duration-slow: 0ms;
-    --duration-slower: 0ms;
+    --motion-scale: 0;
   }
+}
 
+@media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
@@ -1855,16 +1879,43 @@
      et al. (specificity 0,1,0) — re-apply their full duration + infinite
      iteration count and keep animating under reduced motion. The app's primary
      loading indicator (Spinner → `.animate-spin`, used in ~35 files) was
-     spinning at full speed. Hard-kill the animation-shorthand utilities so they
-     come to rest instead of spinning. `!important` beats the utilities'
-     specificity. (Skeleton already self-guards via `motion-safe:animate-pulse`,
-     so its pulse is never applied under reduced motion regardless.) */
+     spinning at full speed. Hard-kill the animation utilities so they come to
+     rest instead of spinning; `.animate-in` / `.animate-out` are included so
+     Radix enter/exit resolves instantly (Radix's presence machinery detects
+     `animation-name: none` and unmounts without waiting). `!important` beats
+     the utilities' specificity. (Skeleton already self-guards via
+     `motion-safe:animate-pulse`, so its pulse is never applied under reduced
+     motion regardless.) */
   .animate-spin,
   .animate-pulse,
   .animate-bounce,
-  .animate-ping {
+  .animate-ping,
+  .animate-in,
+  .animate-out {
     animation: none !important;
   }
+}
+
+/* In-app "Off" — mirror of the reduced-motion reset above, keyed off the
+   `data-motion='off'` attribute the motion hook stamps on <html>. Kept as a
+   parallel block because a media query and an attribute selector can't be
+   merged into one rule. */
+:root[data-motion='off'] *,
+:root[data-motion='off'] *::before,
+:root[data-motion='off'] *::after {
+  animation-duration: 0.01ms;
+  animation-iteration-count: 1;
+  transition-duration: 0.01ms;
+  scroll-behavior: auto;
+}
+
+:root[data-motion='off'] .animate-spin,
+:root[data-motion='off'] .animate-pulse,
+:root[data-motion='off'] .animate-bounce,
+:root[data-motion='off'] .animate-ping,
+:root[data-motion='off'] .animate-in,
+:root[data-motion='off'] .animate-out {
+  animation: none !important;
 }
 
 /* ── main-content ScrollArea viewport wrapper height ──────────

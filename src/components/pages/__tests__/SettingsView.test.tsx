@@ -103,10 +103,13 @@ beforeEach(() => {
   vi.clearAllMocks()
   localStorage.removeItem('theme-preference')
   localStorage.removeItem('agaric-font-size')
+  localStorage.removeItem('agaric-motion')
   localStorage.removeItem('agaric-settings-active-tab')
   localStorage.removeItem('journal-date-format')
   for (const cls of ALL_THEME_CLASSES) document.documentElement.classList.remove(cls)
   document.documentElement.style.removeProperty('--agaric-font-size')
+  document.documentElement.style.removeProperty('--motion-scale')
+  document.documentElement.removeAttribute('data-motion')
   // Ensure URL state from a previous test doesn't leak in via the
   // `?settings=…` deep-link param (each test that needs a specific URL
   // sets it explicitly).
@@ -746,6 +749,39 @@ describe('SettingsView', () => {
 
     expect(localStorage.getItem('agaric-font-size')).toBe('small')
     expect(document.documentElement.style.getPropertyValue('--agaric-font-size')).toBe('14px')
+  })
+
+  it('animation-speed selector updates localStorage and the motion scale', async () => {
+    const user = userEvent.setup()
+    render(<SettingsView />)
+
+    const appearanceTab = screen.getByRole('tab', { name: t('settings.tabAppearance') })
+    await user.click(appearanceTab)
+
+    const motionSelect = screen.getByLabelText(t('settings.motionLabel'))
+
+    // Default is "system" — no inline scale override is written.
+    expect(motionSelect).toHaveValue('system')
+    expect(document.documentElement.style.getPropertyValue('--motion-scale')).toBe('')
+    expect(document.documentElement.getAttribute('data-motion')).toBeNull()
+
+    // Fast → half-speed scale.
+    await user.selectOptions(motionSelect, 'fast')
+    expect(localStorage.getItem('agaric-motion')).toBe('fast')
+    expect(document.documentElement.style.getPropertyValue('--motion-scale')).toBe('0.5')
+    expect(document.documentElement.getAttribute('data-motion')).toBeNull()
+
+    // Off → zero scale plus the hard-kill attribute.
+    await user.selectOptions(motionSelect, 'off')
+    expect(localStorage.getItem('agaric-motion')).toBe('off')
+    expect(document.documentElement.style.getPropertyValue('--motion-scale')).toBe('0')
+    expect(document.documentElement.getAttribute('data-motion')).toBe('off')
+
+    // Back to System → the inline override and attribute are removed again.
+    await user.selectOptions(motionSelect, 'system')
+    expect(localStorage.getItem('agaric-motion')).toBe('system')
+    expect(document.documentElement.style.getPropertyValue('--motion-scale')).toBe('')
+    expect(document.documentElement.getAttribute('data-motion')).toBeNull()
   })
 
   // ── active tab persistence ─────────────────────────────────
