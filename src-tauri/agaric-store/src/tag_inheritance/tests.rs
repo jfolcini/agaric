@@ -1170,3 +1170,236 @@ async fn rebuild_all_split_serialises_with_concurrent_add_tag() {
         "expected exactly 4 inherited rows (2 descendants × 2 tags), got: {rows:?}",
     );
 }
+
+// ======================================================================
+// #2669 — the per-op incremental keeps `block_tag_inherited` correct
+// WITHOUT the redundant whole-vault RebuildTagInheritanceCache task.
+//
+// These tests are the evidence behind the dispatch-table change: they
+// exercise `apply_op_tag_inheritance` (which routes to the exact in-tx
+// helpers the apply path runs — `recompute_subtree_inheritance` for
+// MoveBlock, `remove_inherited_tag` for RemoveTag,
+// `propagate_tag_to_descendants` for AddTag) and compare the resulting
+// cache to a from-scratch `rebuild_all`.
+// ======================================================================
+
+/// #2669 — MoveBlock: `recompute_subtree_inheritance` reproduces the full
+/// rebuild byte-for-byte (block_id, tag_id AND inherited_from) after a
+/// cross-page move that changes the moved subtree's inherited tags. This
+/// justifies dropping the redundant `RebuildTagInheritanceCache` from the
+/// MoveBlock dispatch arm.
+#[tokio::test]
+async fn move_block_incremental_matches_full_rebuild_2669() {
+    use crate::op::{MoveBlockPayload, OpPayload};
+    use agaric_core::ulid::BlockId;
+    let (pool, _dir) = test_pool().await;
+
+    // P1 tagged T1, P2 tagged T2; subtree M->X starts under P1.
+    insert_block(&pool, "T1", "tag", "t1", None).await;
+    insert_block(&pool, "T2", "tag", "t2", None).await;
+    insert_block(&pool, "P1", "page", "p1", None).await;
+    insert_block(&pool, "P2", "page", "p2", None).await;
+    insert_block(&pool, "MM", "content", "m", Some("P1")).await;
+    insert_block(&pool, "XX", "content", "x", Some("MM")).await;
+    insert_tag_assoc(&pool, "P1", "T1").await;
+    insert_tag_assoc(&pool, "P2", "T2").await;
+    rebuild_all(&pool).await.unwrap();
+
+    // Project the move (parent_id flip), then run the incremental the apply
+    // path runs — WITHOUT any subsequent full rebuild.
+    sqlx::query("UPDATE blocks SET parent_id = 'P2' WHERE id = 'MM'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::MoveBlock(MoveBlockPayload {
+            block_id: BlockId::from_trusted("MM"),
+            new_parent_id: Some(BlockId::from_trusted("P2")),
+            new_position: 1,
+            new_index: Some(0),
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    // The moved subtree must now inherit T2 and have lost T1.
+    assert!(incremental.contains(&("MM".into(), "T2".into(), "P2".into())));
+    assert!(incremental.contains(&("XX".into(), "T2".into(), "P2".into())));
+    assert!(!incremental.iter().any(|(_, t, _)| t == "T1"));
+
+    // Equivalence to the whole-vault rebuild (the task we removed).
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+    assert_eq!(
+        incremental, rebuilt,
+        "MoveBlock incremental must equal the full rebuild (#2669)"
+    );
+}
+
+/// #2669 — RemoveTag: `remove_inherited_tag` reproduces the full rebuild
+/// byte-for-byte, including nearest-ancestor re-attribution. Nested case:
+/// A and B both directly tag T (A above B above D); removing T from B must
+/// re-attribute D's inherited row from B up to A — exactly what the full
+/// rebuild computes. This justifies dropping `RebuildTagInheritanceCache`
+/// from the RemoveTag path.
+#[tokio::test]
+async fn remove_tag_incremental_matches_full_rebuild_2669() {
+    use crate::op::{OpPayload, RemoveTagPayload};
+    use agaric_core::ulid::BlockId;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TG", "tag", "tag", None).await;
+    insert_block(&pool, "AA", "page", "a", None).await;
+    insert_block(&pool, "BB", "content", "b", Some("AA")).await;
+    insert_block(&pool, "DD", "content", "d", Some("BB")).await;
+    insert_tag_assoc(&pool, "AA", "TG").await;
+    insert_tag_assoc(&pool, "BB", "TG").await;
+    rebuild_all(&pool).await.unwrap();
+
+    // Project the remove (drop the block_tags edge), then run the
+    // incremental the apply path runs — WITHOUT a subsequent full rebuild.
+    sqlx::query("DELETE FROM block_tags WHERE block_id = 'BB' AND tag_id = 'TG'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut conn = pool.acquire().await.unwrap();
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::RemoveTag(RemoveTagPayload {
+            block_id: BlockId::from_trusted("BB"),
+            tag_id: BlockId::from_trusted("TG"),
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    // D re-attributes to A (nearest remaining tagger); B inherits from A.
+    assert!(incremental.contains(&("DD".into(), "TG".into(), "AA".into())));
+    assert!(incremental.contains(&("BB".into(), "TG".into(), "AA".into())));
+
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+    assert_eq!(
+        incremental, rebuilt,
+        "RemoveTag incremental must equal the full rebuild (#2669)"
+    );
+}
+
+/// #2669 — AddTag: single-tagger propagation across a subtree matches the
+/// full rebuild. This is the common case and confirms the incremental is
+/// effective-tag-complete for a fresh tag add.
+#[tokio::test]
+async fn add_tag_incremental_matches_full_rebuild_simple_2669() {
+    use crate::op::{AddTagPayload, OpPayload};
+    use agaric_core::ulid::BlockId;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TG", "tag", "tag", None).await;
+    insert_block(&pool, "PG", "page", "p", None).await;
+    insert_block(&pool, "C1", "content", "c1", Some("PG")).await;
+    insert_block(&pool, "C2", "content", "c2", Some("C1")).await;
+    insert_tag_assoc(&pool, "PG", "TG").await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted("PG"),
+            tag_id: BlockId::from_trusted("TG"),
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+    assert_eq!(
+        incremental, rebuilt,
+        "AddTag single-tagger incremental must equal the full rebuild (#2669)"
+    );
+}
+
+/// #2669 GAP — AddTag: `propagate_tag_to_descendants` is a plain
+/// `INSERT OR IGNORE` and does NOT re-attribute an existing inherited row
+/// to a newly-added CLOSER ancestor. When A (above B above D) is tagged
+/// first and B is tagged second, the full rebuild attributes D's inherited
+/// row to the nearer B, but the incremental keeps the original A. The
+/// EFFECTIVE tag set is identical (D still inherits T) — only the
+/// `inherited_from` provenance differs — but because the state is NOT
+/// byte-identical to the full rebuild, the AddTag dispatch arm KEEPS its
+/// `RebuildTagInheritanceCache` (unlike RemoveTag / MoveBlock). This test
+/// pins the divergence so the rationale can't silently rot.
+#[tokio::test]
+async fn add_tag_nested_diverges_from_rebuild_provenance_only_2669() {
+    use crate::op::{AddTagPayload, OpPayload};
+    use agaric_core::ulid::BlockId;
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "TG", "tag", "tag", None).await;
+    insert_block(&pool, "AA", "page", "a", None).await;
+    insert_block(&pool, "BB", "content", "b", Some("AA")).await;
+    insert_block(&pool, "DD", "content", "d", Some("BB")).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+    insert_tag_assoc(&pool, "AA", "TG").await;
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted("AA"),
+            tag_id: BlockId::from_trusted("TG"),
+        }),
+    )
+    .await
+    .unwrap();
+    insert_tag_assoc(&pool, "BB", "TG").await;
+    apply_op_tag_inheritance(
+        &mut conn,
+        &OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::from_trusted("BB"),
+            tag_id: BlockId::from_trusted("TG"),
+        }),
+    )
+    .await
+    .unwrap();
+    drop(conn);
+
+    let incremental = get_inherited(&pool).await;
+    rebuild_all(&pool).await.unwrap();
+    let rebuilt = get_inherited(&pool).await;
+
+    // Effective (block_id, tag_id) membership is identical...
+    let eff = |v: &[(String, String, String)]| {
+        let mut m: Vec<(String, String)> =
+            v.iter().map(|(b, t, _)| (b.clone(), t.clone())).collect();
+        m.sort();
+        m
+    };
+    assert_eq!(
+        eff(&incremental),
+        eff(&rebuilt),
+        "effective tag membership must match the rebuild even in the nested case"
+    );
+    // ...but the `inherited_from` provenance differs: incremental keeps AA,
+    // the rebuild picks the nearer BB. THIS is why the AddTag arm keeps the
+    // full rebuild.
+    assert!(
+        incremental.contains(&("DD".into(), "TG".into(), "AA".into())),
+        "incremental keeps the original (farther) attribution AA, got {incremental:?}"
+    );
+    assert!(
+        rebuilt.contains(&("DD".into(), "TG".into(), "BB".into())),
+        "full rebuild picks the nearer attribution BB, got {rebuilt:?}"
+    );
+    assert_ne!(
+        incremental, rebuilt,
+        "the nested AddTag incremental must (still) differ from the full rebuild in provenance"
+    );
+}

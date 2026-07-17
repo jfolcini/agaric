@@ -2,104 +2,231 @@
 
 use crate::db::MAX_SQL_PARAMS;
 use agaric_core::error::AppError;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
+use std::collections::HashMap;
 
-// The split rebuild's chunked CASE-expression UPDATE binds 2 params per
-// row in the `CASE id WHEN ? THEN ? ...` clause plus 1 param per row in
-// the trailing `WHERE id IN (?, ?, ...)` list — total 3 params per row,
-// so each statement binds at most `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`.
+// The chunked CASE-expression UPDATE binds 2 params per row in the
+// `CASE id WHEN ? THEN ? ...` clause plus 1 param per row in the trailing
+// `WHERE id IN (?, ?, ...)` list — total 3 params per row, so each
+// statement binds at most `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`.
 // Mirrors the chunk-size derivation in `cache/pages.rs`,
 // `cache/agenda.rs`, and the chunked-INSERT convention.
 const REBUILD_CHUNK: usize = MAX_SQL_PARAMS / 3; // 333
 
-/// Full rebuild of `page_id` for all blocks using a recursive CTE.
-pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
-    super::rebuild_with_timing("page_id", || rebuild_page_ids_impl(pool)).await
+// The chunked NULL-reset UPDATE binds 1 param per row in its
+// `WHERE id IN (?, ?, ...)` list, so it can pack up to `MAX_SQL_PARAMS`
+// ids per statement.
+const NULL_CHUNK: usize = MAX_SQL_PARAMS; // 999
+
+// The within-depth-cap ancestor walk. Materialises `(block_id, page_id)`
+// for every block that resolves to an owning page within
+// `DESCENDANT_DEPTH_CAP` parent-steps. Shared by both the single-pool and
+// the read/write-split rebuilds so the two cannot silently diverge.
+//
+// Invariant #9: the recursive CTE bounds `depth < 100`
+// (`DESCENDANT_DEPTH_CAP`, see block_descendants) to defend against
+// runaway recursion on corrupted `parent_id` chains.
+const DESIRED_PAGE_ID_SQL: &str = "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
+         SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
+         UNION ALL \
+         SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
+         FROM ancestors a \
+         JOIN blocks child ON child.id = a.cur_id \
+         JOIN blocks parent ON parent.id = child.parent_id \
+         WHERE a.cur_type != 'page' \
+           AND a.depth < 100 \
+     ) \
+     SELECT block_id, cur_id AS page_id \
+     FROM ancestors \
+     WHERE cur_type = 'page'";
+
+/// A `page_id` diff: the rows whose denormalised `page_id` must change to
+/// reach the desired (source-of-truth) state, split into value-sets and
+/// NULL-resets. A byte-identical cache is reached by applying ONLY these
+/// rows — every block already carrying its correct `page_id` is skipped,
+/// so an up-to-date vault writes zero `blocks` rows (#2668).
+struct PageIdDiff {
+    /// Blocks whose `page_id` must be set to `Some(page_id)`.
+    to_set: Vec<(String, String)>,
+    /// Blocks whose `page_id` must be reset to NULL (orphans / tags /
+    /// cycle members that currently carry a stale value).
+    to_null: Vec<String>,
+    /// Number of blocks whose `page_id` was resolved past the depth-100
+    /// ancestor-CTE cap by the iterative extension (R27). Non-zero only
+    /// for pathologically deep (merged-sync) trees; surfaced as a warn.
+    extended: u64,
 }
 
-async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
-    // Invariant #9: recursive CTE over `blocks` must bound `depth < 100`
-    // to defend against runaway recursion on corrupted `parent_id`
-    // chains.
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    let result = sqlx::query(
-        "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
-             SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
-             UNION ALL \
-             SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
-             FROM ancestors a \
-             JOIN blocks child ON child.id = a.cur_id \
-             JOIN blocks parent ON parent.id = child.parent_id \
-             WHERE a.cur_type != 'page' \
-               AND a.depth < 100 \
-         ), \
-         page_ancestors AS ( \
-             SELECT block_id, cur_id AS page_id \
-             FROM ancestors \
-             WHERE cur_type = 'page' \
-         ) \
-         UPDATE blocks SET page_id = ( \
-             SELECT pa.page_id FROM page_ancestors pa WHERE pa.block_id = blocks.id \
-         ) \
-         ",
-    )
-    .execute(pool)
-    .await?;
-    let mut conn = pool.acquire().await?;
-    let extended = extend_page_ids_below_depth_cap(&mut conn).await?;
-    Ok(result.rows_affected() + extended)
-}
-
-/// R27: extension pass shared by both rebuild variants — derive `page_id`
-/// for blocks the depth-capped ancestor CTE left unresolved (more than 100
-/// parent-steps below their page). Merged sync trees can legally exceed the
-/// local `MAX_BLOCK_DEPTH` bound, and pre-fix these rows resolved no page
-/// ancestor and were left/reset to NULL — silently invisible to every
-/// `WHERE page_id = ?` read.
+/// Compute the desired `block_id → page_id` mapping and diff it against the
+/// current `blocks.page_id` column, reading everything from `conn`.
 ///
-/// Each fixpoint iteration copies the parent's already-resolved `page_id`
-/// one level further down; it runs AFTER the capped rebuild so parent values
-/// are fresh. The loop is monotone (every iteration resolves at least one
-/// previously-NULL row or stops), so it terminates without an explicit
-/// depth bound — invariant #9 is untouched because this pass contains no
-/// recursive CTE at all. Orphans, tags, and cycle members keep NULL exactly
-/// as before (their parent chain never yields a resolved `page_id`). On a
-/// healthy (≤100-deep) tree the first iteration matches zero rows, so the
-/// extension costs one no-op UPDATE. Crossing the cap is LOUD (warn), never
-/// a silent NULL.
-async fn extend_page_ids_below_depth_cap(
-    conn: &mut sqlx::SqliteConnection,
-) -> Result<u64, AppError> {
-    let mut total: u64 = 0;
-    let mut rounds: u64 = 0;
-    loop {
-        let res = sqlx::query!(
-            "UPDATE blocks SET page_id = \
-                 (SELECT p.page_id FROM blocks p WHERE p.id = blocks.parent_id) \
-             WHERE page_id IS NULL \
-               AND block_type != 'page' \
-               AND parent_id IS NOT NULL \
-               AND (SELECT p.page_id FROM blocks p WHERE p.id = blocks.parent_id) \
-                   IS NOT NULL"
-        )
-        .execute(&mut *conn)
+/// Desired state is derived exactly as the old full-rewrite did — the
+/// within-cap ancestor CTE ([`DESIRED_PAGE_ID_SQL`]) plus the R27 iterative
+/// extension for blocks deeper than `DESCENDANT_DEPTH_CAP` — but into an
+/// in-memory map instead of an inline `blocks` UPDATE. The returned
+/// [`PageIdDiff`] therefore reaches a state byte-identical to the old
+/// unconditional rewrite while touching only the rows that actually change.
+///
+/// Mirrors the diff-based writers in `cache/block_tag_refs.rs` and
+/// `cache/agenda.rs`.
+async fn compute_page_id_diff(conn: &mut SqliteConnection) -> Result<PageIdDiff, AppError> {
+    // Desired within the depth cap: same recursive ancestor walk the old
+    // rebuild folded into an inline UPDATE. Pages resolve to themselves
+    // (depth-0, `cur_type = 'page'`), matching the `page_id_self_for_pages`
+    // CHECK, so a page's row never appears in the diff.
+    let pairs: Vec<(String, String)> = sqlx::query_as(DESIRED_PAGE_ID_SQL)
+        .fetch_all(&mut *conn)
         .await?;
-        if res.rows_affected() == 0 {
+    let mut desired: HashMap<String, String> = pairs.into_iter().collect();
+
+    // R27 extension: blocks deeper than the depth-100 cap resolved no page
+    // ancestor within the CTE. Copy the parent's already-resolved page_id
+    // one level further down, iterating to a fixpoint — the exact monotone
+    // fill the old `extend_page_ids_below_depth_cap` did in SQL, but on the
+    // in-memory desired map. Only non-page blocks WITH a parent participate
+    // (mirrors the SQL guards `block_type != 'page' AND parent_id IS NOT
+    // NULL`); orphans / cycle members never resolve and stay unmapped (→
+    // NULL), exactly as before.
+    let candidates: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT id, parent_id FROM blocks WHERE block_type != 'page'")
+            .fetch_all(&mut *conn)
+            .await?;
+    let mut extended: u64 = 0;
+    loop {
+        let mut progressed = false;
+        for (id, parent_id) in &candidates {
+            if desired.contains_key(id) {
+                continue;
+            }
+            let Some(parent_id) = parent_id else { continue };
+            if let Some(page_id) = desired.get(parent_id).cloned() {
+                desired.insert(id.clone(), page_id);
+                extended += 1;
+                progressed = true;
+            }
+        }
+        if !progressed {
             break;
         }
-        total += res.rows_affected();
-        rounds += 1;
     }
-    if total > 0 {
+
+    // Diff against the live column. `to_set` for blocks whose desired
+    // page_id differs from the current value; `to_null` for blocks that
+    // resolve to no page (unmapped) but still carry a stale non-NULL value.
+    let current: Vec<(String, Option<String>)> = sqlx::query_as("SELECT id, page_id FROM blocks")
+        .fetch_all(&mut *conn)
+        .await?;
+    let mut to_set: Vec<(String, String)> = Vec::new();
+    let mut to_null: Vec<String> = Vec::new();
+    for (id, cur) in current {
+        match desired.get(&id) {
+            Some(want) if cur.as_deref() != Some(want.as_str()) => {
+                to_set.push((id, want.clone()));
+            }
+            None if cur.is_some() => to_null.push(id),
+            _ => {}
+        }
+    }
+
+    Ok(PageIdDiff {
+        to_set,
+        to_null,
+        extended,
+    })
+}
+
+/// Apply a computed [`PageIdDiff`] inside an open write transaction, in
+/// chunks bounded by [`MAX_SQL_PARAMS`]. Returns the number of `blocks`
+/// rows written (0 when the cache was already up to date).
+///
+/// NULL-resets run before value-sets — neither set overlaps (a block is in
+/// at most one), so ordering is immaterial, but it matches the
+/// delete-before-insert apply-style of the sibling diff writers.
+async fn apply_page_id_diff(tx: &mut SqliteConnection, diff: &PageIdDiff) -> Result<u64, AppError> {
+    let mut written: u64 = 0;
+
+    for chunk in diff.to_null.chunks(NULL_CHUNK) {
+        let placeholders: String = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!("UPDATE blocks SET page_id = NULL WHERE id IN ({placeholders})");
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for id in chunk {
+            q = q.bind(id);
+        }
+        written += q.execute(&mut *tx).await?.rows_affected();
+    }
+
+    // Chunked CASE-expression UPDATE: 2 binds per row in the CASE +
+    // 1 bind per row in the trailing IN list = 3 binds per row, bounded by
+    // `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`. The IN clause restricts the
+    // UPDATE to the chunk's rows so the CASE's `ELSE page_id` no-op never
+    // rewrites an unrelated block.
+    for chunk in diff.to_set.chunks(REBUILD_CHUNK) {
+        let case_clauses: String = std::iter::repeat_n("WHEN ? THEN ?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(" ");
+        let in_placeholders: String = std::iter::repeat_n("?", chunk.len())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let sql = format!(
+            "UPDATE blocks SET page_id = CASE id {case_clauses} ELSE page_id END \
+             WHERE id IN ({in_placeholders})",
+        );
+        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
+        for (block_id, page_id) in chunk {
+            q = q.bind(block_id).bind(page_id);
+        }
+        for (block_id, _) in chunk {
+            q = q.bind(block_id);
+        }
+        written += q.execute(&mut *tx).await?.rows_affected();
+    }
+
+    Ok(written)
+}
+
+/// Emit the R27 depth-cap-crossing warn (LOUD, never a silent NULL) when
+/// the extension resolved any block past the depth-100 ancestor-CTE cap.
+fn warn_if_extended(extended: u64) {
+    if extended > 0 {
         tracing::warn!(
-            total,
-            rounds,
+            extended,
             "page_id derivation extended past the depth-100 ancestor-CTE cap \
              (tree deeper than DESCENDANT_DEPTH_CAP — merged sync trees can \
              legally exceed the local depth bound, R27)",
         );
     }
-    Ok(total)
+}
+
+/// Diff-based rebuild of `page_id` for all blocks (#2668).
+///
+/// Computes the desired `block_id → page_id` mapping (the recursive
+/// ancestor walk plus the R27 depth-cap extension), diffs it against the
+/// live `blocks.page_id` column, and writes ONLY the rows whose value
+/// changed. The final cache state is byte-identical to the pre-#2668
+/// full-rewrite; an up-to-date vault writes zero `blocks` rows.
+///
+/// Reads and writes run in a single transaction so the diff is computed and
+/// applied atomically (no TOCTOU window for the single-pool path).
+pub async fn rebuild_page_ids(pool: &SqlitePool) -> Result<(), AppError> {
+    super::rebuild_with_timing("page_id", || rebuild_page_ids_impl(pool)).await
+}
+
+async fn rebuild_page_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
+    let mut tx = crate::db::begin_immediate_logged(pool, "cache_page_id_rebuild").await?;
+    // Compute the diff INSIDE the write tx so the read snapshot and the
+    // applied writes are atomic (the single-pool path keeps the old
+    // one-statement UPDATE's no-TOCTOU guarantee).
+    let diff = compute_page_id_diff(&mut tx).await?;
+    warn_if_extended(diff.extended);
+    let written = apply_page_id_diff(&mut tx, &diff).await?;
+    if written == 0 {
+        // Nothing changed — transaction rolls back on drop.
+        return Ok(0);
+    }
+    tx.commit().await?;
+    Ok(written)
 }
 
 // ---------------------------------------------------------------------------
@@ -108,18 +235,14 @@ async fn extend_page_ids_below_depth_cap(
 
 /// Read/write split variant of [`rebuild_page_ids`].
 ///
-/// Runs the recursive ancestor-walk CTE as a SELECT on `read_pool`
-/// inside a snapshot-isolated transaction, materialises the
-/// `(block_id, page_id)` pairs into memory, then resets every non-
-/// conflict block's `page_id` to NULL and applies a chunked CASE-
-/// expression UPDATE on `write_pool` so the writer is held only for
-/// the final write transaction.
+/// Computes the desired mapping + diff on `read_pool` (a snapshot-isolated
+/// connection), then applies only the changed rows on `write_pool` so the
+/// writer lock is held for the final write transaction only.
 ///
-/// Stale-while-revalidate: between dropping the read tx and beginning
-/// the write tx another writer may mutate `blocks`. The next rebuild
-/// reconciles any churn — cache rebuilds are background, eventually
-/// consistent (AGENTS.md "Performance Conventions / Split read/write
-/// pool pattern").
+/// Stale-while-revalidate: between reading on `read_pool` and beginning the
+/// write tx another writer may mutate `blocks`. The next rebuild reconciles
+/// any churn — cache rebuilds are background, eventually consistent
+/// (AGENTS.md "Performance Conventions / Split read/write pool pattern").
 ///
 /// Invariant #9: the read-side CTE bounds `depth < 100`.
 pub async fn rebuild_page_ids_split(
@@ -136,82 +259,24 @@ async fn rebuild_page_ids_split_impl(
     write_pool: &SqlitePool,
     read_pool: &SqlitePool,
 ) -> Result<u64, AppError> {
-    // Read phase — snapshot-isolated SELECT on `read_pool`. Same recursive
-    // CTE shape as `rebuild_page_ids_impl` but materialises the
-    // `(block_id, page_id)` mapping instead of folding into an inline
-    // UPDATE. Invariant #9 filters apply identically.
-    let mut read_tx = read_pool.begin().await?;
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    let pairs: Vec<(String, String)> = sqlx::query_as(
-        "WITH RECURSIVE ancestors(block_id, cur_id, cur_type, depth) AS ( \
-             SELECT b.id, b.id, b.block_type, 0 FROM blocks b \
-             UNION ALL \
-             SELECT a.block_id, parent.id, parent.block_type, a.depth + 1 \
-             FROM ancestors a \
-             JOIN blocks child ON child.id = a.cur_id \
-             JOIN blocks parent ON parent.id = child.parent_id \
-             WHERE a.cur_type != 'page' \
-               AND a.depth < 100 \
-         ) \
-         SELECT block_id, cur_id AS page_id \
-         FROM ancestors \
-         WHERE cur_type = 'page'",
-    )
-    .fetch_all(&mut *read_tx)
-    .await?;
-    drop(read_tx);
+    // Read phase — desired mapping + current column + diff, all on a single
+    // `read_pool` connection (consistent snapshot).
+    let mut read_conn = read_pool.acquire().await?;
+    let diff = compute_page_id_diff(&mut read_conn).await?;
+    drop(read_conn);
+    warn_if_extended(diff.extended);
 
-    // Write phase — single tx wrapping the NULL-reset and every chunked
-    // UPDATE. Mirrors the single-pool variant's atomic semantics.
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "cache_page_id_rebuild_write").await?;
-
-    // Reset every block's `page_id` to NULL. Mirrors the single-pool
-    // UPDATE semantics: blocks not present in the CTE result (orphans)
-    // get `page_id = NULL` because the correlated subquery returns
-    // NULL for them.
-    let reset = sqlx::query!("UPDATE blocks SET page_id = NULL ")
-        .execute(&mut *tx)
-        .await?;
-    let mut updated: u64 = reset.rows_affected();
-
-    // Chunked CASE-expression UPDATE: 2 binds per row in the CASE +
-    // 1 bind per row in the trailing IN list = 3 binds per row,
-    // bounded by `REBUILD_CHUNK * 3 ≤ MAX_SQL_PARAMS`. The IN clause
-    // restricts the UPDATE to the chunk's rows so we do not rewrite
-    // unrelated blocks via the CASE's `ELSE page_id` no-op.
-    for chunk in pairs.chunks(REBUILD_CHUNK) {
-        let case_clauses: String = std::iter::repeat_n("WHEN ? THEN ?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(" ");
-        let in_placeholders: String = std::iter::repeat_n("?", chunk.len())
-            .collect::<Vec<_>>()
-            .join(", ");
-        let sql = format!(
-            "UPDATE blocks SET page_id = CASE id {case_clauses} ELSE page_id END \
-             WHERE id IN ({in_placeholders})",
-        );
-        let mut q = sqlx::query(sqlx::AssertSqlSafe(sql.as_str()));
-        // CASE binds: (block_id, page_id) per row.
-        for (block_id, page_id) in chunk {
-            q = q.bind(block_id).bind(page_id);
-        }
-        // IN-list binds: just the block ids, in the same order.
-        for (block_id, _) in chunk {
-            q = q.bind(block_id);
-        }
-        let res = q.execute(&mut *tx).await?;
-        updated += res.rows_affected();
+    if diff.to_set.is_empty() && diff.to_null.is_empty() {
+        // Nothing changed — skip the writer lock entirely.
+        return Ok(0);
     }
 
-    // R27: resolve blocks deeper than the read-phase CTE's depth-100 cap —
-    // without this the NULL-reset above would DESTROY their previously
-    // correct `page_id`. Runs inside the same write tx so the reset and the
-    // extension land atomically.
-    updated += extend_page_ids_below_depth_cap(&mut tx).await?;
-
+    // Write phase — single tx applying only the changed rows.
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_page_id_rebuild_write").await?;
+    let written = apply_page_id_diff(&mut tx, &diff).await?;
     tx.commit().await?;
-    Ok(updated)
+    Ok(written)
 }
 
 /// Set `page_id` for a single newly created block by inheriting from its parent.
@@ -263,11 +328,25 @@ async fn rebuild_space_ids_impl(pool: &SqlitePool) -> Result<u64, AppError> {
     // re-derive from, so they must NOT be touched here or the rebuild would
     // null every tag's space (data loss). Orphan content (page purged →
     // NULL page_id) likewise keeps its last value rather than being cleared.
+    //
+    // #2668: the trailing null-safe `space_id IS NOT (<owning page's
+    // space_id>)` guard restricts the UPDATE to rows whose value actually
+    // changes, so an up-to-date vault writes zero `blocks` rows. The target
+    // row set (non-page blocks with a page_id) is unchanged — only rows
+    // already carrying the correct `space_id` are skipped — so the final
+    // cache state is byte-identical to the pre-#2668 unconditional UPDATE.
+    // The correlated subquery is evaluated twice per candidate row (SET +
+    // WHERE) but reads only; `IS NOT` is SQLite's null-safe distinct
+    // operator, so a NULL owning-page value correctly matches a NULL current
+    // `space_id` (no spurious write).
     let result = sqlx::query!(
         "UPDATE blocks SET space_id = ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
-         WHERE block_type != 'page' AND page_id IS NOT NULL"
+         WHERE block_type != 'page' AND page_id IS NOT NULL \
+           AND space_id IS NOT ( \
+             SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
+           )"
     )
     .execute(pool)
     .await?;
@@ -739,5 +818,195 @@ mod tests {
         .execute(&pool)
         .await
         .expect("page row with id = page_id must satisfy the CHECK");
+    }
+
+    // ===================================================================
+    // #2668 — diff-based rebuilds write ONLY changed rows.
+    //
+    // `rebuild_page_ids_impl` / `rebuild_space_ids_impl` return the number
+    // of `blocks` rows actually written; the assertions below drive that
+    // count directly.
+    // ===================================================================
+
+    /// Seed a page → parent → child tree with every `page_id` already
+    /// correct (as the materializer leaves it).
+    async fn seed_correct_tree(pool: &SqlitePool) {
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
+             ('PG0001', 'page',    'p', NULL,     1, 'PG0001'), \
+             ('PARENT', 'content', 'a', 'PG0001', 1, 'PG0001'), \
+             ('CHILD1', 'content', 'b', 'PARENT', 1, 'PG0001'), \
+             ('CHILD2', 'content', 'c', 'PARENT', 2, 'PG0001')",
+        )
+        .execute(pool)
+        .await
+        .expect("seed tree");
+    }
+
+    /// #2668: a rebuild over an already-correct `page_id` column writes ZERO
+    /// `blocks` rows (the whole point of the diff-based rewrite).
+    #[tokio::test]
+    async fn rebuild_page_ids_writes_zero_when_unchanged_2668() {
+        let (pool, _dir) = test_pool().await;
+        seed_correct_tree(&pool).await;
+
+        // Already correct — first pass must find nothing to write.
+        let written = super::rebuild_page_ids_impl(&pool).await.expect("rebuild");
+        assert_eq!(
+            written, 0,
+            "an already-correct page_id column must write zero blocks rows (#2668)"
+        );
+    }
+
+    /// #2668: only the blocks whose `page_id` is stale get written, and the
+    /// final state equals a from-scratch recompute.
+    #[tokio::test]
+    async fn rebuild_page_ids_writes_only_changed_rows_2668() {
+        let (pool, _dir) = test_pool().await;
+        seed_correct_tree(&pool).await;
+
+        // A second (valid) page so a "wrong" page_id still satisfies the FK.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('PG0002', 'page', 'q', NULL, 9, 'PG0002')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Corrupt two rows: one stale (wrong page) value, one NULL that
+        // should resolve.
+        sqlx::query("UPDATE blocks SET page_id = 'PG0002' WHERE id = 'CHILD1'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE blocks SET page_id = NULL WHERE id = 'CHILD2'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let written = super::rebuild_page_ids_impl(&pool).await.expect("rebuild");
+        assert_eq!(
+            written, 2,
+            "exactly the two corrupted blocks must be written (#2668)"
+        );
+
+        // Final state correct + byte-identical to a fresh recompute.
+        for id in ["CHILD1", "CHILD2"] {
+            let pid: Option<String> = sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = ?")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            assert_eq!(
+                pid.as_deref(),
+                Some("PG0001"),
+                "{id} must resolve to PG0001"
+            );
+        }
+        // Idempotent: a follow-up rebuild writes nothing.
+        let again = super::rebuild_page_ids_impl(&pool).await.expect("rebuild2");
+        assert_eq!(again, 0, "second rebuild must be a no-op (#2668)");
+    }
+
+    /// #2668: a stale non-NULL value on an orphaned block (no page ancestor)
+    /// is NULLed — but only that row, and only because it changed.
+    #[tokio::test]
+    async fn rebuild_page_ids_nulls_only_stale_orphans_2668() {
+        let (pool, _dir) = test_pool().await;
+        seed_correct_tree(&pool).await;
+        // A top-level tag block carrying a stale page_id (should be NULL).
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES ('TAG001', 'tag', 't', NULL, 5, 'PG0001')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let written = super::rebuild_page_ids_impl(&pool).await.expect("rebuild");
+        assert_eq!(written, 1, "only the stale orphan is NULLed (#2668)");
+        let pid: Option<String> =
+            sqlx::query_scalar("SELECT page_id FROM blocks WHERE id = 'TAG001'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            pid, None,
+            "orphan tag's stale page_id must be reset to NULL"
+        );
+    }
+
+    /// #2668 (split variant): unchanged vault writes zero rows.
+    #[tokio::test]
+    async fn rebuild_page_ids_split_writes_zero_when_unchanged_2668() {
+        let (pool, _dir) = test_pool().await;
+        seed_correct_tree(&pool).await;
+        let written = super::rebuild_page_ids_split_impl(&pool, &pool)
+            .await
+            .expect("split rebuild");
+        assert_eq!(
+            written, 0,
+            "split rebuild over a correct column must write zero rows (#2668)"
+        );
+    }
+
+    /// #2668: `rebuild_space_ids` writes zero rows when every `space_id` is
+    /// already correct, and only the changed rows otherwise.
+    #[tokio::test]
+    async fn rebuild_space_ids_writes_only_changed_rows_2668() {
+        let (pool, _dir) = test_pool().await;
+        // `spaces.id` REFERENCES `blocks(id)` and `blocks.space_id`
+        // REFERENCES `spaces(id)` — a chicken-and-egg cycle. Insert the
+        // space block first (no space_id), register the space, THEN attach
+        // space_id to every block.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) VALUES \
+             ('SP0001', 'page',    'p', NULL,     1, 'SP0001'), \
+             ('KID001', 'content', 'a', 'SP0001', 1, 'SP0001'), \
+             ('KID002', 'content', 'b', 'SP0001', 2, 'SP0001')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO spaces (id) VALUES ('SP0001')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "UPDATE blocks SET space_id = 'SP0001' WHERE id IN ('SP0001','KID001','KID002')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // Already correct → zero writes.
+        let first = super::rebuild_space_ids_impl(&pool)
+            .await
+            .expect("space rebuild");
+        assert_eq!(
+            first, 0,
+            "an already-correct space_id column must write zero rows (#2668)"
+        );
+
+        // Corrupt one child's space_id → exactly one write.
+        sqlx::query("UPDATE blocks SET space_id = NULL WHERE id = 'KID002'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let second = super::rebuild_space_ids_impl(&pool)
+            .await
+            .expect("space rebuild2");
+        assert_eq!(second, 1, "only the corrupted child is rewritten (#2668)");
+        let sp: Option<String> =
+            sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'KID002'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            sp.as_deref(),
+            Some("SP0001"),
+            "KID002 must re-derive SP0001"
+        );
     }
 }

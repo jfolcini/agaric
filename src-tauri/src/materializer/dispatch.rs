@@ -1022,7 +1022,36 @@ fn invalidations_for_op(
             // and references no tag table, so a tag edge mutation
             // (`block_tags`) can never change the projected agenda. Enqueueing
             // it would be wasted work.
-            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            //
+            // #2669 (same safe class as #2200 / #2265): the apply path already
+            // maintained `block_tag_inherited` incrementally, in-tx, for the
+            // affected scope — `propagate_tag_to_descendants` on AddTag,
+            // `remove_inherited_tag` on RemoveTag (agaric-engine
+            // `apply/loro_apply.rs` + `apply/sql_only.rs`) — so the whole-vault
+            // `RebuildTagInheritanceCache` (a `DELETE FROM block_tag_inherited`
+            // + recursive-CTE recompute under `BEGIN IMMEDIATE`, run on EVERY
+            // tag click) is redundant work.
+            //
+            //   * RemoveTag: `remove_inherited_tag` reproduces the full
+            //     rebuild BYTE-FOR-BYTE, including nearest-ancestor
+            //     re-attribution (its step 2/3 climb to the closest remaining
+            //     tagger — proven equivalent by
+            //     `remove_tag_incremental_matches_full_rebuild_2669` in
+            //     agaric-store `tag_inheritance::tests`). Its redundant rebuild
+            //     is DROPPED below.
+            //   * AddTag: `propagate_tag_to_descendants` is effective-tag
+            //     complete (every descendant of the newly-tagged block gets
+            //     the tag) but, being a plain `INSERT OR IGNORE`, does NOT
+            //     re-point an existing inherited row to a newly-added CLOSER
+            //     ancestor. In that nested-tagger case it diverges from the
+            //     full rebuild in the `inherited_from` PROVENANCE column
+            //     (effective membership is identical — see
+            //     `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
+            //     Because that is a genuine state difference vs the rebuild,
+            //     AddTag KEEPS the full rebuild; only RemoveTag drops it.
+            if matches!(op_type, OpType::AddTag) {
+                tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            }
             // #1715: deliberately NO Update/RemoveFtsBlock here. A block's FTS
             // row indexes only the inline `#[ULID]` TAG_REF tokens present in its
             // content (see fts/strip.rs), which are added/removed by EditBlock and
@@ -1080,7 +1109,22 @@ fn invalidations_for_op(
             }
         }
         OpType::MoveBlock => {
-            tasks.push(MaterializeTask::RebuildTagInheritanceCache);
+            // #2669 (same safe class as #2200 / #2265): the whole-vault
+            // `RebuildTagInheritanceCache` is dropped from this arm. A move
+            // already re-derives `block_tag_inherited` for the moved subtree
+            // SYNCHRONOUSLY, in-transaction, via
+            // `tag_inheritance::recompute_subtree_inheritance(block_id)` (run
+            // inside `apply_op_projected` — agaric-engine `apply/loro_apply.rs`
+            // `apply_move_block_via_loro` and the `apply/sql_only.rs`
+            // fallback). A move can only change the inherited tags of the moved
+            // subtree itself (no block outside it changes ancestry), and
+            // `recompute_subtree_inheritance` is a from-scratch DELETE +
+            // nearest-ancestor recompute of exactly that subtree — so it
+            // reproduces the full rebuild BYTE-FOR-BYTE for the affected scope
+            // (proven by `move_block_incremental_matches_full_rebuild_2669` in
+            // agaric-store `tag_inheritance::tests`; it is also the identical
+            // function the inbound-sync path relies on per #2265). The
+            // vault-wide rebuild was pure O(vault) waste.
             // #2200 (Tier-2, same safe class as #2186): the whole-vault
             // `RebuildPageIds` recompute is dropped from this arm. A move
             // already re-derives `page_id` AND `space_id` for the moved root
@@ -1724,7 +1768,15 @@ mod tests {
 
     /// #676: `add_tag` enqueues a SCOPED `RefreshTagUsageCount(tag_id)`
     /// instead of the former full O(vault) `RebuildTagsCache`. The agenda
-    /// family + inheritance rebuild are unchanged.
+    /// family is unchanged.
+    ///
+    /// #2669: `add_tag` KEEPS `RebuildTagInheritanceCache` (unlike remove_tag /
+    /// move_block). Its in-tx `propagate_tag_to_descendants` is effective-tag
+    /// complete but a plain `INSERT OR IGNORE` that can leave a stale
+    /// `inherited_from` provenance when a closer ancestor is tagged after a
+    /// farther one, so the state is not byte-identical to the full rebuild —
+    /// hence the rebuild is retained (see arm comment +
+    /// `add_tag_nested_diverges_from_rebuild_provenance_only_2669`).
     #[test]
     fn invalidations_for_op_add_tag_uses_scoped_tag_refresh() {
         let r = make_record(
@@ -1759,6 +1811,11 @@ mod tests {
 
     /// #676: `remove_tag` shares the arm — same scoped refresh of the
     /// affected tag, no full rebuild.
+    ///
+    /// #2669: `remove_tag` also DROPS `RebuildTagInheritanceCache` — the in-tx
+    /// `remove_inherited_tag` reproduces the full rebuild byte-for-byte
+    /// (nearest-ancestor re-attribution), so the vault-wide recompute is pure
+    /// waste. (AddTag KEEPS it — see that arm's comment / test.)
     #[test]
     fn invalidations_for_op_remove_tag_uses_scoped_tag_refresh() {
         let r = make_record(
@@ -1769,11 +1826,14 @@ mod tests {
         let tasks = invalidations_for_op(&r, None).unwrap();
         assert_eq!(
             labels(&tasks),
-            vec![
-                "RefreshTagUsageCount(TAG1)",
-                "RebuildAgendaCache",
-                "RebuildTagInheritanceCache",
-            ],
+            vec!["RefreshTagUsageCount(TAG1)", "RebuildAgendaCache"],
+        );
+        // #2669 regression sentinel: remove_tag must NOT enqueue the
+        // whole-vault inheritance rebuild (the incremental covers it).
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "remove_tag must not enqueue the vault-wide RebuildTagInheritanceCache (#2669); got {:?}",
+            labels(&tasks),
         );
         assert!(
             !contains_kind(&tasks, &MaterializeTask::RebuildTagsCache),
@@ -1982,10 +2042,12 @@ mod tests {
         // observes the already-corrected membership. #627: the page-link
         // roll-up cache is keyed by source `page_id`, so a cross-page move
         // must rebuild it too or link attribution goes stale on both pages.
+        // #2669: `RebuildTagInheritanceCache` is also dropped — the in-tx
+        // `recompute_subtree_inheritance` already reproduces the full rebuild
+        // for the moved subtree (the only scope a move can affect).
         assert_eq!(
             labels(&tasks),
             vec![
-                "RebuildTagInheritanceCache",
                 "RebuildPagesCache",
                 "RebuildPageLinkCache",
                 // #2657: a move changes `page_id`; `DESIRED_AGENDA_SQL` excludes
@@ -2003,6 +2065,12 @@ mod tests {
         assert!(
             !contains_kind(&tasks, &MaterializeTask::RebuildPageIds),
             "move_block must not enqueue the vault-wide RebuildPageIds (#2200)",
+        );
+        // #2669 sentinel: the whole-vault inheritance rebuild is dropped — the
+        // in-tx recompute_subtree_inheritance already covers the moved subtree.
+        assert!(
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "move_block must not enqueue the vault-wide RebuildTagInheritanceCache (#2669)",
         );
     }
 
