@@ -37,9 +37,9 @@
 
 use crate::cache::{TAG_REF_RE, ULID_LINK_RE};
 use crate::db::MAX_SQL_PARAMS;
-use crate::error::AppError;
 use crate::space::{SpaceId, resolve_block_space};
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
 use std::collections::HashMap;
 
 /// Resolve the owning space of every block id in `ids` in one chunked
@@ -57,7 +57,7 @@ use std::collections::HashMap;
 /// exactly (invariant #9): the input block must be live for its
 /// `page_id` to flow through the COALESCE, and the block that *holds*
 /// the `space` property must be live too.
-pub(crate) async fn resolve_block_spaces_batch(
+pub async fn resolve_block_spaces_batch(
     conn: &mut sqlx::SqliteConnection,
     ids: &[&str],
 ) -> Result<HashMap<String, SpaceId>, AppError> {
@@ -230,9 +230,15 @@ pub async fn validate_ref_property_cross_space(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::commands::tests::common::test_pool;
-    use crate::spaces::bootstrap::{SPACE_PERSONAL_ULID, SPACE_WORK_ULID};
+    use crate::test_support::test_pool;
     use sqlx::SqlitePool;
+
+    // #2621 (THE INVERSION): the two default-space ULIDs live in the app
+    // crate's `spaces::bootstrap` (which stays app-side); the moved tests only
+    // need two distinct, deterministic space ids, so mirror the constants
+    // locally rather than dragging bootstrap down into the store.
+    const SPACE_PERSONAL_ULID: &str = "00000000000000000AGAR1CPER";
+    const SPACE_WORK_ULID: &str = "00000000000000000AGAR1CWRK";
 
     async fn seed_spaces(pool: &SqlitePool) {
         for (id, name) in [(SPACE_PERSONAL_ULID, "Personal"), (SPACE_WORK_ULID, "Work")] {
