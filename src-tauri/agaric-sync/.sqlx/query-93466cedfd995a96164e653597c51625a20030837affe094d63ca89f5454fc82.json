@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT page_id FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "93466cedfd995a96164e653597c51625a20030837affe094d63ca89f5454fc82"
+}

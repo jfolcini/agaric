@@ -38,19 +38,16 @@ default-run = "agaric"
 # in the final binary.
 [package.metadata.cargo-machete]
 ignored = [
-    "mdns-sd",           # LAN sync discovery; called directly from sync_daemon.
-    "qrcode",            # device-pairing QR code rendering; used in pairing.rs.
-    "rand",              # crypto-quality random for pairing tokens + sync_net key material; used in sync_net / pairing / sync_scheduler.
-    "rcgen",             # self-signed TLS certificate generation for mTLS sync handshake; used in sync_net/tls.rs.
-    "rustls",            # pure-Rust TLS stack. Direct dep + transitive via reqwest 0.12/0.13, hyper-rustls, tauri-plugin-updater, tokio-rustls.
-    "sha2",              # SHA-256 hashing for sync_scheduler digest paths + pairing token derivation.
-    "tokio-tungstenite", # WebSocket transport for the sync protocol (sync_net/websocket.rs).
-    "tokio-rustls",      # async TLS adapter for tokio. Direct dep + transitive via reqwest, tokio-tungstenite.
-    "futures-util",      # Stream / Sink combinators used by sync_net + sqlx_core paths. Direct dep + transitive via futures, sqlx-core, reqwest, hyper-util, gio, glib.
-    "x509-parser",       # peer-certificate parsing during the TLS mTLS handshake validation.
-    # Android-only, unused on desktop targets
-    "jni",         # Java <-> Rust FFI for the multicast lock + Android lifecycle bridge.
-    "ndk-context", # Android NDK runtime context handle for JNI calls.
+    # #2621 Sync-D: the sync-only deps (mdns-sd, qrcode, rcgen, tokio-tungstenite,
+    # tokio-rustls, if-addrs, x509-parser, jni, ndk-context) moved to
+    # `agaric-sync/Cargo.toml` along with the code that uses them. What remains
+    # here is used by app production code (or shared TLS/crypto) but sits behind
+    # conditional compilation the static analyzer can't see under the default
+    # feature set.
+    "rand",         # crypto-quality random used outside the sync cluster; also transitive.
+    "rustls",       # pure-Rust TLS stack. Direct dep + transitive via reqwest 0.13, hyper-rustls, tauri-plugin-updater.
+    "sha2",         # SHA-256 hashing used outside the sync cluster; also transitive.
+    "futures-util", # Stream / Sink combinators. Direct dep + transitive via futures, sqlx-core, reqwest, hyper-util, gio, glib.
 ]
 
 [lints.rust]
@@ -260,23 +257,19 @@ opentelemetry-appender-tracing = "0.32"
 # follow-up). Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
 
-# Sync
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+# Sync — #2621 Sync-D: the peer-to-peer net/protocol/daemon/files/snapshot
+# cluster moved into `agaric-sync`, taking its sync-only deps with it
+# (`tokio-tungstenite`, `tokio-rustls`, `rcgen`, `mdns-sd`, `if-addrs`,
+# `qrcode`, `x509-parser`). What remains here is used by app *production* code
+# outside the sync cluster (or is a shared TLS/crypto dep): `rustls`,
+# `futures-util`, `sha2`, `rand`. The four still referenced by the app's hosted
+# sync *tests* (`tokio-tungstenite`, `rcgen`, `mdns-sd`, `x509-parser`) moved to
+# `[dev-dependencies]`; `tokio-rustls` / `if-addrs` / `qrcode` had no remaining
+# app use site and were dropped entirely.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
-tokio-rustls = "0.26"
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-rcgen = "0.14"
-mdns-sd = "0.20"
-# Enumerate local interfaces so mDNS announces only on RFC 1918
-# private IPv4 LAN interfaces (not on every routable interface, which
-# leaks the device IP onto guest WiFi / VPN / cellular). Already in the
-# build graph transitively via `mdns-sd`; promoted to a direct dep so
-# `MdnsService::announce` can use it explicitly.
-if-addrs = "0.15"
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 sha2 = "0.11"
 rand = "0.10"
-x509-parser = "0.18.1"
 tracing-appender = "0.2.4"
 # Align `reqwest 0.13` to the repo's rustls-everywhere
 # posture (same TLS stack as `tokio-tungstenite` / `tokio-rustls` / sqlx on
@@ -347,6 +340,18 @@ agaric-core = { path = "agaric-core", version = "0.1.0", features = ["test-util"
 # reprojection assertions (#2621, wave E1). Only enabled for test builds; the
 # normal `[dependencies]` entry stays lean.
 agaric-engine = { path = "agaric-engine", version = "0.1.0", features = ["test-util"] }
+# #2621 Sync-D: re-declare agaric-sync with `test-util` so the app-hosted sync
+# tests can reach the cross-crate test helpers gated behind that feature
+# (`sync_net::test_connection_pair` + the `InnerStream::Test` machinery,
+# `sync_events::RecordingEventSink`). Only enabled for test builds.
+agaric-sync = { path = "agaric-sync", version = "0.1.0", features = ["test-util"] }
+# #2621 Sync-D: these sync-only crates moved to `agaric-sync` for production;
+# the only remaining app use sites are the hosted sync tests, so they are
+# dev-only here (unified with agaric-sync's production copies by cargo).
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+rcgen = "0.14"
+mdns-sd = "0.20"
+x509-parser = "0.18.1"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 # Test-only OTel feature: `InMemorySpanExporter` / `InMemoryLogExporter` /
 # `InMemoryMetricExporter` for the observability pipeline tests (#2110, M1a +
@@ -360,12 +365,11 @@ tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-ut
 # HTTP mocking for OAuth token endpoint tests.
 wiremock = "0.6"
 
-# Android-only dependencies (WiFi multicast lock via JNI).
-# Gated on target_os = "android" so desktop builds do not pull in
-# these transitive dependencies.
-[target.'cfg(target_os = "android")'.dependencies]
-jni = "0.22"
-ndk-context = "0.1"
+# #2621 Sync-D: the Android WiFi-multicast-lock JNI bridge
+# (`sync_daemon/android_multicast.rs`) moved to `agaric-sync`, taking its
+# Android-only `jni` / `ndk-context` deps with it. No app-crate code references
+# them any longer, so the `[target.'cfg(target_os = "android")'.dependencies]`
+# table was dropped here.
 
 # Linux OS notifications are dispatched via notify-rust directly (see
 # commands/notifier.rs): tauri-plugin-notification fires notify-rust's

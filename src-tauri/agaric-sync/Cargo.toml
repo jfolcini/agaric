@@ -20,30 +20,108 @@ rust-version = "1.95.0"
 license = "GPL-3.0-or-later"
 publish = false
 
+# Sync-D folds in the net / protocol / daemon / files cluster + `snapshot`, so
+# this crate gains a `test-util` feature: the cross-crate test helpers the app's
+# hosted sync tests reach (e.g. `sync_net::test_connection_pair` + the
+# `InnerStream::Test` machinery) are gated `#[cfg(any(test, feature =
+# "test-util"))]` so they compile when the app builds this crate as a dependency
+# for its own test target (mirrors `agaric-store` / `agaric-core`'s `test-util`).
+[features]
+test-util = []
+
 [dependencies]
 # Versions/features mirror the app crate's `[dependencies]` so cargo's feature
 # unification keeps a single build of each crate across the workspace.
-# `agaric-core` — `device` returns `error::AppError`. Path dep pinned with a
-# version (cargo-deny wildcard ban).
+# `agaric-core` — `device` returns `error::AppError`; snapshot / protocol read
+# `error`/`ulid`/`hash`. Path dep pinned with a version (cargo-deny wildcard ban).
 agaric-core = { path = "../agaric-core", version = "0.1.0" }
+# `agaric-store` — the sync cluster reads `db`/`op`/`op_log`/`peer_refs`/`space`/
+# `tag_inheritance`/`cache`/`soft_delete`. Path dep pinned with a version.
+agaric-store = { path = "../agaric-store", version = "0.1.0" }
+# `agaric-engine` — the sync cluster reads `loro`/`dag`. Path dep pinned with a
+# version.
+agaric-engine = { path = "../agaric-engine", version = "0.1.0" }
 # `device` parses / mints the persisted device UUID. Version/features mirror the
 # app crate exactly for cargo feature-unification.
 uuid = { version = "1.23.2", features = ["v4"] }
-# `foreground`'s `LifecycleHooks` wakes background loops via `tokio::sync::Notify`.
-# Only the `sync` feature is needed here; the app relies on workspace feature
-# unification to pull the rest, but it is enabled explicitly so the crate builds
-# standalone.
-tokio = { version = "1", features = ["sync"] }
+# The daemon runs a full tokio stack (net listener, timers, notify, stdio for
+# the wire codec). `rt-multi-thread` is needed for `tokio::task::block_in_place`
+# on the loro-sync apply path (loro_sync.rs). Mirrors the feature set the app
+# resolves for tokio (the app pulls `rt-multi-thread` transitively via tauri).
+tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", "net", "io-util", "io-std"] }
+# Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
+# directly (the wire types + apply path). Caret-1 mirrors the app crate.
+loro = "1.12"
+# `ulid::Ulid` for snapshot / file-transfer temp-name minting + id parsing.
+ulid = "1.2.1"
+# async-fn-in-dyn-trait shim for the `ApplyHost` trait (apply_host.rs).
+async-trait = "0.1"
+# Sync carries `query!`/`query_as!`/`query_scalar!` macro sites (operations /
+# loro_sync / sync_files / snapshot). Features mirror the app crate exactly.
+sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# `sync_events::SyncProgressUpdate` + `snapshot_fallback_metrics` derive
+# `specta::Type`; `chrono` feature matches the app crate.
+specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+chrono = { version = "0.4.44", features = ["serde"] }
+tracing = { version = "0.1.44", features = ["attributes"] }
+# Snapshot codec (blake3 content hash, zstd compression, CBOR framing).
+blake3 = "1.8.5"
+zstd = "0.13"
+ciborium = "0.2"
+base64 = "0.22.1"
+# Crypto-quality random for pairing tokens + key material.
+rand = "0.10"
+# SHA-256 for sync_scheduler digest paths + pairing token derivation.
+sha2 = "0.11"
+# TLS stack for the mTLS sync handshake (rustls + tokio adapter + WebSocket
+# transport + self-signed cert gen + peer-cert parsing). Versions/features
+# mirror the app crate exactly.
+rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+tokio-rustls = "0.26"
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+rcgen = "0.14"
+x509-parser = "0.18.1"
+# LAN discovery: mDNS announce/browse + private-interface enumeration.
+mdns-sd = "0.20"
+if-addrs = "0.15"
+# device-pairing QR code rendering (pairing.rs).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+# Cargo-machete allowlist — deps whose only use sites are behind conditional
+# compilation the static analyzer can't see under the default (desktop) feature
+# set. Moved with the sync-only stack from the app crate (#2621 Sync-D).
+[package.metadata.cargo-machete]
+ignored = [
+    "jni",         # Android-only: JNI bridge for the WiFi multicast lock (sync_daemon/android_multicast.rs).
+    "ndk-context", # Android-only: NDK runtime context handle for the JNI calls.
+]
+
+# Android-only: acquire WifiManager.MulticastLock so mdns-sd's UDP multicast
+# sockets receive packets (sync_daemon/android_multicast.rs). Gated on
+# target_os = "android" so desktop builds do not pull these transitive deps.
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.22"
+ndk-context = "0.1"
 
 [dev-dependencies]
-# `device`'s tests build config-dir fixtures under a `TempDir`. Version mirrors
-# the app crate's `[dev-dependencies]`.
+# `device`'s tests build config-dir fixtures under a `TempDir`; the snapshot /
+# protocol tests use temp DBs. Version mirrors the app crate.
 tempfile = "3.27.0"
-# `foreground`'s tests drive the `LifecycleHooks` wake/notify pair under
-# `#[tokio::test]`, which needs the macro + a runtime. Enabled here (not just via
-# workspace feature unification) so the crate's tests build standalone. Version/
-# features mirror the app crate's `[dev-dependencies]`.
-tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread"] }
+# The moved inline tests drive async flows under `#[tokio::test]` with paused
+# time (`test-util`). Version/features mirror the app crate's `[dev-dependencies]`.
+tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }
+# Re-declare agaric-core with `test-util` so the moved `BlockId::test_id`
+# constructor is available to the snapshot inline tests (#2621). Only enabled for
+# test builds; the normal `[dependencies]` entry stays lean.
+agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-util"] }
+# Re-declare agaric-store with `test-util` so the moved snapshot inline tests can
+# use `agaric_store::test_support::test_pool` (the shared migrated-temp-DB
+# fixture) in place of the app-only `crate::db::init_pool` (same pattern as
+# agaric-engine's dev-deps). Only enabled for test builds.
+agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-util"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-store` / `agaric-engine`

@@ -741,6 +741,25 @@ jobs:
           working-directory: src-tauri/agaric-engine
           database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
 
+      - name: sqlx offline cache check (agaric-sync)
+        # ci/path-conditional-jobs: same as the app-crate lane above — Rust-only
+        # sqlx compile, skipped on a backend-less PR (backend != 'true').
+        if: needs.detect-changes.outputs.backend == 'true'
+        # #2621 Sync-D: the net/protocol/daemon/files + snapshot cluster's
+        # `query!`/`query_as!`/`query_scalar!` macros moved into agaric-sync,
+        # which now carries its own committed `.sqlx/` cache. A `../migrations`
+        # symlink under the crate lets both this action's `cargo sqlx migrate
+        # run` and `sqlx::migrate!` resolve the shared workspace migrations.
+        #
+        # The `database-url` MUST be absolute for a NON-root workspace member —
+        # see the agaric-store lane's comment above for the relative-path
+        # failure mode (rustc resolves relative sqlite paths from the workspace
+        # root, not the crate dir).
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-sync
+          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
+
   # ---------------------------------------------------------------------------
   # docs-lint (#833) — the docs-only counterpart to `lint`. Runs ONLY on a
   # provably docs-only diff (the full `lint` job is skipped then) and runs

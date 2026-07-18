@@ -1,33 +1,20 @@
-//! Sync protocol orchestrator.
+//! #2621 Sync-D: production moved to [`agaric_sync::sync_protocol`]; this
+//! app-side shim re-exports it so every `crate::sync_protocol::…` path resolves
+//! unchanged, and hosts the app-coupled tests (which reference app-only
+//! `Materializer` / `recovery`).
 //!
-//! Implements the core sync logic: head exchange, Loro-CRDT engine
-//! sync, and peer-ref bookkeeping.  The transport layer (WebSocket,
-//! BLE, …) is handled elsewhere — this module operates purely on typed
-//! [`SyncMessage`] values.
+//! `loro_sync_tests.rs` was an inline child of the `loro_sync` submodule, so its
+//! `use super::*` reached `loro_sync`'s namespace; it is hosted in a wrapper that
+//! reconstructs that namespace (`super` = the wrapper). The `../` in the path
+//! escapes the inline-module directory back to `src/sync_protocol/`.
+#![cfg_attr(test, allow(unused_imports))]
 
-// Sync wire types for Loro-based sync
-// (`LoroSyncMessage::{Snapshot, Update}`).
-pub mod loro_sync_types;
-
-// `prepare_outgoing` + `apply_remote` helpers that build / consume
-// the wire types.
-pub mod loro_sync;
-
-// #1319 cross-session aggregate of snapshot-fallback occurrences,
-// surfaced through `StatusInfo`.
-pub mod snapshot_fallback_metrics;
-
-mod operations;
-mod session_state_machine;
-pub mod types;
+pub use agaric_sync::sync_protocol::*;
 
 #[cfg(test)]
 mod tests;
 
-// ---------------------------------------------------------------------------
-// Re-exports — preserve the original public API surface
-// ---------------------------------------------------------------------------
-
-pub use operations::*;
-pub use session_state_machine::SyncOrchestrator;
-pub use types::*;
+// `loro_sync_tests.rs` was an inline child of `loro_sync`; it is hosted in a
+// wrapper module (a real file) that reconstructs that module's namespace.
+#[cfg(test)]
+mod loro_sync_tests_host;

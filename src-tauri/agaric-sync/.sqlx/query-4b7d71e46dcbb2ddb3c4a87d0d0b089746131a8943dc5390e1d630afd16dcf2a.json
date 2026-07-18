@@ -1,0 +1,110 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, origin FROM op_log ORDER BY device_id ASC, seq ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "seq"
+          }
+        }
+      },
+      {
+        "name": "parent_seqs",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "parent_seqs"
+          }
+        }
+      },
+      {
+        "name": "hash",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "hash"
+          }
+        }
+      },
+      {
+        "name": "op_type",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "origin",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "origin"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "4b7d71e46dcbb2ddb3c4a87d0d0b089746131a8943dc5390e1d630afd16dcf2a"
+}

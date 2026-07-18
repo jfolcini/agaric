@@ -1,10 +1,10 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
-// #2621 (agaric-sync inversion): the narrow apply/materialize surface the sync
-// layer needs from the app-side `Materializer`, expressed as a trait so the
-// sync modules depend DOWN on this abstraction instead of UP on the concrete
-// coordinator. `Materializer` impls it in `materializer/coordinator.rs`.
-pub mod apply_host;
+// #2621 Sync-D: `apply_host` moved into `agaric-sync` (the sync layer that
+// consumes the trait). Re-exported so every `crate::apply_host::…` path resolves
+// unchanged; the app's `impl ApplyHost for Materializer` stays app-side in
+// `materializer/coordinator.rs`.
+pub use agaric_sync::apply_host;
 // `backlink` moved into `agaric-store` (#2621, wave S4d) as part of the
 // search/query SCC. Re-exported so every `crate::backlink::…` path resolves
 // unchanged. Its insta snapshots moved with it (`agaric-store/src/backlink/
@@ -114,7 +114,9 @@ mod op_log_app_tests;
 pub use agaric_store::pagination;
 #[cfg(test)]
 mod pagination_app_tests;
-pub mod pairing;
+// #2621 Sync-D: `pairing` moved into `agaric-sync`. Re-exported so every
+// `crate::pairing::…` path resolves unchanged.
+pub use agaric_sync::pairing;
 // `peer_refs` moved into `agaric-store` (#2621, wave S4a). Re-exported so
 // every `crate::peer_refs::…` path resolves unchanged. The one test that
 // couples to the app-only `pairing` module lives in `peer_refs_app_tests`.
@@ -135,6 +137,8 @@ pub mod recurrence;
 // paths resolve unchanged.
 pub use agaric_store::recurrence_math;
 pub mod reverse;
+// #2621 Sync-D: `snapshot` production moved into `agaric-sync`; `src/snapshot/
+// mod.rs` is now a shim that re-exports it and hosts the app-coupled tests.
 pub mod snapshot;
 pub mod soft_delete;
 // `space` + `space_filter_canonical` moved into `agaric-store` (#2621, wave
@@ -144,18 +148,30 @@ pub use agaric_store::space;
 pub use agaric_store::space_filter_canonical;
 pub mod spaces;
 pub use agaric_core::sql_utils; // foundation crate (#2621)
-pub mod sync_cert;
+// #2621 Sync-D: `sync_cert` moved into `agaric-sync`. Re-exported so every
+// `crate::sync_cert::…` path resolves unchanged.
+pub use agaric_sync::sync_cert;
 pub use agaric_sync::sync_constants;
+// #2621 Sync-D: `sync_daemon` production moved into `agaric-sync`; this
+// `pub mod` is now a shim (`src/sync_daemon/mod.rs`) re-exporting it and hosting
+// the app-coupled tests (`tests.rs`, `snapshot_transfer_tests.rs`).
 pub mod sync_daemon;
 // #2621 (agaric-sync split): the Tauri-backed sinks (`TauriEventSink`,
-// `ChannelEventSink`) live here; `sync_events` keeps only the pure event
-// types + `SyncEventSink` trait, free of any Tauri dependency.
+// `ChannelEventSink`) live here; `sync_events` (the pure event types +
+// `SyncEventSink` trait) moved into `agaric-sync` and is re-exported below.
 pub mod sync_event_sinks;
-pub mod sync_events;
+// #2621 Sync-D: `sync_events` (pure types + trait) moved into `agaric-sync`.
+// Re-exported so every `crate::sync_events::…` path resolves unchanged.
+pub use agaric_sync::sync_events;
+// #2621 Sync-D: `sync_files` / `sync_net` / `sync_protocol` production moved
+// into `agaric-sync`; each `pub mod` is now a shim re-exporting it and hosting
+// the app-coupled tests.
 pub mod sync_files;
 pub mod sync_net;
 pub mod sync_protocol;
-pub mod sync_scheduler;
+// #2621 Sync-D: `sync_scheduler` moved into `agaric-sync`. Re-exported so every
+// `crate::sync_scheduler::…` path resolves unchanged.
+pub use agaric_sync::sync_scheduler;
 // `tag_inheritance` + its companion `tag_inheritance_macros` moved into
 // `agaric-store` (#2621, wave S4a). Re-exported so `crate::tag_inheritance::…`
 // / `crate::tag_inheritance_macros::…` paths resolve unchanged. The

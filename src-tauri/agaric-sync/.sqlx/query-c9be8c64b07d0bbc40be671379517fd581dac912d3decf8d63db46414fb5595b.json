@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, data, up_to_seqs FROM log_snapshots WHERE status = 'complete' ORDER BY id DESC LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "data",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "data"
+          }
+        }
+      },
+      {
+        "name": "up_to_seqs",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "log_snapshots",
+            "name": "up_to_seqs"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "c9be8c64b07d0bbc40be671379517fd581dac912d3decf8d63db46414fb5595b"
+}

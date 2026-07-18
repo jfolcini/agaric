@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_type FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "block_type"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "7135689e80ac71786a1d361e1d5fcffb737fd1c5d5c1a3bdff08ddba76dc3714"
+}

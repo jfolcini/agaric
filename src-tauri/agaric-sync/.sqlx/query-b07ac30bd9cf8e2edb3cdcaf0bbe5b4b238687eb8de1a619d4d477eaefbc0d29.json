@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE materializer_apply_cursor SET materialized_through_seq = MAX(materialized_through_seq, ?), updated_at = ? WHERE id = 1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "b07ac30bd9cf8e2edb3cdcaf0bbe5b4b238687eb8de1a619d4d477eaefbc0d29"
+}

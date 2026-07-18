@@ -1,0 +1,122 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id, block_id, mime_type, filename, size_bytes, fs_path, created_at, deleted_at, content_hash FROM attachments",
+  "describe": {
+    "columns": [
+      {
+        "name": "id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "block_id",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "mime_type",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "mime_type"
+          }
+        }
+      },
+      {
+        "name": "filename",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "filename"
+          }
+        }
+      },
+      {
+        "name": "size_bytes",
+        "ordinal": 4,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "size_bytes"
+          }
+        }
+      },
+      {
+        "name": "fs_path",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "fs_path"
+          }
+        }
+      },
+      {
+        "name": "created_at",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "created_at"
+          }
+        }
+      },
+      {
+        "name": "deleted_at",
+        "ordinal": 7,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "deleted_at"
+          }
+        }
+      },
+      {
+        "name": "content_hash",
+        "ordinal": 8,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "attachments",
+            "name": "content_hash"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "64e6d6ef108c845363a534e8965c17f42d64d79ab494b79ba564a7ad970e4a16"
+}

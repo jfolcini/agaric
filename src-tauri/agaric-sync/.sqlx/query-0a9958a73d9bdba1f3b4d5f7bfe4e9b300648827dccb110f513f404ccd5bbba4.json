@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH desired AS ( SELECT bl.target_id AS target, COUNT(*) AS edge_count, MAX(tb.deleted_at IS NOT NULL) AS tgt_deleted, MIN(tb.block_type = 'page') AS tgt_is_page FROM block_links bl JOIN blocks sb ON sb.id = bl.source_id JOIN blocks tb ON tb.id = bl.target_id WHERE COALESCE(sb.page_id, sb.parent_id, sb.id) = ?1 AND sb.deleted_at IS NULL AND bl.target_id IN (SELECT value FROM json_each(?2)) GROUP BY 1 ) INSERT INTO page_link_cache (source_page_id, target_page_id, edge_count, src_deleted, tgt_deleted, tgt_is_page) SELECT ?1, target, edge_count, COALESCE((SELECT (b.deleted_at IS NOT NULL) FROM blocks b WHERE b.id = ?1), 1), tgt_deleted, tgt_is_page FROM desired WHERE true ON CONFLICT(source_page_id, target_page_id) DO UPDATE SET edge_count = excluded.edge_count, src_deleted = excluded.src_deleted, tgt_deleted = excluded.tgt_deleted, tgt_is_page = excluded.tgt_is_page",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0a9958a73d9bdba1f3b4d5f7bfe4e9b300648827dccb110f513f404ccd5bbba4"
+}

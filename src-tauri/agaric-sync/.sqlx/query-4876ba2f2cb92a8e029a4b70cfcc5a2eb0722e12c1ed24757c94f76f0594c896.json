@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM log_snapshots",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "4876ba2f2cb92a8e029a4b70cfcc5a2eb0722e12c1ed24757c94f76f0594c896"
+}

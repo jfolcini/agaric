@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id FROM block_drafts LIMIT 8",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_drafts",
+            "name": "block_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e4b5aa82f204a93601c6e7c4eb2a379db0c63617eb57be2e033df028a85496de"
+}

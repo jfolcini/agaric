@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT position as \"position: i64\", page_id as \"page_id: agaric_core::ulid::BlockId\" FROM blocks WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "position: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "position"
+          }
+        }
+      },
+      {
+        "name": "page_id: agaric_core::ulid::BlockId",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      true
+    ]
+  },
+  "hash": "32003ee8d6d400cd20a8e10a216219c83194b6f5ef2663e8b3739c5f11c95e93"
+}
