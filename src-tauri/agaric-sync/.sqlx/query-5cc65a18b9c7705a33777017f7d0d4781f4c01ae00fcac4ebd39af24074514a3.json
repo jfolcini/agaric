@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT DISTINCT page_id AS \"page_id!\" FROM blocks WHERE id IN (SELECT value FROM json_each(?)) AND page_id IS NOT NULL",
+  "describe": {
+    "columns": [
+      {
+        "name": "page_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "blocks",
+            "name": "page_id"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true
+    ]
+  },
+  "hash": "5cc65a18b9c7705a33777017f7d0d4781f4c01ae00fcac4ebd39af24074514a3"
+}
