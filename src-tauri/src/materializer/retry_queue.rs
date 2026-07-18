@@ -78,6 +78,14 @@ pub(crate) const APPLY_OP_TASK_SENTINEL: &str = "__APPLY_OP__";
 /// changes.
 pub(crate) const SHED_LAST_ERROR: &str = "shed: background queue full (task never executed)";
 
+/// #2831: `last_error` marker for a `RefreshTagUsageCount` row that was
+/// *pre-seeded* by the `ReindexBlockTagRefs` handler (as a durable refresh
+/// obligation) rather than recorded from an execution failure. Distinct
+/// from [`SHED_LAST_ERROR`] so it does not trip the shed give-up exemption;
+/// a later real failure overwrites it via `record_failure`.
+pub(crate) const SEED_OBLIGATION_LAST_ERROR: &str =
+    "seed: usage_count refresh owed by reindex (not yet attempted)";
+
 /// Task kinds that may be persisted to the retry queue.
 ///
 /// Three families:
@@ -719,6 +727,83 @@ pub(crate) async fn lease_entry(
     )
     .execute(pool)
     .await?;
+    Ok(())
+}
+
+/// #2831: seed a durable, idempotent `RefreshTagUsageCount` obligation for
+/// `tag_id` on the caller-provided connection (typically the same
+/// `BEGIN IMMEDIATE` transaction that commits a `block_tag_refs` diff).
+///
+/// The obligation decouples "a `usage_count` refresh is owed" from the
+/// transient reindex diff: on a retry the diff is empty, so a diff-coupled
+/// refresh silently no-ops and leaves `tags_cache.usage_count` stale
+/// (#2831). Persisting it inside the diff transaction lets the periodic
+/// sweeper drive the refresh to completion independently of any future
+/// diff, and makes the seed atomic with the diff it depends on.
+///
+/// Idempotent via `ON CONFLICT(block_id, task_kind) DO NOTHING`: an
+/// existing row (e.g. from a prior real failure, carrying its accumulated
+/// `attempts`/backoff/`created_at`) is preserved untouched. A fresh row
+/// lands with `attempts = 1` and `next_attempt_at = now` so the next sweep
+/// (≤60 s) picks it up immediately IF the inline refresh the caller
+/// attempts next does not durably succeed. `attempts = 1` matches
+/// [`record_failure`]'s first-failure INSERT so the `pending_retry_rows`
+/// gauge stays consistent: the caller bumps the gauge once for a freshly
+/// inserted row (this fn returns `true`), and a later `record_failure` on
+/// the same row takes the `DO UPDATE` branch (`attempts >= 2`), which does
+/// not re-bump.
+///
+/// Returns `true` iff a new row was inserted. The caller MUST bump
+/// `pending_retry_rows` only AFTER the transaction commits — a bump before
+/// commit would over-count on rollback.
+pub(crate) async fn seed_refresh_tag_usage_count_obligation_tx(
+    conn: &mut sqlx::SqliteConnection,
+    tag_id: &str,
+) -> Result<bool, AppError> {
+    let now = crate::db::now_ms();
+    let kind = RetryKind::RefreshTagUsageCount.task_kind_str();
+    let kind_str: &str = kind.as_ref();
+    let result = sqlx::query!(
+        "INSERT INTO materializer_retry_queue \
+             (block_id, task_kind, attempts, last_error, next_attempt_at) \
+         VALUES (?1, ?2, 1, ?3, ?4) \
+         ON CONFLICT(block_id, task_kind) DO NOTHING",
+        tag_id,
+        kind_str,
+        SEED_OBLIGATION_LAST_ERROR,
+        now,
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// #2831: clear the durable `RefreshTagUsageCount` obligation for `tag_id`
+/// after the inline refresh has durably succeeded.
+///
+/// Unlike [`clear_on_success`], this does NOT consult the
+/// `pending_retry_rows` gauge fast-path: the caller just seeded a row for
+/// this exact key, so the DELETE-by-PK is always warranted (and cheap
+/// against the tiny single-writer retry-queue table). `metrics` is optional
+/// so the direct-call handler path (unit tests with no live sweeper) can
+/// pass `None`; production passes `Some` so the gauge is re-floored.
+pub(crate) async fn clear_refresh_tag_usage_count_obligation(
+    pool: &SqlitePool,
+    tag_id: &str,
+    metrics: Option<&super::metrics::QueueMetrics>,
+) -> Result<(), AppError> {
+    let kind = RetryKind::RefreshTagUsageCount.task_kind_str();
+    let kind_str: &str = kind.as_ref();
+    let result = sqlx::query!(
+        "DELETE FROM materializer_retry_queue WHERE block_id = ? AND task_kind = ?",
+        tag_id,
+        kind_str,
+    )
+    .execute(pool)
+    .await?;
+    if let Some(m) = metrics {
+        m.note_retry_rows_deleted(result.rows_affected());
+    }
     Ok(())
 }
 

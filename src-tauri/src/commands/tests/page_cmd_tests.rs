@@ -7703,6 +7703,268 @@ async fn import_export_full_round_trip_1916_1917_1918() {
     mat.shutdown();
 }
 
+/// #2715 — a frontmatter scalar property value carrying YAML-significant
+/// content (an embedded newline, a `---` on its own line, a `:` ) must
+/// round-trip byte-identically: the exporter YAML-escapes / block-scalar
+/// encodes it (`yaml_scalar_emit`) and the importer's `parse_frontmatter`
+/// recovers the exact value. Before the fix the raw value was written verbatim
+/// after `key: `, so an embedded `\n---` broke out of the frontmatter fence and
+/// an embedded `\nother: v` injected a spurious key.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_frontmatter_scalar_escaping_round_trip_2715() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA2715S1";
+
+    insert_block(&pool, SRC, "page", "Escaping Source", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+
+    // A multi-line value that also carries a bare `---` line and a colon — the
+    // exact content that, written verbatim, would break out of / inject into
+    // the frontmatter fence. An unseeded key routes to `value_text` on import.
+    const MULTILINE: &str = "First line\n---\ntail: value";
+    // A single-line value carrying a `: ` (colon-space).
+    const COLON: &str = "16: 9 ratio";
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'release_notes', ?)",
+    )
+    .bind(SRC)
+    .bind(MULTILINE)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'ratio', ?)")
+        .bind(SRC)
+        .bind(COLON)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Export → the frontmatter fence must stay well-formed (exactly two `---`
+    // fence lines at column 0: open + close).
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+    let fence_lines = md.lines().filter(|l| *l == "---").count();
+    assert_eq!(
+        fence_lines, 2,
+        "exactly one frontmatter fence pair; embedded `---` must be escaped, got:\n{md}"
+    );
+
+    // Re-import as a NEW page and read the two page properties back.
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Reimported Escaping.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("round-trip re-import must succeed");
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported Escaping'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let notes: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'release_notes'",
+    )
+    .bind(&new_page)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        notes.as_deref(),
+        Some(MULTILINE),
+        "multi-line/`---`/colon value must round-trip byte-identically; got {notes:?}\nmd:\n{md}"
+    );
+
+    let ratio: Option<String> = sqlx::query_scalar(
+        "SELECT value_text FROM block_properties WHERE block_id = ? AND key = 'ratio'",
+    )
+    .bind(&new_page)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        ratio.as_deref(),
+        Some(COLON),
+        "colon-bearing value must round-trip byte-identically; got {ratio:?}\nmd:\n{md}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2716 — a block whose content spans multiple lines — including a
+/// continuation line that begins with `- ` and one shaped like `key:: value` —
+/// must round-trip to the SAME single block with identical content. Before the
+/// fix the embedded `\n` lines were written at column 0 with no bullet/indent,
+/// so re-import mis-parsed them into new blocks / properties.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_multiline_block_content_round_trip_2716() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA2716S1";
+    const BLK: &str = "01AAAAAAAAAAAAAAAAAA2716B1";
+
+    insert_block(&pool, SRC, "page", "Multiline Source", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+
+    // Continuation lines that would be MISCLASSIFIED verbatim: `- bravo`
+    // (bullet) and `key:: charlie` (property). The exporter must escape them.
+    const CONTENT: &str = "alpha\n- bravo\nkey:: charlie\ndelta";
+    insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Reimported Multiline.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("round-trip re-import must succeed");
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported Multiline'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Exactly one content block carries the multi-line content (the exported
+    // `# Multiline Source` heading re-imports as a separate depth-0 block).
+    let matches: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE page_id = ? AND id != ? \
+         AND block_type = 'content' AND deleted_at IS NULL AND content = ?",
+    )
+    .bind(&new_page)
+    .bind(&new_page)
+    .bind(CONTENT)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        matches.len(),
+        1,
+        "the multi-line content must round-trip to ONE block with identical content; \
+         got {matches:?}\nmd:\n{md}"
+    );
+
+    // The escaped continuation lines must NOT have leaked into block properties.
+    let props: Vec<String> =
+        sqlx::query_scalar("SELECT key FROM block_properties WHERE block_id = ?")
+            .bind(&matches[0])
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !props.iter().any(|k| k == "key"),
+        "the `key:: charlie` continuation line must stay literal, not become a property; \
+         got {props:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2725 — a block whose content is a fenced code block whose interior carries
+/// list-like (`- item`) and property-like (`key:: value`) lines must round-trip
+/// intact as ONE block. Before the fix those interior lines were split into new
+/// blocks / properties on re-import.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_export_fenced_code_block_round_trip_2725() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    const SRC: &str = "01AAAAAAAAAAAAAAAAAA2725S1";
+    const BLK: &str = "01AAAAAAAAAAAAAAAAAA2725B1";
+
+    insert_block(&pool, SRC, "page", "Fenced Source", None, Some(1)).await;
+    assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
+
+    // A fenced code block whose body contains list/property-shaped lines. These
+    // are literal code, NOT new blocks/properties.
+    const CONTENT: &str = "```\n- fake item\nkey:: fake prop\n```";
+    insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
+
+    import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Reimported Fenced.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .expect("round-trip re-import must succeed");
+
+    let new_page: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported Fenced'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // Exactly one content block carries the whole fenced code sample.
+    let matches: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE page_id = ? AND id != ? \
+         AND block_type = 'content' AND deleted_at IS NULL AND content = ?",
+    )
+    .bind(&new_page)
+    .bind(&new_page)
+    .bind(CONTENT)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        matches.len(),
+        1,
+        "the fenced code block must round-trip to ONE block with identical content; \
+         got {matches:?}\nmd:\n{md}"
+    );
+
+    // The interior `key:: fake prop` line must NOT have become a property on any
+    // block of the new page.
+    let fake_props: Vec<String> = sqlx::query_scalar(
+        "SELECT bp.key FROM block_properties bp JOIN blocks b ON b.id = bp.block_id \
+         WHERE b.page_id = ? AND bp.key = 'key'",
+    )
+    .bind(&new_page)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(
+        fake_props.is_empty(),
+        "a `key:: value` line inside a code fence must stay literal; got {fake_props:?}"
+    );
+
+    mat.shutdown();
+}
+
 // ======================================================================
 // #1925 — import attachments referenced by Logseq/Obsidian vaults
 // ======================================================================

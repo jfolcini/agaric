@@ -4021,6 +4021,12 @@ async fn reindex_block_links_waits_for_competing_writer() {
 
     let pool = Arc::new(pool);
 
+    // Readiness handshake: the holder signals only after it provably
+    // owns the writer lock, so the contender never has to guess a
+    // scheduling window (a fixed pre-sleep can lose the race under
+    // CPU saturation and false-red this test).
+    let (lock_held_tx, lock_held_rx) = tokio::sync::oneshot::channel();
+
     // Holder: take a writer lock for ~100 ms, then release.
     let holder = {
         let pool = Arc::clone(&pool);
@@ -4028,13 +4034,15 @@ async fn reindex_block_links_waits_for_competing_writer() {
             let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
             // Force the writer lock to be acquired now, not lazily.
             sqlx::query("SELECT 1").execute(&mut *tx).await.unwrap();
+            // Lock is now provably held — signal the contender.
+            let _ = lock_held_tx.send(());
             tokio::time::sleep(Duration::from_millis(100)).await;
             tx.commit().await.unwrap();
         })
     };
 
-    // Give the holder a beat to acquire the lock first.
-    tokio::time::sleep(Duration::from_millis(10)).await;
+    // Wait for the holder to actually acquire the lock before racing.
+    lock_held_rx.await.unwrap();
 
     // Contender: the rebuild must wait for the holder, not fail.
     let start = Instant::now();

@@ -30,6 +30,11 @@ name: Scheduled deep checks
 #   mutants        — #649: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine). Non-blocking; the
 #                    survivor list is the deliverable to triage into tests.
+#   mutants-frontend — #886: StrykerJS scoped to a handful of pure,
+#                    deterministic frontend libs (search-query's pure
+#                    modules, agenda-sort, filters/model, date-utils,
+#                    tree-utils — never components or Tauri IPC).
+#                    Non-blocking, same triage-signal posture as `mutants`.
 #   fuzz           — #650/#2590: short coverage-guided fuzz runs over the
 #                    raw-input parsers (snapshot decode, deeplink parse,
 #                    Markdown/Obsidian import parse). Smoke-length here (the
@@ -627,6 +632,135 @@ jobs:
         with:
           name: mutants-out
           path: src-tauri/mutants-out/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # mutants-frontend (#886) — StrykerJS scoped to a handful of pure,
+  # deterministic frontend libs (search-query's pure modules, agenda-sort,
+  # filters/model, date-utils, tree-utils — never components or Tauri IPC).
+  # Mirrors the `mutants` (Rust) lane above: non-blocking, survivor list is
+  # the deliverable to triage into tests. See `stryker.modules.mjs` /
+  # `stryker.config.mjs` / `stryker.vitest.config.mjs` and
+  # `docs/BUILD.md`'s "Mutation testing (nightly)" section for the recipe
+  # (why each module runs in its own Stryker invocation, scoped to just its
+  # own test file(s) — vitest's default "related" test-selection resolves
+  # through barrel re-exports like `search-query/index.ts` and drags in
+  # 271+ unrelated component tests otherwise).
+  # ---------------------------------------------------------------------------
+  mutants-frontend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Run Stryker mutation testing (scoped frontend libs)
+        # Never gate: surviving mutants are triage signal, not a merge
+        # blocker. `npm run mutation` loops `stryker run` once per module
+        # (see `scripts/run-mutation.mjs`); a non-zero exit here means an
+        # actual Stryker crash, not a low mutation score (no
+        # `thresholds.break` is configured).
+        run: npm run mutation || true
+
+      - name: Mutation summary
+        if: always()
+        run: |
+          node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
+          const fs = require('node:fs')
+          const path = require('node:path')
+
+          const root = 'reports/mutation'
+          let lines = ['## StrykerJS mutation testing (frontend, #886)', '']
+          if (!fs.existsSync(root)) {
+            lines.push('_No reports produced (Stryker crashed before writing JSON) — see job log._')
+            console.log(lines.join('\n'))
+            process.exit(0)
+          }
+
+          const modules = fs.readdirSync(root).sort()
+          // "Score" here is Stryker's "covered" mutation score — (killed +
+          // timeout) / (killed + timeout + survived) — i.e. excluding
+          // no-coverage mutants from the denominator, same as the "covered"
+          // column Stryker itself prints to the job log.
+          lines.push('| Module | Score (covered) | Killed | Timeout | Survived | No cov | Errors |')
+          lines.push('|---|--:|--:|--:|--:|--:|--:|')
+
+          let totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+          const survivors = []
+
+          for (const mod of modules) {
+            const jsonPath = path.join(root, mod, 'mutation.json')
+            if (!fs.existsSync(jsonPath)) {
+              lines.push(`| ${mod} | _no report_ | | | | | |`)
+              continue
+            }
+            const report = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
+            const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+            for (const [file, entry] of Object.entries(report.files ?? {})) {
+              for (const mutant of entry.mutants ?? []) {
+                switch (mutant.status) {
+                  case 'Killed':
+                    counts.killed++
+                    break
+                  case 'Timeout':
+                    counts.timeout++
+                    break
+                  case 'Survived':
+                    counts.survived++
+                    survivors.push(`${mod}: ${file}:${mutant.location.start.line} [${mutant.mutatorName}]`)
+                    break
+                  case 'NoCoverage':
+                    counts.noCov++
+                    break
+                  case 'CompileError':
+                  case 'RuntimeError':
+                    counts.errors++
+                    break
+                  default:
+                    break
+                }
+              }
+            }
+            const scored = counts.killed + counts.timeout + counts.survived
+            const score = scored > 0 ? ((counts.killed + counts.timeout) / scored) * 100 : 0
+            lines.push(
+              `| ${mod} | ${score.toFixed(1)}% | ${counts.killed} | ${counts.timeout} | ${counts.survived} | ${counts.noCov} | ${counts.errors} |`,
+            )
+            for (const k of Object.keys(totals)) totals[k] += counts[k]
+          }
+
+          const totalScored = totals.killed + totals.timeout + totals.survived
+          const totalScore = totalScored > 0 ? ((totals.killed + totals.timeout) / totalScored) * 100 : 0
+          lines.push(
+            `| **All modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
+          )
+
+          if (survivors.length > 0) {
+            lines.push('', '### Surviving mutants — triage into test gaps', '```')
+            lines.push(...survivors)
+            lines.push('```')
+          }
+
+          console.log(lines.join('\n'))
+          NODE
+
+      - name: Upload mutation reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: mutation-frontend-report
+          path: reports/mutation/
           if-no-files-found: ignore
           retention-days: 30
 

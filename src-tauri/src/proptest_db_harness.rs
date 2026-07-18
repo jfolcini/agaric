@@ -59,12 +59,35 @@
 //!
 //! # Scope discipline
 //!
-//! Kept focused on B1's needs: the generator emits the op variants whose
-//! reverse is observable through the op log alone (Create / Edit / Delete
-//! / Move / Restore / AddTag / RemoveTag / SetProperty / DeleteProperty).
-//! Attachment ops (Add/Delete) and PurgeBlock are covered by the B1
-//! mapping test directly (they need no chain), so the generator does not
-//! emit them — B2 can add them when it wires the attachment FS side.
+//! The generator emits every op variant whose pre-conditions the running
+//! [`ChainModel`] can maintain structurally: Create / Edit / Delete /
+//! Restore / **Purge** / Move / AddTag / RemoveTag / SetProperty /
+//! DeleteProperty / **AddAttachment** / **DeleteAttachment**.
+//!
+//! **#2681:** `PurgeBlock` and the attachment ops used to be excluded here
+//! ("covered by the B1 mapping test directly"), so no randomized chain ever
+//! interleaved them. They are now generated:
+//!
+//! * `PurgeBlock` is gated on a currently soft-deleted block (a *deleted
+//!   seed*), mirroring the "purge from trash" lifecycle; the model removes
+//!   the purged cohort so no later op targets a purged id.
+//! * `AddAttachment` / `DeleteAttachment` draw a fresh `attachment_id` per
+//!   add and only delete an attachment the chain previously added, so
+//!   `reverse::compute_reverse` can reconstruct the prior `add_attachment`
+//!   from the op log alone (the B1 inverse law). `RenameAttachment` is left
+//!   out — its reverse needs no chain state, so a directed test suffices.
+//!
+//! ## Valid `deleted_at_ref` for Restore (#2681)
+//!
+//! `DeleteBlock` soft-deletes with a deterministic `deleted_at` equal to the
+//! op's `created_at` ([`ts_for`] of the op's chain step). The model records
+//! that timestamp per deleted block, so a later `RestoreBlock` carries the
+//! **real** `deleted_at_ref` (not the old `0` placeholder) — the same
+//! technique the directed `delete_restore_local_matches_remote` fixture uses.
+//! A driver that appends each resolved op with `ts_for(step)` (see
+//! `materializer::handlers::apply_reproject_proptest`) then stamps a
+//! `deleted_at` that the minted ref matches exactly, so the SQL cohort restore
+//! is a real un-delete rather than a silent no-op.
 
 #![cfg(test)]
 
@@ -73,8 +96,9 @@ use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 
 use crate::op::{
-    CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
-    MoveBlockPayload, OpPayload, RestoreBlockPayload, SetPropertyPayload,
+    AddAttachmentPayload, CreateBlockPayload, DeleteAttachmentPayload, DeleteBlockPayload,
+    DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
+    RestoreBlockPayload, SetPropertyPayload,
 };
 use crate::op_log::{OpRecord, append_local_op_at};
 use crate::ulid::BlockId;
@@ -100,6 +124,11 @@ const DEFAULT_POOL_SIZE: usize = 4;
 /// Property keys the generator draws from — short identifiers matching
 /// production property shapes (`status`, `priority`, …).
 const PROP_KEYS: &[&str] = &["status", "priority", "due_date", "owner"];
+
+/// #2681: filenames the `AddAttachment` generator draws from. A tiny fixed set
+/// keeps shrunk counter-examples small; the attachment_id (not the filename) is
+/// what disambiguates attachments.
+const ATTACHMENT_NAMES: &[&str] = &["a.png", "b.png", "c.png"];
 
 // ---------------------------------------------------------------------------
 // Op-kind IR.
@@ -131,6 +160,22 @@ pub enum OpKind {
     },
     Restore {
         deleted_index: usize,
+    },
+    /// #2681: hard-purge a currently soft-deleted block (a *deleted seed*).
+    /// Resolved against the deleted-seed set so `PurgeBlock` always targets a
+    /// block in trash, mirroring the production lifecycle.
+    Purge {
+        deleted_index: usize,
+    },
+    /// #2681: attach a new file to a live block. Mints a fresh `attachment_id`
+    /// so a later [`OpKind::DeleteAttachment`] has a real prior add to reverse.
+    AddAttachment {
+        live_index: usize,
+        name_index: usize,
+    },
+    /// #2681: delete a previously-added, still-present attachment.
+    DeleteAttachment {
+        attachment_index: usize,
     },
     Move {
         live_index: usize,
@@ -189,6 +234,12 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
             .prop_map(|(live_index, new_content)| OpKind::Edit { live_index, new_content }),
         1 => any::<usize>().prop_map(|live_index| OpKind::Delete { live_index }),
         1 => any::<usize>().prop_map(|deleted_index| OpKind::Restore { deleted_index }),
+        // #2681: purge a soft-deleted block, and attach/detach files.
+        1 => any::<usize>().prop_map(|deleted_index| OpKind::Purge { deleted_index }),
+        1 => (any::<usize>(), any::<usize>())
+            .prop_map(|(live_index, name_index)| OpKind::AddAttachment { live_index, name_index }),
+        1 => any::<usize>()
+            .prop_map(|attachment_index| OpKind::DeleteAttachment { attachment_index }),
         2 => (any::<usize>(), proptest::option::of(any::<usize>()), position_strategy())
             .prop_map(|(live_index, parent_choice, position)| OpKind::Move {
                 live_index, parent_choice, position,
@@ -237,6 +288,30 @@ pub struct ChainModel {
     state: BTreeMap<String, bool>, // true = live, false = soft-deleted
     /// Properties set per (block_id, key) — used to gate DeleteProperty.
     props: BTreeMap<(String, String), ()>,
+    /// #2681: current parent per created block (`None` = model root). Tracked
+    /// so `Delete` can cascade to the live subtree exactly like the SQL
+    /// `descendants_cte_active` cascade — the model then never emits a mutating
+    /// op against a cascade-soft-deleted descendant (which would take the
+    /// SQL-only fallback in the apply/reproject tests when its space can no
+    /// longer resolve).
+    parents: BTreeMap<String, Option<String>>,
+    /// #2681: the `deleted_at` timestamp ([`ts_for`] of the deleting op's chain
+    /// step) stamped on each currently soft-deleted block. Sourced so a later
+    /// `RestoreBlock` carries the REAL `deleted_at_ref`.
+    deleted_at: BTreeMap<String, i64>,
+    /// #2681: for each *deleted seed* (a block that was the direct target of a
+    /// `DeleteBlock`), the cohort of ids soft-deleted together (seed + its
+    /// then-live descendants). Restore/Purge of the seed acts on this set,
+    /// mirroring the SQL cohort walk.
+    cohorts: BTreeMap<String, Vec<String>>,
+    /// #2681: attachments the chain has added and not yet deleted, as
+    /// `(attachment_id, fs_path)`. `DeleteAttachment` draws from this so its
+    /// reverse (the original `add_attachment`) is reconstructable from the log.
+    attachments: Vec<(BlockId, String)>,
+    /// #2681: count of successfully-resolved ops so far — the op's chain step.
+    /// Equals `seed_chain`'s `n` and the apply/reproject driver's enumerate
+    /// index, so `ts_for(step)` is the timestamp the op will be appended with.
+    step: usize,
 }
 
 impl ChainModel {
@@ -246,7 +321,70 @@ impl ChainModel {
             pool,
             state: BTreeMap::new(),
             props: BTreeMap::new(),
+            parents: BTreeMap::new(),
+            deleted_at: BTreeMap::new(),
+            cohorts: BTreeMap::new(),
+            attachments: Vec::new(),
+            step: 0,
         }
+    }
+
+    /// Is `id` a currently-live (created, not soft-deleted, not purged) block?
+    fn is_live(&self, id: &str) -> bool {
+        self.state.get(id).copied() == Some(true)
+    }
+
+    /// Is `id`'s parent currently live? A model-root (`None` parent) is anchored
+    /// under the always-live rooting page by the apply/reproject `prepare_chain`,
+    /// so it counts as parent-live too.
+    fn parent_is_live(&self, id: &str) -> bool {
+        match self.parents.get(id) {
+            Some(Some(parent)) => self.is_live(parent),
+            _ => true,
+        }
+    }
+
+    /// The live descendant subtree of `seed` (excluding `seed`), by walking the
+    /// `parents` map downward. Cycle-safe via a visited set; only currently-live
+    /// blocks are returned (mirrors the SQL active-descendant cascade).
+    fn live_descendants(&self, seed: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut frontier = vec![seed.to_string()];
+        let mut visited: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        visited.insert(seed.to_string());
+        while let Some(cur) = frontier.pop() {
+            for (child, parent) in &self.parents {
+                if parent.as_deref() == Some(cur.as_str())
+                    && self.is_live(child)
+                    && visited.insert(child.clone())
+                {
+                    out.push(child.clone());
+                    frontier.push(child.clone());
+                }
+            }
+        }
+        out
+    }
+
+    /// Would reparenting `target` under `candidate` form a cycle — i.e. is
+    /// `candidate` equal to `target` or a descendant of `target`? Mirrors the
+    /// engine's `is_cyclic_move` guard so the model only records acyclic
+    /// reparents (a cyclic `MoveBlock` is skipped by the engine, keeping the old
+    /// parent; the model avoids emitting one so its `parents` tree stays sound).
+    fn would_cycle(&self, target: &str, candidate: &str) -> bool {
+        if candidate == target {
+            return true;
+        }
+        // Walk up from candidate; if we reach target, candidate is below it.
+        let mut cur = candidate.to_string();
+        for _ in 0..1000 {
+            match self.parents.get(&cur).cloned().flatten() {
+                Some(p) if p == target => return true,
+                Some(p) => cur = p,
+                None => return false,
+            }
+        }
+        false
     }
 
     fn live_ids(&self) -> Vec<String> {
@@ -257,19 +395,24 @@ impl ChainModel {
             .collect()
     }
 
-    fn deleted_ids(&self) -> Vec<String> {
-        self.state
-            .iter()
-            .filter(|&(_, &live)| !live)
-            .map(|(id, _)| id.clone())
-            .collect()
-    }
-
     /// Resolve one sketch to a typed payload, or `None` if no valid
     /// target exists (caller skips — keeps the chain well-formed without
     /// rejecting the whole proptest case). Mutates the model to reflect
     /// the op that will be appended.
+    ///
+    /// #2681: increments the chain [`step`](Self::step) counter for every op it
+    /// actually emits, so `ts_for(step)` (the timestamp the op will be appended
+    /// with) is available to arms that mint a `deleted_at`-derived value. A
+    /// skipped sketch (`None`) does not advance the step.
     fn resolve(&mut self, kind: &OpKind) -> Option<OpPayload> {
+        let out = self.resolve_inner(kind);
+        if out.is_some() {
+            self.step += 1;
+        }
+        out
+    }
+
+    fn resolve_inner(&mut self, kind: &OpKind) -> Option<OpPayload> {
         match kind {
             OpKind::Create {
                 pool_index,
@@ -292,6 +435,12 @@ impl ChainModel {
                     }
                 });
                 self.state.insert(id.as_str().to_string(), true);
+                // #2681: record the model parent so `Delete` can cascade to the
+                // live subtree exactly like the SQL active-descendant cascade.
+                self.parents.insert(
+                    id.as_str().to_string(),
+                    parent_id.as_ref().map(|p| p.as_str().to_string()),
+                );
                 Some(OpPayload::CreateBlock(CreateBlockPayload {
                     block_id: id,
                     block_type: "content".into(),
@@ -322,25 +471,82 @@ impl ChainModel {
                     return None;
                 }
                 let target = live[live_index % live.len()].clone();
-                self.state.insert(target.clone(), false);
+                // #2681: cascade to the live subtree with a single deterministic
+                // `deleted_at = ts_for(step)` (the timestamp this op will be
+                // appended with), exactly mirroring the SQL cascade. Record the
+                // cohort under the seed so Restore/Purge act on the same set.
+                let ts = ts_for(self.step);
+                let mut cohort = vec![target.clone()];
+                cohort.extend(self.live_descendants(&target));
+                for id in &cohort {
+                    self.state.insert(id.clone(), false);
+                    self.deleted_at.insert(id.clone(), ts);
+                }
+                self.cohorts.insert(target.clone(), cohort);
                 Some(OpPayload::DeleteBlock(DeleteBlockPayload {
                     block_id: BlockId::from_trusted(&target),
                 }))
             }
             OpKind::Restore { deleted_index } => {
-                let deleted = self.deleted_ids();
-                if deleted.is_empty() {
+                // #2681: restore only a *deleted seed* whose parent is currently
+                // live, so `apply_restore_block_via_loro` can resolve the space
+                // via the (live) parent and stay on the engine path — and so no
+                // soft-deleted ancestor chain is dragged in (the seed's parent
+                // being live means the #1884 upward restore has nothing to do,
+                // keeping the model's cohort in step with the SQL cohort walk).
+                let seeds: Vec<String> = self
+                    .cohorts
+                    .keys()
+                    .filter(|s| !self.is_live(s) && self.parent_is_live(s))
+                    .cloned()
+                    .collect();
+                if seeds.is_empty() {
                     return None;
                 }
-                let target = deleted[deleted_index % deleted.len()].clone();
-                self.state.insert(target.clone(), true);
-                // Reverse-of-restore discards the original
-                // deleted_at_ref; we still need a non-empty ref to build a
-                // structurally valid RestoreBlock payload. Use a marker —
-                // the actual value is irrelevant to the chain model.
+                let target = seeds[deleted_index % seeds.len()].clone();
+                // Carry the REAL deleted_at the delete stamped (not a `0`
+                // placeholder) so the SQL cohort restore is a genuine un-delete.
+                let deleted_at_ref = self.deleted_at.get(&target).copied().unwrap_or(0);
+                let cohort = self.cohorts.remove(&target).unwrap_or_default();
+                for id in &cohort {
+                    self.state.insert(id.clone(), true);
+                    self.deleted_at.remove(id);
+                }
                 Some(OpPayload::RestoreBlock(RestoreBlockPayload {
                     block_id: BlockId::from_trusted(&target),
-                    deleted_at_ref: 0,
+                    deleted_at_ref,
+                }))
+            }
+            OpKind::Purge { deleted_index } => {
+                // #2681: purge a deleted seed. Drop its cohort from
+                // `cohorts`/`deleted_at` so the ids are no longer a
+                // restore/purge target, but DELIBERATELY keep each id in `state`
+                // (as soft-deleted) so a later `Create` never reuses that pool
+                // id. A consumer that FILTERS the emitted `PurgeBlock` (the
+                // apply/reproject tests drop purge — it is always SQL-only for
+                // the engine side) leaves the block's row in place, so freeing
+                // the id here would let a re-`Create` collide with the still-
+                // present soft-deleted row and take the SQL-only fallback. Pool
+                // ids are single-use for the whole chain either way (the model
+                // never freed a deleted id before #2681 added purge).
+                let seeds: Vec<String> = self
+                    .cohorts
+                    .keys()
+                    .filter(|s| !self.is_live(s))
+                    .cloned()
+                    .collect();
+                if seeds.is_empty() {
+                    return None;
+                }
+                let target = seeds[deleted_index % seeds.len()].clone();
+                let cohort = self.cohorts.remove(&target).unwrap_or_default();
+                for id in &cohort {
+                    self.deleted_at.remove(id);
+                    // `state[id]` stays `false` (consumed); `parents[id]` stays
+                    // so any descendant walk still sees the correct shape.
+                }
+                Some(OpPayload::PurgeBlock(PurgeBlockPayload {
+                    block_id: BlockId::from_trusted(&target),
                 }))
             }
             OpKind::Move {
@@ -353,9 +559,16 @@ impl ChainModel {
                     return None;
                 }
                 let target = live[live_index % live.len()].clone();
-                // Parent must be a different live block (or root). Avoid
-                // self-parenting, which `move_block_inner` rejects.
-                let candidates: Vec<&String> = live.iter().filter(|id| **id != target).collect();
+                // Parent must be a different live block (or root), and #2681
+                // must NOT be a descendant of `target` — the engine skips a
+                // cycle-forming reparent (keeping the old parent), so emitting
+                // one would desync the model's `parents` tree from reality.
+                // Restrict candidates to live non-descendants so every emitted
+                // reparent actually lands.
+                let candidates: Vec<&String> = live
+                    .iter()
+                    .filter(|id| !self.would_cycle(&target, id))
+                    .collect();
                 let new_parent_id = parent_choice.and_then(|c| {
                     if candidates.is_empty() {
                         None
@@ -363,6 +576,11 @@ impl ChainModel {
                         Some(BlockId::from_trusted(candidates[c % candidates.len()]))
                     }
                 });
+                // Reflect the reparent in the model tree.
+                self.parents.insert(
+                    target.clone(),
+                    new_parent_id.as_ref().map(|p| p.as_str().to_string()),
+                );
                 Some(OpPayload::MoveBlock(MoveBlockPayload {
                     block_id: BlockId::from_trusted(&target),
                     new_parent_id,
@@ -443,6 +661,46 @@ impl ChainModel {
                     tag_id: tag,
                 }))
             }
+            OpKind::AddAttachment {
+                live_index,
+                name_index,
+            } => {
+                // #2681: attach a fresh file to a live block. A brand-new
+                // `attachment_id` per add keeps ids unique, so `DeleteAttachment`
+                // and its reverse target an unambiguous prior add.
+                let live = self.live_ids();
+                if live.is_empty() {
+                    return None;
+                }
+                let target = live[live_index % live.len()].clone();
+                let attachment_id = BlockId::new();
+                let name = ATTACHMENT_NAMES[name_index % ATTACHMENT_NAMES.len()];
+                let fs_path = format!("attachments/{}/{name}", attachment_id.as_str());
+                self.attachments
+                    .push((attachment_id.clone(), fs_path.clone()));
+                Some(OpPayload::AddAttachment(AddAttachmentPayload {
+                    attachment_id,
+                    block_id: BlockId::from_trusted(&target),
+                    mime_type: "image/png".into(),
+                    filename: name.into(),
+                    size_bytes: 1,
+                    fs_path,
+                }))
+            }
+            OpKind::DeleteAttachment { attachment_index } => {
+                // #2681: delete a still-present attachment the chain added. Its
+                // reverse (`reverse_delete_attachment`) reconstructs the original
+                // `add_attachment` from the op log, so a prior add MUST exist.
+                if self.attachments.is_empty() {
+                    return None;
+                }
+                let idx = attachment_index % self.attachments.len();
+                let (attachment_id, fs_path) = self.attachments.remove(idx);
+                Some(OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+                    attachment_id,
+                    fs_path,
+                }))
+            }
         }
     }
 }
@@ -461,10 +719,11 @@ pub struct AppliedChain {
 }
 
 impl AppliedChain {
-    /// All (record, payload) pairs whose `op_type` is reversible — i.e.
-    /// everything except `purge_block` and `delete_attachment`-without-add.
-    /// Convenience for the B1 inverse-law test, which only iterates ops
-    /// `compute_reverse` will not reject.
+    /// Every (record, payload) pair in chain order. The B1 inverse-law test
+    /// iterates all of them and classifies per op: reversible ops must reverse
+    /// to the documented inverse, while the unconditionally non-reversible
+    /// `purge_block` (#2681: now emitted by the generator) is expected to be
+    /// rejected by `compute_reverse` with `NonReversible`, not mis-reversed.
     pub fn iter(&self) -> impl Iterator<Item = (&OpRecord, &OpPayload)> {
         self.records.iter().zip(self.payloads.iter())
     }
@@ -474,7 +733,7 @@ impl AppliedChain {
 /// chain. Spaced one minute apart, rolling into hours, so `created_at`
 /// lex-ordering tracks chain order exactly (the invariant the reverse
 /// prior-state lookups depend on).
-fn ts_for(n: usize) -> i64 {
+pub fn ts_for(n: usize) -> i64 {
     let (base_h, base_m) = FIXED_BASE_HHMM;
     let total_minutes = base_h as usize * 60 + base_m as usize + n;
     let h = total_minutes / 60;

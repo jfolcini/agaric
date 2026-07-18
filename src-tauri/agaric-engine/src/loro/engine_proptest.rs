@@ -38,7 +38,7 @@ use crate::loro::engine::{LoroEngine, PropertyValue};
 use agaric_core::ulid::BlockId;
 use agaric_store::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
-    OpPayload, RemoveTagPayload, SetPropertyPayload,
+    OpPayload, PurgeBlockPayload, RemoveTagPayload, SetPropertyPayload,
 };
 
 // ---------------------------------------------------------------------------
@@ -159,6 +159,16 @@ enum OpKind {
     Delete {
         index: usize,
     },
+    /// Hard-purge a previously-deleted block. Resolved against the
+    /// currently-deleted-but-not-yet-purged set so the emitted
+    /// `PurgeBlock` always targets a soft-deleted block (mirrors the
+    /// production "purge from trash" lifecycle). Exercises the engine's
+    /// `apply_purge_block` — the tree-node + property/tag removal — through
+    /// the single-author, two-device, and N-way convergence properties
+    /// (#2681: PurgeBlock previously appeared in NO randomized generator).
+    Purge {
+        index: usize,
+    },
     Move {
         index: usize,
         position: i64,
@@ -190,6 +200,7 @@ fn op_kind_strategy() -> impl Strategy<Value = OpKind> {
         2 => (any::<usize>(), content_strategy())
             .prop_map(|(index, new_content)| OpKind::Edit { index, new_content }),
         1 => any::<usize>().prop_map(|index| OpKind::Delete { index }),
+        1 => any::<usize>().prop_map(|index| OpKind::Purge { index }),
         1 => (any::<usize>(), position_strategy())
             .prop_map(|(index, position)| OpKind::Move { index, position }),
         2 => (any::<usize>(), prop_key_strategy(), prop_value_strategy())
@@ -215,7 +226,12 @@ fn op_stream_strategy(
 /// target (e.g. an Edit when no blocks exist yet); the caller skips
 /// these so the stream stays well-formed without rejecting whole
 /// proptest cases.
-fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<OpPayload> {
+fn resolve_op(
+    kind: &OpKind,
+    created: &[String],
+    deleted: &[String],
+    purged: &[String],
+) -> Option<OpPayload> {
     let pick_alive = |index: usize| -> Option<&String> {
         // Only consider blocks that exist AND have not been deleted.
         // Mirrors the materializer boundary's "skip ops against
@@ -254,6 +270,25 @@ fn resolve_op(kind: &OpKind, created: &[String], deleted: &[String]) -> Option<O
         OpKind::Delete { index } => {
             let target = pick_alive(*index)?;
             Some(OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::from_trusted(target),
+            }))
+        }
+        OpKind::Purge { index } => {
+            // Purge only a currently soft-deleted, not-yet-purged block —
+            // mirrors the production "purge from trash" lifecycle. Gating on
+            // `deleted` (mirrors the `Delete` arm's `deleted` tracking) keeps
+            // the emitted `PurgeBlock` well-formed: `apply_purge_block` is
+            // idempotent even on an already-absent id, but restricting to the
+            // deleted-not-purged set keeps each emitted op a real state
+            // transition (a live block would still be purgeable, but purging
+            // trash is the modelled lifecycle).
+            let purgeable: Vec<&String> =
+                deleted.iter().filter(|id| !purged.contains(*id)).collect();
+            if purgeable.is_empty() {
+                return None;
+            }
+            let target = purgeable[*index % purgeable.len()];
+            Some(OpPayload::PurgeBlock(PurgeBlockPayload {
                 block_id: BlockId::from_trusted(target),
             }))
         }
@@ -325,6 +360,9 @@ fn apply_to_engine(
         OpPayload::DeleteBlock(p) => {
             engine.apply_delete_block(p.block_id.as_str(), "2025-01-15T12:00:00Z")?;
         }
+        OpPayload::PurgeBlock(p) => {
+            engine.apply_purge_block(p.block_id.as_str())?;
+        }
         OpPayload::MoveBlock(p) => {
             let parent = p.new_parent_id.as_ref().map(BlockId::as_str);
             engine.apply_move_block(p.block_id.as_str(), parent, p.new_position)?;
@@ -383,7 +421,7 @@ proptest! {
                 block_id: block_id.clone(),
                 content: "hello".into(),
             };
-            let Some(op) = resolve_op(&kind, &created, &[]) else { continue };
+            let Some(op) = resolve_op(&kind, &created, &[], &[]) else { continue };
 
             apply_to_engine(&mut engine, &op).expect("apply create on fresh id");
 
@@ -467,9 +505,10 @@ proptest! {
             .expect("with_peer_id");
         let mut created: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
+        let mut purged: Vec<String> = Vec::new();
 
         for kind in &ops {
-            let Some(op) = resolve_op(kind, &created, &deleted) else { continue };
+            let Some(op) = resolve_op(kind, &created, &deleted, &purged) else { continue };
 
             // Headline assertion: well-formed ops must apply cleanly.
             // A failure here is an engine bug (or a resolver bug if
@@ -540,6 +579,21 @@ proptest! {
                         p.block_id.as_str()
                     );
                 }
+                OpPayload::PurgeBlock(p) => {
+                    purged.push(p.block_id.as_str().to_string());
+                    // Hard-purge removes the block's tree node entirely, so a
+                    // read-back must now see NOTHING (not merely a
+                    // deleted-flagged block) — this is the observable
+                    // difference between soft-delete and purge.
+                    let snap = engine
+                        .read_block(p.block_id.as_str())
+                        .map_err(|e| TestCaseError::fail(format!("read_block after purge failed: {e}")))?;
+                    prop_assert!(
+                        snap.is_none(),
+                        "PurgeBlock: block {} must be absent from the engine after purge",
+                        p.block_id.as_str()
+                    );
+                }
                 _ => {}
             }
         }
@@ -603,9 +657,10 @@ mod two_device {
     ) -> Result<Vec<String>, TestCaseError> {
         let mut created: Vec<String> = Vec::new();
         let mut deleted: Vec<String> = Vec::new();
+        let mut purged: Vec<String> = Vec::new();
 
         for kind in ops {
-            let Some(op) = resolve_op(kind, &created, &deleted) else {
+            let Some(op) = resolve_op(kind, &created, &deleted, &purged) else {
                 continue;
             };
 
@@ -638,6 +693,22 @@ mod two_device {
                 }
                 OpPayload::DeleteBlock(p) => {
                     deleted.push(p.block_id.as_str().to_string());
+                }
+                OpPayload::PurgeBlock(p) => {
+                    // Anti-vacuity: purge must actually remove the block from
+                    // this engine (a no-op apply would leave it readable and
+                    // the two peers would "converge" on a still-present block
+                    // rather than on the purge). Assert absence locally before
+                    // the cross-peer convergence compare downstream.
+                    let snap = engine.read_block(p.block_id.as_str()).map_err(|e| {
+                        TestCaseError::fail(format!("apply_stream read_block after purge: {e}"))
+                    })?;
+                    prop_assert!(
+                        snap.is_none(),
+                        "PurgeBlock {} must be absent from the engine after apply",
+                        p.block_id.as_str()
+                    );
+                    purged.push(p.block_id.as_str().to_string());
                 }
                 _ => {}
             }

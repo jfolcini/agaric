@@ -249,11 +249,43 @@ where
     }
 }
 
+/// Metrics-unaware entry point (unit tests, and any caller without a live
+/// [`QueueMetrics`]). Retry-queue `pending_retry_rows` gauge accounting is
+/// skipped for the #2831 obligation seed — safe because that gauge is only
+/// ever consulted to SKIP work, and no sweeper runs in these callers.
+///
+/// #2831: the production background consumer routes through
+/// [`handle_background_task_metered`], so in a non-test lib build this
+/// unmetered wrapper is exercised only by the materializer test suite.
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn handle_background_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
     read_pool: Option<&SqlitePool>,
     app_data_dir: Option<&Path>,
+) -> Result<(), AppError> {
+    handle_background_task_inner(pool, task, read_pool, app_data_dir, None).await
+}
+
+/// #2831: metrics-aware entry point used by the background consumer so the
+/// durable `RefreshTagUsageCount` obligation seeded by the
+/// `ReindexBlockTagRefs` arm keeps the `pending_retry_rows` gauge accurate.
+pub(crate) async fn handle_background_task_metered(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: Option<&Path>,
+    metrics: &crate::materializer::metrics::QueueMetrics,
+) -> Result<(), AppError> {
+    handle_background_task_inner(pool, task, read_pool, app_data_dir, Some(metrics)).await
+}
+
+async fn handle_background_task_inner(
+    pool: &SqlitePool,
+    task: &MaterializeTask,
+    read_pool: Option<&SqlitePool>,
+    app_data_dir: Option<&Path>,
+    metrics: Option<&crate::materializer::metrics::QueueMetrics>,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::RebuildTagsCache => {
@@ -350,30 +382,90 @@ pub(crate) async fn handle_background_task(
             .await
         }
         MaterializeTask::ReindexBlockTagRefs { block_id } => {
-            // #2659: the reindex rewrites the `block_tag_refs` TABLE for this
-            // block's inline `#[ULID]` refs but does NOT recompute
-            // `tags_cache.usage_count` — that column counts DISTINCT live blocks
-            // referencing each tag via `block_tags ∪ block_tag_refs`
-            // (`DESIRED_TAGS_SQL`). So an inline-ref content edit that gains or
-            // loses a ref would leave the affected tags' `usage_count` stale
-            // until an unrelated AddTag/RemoveTag/full-rebuild healed it. Refresh
-            // exactly the tags whose ref set changed (the reindex returns
-            // `to_insert ∪ to_delete`), reusing the scoped #676
-            // `refresh_tag_usage_count` — the same per-tag recompute AddTag /
-            // RemoveTag enqueue — rather than the expensive O(vault)
-            // `RebuildTagsCache` the invariant notes deliberately avoid on the
-            // content path. The refresh reads the just-committed `block_tag_refs`
-            // rows from the write `pool`, so it must run AFTER the reindex tx
-            // commits (single-pool refresh per the #676 rationale).
-            let changed_tags = dispatch_split_or_single(
-                pool,
-                read_pool,
-                |w, r| cache::reindex_block_tag_refs_split(w, r, block_id),
-                |p| cache::reindex_block_tag_refs(p, block_id),
-            )
-            .await?;
+            // #2659 + #2831: reindex this block's inline `#[ULID]` tag-refs AND
+            // make the dependent `tags_cache.usage_count` refresh DURABLE and
+            // idempotent.
+            //
+            // #2659 rewrote `block_tag_refs` and refreshed each changed tag's
+            // usage_count inline, but coupled that refresh to the reindex
+            // *diff*: on a retry (WAL contention on a `refresh_tag_usage_count`,
+            // or a crash mid-loop) the `block_tag_refs` table already holds the
+            // new state, so the retry's diff is EMPTY, `changed_tags` is empty,
+            // the refresh loop runs zero times, and `usage_count` stays stale
+            // until an unrelated AddTag/RemoveTag or a full RebuildTagsCache
+            // heals it (#2831 — the "a refresh is owed" signal was transient).
+            //
+            // Fix: seed a durable, tag_id-keyed `RetryKind::RefreshTagUsageCount`
+            // obligation INSIDE the same write transaction that commits the
+            // `block_tag_refs` diff (`*_in_tx` variants). A crash or error
+            // anywhere after that commit leaves a durable row the periodic
+            // sweeper drives to completion, independent of any future (empty)
+            // reindex diff. After the diff + obligations commit, each changed
+            // tag's usage_count is refreshed inline (the #2659 happy path) and
+            // its obligation cleared on success; a failed refresh is swallowed
+            // and left to the sweeper — re-running the whole reindex would only
+            // produce an empty diff, so returning `Err` here would not help the
+            // refresh and would just churn the `ReindexBlockTagRefs` retry row.
+            let mut tx =
+                crate::db::begin_immediate_logged(pool, "reindex_block_tag_refs_2831").await?;
+            let changed_tags = match read_pool {
+                Some(rp) => {
+                    cache::reindex_block_tag_refs_split_in_tx(&mut tx, rp, block_id).await?
+                }
+                None => cache::reindex_block_tag_refs_in_tx(&mut tx, block_id).await?,
+            };
+            // Seed one durable obligation per changed tag, atomic with the diff.
+            let mut freshly_seeded = 0usize;
             for tag_id in &changed_tags {
-                cache::refresh_tag_usage_count(pool, tag_id).await?;
+                let inserted =
+                    crate::materializer::retry_queue::seed_refresh_tag_usage_count_obligation_tx(
+                        &mut tx, tag_id,
+                    )
+                    .await?;
+                if inserted {
+                    freshly_seeded += 1;
+                }
+            }
+            tx.commit().await?;
+
+            // Gauge accounting only AFTER a successful commit (a bump before
+            // commit would over-count on rollback).
+            if let Some(m) = metrics {
+                for _ in 0..freshly_seeded {
+                    m.note_retry_row_inserted();
+                }
+            }
+
+            // #2659 happy path: refresh each changed tag inline and clear its
+            // now-redundant obligation. A failure leaves the durable row for
+            // the sweeper (which re-enqueues `RefreshTagUsageCount { tag_id }`
+            // and, on durable success, clears it via `clear_on_success`).
+            for tag_id in &changed_tags {
+                match cache::refresh_tag_usage_count(pool, tag_id).await {
+                    Ok(()) => {
+                        if let Err(e) =
+                            crate::materializer::retry_queue::clear_refresh_tag_usage_count_obligation(
+                                pool, tag_id, metrics,
+                            )
+                            .await
+                        {
+                            tracing::warn!(
+                                tag_id = %tag_id,
+                                error = %e,
+                                "#2831: failed to clear usage_count refresh obligation after \
+                                 inline success; sweeper will re-run (idempotent) and re-clear"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            tag_id = %tag_id,
+                            error = %e,
+                            "#2831: inline usage_count refresh failed after reindex; durable \
+                             obligation left for the retry sweeper"
+                        );
+                    }
+                }
             }
             Ok(())
         }
