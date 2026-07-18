@@ -17,7 +17,8 @@
 //! ## What lives here
 //!
 //! - [`validate_date_format`] and [`is_valid_iso_date`] (#642) — both pure
-//!   (only `AppError` + `chrono`), no DB / op_log / payload coupling.
+//!   (only `AppError` + `chrono`), no DB / op_log / payload coupling; moved
+//!   DOWN into `agaric_core::date_validation` (#2633) and re-exported here.
 //! - [`create_block_in_tx`] and [`set_property_in_tx`] (#882) — the
 //!   tx-scoped create-block / set-property cores, moved verbatim from
 //!   `commands::blocks::crud`. Despite the `…_in_tx` names they are the
@@ -58,56 +59,15 @@ pub const MAX_CONTENT_LENGTH: usize = 256 * 1024;
 /// `crate::domain::block_ops::MAX_BLOCK_DEPTH` call site resolves unchanged.
 pub use agaric_store::block_descendants::MAX_BLOCK_DEPTH;
 
-/// Validate that `s` parses as a calendar-valid `YYYY-MM-DD` date.
-///
-/// I-CommandsCRUD-6: previously did only structural validation (month
-/// 01–12, day 01–31) and explicitly accepted impossible combinations
-/// (Feb 30, Apr 31), relying on downstream callers to handle them. The
-/// agenda path (`list_projected_agenda_inner`) re-parsed via
-/// `NaiveDate::parse_from_str` and rejected with a different error
-/// shape — inconsistent failure for the same input depending on which
-/// command consumed it.
-///
-/// Now uses `NaiveDate::parse_from_str` directly so impossible dates
-/// are rejected at the boundary with a single canonical error message.
-/// The agenda re-parse becomes redundant and can be removed in a
-/// follow-up; this change keeps the validator's return type stable so
-/// existing callers don't need updating.
-///
-/// Chrono's `%Y-%m-%d` accepts non-zero-padded forms like
-/// `2025-1-1` and 2-digit years like `25-1-1`. Pre-validate the strict
-/// shape (`\d{4}-\d{2}-\d{2}`) before delegating calendar validity to
-/// chrono — otherwise these slip through and downstream callers get
-/// surprising "valid" dates that the canonical date format invariant
-/// rejects.
-pub fn validate_date_format(s: &str) -> Result<(), AppError> {
-    let bytes = s.as_bytes();
-    let shape_ok = bytes.len() == 10
-        && bytes[4] == b'-'
-        && bytes[7] == b'-'
-        && bytes[..4].iter().all(u8::is_ascii_digit)
-        && bytes[5..7].iter().all(u8::is_ascii_digit)
-        && bytes[8..10].iter().all(u8::is_ascii_digit);
-    if !shape_ok {
-        return Err(AppError::validation(format!(
-            "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-        )));
-    }
-    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
-        .map(|_| ())
-        .map_err(|_| {
-            AppError::validation(format!(
-                "expected YYYY-MM-DD format with calendar-valid date, got '{s}'"
-            ))
-        })
-}
-
-/// I-CommandsCRUD-8: previously a separate structural validator that
-/// drifted from `validate_date_format`. Now delegates so there is one
-/// source of truth for ISO-date validation across the commands surface.
-pub fn is_valid_iso_date(s: &str) -> bool {
-    validate_date_format(s).is_ok()
-}
+/// The pure ISO-date (`YYYY-MM-DD`) validators moved DOWN into `agaric-core`
+/// (#2633): [`validate_date_format`] and its `.is_ok()` delegate
+/// [`is_valid_iso_date`] depend only on `AppError` + `chrono`, so they belong
+/// at the bottom of the DAG rather than in this engine module. Re-exported so
+/// the block write-path (`validate_property_value`), the recurrence projector
+/// (`crate::recurrence::compute`), and the app command surface (via the
+/// `crate::domain::block_ops` glob) all resolve `block_ops::validate_date_format`
+/// / `block_ops::is_valid_iso_date` unchanged.
+pub use agaric_core::date_validation::{is_valid_iso_date, validate_date_format};
 
 /// The `(value_text, value_num, value_date, value_ref, value_bool)` tuple
 /// that positionally matches [`set_property_in_tx`]'s trailing args. Named
