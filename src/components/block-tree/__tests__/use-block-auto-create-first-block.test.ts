@@ -63,6 +63,8 @@ describe('useBlockAutoCreateFirstBlock', () => {
       parentId: 'PAGE_1',
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — auto-create supplies no client id (null).
+      blockId: null,
     })
     expect(pageStore.getState().blocks[0]).toEqual({ ...newBlock, depth: 0 })
     // #752 — the wrapped store setState derives blocksById for `{ blocks }`

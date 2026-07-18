@@ -628,6 +628,8 @@ describe('useBlockTags handleCreateTag', () => {
       parentId: null,
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — tag creation supplies no client id; the binding sends null.
+      blockId: null,
     })
 
     expect(mockedInvoke).toHaveBeenCalledWith('add_tag', {
@@ -675,6 +677,8 @@ describe('useBlockTags handleCreateTag', () => {
       parentId: null,
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — tag creation supplies no client id; the binding sends null.
+      blockId: null,
     })
   })
 
@@ -729,6 +733,8 @@ describe('useBlockTags handleCreateTag', () => {
       parentId: null,
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — tag creation supplies no client id; the binding sends null.
+      blockId: null,
     })
 
     // addTag should NOT be called

@@ -5606,25 +5606,38 @@ describe('BlockTree Enter creates new sibling block', () => {
       ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
     })
 
-    // Verify create_block was called
+    // #2849 PR2 — createBelow mints the id CLIENT-side and the new block keeps
+    // that client ULID (the mock's server 'NEW_BLOCK_01' is ignored). Capture
+    // the id from the store rather than expecting the server id.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'content',
-        content: '',
-        parentId: null,
-        // #400: createBelow inserts at afterBlock's slot (0) + 1.
-        index: 1,
-        scope: { kind: 'global' },
-      })
+      expect(pageStore.getState().blocks).toHaveLength(2)
+    })
+    const newId = pageStore.getState().blocks.find((b) => b.id !== 'A')?.id
+    expect(newId).toBeDefined()
+
+    // Verify create_block was called with the client id
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({
+          blockType: 'content',
+          content: '',
+          parentId: null,
+          // #400: createBelow inserts at afterBlock's slot (0) + 1.
+          index: 1,
+          scope: { kind: 'global' },
+          blockId: newId,
+        }),
+      )
     })
 
-    // Verify focus moved to the new block
+    // Verify focus moved to the new (client-id) block
     await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_BLOCK_01')
+      expect(useBlockStore.getState().focusedBlockId).toBe(newId)
     })
 
     // Verify the new block exists in the store
-    const newBlock = pageStore.getState().blocks.find((b) => b.id === 'NEW_BLOCK_01')
+    const newBlock = pageStore.getState().blocks.find((b) => b.id === newId)
     expect(newBlock).toBeDefined()
   })
 
@@ -5665,9 +5678,16 @@ describe('BlockTree Enter creates new sibling block', () => {
       ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
     })
 
-    // Verify the new block was created and focused
+    // Verify the new block was created and focused. #2849 PR2 — the new block
+    // carries the CLIENT id (the mock's server 'NEW_EMPTY' is ignored); capture
+    // it from the store.
     await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_EMPTY')
+      expect(pageStore.getState().blocks).toHaveLength(2)
+    })
+    const newId = pageStore.getState().blocks.find((b) => b.id !== 'A')?.id
+    expect(newId).toBeDefined()
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe(newId)
     })
 
     // Now change focus away from the empty just-created block
@@ -5677,7 +5697,7 @@ describe('BlockTree Enter creates new sibling block', () => {
 
     // Verify delete_block was called to clean up the empty block
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'NEW_EMPTY' })
+      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: newId })
     })
   })
 
@@ -5721,16 +5741,23 @@ describe('BlockTree Enter creates new sibling block', () => {
       ;(capturedBlockKeyboardOpts as { onEnterSave: () => void }).onEnterSave()
     })
 
-    // Verify the new block was created and focused
+    // Verify the new block was created and focused. #2849 PR2 — the new block
+    // carries the CLIENT id (the mock's server 'NEW_WITH_CONTENT' is ignored);
+    // capture it from the store.
     await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('NEW_WITH_CONTENT')
+      expect(pageStore.getState().blocks).toHaveLength(2)
+    })
+    const newId = pageStore.getState().blocks.find((b) => b.id !== 'A')?.id
+    expect(newId).toBeDefined()
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe(newId)
     })
 
     // Simulate the user typing content into the new block (update store state)
     act(() => {
       pageStore.setState((s) => ({
         blocks: s.blocks.map((b) =>
-          b.id === 'NEW_WITH_CONTENT' ? { ...b, content: 'User typed something' } : b,
+          b.id === newId ? { ...b, content: 'User typed something' } : b,
         ),
       }))
     })
@@ -5749,7 +5776,7 @@ describe('BlockTree Enter creates new sibling block', () => {
 
     // Verify delete_block was NOT called (block has content)
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', {
-      blockId: 'NEW_WITH_CONTENT',
+      blockId: newId,
     })
   })
 })
@@ -6706,6 +6733,8 @@ describe('H-9: auto-create first block on empty page', () => {
         parentId: 'PAGE_1',
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — auto-create supplies no client id (null).
+        blockId: null,
       })
     })
   })
@@ -6878,6 +6907,8 @@ describe('H-9: auto-create first block on empty page', () => {
         parentId: 'PAGE_1',
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — auto-create supplies no client id (null).
+        blockId: null,
       })
     })
   })
@@ -6902,6 +6933,8 @@ describe('H-9: auto-create first block on empty page', () => {
         parentId: 'PAGE_1',
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — auto-create supplies no client id (null).
+        blockId: null,
       })
     })
 

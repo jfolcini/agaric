@@ -278,20 +278,36 @@ describe('PageEditor', () => {
     const addBtn = screen.getByRole('button', { name: /add block/i })
     await user.click(addBtn)
 
+    // #2849 PR2 — "Add block" with blocks present routes through createBelow,
+    // which mints the id CLIENT-side and passes it as `blockId`; the new block
+    // carries that client ULID (the mock's server id is ignored). Capture it
+    // from the store rather than expecting the server-minted 'B2'.
     await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'content',
-        content: '',
-        parentId: 'PAGE_1',
-        index: 1,
-        scope: { kind: 'global' },
-      })
+      expect(getPageStore('PAGE_1')?.getState().blocks).toHaveLength(2)
+    })
+    const newId = getPageStore('PAGE_1')
+      ?.getState()
+      .blocks.find((b) => b.id !== 'B1')?.id
+    expect(newId).toBeDefined()
+
+    await waitFor(() => {
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({
+          blockType: 'content',
+          content: '',
+          parentId: 'PAGE_1',
+          index: 1,
+          scope: { kind: 'global' },
+          blockId: newId,
+        }),
+      )
     })
 
-    // Should focus the new block
+    // Should focus the new (client-id) block
     await waitFor(() => {
       const state = useBlockStore.getState()
-      expect(state.focusedBlockId).toBe('B2')
+      expect(state.focusedBlockId).toBe(newId)
     })
   })
 
@@ -323,6 +339,9 @@ describe('PageEditor', () => {
         parentId: 'PAGE_1',
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — the empty-page path calls createBlock directly with no
+        // client id (createBelow needs an anchor), so the binding sends null.
+        blockId: null,
       })
     })
 
@@ -377,20 +396,35 @@ describe('PageEditor', () => {
     const addBtn = screen.getByRole('button', { name: /add block/i })
     await user.click(addBtn)
 
+    // #2849 PR2 — createBelow mints the id CLIENT-side; capture the new block
+    // (the one that isn't a pre-seeded B1/B2/B3) rather than expecting 'B4'.
+    await waitFor(() => {
+      expect(getPageStore('PAGE_1')?.getState().blocks).toHaveLength(4)
+    })
+    const seeded = new Set(['B1', 'B2', 'B3'])
+    const newId = getPageStore('PAGE_1')
+      ?.getState()
+      .blocks.find((b) => !seeded.has(b.id))?.id
+    expect(newId).toBeDefined()
+
     await waitFor(() => {
       // Must create under PAGE_1 (top-level), not under B2 (nested parent)
-      expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
-        blockType: 'content',
-        content: '',
-        parentId: 'PAGE_1',
-        index: 1,
-        scope: { kind: 'global' },
-      })
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'create_block',
+        expect.objectContaining({
+          blockType: 'content',
+          content: '',
+          parentId: 'PAGE_1',
+          index: 1,
+          scope: { kind: 'global' },
+          blockId: newId,
+        }),
+      )
     })
 
-    // Should focus the new block
+    // Should focus the new (client-id) block
     await waitFor(() => {
-      expect(useBlockStore.getState().focusedBlockId).toBe('B4')
+      expect(useBlockStore.getState().focusedBlockId).toBe(newId)
     })
   })
 
@@ -539,6 +573,9 @@ describe('PageEditor BlockTree auto-creation prop', () => {
         parentId: 'PAGE_1',
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — the empty-page path calls createBlock directly with no
+        // client id (createBelow needs an anchor), so the binding sends null.
+        blockId: null,
       })
     })
 

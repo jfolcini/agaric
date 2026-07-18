@@ -71,6 +71,8 @@ describe('useBlockZoomEmptySeed', () => {
       parentId: 'LEAF',
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — zoom-empty seed supplies no client id (null).
+      blockId: null,
     })
     // NON-wholesale: OTHER survives, and the child is spliced right after LEAF
     // at depth+1.
