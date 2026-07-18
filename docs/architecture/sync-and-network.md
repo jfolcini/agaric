@@ -44,11 +44,11 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 - **Certificate pinning.** `PinningCertVerifier` rejects any cert whose SHA-256 doesn't match `peer_refs.cert_hash`. Also enforces `CN=agaric-{expected_device_id}` so a cert swap with a matching hash but mismatched CN fails.
 - **Self-device guard.** Prevents talking to your own announced service in mDNS loopback scenarios.
 - **WebSocket framing.** `MAX_MSG_SIZE = 10_000_000` bytes per WS frame; `BINARY_FRAME_CHUNK_SIZE = 5_000_000` for snapshot + attachment transfer (the actual chunk unit).
-- **Timeouts.** `HANDSHAKE_TIMEOUT` (per-`handle_message` budget) is shorter than `RECV_TIMEOUT` (overall idle); a `#[test]` (`recv_timeout_invariant::recv_timeout_exceeds_handshake_timeout` in `src-tauri/src/sync_net/connection.rs`) enforces the ordering. Not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range.
+- **Timeouts.** `HANDSHAKE_TIMEOUT` (per-`handle_message` budget) is shorter than `RECV_TIMEOUT` (overall idle); a `#[test]` (`recv_timeout_invariant::recv_timeout_exceeds_handshake_timeout` in `src-tauri/agaric-sync/src/sync_net/connection.rs`) enforces the ordering. Not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range.
 
 ## Protocol
 
-`SyncMessage` (`src-tauri/src/sync_protocol/types.rs`) is the envelope. The streaming-phase variant is `LoroSync { msg: LoroSyncMessage, is_last: bool }`. `LoroSyncMessage::{Snapshot, Update}` carries the actual CRDT bytes per `SpaceId`. `from_vv` (version-vector floor) lets the responder send only ops the initiator is missing.
+`SyncMessage` (`src-tauri/agaric-sync/src/sync_protocol/types.rs`) is the envelope. The streaming-phase variant is `LoroSync { msg: LoroSyncMessage, is_last: bool }`. `LoroSyncMessage::{Snapshot, Update}` carries the actual CRDT bytes per `SpaceId`. `from_vv` (version-vector floor) lets the responder send only ops the initiator is missing.
 
 **State machine.** `Idle → ExchangingHeads → StreamingOps → ApplyingOps → Merging → TransferringFiles → Complete`. The names predate Loro and survive even though the streaming phase no longer carries individual ops — they now wrap Loro messages.
 
@@ -67,7 +67,7 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 
 When the initiator's frontier is older than the responder's compaction point (the responder has GC'd the relevant op-log entries), the responder sends a full **snapshot** instead of replaying ops:
 
-1. Responder emits `SnapshotOffer { size_bytes }` (`src-tauri/src/sync_protocol/types.rs`). `up_to_hash` is advanced separately during apply, after the snapshot lands.
+1. Responder emits `SnapshotOffer { size_bytes }` (`src-tauri/agaric-sync/src/sync_protocol/types.rs`). `up_to_hash` is advanced separately during apply, after the snapshot lands.
 2. Initiator enforces a 256 MB cap; accepts → `SnapshotAccept`; rejects → falls back to "manual re-sync" UX.
 3. Responder streams the snapshot in 5 MB binary frames.
 4. Initiator calls `apply_snapshot()`: wipes core tables + materialised caches in one `BEGIN IMMEDIATE` + `defer_foreign_keys` transaction, restores the snapshot, then advances `peer_refs.last_hash` to `up_to_hash`.
