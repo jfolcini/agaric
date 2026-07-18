@@ -41,7 +41,13 @@ import {
   cloneBlocksByIdWith,
   cloneBlocksByIdWithout,
 } from '@/stores/page-blocks-map'
-import { applyStructuralMove, reconcileBatchMove } from '@/stores/page-blocks-move'
+import {
+  applyProvisionalMove,
+  applyStructuralMove,
+  reconcileBatchMove,
+  reconcileProvisionalMoveSuccess,
+  rollbackProvisionalMove,
+} from '@/stores/page-blocks-move'
 import type { PageBlockState } from '@/stores/page-blocks-types'
 import { useUndoStore } from '@/stores/undo'
 
@@ -322,21 +328,40 @@ export function createReducers({
 
     remove: async (blockId: string) => {
       const { rootParentId } = get()
+
+      // #2849 — remove the block (and its descendants) OPTIMISTICALLY, BEFORE
+      // the delete IPC, so the UI updates instantly instead of after the
+      // round-trip. Snapshot the pre-op arrays for an exact rollback if the IPC
+      // rejects. Few-block delete (perf invariant): touch only the removed keys
+      // on the prior Map; the remaining `n - k` entries are reused as-is.
+      let prevBlocks: FlatBlock[] | null = null
+      let prevById: Map<string, FlatBlock> | null = null
+      let provBlocks: FlatBlock[] | null = null
+      set((state) => {
+        prevBlocks = state.blocks
+        prevById = state.blocksById
+        const descendants = getDragDescendants(state.blocks, blockId)
+        const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
+        provBlocks = newBlocks
+        return {
+          blocks: newBlocks,
+          blocksById: cloneBlocksByIdWithout(state.blocksById, [blockId, ...descendants]),
+        }
+      })
+
       try {
         // #730 — pool_busy retry (see edit/createBelow).
         const resp = await retryOnPoolBusy(() => deleteBlock(blockId))
-        // #714 — recompute the descendant set INSIDE the functional updater
-        // from `state.blocks` (current at commit time), never from the
-        // pre-await capture: a concurrent structural change (reparent,
-        // move) that lands while delete_block is in flight must be
-        // reflected in which blocks actually get removed locally. A
-        // pre-await snapshot would either strand a since-reparented block
-        // with a dangling parent (backend cascade-deleted it, FE kept it)
-        // or delete a block that was dedented OUT of this subtree mid-
-        // flight (backend kept it alive, FE would drop a live block).
-        // Few-block delete (perf invariant): touch only the removed keys
-        // on the prior Map; the remaining `n - k` entries are reused as-is.
+        // #2543 — re-confirm the removal at COMMIT time. If a racing sync
+        // load() whose snapshot predated the delete commit restored the block
+        // while delete_block was in flight, re-splice it out now, recomputing
+        // the descendant set from CURRENT state (a concurrent reparent may have
+        // moved blocks in/out of the subtree since the provisional splice — a
+        // block dedented OUT survives, one reparented IN cascades). When the
+        // provisional removal still holds (the common case) `has()` is false
+        // and this is a no-op.
         set((state) => {
+          if (!state.blocksById.has(blockId)) return {}
           const descendants = getDragDescendants(state.blocks, blockId)
           const newBlocks = state.blocks.filter((b) => b.id !== blockId && !descendants.has(b.id))
           return {
@@ -349,6 +374,20 @@ export function createReducers({
         // empty-block cleanup) explicitly manage focus after remove() resolves.
         notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
+        // Roll back the optimistic removal. Exact restore when nothing landed
+        // since (the required pre-op state); otherwise reconcile via load() so
+        // a concurrent structural write that touched the still-visually-removed
+        // subtree while delete_block was in flight is not clobbered by
+        // re-inserting the stale snapshot — mirrors edit's guarded rollback.
+        let needsReload = false
+        set((state) => {
+          if (state.blocks === provBlocks && prevBlocks != null && prevById != null) {
+            return { blocks: prevBlocks, blocksById: prevById }
+          }
+          needsReload = true
+          return {}
+        })
+        if (needsReload) await get().load()
         logger.error('page-blocks', 'Failed to delete block', { blockId }, err)
         notify.error(i18n.t('error.deleteBlockFailed'))
       }
@@ -446,90 +485,80 @@ export function createReducers({
       const currentSlot = siblingSlot(blocks, block)
       if (newIndex === currentSlot) return
 
+      // R5 (#404): same-parent reorder mirrors the resulting sibling order
+      // locally and does NOT call load(). #2849 — apply that splice
+      // OPTIMISTICALLY, BEFORE the IPC, so the UI updates instantly; the moved
+      // block keeps its current `position` (array order is authoritative) and
+      // the backend's dense rank is healed in on resolve.
+      const handle = applyProvisionalMove(set, blockId, (state) => {
+        const cur = state.blocks
+        const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
+        // Splice the moved subtree to its new slot among the siblings in the
+        // flat tree. Build moved + remaining, then locate the insertion anchor
+        // from the target sibling slot.
+        const descendants = getDragDescendants(cur, blockId)
+        const movedSet = new Set([blockId, ...descendants])
+        const movedItems = cur.filter((b) => movedSet.has(b.id))
+        const remaining = cur.filter((b) => !movedSet.has(b.id))
+        // `remaining` can be scanned twice below for the same anchor id
+        // (getDragDescendants + the insertion anchor lookup) across the
+        // branches. Build the id→index map once so every anchor lookup here
+        // becomes an O(1) `.get()` instead of a `.findIndex()` scan (#2041).
+        const remainingIndex = buildIndexById(remaining)
+
+        // The flat index in `remaining` of the (newIndex)-th same-parent
+        // sibling; if newIndex is past the last sibling, insert after the last
+        // sibling's subtree. parentDepth+1 is the sibling depth.
+        const siblingsRemaining = remaining.filter(
+          (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
+        )
+        let insertAt: number
+        if (newIndex >= siblingsRemaining.length) {
+          const lastSib = siblingsRemaining.at(-1)
+          if (lastSib) {
+            const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
+            insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
+            while (
+              insertAt < remaining.length &&
+              lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
+            ) {
+              insertAt++
+            }
+          } else {
+            // No remaining siblings — insert right after the parent, or at the
+            // start of the list when at root level.
+            insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
+          }
+        } else {
+          const anchor = siblingsRemaining[newIndex] as FlatBlock
+          insertAt = remainingIndex.get(anchor.id) ?? -1
+        }
+
+        const newBlocks = [...remaining]
+        newBlocks.splice(insertAt, 0, ...movedItems)
+        // Same-parent swap: only array order changed, no block object was
+        // rewritten — nothing to touch in the Map (the position heal on resolve
+        // re-allocates the one moved block).
+        return { blocks: newBlocks, touchedIds: [] }
+      })
+
       try {
-        // R5 (#404): same-parent reorder applies an OPTIMISTIC local splice and
-        // does NOT call load(). The backend assigns the dense rank from the
-        // slot; we mirror the resulting sibling order locally.
         // #730 — pool_busy retry (see edit/createBelow).
         const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
 
         // Defensive: a reorder never crosses parents. If the backend echoes a
-        // different parent, fall back to a structural reload.
+        // different parent, the provisional guess was wrong — reload reconciles
+        // FE with the backend (overwriting the provisional splice).
         if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
           await get().load()
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return
         }
 
-        // #714 — recompute the splice INSIDE the functional updater from
-        // `state.blocks` (current at commit time), never from the pre-await
-        // capture: a concurrent write that landed while the IPC was in
-        // flight must survive. If the block vanished or was re-parented
-        // mid-flight, the splice context is invalid → fall back to load().
-        // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-        await applyStructuralMove(set, get, {
-          validateAtCommit: (state) => {
-            const curBlock = state.blocks.find((b) => b.id === blockId)
-            return !!curBlock && (curBlock.parent_id ?? null) === (parentId ?? null)
-          },
-          computeSpliced: (state) => {
-            const cur = state.blocks
-            const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
-            // Splice the moved subtree to its new slot among the siblings in the
-            // flat tree. Build moved + remaining, then locate the insertion anchor
-            // from the target sibling slot.
-            const descendants = getDragDescendants(cur, blockId)
-            const movedSet = new Set([blockId, ...descendants])
-            const movedItems = cur
-              .filter((b) => movedSet.has(b.id))
-              .map((b) =>
-                b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
-              )
-            const remaining = cur.filter((b) => !movedSet.has(b.id))
-            // `remaining` can be scanned twice below for the same anchor id
-            // (getDragDescendants + the insertion anchor lookup) across the
-            // branches. Build the id→index map once so every anchor lookup
-            // here becomes an O(1) `.get()` instead of a `.findIndex()` scan
-            // (#2041/#2200 — mirrors the dedent/moveDown conversion).
-            const remainingIndex = buildIndexById(remaining)
-
-            // The flat index in `remaining` of the (newIndex)-th same-parent
-            // sibling; if newIndex is past the last sibling, insert after the last
-            // sibling's subtree. parentDepth+1 is the sibling depth.
-            const siblingsRemaining = remaining.filter(
-              (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
-            )
-            let insertAt: number
-            if (newIndex >= siblingsRemaining.length) {
-              const lastSib = siblingsRemaining.at(-1)
-              if (lastSib) {
-                const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
-                insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
-                while (
-                  insertAt < remaining.length &&
-                  lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
-                ) {
-                  insertAt++
-                }
-              } else {
-                // No remaining siblings — insert right after the parent, or at the
-                // start of the list when at root level.
-                insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
-              }
-            } else {
-              const anchor = siblingsRemaining[newIndex] as FlatBlock
-              insertAt = remainingIndex.get(anchor.id) ?? -1
-            }
-
-            const newBlocks = [...remaining]
-            newBlocks.splice(insertAt, 0, ...movedItems)
-            // Subtree-touch (perf invariant): only the moved block's `position`
-            // field changed; descendants are reused as-is.
-            return { blocks: newBlocks, touchedIds: [blockId] }
-          },
-        })
+        await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
         notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
+        await rollbackProvisionalMove(set, get, handle)
         logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
         notify.error(i18n.t('error.reorderBlockFailed'))
       }
@@ -652,6 +681,20 @@ export function createReducers({
         // its slot is the prev sibling's current child count (append).
         const prevChildCount = blocks.filter((b) => (b.parent_id ?? null) === prevSibling.id).length
 
+        // #2849 — apply the indent splice OPTIMISTICALLY, BEFORE the IPC, so the
+        // UI updates instantly. `computeIndentedBlocks` assigns the moved block
+        // its provisional `position: 1` (#400 — the real dense rank is the
+        // backend's), so indent does NOT heal position on resolve.
+        const handle = applyProvisionalMove(set, blockId, (state) => {
+          const cur = state.blocks
+          const curPrev = cur.find((b) => b.id === prevSibling.id) as FlatBlock
+          const newBlocks = computeIndentedBlocks(cur, blockId, curPrev)
+          // Subtree-touch (perf invariant): only the indented block and its
+          // descendants got new references; reuse the rest of the prior Map.
+          const descendantIds = getDragDescendants(cur, blockId)
+          return { blocks: newBlocks, touchedIds: [blockId, ...descendantIds] }
+        })
+
         try {
           // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
@@ -661,55 +704,23 @@ export function createReducers({
           // #774 — mirror reorder/moveUp/moveDown: if the backend echoes a
           // parent other than the one we requested (prevSibling), our local
           // "indent under prevSibling" splice would diverge from the backend
-          // tree. Fall back to a structural reload so FE and BE stay in sync
-          // instead of silently trusting the requested parent.
+          // tree. Fall back to a structural reload (overwriting the provisional)
+          // instead of silently trusting the requested parent. `resp?.` also
+          // catches a nullish echo → ref-less (positional) undo entry.
           if ((resp?.new_parent_id ?? null) !== prevSibling.id) {
             await get().load()
-            // `resp?.` — this branch also catches a nullish echo (mirrors the
-            // guard above); fall back to a ref-less (positional) undo entry.
             notifyUndoNewAction(rootParentId, resp?.op_refs)
             return true
           }
-          // #714 — recompute the indent splice INSIDE the functional updater
-          // from `state.blocks` (current at commit time), never from the
-          // pre-await capture: a concurrent write that landed while the IPC
-          // was in flight must survive. If either block vanished or the pair
-          // is no longer a valid indent target (same parent + depth — e.g. an
-          // interleaved structural move), fall back to a full load().
-          // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-          await applyStructuralMove(set, get, {
-            validateAtCommit: (state) => {
-              const cur = state.blocks
-              const curBlock = cur.find((b) => b.id === blockId)
-              const curPrev = cur.find((b) => b.id === prevSibling.id)
-              if (
-                !curBlock ||
-                !curPrev ||
-                (curBlock.parent_id ?? null) !== (curPrev.parent_id ?? null) ||
-                curBlock.depth !== curPrev.depth
-              ) {
-                return false
-              }
-              // The backend appended at slot `prevChildCount` (captured
-              // pre-await). If the new parent's child set changed mid-flight,
-              // the local "append as last child" no longer matches that slot —
-              // reload instead of diverging silently from the backend order.
-              const curChildCount = cur.filter((b) => (b.parent_id ?? null) === curPrev.id).length
-              return curChildCount === prevChildCount
-            },
-            computeSpliced: (state) => {
-              const cur = state.blocks
-              const curPrev = cur.find((b) => b.id === prevSibling.id) as FlatBlock
-              const newBlocks = computeIndentedBlocks(cur, blockId, curPrev)
-              // Subtree-touch (perf invariant): only the indented block and its
-              // descendants got new references; reuse the rest of the prior Map.
-              const descendantIds = getDragDescendants(cur, blockId)
-              return { blocks: newBlocks, touchedIds: [blockId, ...descendantIds] }
-            },
-          })
+          // Confirm the provisional splice; the double-apply guard reloads if a
+          // concurrent write (interleaved structural move, slot drift) reverted
+          // or superseded it. `null` position → keep the splice's provisional
+          // `position: 1`.
+          await reconcileProvisionalMoveSuccess(set, get, handle, null)
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
+          await rollbackProvisionalMove(set, get, handle)
           logger.error('page-blocks', 'Failed to indent block', { blockId }, err)
           notify.error(i18n.t('error.indentBlockFailed'))
           return false
@@ -729,84 +740,62 @@ export function createReducers({
         // #400: dedent places the block right AFTER its parent among the
         // grandparent's children → slot = parent's sibling slot + 1.
         const newIndex = siblingSlot(blocks, parent) + 1
+
+        // #2849 — apply the dedent splice OPTIMISTICALLY, BEFORE the IPC, so the
+        // UI updates instantly. The moved block keeps its current `position`;
+        // the backend's dense rank is healed in on resolve.
+        const handle = applyProvisionalMove(set, blockId, (state) => {
+          const cur = state.blocks
+          const descendantIds = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...descendantIds])
+
+          const movedItems: FlatBlock[] = cur
+            .filter((b) => movedSet.has(b.id))
+            .map((b) => {
+              const moved = Object.assign({}, b, { depth: b.depth - 1 })
+              if (b.id === blockId) moved.parent_id = newParentId
+              return moved
+            })
+
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
+          // `remaining` is scanned twice for the parent's slot below
+          // (getDragDescendants + the insertion anchor). Build the id→index map
+          // once so both become O(1) lookups (#2041/#2200).
+          const remainingIndex = buildIndexById(remaining)
+          const parentDescendants = getDragDescendants(remaining, parent.id, remainingIndex)
+          let insertAt = (remainingIndex.get(parent.id) ?? -1) + 1
+          while (
+            insertAt < remaining.length &&
+            parentDescendants.has((remaining[insertAt] as FlatBlock).id)
+          ) {
+            insertAt++
+          }
+
+          remaining.splice(insertAt, 0, ...movedItems)
+          // Subtree-touch (perf invariant): only `movedItems` got new references.
+          return { blocks: remaining, touchedIds: movedItems.map((b) => b.id) }
+        })
+
         try {
           // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
 
           // #774 — mirror reorder/moveUp/moveDown: dedent requests a specific
           // grandparent (`newParentId`). If the backend echoes a different
-          // parent, the local "place after parent's subtree" splice would
-          // diverge from the backend tree — reload instead of trusting the
-          // requested parent.
+          // parent, the provisional "place after parent's subtree" splice would
+          // diverge from the backend tree — reload (overwriting the provisional)
+          // instead of trusting the requested parent.
           if ((resp.new_parent_id ?? null) !== (newParentId ?? null)) {
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
           }
 
-          // #714 — recompute the dedent splice INSIDE the functional updater
-          // from `state.blocks` (current at commit time), never from the
-          // pre-await capture: a concurrent write that landed while the IPC
-          // was in flight must survive. If the block or its parent vanished,
-          // or the block was re-parented mid-flight, fall back to load().
-          // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-          await applyStructuralMove(set, get, {
-            validateAtCommit: (state) => {
-              const cur = state.blocks
-              const curBlock = cur.find((b) => b.id === blockId)
-              const curParent = cur.find((b) => b.id === parent.id)
-              if (!curBlock || !curParent || (curBlock.parent_id ?? null) !== parent.id) {
-                return false
-              }
-              // The backend placed the block under `newParentId` at slot
-              // `newIndex` (the parent's sibling slot + 1, captured pre-await).
-              // If the parent was itself re-parented mid-flight, or its sibling
-              // slot changed (a sibling inserted/removed above it), "insert
-              // right after the parent's subtree" no longer matches the
-              // backend's slot — reload instead of diverging silently.
-              return (
-                (curParent.parent_id ?? null) === (newParentId ?? null) &&
-                siblingSlot(cur, curParent) + 1 === newIndex
-              )
-            },
-            computeSpliced: (state) => {
-              const cur = state.blocks
-              const descendantIds = getDragDescendants(cur, blockId)
-              const movedSet = new Set([blockId, ...descendantIds])
-
-              const movedItems: FlatBlock[] = cur
-                .filter((b) => movedSet.has(b.id))
-                .map((b) => {
-                  const moved = Object.assign({}, b, { depth: b.depth - 1 })
-                  if (b.id === blockId) {
-                    moved.parent_id = newParentId
-                    moved.position = resp.new_position
-                  }
-                  return moved
-                })
-
-              const remaining = cur.filter((b) => !movedSet.has(b.id))
-              // `remaining` is scanned twice for the parent's slot below
-              // (getDragDescendants + the insertion anchor). Build the id→index
-              // map once so both become O(1) lookups (#2041/#2200).
-              const remainingIndex = buildIndexById(remaining)
-              const parentDescendants = getDragDescendants(remaining, parent.id, remainingIndex)
-              let insertAt = (remainingIndex.get(parent.id) ?? -1) + 1
-              while (
-                insertAt < remaining.length &&
-                parentDescendants.has((remaining[insertAt] as FlatBlock).id)
-              ) {
-                insertAt++
-              }
-
-              remaining.splice(insertAt, 0, ...movedItems)
-              // Subtree-touch (perf invariant): only `movedItems` got new references.
-              return { blocks: remaining, touchedIds: movedItems.map((b) => b.id) }
-            },
-          })
+          await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
+          await rollbackProvisionalMove(set, get, handle)
           logger.error('page-blocks', 'Failed to dedent block', { blockId }, err)
           notify.error(i18n.t('error.dedentBlockFailed'))
           return false
@@ -859,84 +848,47 @@ export function createReducers({
         // the OTHER children — moving up swaps with the previous sibling.
         const newIndex = sibIndex - 1
 
+        // #2849 — apply the swap splice OPTIMISTICALLY, BEFORE the IPC, so the
+        // UI updates instantly. Same-parent only — moveUp never crosses parents
+        // (it walks the sibling list at fixed depth). The moved block keeps its
+        // current `position`; the backend's dense rank is healed in on resolve.
+        const handle = applyProvisionalMove(set, blockId, (state) => {
+          const cur = state.blocks
+          const movedDescendants = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...movedDescendants])
+          const movedItems = cur.filter((b) => movedSet.has(b.id))
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
+          // #2041/#2200 — unlike dedent/moveDown/reorder, this inserts BEFORE
+          // `prevSibling`'s own slot: in a DFS-flattened array a block's
+          // descendants always sit AFTER it, so landing at `prevSibling`'s index
+          // already lands before its whole subtree — no skip-loop, one findIndex.
+          const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
+          const newBlocks = [...remaining]
+          newBlocks.splice(insertAt, 0, ...movedItems)
+          // Same-parent swap: only array order changed, no block object was
+          // rewritten — nothing to touch (the position heal on resolve
+          // re-allocates the one moved block).
+          return { blocks: newBlocks, touchedIds: [] }
+        })
+
         try {
-          // Splice locally instead of full re-list.
           // The MoveResponse echoes the canonical (parent_id, position) the
-          // backend committed, so we can mirror the `reorder` path
-          // without a follow-up `list_blocks` IPC. Same-parent only — moveUp
-          // never crosses parents (it walks the sibling list at fixed depth).
-          // #730 — pool_busy retry (see edit/createBelow).
+          // backend committed, so we mirror it without a follow-up `list_blocks`
+          // IPC. #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
 
           // Defensive: if the backend echoes a different parent (shouldn't
-          // happen for moveUp, but the response shape allows it), fall back
-          // to the full reload path so descendant chains stay consistent.
+          // happen for moveUp, but the response shape allows it), reload
+          // (overwriting the provisional) so descendant chains stay consistent.
           if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
             await get().load()
           } else {
-            // #714 — recompute the swap splice INSIDE the functional updater
-            // from `state.blocks` (current at commit time), never from the
-            // pre-await capture: a concurrent write that landed while the IPC
-            // was in flight must survive. If the block or its predecessor
-            // vanished or the block was re-parented mid-flight, fall back to
-            // a full load().
-            // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-            await applyStructuralMove(set, get, {
-              validateAtCommit: (state) => {
-                const cur = state.blocks
-                // Locate the moved block and its predecessor in the flat tree
-                // (which may include descendants between them). Swap the two
-                // sibling subtrees so visual order matches the new positions.
-                const curBlock = cur.find((b) => b.id === blockId)
-                if (!curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null)) {
-                  return false
-                }
-                // Backend semantics: the block lands at slot `newIndex` among its
-                // OTHER same-parent siblings (captured pre-await). If the sibling
-                // set changed mid-flight (insert/remove/re-parent above the
-                // block), "insert before the captured prevSibling" no longer
-                // equals that slot — reload instead of diverging silently. This
-                // also covers prevSibling vanishing or being re-parented.
-                const siblingsRemaining = cur.filter(
-                  (b) =>
-                    b.id !== blockId &&
-                    (b.parent_id ?? null) === (parentId ?? null) &&
-                    b.depth === curBlock.depth,
-                )
-                return siblingsRemaining[newIndex]?.id === prevSibling.id
-              },
-              computeSpliced: (state) => {
-                const cur = state.blocks
-                const movedDescendants = getDragDescendants(cur, blockId)
-                const movedSet = new Set([blockId, ...movedDescendants])
-                const movedItems = cur
-                  .filter((b) => movedSet.has(b.id))
-                  .map((b) =>
-                    b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
-                  )
-                const remaining = cur.filter((b) => !movedSet.has(b.id))
-                // #2041/#2200 — unlike dedent/moveDown/reorder, this inserts
-                // BEFORE `prevSibling`'s own slot: in a DFS-flattened array a
-                // block's descendants always sit AFTER it, so landing at
-                // `prevSibling`'s index already lands before its whole subtree
-                // — no `getDragDescendants` skip-loop, hence no second scan of
-                // `remaining` to fold into a shared `buildIndexById` map here.
-                // A single `.findIndex` is the cheapest correct lookup; building
-                // an id→index Map to serve exactly one lookup would cost O(n)
-                // to save nothing (verified — left as-is intentionally).
-                const insertAt = remaining.findIndex((b) => b.id === prevSibling.id)
-                const newBlocks = [...remaining]
-                newBlocks.splice(insertAt, 0, ...movedItems)
-                // Subtree-touch (perf invariant): only the moved block (whose
-                // `position` was rewritten) actually got a new reference; the
-                // descendants are reused as-is. Update only that key.
-                return { blocks: newBlocks, touchedIds: [blockId] }
-              },
-            })
+            await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
           }
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
+          await rollbackProvisionalMove(set, get, handle)
           logger.error('page-blocks', 'Failed to move block up', { blockId }, err)
           notify.error(i18n.t('error.moveBlockUpFailed'))
           return false
@@ -989,83 +941,50 @@ export function createReducers({
         // is slot `sibIndex + 1`.
         const newIndex = sibIndex + 1
 
+        // #2849 — apply the swap splice OPTIMISTICALLY, BEFORE the IPC, so the
+        // UI updates instantly. Same-parent reorder only (see moveUp). The moved
+        // block keeps its current `position`; the backend rank heals on resolve.
+        const handle = applyProvisionalMove(set, blockId, (state) => {
+          const cur = state.blocks
+          // Move the block AND its descendants past nextSibling AND its
+          // descendants. Build moved + remaining, then re-insert moved right
+          // after nextSibling's last descendant in `remaining`.
+          const movedDescendants = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...movedDescendants])
+          const movedItems = cur.filter((b) => movedSet.has(b.id))
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
+          // `remaining` is scanned twice for nextSibling's slot below
+          // (getDragDescendants + the insertion anchor). Build the id→index map
+          // once so both become O(1) lookups (#2041/#2200).
+          const remainingIndex = buildIndexById(remaining)
+          const nextDescendants = getDragDescendants(remaining, nextSibling.id, remainingIndex)
+          let insertAt = (remainingIndex.get(nextSibling.id) ?? -1) + 1
+          while (
+            insertAt < remaining.length &&
+            nextDescendants.has((remaining[insertAt] as FlatBlock).id)
+          ) {
+            insertAt++
+          }
+          const newBlocks = [...remaining]
+          newBlocks.splice(insertAt, 0, ...movedItems)
+          // Same-parent swap: only array order changed, no block object was
+          // rewritten — nothing to touch (the position heal re-allocates it).
+          return { blocks: newBlocks, touchedIds: [] }
+        })
+
         try {
-          // Splice locally instead of full re-list.
-          // See moveUp comment for rationale; same-parent reorder only.
           // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
 
           if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
             await get().load()
           } else {
-            // #714 — recompute the swap splice INSIDE the functional updater
-            // from `state.blocks` (current at commit time), never from the
-            // pre-await capture: a concurrent write that landed while the IPC
-            // was in flight must survive. If the block or its successor
-            // vanished or the block was re-parented mid-flight, fall back to
-            // a full load().
-            // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-            await applyStructuralMove(set, get, {
-              validateAtCommit: (state) => {
-                const cur = state.blocks
-                const curBlock = cur.find((b) => b.id === blockId)
-                if (!curBlock || (curBlock.parent_id ?? null) !== (parentId ?? null)) {
-                  return false
-                }
-                // Backend semantics: the block lands at slot `newIndex` among its
-                // OTHER same-parent siblings (captured pre-await), i.e. right
-                // after the captured nextSibling only while that sibling still
-                // sits at slot `newIndex - 1`. If the sibling set changed
-                // mid-flight, reload instead of diverging silently. This also
-                // covers nextSibling vanishing or being re-parented.
-                const siblingsRemaining = cur.filter(
-                  (b) =>
-                    b.id !== blockId &&
-                    (b.parent_id ?? null) === (parentId ?? null) &&
-                    b.depth === curBlock.depth,
-                )
-                return siblingsRemaining[newIndex - 1]?.id === nextSibling.id
-              },
-              computeSpliced: (state) => {
-                const cur = state.blocks
-                // Move the block AND its descendants past nextSibling AND its
-                // descendants. Build moved + remaining, then re-insert moved
-                // right after nextSibling's last descendant in `remaining`.
-                const movedDescendants = getDragDescendants(cur, blockId)
-                const movedSet = new Set([blockId, ...movedDescendants])
-                const movedItems = cur
-                  .filter((b) => movedSet.has(b.id))
-                  .map((b) =>
-                    b.id === blockId ? Object.assign({}, b, { position: resp.new_position }) : b,
-                  )
-                const remaining = cur.filter((b) => !movedSet.has(b.id))
-                // `remaining` is scanned twice for nextSibling's slot below
-                // (getDragDescendants + the insertion anchor). Build the id→index
-                // map once so both become O(1) lookups (#2041/#2200).
-                const remainingIndex = buildIndexById(remaining)
-                const nextDescendants = getDragDescendants(
-                  remaining,
-                  nextSibling.id,
-                  remainingIndex,
-                )
-                let insertAt = (remainingIndex.get(nextSibling.id) ?? -1) + 1
-                while (
-                  insertAt < remaining.length &&
-                  nextDescendants.has((remaining[insertAt] as FlatBlock).id)
-                ) {
-                  insertAt++
-                }
-                const newBlocks = [...remaining]
-                newBlocks.splice(insertAt, 0, ...movedItems)
-                // Subtree-touch (perf invariant): only the moved block's
-                // `position` field changed; the descendants are reused as-is.
-                return { blocks: newBlocks, touchedIds: [blockId] }
-              },
-            })
+            await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
           }
           notifyUndoNewAction(rootParentId, resp.op_refs)
           return true
         } catch (err) {
+          await rollbackProvisionalMove(set, get, handle)
           logger.error('page-blocks', 'Failed to move block down', { blockId }, err)
           notify.error(i18n.t('error.moveBlockDownFailed'))
           return false
