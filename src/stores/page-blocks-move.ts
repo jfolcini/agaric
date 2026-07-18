@@ -2,75 +2,18 @@
  * Optimistic structural-move core for the per-page block store (#1077, #2274).
  *
  * Extracted from `page-blocks.ts` (#2254) — behavior-preserving move. Holds the
- * recompute-at-commit + reconcile-or-reload core (`applyStructuralMove`) shared
- * by every optimistic mover (createBelow/reorder/indent/dedent/moveUp/moveDown)
- * and the batched-move surgical reconcile (`reconcileBatchMove`, used by
- * moveBlocks). Callers live in `page-blocks-reducers.ts`.
+ * pre-await optimistic splice + resolve-path confirm/rollback core
+ * (`applyProvisionalMove` / `reconcileProvisionalMoveSuccess` /
+ * `rollbackProvisionalMove`, #2849) shared by every optimistic mover
+ * (createBelow/reorder/indent/dedent/moveUp/moveDown) and the batched-move
+ * surgical reconcile (`reconcileBatchMove`, used by moveBlocks). Callers live in
+ * `page-blocks-reducers.ts`.
  */
 
 import type { MoveResponse } from '@/lib/tauri'
 import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
 import { cloneBlocksByIdWith } from '@/stores/page-blocks-map'
 import type { PageBlockState } from '@/stores/page-blocks-types'
-
-// ── Optimistic structural-move core (#1077) ──────────────────────────────
-
-/**
- * #1077 — the recompute-at-commit + reconcile-or-reload core shared by every
- * optimistic structural mover (`createBelow`, `reorder`, `indent`, `dedent`,
- * `moveUp`, `moveDown`).
- *
- * Each of those actions captures a pre-await snapshot and dispatches its
- * `move_block` / `create_block` IPC FIRST (that part stays in the caller, and
- * so does any backend-echo parent-mismatch reload — see the call sites), then
- * runs this core SYNCHRONOUSLY with the resolved IPC response. The core:
- *
- *  1. runs `validateAtCommit(state)` inside a functional `set()` updater, so
- *     the anchor/sibling context is re-validated against `state.blocks`
- *     CURRENT AT COMMIT TIME — a concurrent write (edit flush, sync load,
- *     queued move) that landed while the IPC was in flight must survive;
- *  2. on a `'reload'` decision, commits nothing and falls back to a full
- *     `get().load()` to reconcile FE with the backend;
- *  3. on a `'skip'` decision, commits nothing and does NOT reload (the state
- *     is already reconciled — e.g. an interleaved sync load already delivered
- *     the new block);
- *  4. on a `'commit'` decision, applies `computeSpliced(state)` and derives the
- *     next `blocksById` via the subtree-touch `cloneBlocksByIdWith(touchedIds)`
- *     perf invariant (only the touched keys re-allocate).
- *
- * The `needsReload` flag + `set()` wrapper + `if (needsReload) await load()`
- * fallback all live here; callers pass only their action-specific predicate and
- * splice. The pre-await-capture contract is preserved because this runs
- * synchronously after the caller's capture + dispatch — the only await is the
- * conditional reconciling `load()`.
- */
-type StructuralCommitDecision =
-  /** Anchor/sibling context still valid — apply `computeSpliced`. */
-  | { kind: 'commit' }
-  /** Context invalid mid-flight — commit nothing and reload to reconcile. */
-  | { kind: 'reload' }
-  /** State already reconciled — commit nothing, do NOT reload. */
-  | { kind: 'skip' }
-
-interface StructuralMoveSpec {
-  /**
-   * Re-validate the action's anchor/sibling context against the commit-time
-   * `state`. Return `{ kind: 'commit' }` to apply the splice, `{ kind: 'reload' }`
-   * to fall back to `load()`, or `{ kind: 'skip' }` to commit nothing without
-   * reloading. A bare `true`/`false` is accepted as sugar for
-   * `'commit'`/`'reload'` (the common two-outcome movers).
-   */
-  validateAtCommit: (state: PageBlockState) => StructuralCommitDecision | boolean
-  /**
-   * Compute the spliced flat tree and the set of ids whose `FlatBlock`
-   * reference changed (the subtree-touch perf invariant). Only called after
-   * `validateAtCommit` resolves to `'commit'`.
-   */
-  computeSpliced: (state: PageBlockState) => {
-    blocks: FlatBlock[]
-    touchedIds: Iterable<string>
-  }
-}
 
 /**
  * #2274 — surgically reconcile the flat tree after a batched `move_blocks_batch`
@@ -195,34 +138,6 @@ export function reconcileBatchMove(
     if (!present.has(id)) return null
   }
   return flat
-}
-
-/**
- * Run the optimistic recompute-at-commit + reconcile-or-reload core. See
- * `StructuralMoveSpec`. Must be invoked synchronously after the caller has
- * captured its pre-await snapshot and dispatched its IPC.
- */
-export async function applyStructuralMove(
-  set: (updater: (state: PageBlockState) => Partial<PageBlockState>) => void,
-  get: () => PageBlockState,
-  { validateAtCommit, computeSpliced }: StructuralMoveSpec,
-): Promise<void> {
-  let needsReload = false
-  set((state) => {
-    const decision = validateAtCommit(state)
-    const kind = decision === true ? 'commit' : decision === false ? 'reload' : decision.kind
-    if (kind === 'reload') {
-      needsReload = true
-      return {}
-    }
-    if (kind === 'skip') return {}
-    const { blocks, touchedIds } = computeSpliced(state)
-    return {
-      blocks,
-      blocksById: cloneBlocksByIdWith(state.blocksById, deriveTouched(blocks, touchedIds)),
-    }
-  })
-  if (needsReload) await get().load()
 }
 
 // ── Optimistic pre-await provisional move (#2849) ─────────────────────────

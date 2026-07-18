@@ -198,6 +198,11 @@ pub fn validate_create_block_shape(block_type: &str, content: &str) -> Result<()
 /// performs **no in-transaction shift / renumber** of the existing
 /// siblings; a caller that needs collision-free positions must renumber the
 /// siblings itself.
+// #2849 PR2 added the trailing `client_id` slot (8 args, one over the clippy
+// threshold of 7). Bundling the create-block core's positional args into a
+// struct would touch ~12 call sites for zero behavioural gain; the tx-scoped
+// writer signature is intentionally flat.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_block_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     state: &crate::loro::shared::LoroState,
@@ -208,6 +213,12 @@ pub async fn create_block_in_tx(
     // #400: 0-based sibling slot among `parent_id`'s children; `None` appends
     // after the last sibling. (Was a legacy 1-based `position`.)
     index: Option<i64>,
+    // #2849 PR2: an OPTIONAL client-supplied block id. `Some(id)` is used
+    // verbatim iff it is a well-formed ULID that does not collide with an
+    // existing block (else a hard error — never a silent fallback, which would
+    // defeat the stable-id optimistic-create UX). `None` (every non-optimistic
+    // caller) generates a fresh server id, preserving all existing behaviour.
+    client_id: Option<BlockId>,
 ) -> Result<(BlockRow, op_log::OpRecord), AppError> {
     // 1 + 1c. Validate block_type and content length (pure checks, shared
     // with `create_blocks_batch_inner`'s pre-validation pass).
@@ -220,8 +231,37 @@ pub async fn create_block_in_tx(
     // position via reprojection, so a caller can no longer target the sentinel.)
     let index = index.map(|i| i.max(0));
 
-    // 2. Generate new BlockId
-    let block_id = BlockId::new();
+    // 2. Resolve the new BlockId. #2849 PR2: an optimistic-create caller supplies
+    //    a client-generated ULID so the frontend can splice the row in BEFORE this
+    //    IPC resolves and never has to relocate focus/selection to a server id.
+    //    Accept it verbatim ONLY when it is a well-formed ULID that does not
+    //    collide with any existing row; otherwise error (a silent swap would hide
+    //    bugs and break the stable-id contract). `None` keeps the legacy
+    //    server-generated id (every non-optimistic caller).
+    let block_id = match client_id {
+        Some(id) => {
+            // The IPC `BlockId` Deserialize is lenient (it uppercases a non-ULID
+            // string instead of erroring — it must, so synthetic test ids survive),
+            // so re-validate here through the strict `from_string` parse: a
+            // malformed client id becomes `AppError::Ulid` rather than a phantom
+            // insert. This also canonicalises to uppercase Crockford base32.
+            let id = BlockId::from_string(id.into_string())?;
+            // Collision check against ALL rows (live OR tombstoned): `blocks.id`
+            // is the primary key, so a soft-deleted row carrying this id would
+            // still fail the INSERT below. Reject up-front with a clear Conflict.
+            let id_str = id.as_str();
+            let existing = sqlx::query!(r#"SELECT 1 as "v: i32" FROM blocks WHERE id = ?"#, id_str)
+                .fetch_optional(&mut **tx)
+                .await?;
+            if existing.is_some() {
+                return Err(AppError::Conflict(format!(
+                    "block id '{id_str}' already exists"
+                )));
+            }
+            id
+        }
+        None => BlockId::new(),
+    };
 
     // F01: Validate parent_id inside the transaction to prevent TOCTOU race.
     // A concurrent purge_block could physically delete the parent between

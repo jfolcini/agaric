@@ -143,6 +143,8 @@ Some commands need to be callable both standalone AND as part of a larger transa
 
 The inner-pool version usually wraps the in-tx version with its own `CommandTx::begin_immediate` + commit. Don't duplicate logic.
 
+**#2849 PR2 — client-supplied block ids on the create path.** `create_block_in_tx` (in `agaric-engine::block_ops`) takes a trailing `client_id: Option<BlockId>`. `None` (every non-optimistic caller — journal, spaces, bibliography, markdown import, recurrence, batch) mints a server ULID as before. `Some(id)` is the optimistic-create path (`create_block` IPC → `create_block_inner_with_id`): the frontend generates a ULID client-side, splices the block in *before* the round-trip, and passes it here so the id is stable from insertion (no focus/selection relocation to a server id). The id is used verbatim **only** if it parses as a well-formed ULID (`BlockId::from_string`, else `AppError::Ulid`) AND does not collide with any existing row — live or tombstoned (else `AppError::Conflict`). A malformed or colliding id is a hard error, never a silent fallback to a generated id (a silent swap would defeat the stable-id UX and hide bugs). The IPC-level `BlockId` `Deserialize` is lenient, so the ULID re-validation must happen here, not at the wire boundary. The legacy 7-arg `create_block_inner` stays a thin `client_id = None` wrapper so the dozens of existing callers are untouched.
+
 ## `_local` / `record_append` helpers
 
 When a command emits ops that need to participate in the activity-feed entry (`LAST_APPEND` task-local), use the `append_local_op_in_tx` helper. It writes to `op_log` AND records the `OpRef` in the task-local. The bare `INSERT INTO op_log` path skips the task-local; activity-feed entries are NOT emitted.

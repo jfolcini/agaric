@@ -513,6 +513,8 @@ async fn create_block_rejects_page_without_space_id() {
         None,
         None,
         &SpaceScope::Global, // <-- no space_id
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await;
 
@@ -568,6 +570,8 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
         &SpaceScope::Active(SpaceId::from_trusted(
             crate::spaces::bootstrap::SPACE_PERSONAL_ULID,
         )),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .expect("create_block(page, spaceId=Personal) must succeed");
@@ -665,6 +669,8 @@ async fn create_block_non_page_ignores_space_id() {
         &SpaceScope::Active(SpaceId::from_trusted(
             crate::spaces::bootstrap::SPACE_PERSONAL_ULID,
         )),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -680,6 +686,8 @@ async fn create_block_non_page_ignores_space_id() {
         Some(page.id.clone()),
         None,
         &SpaceScope::Global,
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .expect("content block create must succeed without space_id");

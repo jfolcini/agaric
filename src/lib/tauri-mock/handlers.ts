@@ -1744,7 +1744,9 @@ const HANDLERS_TYPED = {
 
   create_block: (args) => {
     const a = args as Record<string, unknown>
-    const id = fakeId()
+    // #2849 PR2 — honor a client-supplied ULID verbatim (the backend uses it as
+    // the block id iff well-formed + non-colliding); fall back to a minted id.
+    const id = (a['blockId'] as string | null | undefined) ?? fakeId()
     const parentId = (a['parentId'] as string) ?? null
     // `scope: SpaceScope` mirrors the backend
     // `create_block_inner_with_space` semantics: when `kind === 'active'`

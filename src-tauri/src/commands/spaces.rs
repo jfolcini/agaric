@@ -270,6 +270,8 @@ pub async fn create_page_in_space_inner(
         // `None` means "append after last sibling" — matches the
         // existing `create_block` behaviour for top-level pages.
         None,
+        // #2849 PR2: server-generated id.
+        None,
     )
     .await?;
     let new_page_id = block.id.clone();
@@ -389,6 +391,8 @@ pub async fn create_space_inner(
         // Spaces are top-level — `parent_id = None`, `position = None`
         // (append after last sibling).
         None,
+        None,
+        // #2849 PR2: server-generated id.
         None,
     )
     .await?;

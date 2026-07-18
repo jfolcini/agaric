@@ -159,6 +159,9 @@ describe('createBlock', () => {
       // carries the `scope` tagged-enum. For non-page block types
       // `{ kind: 'global' }` is correct (the backend ignores it).
       scope: { kind: 'global' },
+      // #2849 PR2: `blockId` defaults to null (server mints the id) when the
+      // caller does not supply a client-generated ULID for optimistic create.
+      blockId: null,
     })
     expect(result).toEqual(expected)
   })
@@ -186,6 +189,8 @@ describe('createBlock', () => {
       // documents that the wrapper forwards `undefined` → Global (the
       // backend will then surface `Validation` for a real call).
       scope: { kind: 'global' },
+      // #2849 PR2: `blockId` defaults to null when no client id is supplied.
+      blockId: null,
     })
   })
 

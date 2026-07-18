@@ -45,6 +45,24 @@ function subtreeResp<T>(blocks: T[]): { blocks: T[]; truncated: boolean; total: 
   return { blocks, truncated: false, total: blocks.length }
 }
 
+// #2849 PR2 — `createBelow` now generates the new block's id CLIENT-SIDE (a
+// ULID) BEFORE the create IPC, so the row can be spliced in optimistically. Mock
+// the generator deterministically (`CID_1`, `CID_2`, …, reset per test) so tests
+// can address the new block by a stable, predictable id instead of a random
+// ULID. `resetClientIds` runs in `beforeEach`.
+const { newBlockIdMock, resetClientIds } = vi.hoisted(() => {
+  let counter = 0
+  return {
+    newBlockIdMock: () => `CID_${++counter}`,
+    resetClientIds: () => {
+      counter = 0
+    },
+  }
+})
+vi.mock('@/lib/block-id', () => ({
+  newBlockId: newBlockIdMock,
+}))
+
 // --- Mock for undo store (used by notifyUndoNewAction in page-blocks.ts) ---
 const mockOnNewAction = vi.fn()
 const mockClearPage = vi.fn()
@@ -98,6 +116,9 @@ describe('PageBlockStore', () => {
     // The pre-bootstrap no-op contract is exercised in its own test.
     useSpaceStore.setState({ currentSpaceId: TEST_SPACE_ID })
     vi.clearAllMocks()
+    // #2849 PR2 — reset the client-ULID counter so each test's first
+    // `createBelow` mints `CID_1` deterministically.
+    resetClientIds()
     // #2850 — the prefetch map is a module-level singleton; reset it so a
     // prefetch parked by one test can never leak into the next.
     _resetPrefetchPageSubtreeForTest()
@@ -825,9 +846,12 @@ describe('PageBlockStore', () => {
       const blockB = makeBlock({ id: 'B', position: 1 })
       store.setState({ blocks: [blockA, blockB] })
 
+      // #2849 PR2 — the backend uses the client-supplied id verbatim, so it
+      // echoes `blockId` back. The new block is addressed by the CLIENT id
+      // (`CID_1`), never a server-minted one.
       mockedInvoke.mockResolvedValueOnce({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'new content',
         parent_id: null,
         position: 1,
@@ -836,11 +860,11 @@ describe('PageBlockStore', () => {
 
       const newId = await store.getState().createBelow('A', 'new content')
 
-      expect(newId).toBe('NEW')
+      expect(newId).toBe('CID_1')
       const blocks = store.getState().blocks
       expect(blocks).toHaveLength(3)
       expect(blocks[0]?.id).toBe('A')
-      expect(blocks[1]?.id).toBe('NEW')
+      expect(blocks[1]?.id).toBe('CID_1')
       expect(blocks[1]?.content).toBe('new content')
       expect(blocks[2]?.id).toBe('B')
     })
@@ -1325,10 +1349,11 @@ describe('PageBlockStore', () => {
 
       await store.getState().splitBlock('A', 'a\nb\nc')
 
-      // Verify the third invoke used position based on B's position
+      // #2849 PR2 — the two created blocks carry CLIENT ids (`CID_1`, `CID_2`);
+      // splitBlock chains on those (the store's actual ids), not server ids.
       expect(mockedInvoke).toHaveBeenCalledTimes(3)
       const blocks = store.getState().blocks
-      expect(blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+      expect(blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'CID_2'])
     })
 
     it('splits heading + paragraph into two blocks', async () => {
@@ -2280,6 +2305,127 @@ describe('PageBlockStore', () => {
       })
     })
 
+    // ── createBelow (optimistic pre-await insert, #2849 PR2) ────────────────
+    // The new block's id is generated CLIENT-side (mocked to `CID_1`) so the row
+    // can be spliced in before the create IPC resolves and the id is stable from
+    // insertion — focus/selection never relocate to a server-minted id.
+    describe('createBelow', () => {
+      it('(a) the provisional block is visible BEFORE the create IPC resolves, under the client id', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveCreate = deferInvoke()
+
+        const p = store.getState().createBelow('A', 'new')
+        // Spliced synchronously with the client id — before any await.
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
+        expect(store.getState().blocksById.get('CID_1')?.content).toBe('new')
+        // The create IPC carried the client id verbatim.
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'create_block',
+          expect.objectContaining({ blockId: 'CID_1', content: 'new' }),
+        )
+
+        resolveCreate({
+          id: 'CID_1',
+          block_type: 'content',
+          content: 'new',
+          parent_id: null,
+          position: 1,
+          deleted_at: null,
+        })
+        await expect(p).resolves.toBe('CID_1')
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(b) success confirms in place — no id swap, focus stays, position healed', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        // Backend echoes the client id and returns the authoritative dense rank.
+        mockedInvoke.mockResolvedValueOnce({
+          id: 'CID_1',
+          block_type: 'content',
+          content: 'new',
+          parent_id: null,
+          position: 2,
+          deleted_at: null,
+        })
+
+        const newId = await store.getState().createBelow('A', 'new')
+
+        // No id swap: the returned id is the client id already in the store.
+        expect(newId).toBe('CID_1')
+        const s = store.getState()
+        expect(s.blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
+        // Provisional carried `position: null`; the resolve healed it to the
+        // backend dense rank (2).
+        expect(s.blocksById.get('CID_1')?.position).toBe(2)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+        expectMapMatchesArray(s)
+      })
+
+      it('(c) an IPC rejection rolls back to the EXACT pre-op state (same refs)', async () => {
+        const a = root('A', 0)
+        const b = root('B', 1)
+        store.setState({ blocks: [a, b] })
+        const before = store.getState().blocks
+        mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+
+        await expect(store.getState().createBelow('A', 'x')).resolves.toBeNull()
+
+        // Exact restore — the pre-op array AND its entries by reference; the
+        // provisional block is gone from both structures.
+        expect(store.getState().blocks).toBe(before)
+        expect(store.getState().blocks[0]).toBe(a)
+        expect(store.getState().blocks[1]).toBe(b)
+        expect(store.getState().blocksById.has('CID_1')).toBe(false)
+        expectMapMatchesArray(store.getState())
+        expect(toast.error).toHaveBeenCalledWith('Failed to create block')
+      })
+
+      it('(d) a concurrent write that built on the provisional block is not clobbered by rollback', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveCreate = deferInvoke()
+
+        const p = store.getState().createBelow('A', 'x')
+        // Provisional: [A, CID_1, B].
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
+
+        // A concurrent write builds ON the provisional block: a child was
+        // indented under CID_1 while create_block was in flight (fresh array
+        // ref, so the pre-op snapshot no longer equals live state).
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'CID_1', position: 1, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'CHILD', position: 0, parent_id: 'CID_1', depth: 1 }),
+            makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 }),
+          ],
+        })
+        // The guarded rollback must reload (not restore the stale [A,B] pre-op
+        // snapshot, which would DROP both CID_1 and the child built on it).
+        mockedInvoke.mockResolvedValueOnce(
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+            makeBlock({ id: 'CID_1', parent_id: 'PAGE_1', position: 1 }),
+            makeBlock({ id: 'CHILD', parent_id: 'CID_1', position: 0 }),
+            makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 2 }),
+          ]),
+        )
+
+        // Reject the deferred create IPC — the outer promise adopts the
+        // rejection, driving the catch/rollback.
+        resolveCreate(Promise.reject(new Error('create failed')))
+        await expect(p).resolves.toBeNull()
+
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'load_page_subtree',
+          expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+        )
+        // The concurrent child survives — the stale snapshot did not clobber it.
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'CHILD', 'B'])
+        expectMapMatchesArray(store.getState())
+      })
+    })
+
     // ── adversarial interleavings (traps #2/#3/#4) ─────────────────────────
     // These exercise the reconcile/rollback branches a benign in-flight edit
     // does NOT reach: a racing load() that REVERTS or SUPERSEDES the provisional
@@ -2583,24 +2729,27 @@ describe('PageBlockStore', () => {
 
       const resolveCreate = deferInvoke()
       const createPromise = store.getState().createBelow('A', 'new content')
+      // #2849 PR2 — the provisional block is spliced in SYNCHRONOUSLY, before
+      // the IPC resolves, under the client id `CID_1`.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
 
       // Interleave an edit flush while create_block is in flight.
       mockedInvoke.mockResolvedValueOnce({})
       await store.getState().edit('A', 'edited mid-flight')
 
       resolveCreate({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'new content',
         parent_id: null,
         position: 1,
         deleted_at: null,
       })
-      await expect(createPromise).resolves.toBe('NEW')
+      await expect(createPromise).resolves.toBe('CID_1')
 
       const s = store.getState()
-      // Structural change applied: NEW inserted right after A.
-      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'NEW', 'B'])
+      // Structural change persisted: CID_1 sits right after A.
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
       // The interleaved write survived in BOTH the array and the Map.
       expect(s.blocks.find((b) => b.id === 'A')?.content).toBe('edited mid-flight')
       expect(s.blocksById.get('A')?.content).toBe('edited mid-flight')
@@ -2619,34 +2768,37 @@ describe('PageBlockStore', () => {
       const createPromise = store.getState().createBelow('A', 'x')
 
       // Simulate a sync:complete registry-wide load() that dropped the anchor
-      // while create_block was in flight.
+      // AND the provisional block (CID_1) while create_block was in flight.
       store.setState({ blocks: [makeBlock({ id: 'B', position: 0, parent_id: null, depth: 0 })] })
 
-      // The fallback load() will hit load_page_subtree — give it the backend truth.
+      // The fallback load() will hit load_page_subtree — give it the backend
+      // truth (the backend committed CID_1 verbatim).
       mockedInvoke.mockResolvedValueOnce(
         subtreeResp([
           makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
-          makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+          makeBlock({ id: 'CID_1', parent_id: 'PAGE_1', position: 1, content: 'x' }),
         ]),
       )
 
       resolveCreate({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'x',
         parent_id: null,
         position: 1,
         deleted_at: null,
       })
-      await expect(createPromise).resolves.toBe('NEW')
+      await expect(createPromise).resolves.toBe('CID_1')
 
-      // No blind splice against stale state — full reload instead.
+      // The provisional block vanished mid-flight (racing load rebuilt
+      // blocksById without it), so the resolve path reconciles via load()
+      // instead of blindly healing a splice that is no longer there.
       expect(mockedInvoke).toHaveBeenCalledWith(
         'load_page_subtree',
         expect.objectContaining({ rootBlockId: 'PAGE_1' }),
       )
       const s = store.getState()
-      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'NEW'])
+      expect(s.blocks.map((b) => b.id)).toEqual(['B', 'CID_1'])
       expectMapMatchesArray(s)
     })
 
@@ -2708,10 +2860,10 @@ describe('PageBlockStore', () => {
         ],
       })
 
-      // createBelow: A,NEW,B,C
+      // createBelow: A,CID_1,B,C (client id CID_1)
       mockedInvoke.mockResolvedValueOnce({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'x',
         parent_id: null,
         position: 1,
@@ -2720,23 +2872,23 @@ describe('PageBlockStore', () => {
       await store.getState().createBelow('A', 'x')
       expectMapMatchesArray(store.getState())
 
-      // reorder: C,A,NEW,B
+      // reorder: C,A,CID_1,B
       mockedInvoke.mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 0 })
       await store.getState().reorder('C', 0)
       expectMapMatchesArray(store.getState())
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'NEW', 'B'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'CID_1', 'B'])
 
-      // moveUp: C,A,B,NEW
+      // moveUp: C,A,B,CID_1
       mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 2 })
       await store.getState().moveUp('B')
       expectMapMatchesArray(store.getState())
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B', 'NEW'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B', 'CID_1'])
 
-      // moveDown: C,B,A,NEW
+      // moveDown: C,B,A,CID_1
       mockedInvoke.mockResolvedValueOnce({ block_id: 'A', new_parent_id: null, new_position: 2 })
       await store.getState().moveDown('A')
       expectMapMatchesArray(store.getState())
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'NEW'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'CID_1'])
 
       // indent: A becomes child of B. #774 — indent now checks the backend
       // parent echo, so the mock must echo the requested parent ('B') to
@@ -2753,7 +2905,7 @@ describe('PageBlockStore', () => {
       expectMapMatchesArray(store.getState())
       expect(store.getState().blocksById.get('A')?.parent_id).toBe(null)
       expect(store.getState().blocksById.get('A')?.depth).toBe(0)
-      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'NEW'])
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'B', 'A', 'CID_1'])
     })
 
     it('createBelow: skips the splice when an interleaved load() already delivered the new block', async () => {
@@ -2767,29 +2919,31 @@ describe('PageBlockStore', () => {
       const resolveCreate = deferInvoke()
       const createPromise = store.getState().createBelow('A', 'x')
 
-      // A sync:complete load() landed mid-flight whose snapshot already
-      // contains the freshly created block.
+      // A sync:complete load() landed mid-flight whose snapshot already contains
+      // the freshly created block — with the SAME client id (CID_1) the backend
+      // committed verbatim — still at the provisional slot.
       store.setState({
         blocks: [
           makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
-          makeBlock({ id: 'NEW', content: 'x', position: 1, parent_id: null, depth: 0 }),
+          makeBlock({ id: 'CID_1', content: 'x', position: 1, parent_id: null, depth: 0 }),
           makeBlock({ id: 'B', position: 2, parent_id: null, depth: 0 }),
         ],
       })
 
       resolveCreate({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'x',
         parent_id: null,
         position: 1,
         deleted_at: null,
       })
-      await expect(createPromise).resolves.toBe('NEW')
+      await expect(createPromise).resolves.toBe('CID_1')
 
       const s = store.getState()
-      // No duplicate entry, no fallback reload — state was already reconciled.
-      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'NEW', 'B'])
+      // No duplicate entry, no fallback reload — the block sits at the same
+      // slot+parent under its stable id, so the resolve path just heals position.
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'CID_1', 'B'])
       expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
       expectMapMatchesArray(s)
     })
@@ -2805,9 +2959,9 @@ describe('PageBlockStore', () => {
       const resolveCreate = deferInvoke()
       const createPromise = store.getState().createBelow('A', 'x')
 
-      // A was re-parented under B while create_block was in flight — the new
-      // block belongs under A's ORIGINAL parent, so a local splice after A's
-      // new location would lie about the structure.
+      // A was re-parented under B while create_block was in flight — the racing
+      // load rebuilt blocksById without the provisional block at its slot, so
+      // the resolve path reconciles via load() rather than heal a moved splice.
       store.setState({
         blocks: [
           makeBlock({ id: 'B', position: 0, parent_id: null, depth: 0 }),
@@ -2818,19 +2972,19 @@ describe('PageBlockStore', () => {
         subtreeResp([
           makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 0 }),
           makeBlock({ id: 'A', parent_id: 'B', position: 0 }),
-          makeBlock({ id: 'NEW', parent_id: 'PAGE_1', position: 1, content: 'x' }),
+          makeBlock({ id: 'CID_1', parent_id: 'PAGE_1', position: 1, content: 'x' }),
         ]),
       )
 
       resolveCreate({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'x',
         parent_id: null,
         position: 1,
         deleted_at: null,
       })
-      await expect(createPromise).resolves.toBe('NEW')
+      await expect(createPromise).resolves.toBe('CID_1')
 
       expect(mockedInvoke).toHaveBeenCalledWith(
         'load_page_subtree',
@@ -4425,8 +4579,8 @@ describe('PageBlockStore', () => {
       store.setState({ blocks: [makeBlock({ id: 'A', position: 0 })] })
 
       mockedInvoke.mockResolvedValueOnce({
-        id: 'NEW',
-        block_type: 'text',
+        id: 'CID_1',
+        block_type: 'content',
         content: 'new',
         parent_id: null,
         position: 1,
@@ -4437,7 +4591,7 @@ describe('PageBlockStore', () => {
 
       const { blocks, blocksById } = store.getState()
       expect(blocksById.size).toBe(blocks.length)
-      expect(blocksById.get('NEW')?.content).toBe('new')
+      expect(blocksById.get('CID_1')?.content).toBe('new')
       expect(blocksById.get('A')?.id).toBe('A')
     })
 

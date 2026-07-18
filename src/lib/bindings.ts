@@ -16,7 +16,7 @@ export const commands = {
 	 *  flattened, strict superset of the previous `BlockRow` shape) so the
 	 *  frontend undo stack can address the action by exact ref (`undo_op`).
 	 */
-	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope })),
+	createBlock: (blockType: string, content: string, parentId: string | null, index: number | null, scope: SpaceScope, blockId: string | null) => typedError<WithOps<BlockRow>, AppError>(__TAURI_INVOKE("create_block", { blockType, content, parentId, index, scope, blockId })),
 	/**
 	 *  Tauri command: atomically create a batch of blocks. Delegates to
 	 *  [`create_blocks_batch_inner`].

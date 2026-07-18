@@ -224,6 +224,8 @@ pub async fn build_recurrence_sibling_in_tx(
         original.content.unwrap_or_default(),
         original.parent_id.clone().map(BlockId::into_string),
         new_index,
+        // #2849 PR2: recurrence siblings mint server ids.
+        None,
     )
     .await?;
     op_records.push(op);

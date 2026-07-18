@@ -699,6 +699,8 @@ async fn handle_create_page(
         None,
         None,
         &scope,
+        // #2849 PR2: MCP page creation mints a server id.
+        None,
     )
     .await?;
     // A newly-created page resolves to itself (page_id = id), so `blocks:changed`

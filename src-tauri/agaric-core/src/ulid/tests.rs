@@ -76,6 +76,51 @@ fn from_string_accepts_owned_string() {
     assert_eq!(id.as_str(), FIXTURE_ULID);
 }
 
+/// #2849 PR2 — REAL outputs of the frontend `newBlockId()` generator
+/// (`src/lib/block-id.ts`), captured verbatim from `node` runs of the actual
+/// implementation. The optimistic-create path feeds these straight into the
+/// backend `create_block(blockId)` → `BlockId::from_string`, and the FE unit
+/// tests MOCK `newBlockId`, so nothing else in the suite ever proves the two
+/// implementations agree on the ULID wire format. If the JS encoder drifted
+/// (wrong length / alphabet / bit or byte order / case), every production
+/// createBelow would fail here.
+const FE_NEW_BLOCK_IDS: [&str; 6] = [
+    "01KXSMFVM0VV6K02860AX2DAMY",
+    "01KXSMFVNAFYE8RZJ5M1SQJB3Y",
+    "01KXSMFVPK5STFA2D0FZ3CTWEB",
+    "01KXSMFVQW50BFXMQP17BNDFB1",
+    "01KXSMFVS55ZPJVTN8G3D1AB4R",
+    "01KXSMFVTESPNZS7P1Q2Y5JHK3",
+];
+
+#[test]
+fn from_string_accepts_real_frontend_new_block_id_output_2849() {
+    for raw in FE_NEW_BLOCK_IDS {
+        // 1. It parses as a canonical 26-char Crockford base32 ULID.
+        let id = BlockId::from_string(raw)
+            .unwrap_or_else(|e| panic!("real newBlockId() output '{raw}' must parse: {e:?}"));
+        // 2. It is ALREADY canonical — the FE emits uppercase Crockford, so
+        //    `from_string`'s canonicalisation is a no-op (byte-identical). Any
+        //    difference would mean the FE format is non-canonical.
+        assert_eq!(
+            id.as_str(),
+            raw,
+            "newBlockId() output must already be canonical uppercase Crockford base32"
+        );
+        // 3. The IPC entry point (`Deserialize`) must agree with `from_string`
+        //    — this is the ACTUAL production path (JSON param → BlockId).
+        let via_ipc: BlockId = serde_json::from_str(&format!("\"{raw}\"")).unwrap();
+        assert_eq!(
+            via_ipc.as_str(),
+            raw,
+            "IPC deserialize must match from_string"
+        );
+        // 4. Shape sanity: 26 chars, first char <= '7' (128-bit no-overflow).
+        assert_eq!(raw.len(), 26);
+        assert!(raw.as_bytes()[0] <= b'7', "ULID first char must be <= '7'");
+    }
+}
+
 // --- BlockId::from_string: error paths ---
 
 #[test]

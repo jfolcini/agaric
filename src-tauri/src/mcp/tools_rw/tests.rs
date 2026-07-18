@@ -109,6 +109,8 @@ async fn append_block_happy_path() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -173,6 +175,8 @@ async fn append_block_position_zero_rejected() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -207,6 +211,8 @@ async fn append_block_negative_position_rejected() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -240,6 +246,8 @@ async fn append_block_position_one_maps_to_first_child() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -275,6 +283,8 @@ async fn update_block_content_happy_path() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -353,6 +363,8 @@ async fn mk_in_space_content_block(
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -705,6 +717,8 @@ async fn add_tag_non_tag_target_is_invalid_operation() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -1107,6 +1121,8 @@ async fn append_block_stamps_origin_agent_in_op_log() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -1192,6 +1208,8 @@ async fn append_block_populates_last_append_inside_scope() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -1266,6 +1284,8 @@ async fn concurrent_rw_clients_serialize_correctly_l124() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -1471,6 +1491,8 @@ async fn append_block_cross_space_rejected() {
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(&space_b)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap();
@@ -1634,6 +1656,8 @@ async fn mk_page(pool: &SqlitePool, mat: &Materializer, space: &str, title: &str
         None,
         Some(1),
         &SpaceScope::Active(SpaceId::from_trusted(space)),
+        // #2849 PR2: server-generated id (test).
+        None,
     )
     .await
     .unwrap()

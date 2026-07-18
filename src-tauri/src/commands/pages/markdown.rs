@@ -1409,6 +1409,8 @@ pub async fn import_markdown_with_progress(
         page_title.clone(),
         None,
         None,
+        // #2849 PR2: server-generated id.
+        None,
     )
     .await?;
     tx.enqueue_background(page_op);
@@ -1869,6 +1871,8 @@ pub async fn import_markdown_with_progress(
                         base.clone(),
                         None,
                         None,
+                        // #2849 PR2: server-generated id.
+                        None,
                     )
                     .await?;
                     tx.enqueue_background(new_page_op);
@@ -2097,6 +2101,8 @@ pub async fn import_markdown_with_progress(
             token_name.clone(),
             None,
             None,
+            // #2849 PR2: server-generated id.
+            None,
         )
         .await
         {
@@ -2204,6 +2210,8 @@ pub async fn import_markdown_with_progress(
                     "tag".into(),
                     tag_name.to_string(),
                     None,
+                    None,
+                    // #2849 PR2: server-generated id.
                     None,
                 )
                 .await
@@ -2433,6 +2441,8 @@ pub async fn import_markdown_with_progress(
             "content".into(),
             content,
             Some(parent_id.clone()),
+            None,
+            // #2849 PR2: server-generated id.
             None,
         )
         .await;
