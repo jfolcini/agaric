@@ -15,8 +15,8 @@
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
-/// Date-filter shape used by [`SearchFilter::due_filter`] /
-/// [`SearchFilter::scheduled_filter`].
+/// Date-filter shape used by `SearchFilter::due_filter` /
+/// `SearchFilter::scheduled_filter`.
 ///
 /// Two variants:
 ///

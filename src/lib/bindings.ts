@@ -1695,8 +1695,8 @@ export type DateField =
 "lastEdited";
 
 /**
- *  Date-filter shape used by [`SearchFilter::due_filter`] /
- *  [`SearchFilter::scheduled_filter`].
+ *  Date-filter shape used by `SearchFilter::due_filter` /
+ *  `SearchFilter::scheduled_filter`.
  * 
  *  Two variants:
  * 
