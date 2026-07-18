@@ -445,6 +445,17 @@ panic = "abort"
 [profile.dev.package."*"]
 debug = false
 
+# Dev-build link-time trim, part 2 (companion to the dep-debuginfo override
+# above and the mold/lld linker auto-wired by scripts/setup.sh). Default Linux
+# `split-debuginfo` packs DWARF into the linked artifact; `"unpacked"` leaves it
+# in the per-object `.o`/`.dwo` files instead, so the linker copies far fewer
+# bytes into the output — cutting cold + incremental *link* time (the long pole
+# on this graph, per docs/BUILD.md § "Speed up Rust builds"). First-party
+# debuggability and runtime are unchanged (the debuginfo still exists, just
+# beside the binary); the dev profile never ships. Reversible with zero effect.
+[profile.dev]
+split-debuginfo = "unpacked"
+
 [lib]
 name = "agaric_lib"
 crate-type = ["lib", "cdylib", "staticlib"]

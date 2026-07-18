@@ -1,19 +1,36 @@
-# Optional faster-linker config. Staged as `.example` so the working tree
-# doesn't break if you haven't installed mold yet. Activate with:
+# Optional faster-linker config for local Rust builds (Linux).
+#
+# You normally DON'T need to copy this by hand: `scripts/setup.sh` (aka
+# `npm run setup` / `just setup`) auto-writes `.cargo/config.toml` on Linux
+# when a fast linker is on PATH — preferring `mold`, falling back to `lld`.
+# This file is the reference / manual fallback.
+#
+# Why: the link step is the long pole of incremental Rust compiles on this
+# codebase (~200K LOC + the Tauri/sqlx/Loro/rustls tree), not codegen. A faster
+# linker cuts incremental relink time substantially (mold measured ~60% faster
+# on this project, 2026-05-16; lld is close behind and ships on most CI/dev
+# images already).
+#
+# Manual activation (only if setup.sh didn't wire it — e.g. you installed the
+# linker afterwards):
 #
 #   sudo apt install mold      # Debian/Ubuntu (mold is in main since 22.04)
 #   cp .cargo/config.toml.example .cargo/config.toml
 #
-# After activation, an incremental `cargo check` after touching a single
-# Rust file drops from ~20s to ~7-10s on this project (measured 2026-05-16:
-# 200K LOC across 228 files; the link step is the long pole, not codegen).
+# ...or just re-run `scripts/setup.sh`, which wires whichever of mold/lld it
+# finds. Match the `[target.…]` triple to your host (`rustc -vV | grep host`).
+# gcc/clang's `-fuse-ld=<ld>` gives a clear error if the linker isn't installed,
+# never silent breakage.
 #
-# Safe to delete the active config any time — it only affects the linker
-# the host toolchain picks for `cargo build` / `cargo check` on Linux,
-# and gcc/clang's `-fuse-ld=mold` is a no-op if mold isn't on PATH (you'd
-# get a clear "fuse-ld: cannot find mold" error, not silent breakage).
-#
-# Tracked in PEND-37 (local dev speed plan).
+# The active `.cargo/config.toml` is gitignored, so it never leaks into the
+# tree — an unconditional linker flag would break a fresh clone that hasn't
+# installed the linker yet. Linux-only: leave untouched on macOS/Windows. Safe
+# to delete any time; it only affects the linker pick. Tracked in PEND-37.
 
+# Preferred — mold:
 [target.x86_64-unknown-linux-gnu]
 rustflags = ["-C", "link-arg=-fuse-ld=mold"]
+
+# Fallback — lld (uncomment instead of the mold block above if mold is absent):
+# [target.x86_64-unknown-linux-gnu]
+# rustflags = ["-C", "link-arg=-fuse-ld=lld"]
