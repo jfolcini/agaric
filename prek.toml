@@ -924,6 +924,28 @@ pass_filenames = false
 types = ["rust"]
 stages = ["pre-commit"]
 
+# Companion read-only gate (#2633). The fixer above runs at `pre-commit` and
+# rewrites unformatted files in place — but it only fires when the commit
+# actually runs the hooks. A `git commit --no-verify`, or a commit made before
+# the hook toolchain finished provisioning in the background, bypasses it, so
+# an unformatted file can still land in history and reach a push — where it
+# only surfaces as a red `cargo fmt` in CI's `validate / lint` lane.
+#
+# This `--check` variant re-verifies formatting at `pre-push`: read-only (no
+# tree mutation on the push path, unlike the fixer) and it aborts the push if
+# any committed Rust file drifted, catching the miss one step before CI does.
+# `cargo fmt` only parses + formats (it does not compile), so the push-path
+# cost is a couple of seconds. Pre-push-staged, so it does not double-run in
+# CI's `prek run --all-files` (that pass runs the pre-commit stage).
+[[repos.hooks]]
+id = "cargo-fmt-check"
+name = "cargo fmt --check"
+entry = "bash -c '. \"$HOME/.cargo/env\" && cd src-tauri && cargo fmt --all --check'"
+language = "system"
+pass_filenames = false
+types = ["rust"]
+stages = ["pre-push"]
+
 # Rust: cargo clippy
 [[repos]]
 repo = "local"
