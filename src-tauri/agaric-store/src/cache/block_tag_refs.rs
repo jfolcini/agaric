@@ -52,12 +52,37 @@ pub async fn reindex_block_tag_refs(
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
     let mut tx = crate::db::begin_immediate_logged(pool, "cache_block_tag_refs_reindex").await?;
+    let changed_tags = reindex_block_tag_refs_in_tx(&mut tx, block_id).await?;
+    // Empty diff performed no writes; skip the commit (rollback-on-drop is a
+    // no-op) to match the pre-#2831 lazy-commit behaviour.
+    if !changed_tags.is_empty() {
+        tx.commit().await?;
+    }
+    Ok(changed_tags)
+}
 
+/// #2831: transactional core of [`reindex_block_tag_refs`].
+///
+/// Runs the read → diff → DELETE/INSERT of the `block_tag_refs` rewrite
+/// against the caller-provided connection (typically a `BEGIN IMMEDIATE`
+/// transaction) and returns the set of tag ids whose ref set changed —
+/// WITHOUT committing. Exposing the core lets the `ReindexBlockTagRefs`
+/// materializer handler seed the durable `usage_count`-refresh obligation
+/// (`RetryKind::RefreshTagUsageCount`) into the SAME transaction that
+/// commits this diff, so a crash or error between the diff commit and the
+/// dependent refresh cannot strand a stale `tags_cache.usage_count` (the
+/// #2831 recoverability hole: a *retry's* diff is empty, so a diff-coupled
+/// refresh would silently no-op). The empty-diff case performs no writes
+/// and returns an empty vec.
+pub async fn reindex_block_tag_refs_in_tx(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
     let row = sqlx::query!(
         "SELECT content FROM blocks WHERE id = ? AND deleted_at IS NULL",
         block_id,
     )
-    .fetch_optional(&mut *tx)
+    .fetch_optional(&mut *conn)
     .await?;
 
     let content = match row {
@@ -75,7 +100,7 @@ pub async fn reindex_block_tag_refs(
         "SELECT tag_id FROM block_tag_refs WHERE source_id = ?",
         block_id,
     )
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
 
     let old_targets: HashSet<String> = existing_rows.into_iter().map(|r| r.tag_id).collect();
@@ -98,13 +123,13 @@ pub async fn reindex_block_tag_refs(
         None
     } else {
         let source_block_id = agaric_core::ulid::BlockId::from_trusted(block_id);
-        crate::space::resolve_block_space(&mut *tx, &source_block_id)
+        crate::space::resolve_block_space(&mut *conn, &source_block_id)
             .await?
             .map(|s| s.as_str().to_owned())
     };
 
     if to_delete.is_empty() && to_insert.is_empty() {
-        // No changes — transaction rolls back on drop (no commit needed).
+        // No changes — the caller commits nothing on an empty diff.
         // No tag's usage_count can have shifted, so nothing to refresh.
         return Ok(Vec::new());
     }
@@ -122,7 +147,7 @@ pub async fn reindex_block_tag_refs(
             block_id,
             delete_json,
         )
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
 
@@ -161,17 +186,16 @@ pub async fn reindex_block_tag_refs(
             insert_json,
             source_space,
         )
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
     }
 
-    tx.commit().await?;
-
     // #2659: report the changed tags (added ∪ removed) so the caller can
-    // refresh exactly their `usage_count`. Computed AFTER commit but from
-    // the same in-memory diff sets, so it costs nothing extra. A candidate
-    // that turned out not to be a live tag (stray `#[ULID]`, cross-space,
-    // purged) is harmless: `refresh_tag_usage_count` no-ops for it.
+    // refresh exactly their `usage_count` (and, #2831, seed a durable refresh
+    // obligation before committing). Computed from the in-memory diff sets, so
+    // it costs nothing extra. A candidate that turned out not to be a live tag
+    // (stray `#[ULID]`, cross-space, purged) is harmless: `refresh_tag_usage_count`
+    // no-ops for it.
     let changed_tags: Vec<String> = new_targets
         .symmetric_difference(&old_targets)
         .cloned()
@@ -189,6 +213,32 @@ pub async fn reindex_block_tag_refs(
 /// targets), same contract as [`reindex_block_tag_refs`].
 pub async fn reindex_block_tag_refs_split(
     write_pool: &SqlitePool,
+    read_pool: &SqlitePool,
+    block_id: &str,
+) -> Result<Vec<String>, AppError> {
+    let mut tx =
+        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_reindex_write").await?;
+    let changed_tags = reindex_block_tag_refs_split_in_tx(&mut tx, read_pool, block_id).await?;
+    // Empty diff performed no writes; skip the commit to match the pre-#2831
+    // lazy-commit behaviour (rollback-on-drop is a no-op).
+    if !changed_tags.is_empty() {
+        tx.commit().await?;
+    }
+    Ok(changed_tags)
+}
+
+/// #2831: transactional core of [`reindex_block_tag_refs_split`].
+///
+/// Reads the block's content, existing refs, and source space from
+/// `read_pool`; applies the DELETE/INSERT diff on the caller-provided
+/// `write_conn` (a `BEGIN IMMEDIATE` transaction on the write pool) and
+/// returns the changed tag ids WITHOUT committing — so the
+/// `ReindexBlockTagRefs` handler can seed the durable
+/// `RetryKind::RefreshTagUsageCount` obligation atomically with the diff.
+/// Mirrors [`reindex_block_tag_refs_in_tx`] for the read/write-split pool
+/// configuration. Same contract otherwise as [`reindex_block_tag_refs_split`].
+pub async fn reindex_block_tag_refs_split_in_tx(
+    write_conn: &mut sqlx::SqliteConnection,
     read_pool: &SqlitePool,
     block_id: &str,
 ) -> Result<Vec<String>, AppError> {
@@ -238,9 +288,7 @@ pub async fn reindex_block_tag_refs_split(
         return Ok(Vec::new());
     }
 
-    // Write phase on write_pool.
-    let mut tx =
-        crate::db::begin_immediate_logged(write_pool, "cache_block_tag_refs_reindex_write").await?;
+    // Write phase on the caller-owned write transaction (#2831).
 
     // Batch DELETE/INSERT via `json_each` — one round-trip per
     // side regardless of the number of changed targets, replacing the
@@ -255,7 +303,7 @@ pub async fn reindex_block_tag_refs_split(
             block_id,
             delete_json,
         )
-        .execute(&mut *tx)
+        .execute(&mut *write_conn)
         .await?;
     }
 
@@ -285,14 +333,13 @@ pub async fn reindex_block_tag_refs_split(
             insert_json,
             source_space,
         )
-        .execute(&mut *tx)
+        .execute(&mut *write_conn)
         .await?;
     }
 
-    tx.commit().await?;
-
-    // #2659: same as the single-pool variant — report changed tags so the
-    // handler can refresh their `usage_count`.
+    // #2659 / #2831: same as the single-pool variant — report changed tags so
+    // the handler can refresh their `usage_count` and seed the durable refresh
+    // obligation before committing this transaction.
     let changed_tags: Vec<String> = new_targets
         .symmetric_difference(&old_targets)
         .cloned()

@@ -139,7 +139,7 @@ pub use agenda::{rebuild_agenda_cache, rebuild_agenda_cache_split};
 pub use block_links::{reindex_block_links, reindex_block_links_conn, reindex_block_links_split};
 pub use block_tag_refs::{
     rebuild_block_tag_refs_cache, rebuild_block_tag_refs_cache_split, reindex_block_tag_refs,
-    reindex_block_tag_refs_split,
+    reindex_block_tag_refs_in_tx, reindex_block_tag_refs_split, reindex_block_tag_refs_split_in_tx,
 };
 pub use page_id::{
     rebuild_page_ids, rebuild_page_ids_split, rebuild_space_ids, set_block_page_id_from_parent,

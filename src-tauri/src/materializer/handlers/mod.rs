@@ -105,7 +105,12 @@ pub(crate) use apply::apply_op_projected;
 pub(crate) use loro_apply::purge_block_sql_cascade;
 #[cfg(test)]
 pub(crate) use pages_cache::recompute_pages_cache_counts_for_pages;
-pub(crate) use task_handlers::{handle_background_task, handle_foreground_task};
+// #2831: `handle_background_task` (unmetered) is test-only in a non-test lib
+// build now that the consumer routes through `handle_background_task_metered`.
+#[cfg_attr(not(test), allow(unused_imports))]
+pub(crate) use task_handlers::{
+    handle_background_task, handle_background_task_metered, handle_foreground_task,
+};
 
 #[cfg(test)]
 mod apply_reproject_proptest;
