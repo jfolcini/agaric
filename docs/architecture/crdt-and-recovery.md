@@ -56,7 +56,7 @@ Snapshots are the durable compaction artifact. They serialise the full SQL prima
 
 ### What's in a snapshot
 
-- All `blocks`, `block_properties`, `block_tags`, `block_links`, `attachments`, `property_definitions`, `page_aliases` rows that survive the frontier (`SnapshotTables` in `src-tauri/src/snapshot/types.rs`).
+- All `blocks`, `block_properties`, `block_tags`, `block_links`, `attachments`, `property_definitions`, `page_aliases` rows that survive the frontier (`SnapshotTables` in `src-tauri/agaric-sync/src/snapshot/types.rs`).
 - Schema version (a small integer; bumped on schema-breaking migrations to refuse cross-version snapshot apply).
 
 Loro engine state is **not** bundled into the snapshot blob — it lives in the separate `loro_doc_state` table (see § Loro state persistence above) and is restored by the engine's own load path, not by `apply_snapshot`.
@@ -78,7 +78,7 @@ All of the above are pinned by tests in `src-tauri/src/snapshot/tests.rs`.
 
 ### Crash-safe write
 
-`create_snapshot` (`src-tauri/src/snapshot/create.rs`) is two-phase, and the phases hold different locks (#2470):
+`create_snapshot` (`src-tauri/agaric-sync/src/snapshot/create.rs`) is two-phase, and the phases hold different locks (#2470):
 
 1. **Collect** — a `DEFERRED` **read** transaction wraps `collect_tables` + `collect_frontier` so every SELECT sees one consistent point-in-time view. Under WAL this holds only a read lock: concurrent writers are *not* blocked while the (potentially large) table scan runs.
 2. **Encode** — CBOR + zstd, outside any transaction.

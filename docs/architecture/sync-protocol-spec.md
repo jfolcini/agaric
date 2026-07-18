@@ -12,22 +12,22 @@ machine.
 This is an extraction of the implementation as it stands; it does not
 propose new behavior. The canonical source is the code, primarily:
 
-- `src-tauri/src/sync_protocol/types.rs` — the `SyncMessage` envelope and
+- `src-tauri/agaric-sync/src/sync_protocol/types.rs` — the `SyncMessage` envelope and
   `SyncState`.
-- `src-tauri/src/sync_protocol/loro_sync_types.rs` — the `LoroSyncMessage`
+- `src-tauri/agaric-sync/src/sync_protocol/loro_sync_types.rs` — the `LoroSyncMessage`
   payload and `LORO_SYNC_PROTOCOL_VERSION`.
-- `src-tauri/src/sync_protocol/session_state_machine.rs` — the per-session
+- `src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs` — the per-session
   `SyncOrchestrator` state machine.
-- `src-tauri/src/sync_protocol/loro_sync.rs` — `prepare_outgoing` /
+- `src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs` — `prepare_outgoing` /
   `apply_remote` and the version-vector reachability check.
-- `src-tauri/src/sync_daemon/session_supervisor.rs` — the initiator-side session
+- `src-tauri/agaric-sync/src/sync_daemon/session_supervisor.rs` — the initiator-side session
   driver (`run_sync_session`).
-- `src-tauri/src/sync_daemon/server.rs` — the responder-side session driver
+- `src-tauri/agaric-sync/src/sync_daemon/server.rs` — the responder-side session driver
   (`handle_incoming_sync`).
-- `src-tauri/src/sync_daemon/snapshot_transfer.rs` — the snapshot catch-up
+- `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs` — the snapshot catch-up
   sub-flow.
-- `src-tauri/src/sync_files.rs` — the attachment-transfer sub-protocol.
-- `src-tauri/agaric-sync/src/sync_constants.rs` and `src-tauri/src/sync_net/connection.rs`
+- `src-tauri/agaric-sync/src/sync_files.rs` — the attachment-transfer sub-protocol.
+- `src-tauri/agaric-sync/src/sync_constants.rs` and `src-tauri/agaric-sync/src/sync_net/connection.rs`
   — shared transport constants.
 
 ## Envelope encoding
@@ -54,7 +54,7 @@ each frame at most `BINARY_FRAME_CHUNK_SIZE` (5 MB) — see
 ### Transport limits
 
 Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-connection) in
-`src-tauri/src/sync_net/connection.rs`:
+`src-tauri/agaric-sync/src/sync_net/connection.rs`:
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
@@ -69,8 +69,8 @@ Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-connection) in
 ## Message types
 
 All variants below are arms of the `SyncMessage` enum in
-`src-tauri/src/sync_protocol/types.rs`, unless noted as belonging to
-`LoroSyncMessage` (`src-tauri/src/sync_protocol/loro_sync_types.rs`).
+`src-tauri/agaric-sync/src/sync_protocol/types.rs`, unless noted as belonging to
+`LoroSyncMessage` (`src-tauri/agaric-sync/src/sync_protocol/loro_sync_types.rs`).
 
 ### `SyncMessage::HeadExchange`
 
@@ -392,7 +392,7 @@ messages after this point.
 
 ### Snapshot sub-flow variants
 
-Driven by `src-tauri/src/sync_daemon/snapshot_transfer.rs`, **not** the
+Driven by `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs`, **not** the
 per-session orchestrator (which explicitly errors if they reach
 `handle_message`):
 
@@ -407,7 +407,7 @@ caps it at `MAX_SNAPSHOT_SIZE` (256 MB).
 
 ### Attachment sub-flow variants
 
-Driven by `src-tauri/src/sync_files.rs`, also outside the per-session
+Driven by `src-tauri/agaric-sync/src/sync_files.rs`, also outside the per-session
 orchestrator:
 
 ```text
@@ -434,8 +434,8 @@ check to fail loudly on a stale snapshot (see the path in
 ## State machine
 
 The per-session state machine is `SyncOrchestrator`
-(`src-tauri/src/sync_protocol/session_state_machine.rs`); its phase enum is
-`SyncState` (`src-tauri/src/sync_protocol/types.rs`).
+(`src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs`); its phase enum is
+`SyncState` (`src-tauri/agaric-sync/src/sync_protocol/types.rs`).
 
 `SyncState` variants: `Idle`, `ExchangingHeads`, `StreamingOps`,
 `ApplyingOps`, `Merging`, `TransferringFiles`, `Complete`, `ResetRequired`,
@@ -495,7 +495,7 @@ of `SyncOrchestrator::handle_message`. Notable rules:
   file-transfer variants pass state validation but are rejected by the
   dispatch body — they are handled by the daemon-layer sub-flows, never the
   orchestrator. Implementation detail in
-  `src-tauri/src/sync_protocol/session_state_machine.rs`.
+  `src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs`.
 
 The surrounding daemon (`src-tauri/src/sync_daemon`) owns everything outside
 the per-session machine: discovery, scheduling, per-peer locking, connection
@@ -743,7 +743,7 @@ How peers compare and request missing ops:
   **persisted** frontier from `peer_refs.loro_vv_bytes` (the vv it advertised
   at the last completed session, #2502/#610) as the export floor, and only
   when neither is available does it ship a full `Snapshot` (`peer_vv = None`)
-  (`src-tauri/src/sync_protocol/session_state_machine.rs`, `loro_sync.rs`).
+  (`src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs`, `loro_sync.rs`).
 - **Receiver** (`loro_sync::apply_remote`): for an `Update`, before any
   engine import it reads the local engine's current version vector
   (`version_vector()`) and runs `classify_from_vv_reachability` against the
@@ -764,7 +764,7 @@ in `loro_sync_types.rs` pins the constant and the serde round-trip shape.
 ## `SnapshotFallbackRequested`
 
 `SnapshotFallbackRequested` is a variant of `ApplyOutcome`
-(`src-tauri/src/sync_protocol/loro_sync.rs`), the return type of
+(`src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs`), the return type of
 `apply_remote`:
 
 ```text
@@ -790,7 +790,7 @@ recovery path.
 ## Attachment-transfer sub-protocol
 
 After the delta phase reaches `Complete`, the session runs a bidirectional
-attachment transfer (`src-tauri/src/sync_files.rs`). It is driven directly
+attachment transfer (`src-tauri/agaric-sync/src/sync_files.rs`). It is driven directly
 off the wire by `run_file_transfer_initiator` / `run_file_transfer_responder`
 and never enters the per-session orchestrator. File-transfer failure is
 non-fatal — it is logged and does not abort the (already-successful) sync.
@@ -837,7 +837,7 @@ Mechanics:
 ### Binary-frame transfer
 
 Both the snapshot blob and attachment files use the shared chunked-binary
-path on `SyncConnection` (`src-tauri/src/sync_net/connection.rs`):
+path on `SyncConnection` (`src-tauri/agaric-sync/src/sync_net/connection.rs`):
 `send_binary_chunked` splits the payload into frames of at most
 `BINARY_FRAME_CHUNK_SIZE` and the receiver reassembles by frame accounting
 against the advertised `size_bytes`. Frames are raw WebSocket binary frames

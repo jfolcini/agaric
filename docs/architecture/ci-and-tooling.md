@@ -66,7 +66,7 @@ Vulnerability advisories filter through three rings of decreasing strictness. **
 
 ## JNI / Android `unsafe_code` reconciliation
 
-Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml:41`). Exactly one file holds a `#![allow(unsafe_code)]` carve-out: `src-tauri/src/sync_daemon/android_multicast.rs:33`, which acquires Android's `WifiManager.MulticastLock` over JNI — the only way to receive multicast packets on an Android Wi-Fi interface, and the only JNI raw-pointer surface in the tree. Each `unsafe` block inside that file is justified inline. Contract: any *new* file needing the allow requires explicit review, enforced by the `unsafe-code allowlist` prek hook (`src-tauri/unsafe-allowlist.txt` + `scripts/check-unsafe-allowlist.sh`).
+Workspace lint is `unsafe_code = "deny"` (`src-tauri/Cargo.toml:41`). Exactly one file holds a `#![allow(unsafe_code)]` carve-out: `src-tauri/agaric-sync/src/sync_daemon/android_multicast.rs:33`, which acquires Android's `WifiManager.MulticastLock` over JNI — the only way to receive multicast packets on an Android Wi-Fi interface, and the only JNI raw-pointer surface in the tree. Each `unsafe` block inside that file is justified inline. Contract: any *new* file needing the allow requires explicit review, enforced by the `unsafe-code allowlist` prek hook (`src-tauri/unsafe-allowlist.txt` + `scripts/check-unsafe-allowlist.sh`).
 
 ## Asymmetric branch-protection convention
 
