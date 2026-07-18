@@ -528,7 +528,21 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
     // import handling (tilde fences, language hints, indented fences, verbatim
     // preservation) is separate, out-of-scope work.
     let mut in_fence = false;
-    for line in normalized.lines() {
+    // #2866: depth of the block that opened the currently-open fence (if
+    // any). `in_fence` is document-global, so a block whose content contains
+    // an ODD number of fence delimiters (an unbalanced/unterminated fence)
+    // would otherwise leave `in_fence` open past the end of that block and
+    // swallow the next sibling into the never-closed fence. `fence_open_depth`
+    // lets the loop detect that boundary — see the check below.
+    let mut fence_open_depth: Option<usize> = None;
+    // #2866 (review follow-up) — `lines()` (`Lines<'_>`) is `Clone`, so a
+    // manual `while let` over it (instead of a `for` loop) lets the boundary
+    // check below CLONE the iterator to peek one line ahead without
+    // consuming it. This is a read-only peek: the cloned iterator is
+    // discarded after the check, so the outer loop's position and every
+    // other line's processing is completely unaffected.
+    let mut lines_iter = normalized.lines();
+    while let Some(line) = lines_iter.next() {
         let trimmed = line.trim_start();
 
         // Skip empty lines
@@ -547,14 +561,93 @@ pub fn parse_logseq_markdown(content: &str) -> ParseOutput {
         // backtick test.
         let fence_probe = trimmed.strip_prefix("- ").unwrap_or(trimmed);
         let is_fence_delim = fence_probe.starts_with("```");
-        let line_is_code = in_fence || is_fence_delim;
-        if is_fence_delim {
-            in_fence = !in_fence;
-        }
 
-        // Calculate indentation (number of leading spaces / 2)
+        // Calculate indentation (number of leading spaces / 2). Moved ahead of
+        // the fence toggle below (#2866) so `depth` is available for the
+        // boundary check.
         let indent = line.len() - trimmed.len();
         let depth = indent / 2;
+
+        // #2866 — an unbalanced fence recovery: `in_fence` is still open from
+        // an earlier, unterminated fence (odd delimiter count inside the
+        // owning block), and this line is a NEW bullet at or above the depth
+        // of the block that opened that fence. That means we've left the
+        // owning block's scope, so the fence must have been meant to close by
+        // the end of that block — force it closed at this boundary so the
+        // sibling spawns its own block instead of being folded into the
+        // never-closed fence. Only applies to non-delimiter lines; a genuine
+        // closing delimiter is handled by the toggle below.
+        if in_fence
+            && !is_fence_delim
+            && (trimmed == "-" || trimmed.starts_with("- "))
+            && fence_open_depth.is_some_and(|open_depth| depth <= open_depth)
+        {
+            // (#2866 review follow-up) — regression guard against #2725: a
+            // bullet-shaped line at (or above) the fence-opener's own depth
+            // is genuinely ambiguous on its own — it could be the sibling
+            // bullet #2866 needs to recover at (the fence never really
+            // closes), OR it could be literal fence CONTENT that just
+            // happens to look bullet-shaped, with the fence properly closing
+            // on the very next line (e.g. a pasted snippet whose last line
+            // is `- interior`, immediately followed by the closing fence:
+            // `- ```\n- interior\n``` `). Those two shapes are
+            // indistinguishable from this line alone.
+            //
+            // Resolve the ambiguity with a single-line peek: if the next
+            // non-blank line is a BARE closing delimiter (no `- ` prefix),
+            // that's an UNAMBIGUOUS signal the fence closes right here — a
+            // bare ```` ``` ```` can only ever be a continuation/close of an
+            // already-open fence, never the start of a new bullet — so treat
+            // the current line as fence content and do NOT recover. A
+            // BULLETED delimiter (`- ``` `) on the next line is NOT treated
+            // as unambiguous: it could just as easily be opening a brand-new
+            // sibling code block (the exact shape #2866 was filed over, see
+            // the multi-code-block regression test below), so recovery still
+            // fires in that case. Anything else on the next line (or EOF)
+            // also falls through to recovery, matching the pre-existing
+            // (unrefined) behaviour.
+            let next_is_unambiguous_close = {
+                let mut peek = lines_iter.clone();
+                loop {
+                    match peek.next() {
+                        None => break false,
+                        Some(next_line) => {
+                            let next_trimmed = next_line.trim_start();
+                            if next_trimmed.is_empty() {
+                                continue;
+                            }
+                            break next_trimmed.starts_with("```");
+                        }
+                    }
+                }
+            };
+            if !next_is_unambiguous_close {
+                in_fence = false;
+                fence_open_depth = None;
+            }
+        }
+
+        let line_is_code = in_fence || is_fence_delim;
+        if is_fence_delim {
+            if in_fence {
+                // Closing an open fence.
+                fence_open_depth = None;
+            } else {
+                // Opening a fence: record the depth of the block that owns
+                // it, so an unbalanced fence can be detected at the next
+                // sibling boundary (see above). A delimiter that opens a
+                // bullet (`- ```rust`) owns that bullet's own depth; a bare
+                // ```` ``` ```` continuation line belongs to the
+                // most-recently-pushed block instead.
+                let owner_depth = if trimmed == "-" || trimmed.starts_with("- ") {
+                    depth
+                } else {
+                    blocks.last().map(|b| b.depth).unwrap_or(depth)
+                };
+                fence_open_depth = Some(owner_depth);
+            }
+            in_fence = !in_fence;
+        }
 
         // #2725 — a `- `-prefixed line STRICTLY INSIDE an open code fence (i.e.
         // not itself a fence delimiter) is literal code content, NOT a new list
@@ -1453,6 +1546,165 @@ mod tests {
             "a block covering the fenced region must be flagged code: {:?}",
             output.blocks
         );
+    }
+
+    /// #2866 (review follow-up) — a BARE (non-bulleted) fence opened at the
+    /// very start of the document, before any block has been pushed, must
+    /// not panic. The owner-depth computation falls back to
+    /// `blocks.last().map(...).unwrap_or(depth)` specifically to cover this
+    /// `blocks.is_empty()` case; a doc-starting unterminated bare fence must
+    /// still parse into a single code block with no sibling recovery
+    /// possible (no block exists yet to compare depth against).
+    #[test]
+    fn parse_doc_starting_bare_unterminated_fence_does_not_panic_2866() {
+        let md = "```\nunclosed";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(output.blocks.len(), 1, "got {:?}", output.blocks);
+        assert_eq!(output.blocks[0].content, "```\nunclosed");
+        assert!(output.blocks[0].is_code);
+    }
+
+    /// #2866 — an odd number of ```` ``` ```` delimiters inside a block (an
+    /// unbalanced/unterminated fence) must NOT leave the importer's
+    /// document-global `in_fence` flag open past the end of that block: the
+    /// next sibling bullet must still spawn its own block instead of being
+    /// folded into the never-closed fence. Mirrors the issue's repro shape
+    /// (`["```\nunclosed", "normal"]`).
+    #[test]
+    fn parse_unbalanced_fence_does_not_swallow_sibling_block_2866() {
+        let md = "- ```\n  unclosed\n- normal";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(
+            output.blocks.len(),
+            2,
+            "an unterminated fence must not bleed into the next sibling; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "```\nunclosed");
+        assert!(
+            output.blocks[0].is_code,
+            "the unterminated-fence block itself is still code"
+        );
+        assert_eq!(output.blocks[1].content, "normal");
+        assert!(
+            !output.blocks[1].is_code,
+            "the sibling after the unterminated fence must NOT be marked code: {:?}",
+            output.blocks[1]
+        );
+    }
+
+    /// #2866 (guard) — the fix for the unbalanced-fence case above must NOT
+    /// regress #2725: a BALANCED fence containing `- `-prefixed lines still
+    /// folds into a single code block, and a normal sibling bullet AFTER a
+    /// properly-closed fence still spawns its own block as usual.
+    #[test]
+    fn parse_balanced_fence_with_list_lines_still_folds_and_sibling_still_spawns_2866() {
+        let md = "- ```\n  - not a real bullet\n  ```\n- after";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(
+            output.blocks.len(),
+            2,
+            "a balanced fence stays one block, followed by its own sibling; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "```\n- not a real bullet\n```");
+        assert!(output.blocks[0].is_code);
+        assert_eq!(output.blocks[1].content, "after");
+        assert!(!output.blocks[1].is_code);
+    }
+
+    /// #2866 (review follow-up, highest-risk case) — an interior `- `-prefixed
+    /// line at the SAME depth as the fence-opening bullet, immediately
+    /// followed by the closing delimiter, must still fold into ONE balanced
+    /// code block instead of being mistaken for the #2866 sibling-recovery
+    /// boundary. Without the unambiguous-bare-close peek this false-positives
+    /// (splits the balanced fence into two blocks) because a same-depth
+    /// bullet-shaped line is locally indistinguishable from a genuine
+    /// never-closed-fence sibling.
+    #[test]
+    fn parse_balanced_fence_with_same_depth_interior_bullet_still_folds_2866() {
+        let md = "- ```\n- interior\n```";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(
+            output.blocks.len(),
+            1,
+            "a balanced fence whose interior bullet-shaped line is immediately \
+             followed by the closing delimiter must stay ONE block; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "```\n- interior\n```");
+        assert!(output.blocks[0].is_code);
+    }
+
+    /// #2866 (review follow-up) — non-regression: two SEPARATE fenced code
+    /// blocks as siblings (a very common real-document shape) must NOT be
+    /// merged together just because the first sibling's `- ` bullet is
+    /// immediately followed, several lines later, by ANOTHER bulleted fence
+    /// delimiter that opens a brand-new sibling's own code block. A bulleted
+    /// delimiter (`- ``` `) is ambiguous (unlike a bare ```` ``` ````) and
+    /// must NOT be treated as an unambiguous close of the FIRST fence, or
+    /// this would re-fold the original #2866 bug (the intervening sibling
+    /// bullet bleeding into the first, never-closed fence).
+    #[test]
+    fn parse_two_sibling_code_blocks_stay_separate_2866() {
+        let md = "- ```\n  unclosed\n- normal bullet\n- ```\n  another codeblock\n  ```";
+        let output = parse_logseq_markdown(md);
+
+        assert_eq!(
+            output.blocks.len(),
+            3,
+            "an unterminated fence, a plain sibling, and a SEPARATE balanced \
+             fence must remain three distinct blocks; got {:?}",
+            output.blocks
+        );
+        assert_eq!(output.blocks[0].content, "```\nunclosed");
+        assert!(output.blocks[0].is_code);
+        assert_eq!(output.blocks[1].content, "normal bullet");
+        assert!(!output.blocks[1].is_code);
+        assert_eq!(output.blocks[2].content, "```\nanother codeblock\n```");
+        assert!(output.blocks[2].is_code);
+    }
+
+    /// #2866 (review follow-up) — an unterminated fence opened at depth 2:
+    /// a sibling bullet at the SAME depth (2) or SHALLOWER (1, an
+    /// ancestor-level bullet) both correctly signal "we've left the owning
+    /// block's scope" and recover (spawn their own block, not code). A
+    /// bullet-shaped line DEEPER than the opener (3) is ambiguous — it could
+    /// be a genuine child bullet or literal fence content — and the parser
+    /// resolves that ambiguity by folding it into the still-open fence as
+    /// code content, consistent with #2725's "prefer swallowing ambiguous
+    /// content over guessing wrong" bias.
+    #[test]
+    fn parse_unterminated_fence_depth_boundary_variants_2866() {
+        let equal = parse_logseq_markdown("    - ```\n      unclosed\n    - sibling");
+        assert_eq!(equal.blocks.len(), 2, "equal depth: {:?}", equal.blocks);
+        assert!(!equal.blocks[1].is_code);
+        assert_eq!(equal.blocks[1].content, "sibling");
+
+        let shallower = parse_logseq_markdown("    - ```\n      unclosed\n  - shallower");
+        assert_eq!(
+            shallower.blocks.len(),
+            2,
+            "shallower depth: {:?}",
+            shallower.blocks
+        );
+        assert!(!shallower.blocks[1].is_code);
+        assert_eq!(shallower.blocks[1].content, "shallower");
+
+        let deeper = parse_logseq_markdown("    - ```\n      unclosed\n      - deeper");
+        assert_eq!(
+            deeper.blocks.len(),
+            1,
+            "deeper bullet under an unterminated fence is ambiguous and must \
+             fold as code content, not spawn its own block: {:?}",
+            deeper.blocks
+        );
+        assert!(deeper.blocks[0].is_code);
+        assert_eq!(deeper.blocks[0].content, "```\nunclosed\n- deeper");
     }
 
     /// #2725 — a fenced code block whose body contains list-like (`- item`) and
