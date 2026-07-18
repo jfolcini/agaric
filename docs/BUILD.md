@@ -98,7 +98,7 @@ cargo install cargo-machete          # unused-dependency detector
 sudo apt install shellcheck          # shell-script linter (or `brew install shellcheck`)
 ```
 
-`prek.toml` is the source of truth — each hook's exact `entry` and any install hint live there, so re-check it if a command above ever drifts. `mold` (see [Speed up Rust builds](#speed-up-rust-builds-linux-only-optional)) is an optional Linux linker, not a hook binary.
+`prek.toml` is the source of truth — each hook's exact `entry` and any install hint live there, so re-check it if a command above ever drifts. `mold` (see [Speed up Rust builds](#speed-up-rust-builds-linux)) is an optional Linux linker, not a hook binary.
 
 These local hooks are **optional**: if you cannot install them, open your PR anyway — CI runs the same gate via `.github/workflows/_validate.yml` (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#bootstrap)).
 
@@ -153,20 +153,24 @@ bacon                       # default: cargo check, re-runs on save
 
 Keep a `bacon` window open next to the editor. Defaults are sensible; optional `bacon.toml` wires up custom jobs (clippy, nextest, …). No project-side config needed.
 
-### Speed up Rust builds (Linux only, optional)
+### Speed up Rust builds (Linux)
 
-The link step is the long pole of incremental Rust compiles on this codebase, not codegen. The [`mold`](https://github.com/rui314/mold) linker cuts it dramatically. Activation is one install + one copy:
+The link step is the long pole of incremental Rust compiles on this codebase, not codegen. Two things address that, and **`scripts/setup.sh` now wires both automatically** — you no longer copy anything by hand:
 
-```sh
-sudo apt install mold        # Debian/Ubuntu (mold has been in main since 22.04)
-cp .cargo/config.toml.example .cargo/config.toml
-```
+1. **A faster linker.** `setup.sh` writes `.cargo/config.toml` on a Linux host when a fast linker is on PATH, preferring [`mold`](https://github.com/rui314/mold) and falling back to `lld`. Install one for the win:
 
-After activation, an incremental `cargo check` after touching a single Rust file drops from ~20 s to ~7-10 s (~60% faster; measured 2026-05-16 on this project — 200K LOC across 228 files).
+   ```sh
+   sudo apt install mold        # Debian/Ubuntu (mold has been in main since 22.04)
+   # then re-run: bash scripts/setup.sh   (or: cp .cargo/config.toml.example .cargo/config.toml)
+   ```
 
-`mold` must be installed separately — it is not bundled. Without it, `gcc`/`clang`'s `-fuse-ld=mold` errors with a clear `cannot find -fuse-ld=mold` rather than failing silently.
+   `lld` already ships on most CI/dev images, so on many machines the fast linker is wired with no extra install. Neither is bundled; without either, gcc/clang's `-fuse-ld=<ld>` errors clearly (`cannot find -fuse-ld=…`) rather than failing silently.
 
-The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked. This keeps a fresh clone from breaking on contributors who haven't installed mold yet (an unconditional `[target.…] rustflags` would fail every build). It is **Linux-only**: leave it untouched on macOS/Windows. Safe to delete any time — it only affects the linker pick on Linux.
+2. **`split-debuginfo = "unpacked"`** (committed in `[profile.dev]`, `src-tauri/Cargo.toml`). Leaves DWARF beside the object files instead of packing it into the linked artifact, so the linker copies far fewer bytes — complementary to the fast linker. First-party debuggability and runtime are unchanged; the dev profile never ships.
+
+Measured effect (this project): with **mold**, an incremental `cargo check` after touching a single Rust file dropped from ~20 s to ~7-10 s (~60%; 2026-05-16, 200K LOC / 228 files). With **lld** (the fallback) plus `unpacked` split-debuginfo, a steady-state incremental **relink** of the main crate measured ~21 s → ~18 s (~14%; touch `src-tauri/src/lib.rs`, `cargo build`). That relink is dominated by recompiling the ~246K-LOC `agaric_lib` crate, so the linker is only part of it — the front-end half is tracked separately (crate decomposition). Incremental `cargo check` is unchanged by the linker, as expected (check doesn't link).
+
+The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked, and `setup.sh` never overwrites an existing file (a manual override wins). An unconditional `[target.…] rustflags` would break a fresh clone that hasn't installed the linker, which is why it's generated rather than committed. **Linux-only**: `setup.sh` only wires the Linux host triple, so macOS/Windows and Android cross-builds are untouched. Safe to delete any time.
 
 ## Testing
 
