@@ -161,6 +161,8 @@ describe('useJournalBlockCreation', () => {
       parentId: 'PEXIST',
       index: null,
       scope: { kind: 'global' },
+      // #2849 PR2 — direct createBlock supplies no client id (null).
+      blockId: null,
     })
     expect(pageCreatedCalls).toHaveLength(0)
   })

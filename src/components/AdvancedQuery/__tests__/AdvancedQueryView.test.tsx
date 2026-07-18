@@ -779,6 +779,8 @@ describe('AdvancedQueryView — saved views (#1460)', () => {
         parentId: null,
         index: null,
         scope: { kind: 'active', space_id: SPACE_ID },
+        // #2849 PR2 — direct createBlock supplies no client id (null).
+        blockId: null,
       })
     })
 

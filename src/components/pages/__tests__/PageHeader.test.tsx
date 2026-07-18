@@ -555,6 +555,8 @@ describe('PageHeader tag management', () => {
         parentId: null,
         index: null,
         scope: { kind: 'global' },
+        // #2849 PR2 — tag creation supplies no client id; the binding sends null.
+        blockId: null,
       })
     })
   })

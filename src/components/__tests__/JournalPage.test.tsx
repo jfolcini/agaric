@@ -962,6 +962,8 @@ describe('JournalPage', () => {
           parentId: 'DP1',
           index: null,
           scope: { kind: 'global' },
+          // #2849 PR2 — direct createBlock supplies no client id (null).
+          blockId: null,
         })
       })
 
