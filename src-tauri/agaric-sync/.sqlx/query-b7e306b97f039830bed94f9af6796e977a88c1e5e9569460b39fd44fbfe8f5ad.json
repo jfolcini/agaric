@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "WITH computed(page_id, new_inbound, new_child) AS ( SELECT p.page_id, ( SELECT COUNT(DISTINCT bl.source_id) FROM block_links bl JOIN blocks descendant ON bl.target_id = descendant.id JOIN blocks src ON src.id = bl.source_id WHERE descendant.page_id = p.page_id AND descendant.deleted_at IS NULL AND src.deleted_at IS NULL AND src.page_id IS NOT NULL AND src.page_id != p.page_id ), ( SELECT COUNT(*) FROM blocks descendant WHERE descendant.page_id = p.page_id AND descendant.deleted_at IS NULL AND descendant.id != p.page_id ) FROM pages_cache p ) UPDATE pages_cache SET inbound_link_count = c.new_inbound, child_block_count  = c.new_child FROM computed c WHERE pages_cache.page_id = c.page_id AND ( pages_cache.inbound_link_count != c.new_inbound OR pages_cache.child_block_count  != c.new_child )",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": []
+  },
+  "hash": "b7e306b97f039830bed94f9af6796e977a88c1e5e9569460b39fd44fbfe8f5ad"
+}

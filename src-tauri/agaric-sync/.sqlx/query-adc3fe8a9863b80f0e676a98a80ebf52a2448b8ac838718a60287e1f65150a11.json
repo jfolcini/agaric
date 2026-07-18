@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE attachments SET filename = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "adc3fe8a9863b80f0e676a98a80ebf52a2448b8ac838718a60287e1f65150a11"
+}

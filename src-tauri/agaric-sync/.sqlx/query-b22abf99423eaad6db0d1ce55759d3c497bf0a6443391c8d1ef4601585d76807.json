@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE blocks SET page_id = ?, space_id = (SELECT space_id FROM blocks WHERE id = ?) WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "b22abf99423eaad6db0d1ce55759d3c497bf0a6443391c8d1ef4601585d76807"
+}

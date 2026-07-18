@@ -1,0 +1,33 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT device_id as \"device_id!: String\", MAX(seq) AS \"seq!: i64\"\n         FROM op_log\n         WHERE op_type = 'edit_block'\n           AND block_id = ?\n         GROUP BY device_id\n         ORDER BY device_id",
+  "describe": {
+    "columns": [
+      {
+        "name": "device_id!: String",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "device_id"
+          }
+        }
+      },
+      {
+        "name": "seq!: i64",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": "Expression"
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      true,
+      false
+    ]
+  },
+  "hash": "6433207d34effedbc1c94819bdcf4f99f5ac1908f26b703ed5e157d85110103b"
+}
