@@ -288,6 +288,13 @@ export async function createBlock(params: {
   /** #400: 0-based sibling slot among `parentId`'s children; omit to append. */
   index?: number | undefined
   spaceId?: string | undefined
+  /**
+   * #2849 PR2 — optional client-generated ULID for optimistic create. When
+   * supplied it MUST be a well-formed ULID (see `newBlockId`): the backend uses
+   * it verbatim and rejects a malformed or already-existing id. Omit to let the
+   * backend mint a server id (all legacy callers).
+   */
+  blockId?: string | undefined
 }): Promise<WithOps<BlockRow>> {
   return unwrap(
     await commands.createBlock(
@@ -296,6 +303,7 @@ export async function createBlock(params: {
       params.parentId ?? null,
       params.index ?? null,
       toSpaceScope(params.spaceId),
+      params.blockId ?? null,
     ),
   )
 }

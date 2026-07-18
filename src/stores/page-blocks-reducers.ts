@@ -15,6 +15,7 @@ import type { StoreApi } from 'zustand'
 
 import { retryOnPoolBusy } from '@/lib/app-error'
 import { internalizeRefTokens, parseIndentedMarkdown } from '@/lib/block-clipboard'
+import { newBlockId } from '@/lib/block-id'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
 import { recordGraphStructureChange } from '@/lib/graph-structure-events'
 import { i18n } from '@/lib/i18n'
@@ -43,7 +44,6 @@ import {
 } from '@/stores/page-blocks-map'
 import {
   applyProvisionalMove,
-  applyStructuralMove,
   reconcileBatchMove,
   reconcileProvisionalMoveSuccess,
   rollbackProvisionalMove,
@@ -156,6 +156,50 @@ export function createReducers({
       // #400: insert at the slot right after `afterBlock` among its siblings.
       const afterSlot = siblingSlot(blocks, afterBlock)
 
+      // #2849 PR2 — generate the new block's ULID CLIENT-SIDE so the row can be
+      // spliced in OPTIMISTICALLY, BEFORE the create IPC resolves. The backend
+      // accepts this id verbatim (`create_block(blockId)`), so the id is stable
+      // from insertion: focus/selection assigned to the new block never have to
+      // relocate to a server-minted id after the round-trip (option (b)). The
+      // provisional parent/depth mirror the anchor's; `position: null` is healed
+      // to the backend's dense rank on success.
+      const newId = newBlockId()
+      const parentId = afterBlock.parent_id
+
+      // Splice the provisional block in NOW (pre-await), reusing PR1's
+      // `applyProvisionalMove` snapshot+splice infra. The returned handle drives
+      // the resolve-path confirm/heal or the guarded rollback.
+      const handle = applyProvisionalMove(set, newId, (state) => {
+        const cur = state.blocks
+        const curIdx = cur.findIndex((b) => b.id === afterBlockId)
+        const curAfter = cur[curIdx] as FlatBlock
+        // In a flat tree the new sibling goes right after the anchor and all of
+        // its descendants.
+        const descendants = getDragDescendants(cur, afterBlockId)
+        let insertIdx = curIdx + 1
+        while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
+          insertIdx++
+        }
+        const newBlock: FlatBlock = {
+          id: newId,
+          block_type: 'content',
+          content,
+          parent_id: curAfter.parent_id,
+          position: null,
+          deleted_at: null,
+          todo_state: null,
+          priority: null,
+          due_date: null,
+          scheduled_date: null,
+          page_id: curAfter.page_id,
+          depth: curAfter.depth,
+        }
+        const newBlocks = [...cur]
+        newBlocks.splice(insertIdx, 0, newBlock)
+        // Single-block insert (perf invariant): only the new block's key.
+        return { blocks: newBlocks, touchedIds: [newBlock.id] }
+      })
+
       try {
         // #730 — route through the shared pool_busy retry so a transient
         // connection-pool blip doesn't surface as a create failure / lost
@@ -165,75 +209,33 @@ export function createReducers({
           createBlock({
             blockType: 'content',
             content,
-            ...(afterBlock.parent_id != null && { parentId: afterBlock.parent_id }),
+            ...(parentId != null && { parentId }),
             index: afterSlot + 1,
+            blockId: newId,
           }),
         )
 
-        // #714 — recompute the insertion splice INSIDE the functional updater
-        // from `state.blocks` (current at commit time), never from the
-        // pre-await capture: a concurrent write (edit flush, sync load,
-        // queued move) that landed while the IPC was in flight must survive.
-        // The anchor (`afterBlockId`) is re-located in current state; if it
-        // vanished or moved mid-flight the splice context is invalid, so we
-        // fall back to a full load() to reconcile with the backend.
-        // #1077 — shared recompute-at-commit + reconcile-or-reload core.
-        await applyStructuralMove(set, get, {
-          validateAtCommit: (state) => {
-            const curIdx = state.blocks.findIndex((b) => b.id === afterBlockId)
-            const curAfter = state.blocks[curIdx]
-            if (!curAfter) return { kind: 'reload' }
-            // If an interleaved sync load() already delivered the freshly
-            // created block (the backend committed it before the snapshot
-            // query ran), splicing it again would duplicate the array entry
-            // and break the blocks/blocksById size invariant. State is
-            // already reconciled — commit nothing (no reload).
-            if (state.blocksById.has(result.id)) return { kind: 'skip' }
-            // The anchor was re-parented mid-flight (or the backend echoed an
-            // unexpected parent): the new block belongs under the anchor's
-            // ORIGINAL parent, so splicing it after the anchor's new location
-            // would break array-order/parent_id consistency. Reload instead.
-            if ((result.parent_id ?? null) !== (curAfter.parent_id ?? null)) {
-              return { kind: 'reload' }
-            }
-            return { kind: 'commit' }
-          },
-          computeSpliced: (state) => {
-            const cur = state.blocks
-            const curIdx = cur.findIndex((b) => b.id === afterBlockId)
-            const curAfter = cur[curIdx] as FlatBlock
-            // Insert the new block into the local array at the right position.
-            // In a flat tree, the new sibling goes right after the afterBlock
-            // and all its descendants.
-            const descendants = getDragDescendants(cur, afterBlockId)
-            let insertIdx = curIdx + 1
-            while (insertIdx < cur.length && descendants.has((cur[insertIdx] as FlatBlock).id)) {
-              insertIdx++
-            }
-
-            const newBlock: FlatBlock = {
-              id: result.id,
-              block_type: result.block_type,
-              content: result.content,
-              parent_id: result.parent_id,
-              position: result.position,
-              deleted_at: null,
-              todo_state: null,
-              priority: null,
-              due_date: null,
-              scheduled_date: null,
-              page_id: curAfter.page_id,
-              depth: curAfter.depth,
-            }
-            const newBlocks = [...cur]
-            newBlocks.splice(insertIdx, 0, newBlock)
-            // Single-block insert (perf invariant): only the new block's key.
-            return { blocks: newBlocks, touchedIds: [newBlock.id] }
-          },
-        })
+        // Confirm the provisional insert. Because the block already carries the
+        // client id, success is a no-op confirm (no id swap, focus stays); we
+        // only heal its `position` to the backend's authoritative dense rank.
+        // `reconcileProvisionalMoveSuccess` guards against a concurrent write
+        // that superseded the provisional splice (a racing load() that dropped
+        // or moved it) — reconciling via load() instead of blindly healing.
+        await reconcileProvisionalMoveSuccess(set, get, handle, result.position)
         notifyUndoNewAction(rootParentId, result.op_refs)
-        return result.id
+        // Return the CLIENT id — the id of the block actually in the store (the
+        // backend used it verbatim). Callers (splitBlock's chaining, focus
+        // placement) address the new block by this stable id; it never has to
+        // relocate to a server-minted id.
+        return newId
       } catch (err) {
+        // Roll back the provisional insert: remove the row + its `blocksById`
+        // entry. `rollbackProvisionalMove` restores the exact pre-op snapshot
+        // when nothing landed since (the common case), or reconciles via load()
+        // when a concurrent write built on the provisional block (e.g. an
+        // immediate child indent) — mirroring PR1's rollback discipline so that
+        // write is not clobbered.
+        await rollbackProvisionalMove(set, get, handle)
         logger.error('page-blocks', 'Failed to create block', { afterBlockId }, err)
         notify.error(i18n.t('error.createBlockFailed'))
         return null

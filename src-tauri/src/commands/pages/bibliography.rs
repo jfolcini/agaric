@@ -360,6 +360,8 @@ pub async fn import_bibliography_inner(
             title.clone(),
             None,
             None,
+            // #2849 PR2: server-generated id.
+            None,
         )
         .await
         {

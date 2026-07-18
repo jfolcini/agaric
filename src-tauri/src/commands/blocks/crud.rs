@@ -68,6 +68,41 @@ pub async fn create_block_inner(
     parent_id: Option<BlockId>,
     index: Option<i64>,
 ) -> Result<BlockRow, AppError> {
+    // #2849 PR2: the legacy 7-arg entry point — a thin wrapper that mints a
+    // server id (`client_id = None`). Kept signature-stable so the dozens of
+    // existing callers (tests + the recurrence/journal/space paths) are
+    // unaffected; the optimistic-create path uses the `_with_id` variant.
+    create_block_inner_with_id(
+        pool,
+        device_id,
+        materializer,
+        block_type,
+        content,
+        parent_id,
+        index,
+        None,
+    )
+    .await
+}
+
+/// #2849 PR2: `create_block_inner` plus an OPTIONAL client-generated block id.
+///
+/// `client_id = Some(ulid)` is used verbatim iff it is a well-formed ULID that
+/// does not collide with an existing block (else a hard error — see
+/// [`create_block_in_tx`]); `None` mints a server id. Only the optimistic
+/// `create_block` IPC path threads a `Some`.
+#[allow(clippy::too_many_arguments)]
+#[instrument(skip(pool, device_id, materializer, content), err)]
+pub async fn create_block_inner_with_id(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_type: String,
+    content: String,
+    parent_id: Option<BlockId>,
+    index: Option<i64>,
+    client_id: Option<BlockId>,
+) -> Result<BlockRow, AppError> {
     // CommandTx couples commit + post-commit dispatch.
     let parent_id = parent_id.map(BlockId::into_string);
     let mut tx = CommandTx::begin_immediate(pool, "create_block").await?;
@@ -81,6 +116,7 @@ pub async fn create_block_inner(
         content,
         parent_id,
         index,
+        client_id,
     )
     .await?;
     tx.enqueue_background(op_record);
@@ -150,6 +186,10 @@ pub async fn create_block_inner_with_space(
     parent_id: Option<BlockId>,
     index: Option<i64>,
     scope: &SpaceScope,
+    // #2849 PR2: optional client-generated block id. Only threaded on the
+    // non-page path (optimistic create is a `content`-block feature); the page
+    // path routes through `create_page_in_space_inner`, which mints its own id.
+    client_id: Option<BlockId>,
 ) -> Result<BlockRow, AppError> {
     if block_type == "page" {
         let SpaceScope::Active(sid) = scope else {
@@ -201,7 +241,7 @@ pub async fn create_block_inner_with_space(
     // Non-page block types ignore `scope` and follow the legacy path —
     // `content`, `tag` blocks have no space invariant.
     let _ignore_scope = scope;
-    create_block_inner(
+    create_block_inner_with_id(
         pool,
         device_id,
         materializer,
@@ -209,6 +249,7 @@ pub async fn create_block_inner_with_space(
         content,
         parent_id,
         index,
+        client_id,
     )
     .await
 }
@@ -2220,6 +2261,9 @@ pub async fn create_block(
     // #400: 0-based sibling slot among `parent_id`'s children; `None` appends.
     index: Option<i64>,
     scope: SpaceScope,
+    // #2849 PR2: optional client-generated ULID for optimistic create. `None`
+    // (all legacy callers) keeps the server-generated id — backwards-compatible.
+    block_id: Option<BlockId>,
 ) -> Result<WithOps<BlockRow>, AppError> {
     capture_op_refs(create_block_inner_with_space(
         ctx.pool(),
@@ -2230,6 +2274,7 @@ pub async fn create_block(
         parent_id,
         index,
         &scope,
+        block_id,
     ))
     .await
     .map_err(sanitize_internal_error)
@@ -2473,6 +2518,8 @@ pub async fn create_blocks_batch_inner(
             spec.content,
             spec.parent_id.map(BlockId::into_string),
             index,
+            // #2849 PR2: batch creates always mint server ids.
+            None,
         )
         .await?;
         tx.enqueue_background(block_op);
@@ -2865,6 +2912,185 @@ mod saturation_probe_tests {
         assert!(
             out.contains("crossed the depth-100 CTE cap"),
             "a past-cap batch delete must emit the batched-walk breadcrumb warn, got: {out:?}"
+        );
+        mat.shutdown();
+    }
+
+    // ── #2849 PR2: client-supplied block id (optimistic create) ───────────
+
+    /// A canonical, well-formed ULID for the client-id tests (upper Crockford).
+    const CLIENT_ULID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
+
+    #[tokio::test]
+    async fn create_block_uses_client_id_verbatim_2849() {
+        // A well-formed client ULID is accepted and used as the new block's id
+        // (no server swap) — the invariant the optimistic-create UX relies on.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hello".into(),
+            None,
+            None,
+            Some(BlockId::from_trusted(CLIENT_ULID)),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            block.id.as_str(),
+            CLIENT_ULID,
+            "the returned block must carry the client-supplied id verbatim"
+        );
+        // And it is the id actually persisted.
+        let persisted: String = sqlx::query_scalar("SELECT id FROM blocks WHERE id = ?")
+            .bind(CLIENT_ULID)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(persisted, CLIENT_ULID);
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn create_block_client_id_lowercase_canonicalizes_2849() {
+        // A valid ULID supplied in lowercase is canonicalized to uppercase
+        // Crockford base32 (blake3 determinism) rather than rejected.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "hi".into(),
+            None,
+            None,
+            Some(BlockId::from_trusted(&CLIENT_ULID.to_ascii_lowercase())),
+        )
+        .await
+        .unwrap();
+        assert_eq!(block.id.as_str(), CLIENT_ULID);
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn create_block_client_id_collision_errors_2849() {
+        // A client id that already exists is rejected with a Conflict, and the
+        // pre-existing row is left untouched (no corruption / double-insert).
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        // First create claims the id.
+        create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "original".into(),
+            None,
+            None,
+            Some(BlockId::from_trusted(CLIENT_ULID)),
+        )
+        .await
+        .unwrap();
+
+        // Second create with the SAME id must fail.
+        let err = create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "usurper".into(),
+            None,
+            None,
+            Some(BlockId::from_trusted(CLIENT_ULID)),
+        )
+        .await
+        .expect_err("a colliding client id must be rejected");
+        assert!(
+            matches!(err, AppError::Conflict(_)),
+            "collision must surface as AppError::Conflict, got: {err:?}"
+        );
+
+        // Exactly one row with that id, still carrying the ORIGINAL content.
+        let (count, content): (i64, String) =
+            sqlx::query_as("SELECT COUNT(*), MAX(content) FROM blocks WHERE id = ?")
+                .bind(CLIENT_ULID)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(count, 1, "the collision must not create a second row");
+        assert_eq!(
+            content, "original",
+            "the pre-existing row must be untouched by the rejected create"
+        );
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn create_block_malformed_client_id_errors_2849() {
+        // A malformed client id (not a well-formed ULID) is rejected — never a
+        // silent fallback to a generated id, and nothing is inserted.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let err = create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "bad".into(),
+            None,
+            None,
+            // `from_trusted` skips validation, so this reaches the command with a
+            // malformed value — exactly what a buggy client could send.
+            Some(BlockId::from_trusted("not-a-valid-ulid")),
+        )
+        .await
+        .expect_err("a malformed client id must be rejected");
+        assert!(
+            matches!(err, AppError::Ulid(_)),
+            "malformed id must surface as AppError::Ulid, got: {err:?}"
+        );
+
+        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count, 0, "a rejected create must insert nothing");
+        mat.shutdown();
+    }
+
+    #[tokio::test]
+    async fn create_block_none_client_id_generates_server_id_2849() {
+        // `None` preserves the legacy server-generated id: a fresh, well-formed
+        // ULID that was not supplied by the caller.
+        let (pool, _dir) = test_pool().await;
+        let mat = Materializer::new(pool.clone());
+
+        let block = create_block_inner_with_id(
+            &pool,
+            DEV,
+            &mat,
+            "content".into(),
+            "server".into(),
+            None,
+            None,
+            None,
+        )
+        .await
+        .unwrap();
+        // A server ULID is 26 uppercase Crockford chars and re-parses cleanly.
+        assert_eq!(block.id.as_str().len(), 26);
+        assert!(
+            BlockId::from_string(block.id.as_str()).is_ok(),
+            "the server-generated id must be a well-formed ULID"
         );
         mat.shutdown();
     }

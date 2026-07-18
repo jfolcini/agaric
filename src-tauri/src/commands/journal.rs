@@ -215,6 +215,8 @@ async fn resolve_or_create_journal_page(
         date.to_string(),
         None,
         None,
+        // #2849 PR2: server-generated id (no optimistic client id).
+        None,
     )
     .await?;
 
