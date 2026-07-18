@@ -6,6 +6,8 @@
 //! crate re-exports them (`pub use agaric_core::error;` …) to keep every
 //! existing `crate::error::…` path resolving unchanged.
 
+pub mod date_filter;
+pub mod date_validation;
 pub mod error;
 pub mod hash;
 pub mod sql_utils;
