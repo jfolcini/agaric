@@ -1991,6 +1991,472 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
+  // #2849 — optimistic block writes: `remove` + the keyboard structural moves
+  // apply their splice OPTIMISTICALLY (before the IPC round-trip). Each op is
+  // exercised for: (a) the provisional state is visible BEFORE the IPC resolves,
+  // (b) success confirms/heals, (c) an IPC rejection rolls back to the EXACT
+  // pre-op state, (d) an interleaved write does not double-apply or clobber, and
+  // (e) the undo-before-settle race (undo registration stays on the resolve
+  // path). `remove` + representative movers `indent` (cross-parent) and `moveUp`
+  // (same-parent swap) are covered here; the stale-capture (#714) suite above
+  // covers the slot-drift / racing-reload reconcile branches.
+  // ---------------------------------------------------------------------------
+  describe('optimistic block writes (#2849)', () => {
+    /** Array/Map consistency: same length, every array entry present in the Map. */
+    function expectMapMatchesArray(s: PageBlockState): void {
+      expect(s.blocksById.size).toBe(s.blocks.length)
+      for (const b of s.blocks) expect(s.blocksById.get(b.id)).toBe(b)
+    }
+
+    /** Deferred IPC: queue a promise we can resolve mid-test. */
+    function deferInvoke(): (v: unknown) => void {
+      let resolve!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((r) => {
+          resolve = r
+        }),
+      )
+      return resolve
+    }
+
+    const root = (id: string, position: number) =>
+      makeBlock({ id, position, parent_id: null, depth: 0 })
+
+    // ── remove ────────────────────────────────────────────────────────────
+    describe('remove', () => {
+      it('(a) the provisional removal is visible BEFORE the delete IPC resolves', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveDelete = deferInvoke()
+
+        const p = store.getState().remove('A')
+        // Applied synchronously — no await needed to see A gone.
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B'])
+
+        resolveDelete({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+        })
+        await p
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B'])
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(b) a successful delete keeps the block removed and notifies undo', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        mockedInvoke.mockResolvedValueOnce({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+        })
+
+        await store.getState().remove('A')
+
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B'])
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+
+      it('(c) an IPC rejection rolls back to the EXACT pre-op state (same refs)', async () => {
+        const a = root('A', 0)
+        const b = root('B', 1)
+        store.setState({ blocks: [a, b] })
+        const before = store.getState().blocks
+        mockedInvoke.mockRejectedValueOnce(new Error('delete failed'))
+
+        await store.getState().remove('A')
+
+        // Exact restore — the pre-op array AND its entries by reference.
+        expect(store.getState().blocks).toBe(before)
+        expect(store.getState().blocks[0]).toBe(a)
+        expect(store.getState().blocks[1]).toBe(b)
+        expectMapMatchesArray(store.getState())
+        expect(toast.error).toHaveBeenCalledWith('Failed to delete block')
+      })
+
+      it('(d) an interleaved edit survives and the removal still commits (no clobber)', async () => {
+        store.setState({ blocks: [root('A', 0), makeBlock({ id: 'B', content: 'old B' })] })
+        const resolveDelete = deferInvoke()
+
+        const p = store.getState().remove('A')
+        // Interleave an edit flush on a surviving block while delete is in flight.
+        mockedInvoke.mockResolvedValueOnce({})
+        await store.getState().edit('B', 'edited mid-flight')
+
+        resolveDelete({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+        })
+        await p
+
+        const s = store.getState()
+        // A stays removed; the interleaved edit survived; no duplicate B.
+        expect(s.blocks.map((b) => b.id)).toEqual(['B'])
+        expect(s.blocksById.get('B')?.content).toBe('edited mid-flight')
+        expectMapMatchesArray(s)
+      })
+
+      it('(e) undo is NOT notified until the delete IPC resolves (undo-before-settle race)', async () => {
+        store.setState({ blocks: [root('A', 0)] })
+        const resolveDelete = deferInvoke()
+
+        const p = store.getState().remove('A')
+        // The provisional removal shows immediately, but Ctrl+Z now would find
+        // no registered action for this delete — it lands only on resolve.
+        expect(store.getState().blocks).toHaveLength(0)
+        expect(mockOnNewAction).not.toHaveBeenCalled()
+
+        resolveDelete({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+        })
+        await p
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+    })
+
+    // ── indent (cross-parent structural move) ──────────────────────────────
+    describe('indent', () => {
+      it('(a) the provisional indent is visible BEFORE the move IPC resolves', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().indent('B')
+        const bp = store.getState().blocksById.get('B')
+        expect(bp?.parent_id).toBe('A')
+        expect(bp?.depth).toBe(1)
+
+        resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+        await expect(p).resolves.toBe(true)
+        expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(b) success confirms the indent and notifies undo', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+
+        await expect(store.getState().indent('B')).resolves.toBe(true)
+
+        expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+
+      it('(c) an IPC rejection rolls back to the EXACT pre-op state (same refs)', async () => {
+        const a = root('A', 0)
+        const b = root('B', 1)
+        store.setState({ blocks: [a, b] })
+        const before = store.getState().blocks
+        mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+        await expect(store.getState().indent('B')).resolves.toBe(false)
+
+        expect(store.getState().blocks).toBe(before)
+        expect(store.getState().blocks[1]).toBe(b)
+        expect(store.getState().blocksById.get('B')?.parent_id).toBeNull()
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(d) an interleaved edit survives and the indent commits exactly once (no double-apply)', async () => {
+        store.setState({
+          blocks: [makeBlock({ id: 'A', content: 'old A', position: 0 }), root('B', 1)],
+        })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().indent('B')
+        mockedInvoke.mockResolvedValueOnce({})
+        await store.getState().edit('A', 'edited mid-flight')
+
+        resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+        await expect(p).resolves.toBe(true)
+
+        const s = store.getState()
+        expect(s.blocks.map((b) => b.id)).toEqual(['A', 'B'])
+        // B appears exactly once — the provisional splice was not re-applied.
+        expect(s.blocks.filter((b) => b.id === 'B')).toHaveLength(1)
+        expect(s.blocksById.get('B')?.parent_id).toBe('A')
+        expect(s.blocksById.get('A')?.content).toBe('edited mid-flight')
+        expectMapMatchesArray(s)
+      })
+
+      it('(e) undo is NOT notified until the move IPC resolves (undo-before-settle race)', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().indent('B')
+        expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+        expect(mockOnNewAction).not.toHaveBeenCalled()
+
+        resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+        await p
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+    })
+
+    // ── moveUp (same-parent swap) ──────────────────────────────────────────
+    describe('moveUp', () => {
+      it('(a) the provisional swap is visible BEFORE the move IPC resolves', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().moveUp('B')
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'A'])
+
+        resolveMove({ block_id: 'B', new_parent_id: null, new_position: 0 })
+        await expect(p).resolves.toBe(true)
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'A'])
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(b) success heals the moved block position to the backend dense rank', async () => {
+        store.setState({ blocks: [root('A', 1), root('B', 2)] })
+        mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 1 })
+
+        await expect(store.getState().moveUp('B')).resolves.toBe(true)
+
+        const s = store.getState()
+        expect(s.blocks.map((b) => b.id)).toEqual(['B', 'A'])
+        // Provisional kept B's old position (2); resolve healed it to 1.
+        expect(s.blocks[0]?.position).toBe(1)
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+
+      it('(c) an IPC rejection rolls back to the EXACT pre-op state (same refs)', async () => {
+        const a = root('A', 0)
+        const b = root('B', 1)
+        store.setState({ blocks: [a, b] })
+        const before = store.getState().blocks
+        mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+        await expect(store.getState().moveUp('B')).resolves.toBe(false)
+
+        expect(store.getState().blocks).toBe(before)
+        expect(store.getState().blocks[0]).toBe(a)
+        expect(store.getState().blocks[1]).toBe(b)
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(d) a rapid second press computes against the APPLIED provisional first move (no collapse)', async () => {
+        // A,B,C at root. Two rapid moveUp('C') before the first resolves must
+        // climb C two slots (past B, then past A), reading the post-first-move
+        // provisional state — not a stale pre-move snapshot.
+        store.setState({ blocks: [root('A', 0), root('B', 1), root('C', 2)] })
+        mockedInvoke
+          .mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 1 })
+          .mockResolvedValueOnce({ block_id: 'C', new_parent_id: null, new_position: 0 })
+
+        const p1 = store.getState().moveUp('C')
+        const p2 = store.getState().moveUp('C')
+        const [r1, r2] = await Promise.all([p1, p2])
+
+        expect(r1).toBe(true)
+        expect(r2).toBe(true)
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['C', 'A', 'B'])
+        expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'move_block', {
+          blockId: 'C',
+          newParentId: null,
+          newIndex: 1,
+        })
+        expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'move_block', {
+          blockId: 'C',
+          newParentId: null,
+          newIndex: 0,
+        })
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('(e) undo is NOT notified until the move IPC resolves (undo-before-settle race)', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().moveUp('B')
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'A'])
+        expect(mockOnNewAction).not.toHaveBeenCalled()
+
+        resolveMove({ block_id: 'B', new_parent_id: null, new_position: 0 })
+        await p
+        expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+      })
+    })
+
+    // ── adversarial interleavings (traps #2/#3/#4) ─────────────────────────
+    // These exercise the reconcile/rollback branches a benign in-flight edit
+    // does NOT reach: a racing load() that REVERTS or SUPERSEDES the provisional
+    // splice mid-flight, and a delete-subtree whose descendant set changed under
+    // it. Each simulates the concurrent write with `store.setState({ blocks })`
+    // (a fresh array ref — exactly what a real load() replacement produces),
+    // mirroring the #714 stale-capture suite's technique.
+    describe('interleavings', () => {
+      it('trap#2 — indent: a racing load() reverts the move mid-flight, success reconciles via reload (no stale provisional)', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().indent('B')
+        // Provisional applied: B under A.
+        expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+
+        // A racing load() lands mid-flight whose backend snapshot PREDATED the
+        // indent — it reverts B to root (fresh array ref, like a real reload).
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+          ],
+        })
+
+        // The reconcile detects supersession (B no longer under A at provIndex)
+        // and reloads; the backend now has the indent committed.
+        mockedInvoke.mockResolvedValueOnce(
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+            makeBlock({ id: 'B', parent_id: 'A', position: 0 }),
+          ]),
+        )
+
+        resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+        await expect(p).resolves.toBe(true)
+
+        // Reconciled from the backend, NOT left in the reverted-provisional limbo.
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'load_page_subtree',
+          expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+        )
+        expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('trap#4a — remove: a racing load() restores the whole subtree mid-flight, success re-splices it out (#2543)', async () => {
+        // A → C (C is A's child). Deleting A must cascade C.
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'C', position: 0, parent_id: 'A', depth: 1 }),
+          ],
+        })
+        const resolveDelete = deferInvoke()
+
+        const p = store.getState().remove('A')
+        // Provisional: both A and its descendant C gone.
+        expect(store.getState().blocks).toHaveLength(0)
+
+        // A racing load() (snapshot predating the delete commit) restores the
+        // FULL subtree while delete_block is in flight.
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'C', position: 0, parent_id: 'A', depth: 1 }),
+          ],
+        })
+
+        resolveDelete({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 1,
+        })
+        await p
+
+        // Commit-time re-confirm removed A AND its recomputed descendant C.
+        expect(store.getState().blocks).toHaveLength(0)
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('trap#4b — remove: a child dedented OUT mid-flight survives the commit-time re-confirm (fresh descendants)', async () => {
+        // A → C. Deleting A; but a racing load() shows C reparented to root
+        // (dedented OUT) with A still present. C must NOT be dropped: it is no
+        // longer a descendant of A, so the backend kept it alive.
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'C', position: 0, parent_id: 'A', depth: 1 }),
+          ],
+        })
+        const resolveDelete = deferInvoke()
+
+        const p = store.getState().remove('A')
+        expect(store.getState().blocks).toHaveLength(0)
+
+        // Racing load(): A present, C now a root sibling (moved out of A).
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'C', position: 1, parent_id: null, depth: 0 }),
+          ],
+        })
+
+        resolveDelete({
+          block_id: 'A',
+          deleted_at: '2025-01-01T00:00:00Z',
+          descendants_affected: 0,
+        })
+        await p
+
+        // Only A removed; the dedented-out C survives (fresh descendant recompute).
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['C'])
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('trap#3 — moveUp: a concurrent write lands before an IPC rejection, rollback reloads instead of clobbering it', async () => {
+        store.setState({ blocks: [root('A', 0), root('B', 1)] })
+        const resolveMove = deferInvoke()
+
+        const p = store.getState().moveUp('B')
+        // Provisional swap: [B, A].
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['B', 'A'])
+
+        // A concurrent write (e.g. a synced remote insert of C) lands while
+        // move_block is in flight — fresh array ref, so the pre-op snapshot no
+        // longer equals live state.
+        store.setState({
+          blocks: [
+            makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 }),
+            makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 }),
+          ],
+        })
+        // The guarded rollback must reload (not restore the stale [A,B] pre-op
+        // snapshot, which would DROP the concurrently-synced C).
+        mockedInvoke.mockResolvedValueOnce(
+          subtreeResp([
+            makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 }),
+            makeBlock({ id: 'B', parent_id: 'PAGE_1', position: 1 }),
+            makeBlock({ id: 'C', parent_id: 'PAGE_1', position: 2 }),
+          ]),
+        )
+
+        // Resolve the deferred move IPC with a rejected thenable — the outer
+        // promise adopts the rejection, driving the mover's catch/rollback.
+        resolveMove(Promise.reject(new Error('move failed')))
+        await expect(p).resolves.toBe(false)
+
+        expect(mockedInvoke).toHaveBeenCalledWith(
+          'load_page_subtree',
+          expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+        )
+        // C preserved — the stale snapshot did not clobber the concurrent write.
+        expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B', 'C'])
+        expectMapMatchesArray(store.getState())
+      })
+
+      it('trap#1/ABA — moveUp: position heal writes only the moved block, never corrupts array order', async () => {
+        // Backend echoes a dense rank (1) differing from the stale provisional
+        // position (2). The heal must update ONLY B's position, leaving array
+        // order (authoritative) untouched.
+        store.setState({ blocks: [root('A', 5), root('B', 9)] })
+        mockedInvoke.mockResolvedValueOnce({ block_id: 'B', new_parent_id: null, new_position: 1 })
+
+        await expect(store.getState().moveUp('B')).resolves.toBe(true)
+
+        const s = store.getState()
+        expect(s.blocks.map((b) => b.id)).toEqual(['B', 'A'])
+        expect(s.blocks[0]?.position).toBe(1) // healed
+        expect(s.blocks[1]?.position).toBe(5) // A untouched
+        expectMapMatchesArray(s)
+      })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
   // moveToParent
   // ---------------------------------------------------------------------------
   describe('moveToParent', () => {

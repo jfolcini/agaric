@@ -114,6 +114,12 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
     // mover captures its pre-await `get()` snapshot and dispatches its
     // `move_block` IPC synchronously with the call — the #714 stale-capture
     // races depend on it, and a lone move must not eat an extra microtask.
+    // #2849 — each mover now also applies its OPTIMISTIC provisional splice
+    // (`applyProvisionalMove`) inside this synchronous window, BEFORE its await.
+    // Because that splice is the first thing `run` does, this serializer already
+    // covers the provisional-apply window: a queued second press does not start
+    // until the predecessor settles (below), so it computes against the
+    // already-applied provisional first move — never a pre-move snapshot.
     // Only when a predecessor is still settling do we chain, so the queued
     // second press reads the post-first-move state (the #774 fix).
     const next: Promise<T> = prev ? prev.then(run, run) : run()
@@ -247,6 +253,16 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
               // being mistaken for remote deletions. `setFocused(null)` also
               // clears the coupled selection state, matching every other
               // focus-clear path in the app.
+              //
+              // #2849 — this same load-START discipline also covers a block the
+              // user OPTIMISTICALLY removed/moved before or during this load. A
+              // block spliced out pre-await is absent from `blocksById` at
+              // commit time, so the `if (currentBlock)` gate above short-circuits
+              // and focus is left for the remove() caller to manage; a block
+              // optimistically MOVED is still present (moves never delete), so it
+              // hits the content-preserve branch, never this clear. Only a block
+              // that was here at load START and is genuinely gone from the fresh
+              // snapshot reaches this clear.
               useBlockStore.getState().setFocused(null)
             }
           }
@@ -262,7 +278,13 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
         // and ids this store never owned (managed by another tree, or
         // optimistically created mid-load and absent from the snapshot — same
         // load-START guard as #773) are preserved untouched, and the update
-        // only fires when something actually changed.
+        // only fires when something actually changed. #2849 — the same
+        // load-START discipline covers optimistic remove/move: an id
+        // optimistically MOVED still survives (present in the snapshot); an id
+        // optimistically REMOVED before load START is treated as "never owned"
+        // here (absent from `preLoadBlocksById`) and left for the remove()
+        // caller's own selection cleanup, exactly like a block owned by another
+        // tree.
         const survivingIds = new Set(newBlocks.map((b) => b.id))
         const { selectedBlockIds, setSelected } = useBlockStore.getState()
         if (selectedBlockIds.length > 0) {

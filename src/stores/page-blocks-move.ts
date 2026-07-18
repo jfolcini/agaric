@@ -217,22 +217,165 @@ export async function applyStructuralMove(
     }
     if (kind === 'skip') return {}
     const { blocks, touchedIds } = computeSpliced(state)
-    // Perf (#2041): resolve touched ids via a single id→object Map built once
-    // (O(n)) instead of a per-id `blocks.find` (O(touched×n)) inside the loop.
-    const byId = new Map<string, FlatBlock>()
-    for (const b of blocks) byId.set(b.id, b)
-    const touched: FlatBlock[] = []
-    const seen = new Set<string>()
-    for (const id of touchedIds) {
-      if (seen.has(id)) continue
-      seen.add(id)
-      const b = byId.get(id)
-      if (b) touched.push(b)
-    }
     return {
       blocks,
-      blocksById: cloneBlocksByIdWith(state.blocksById, touched),
+      blocksById: cloneBlocksByIdWith(state.blocksById, deriveTouched(blocks, touchedIds)),
     }
+  })
+  if (needsReload) await get().load()
+}
+
+// ── Optimistic pre-await provisional move (#2849) ─────────────────────────
+
+/** Zustand functional `set` shape the provisional-move helpers use. */
+type MoveSet = (updater: (state: PageBlockState) => Partial<PageBlockState>) => void
+
+/**
+ * Resolve the `FlatBlock` objects for `touchedIds` from the spliced `blocks`,
+ * for the subtree-touch `cloneBlocksByIdWith` perf invariant (only touched keys
+ * re-allocate). Perf (#2041): one id→object Map built once (O(n)) instead of a
+ * per-id `blocks.find`. De-dups ids and skips any not present in `blocks`.
+ */
+function deriveTouched(blocks: FlatBlock[], touchedIds: Iterable<string>): FlatBlock[] {
+  const byId = new Map<string, FlatBlock>()
+  for (const b of blocks) byId.set(b.id, b)
+  const touched: FlatBlock[] = []
+  const seen = new Set<string>()
+  for (const id of touchedIds) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const b = byId.get(id)
+    if (b) touched.push(b)
+  }
+  return touched
+}
+
+/**
+ * #2849 — everything the resolve path needs to confirm/heal a provisional move
+ * or roll it back. Returned by {@link applyProvisionalMove}.
+ */
+export interface ProvisionalMoveHandle {
+  /** The moved block's id. */
+  blockId: string
+  /** `blocks`/`blocksById` BEFORE the provisional splice — exact rollback target. */
+  prevBlocks: FlatBlock[]
+  prevById: Map<string, FlatBlock>
+  /** The `blocks` array reference the provisional splice produced. */
+  provBlocks: FlatBlock[]
+  /** The moved block's flat index + parent AFTER the provisional splice. */
+  provIndex: number
+  provParent: string | null
+}
+
+/**
+ * #2849 — apply an optimistic structural splice SYNCHRONOUSLY, BEFORE the caller
+ * dispatches its `move_block` IPC, so the UI updates instantly instead of after
+ * the round-trip. Returns a {@link ProvisionalMoveHandle} the resolve path uses
+ * to heal (`reconcileProvisionalMoveSuccess`) or roll back
+ * (`rollbackProvisionalMove`).
+ *
+ * The splice keeps the moved block's stored `position` as-is — array order is
+ * authoritative (see `reconcileBatchMove`'s array-order rationale); same-parent
+ * movers heal it to the backend's dense rank on success. `indent`/`dedent`
+ * rewrite `parent_id`/`depth` on the moved subtree (those objects re-allocate),
+ * so their `touchedIds` cover the subtree; a same-parent swap changes no object
+ * (only array order) and passes `touchedIds: []`.
+ *
+ * MUST be called inside the per-block `enqueueMove` serializer, synchronously
+ * with the caller's context capture (no await between), so a queued second press
+ * computes against this already-applied provisional state (#774 + #2849).
+ */
+export function applyProvisionalMove(
+  set: MoveSet,
+  blockId: string,
+  computeSpliced: (state: PageBlockState) => {
+    blocks: FlatBlock[]
+    touchedIds: Iterable<string>
+  },
+): ProvisionalMoveHandle {
+  let handle: ProvisionalMoveHandle | undefined
+  set((state) => {
+    const prevBlocks = state.blocks
+    const prevById = state.blocksById
+    const { blocks, touchedIds } = computeSpliced(state)
+    const provIndex = blocks.findIndex((b) => b.id === blockId)
+    handle = {
+      blockId,
+      prevBlocks,
+      prevById,
+      provBlocks: blocks,
+      provIndex,
+      provParent: (provIndex >= 0 ? blocks[provIndex]?.parent_id : null) ?? null,
+    }
+    return { blocks, blocksById: cloneBlocksByIdWith(prevById, deriveTouched(blocks, touchedIds)) }
+  })
+  // Zustand runs the updater synchronously, so `handle` is assigned.
+  return handle as ProvisionalMoveHandle
+}
+
+/**
+ * #2849 — resolve-path reconcile for a provisional move the backend CONFIRMED
+ * (parent echo matched). Heals the moved block's `position` to the backend's
+ * dense rank (`newPosition`; pass `null` to skip — `indent` keeps its
+ * splice-assigned `position: 1`).
+ *
+ * Double-apply guard (trap 1): if a concurrent write superseded the provisional
+ * splice — the block vanished (a racing sync `load()` / delete), or it no longer
+ * sits at the provisional slot+parent (a stale `load()` that reverted the
+ * move) — reconcile via `load()` instead of blindly healing. A benign
+ * concurrent write that never reorders (an `edit` on another block) leaves the
+ * block at the same slot+parent, so the heal proceeds and that edit survives.
+ */
+export async function reconcileProvisionalMoveSuccess(
+  set: MoveSet,
+  get: () => PageBlockState,
+  handle: ProvisionalMoveHandle,
+  newPosition: number | null,
+): Promise<void> {
+  let needsReload = false
+  set((state) => {
+    const cur = state.blocksById.get(handle.blockId)
+    if (!cur) {
+      needsReload = true
+      return {}
+    }
+    const stillInPlace =
+      state.blocks === handle.provBlocks ||
+      (state.blocks[handle.provIndex]?.id === handle.blockId &&
+        (cur.parent_id ?? null) === handle.provParent)
+    if (!stillInPlace) {
+      needsReload = true
+      return {}
+    }
+    if (newPosition == null || (cur.position ?? null) === newPosition) return {}
+    const healed: FlatBlock = { ...cur, position: newPosition }
+    const blocks = state.blocks.slice()
+    blocks[handle.provIndex] = healed
+    return { blocks, blocksById: cloneBlocksByIdWith(state.blocksById, [healed]) }
+  })
+  if (needsReload) await get().load()
+}
+
+/**
+ * #2849 — resolve-path rollback for a provisional move whose IPC REJECTED.
+ * Restores the exact pre-op snapshot when nothing landed since (the common
+ * case), or reconciles via `load()` when a concurrent write superseded the
+ * provisional splice — restoring the stale snapshot would clobber it, mirroring
+ * `edit`'s guarded rollback (only revert when the live state still equals what
+ * this move wrote).
+ */
+export async function rollbackProvisionalMove(
+  set: MoveSet,
+  get: () => PageBlockState,
+  handle: ProvisionalMoveHandle,
+): Promise<void> {
+  let needsReload = false
+  set((state) => {
+    if (state.blocks === handle.provBlocks) {
+      return { blocks: handle.prevBlocks, blocksById: handle.prevById }
+    }
+    needsReload = true
+    return {}
   })
   if (needsReload) await get().load()
 }
