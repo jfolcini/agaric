@@ -87,7 +87,13 @@ mod tests {
     fn rejects_non_strict_shapes() {
         // chrono's `%Y-%m-%d` alone would accept these; the strict shape
         // pre-check rejects non-zero-padded / short-year forms.
-        for bad in ["2025-1-1", "25-1-1", "2025/01/01", "2025-01-01T00:00:00", ""] {
+        for bad in [
+            "2025-1-1",
+            "25-1-1",
+            "2025/01/01",
+            "2025-01-01T00:00:00",
+            "",
+        ] {
             assert!(
                 validate_date_format(bad).is_err(),
                 "expected `{bad}` to be rejected"
@@ -98,7 +104,10 @@ mod tests {
     #[test]
     fn accepts_valid_iso_dates() {
         for good in ["2025-01-01", "2000-12-31", "2026-07-18"] {
-            assert!(validate_date_format(good).is_ok(), "expected `{good}` to be valid");
+            assert!(
+                validate_date_format(good).is_ok(),
+                "expected `{good}` to be valid"
+            );
         }
     }
 
