@@ -348,7 +348,7 @@ agaric-sync = { path = "agaric-sync", version = "0.1.0", features = ["test-util"
 # #2621 Sync-D: these sync-only crates moved to `agaric-sync` for production;
 # the only remaining app use sites are the hosted sync tests, so they are
 # dev-only here (unified with agaric-sync's production copies by cargo).
-tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 rcgen = "0.14"
 mdns-sd = "0.20"
 x509-parser = "0.18.1"
