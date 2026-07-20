@@ -504,7 +504,7 @@ jobs:
           retention-days: 90
 
       - name: Install cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: cargo-nextest
 
@@ -581,7 +581,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-mutants + cargo-nextest via prebuilt binary
-        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: cargo-mutants,cargo-nextest
 
@@ -823,7 +823,7 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install cargo-fuzz via prebuilt binary
-        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: cargo-fuzz
 
@@ -983,7 +983,7 @@ jobs:
       - name: Install prek + non-Rust lint tools via prebuilt binaries
         # Mirrors the lint job's first (ungated) tool install: prek runs the
         # whole suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
-        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
           # pins 1.95.0 (see the lint job in _validate.yml). Bump in lockstep.
@@ -992,7 +992,7 @@ jobs:
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest
         # backs both the cargo-test hook and the explicit nextest step below.
-        uses: taiki-e/install-action@ed67fa35ac944f3a9b33f12c4dd43b6f31a47e20 # v2.83.3
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
         with:
           tool: cargo-deny,cargo-machete,cargo-audit,cargo-nextest
 
