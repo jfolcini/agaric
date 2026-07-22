@@ -201,14 +201,22 @@ async fn seed_page_via_engine(
 ///   **#2325/#2250:** the B5 LOCAL-vs-REMOTE parity property DOES now cover
 ///   tags — it uses [`prepare_chain_b5`] instead, which RETAINS the tag ops and
 ///   remaps their `tag_id` to the seeded [`TAG_ID`].
-/// * `PurgeBlock` — purge is gated on a *soft-deleted* block, but
-///   `apply_purge_block_via_loro` resolves the space via the block's OWN
-///   (now `deleted_at IS NOT NULL`) row, which `resolve_block_space` filters
-///   out, so purge ALWAYS takes the SQL-only cascade for the engine side by
-///   design. It therefore cannot satisfy these tests' zero-fallback engine-path
-///   guard. Purge coverage lives at the engine layer
-///   (`loro::engine_proptest`'s `Purge` arm exercises `apply_purge_block`) and
-///   in the B1 NonReversible classification.
+/// * `PurgeBlock` — dropped from these reprojection / LOCAL-vs-REMOTE parity
+///   properties, but NO LONGER because it forces the engine's SQL-only arm.
+///   #2868 fixed `apply_purge_block_via_loro` to resolve a soft-deleted block's
+///   space via `resolve_soft_deleted_block_space` (the `deleted_at IS NULL`
+///   filter in the canonical `resolve_block_space` USED to force the SQL-only
+///   cascade + a `sql_only_fallback`), so a remote purge now runs the engine
+///   arm with a ZERO fallback delta. Purge still stays out of these chains for
+///   STRUCTURAL reasons: it is TERMINAL (removes the block + its subtree, so
+///   later generated ops that reference it are invalidated) and its LOCAL path
+///   is the dedicated `purge_block_inner` COMMAND — not `apply_op_tx` — so it
+///   cannot join the shared apply-kernel LOCAL/REMOTE parity drive these
+///   properties use. Dedicated engine-tombstone coverage for the fixed remote
+///   path lives in `engine_path_tests::\
+///   apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_2868`;
+///   engine-layer purge mechanics in `loro::engine_proptest`'s `Purge` arm;
+///   plus the B1 NonReversible classification.
 /// * `AddAttachment` / `DeleteAttachment` — attachment apply writes the
 ///   `attachments` table + touches the filesystem (`fs_path`) and does not
 ///   affect `parent_id` / `position` / `block_links` / `block_properties`, so it
@@ -257,10 +265,11 @@ fn prepare_chain(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
 /// valid `deleted_at_ref`s and the driver appends with `ts_for(step)` so the
 /// LOCAL and REMOTE drives stamp the SAME deterministic `deleted_at`, keeping
 /// the `read_blocks_full` `deleted_at` column byte-identical between the two
-/// paths). Only `PurgeBlock` (always SQL-only for the engine side — see
-/// [`prepare_chain`]) and the attachment ops (FS-touching, off the projection
-/// path) are dropped; B5 asserts a zero `sql_only_fallback` delta, so a stray
-/// fallback would fail the property.
+/// paths). Only `PurgeBlock` (TERMINAL + a distinct LOCAL command path, not the
+/// shared apply kernel — see [`prepare_chain`]; no longer an engine-side
+/// SQL-only concern since #2868) and the attachment ops (FS-touching, off the
+/// projection path) are dropped; B5 asserts a zero `sql_only_fallback` delta, so
+/// a stray fallback would fail the property.
 fn prepare_chain_b5(payloads: Vec<OpPayload>) -> Vec<OpPayload> {
     payloads
         .into_iter()

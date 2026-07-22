@@ -864,18 +864,34 @@ pub async fn topmost_live_ancestor(
 /// wider than the engine state (purges agenda_cache, tags_cache,
 /// fts_blocks, etc. that the engine doesn't model) so it stays in
 /// this helper rather than getting absorbed into a projection. The
-/// engine descendant state is reconciled via op-log replay; per-
-/// descendant engine purges may be added later if needed. The SQL
-/// cascade is the source of truth users observe. SQL-only fallback
-/// shape mirrors the other helpers; in production both arms are
-/// unreachable.
+/// engine descendant state is handled by `apply_purge_block` itself,
+/// which collects seed + descendants and prunes the whole subtree from
+/// the LoroDoc — so this single seed call keeps the engine in parity with
+/// the SQL cascade. The SQL cascade is the source of truth users observe.
+/// The SQL-only fallback arm is taken only when the block's space is
+/// genuinely unresolvable (NULL `space_id`); it is not reachable for a
+/// normally-spaced purge since #2868.
 pub async fn apply_purge_block_via_loro(
     conn: &mut sqlx::SqliteConnection,
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
-    let Some(space_id) = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
+    // #2868: a purge targets an already SOFT-DELETED block, so the
+    // canonical `resolve_block_space` (which filters `deleted_at IS NULL`)
+    // returns `None` here — dropping the engine fan-out and clearing only
+    // SQL, which leaves the per-space Loro tombstone in place to resurrect
+    // the purged block on a snapshot-syncing peer. Resolve the space via the
+    // soft-delete-tolerant reader (the denormalized `blocks.space_id` column
+    // survives a soft-delete), captured BEFORE `purge_block_sql_cascade`
+    // physically removes the row — mirroring the LOCAL purge path's
+    // `capture_purge_engine_fanout` and the REMOTE delete/restore pre-capture
+    // pattern. `engine.apply_purge_block` then prunes the whole subtree from
+    // the LoroDoc (it collects seed + descendants internally), so a single
+    // seed call clears the engine tombstone. A genuinely unresolvable space
+    // (NULL `space_id`, pre-spaces data) still falls back to SQL-only.
+    let Some(space_id) =
+        agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?
     else {
         super::sql_only_fallback::record(
             "purge_block",

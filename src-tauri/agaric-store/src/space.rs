@@ -396,6 +396,42 @@ where
         .map(|s| SpaceId::from_trusted(&s)))
 }
 
+/// Resolve a block's owning space **without** the `deleted_at IS NULL`
+/// filter that [`resolve_block_space`] applies.
+///
+/// A **purge** targets an already soft-deleted block, so
+/// [`resolve_block_space`] — which excludes tombstones per AGENTS.md
+/// invariant #9 — returns `None` for it. On the REMOTE materializer purge
+/// path that `None` used to drop the engine fan-out and clear only SQL,
+/// leaving the per-space Loro tombstone behind to resurrect the purged
+/// block on a snapshot-syncing peer (#2868). The purge cohort is being
+/// physically removed, so tombstone-participation concerns do not apply
+/// here; read the block's denormalized `blocks.space_id` column directly —
+/// it survives a soft-delete — mirroring the LOCAL purge path's
+/// `capture_purge_engine_fanout` (`commands/blocks/crud.rs`).
+///
+/// Returns `Ok(None)` only when the block is absent or genuinely carries a
+/// NULL `space_id` (pre-spaces data); the caller then legitimately falls
+/// back to the SQL-only cascade.
+///
+/// A runtime query (not the `query!` macro) is used deliberately so this
+/// addition needs no `.sqlx` cache regeneration — matching the SQL cascade
+/// helpers in the engine's `loro_apply` module.
+pub async fn resolve_soft_deleted_block_space<'e, E>(
+    executor: E,
+    block_id: &BlockId,
+) -> Result<Option<SpaceId>, AppError>
+where
+    E: sqlx::SqliteExecutor<'e>,
+{
+    let space: Option<Option<String>> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?1 LIMIT 1")
+            .bind(block_id.as_str())
+            .fetch_optional(executor)
+            .await?;
+    Ok(space.flatten().map(|s| SpaceId::from_trusted(&s)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
