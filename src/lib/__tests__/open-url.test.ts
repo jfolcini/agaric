@@ -74,6 +74,41 @@ describe('openUrl', () => {
     expect(result).toBe(false)
   })
 
+  // #2960 — `openUrl` is the single choke point every caller (context menu,
+  // long-press "Open link", editor click sinks) funnels through, so it must
+  // reject disallowed schemes even if an upstream caller forgot to check.
+  it.each([
+    'javascript:alert(1)',
+    'file:///etc/passwd',
+    'data:text/html,evil',
+    'vbscript:msgbox(1)',
+  ])(
+    'resolves false and never calls the Tauri shell or window.open for a disallowed scheme (%s)',
+    async (disallowedUrl) => {
+      mockOpen.mockClear()
+      vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
+      const windowOpenSpy = vi.spyOn(window, 'open')
+      const { openUrl } = await import('@/lib/open-url')
+
+      const result = await openUrl(disallowedUrl)
+
+      expect(result).toBe(false)
+      expect(mockOpen).not.toHaveBeenCalled()
+      expect(windowOpenSpy).not.toHaveBeenCalled()
+    },
+  )
+
+  it('still opens an allowed https url after the scheme check', async () => {
+    mockOpen.mockResolvedValueOnce(undefined)
+    vi.doMock('@tauri-apps/plugin-shell', () => ({ open: mockOpen }))
+    const { openUrl } = await import('@/lib/open-url')
+
+    const result = await openUrl('https://example.com')
+
+    expect(mockOpen).toHaveBeenCalledWith('https://example.com')
+    expect(result).toBe(true)
+  })
+
   it('never rejects across all three branches', async () => {
     // (1) happy path
     mockOpen.mockResolvedValueOnce(undefined)

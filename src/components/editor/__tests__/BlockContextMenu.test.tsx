@@ -1012,6 +1012,30 @@ describe('BlockContextMenu', () => {
     expect(items[0]).toHaveTextContent(t('contextMenu.openLink'))
   })
 
+  // ── #2960 — disallowed-scheme linkUrl is not offered / not opened ───
+
+  it.each(['javascript:alert(1)', 'file:///etc/passwd'])(
+    'does not render "Open link" item when linkUrl has a disallowed scheme (%s)',
+    (disallowedUrl) => {
+      renderMenu({ linkUrl: disallowedUrl })
+
+      expect(screen.queryByText(t('contextMenu.openLink'))).not.toBeInTheDocument()
+      expect(mockedOpenUrl).not.toHaveBeenCalled()
+    },
+  )
+
+  it('renders and opens "Open link" for an allowed https linkUrl', async () => {
+    const { props } = renderMenu({ linkUrl: 'https://example.com/page' })
+
+    expect(screen.getByText(t('contextMenu.openLink'))).toBeInTheDocument()
+    fireEvent.click(screen.getByText(t('contextMenu.openLink')))
+
+    await waitFor(() => {
+      expect(mockedOpenUrl).toHaveBeenCalledWith('https://example.com/page')
+    })
+    expect(props.onClose).toHaveBeenCalled()
+  })
+
   // ── Copy URL menu item ──────────────────────────────────────────
 
   it('renders "Copy URL" item when linkUrl is provided', () => {

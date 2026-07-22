@@ -15,7 +15,9 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import { Spinner } from '@/components/ui/spinner'
+import { useExternalImageAllowlist, useExternalImagePolicy } from '@/hooks/useExternalImagePolicy'
 import { useLinkPreview } from '@/hooks/useLinkPreview'
+import { shouldLoadExternalImage } from '@/lib/external-image-policy'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { cn } from '@/lib/utils'
@@ -32,8 +34,26 @@ export function LinkPreviewTooltip({
   const [position, setPosition] = useState<{ x: number; y: number } | null>(null)
   const [imgErrorUrl, setImgErrorUrl] = useState<string | null>(null)
 
+  // #2959 — the favicon URL is attacker-controlled: it comes from the
+  // fetched page's `<link rel="icon">`, so mounting `<img src>` unconditionally
+  // fires an uncontrolled cross-origin request (SSRF against LAN/internal
+  // hosts, or a bare tracking beacon) before the user ever decided to trust
+  // that origin. Gate it behind the SAME external-image policy + per-host
+  // allowlist `GatedImage` already enforces for content images
+  // (`lib/external-image-policy`) so no request is made until policy/allowlist
+  // permits it; fall back to the neutral `Globe` icon otherwise (same fallback
+  // already used for "no favicon"/errored-favicon). A backend proxy that
+  // strips/normalizes the favicon fetch server-side would close the SSRF angle
+  // more completely, but is out of scope here — this frontend gate is the
+  // minimal, sufficient fix matching the existing image-policy UX.
+  const { policy: externalImagePolicy } = useExternalImagePolicy()
+  const { allowlist: externalImageAllowlist } = useExternalImageAllowlist()
+
   const faviconUrl = metadata?.favicon_url ?? null
   const imgError = imgErrorUrl === faviconUrl && faviconUrl !== null
+  const faviconAllowed =
+    faviconUrl !== null &&
+    shouldLoadExternalImage(faviconUrl, externalImagePolicy, externalImageAllowlist)
 
   // Compute tooltip position using @floating-ui/dom
   useEffect(() => {
@@ -94,7 +114,8 @@ export function LinkPreviewTooltip({
   // a page that 404s, and don't surface a sign-in page's icon).
   const isAuthRequired = metadata?.auth_required === true
   const isNotFound = metadata?.not_found === true
-  const showFavicon = metadata?.favicon_url && !imgError && !isAuthRequired && !isNotFound
+  const showFavicon =
+    metadata?.favicon_url && !imgError && !isAuthRequired && !isNotFound && faviconAllowed
   const title = isAuthRequired || isNotFound ? null : metadata?.title
 
   return (

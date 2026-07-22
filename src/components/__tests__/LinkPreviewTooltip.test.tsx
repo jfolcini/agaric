@@ -12,10 +12,14 @@
  */
 
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import type { LinkPreviewState } from '@/hooks/useLinkPreview'
+import {
+  EXTERNAL_IMAGE_ALLOWLIST_KEY,
+  EXTERNAL_IMAGE_POLICY_KEY,
+} from '@/lib/external-image-policy'
 import { logger } from '@/lib/logger'
 import type { LinkMetadata } from '@/lib/tauri'
 
@@ -61,6 +65,18 @@ function makeContainer(): HTMLDivElement {
 describe('LinkPreviewTooltip', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    // #2959 — the favicon <img> is now gated behind the external-image
+    // policy/allowlist (`shouldLoadExternalImage`). Default to the
+    // permissive `always` policy so the pre-existing favicon-rendering
+    // assertions below (which predate the privacy gate and are not testing
+    // it) keep exercising the "favicon loads" path unchanged. The dedicated
+    // "external-image policy gating (#2959)" describe block below overrides
+    // this per test to exercise `click` / `never` / allowlist behaviour.
+    localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'always')
+  })
+
+  afterEach(() => {
+    localStorage.clear()
   })
 
   it('returns null when no link is hovered', () => {
@@ -362,6 +378,116 @@ describe('LinkPreviewTooltip', () => {
         metadata: null,
         anchorRect: SAMPLE_RECT,
         isLoading: true,
+      })
+
+      const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)
+      expect(await axe(container)).toHaveNoViolations()
+    })
+  })
+
+  describe('external-image policy gating (#2959)', () => {
+    it('does not load the favicon <img> under the default click policy with no allowlisted host', () => {
+      // No localStorage.setItem here — falls through to the real
+      // (privacy-first) default: policy 'click', empty allowlist.
+      localStorage.removeItem(EXTERNAL_IMAGE_POLICY_KEY)
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
+      })
+
+      render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      // No uncontrolled request to the attacker-controlled favicon host.
+      expect(tooltip.querySelector('img')).toBeNull()
+      // Neutral placeholder — the same Globe fallback used for "no favicon".
+      expect(tooltip.querySelector('svg')).toBeInTheDocument()
+    })
+
+    it('does not load the favicon <img> when policy is "never", even with a title present', () => {
+      localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'never')
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
+      })
+
+      render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      expect(tooltip.querySelector('img')).toBeNull()
+      expect(tooltip.querySelector('svg')).toBeInTheDocument()
+      expect(tooltip).toHaveTextContent('Example Site')
+    })
+
+    it('loads the favicon <img> under click policy once its exact host is allowlisted', () => {
+      localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'click')
+      localStorage.setItem(EXTERNAL_IMAGE_ALLOWLIST_KEY, JSON.stringify(['example.com']))
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
+      })
+
+      render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      const img = tooltip.querySelector('img')
+      expect(img).toBeInTheDocument()
+      expect(img?.src).toBe('https://example.com/favicon.ico')
+    })
+
+    it('does not load the favicon <img> under click policy when a DIFFERENT host is allowlisted', () => {
+      localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'click')
+      localStorage.setItem(EXTERNAL_IMAGE_ALLOWLIST_KEY, JSON.stringify(['trusted.example.com']))
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
+      })
+
+      render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      expect(tooltip.querySelector('img')).toBeNull()
+      expect(tooltip.querySelector('svg')).toBeInTheDocument()
+    })
+
+    it('loads the favicon <img> unconditionally when policy is "always"', () => {
+      localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'always')
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
+      })
+
+      render(<LinkPreviewTooltip container={makeContainer()} />)
+
+      const tooltip = screen.getByTestId('link-preview-tooltip')
+      const img = tooltip.querySelector('img')
+      expect(img).toBeInTheDocument()
+      expect(img?.src).toBe('https://example.com/favicon.ico')
+    })
+
+    it('passes axe audit while the favicon is gated (placeholder path)', async () => {
+      localStorage.setItem(EXTERNAL_IMAGE_POLICY_KEY, 'never')
+
+      mockUseLinkPreview.mockReturnValue({
+        url: 'https://example.com',
+        metadata: SAMPLE_METADATA,
+        anchorRect: SAMPLE_RECT,
+        isLoading: false,
       })
 
       const { container } = render(<LinkPreviewTooltip container={makeContainer()} />)

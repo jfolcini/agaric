@@ -50,6 +50,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
 import { TURN_INTO_OPTIONS, turnIntoTypeKey } from '@/lib/slash-commands'
+import { isAllowedUrl } from '@/lib/url-validation'
 import { cn } from '@/lib/utils'
 import { useBlockStore } from '@/stores/blocks'
 
@@ -325,24 +326,35 @@ function buildHistoryGroup(ctx: MenuGroupContext): MenuItem[] {
 function buildLinkGroup(ctx: MenuGroupContext): MenuItem[] {
   const { t, blockId, onClose, linkUrl, pageRefId } = ctx
 
-  const openLinkItem: MenuItem | null = linkUrl
-    ? {
-        label: t('contextMenu.openLink'),
-        icon: <ExternalLink className="h-3.5 w-3.5" />,
-        action: () => {
-          void (async () => {
-            // openUrl never rejects — it returns false when neither the Tauri
-            // shell nor window.open could open a tab.
-            const opened = await openUrl(linkUrl)
-            if (!opened) {
-              logger.warn('BlockContextMenu', 'Failed to open external link', { url: linkUrl })
-              notify.error(t('contextMenu.actionFailed'))
-            }
-            onClose()
-          })()
-        },
-      }
-    : null
+  // #2960 — the raw `linkUrl` here is captured from an anchor's
+  // `href`/`data-href` by the long-press / right-click gesture
+  // (`useBlockTouchLongPress`) with no upstream validation, so it can carry a
+  // disallowed scheme (`javascript:`, `file:`, …) even though `openUrl` itself
+  // now also guards on `isAllowedUrl` (defense-in-depth). Omit the "Open link"
+  // item entirely for a disallowed url — a no-op with no menu affordance at
+  // all, mirroring the static render sink (`RichContentRenderer/marks/text.tsx`)
+  // which never renders a disallowed href as a clickable link in the first
+  // place.
+  const openLinkItem: MenuItem | null =
+    linkUrl && isAllowedUrl(linkUrl)
+      ? {
+          label: t('contextMenu.openLink'),
+          icon: <ExternalLink className="h-3.5 w-3.5" />,
+          action: () => {
+            void (async () => {
+              // openUrl never rejects — it returns false when neither the Tauri
+              // shell nor window.open could open a tab (including when the url
+              // is disallowed).
+              const opened = await openUrl(linkUrl)
+              if (!opened) {
+                logger.warn('BlockContextMenu', 'Failed to open external link', { url: linkUrl })
+                notify.error(t('contextMenu.actionFailed'))
+              }
+              onClose()
+            })()
+          },
+        }
+      : null
 
   const copyUrlItem: MenuItem | null = linkUrl
     ? {
