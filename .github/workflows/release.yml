@@ -488,6 +488,69 @@ jobs:
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 AppImage .sig, found ${#sigs[@]}"; exit 1; }
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
+      # #2970 — the Linux runner's `targets: "all"` build also produces .deb and
+      # .rpm bundles that the release ships. The updater plugin (2.10.1) detects
+      # the running install format at runtime and looks up
+      # `linux-x86_64-{deb,rpm}` before the bare `linux-x86_64` key, so a
+      # deb/rpm-installed app must be offered its OWN signed payload (offering it
+      # the AppImage fails with InvalidUpdaterFormat). Sign both here, next to
+      # the AppImage signing, so all three Linux updater payloads carry a `.sig`.
+      - name: Sign updater payload (Linux .deb)
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=("$BUNDLE_DIR"/*.deb)
+          [ ${#debs[@]} -eq 1 ] || { echo "::error::expected exactly 1 .deb, found ${#debs[@]}"; exit 1; }
+          npm run tauri -- signer sign "${debs[0]}"
+          test -f "${debs[0]}.sig"
+
+      - name: Upload Linux .deb updater signature
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/deb
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sigs=("$BUNDLE_DIR"/*.deb.sig)
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 .deb .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+
+      - name: Sign updater payload (Linux .rpm)
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/rpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          rpms=("$BUNDLE_DIR"/*.rpm)
+          [ ${#rpms[@]} -eq 1 ] || { echo "::error::expected exactly 1 .rpm, found ${#rpms[@]}"; exit 1; }
+          npm run tauri -- signer sign "${rpms[0]}"
+          test -f "${rpms[0]}.sig"
+
+      - name: Upload Linux .rpm updater signature
+        if: matrix.platform == 'ubuntu-24.04'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/rpm
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sigs=("$BUNDLE_DIR"/*.rpm.sig)
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 .rpm .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+
       - name: Sign updater payload (Windows NSIS)
         if: matrix.platform == 'windows-2025-vs2026'
         env:
@@ -514,6 +577,40 @@ jobs:
           shopt -s nullglob
           sigs=("$BUNDLE_DIR"/*-setup.exe.sig)
           [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS .sig, found ${#sigs[@]}"; exit 1; }
+          gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
+
+      # #2970 — the Windows runner's `targets: "all"` build also produces an .msi
+      # (WiX) bundle the release ships. The updater plugin looks up
+      # `windows-x86_64-msi` before the bare `windows-x86_64` key; without a
+      # signed .msi payload an MSI-installed app is silently offered the NSIS
+      # setup.exe and cross-grades to an unsupported NSIS+MSI mix. Sign the .msi
+      # so an MSI install updates in place via msiexec.
+      - name: Sign updater payload (Windows MSI)
+        if: matrix.platform == 'windows-2025-vs2026'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/msi
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          msis=("$BUNDLE_DIR"/*.msi)
+          [ ${#msis[@]} -eq 1 ] || { echo "::error::expected exactly 1 .msi, found ${#msis[@]}"; exit 1; }
+          npm run tauri -- signer sign "${msis[0]}"
+          test -f "${msis[0]}.sig"
+
+      - name: Upload Windows MSI updater signature
+        if: matrix.platform == 'windows-2025-vs2026'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUNDLE_DIR: src-tauri/target/${{ matrix.target }}/release/bundle/msi
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sigs=("$BUNDLE_DIR"/*.msi.sig)
+          [ ${#sigs[@]} -eq 1 ] || { echo "::error::expected exactly 1 .msi .sig, found ${#sigs[@]}"; exit 1; }
           gh release upload "${GITHUB_REF_NAME}" "${sigs[0]}" --clobber
 
       # macOS: tauri-action ALREADY produces the updater archive and uploads it
@@ -686,7 +783,7 @@ jobs:
               echo "::error file=$f::Potential secret embedded in release bundle"
               found=1
             fi
-          done < <(find "$BUNDLE_DIR" -type f \( -name '*.AppImage' -o -name '*.deb' -o -executable \) 2>/dev/null || true)
+          done < <(find "$BUNDLE_DIR" -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.rpm' -o -executable \) 2>/dev/null || true)
           if [ "$found" -ne 0 ]; then
             echo "::error::One or more release bundles match a secret pattern. Investigate before publishing."
             exit 1
@@ -701,6 +798,7 @@ jobs:
           subject-path: |
             src-tauri/target/${{ matrix.target }}/release/bundle/appimage/*.AppImage
             src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
             ${{ runner.temp }}/agaric-${{ matrix.target }}.spdx.json
             ${{ runner.temp }}/agaric-${{ matrix.target }}.cyclonedx.json
 
@@ -1335,10 +1433,20 @@ jobs:
             # globs below match the versioned name (the leading `*` swallows
             # `Agaric_<v>`), and `${base_url}/${base}` derives the correct URL
             # for the versioned payload asset because `base` IS that asset name.
+            #
+            # #2970 — the payload basename (a `.sig` with the extension stripped)
+            # is matched on its bundle EXTENSION so every format the release ships
+            # maps to the plugin's `{os}-{arch}-{installer}` key. `installer` ∈
+            # {appimage, deb, rpm, nsis, msi} matches `Installer::name()` in
+            # tauri-plugin-updater. macOS keeps the bare `{os}-{arch}` key (its
+            # only bundle is `app`, and the plugin falls back to the bare key).
             case "$base" in
-              *_amd64.AppImage)    key="linux-x86_64" ;;
-              *-setup.exe)         key="windows-x86_64" ;;
-              *_x64.app.tar.gz)    key="darwin-x86_64" ;;
+              *.AppImage)           key="linux-x86_64-appimage" ;;
+              *.deb)                key="linux-x86_64-deb" ;;
+              *.rpm)                key="linux-x86_64-rpm" ;;
+              *-setup.exe)          key="windows-x86_64-nsis" ;;
+              *.msi)                key="windows-x86_64-msi" ;;
+              *_x64.app.tar.gz)     key="darwin-x86_64" ;;
               *_aarch64.app.tar.gz) key="darwin-aarch64" ;;
               *) echo "::error::unrecognised updater payload: $base"; exit 1 ;;
             esac
@@ -1346,23 +1454,45 @@ jobs:
               '{signature:$s, url:$u}')"
           done
 
-          for k in linux-x86_64 windows-x86_64 darwin-x86_64 darwin-aarch64; do
+          # #2970 — the updater plugin (2.10.1) resolves `{os}-{arch}-{installer}`
+          # (installer detected at runtime) BEFORE the bare `{os}-{arch}` key, so
+          # every format the release ships must carry its own signed entry or that
+          # install type is offered the wrong payload (deb/rpm install fails;
+          # MSI install silently cross-grades to NSIS). Require all of them.
+          for k in linux-x86_64-appimage linux-x86_64-deb linux-x86_64-rpm \
+                   windows-x86_64-nsis windows-x86_64-msi \
+                   darwin-x86_64 darwin-aarch64; do
             [ -n "${PLAT[$k]:-}" ] || { echo "::error::missing updater signature for platform $k"; exit 1; }
           done
 
           pub_date="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           notes="See the release page for the changelog and install instructions."
+          # The bare `linux-x86_64` / `windows-x86_64` keys are retained as
+          # fallbacks (AppImage / NSIS) for any client that reports an installer
+          # we did not key explicitly, so no install type is ever left without a
+          # resolvable payload.
           jq -n \
             --arg version "$version" \
             --arg notes "$notes" \
             --arg pub_date "$pub_date" \
-            --argjson linux   "${PLAT[linux-x86_64]}" \
-            --argjson windows "${PLAT[windows-x86_64]}" \
-            --argjson dx86    "${PLAT[darwin-x86_64]}" \
-            --argjson darm    "${PLAT[darwin-aarch64]}" \
+            --argjson lx_appimage "${PLAT[linux-x86_64-appimage]}" \
+            --argjson lx_deb      "${PLAT[linux-x86_64-deb]}" \
+            --argjson lx_rpm      "${PLAT[linux-x86_64-rpm]}" \
+            --argjson wx_nsis     "${PLAT[windows-x86_64-nsis]}" \
+            --argjson wx_msi      "${PLAT[windows-x86_64-msi]}" \
+            --argjson dx86        "${PLAT[darwin-x86_64]}" \
+            --argjson darm        "${PLAT[darwin-aarch64]}" \
             '{version:$version, notes:$notes, pub_date:$pub_date,
-              platforms:{ "linux-x86_64":$linux, "windows-x86_64":$windows,
-                          "darwin-x86_64":$dx86, "darwin-aarch64":$darm }}' \
+              platforms:{
+                "linux-x86_64-appimage":$lx_appimage,
+                "linux-x86_64-deb":$lx_deb,
+                "linux-x86_64-rpm":$lx_rpm,
+                "linux-x86_64":$lx_appimage,
+                "windows-x86_64-nsis":$wx_nsis,
+                "windows-x86_64-msi":$wx_msi,
+                "windows-x86_64":$wx_nsis,
+                "darwin-x86_64":$dx86,
+                "darwin-aarch64":$darm }}' \
             > "$tmp/latest.json"
 
           gh release upload "$TAG" "$tmp/latest.json" --repo "$REPO" --clobber
@@ -1383,7 +1513,9 @@ jobs:
           assets="$(gh release view "$TAG" --repo "$REPO" --json assets --jq '.assets[].name')"
           grep -qx 'latest.json' <<<"$assets" || { echo "::error::latest.json not on release"; exit 1; }
           sig_count="$(grep -c '\.sig$' <<<"$assets" || true)"
-          [ "$sig_count" -ge 4 ] || { echo "::error::expected >=4 .sig assets, found $sig_count"; exit 1; }
+          # #2970 — now 7 updater payloads: AppImage/.deb/.rpm (Linux),
+          # NSIS/.msi (Windows), and the two macOS arch tarballs.
+          [ "$sig_count" -ge 7 ] || { echo "::error::expected >=7 .sig assets, found $sig_count"; exit 1; }
           tmp="$(mktemp -d)"
           gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern 'latest.json'
           got="$(jq -r .version "$tmp/latest.json")"
