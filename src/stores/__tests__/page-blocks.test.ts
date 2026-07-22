@@ -2715,26 +2715,18 @@ describe('PageBlockStore', () => {
   })
 
   // ---------------------------------------------------------------------------
-  // moveToParent
+  // moveToParent (#2900 — optimistic cross-parent DnD reparent)
   // ---------------------------------------------------------------------------
   describe('moveToParent', () => {
-    it('calls moveBlock, reloads tree, and notifies undo', async () => {
+    it('#2900 — applies the reparent optimistically, WITHOUT a full load(), on the happy path', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
 
-      // move_block
       mockedInvoke.mockResolvedValueOnce({
         block_id: 'B',
         new_parent_id: 'A',
         new_position: 0,
-      })
-      // load_page_subtree (reload from load())
-      mockedInvoke.mockResolvedValueOnce({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
       })
 
       await store.getState().moveToParent('B', 'A', 0)
@@ -2744,6 +2736,215 @@ describe('PageBlockStore', () => {
         newParentId: 'A',
         newIndex: 0,
       })
+      // The last unconditional full reload in the move family is gone: a
+      // matching parent echo reconciles in place — no `load_page_subtree`
+      // round-trip (mirrors the equivalent `reorder` assertion).
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['A', 'B'])
+      expect(s.blocksById.get('B')?.parent_id).toBe('A')
+      expect(s.blocksById.get('B')?.depth).toBe(1)
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    it('provisional reparent is visible BEFORE the move IPC resolves', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      let resolveMove!: (v: unknown) => void
+      mockedInvoke.mockReturnValueOnce(
+        new Promise((resolve) => {
+          resolveMove = resolve
+        }),
+      )
+
+      const p = store.getState().moveToParent('B', 'A', 0)
+      // Applied synchronously — no await needed for B to already sit under A.
+      expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+      expect(store.getState().blocksById.get('B')?.depth).toBe(1)
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'B'])
+
+      resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
+      await p
+
+      expect(store.getState().blocksById.get('B')?.parent_id).toBe('A')
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+    })
+
+    it('moves descendants along with the reparented block, splicing the subtree together', async () => {
+      // P (with child C) reparents under X, a sibling root. C must travel
+      // with P: same relative order, `depth` shifted with the subtree,
+      // `parent_id` unchanged (still points at P, not X).
+      const x = makeBlock({ id: 'X', position: 1, parent_id: null, depth: 0 })
+      const p = makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 })
+      const c = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 })
+      store.setState({ blocks: [p, c, x] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'P',
+        new_parent_id: 'X',
+        new_position: 1,
+      })
+
+      await store.getState().moveToParent('P', 'X', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const s = store.getState()
+      expect(s.blocks.map((b) => b.id)).toEqual(['X', 'P', 'C'])
+      expect(s.blocksById.get('P')?.parent_id).toBe('X')
+      expect(s.blocksById.get('P')?.depth).toBe(1)
+      expect(s.blocksById.get('C')?.parent_id).toBe('P')
+      expect(s.blocksById.get('C')?.depth).toBe(2)
+    })
+
+    it("reparents a block AND its descendant multiple levels DEEPER, generalizing dedent's fixed -1 shift to an arbitrary delta", async () => {
+      // G -> M -> D -> E  (D is depth 2, moved; E is its depth-3 child)
+      // R -> S -> T -> U  (U, depth 3, is the new — much deeper — parent)
+      const g = makeBlock({ id: 'G', position: 0, parent_id: null, depth: 0 })
+      const m = makeBlock({ id: 'M', position: 0, parent_id: 'G', depth: 1 })
+      const d = makeBlock({ id: 'D', position: 0, parent_id: 'M', depth: 2 })
+      const e = makeBlock({ id: 'E', position: 0, parent_id: 'D', depth: 3 })
+      const r = makeBlock({ id: 'R', position: 1, parent_id: null, depth: 0 })
+      const s = makeBlock({ id: 'S', position: 0, parent_id: 'R', depth: 1 })
+      const t = makeBlock({ id: 'T', position: 0, parent_id: 'S', depth: 2 })
+      const u = makeBlock({ id: 'U', position: 0, parent_id: 'T', depth: 3 })
+      store.setState({ blocks: [g, m, d, e, r, s, t, u] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'D',
+        new_parent_id: 'U',
+        new_position: 0,
+      })
+
+      // D goes from depth 2 to depth 4 (U's depth 3 + 1) — a delta of +2, not
+      // the fixed +/-1 shift indent/dedent always apply.
+      await store.getState().moveToParent('D', 'U', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const state = store.getState()
+      expect(state.blocks.map((b) => b.id)).toEqual(['G', 'M', 'R', 'S', 'T', 'U', 'D', 'E'])
+      expect(state.blocksById.get('D')?.parent_id).toBe('U')
+      expect(state.blocksById.get('D')?.depth).toBe(4)
+      // E travels with D: parent_id unchanged (still points at D), depth
+      // shifted by the SAME delta (+2) as D, not reset to a fixed offset.
+      expect(state.blocksById.get('E')?.parent_id).toBe('D')
+      expect(state.blocksById.get('E')?.depth).toBe(5)
+    })
+
+    it('reparents a block AND its descendant multiple levels SHALLOWER in one step (straight to root)', async () => {
+      // G -> M -> D -> E, plus a root sibling X. D (depth 2) moves straight to
+      // root — a delta of -2 in one hop, which no single indent/dedent call
+      // could produce (each only ever shifts by exactly 1).
+      const g = makeBlock({ id: 'G', position: 0, parent_id: null, depth: 0 })
+      const m = makeBlock({ id: 'M', position: 0, parent_id: 'G', depth: 1 })
+      const d = makeBlock({ id: 'D', position: 0, parent_id: 'M', depth: 2 })
+      const e = makeBlock({ id: 'E', position: 0, parent_id: 'D', depth: 3 })
+      const x = makeBlock({ id: 'X', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [g, m, d, e, x] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'D',
+        new_parent_id: null,
+        new_position: 1,
+      })
+
+      // newIndex 1 among root siblings-remaining ([G, X]) anchors on X, so D
+      // (+ E) lands between G and X.
+      await store.getState().moveToParent('D', null, 1)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const state = store.getState()
+      expect(state.blocks.map((b) => b.id)).toEqual(['G', 'M', 'D', 'E', 'X'])
+      expect(state.blocksById.get('D')?.parent_id).toBeNull()
+      expect(state.blocksById.get('D')?.depth).toBe(0)
+      expect(state.blocksById.get('E')?.parent_id).toBe('D')
+      expect(state.blocksById.get('E')?.depth).toBe(1)
+    })
+
+    it("inserts at a MID-LIST sibling slot among the target parent's existing children, not just head/tail", async () => {
+      // T already has three children (T1, T2, T3); S (a root block with no
+      // descendants) is dropped at slot 1 — it must land strictly between T1
+      // and T2, not merely appended after the last sibling or prepended.
+      const tp = makeBlock({ id: 'T', position: 0, parent_id: null, depth: 0 })
+      const t1 = makeBlock({ id: 'T1', position: 0, parent_id: 'T', depth: 1 })
+      const t2 = makeBlock({ id: 'T2', position: 1, parent_id: 'T', depth: 1 })
+      const t3 = makeBlock({ id: 'T3', position: 2, parent_id: 'T', depth: 1 })
+      const sBlock = makeBlock({ id: 'S', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [tp, t1, t2, t3, sBlock] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'S',
+        new_parent_id: 'T',
+        new_position: 1,
+      })
+
+      await store.getState().moveToParent('S', 'T', 1)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const state = store.getState()
+      expect(state.blocks.map((b) => b.id)).toEqual(['T', 'T1', 'S', 'T2', 'T3'])
+      expect(state.blocksById.get('S')?.parent_id).toBe('T')
+      expect(state.blocksById.get('S')?.depth).toBe(1)
+    })
+
+    it('preserves descendant object identity (no re-allocation) when the reparent does not change depth (delta === 0)', async () => {
+      // A and B are both root-level (depth 0) parents; P (A's child, depth 1)
+      // has a child C (depth 2). Moving P from A to B keeps P at depth 1 — no
+      // depth shift for the subtree — so C must come out of the splice as the
+      // EXACT SAME object reference (the subtree-touch perf invariant this
+      // reducer's `delta === 0` branch exists for).
+      const a = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const b = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      const p = makeBlock({ id: 'P', position: 0, parent_id: 'A', depth: 1 })
+      const c = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 2 })
+      store.setState({ blocks: [a, p, c, b] })
+      const cRefBefore = store.getState().blocksById.get('C')
+      const pRefBefore = store.getState().blocksById.get('P')
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'P',
+        new_parent_id: 'B',
+        new_position: 0,
+      })
+
+      await store.getState().moveToParent('P', 'B', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+      const state = store.getState()
+      expect(state.blocksById.get('P')?.parent_id).toBe('B')
+      expect(state.blocksById.get('P')?.depth).toBe(1)
+      expect(state.blocksById.get('C')?.parent_id).toBe('P')
+      expect(state.blocksById.get('C')?.depth).toBe(2)
+      // Identity: C's object is untouched (delta === 0); P's is always
+      // re-allocated (its own parent_id changed).
+      expect(state.blocksById.get('C')).toBe(cRefBefore)
+      expect(state.blocksById.get('P')).not.toBe(pRefBefore)
+    })
+
+    it('canSplice guard: reparenting a block under its OWN DESCENDANT falls back to a full reload instead of corrupting the tree', async () => {
+      // P has child C. Requesting moveToParent(P, C, ...) asks P to become a
+      // child of its own child — a cycle a flat splice cannot represent. The
+      // canSplice guard must refuse the optimistic path and take the
+      // pre-#2900 fallback (fire the IPC, then unconditionally reload).
+      const p = makeBlock({ id: 'P', position: 0, parent_id: null, depth: 0 })
+      const c = makeBlock({ id: 'C', position: 0, parent_id: 'P', depth: 1 })
+      store.setState({ blocks: [p, c] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'P',
+        new_parent_id: 'C',
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'C', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'P', parent_id: 'C', depth: 1 }),
+        ]),
+      )
+
+      await store.getState().moveToParent('P', 'C', 0)
+
       expect(mockedInvoke).toHaveBeenCalledWith(
         'load_page_subtree',
         expect.objectContaining({ rootBlockId: 'PAGE_1' }),
@@ -2751,7 +2952,65 @@ describe('PageBlockStore', () => {
       expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
 
-    it('does not update blocks or notify undo on backend error', async () => {
+    it('#2900 — reconciles via exactly one load() when the backend echoes a parent other than requested', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'UNEXPECTED',
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'UNEXPECTED', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 1 }),
+        ]),
+      )
+
+      await store.getState().moveToParent('B', 'A', 0)
+
+      const loadCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'load_page_subtree')
+      expect(loadCalls).toHaveLength(1)
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
+    })
+
+    // Non-tautology: this mismatch fallback is not free-standing test theater
+    // — if the parent-echo guard above is removed/broken, this test fails
+    // (the reconciling `load()` never fires and the store is left holding
+    // the WRONG optimistic parent). Verified by temporarily deleting the
+    // guard locally and re-running: this test — and only this one in the
+    // `moveToParent` suite — goes red.
+    it('#2900 — non-tautology: a broken parent-echo guard would leave the store diverged from the backend', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'UNEXPECTED',
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'UNEXPECTED', parent_id: 'PAGE_1', depth: 0 }),
+          makeBlock({ id: 'B', parent_id: 'UNEXPECTED', depth: 1 }),
+        ]),
+      )
+
+      await store.getState().moveToParent('B', 'A', 0)
+
+      // The reconciled (post-load) state reflects the BACKEND's actual
+      // parent ('UNEXPECTED'), not the optimistically-guessed one ('A') — a
+      // guard that failed to detect the mismatch would leave `B` parented
+      // under 'A' here instead.
+      expect(store.getState().blocksById.get('B')?.parent_id).toBe('UNEXPECTED')
+    })
+
+    it('does not update blocks or notify undo on backend error, rolling back the provisional splice', async () => {
       const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
       const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
       store.setState({ blocks: [blockA, blockB] })
@@ -2760,10 +3019,45 @@ describe('PageBlockStore', () => {
 
       await store.getState().moveToParent('B', 'A', 0)
 
-      expect(store.getState().blocks).toHaveLength(2)
-      expect(store.getState().blocks[0]?.id).toBe('A')
-      expect(store.getState().blocks[1]?.id).toBe('B')
+      const s = store.getState()
+      expect(s.blocks).toHaveLength(2)
+      expect(s.blocks[0]?.id).toBe('A')
+      expect(s.blocks[1]?.id).toBe('B')
+      expect(s.blocksById.get('B')?.parent_id).toBeNull()
       expect(mockOnNewAction).not.toHaveBeenCalled()
+    })
+
+    it('rolled-back reparent leaves no residual load() call (rollback restores the exact snapshot)', async () => {
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB] })
+
+      mockedInvoke.mockRejectedValueOnce(new Error('move failed'))
+
+      await store.getState().moveToParent('B', 'A', 0)
+
+      expect(mockedInvoke).not.toHaveBeenCalledWith('load_page_subtree', expect.anything())
+    })
+
+    it('#2900 — falls back to the pre-#2900 unconditional reload when the block is not loaded locally', async () => {
+      // moveToParent is a public store action; a caller could invoke it for a
+      // block id the store has not loaded yet (defensive fallback path).
+      store.setState({ blocks: [] })
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'GHOST',
+        new_parent_id: 'A',
+        new_position: 0,
+      })
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
+
+      await store.getState().moveToParent('GHOST', 'A', 0)
+
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      expect(mockOnNewAction).toHaveBeenCalledWith('PAGE_1')
     })
   })
 
@@ -2782,20 +3076,14 @@ describe('PageBlockStore', () => {
         resolveMove = resolve
       })
       mockedInvoke.mockReturnValueOnce(movePending)
-      // load_page_subtree call for the load() that follows moveBlock resolve.
-      mockedInvoke.mockResolvedValue({
-        items: [],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
 
       const promise = store.getState().moveToParent('B', 'A', 0)
 
       // Simulate the user navigating to a different page while the IPC is in flight.
       store.setState({ rootParentId: 'DIFFERENT_PAGE' })
 
-      // Resolve the move_block IPC; load() and notifyUndoNewAction run after.
+      // Resolve the move_block IPC; the #2900 optimistic reconcile (no load())
+      // and notifyUndoNewAction run after.
       resolveMove({ block_id: 'B', new_parent_id: 'A', new_position: 0 })
       await promise
 

@@ -564,14 +564,130 @@ export function createReducers({
     },
 
     moveToParent: async (blockId: string, newParentId: string | null, newIndex: number) => {
-      const { rootParentId } = get()
+      const { rootParentId, blocks } = get()
+
+      // #2900 — extend the #2849 optimistic-move machinery to the cross-parent
+      // DnD reparent, the last mover that still did an unconditional full
+      // `load()`. Only take the optimistic path when the block is loaded
+      // locally AND the requested parent is a safe splice target: root, or a
+      // block currently in the tree that is neither the moved block itself
+      // nor one of its own descendants (reparenting into your own subtree is
+      // nonsensical — the DnD projection never offers it, but this reducer is
+      // a public store action a caller could invoke directly). Anything else
+      // falls back to the pre-#2900 behavior: fire the IPC and unconditionally
+      // reload for "the correct flattened order" the old comment referenced.
+      const block = blocks.find((b) => b.id === blockId)
+      const descendants = block ? getDragDescendants(blocks, blockId) : null
+      const newParentBlock = newParentId == null ? null : blocks.find((b) => b.id === newParentId)
+      const canSplice =
+        block != null &&
+        descendants != null &&
+        (newParentId == null ||
+          (newParentBlock != null &&
+            newParentBlock.id !== blockId &&
+            !descendants.has(newParentBlock.id)))
+
+      const handle = canSplice
+        ? applyProvisionalMove(set, blockId, (state) => {
+            const cur = state.blocks
+            const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
+            const curDescendants = getDragDescendants(cur, blockId)
+            const movedSet = new Set([blockId, ...curDescendants])
+
+            const targetParent =
+              newParentId == null
+                ? null
+                : (cur.find((p) => p.id === newParentId) as FlatBlock | undefined)
+            const newDepth = newParentId == null ? 0 : (targetParent?.depth ?? curBlock.depth) + 1
+            const delta = newDepth - curBlock.depth
+
+            // #2849/#2900 — same subtree depth-rewrite as `dedent`, generalized
+            // to an arbitrary target depth (dedent's target is always exactly
+            // one level up; a DnD reparent can land the block at ANY depth).
+            // Descendants only re-allocate when the depth actually shifts —
+            // e.g. moving between two same-depth parents changes `blockId`'s
+            // `parent_id` but not the subtree's depth — preserving their
+            // object identity in that case (subtree-touch perf invariant).
+            const movedItems: FlatBlock[] = cur
+              .filter((b) => movedSet.has(b.id))
+              .map((b) => {
+                if (b.id === blockId) {
+                  return Object.assign({}, b, { depth: newDepth, parent_id: newParentId })
+                }
+                return delta === 0 ? b : Object.assign({}, b, { depth: b.depth + delta })
+              })
+
+            const remaining = cur.filter((b) => !movedSet.has(b.id))
+            // `remaining` is scanned repeatedly below for sibling/anchor
+            // lookups. Build the id→index map once (#2041/#2200).
+            const remainingIndex = buildIndexById(remaining)
+
+            // #400 — same sibling-slot insertion as `reorder`, generalized to
+            // the TARGET parent's children instead of the block's current
+            // siblings.
+            const siblingsRemaining = remaining.filter(
+              (b) => (b.parent_id ?? null) === (newParentId ?? null) && b.depth === newDepth,
+            )
+            let insertAt: number
+            if (newIndex >= siblingsRemaining.length) {
+              const lastSib = siblingsRemaining.at(-1)
+              if (lastSib) {
+                const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
+                insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
+                while (
+                  insertAt < remaining.length &&
+                  lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
+                ) {
+                  insertAt++
+                }
+              } else {
+                // No remaining siblings under the target parent — insert right
+                // after the parent, or at the start of the list at root level.
+                insertAt = newParentId == null ? 0 : (remainingIndex.get(newParentId) ?? -1) + 1
+              }
+            } else {
+              const anchor = siblingsRemaining[newIndex] as FlatBlock
+              insertAt = remainingIndex.get(anchor.id) ?? -1
+            }
+
+            const newBlocks = [...remaining]
+            newBlocks.splice(insertAt, 0, ...movedItems)
+            // Subtree-touch (perf invariant): the moved block always
+            // re-allocates (`parent_id` changed); its descendants only when
+            // the depth shift is non-zero (see the `delta` branch above).
+            return {
+              blocks: newBlocks,
+              touchedIds: delta === 0 ? [blockId] : [blockId, ...curDescendants],
+            }
+          })
+        : null
+
       try {
         // #730 — pool_busy retry (see edit/createBelow).
         const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
-        // Reload the full tree to get the correct flattened order.
-        await get().load()
+
+        if (!handle) {
+          // No local splice was applied — reload for the correct flattened
+          // order, exactly as before #2900.
+          await get().load()
+          notifyUndoNewAction(rootParentId, resp.op_refs)
+          return
+        }
+
+        // Defensive: if the backend echoes a parent other than the one we
+        // requested, the provisional splice guessed wrong — reload reconciles
+        // FE with the backend (mirrors reorder/indent/dedent's parent-echo
+        // guard), overwriting the provisional splice.
+        if ((resp.new_parent_id ?? null) !== (newParentId ?? null)) {
+          await get().load()
+          notifyUndoNewAction(rootParentId, resp.op_refs)
+          return
+        }
+
+        await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
         notifyUndoNewAction(rootParentId, resp.op_refs)
       } catch (err) {
+        if (handle) await rollbackProvisionalMove(set, get, handle)
         logger.error(
           'page-blocks',
           'Failed to move block to new parent',
