@@ -439,23 +439,20 @@ export function createReducers({
             // createBelow failed (it logged + toasted internally). Only roll
             // back when no new blocks were created yet — the `lastId === blockId`
             // check is the durable signal for "first iteration failed."
-            if (lastId === blockId && previousContent !== undefined) {
-              // Single-block rollback (perf invariant): touch only the
-              // restored key on the prior Map.
-              set((state) => {
-                let restored: FlatBlock | null = null
-                const blocks = state.blocks.map((b) => {
-                  if (b.id !== blockId) return b
-                  const next = { ...b, content: previousContent }
-                  restored = next
-                  return next
-                })
-                if (restored == null) return { blocks }
-                return {
-                  blocks,
-                  blocksById: cloneBlocksByIdWith(state.blocksById, [restored]),
-                }
-              })
+            if (lastId === blockId && previousContent != null) {
+              // #2913 — the first-line `edit(blockId, plan.first)` above already
+              // committed the truncated `plan.first` DURABLY to the backend. A
+              // local-only setState restore would show `previousContent` in the
+              // store while the DB still holds `plan.first`, so the next load()
+              // (sync tick, navigation, `blocks:changed`) silently truncates the
+              // visible block and loses the user's un-split `plan.rest` text.
+              // Issue a COMPENSATING backend edit so store AND backend
+              // re-converge on the full pre-split content; if that write also
+              // fails, reconcile exactly from the backend via load() — mirroring
+              // remove()'s failure fallback and edit()'s own rollback discipline.
+              if (!(await get().edit(blockId, previousContent))) {
+                await get().load()
+              }
             }
             // Some of the typed lines never reached the DB — report failure
             // so the blur path keeps the draft (which holds the FULL

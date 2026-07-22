@@ -49,14 +49,63 @@ import { useUndoStore } from '@/stores/undo'
 
 type TFn = TFunction
 
+// #2914 — cross-callback handoff of an in-flight multi-block split.
+//
+// When `handleFlush` takes the SPLIT path it fires `splitBlock`, which is
+// async and creates the trailing sibling blocks via its own chained
+// `createBelow` calls. `handleEnterSave` used to fire that split UNAWAITED and
+// then immediately `createBelow()` an empty Enter block — two sibling-creation
+// sequences racing on overlapping pre-await snapshots (each computed
+// `siblingSlot` from its own stale view). `splitInProgress` only guards
+// re-entrant `splitBlock`, not the concurrent `createBelow`.
+//
+// This module-level registry (keyed by block id, mirroring the `bumpFlushSeq`/
+// `readFlushSeq` flush-token coordination in inline-property-commit.ts) lets
+// `handleFlush` publish the in-flight split so `handleEnterSave` can AWAIT it
+// and focus the last block it produced, instead of racing a parallel create.
+// The published promise resolves to the id of the LAST block the split created
+// (for focus placement), or `null` if the split failed.
+const pendingSplits = new Map<string, Promise<string | null>>()
+
+function setPendingSplit(blockId: string, promise: Promise<string | null>): void {
+  pendingSplits.set(blockId, promise)
+  // Self-clean once the split settles so a flush NOT driven by Enter (blur,
+  // indent, DnD — nobody consumes) can't strand a stale entry that a later
+  // Enter on the same block would await. Guard on identity so a newer split
+  // that replaced this entry is not clobbered.
+  void promise.finally(() => {
+    if (pendingSplits.get(blockId) === promise) pendingSplits.delete(blockId)
+  })
+}
+
+/**
+ * Consume (and remove) the in-flight split published for `blockId` by the most
+ * recent `handleFlush` SPLIT path, or `null` if the last flush did not split.
+ * `handleEnterSave` calls this synchronously right after `handleFlush()` and,
+ * when non-null, awaits it (and focuses the resolved last-created block)
+ * instead of racing its own `createBelow` — see #2914.
+ */
+export function consumePendingSplit(blockId: string): Promise<string | null> | null {
+  const promise = pendingSplits.get(blockId)
+  if (promise === undefined) return null
+  pendingSplits.delete(blockId)
+  return promise
+}
+
 export interface UseBlockFlushParams {
   /** Ref to the latest editor handle. Populated by BlockTree after
    *  `useRovingEditor` is created. May be null on first render. */
   rovingEditorRef: RefObject<RovingEditorHandle | null>
   /** Store action: persist a content edit for a single block. */
   edit: (blockId: string, content: string) => void
-  /** Store action: split a single block into multiple at the given content. */
-  splitBlock: (blockId: string, content: string) => void
+  /**
+   * Store action: split a single block into multiple at the given content.
+   * Resolves `true` only when the split fully committed (see the reducer's
+   * resolve-`false` contract). #2914 — the returned promise is what
+   * `handleEnterSave` awaits via `consumePendingSplit` so it does not race a
+   * parallel `createBelow` against the split's own createBelow chain.
+   */
+  splitBlock: (blockId: string, content: string) => Promise<boolean>
   /** Current page root parent — used to nudge the undo log on todo flips. */
   rootParentId: string | null
   /** Page store API (used to write the optimistic `todo_state` update). */
@@ -103,7 +152,22 @@ export function useBlockFlush({
         // block: this sync commit is newer and owns the final content, so a
         // late-resolving stale run must bail instead of clobbering the split.
         bumpFlushSeq(blockId)
-        splitBlock(blockId, changed)
+        // #2914 — snapshot the pre-split block ids so, once the split resolves,
+        // the trailing blocks it created (the only new ids) are identifiable;
+        // publish the in-flight split + its last-created block for
+        // `handleEnterSave` to await instead of racing a parallel createBelow.
+        const beforeIds = new Set(pageStore.getState().blocks.map((b) => b.id))
+        setPendingSplit(
+          blockId,
+          splitBlock(blockId, changed).then((ok) => {
+            if (!ok) return null
+            let lastNew: string | null = null
+            for (const b of pageStore.getState().blocks) {
+              if (!beforeIds.has(b.id)) lastNew = b.id
+            }
+            return lastNew
+          }),
+        )
       } else {
         // Check for checkbox markdown syntax before saving
         const { cleanContent, todoState } = processCheckboxSyntax(changed)
