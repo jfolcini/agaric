@@ -10,7 +10,7 @@
 /// Resolved observability settings for one app boot.
 ///
 /// Constructed once at startup (see [`from_env`]) and threaded into
-/// [`crate::observability::init`]. Cheap to clone.
+/// [`crate::init`]. Cheap to clone.
 ///
 /// Note: this no longer derives `Copy` — the opt-in OTLP `endpoint`
 /// (`Option<String>`, M8) owns a heap allocation, so the struct is move/clone
@@ -21,7 +21,7 @@ pub struct ObservabilityConfig {
     /// Master on/off switch for the entire trace pipeline.
     ///
     /// `false` (the default, when `AGARIC_OTEL` is unset) means
-    /// [`crate::observability::init`] returns a no-op `Observability` with no
+    /// [`crate::init`] returns a no-op `Observability` with no
     /// trace layer and no guard — the existing logging behaviour is then
     /// byte-identical and OTel adds ~zero overhead.
     pub enabled: bool,
@@ -30,7 +30,7 @@ pub struct ObservabilityConfig {
     ///
     /// `1.0` (the default) samples every trace; `0.0` samples none. Wired into
     /// `Sampler::TraceIdRatioBased` via a `ParentBased` wrapper in
-    /// [`crate::observability::provider`]. Values outside `[0, 1]` are clamped
+    /// [`crate::provider`]. Values outside `[0, 1]` are clamped
     /// by [`parse`] so the SDK never sees an out-of-range probability.
     pub sampling_ratio: f64,
 

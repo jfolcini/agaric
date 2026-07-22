@@ -2,7 +2,8 @@
 //!
 //! The frontend tracer (M3b/M4) produces W3C/OTLP-shaped interaction spans and
 //! ships them to the backend over a single Tauri command
-//! ([`crate::commands::observability::ingest_otel_spans`]). This module owns the
+//! (`crate::commands::observability::ingest_otel_spans`, in the app crate). This
+//! module owns the
 //! sink-facing half: it serializes each [`FrontendSpan`] to one line and writes
 //! it into a daily-rotated file under `<log_dir>/traces/`, the SAME directory
 //! the backend [`super::exporter::FileSpanExporter`] writes to. Because both
@@ -39,7 +40,7 @@
 use std::path::Path;
 
 use super::exporter::{RollingFileSink, TRACES_SUBDIR, sanitize_inline};
-use crate::text_utils::truncate_at_char_boundary;
+use agaric_core::text_utils::truncate_at_char_boundary;
 
 /// Filename prefix for the frontend-span rolling file, kept distinct from the
 /// backend `agaric-traces.log` so the two streams rotate independently while

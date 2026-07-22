@@ -9,7 +9,7 @@
 # #645 — `diagnostics` holds the two read-only DB inspection bins
 # (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
 # crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
-members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "diagnostics"]
+members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "agaric-observability", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -137,6 +137,13 @@ agaric-store = { path = "agaric-store", version = "0.1.0" }
 # query-free `bibliography` leaf, re-exported below via `crate::bibliography`.
 agaric-engine = { path = "agaric-engine", version = "0.1.0" }
 agaric-sync = { path = "agaric-sync", version = "0.1.0" }
+# agaric-observability — OpenTelemetry trace/log/metric pipelines (#2878). The
+# `observability` module + its heavy OTel dep tree moved into this leaf crate;
+# re-exported below via `pub use agaric_observability as observability;` so
+# `crate::observability::…` paths are unchanged. The app wires its two
+# materializer counter readers in through `observability::MaterializerCounters`
+# at `init` time (the crate depends only on `agaric-core`, never up on the app).
+agaric-observability = { path = "agaric-observability", version = "0.1.0" }
 
 # `tracing` feature (#2110 M3): makes Tauri's async `#[command]` wrapper
 # instrument each command future with an `ipc::request::run` span created at
@@ -197,65 +204,15 @@ ciborium = "0.2"
 tracing = { version = "0.1.44", features = ["attributes"] }
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
-# OpenTelemetry tracing (issue #2110, milestone M1a). Backend traces are
-# written to a LOCAL FILE by default — ZERO network egress unless the user
-# explicitly opts in (see opentelemetry-otlp below). The local-file sink is
-# the always-on default and is never replaced; the OTLP exporter, when
-# enabled, is purely additive. The whole pipeline is gated OFF by default
-# (AGARIC_OTEL unset) and is a ~zero-overhead no-op when disabled.
-#
-# Mutually-compatible version set — all three agree on the `opentelemetry`
-# 0.32 API surface, which is what makes them link together:
-#   - tracing-opentelemetry 0.33 pins opentelemetry 0.32 + opentelemetry_sdk 0.32
-# The on-disk span exporter is a small in-repo `impl SpanExporter` (see
-# observability/exporter.rs) writing a line-per-span format to a rolling
-# LOCAL FILE. A future swap to a strict OTLP/JSON file exporter stays behind
-# the same `SpanExporter` trait without a version bump. (NOTE: the
-# `opentelemetry-stdout` crate was evaluated and rejected — its 0.32
-# `SpanExporter` hardcodes `println!` to process stdout with no `with_writer`
-# hook, so it cannot satisfy the local-file requirement; writing our own
-# exporter is both the only way to hit a file AND the intended swap point.)
-# All three crates are Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
-# `metrics` (M6) adds the OTel metrics API the observable counters + latency
-# histograms use, on top of `logs` (M1b) and the default `trace`.
-opentelemetry = { version = "0.32", features = ["logs", "metrics"] }
-# `logs` (M1b) adds the OTel logs API the appender bridge + file log exporter
-# use; `metrics` (M6) adds the meter/instrument API + the `PeriodicReader` that
-# drives the local-file metric exporter, on top of the default `trace`. The
-# thread-based `with_batch_exporter` processor (spans + logs) and the
-# `PeriodicReader` (metrics — a `std::thread` + `mpsc` collector that drives the
-# exporter via `futures_executor::block_on`) both need no async runtime, so
-# `rt-tokio` is deliberately NOT enabled; the test-only `testing` feature
-# (InMemory{Span,Log,Metric}Exporter) is a dev-dependency below so it stays out
-# of the release binary.
-opentelemetry_sdk = { version = "0.32", features = ["logs", "metrics"] }
+# OpenTelemetry stack (issue #2110). The `opentelemetry`, `opentelemetry_sdk`,
+# `opentelemetry-otlp`, and `opentelemetry-appender-tracing` crates moved with
+# the `observability` module into the `agaric-observability` leaf crate (#2878)
+# — nothing outside that module referenced them, so they left the app crate's
+# direct dependency list entirely. What stays here is `tracing-opentelemetry`
+# (the `OpenTelemetrySpanExt` trait the lib.rs invoke wrapper uses to attach the
+# frontend's extracted trace context as the parent span) — it pins
+# opentelemetry 0.32 + opentelemetry_sdk 0.32 transitively.
 tracing-opentelemetry = "0.33"
-# M1b — bridges existing `tracing` events into OTel `LogRecord`s correlated with
-# the active span, written to the SAME local-file sink (still ZERO egress). Pulls
-# no new heavy transitive deps (tracing + opentelemetry only). Apache-2.0
-# (GPL-3-compatible per deny.toml's allow-list). Default features only — the
-# `experimental_*` attribute features are not needed for span-correlated logs.
-opentelemetry-appender-tracing = "0.32"
-# M8 (issue #2110, #2121) — OPT-IN, OFF-BY-DEFAULT, LOOPBACK-ONLY OTLP/HTTP
-# span exporter. This is the ONLY network-egress path in the crate and it is
-# built ONLY when `AGARIC_OTEL_ENDPOINT` is set to a loopback OTLP collector
-# (127.0.0.0/8, ::1, or localhost — enforced in code by
-# `observability::config::validate_loopback_endpoint`; any other host is
-# rejected at config-parse time and the app falls back to file-only export).
-# When enabled it is ADDITIVE: spans fan out to BOTH the local-file sink and
-# the loopback collector — the file sink is never replaced. Default (env
-# unset) = unchanged, zero egress.
-#
-# Feature choice: `default-features = false` drops the gRPC/tonic transport
-# and tokio. `http-proto` selects OTLP/HTTP + protobuf (the common
-# `http://127.0.0.1:4318` collector case, no TLS needed for loopback);
-# `reqwest-blocking-client` uses the BLOCKING reqwest HTTP client so export
-# runs synchronously on the `BatchSpanProcessor`'s own worker thread with NO
-# tokio runtime — matching the existing "no rt-tokio / thread-based" posture
-# of the span/log batch processors and the metrics `PeriodicReader`. `trace`
-# limits the API surface to spans (logs/metrics OTLP are a deferred
-# follow-up). Apache-2.0 (GPL-3-compatible per deny.toml's allow-list).
-opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
 
 # Sync — #2621 Sync-D: the peer-to-peer net/protocol/daemon/files/snapshot
 # cluster moved into `agaric-sync`, taking its sync-only deps with it
@@ -353,11 +310,9 @@ rcgen = "0.14"
 mdns-sd = "0.20"
 x509-parser = "0.18.1"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
-# Test-only OTel feature: `InMemorySpanExporter` / `InMemoryLogExporter` /
-# `InMemoryMetricExporter` for the observability pipeline tests (#2110, M1a +
-# M1b + M6). Cargo unifies this onto the normal `opentelemetry_sdk` dep for test
-# builds; the release binary never sees the `testing` feature.
-opentelemetry_sdk = { version = "0.32", features = ["testing", "logs", "metrics"] }
+# The `opentelemetry_sdk` `testing` dev-dep (InMemory{Span,Log,Metric}Exporter)
+# moved to `agaric-observability` with the pipeline tests it backed (#2878); no
+# app-crate test outside that module used it.
 insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 proptest = "1.11.0"
 tempfile = "3.27.0"

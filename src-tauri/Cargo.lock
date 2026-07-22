@@ -20,6 +20,7 @@ version = "0.8.0"
 dependencies = [
  "agaric-core",
  "agaric-engine",
+ "agaric-observability",
  "agaric-store",
  "agaric-sync",
  "aho-corasick",
@@ -35,10 +36,6 @@ dependencies = [
  "loro",
  "mdns-sd",
  "notify-rust",
- "opentelemetry",
- "opentelemetry-appender-tracing",
- "opentelemetry-otlp",
- "opentelemetry_sdk",
  "proptest",
  "rand 0.10.2",
  "rcgen",
@@ -133,6 +130,28 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "xxhash-rust",
+]
+
+[[package]]
+name = "agaric-observability"
+version = "0.1.0"
+dependencies = [
+ "agaric-core",
+ "chrono",
+ "http",
+ "opentelemetry",
+ "opentelemetry-appender-tracing",
+ "opentelemetry-otlp",
+ "opentelemetry_sdk",
+ "reqwest",
+ "serde",
+ "specta",
+ "tempfile",
+ "tracing",
+ "tracing-appender",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "url",
 ]
 
 [[package]]

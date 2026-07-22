@@ -2,7 +2,7 @@
 //!
 //! [`build_trace_layer`] returns a boxed `tracing_subscriber` `Layer` that
 //! forwards `tracing` spans into the OTel `SdkTracerProvider` built in
-//! [`crate::observability::provider`]. It is added to the existing registry
+//! [`crate::provider`]. It is added to the existing registry
 //! chain in `init_logging` alongside the stderr and JSON-file layers.
 //!
 //! # Filtering (M1a behaviour)

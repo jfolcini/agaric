@@ -56,6 +56,26 @@ const EXPORT_INTERVAL: Duration = Duration::from_secs(30);
 /// scope in the local sink.
 const METER_SCOPE: &str = "agaric";
 
+/// Readers for the process-global materializer atoms this crate surfaces as
+/// observable counters, injected by the app at [`super::init`] time (#2878).
+///
+/// Inverting the dependency this way keeps `agaric-observability` a leaf crate:
+/// the metrics pipeline reports the counts without depending *up* on the
+/// materializer (which would be a cycle — the materializer already depends on
+/// this crate's record helpers). Each field is a plain `fn() -> u64` reader over
+/// a monotonic process-global atomic; the observable-counter callbacks below
+/// invoke them on each ~30s collection cycle. `Copy` so `init` can forward it
+/// into the metrics branch without moving out of a borrow.
+#[derive(Clone, Copy)]
+pub struct MaterializerCounters {
+    /// #1057 — cumulative SQL-only fallback total
+    /// (`materializer::handlers::sql_only_fallback::count`).
+    pub sql_only_fallback: fn() -> u64,
+    /// #2031 — cumulative descendant fan-out drop total
+    /// (`materializer::handlers::descendant_fanout_dropped::count`).
+    pub descendant_fanout_dropped: fn() -> u64,
+}
+
 /// Build an [`SdkMeterProvider`] from `config` and an owned `exporter`.
 ///
 /// Wraps the exporter in a [`PeriodicReader`] (background collector thread, no
@@ -95,10 +115,12 @@ pub fn build_meter_provider(
 /// # Counters wired
 ///
 /// - `agaric.materializer.sql_only_fallback` — the #1057 SQL-only fallback
-///   total (read via [`crate::materializer::sql_only_fallback_count`]).
+///   total (read via `counters.sql_only_fallback`).
 /// - `agaric.materializer.descendant_fanout_dropped` — the #2031 descendant
-///   fan-out drop total (read via
-///   [`crate::materializer::descendant_fanout_dropped_count`]).
+///   fan-out drop total (read via `counters.descendant_fanout_dropped`).
+///
+/// The two readers arrive via [`MaterializerCounters`] rather than a direct
+/// `crate::materializer::…` call so this crate stays a leaf (#2878).
 ///
 /// # Counter deliberately NOT wired
 ///
@@ -109,11 +131,12 @@ pub fn build_meter_provider(
 /// boot-time registration — invasive architecture-bending for a test-only
 /// signal — so it is intentionally skipped here (per the M6 brief's
 /// "prefer skipping with a clear note over invasive plumbing").
-pub fn register_instruments(meter_provider: &SdkMeterProvider) {
+pub fn register_instruments(meter_provider: &SdkMeterProvider, counters: MaterializerCounters) {
     let meter = meter_provider.meter(METER_SCOPE);
 
     // #1057 — SQL-only fallback total. Each collection reads the monotonic
     // process-global atomic and reports it as the current cumulative value.
+    let sql_only_fallback = counters.sql_only_fallback;
     let _sql_only_fallback = meter
         .u64_observable_counter("agaric.materializer.sql_only_fallback")
         .with_description(
@@ -121,13 +144,14 @@ pub fn register_instruments(meter_provider: &SdkMeterProvider) {
              the SQL-only projection path (engine uninit / space unresolved). \
              Nonzero in production signals an unexpected fallback (#1057).",
         )
-        .with_callback(|observer| {
-            observer.observe(crate::materializer::sql_only_fallback_count(), &[]);
+        .with_callback(move |observer| {
+            observer.observe(sql_only_fallback(), &[]);
         })
         .build();
 
     // #2031 — descendant fan-out drops that left the engine potentially
     // divergent from SQL. Same monotonic process-global atomic shape.
+    let descendant_fanout_dropped = counters.descendant_fanout_dropped;
     let _descendant_fanout_dropped = meter
         .u64_observable_counter("agaric.materializer.descendant_fanout_dropped")
         .with_description(
@@ -135,8 +159,8 @@ pub fn register_instruments(meter_provider: &SdkMeterProvider) {
              the Loro engine potentially divergent from SQL. Nonzero signals \
              possible engine/SQL divergence this run (#2031).",
         )
-        .with_callback(|observer| {
-            observer.observe(crate::materializer::descendant_fanout_dropped_count(), &[]);
+        .with_callback(move |observer| {
+            observer.observe(descendant_fanout_dropped(), &[]);
         })
         .build();
 
@@ -391,7 +415,13 @@ mod tests {
         let exporter = InMemoryMetricExporter::default();
         let reader = PeriodicReader::builder(exporter.clone()).build();
         let provider = SdkMeterProvider::builder().with_reader(reader).build();
-        register_instruments(&provider);
+        register_instruments(
+            &provider,
+            MaterializerCounters {
+                sql_only_fallback: || 0,
+                descendant_fanout_dropped: || 0,
+            },
+        );
 
         record_op_apply_duration(12.5);
         provider.force_flush().expect("force_flush");
