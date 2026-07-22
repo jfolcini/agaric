@@ -58,7 +58,7 @@ pub type SnapshotId = BlockId;
 impl BlockId {
     /// Generate a new ULID-based ID (always uppercase Crockford base32).
     pub fn new() -> Self {
-        Self(ulid::Ulid::new().to_string())
+        Self(ulid::Ulid::r#gen().to_string())
     }
 
     /// Create from an existing ULID string. Validates format and normalises

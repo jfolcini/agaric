@@ -4301,7 +4301,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
 
     // The batch query orders each block's Vec by `(created_at, id)`. We assert
     // the returned order matches that key rather than hard-coding `a1` first:
-    // attachment ids are generated with the non-monotonic `Ulid::new()`, so two
+    // attachment ids are generated with the non-monotonic `Ulid::r#gen()`, so two
     // rows that land in the same `created_at` millisecond have an `id` order
     // decided by random ULID bits — assuming insertion order would equal id
     // order is the exact flake this test must not reintroduce. We instead

@@ -675,7 +675,7 @@ mod tests_m83 {
                 r"\\.\pipe\agaric-mcp-m83-{tag}-{pid}-{ulid}",
                 tag = tag,
                 pid = std::process::id(),
-                ulid = ulid::Ulid::new(),
+                ulid = ulid::Ulid::r#gen(),
             )
         }
 
