@@ -1473,3 +1473,106 @@ fn validate_url_target_accepts_public_host() {
         "a literal public IP host must pass the up-front SSRF guard"
     );
 }
+
+// ======================================================================
+// #2958: UTF-8 offset-desync regression tests
+//
+// The parser used to lowercase strings with `to_lowercase()`, compute
+// byte offsets on that copy, then slice back into the ORIGINAL string.
+// For any char whose lowercase form has a different byte length
+// (`İ` U+0130 = 2 bytes -> `i̇` = 3 bytes, `ẞ` U+1E9E, Kelvin `K`
+// U+212A), the offsets desync and the slice lands mid-UTF-8-char,
+// panicking. With `panic = "abort"` (no catch_unwind) and fetch firing
+// automatically on link hover/paste, this was a remotely-triggerable
+// whole-app crash. The fix uses byte-length-preserving
+// `to_ascii_lowercase()` at every offset site. Every test below would
+// have panic-aborted the whole nextest binary before the fix.
+//
+// Length-changing chars used: İ = "\u{0130}", ẞ = "\u{1E9E}",
+// Kelvin K = "\u{212A}".
+// ======================================================================
+
+/// PoC from the report: a length-changing `İ` before `<title>` desyncs
+/// `extract_title_tag`'s offsets. Must decode the title, not panic.
+#[test]
+fn parse_title_survives_length_changing_char_before_title_2958() {
+    let html = "\u{0130}<title>\u{4E2D}x</title>";
+    assert_eq!(
+        parse_title(html),
+        Some("\u{4E2D}x".to_string()),
+        "title after a Turkish-I must be extracted without an offset panic (#2958)"
+    );
+}
+
+/// `ẞ` (uppercase eszett, 3 bytes -> `ß` 2 bytes) before `<title>`.
+#[test]
+fn parse_title_survives_eszett_before_title_2958() {
+    let html = "\u{1E9E}\u{1E9E}<title>Café \u{65E5}\u{672C}</title>";
+    assert_eq!(
+        parse_title(html),
+        Some("Café \u{65E5}\u{672C}".to_string()),
+        "title after eszett chars must be extracted without an offset panic (#2958)"
+    );
+}
+
+/// A Kelvin-sign `K` (U+212A, 3 bytes -> `k` 1 byte) before an
+/// `og:title` `<meta>` tag desyncs `find_first_tag`'s offsets.
+#[test]
+fn parse_title_survives_kelvin_before_og_meta_2958() {
+    let html = r#"<html><head>
+        <span>Temperature: 300\u{212A} is hot</span>
+        <meta property="og:title" content="Kelvin Facts">
+    </head></html>"#;
+    // Embed the real Kelvin char (raw-string can't hold an escape).
+    let html = html.replace("\\u{212A}", "\u{212A}");
+    assert_eq!(
+        parse_title(&html),
+        Some("Kelvin Facts".to_string()),
+        "og:title after a Kelvin sign must be extracted without an offset panic (#2958)"
+    );
+}
+
+/// `extract_attribute_value` offset desync: a length-changing char in a
+/// prior attribute value shifts the byte offsets used to slice the
+/// original tag when locating `content`. Reached via `parse_title`'s
+/// og:title path.
+#[test]
+fn parse_title_survives_length_changing_char_before_target_attr_2958() {
+    let html = r#"<meta property="og:title" data-note="\u{0130}\u{1E9E}" content="Correct Value">"#;
+    let html = html
+        .replace("\\u{0130}", "\u{0130}")
+        .replace("\\u{1E9E}", "\u{1E9E}");
+    assert_eq!(
+        parse_title(&html),
+        Some("Correct Value".to_string()),
+        "content attr after a length-changing prior attr value must extract without panic (#2958)"
+    );
+}
+
+/// `extract_meta_refresh_url` offset desync: a length-changing char in
+/// the `content` value before `url=` shifts the offset used to slice
+/// the original `content` string.
+#[test]
+fn extract_meta_refresh_url_survives_length_changing_char_before_url_2958() {
+    let html = r#"<html><head>
+        <meta http-equiv="refresh" content="\u{0130}0;url=https://example.com/path">
+    </head></html>"#;
+    let html = html.replace("\\u{0130}", "\u{0130}");
+    assert_eq!(
+        extract_meta_refresh_url(&html),
+        Some("https://example.com/path".to_string()),
+        "meta-refresh URL after a length-changing char must extract without an offset panic (#2958)"
+    );
+}
+
+/// `detect_auth_required` title-keyword path: an `İ` in the `<title>`
+/// exercises the `to_ascii_lowercase()` conversion on the title while
+/// still matching the ASCII "sign in" keyword.
+#[test]
+fn detect_auth_required_title_keyword_with_length_changing_char_2958() {
+    let body = "<html><head><title>\u{0130} Sign In Required</title></head></html>";
+    assert!(
+        detect_auth_required(200, "https://a.com", "https://a.com", body),
+        "auth title keyword must still match with a length-changing char present (#2958)"
+    );
+}
