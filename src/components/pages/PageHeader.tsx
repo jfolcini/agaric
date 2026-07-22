@@ -29,6 +29,7 @@ import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
+import { resolveAttachmentRefsForCopy } from '@/lib/export-graph'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { spliceEmojiIntoText } from '@/lib/insert-emoji-at-caret'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
@@ -191,9 +192,18 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
     handleRemoveAlias,
   } = usePageAliases(pageId, t)
 
-  const handleExport = useCallback(async () => {
+  // --- Export as Markdown (copies to clipboard) ---
+  // Shared by BOTH entry points (kebab menu item + Ctrl+Shift+E shortcut, just
+  // below) so they can't drift. The raw backend markdown still carries
+  // internal `attachment:<ULID>` refs (#1434) for inline images / file
+  // links — a scheme only Agaric understands — so a bare clipboard copy (no
+  // accompanying `assets/` folder, unlike the ZIP/graph export) rewrites them
+  // via `resolveAttachmentRefsForCopy` before the text ever hits the
+  // clipboard, so pasted markdown has no dead links (#2967).
+  const copyPageMarkdownToClipboard = useCallback(async (): Promise<void> => {
     try {
-      const markdown = await exportPageMarkdown(pageId)
+      const rawMarkdown = await exportPageMarkdown(pageId)
+      const markdown = await resolveAttachmentRefsForCopy(rawMarkdown)
       await writeText(markdown)
       notify.success(t('pageHeader.exportCopied'))
       announce(t('announce.exported'))
@@ -202,35 +212,24 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
       notify.error(t('pageHeader.exportFailed'))
       announce(t('announce.exportFailed'))
     }
-    setKebabOpen(false)
   }, [pageId, t])
+
+  const handleExport = useCallback(async () => {
+    await copyPageMarkdownToClipboard()
+    setKebabOpen(false)
+  }, [copyPageMarkdownToClipboard])
 
   // --- Keyboard shortcut for export (Ctrl+Shift+E) ---
   useEffect(() => {
     function handleExportShortcut(e: KeyboardEvent) {
       if (matchesShortcutBinding(e, 'exportPageMarkdown')) {
         e.preventDefault()
-        exportPageMarkdown(pageId)
-          .then(async (markdown) => {
-            await writeText(markdown)
-            notify.success(t('pageHeader.exportCopied'))
-            announce(t('announce.exported'))
-          })
-          .catch((err: unknown) => {
-            logger.error(
-              'PageHeader',
-              'Failed to export page markdown via shortcut',
-              { pageId },
-              err,
-            )
-            notify.error(t('pageHeader.exportFailed'))
-            announce(t('announce.exportFailed'))
-          })
+        void copyPageMarkdownToClipboard()
       }
     }
     document.addEventListener('keydown', handleExportShortcut)
     return () => document.removeEventListener('keydown', handleExportShortcut)
-  }, [pageId, t])
+  }, [copyPageMarkdownToClipboard])
 
   // Both delete entry points (dedicated trash button + kebab "Delete
   // page" item) call this. `usePageDeleteAction` opens its single

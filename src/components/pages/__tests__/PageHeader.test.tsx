@@ -23,6 +23,7 @@ import type { StoreApi } from 'zustand'
 
 import { PageHeader } from '@/components/pages/PageHeader'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { writeText } from '@/lib/clipboard'
 import { useNavigationStore } from '@/stores/navigation'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
@@ -30,7 +31,16 @@ import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useUndoStore } from '@/stores/undo'
 
+// #2967 — mock `@/lib/clipboard` directly (rather than relying on the
+// global `@tauri-apps/plugin-clipboard-manager` stub in test-setup.ts) so
+// the export tests below can assert on the EXACT copied string, verifying
+// `attachment:<ULID>` refs never reach the clipboard.
+vi.mock('@/lib/clipboard', () => ({
+  writeText: vi.fn().mockResolvedValue(undefined),
+}))
+
 const mockedInvoke = vi.mocked(invoke)
+const mockedWriteText = vi.mocked(writeText)
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 let pageStore: StoreApi<PageBlockState>
 
@@ -1658,6 +1668,75 @@ describe('PageHeader export keyboard shortcut', () => {
         pageId: 'PAGE_1',
       })
     })
+  })
+})
+
+// ── Export rewrites attachment refs before copying (#2967) ────────
+
+describe('PageHeader export rewrites attachment refs before copying', () => {
+  const attId = '01HZX9P3QABCDEF0123456789'
+  const rawMarkdown = `![shot](attachment:${attId})`
+
+  function mockInvokeWithAttachment() {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'export_page_markdown') return rawMarkdown
+      if (cmd === 'read_attachment_meta') {
+        return {
+          id: attId,
+          block_id: 'B1',
+          filename: 'shot.png',
+          mime_type: 'image/png',
+          size_bytes: 3,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }
+      }
+      return null
+    })
+  }
+
+  it('kebab menu "Export as Markdown" copies markdown with no dead attachment: refs', async () => {
+    const user = userEvent.setup()
+    mockInvokeWithAttachment()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Export as Markdown/i))
+
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('![shot](shot.png)')
+    })
+    const copied = mockedWriteText.mock.calls[0]?.[0]
+    expect(copied).not.toContain('attachment:')
+  })
+
+  it('Ctrl+Shift+E shortcut copies markdown with no dead attachment: refs', async () => {
+    mockInvokeWithAttachment()
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'E',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('![shot](shot.png)')
+    })
+    const copied = mockedWriteText.mock.calls[0]?.[0]
+    expect(copied).not.toContain('attachment:')
   })
 })
 
