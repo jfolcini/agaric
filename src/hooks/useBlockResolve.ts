@@ -29,6 +29,7 @@ import {
   listPageAliasesByPrefix,
   searchBlocks,
   searchBlocksLimit,
+  setProperty,
 } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -538,6 +539,33 @@ export function useBlockResolve(): UseBlockResolveReturn {
   const onCreateTag = useCallback(async (name: string): Promise<string> => {
     try {
       const block = await createBlock({ blockType: 'tag', content: name })
+      // #2996/#2997 — space-scope the freshly created tag so it (a) surfaces in
+      // `listAllTagsInSpace` (the `@` picker index queried by `searchTags`) on
+      // the next lookup and (b) resolves to a navigable tag page. A bare
+      // `createBlock({ blockType: 'tag' })` leaves the tag an ORPHAN (no `space`
+      // property): the backend only adopts an orphan into a space when the tag
+      // is first APPLIED to a block (see `commands/tags.rs`) or by the next-boot
+      // `migrate_orphan_tags_to_space`. Until then `listAllTagsInSpace`
+      // (WHERE `space_id = ?`) excludes it, so a picker-created tag stays
+      // invisible to `@` search and its pill navigates nowhere sensible. We emit
+      // the same `SetProperty(key='space', value_ref=<space>)` the backend
+      // adoption path uses — mirroring how the `[[` page path routes creation
+      // through the space-aware `createPageInSpace`. Best-effort: a failed scope
+      // write still returns the tag (as an orphan) so creation never hard-fails
+      // on the scoping step (the tag is adopted on first apply / next boot).
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId != null) {
+        try {
+          await setProperty({ blockId: block.id, key: 'space', valueRef: spaceId })
+        } catch (scopeErr) {
+          logger.warn(
+            'useBlockResolve',
+            'onCreateTag: space-scope write failed; tag left orphan',
+            { name, tagId: block.id },
+            scopeErr,
+          )
+        }
+      }
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
       return block.id

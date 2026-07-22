@@ -103,6 +103,28 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     setIsCreating(true)
     try {
       const resp = await createBlock({ blockType: 'tag', content: name })
+      // #2997 — space-scope the newly created tag so it surfaces in
+      // `listAllTagsInSpace` (the `@`/# picker index) immediately. A bare
+      // `createBlock({ blockType: 'tag' })` leaves the tag an ORPHAN (no `space`
+      // property), which the backend only adopts into a space when the tag is
+      // first APPLIED to a block or on the next-boot migration — so a
+      // manually-created tag would otherwise never appear in `@` search. Emit
+      // the same `SetProperty(key='space', value_ref=<space>)` the backend
+      // adoption path uses. Best-effort: a failed scope write still leaves the
+      // tag created (as an orphan), adopted on first apply / next boot.
+      const spaceId = useSpaceStore.getState().currentSpaceId
+      if (spaceId != null) {
+        try {
+          await setProperty({ blockId: resp.id, key: 'space', valueRef: spaceId })
+        } catch (scopeErr) {
+          logger.warn(
+            'TagList',
+            'space-scope write for new tag failed; tag left orphan',
+            { name, tagId: resp.id },
+            scopeErr,
+          )
+        }
+      }
       const newTag: TagCacheRow = {
         tag_id: resp.id,
         name: resp.content ?? name,

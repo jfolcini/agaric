@@ -321,6 +321,54 @@ test.describe('@ picker — create new tag & Tab autocomplete', () => {
     await expect(editor.locator('[data-testid="tag-ref-chip"]')).toBeVisible({ timeout: 5000 })
   })
 
+  // #2996/#2997 — the exact lifecycle the fix targets: a tag created via the
+  // `@` picker must (a) be space-scoped so a FRESH `@` search finds it as an
+  // existing tag (not just a "Create" affordance), and (b) navigate when its
+  // pill is clicked. Without the `SetProperty(space)` write in
+  // `onCreateTag`, the new tag stays an ORPHAN — excluded from
+  // `listAllTagsInSpace` (the picker index) — so step 2 would show only a
+  // "Create" item and the tag would never surface in search.
+  test('created tag surfaces in a fresh @ search and its pill navigates', async ({ page }) => {
+    const editor = await focusBlock(page)
+
+    // 1. Create a brand-new tag via the @ picker's Create option.
+    await page.keyboard.press('Control+a')
+    await editor.type('crux @zzcruxtag', { delay: 30 })
+    const list = page.locator('[data-testid="suggestion-list"]')
+    await expect(list).toBeVisible({ timeout: 5000 })
+    const createItem = list.locator('[data-testid="suggestion-item"]', { hasText: /[Cc]reate/ })
+    await expect(createItem).toBeVisible({ timeout: 5000 })
+    await createItem.click()
+    const chip = editor.locator('[data-testid="tag-ref-chip"]', { hasText: 'zzcruxtag' })
+    await expect(chip.first()).toBeVisible({ timeout: 5000 })
+
+    // 2. #2997 — a fresh @ search must now find the tag as an EXISTING match.
+    //    When an exact match exists, `searchTags` OMITS the "Create" item, so
+    //    the absence of a Create affordance (with a matching item present) is
+    //    the space-scoping proof: an orphan tag would instead yield ONLY a
+    //    Create item.
+    await page.keyboard.type(' @zzcruxtag', { delay: 30 })
+    await expect(list).toBeVisible({ timeout: 5000 })
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: 'zzcruxtag' }).first(),
+    ).toBeVisible({ timeout: 5000 })
+    await expect(
+      list.locator('[data-testid="suggestion-item"]', { hasText: /[Cc]reate/ }),
+    ).toHaveCount(0)
+
+    // Dismiss the picker without inserting a second chip.
+    await page.keyboard.press('Escape')
+
+    // 3. #2996 — clicking the created tag's pill navigates to its tag page.
+    //    The resolve cache was seeded on create, so the guard's fast path
+    //    fires. `dispatchEvent('click')` is used for the atomic inline
+    //    NodeView per the headless-pointer note in inner-links.spec.ts.
+    await chip.first().dispatchEvent('click')
+    await expect(page.locator('[aria-label="Page title"]', { hasText: 'zzcruxtag' })).toBeVisible({
+      timeout: 5000,
+    })
+  })
+
   test('Tab autocomplete with @ picker', async ({ page }) => {
     const editor = await focusBlock(page)
 

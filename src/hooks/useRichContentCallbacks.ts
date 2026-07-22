@@ -10,6 +10,10 @@
 
 import { useCallback, useRef } from 'react'
 
+import { t as translate } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+import { getBlock } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -97,8 +101,42 @@ export function useTagClickHandler(): (tagId: string) => void {
       // Composite-key cache; resolve under the active space.
       const spaceId = useSpaceStore.getState().currentSpaceId
       const cached = cacheRef.current.get(keyFor(spaceId, tagId))
-      const name = cached?.title ?? 'Tag'
-      navigateToPage(tagId, name)
+
+      // Fast path: a resolved, non-deleted tag navigates immediately (no IPC).
+      if (cached && !cached.deleted) {
+        navigateToPage(tagId, cached.title)
+        return
+      }
+
+      // #2996 — guard against navigating to a tag that doesn't exist. A tag
+      // pill can reference a tag that was never persisted (e.g. an orphan whose
+      // creation failed), or one that was since deleted; navigating there lands
+      // on a random/incorrect destination. Mirror the `[[` block-link path
+      // (`useBlockNavigateToLink`), which verifies the target via `getBlock`
+      // and surfaces `blockTree.linkTargetNotFound` instead of routing to a
+      // nonexistent page. Verify existence before navigating; on a
+      // missing/deleted target, notify instead. Fire-and-forget so the handler
+      // keeps its synchronous `(tagId) => void` signature.
+      void (async () => {
+        try {
+          const block = await getBlock(tagId)
+          if (block.deleted_at !== null) {
+            notify.error(translate('blockTree.linkTargetNotFound'))
+            return
+          }
+          const name = block.content ?? cached?.title ?? 'Tag'
+          useResolveStore.getState().set(tagId, name, false)
+          navigateToPage(tagId, name)
+        } catch (err) {
+          logger.warn(
+            'useTagClickHandler',
+            'tag target not found; refusing to navigate',
+            { tagId },
+            err,
+          )
+          notify.error(translate('blockTree.linkTargetNotFound'))
+        }
+      })()
     },
     [navigateToPage],
   )
