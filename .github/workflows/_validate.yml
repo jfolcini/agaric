@@ -6,15 +6,43 @@ name: Validate (prek-equivalent)
 #
 # Invoked by ci.yml (every push/PR) and release.yml (every tag).
 #
-# PEND-39 C3 + C5 + C8: the historical monolithic `validate` job was split
-# into five parallel worker jobs (lint, vitest [3-shard matrix], playwright
-# [2-shard matrix], cargo-tests [nextest + llvm-cov], mcp-tests [agaric-mcp
-# build + UDS smoke + externalBin verify]) plus a trivial `validate-all`
-# aggregate whose only job is to give branch-protection rules a single
-# stable check name to depend on. Wall clock drops from ~25-30 min
-# sequential to ~7-10 min (limited by the slowest single job, typically
-# cargo-tests). Callers that `needs: validate` on the workflow-call as a
-# whole continue to work — GitHub propagates per-job failures up to the
+# PEND-39 C3 + C5 + C8 split the historical monolithic `validate` job into
+# parallel workers; later passes (PEND-86, #833) grew that into nine jobs,
+# fanned out from a `detect-changes` per-category classifier that is
+# fail-closed (an unrecognized or undiffable path runs everything):
+#   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
+#   - lint            — the full prek hook suite (clippy, cargo-deny,
+#                        cargo-audit, zizmor, sqlx-prepare, …); skipped on a
+#                        provably docs-only diff.
+#   - docs-lint       — a cheap doc-only hook subset (markdownlint, the
+#                        markdown link/citation checks, typos, lychee); runs
+#                        ONLY on a docs-only diff (exactly one of
+#                        lint/docs-lint runs per push/PR).
+#   - vitest          — the full frontend suite as a single job (coverage,
+#                        production build, bundle-size gate); gated on
+#                        frontend changes.
+#   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
+#                        changes.
+#   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
+#                        sharded 2 ways; gated on backend changes.
+#   - cargo-coverage  — merges the cargo-tests shard coverage into one
+#                        report; gated on backend changes like cargo-tests
+#                        (`validate-all` requires success/allowed-skip), but
+#                        its own steps are glob-guarded and its coverage
+#                        ratchet is explicitly non-blocking, so it practically
+#                        only fails on a genuine merge/upload breakage.
+#   - mcp-tests       — `agaric-mcp` sidecar release build + UDS smoke +
+#                        externalBin verify; gated on backend changes.
+#   - validate-all    — a trivial aggregate so branch-protection rules have
+#                        one stable check name to depend on; fail-closed
+#                        per category (a skipped sibling job is accepted
+#                        only when its category was genuinely absent from
+#                        the diff).
+# Per-job timeout ceilings run 3-35 min, sized for slow-mirror apt/runner
+# variance rather than typical run time — `cargo-tests` and `playwright`
+# are usually the long poles (see each job's own comments for observed
+# wall-clock notes). Callers that `needs: validate` on the workflow-call as
+# a whole continue to work — GitHub propagates per-job failures up to the
 # caller.
 
 on:

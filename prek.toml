@@ -1220,16 +1220,18 @@ stages = ["pre-commit"]
 
 # ─── pre-push only ────────────────────────────────────────────────
 #
-# A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`,
-# which parallelizes every check `_validate.yml` runs in CI (full
-# vitest, full Playwright, cargo nextest + agaric-mcp build + sqlx
-# prepare check, MCP UDS smoke, externalBin verification, plus
-# warn-only `cargo audit` and `npm audit signatures`).
+# A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`. It is
+# NOT a full CI mirror: it re-scopes vitest/nextest to the commit range
+# being pushed (Phases C/D), re-runs the pre-commit-stage prek hooks
+# whole-tree but category-aware (Phase A), gates sqlx-prepare/MCP
+# phases on whether Rust/MCP paths changed (Phases E/F), and explicitly
+# SKIPS Playwright locally (CI still runs the full e2e suite on every
+# PR). See the script's own header comment for the full phase list and
+# rationale.
 #
-# The script wraps everything in one prek slot so we can fan out
-# across cores via background jobs instead of letting prek serialize
-# per-hook. Total wall clock on a warm cache: ≈3-4 min (was ≈5-8 min
-# when each hook ran sequentially via prek).
+# Sequential, not parallel (each phase can depend on the previous
+# phase's setup, e.g. Phase B's externalBin placeholder before Phase D's
+# `cargo nextest`).
 #
 # PREFERRED PUSH PATH: `scripts/push.sh` runs this verification BEFORE
 # `git push` opens any SSH connection, then pushes with a
