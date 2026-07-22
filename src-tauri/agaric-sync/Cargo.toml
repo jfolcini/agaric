@@ -53,7 +53,7 @@ tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", 
 # directly (the wire types + apply path). Caret-1 mirrors the app crate.
 loro = "1.12"
 # `ulid::Ulid` for snapshot / file-transfer temp-name minting + id parsing.
-ulid = "1.2.1"
+ulid = "2.0.1"
 # async-fn-in-dyn-trait shim for the `ApplyHost` trait (apply_host.rs).
 async-trait = "0.1"
 # Sync carries `query!`/`query_as!`/`query_scalar!` macro sites (operations /
