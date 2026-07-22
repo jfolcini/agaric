@@ -872,6 +872,248 @@ async fn export_page_markdown_resolves_page_link_ulids() {
 }
 
 // ======================================================================
+// Block-scoped attachment export (#2961)
+// ======================================================================
+//
+// The `attachments` table has no "inline" flag: an inline image leaves BOTH
+// a row here AND an `![filename](attachment:<id>)` token in the owning
+// block's `content` (same id), while a non-image file (or an image dropped
+// with no editor open) leaves ONLY a row — pre-fix, those files vanished
+// from export entirely. Rows are inserted directly via SQL (bypassing the
+// full add-attachment command path) since only the export read side is
+// under test.
+
+/// Insert an `attachments` row directly, bypassing the add-attachment
+/// command path — this suite only exercises the export READ side.
+async fn insert_attachment(pool: &SqlitePool, id: &str, block_id: &str, filename: &str) {
+    sqlx::query(
+        "INSERT INTO attachments \
+         (id, block_id, mime_type, filename, size_bytes, fs_path, created_at) \
+         VALUES (?, ?, 'application/octet-stream', ?, 123, '/tmp/x', 1)",
+    )
+    .bind(id)
+    .bind(block_id)
+    .bind(filename)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// A block-scoped (non-inline) attachment — a row with no matching
+/// `attachment:<id>` token in the owning block's content — must surface as
+/// a nested markdown link line `- [filename](attachment:<id>)`. Pre-fix,
+/// such attachments (PDFs/docs/any file dropped with no inline token) were
+/// entirely absent from the export.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_emits_block_scoped_attachment_link_2961() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Attachment Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "See the report",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    insert_attachment(
+        &pool,
+        "01ATT0000000000000000AT01",
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "report.pdf",
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    assert!(
+        md.contains("- [report.pdf](attachment:01ATT0000000000000000AT01)"),
+        "block-scoped attachment should emit a link line, got: {md}"
+    );
+    // Nested one level under the owning (depth-0) block, matching the
+    // `"  ".repeat(depth + 1)` child-bullet indent.
+    assert!(
+        md.contains("\n  - [report.pdf](attachment:01ATT0000000000000000AT01)\n"),
+        "attachment link should be indented as a child of its owning block, got: {md}"
+    );
+}
+
+/// An inline image — a row WHOSE id already appears as an
+/// `![...](attachment:<id>)` token in the owning block's content — must
+/// NOT be double-emitted as a separate link line; only the inline
+/// reference should remain in the export.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_dedupes_inline_image_attachment_2961() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Inline Image Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "Look ![pic.png](attachment:01ATT0000000000000000AT02) nice",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    insert_attachment(
+        &pool,
+        "01ATT0000000000000000AT02",
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "pic.png",
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    // Exactly one occurrence of the attachment id — the inline image
+    // reference — not a second, separate link-line emission.
+    let occurrences = md.matches("attachment:01ATT0000000000000000AT02").count();
+    assert_eq!(
+        occurrences, 1,
+        "inline image attachment must not be double-emitted, got: {md}"
+    );
+    assert!(
+        md.contains("![pic.png](attachment:01ATT0000000000000000AT02)"),
+        "the inline image reference itself should be preserved, got: {md}"
+    );
+    assert!(
+        !md.contains("- [pic.png](attachment:01ATT0000000000000000AT02)\n"),
+        "no separate link-line should be emitted for the inline image, got: {md}"
+    );
+}
+
+/// A page with no attachment rows at all exports unchanged — no
+/// `attachment:` text appears anywhere in the output.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_no_attachments_unchanged_2961() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Plain Page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "Just some text",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    assert!(
+        !md.contains("attachment:"),
+        "export with no attachments should not mention any, got: {md}"
+    );
+}
+
+/// An attachment on an ORPHAN stray block — one whose denormalised `page_id`
+/// names this page but whose parent chain is unreachable by the DFS from the
+/// page root (corrupt-data case) — must still be emitted by the safety-net
+/// loop, at one-level indent. Constructed by soft-deleting the parent (so the
+/// DFS never descends into it) while forcing the child's `page_id` to the page
+/// so the descendant walk still returns it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_emits_orphan_block_attachment_link_2961() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Orphan Page",
+        None,
+        Some(1),
+    )
+    .await;
+    // A parent block under the page, then soft-deleted so the DFS walk (which
+    // filters `deleted_at IS NULL`) can never reach its child.
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAADEAD",
+        "content",
+        "dead parent",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET deleted_at = 1 WHERE id = ?")
+        .bind("01AAAAAAAAAAAAAAAAAAADEAD")
+        .execute(&pool)
+        .await
+        .unwrap();
+    // The orphan: parent is the soft-deleted block, so it is unreachable via
+    // DFS; force its page_id to the page so the descendant walk still yields it.
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAASTRY",
+        "content",
+        "orphan text",
+        Some("01AAAAAAAAAAAAAAAAAAADEAD"),
+        Some(1),
+    )
+    .await;
+    sqlx::query("UPDATE blocks SET page_id = ? WHERE id = ?")
+        .bind("01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .bind("01AAAAAAAAAAAAAAAAAAASTRY")
+        .execute(&pool)
+        .await
+        .unwrap();
+    insert_attachment(
+        &pool,
+        "01ATT0000000000000000AT03",
+        "01AAAAAAAAAAAAAAAAAAASTRY",
+        "orphan.bin",
+    )
+    .await;
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    assert!(
+        md.contains("  - [orphan.bin](attachment:01ATT0000000000000000AT03)"),
+        "orphan stray block's attachment must be emitted by the safety-net loop, got: {md}"
+    );
+}
+
+// ======================================================================
 // Descendant pagination & batched ref-resolution
 // ======================================================================
 //

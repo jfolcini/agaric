@@ -272,10 +272,157 @@ describe('exportGraphAsZip', () => {
     expect(md).toBe(`![x](attachment:${attId})`)
     expect(mockedLogger.warn).toHaveBeenCalledWith(
       'export-graph',
-      'inline attachment export failed',
+      'attachment export failed',
       { attachmentId: attId },
       expect.any(Error),
     )
+  })
+
+  it('emits a block-scoped (non-inline) file attachment link and rewrites it, keeping it a plain link (#2961)', async () => {
+    const attId = 'ATT_9'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Project/Notes' }]
+      }
+      if (cmd === 'export_page_markdown') {
+        return `[report.pdf](attachment:${attId})`
+      }
+      if (cmd === 'read_attachment_meta') {
+        return {
+          id: attId,
+          block_id: 'B1',
+          filename: 'report.pdf',
+          mime_type: 'application/pdf',
+          size_bytes: 3,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }
+      }
+      if (cmd === 'read_attachment') {
+        return new Uint8Array([9, 8, 7]).buffer
+      }
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+
+    // The attachment bytes land under assets/, id-prefixed to avoid collisions.
+    const assetName = `assets/${attId}__report.pdf`
+    expect(filenames).toContain(assetName)
+    const assetFile = unzipped.file(assetName)
+    expect(assetFile).not.toBeNull()
+    const assetBytes = await assetFile?.async('uint8array')
+    expect(assetBytes && Array.from(assetBytes)).toEqual([9, 8, 7])
+
+    // The page (one folder deep) rewrites the ref to a relative portable path,
+    // preserving it as a PLAIN link (no leading `!`) — not an image.
+    const md = await unzipped.file('Project/Notes.md')?.async('string')
+    expect(md).toBe(`[report.pdf](../${assetName})`)
+    expect(md).not.toContain('attachment:')
+    expect(md?.startsWith('!')).toBe(false)
+  })
+
+  it('collapses path separators in an attachment filename so the asset name cannot escape assets/ (#2961 Zip-Slip)', async () => {
+    const attId = 'ATT_EVIL'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Notes' }]
+      }
+      if (cmd === 'export_page_markdown') return `[doc](attachment:${attId})`
+      if (cmd === 'read_attachment_meta') {
+        return {
+          id: attId,
+          block_id: 'B1',
+          // A traversal-shaped filename (settable via rename_attachment).
+          filename: '../../evil.sh',
+          mime_type: 'text/x-sh',
+          size_bytes: 1,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }
+      }
+      if (cmd === 'read_attachment') return new Uint8Array([1]).buffer
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+
+    // Every emitted entry stays inside assets/ (or is a page .md) — no entry
+    // contains a `/../` traversal or starts with `..`.
+    for (const name of filenames) {
+      expect(name.includes('/../')).toBe(false)
+      expect(name.startsWith('..')).toBe(false)
+    }
+    // The asset lands under assets/ with `/` collapsed to `_`.
+    expect(filenames).toContain(`assets/${attId}__.._.._evil.sh`)
+  })
+
+  it('leaves a block-scoped file link unchanged when its attachment cannot be read (#2961)', async () => {
+    const attId = 'ATT_GONE'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Notes' }]
+      }
+      if (cmd === 'export_page_markdown') return `[missing.pdf](attachment:${attId})`
+      if (cmd === 'read_attachment_meta') throw new Error('gone')
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const md = await unzipped.file('Notes.md')?.async('string')
+    // Unresolvable attachment → original ref preserved, nothing dropped.
+    expect(md).toBe(`[missing.pdf](attachment:${attId})`)
+    expect(mockedLogger.warn).toHaveBeenCalledWith(
+      'export-graph',
+      'attachment export failed',
+      { attachmentId: attId },
+      expect.any(Error),
+    )
+  })
+
+  it('resolves both an inline image ref and a block-file link on the same page, keeping each form distinct (#2961)', async () => {
+    const imgId = 'ATT_IMG'
+    const fileId = 'ATT_FILE'
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Mixed' }]
+      }
+      if (cmd === 'export_page_markdown') {
+        return `![shot](attachment:${imgId})\n\n- [report.pdf](attachment:${fileId})`
+      }
+      if (cmd === 'read_attachment_meta') {
+        const id = (args as { attachmentId: string }).attachmentId
+        return {
+          id,
+          block_id: 'B1',
+          filename: id === imgId ? 'shot.png' : 'report.pdf',
+          mime_type: id === imgId ? 'image/png' : 'application/pdf',
+          size_bytes: 1,
+          fs_path: 'x',
+          created_at: 0,
+          content_hash: null,
+        }
+      }
+      if (cmd === 'read_attachment') {
+        return new Uint8Array([1]).buffer
+      }
+      return null
+    })
+
+    const blob = await exportGraphAsZip(SPACE_ID)
+    const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
+    const md = await unzipped.file('Mixed.md')?.async('string')
+
+    expect(md).toContain(`![shot](assets/${imgId}__shot.png)`)
+    expect(md).toContain(`- [report.pdf](assets/${fileId}__report.pdf)`)
+    expect(md).not.toContain('attachment:')
   })
 
   it('returns empty ZIP when no pages exist', async () => {
