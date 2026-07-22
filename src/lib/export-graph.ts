@@ -1,6 +1,6 @@
 import JSZip from 'jszip'
 
-import { parseAttachmentRef } from '@/lib/attachment-ref'
+import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { logger } from '@/lib/logger'
 import {
   exportPageMarkdown,
@@ -38,23 +38,58 @@ const ASSETS_DIR = 'assets'
 const ATTACHMENT_REF_RE = /(!?)\[([^\]]*)\]\((attachment:[^)\s]+)\)/g
 
 /**
+ * Windows device names reserved case-insensitively regardless of extension
+ * (`CON`, `con.txt`, `Nul.md` are all invalid on Windows) — matched against
+ * the segment's basename (the part before its first `.`), not the whole
+ * string, so `CON.tar.gz` is still caught via its `CON` basename.
+ */
+const RESERVED_DEVICE_NAME_RE = /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/i
+
+/**
+ * Escape a segment whose basename is a Windows-reserved device name by
+ * suffixing the basename with `_`, preserving whatever extension followed
+ * (`CON` → `CON_`, `CON.txt` → `CON_.txt`, `nul.md` → `nul_.md`). Segments
+ * whose basename isn't reserved are returned unchanged.
+ */
+function escapeReservedDeviceName(name: string): string {
+  const dotIndex = name.indexOf('.')
+  const basename = dotIndex === -1 ? name : name.slice(0, dotIndex)
+  const rest = dotIndex === -1 ? '' : name.slice(dotIndex)
+  if (!RESERVED_DEVICE_NAME_RE.test(basename.trimEnd())) return name
+  return `${basename}_${rest}`
+}
+
+/**
  * Sanitize ONE path segment: trim it, strip illegal-per-segment characters,
- * neutralize path-traversal segments (`.` / `..` / any all-dots segment), and
- * fall back to `Untitled` when nothing usable remains. The namespace separator
- * `/` is handled by the caller (split into segments) and never reaches here.
+ * neutralize path-traversal segments (`.` / `..` / any all-dots segment),
+ * trim trailing dots/spaces, escape Windows-reserved device names, and fall
+ * back to `Untitled` when nothing usable remains. The namespace separator `/`
+ * is handled by the caller (split into segments) and never reaches here.
  *
  * Neutralizing a dots-only segment is a SECURITY requirement, not cosmetics: a
  * page titled `../../etc/passwd` would otherwise emit a ZIP entry
  * `../../etc/passwd.md`, a classic Zip-Slip path that escapes the extraction
  * root when the archive is unpacked by a naive tool. A leading empty segment
  * (absolute `/etc/...`) is already dropped by the caller's `filter`.
+ *
+ * Trailing dots/spaces are trimmed (Windows silently strips them on write, so
+ * `Notes.` and `Notes` would otherwise collide or resolve to a different name
+ * than written) and a Windows-reserved device basename (`CON`, `NUL`, `COM1`,
+ * …) is escaped, since a file by that exact name (with or without extension)
+ * is invalid/dangerous to create on Windows. Both run BEFORE the final
+ * empty→fallback check so a segment that trims down to nothing (e.g. a name
+ * made entirely of dots and spaces) still falls back to `Untitled`.
  */
-function sanitizeSegment(segment: string): string {
-  const cleaned = segment.replace(ILLEGAL_SEGMENT_CHARS_RE, '_').trim()
+export function sanitizeSegment(segment: string): string {
+  let cleaned = segment.replace(ILLEGAL_SEGMENT_CHARS_RE, '_').trim()
   // A segment that is empty or consists solely of dots (`.`, `..`, `...`) is a
   // traversal/relative-path token, not a usable folder name — replace it.
   if (cleaned.length === 0 || /^\.+$/.test(cleaned)) return 'Untitled'
-  return cleaned
+
+  cleaned = cleaned.replace(/[. ]+$/, '')
+  if (cleaned.length === 0) return 'Untitled'
+
+  return escapeReservedDeviceName(cleaned)
 }
 
 /**
@@ -172,6 +207,20 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
 }
 
 /**
+ * Collect the distinct attachment ids referenced in a page's markdown via
+ * `attachment:<id>` refs (url is capture group 3 — group 1 is the optional
+ * leading `!` that marks an inline image vs. a block-scoped file link).
+ */
+function collectAttachmentIds(md: string): Set<string> {
+  const ids = new Set<string>()
+  for (const m of md.matchAll(ATTACHMENT_REF_RE)) {
+    const id = parseAttachmentRef(m[3] ?? '')
+    if (id != null) ids.add(id)
+  }
+  return ids
+}
+
+/**
  * Rewrite every `attachment:<id>` ref in `md` — both inline image links
  * (`![alt](attachment:<id>)`) and block-scoped file links
  * (`[label](attachment:<id>)`, #2961) — to a portable relative path into the
@@ -186,13 +235,7 @@ async function rewriteAttachmentRefs(
   emittedAssets: Map<string, string | null>,
   relPrefix: string,
 ): Promise<string> {
-  // Collect the distinct attachment ids referenced in this page's markdown
-  // (url is now capture group 3 — group 1 is the optional leading `!`).
-  const ids = new Set<string>()
-  for (const m of md.matchAll(ATTACHMENT_REF_RE)) {
-    const id = parseAttachmentRef(m[3] ?? '')
-    if (id != null) ids.add(id)
-  }
+  const ids = collectAttachmentIds(md)
   if (ids.size === 0) return md
 
   // Emit each not-yet-emitted attachment's bytes once, caching the asset's
@@ -234,6 +277,68 @@ async function rewriteAttachmentRefs(
     if (id == null) return match
     const assetPath = emittedAssets.get(id)
     return assetPath == null ? match : `${bang}[${alt}](${relPrefix}${assetPath})`
+  })
+}
+
+/**
+ * Rewrite every `attachment:<id>` ref in `md` to a portable form for a BARE
+ * single-page copy (#2967) — the "Export as Markdown" clipboard action,
+ * which (unlike `exportGraphAsZip`) has no accompanying `assets/` folder to
+ * write attachment bytes into. There is nowhere to put a link that still
+ * resolves once the markdown is pasted elsewhere, so the best available
+ * portable stand-in is the attachment's own original filename (resolved via
+ * `readAttachmentMeta`, the same lookup `rewriteAttachmentRefs` uses) — it
+ * tells the reader what was there even though it no longer links to it.
+ *
+ * DESIGN NOTE — flagged, not silently decided: this is a genuine trade-off
+ * (the alternatives are embedding the bytes as a base64 data URI, which
+ * would bloat every clipboard paste, or dropping a footnote-style "not
+ * exported" marker). The filename stand-in was chosen as the minimal, safe
+ * fix — it removes the dead Agaric-only `attachment:` scheme without
+ * inventing new markdown conventions. Revisit if users report it as
+ * confusing.
+ *
+ * The ONE invariant this function guarantees unconditionally: the returned
+ * markdown never contains `attachment:` — an attachment whose metadata can't
+ * be resolved (deleted, IPC failure, …) is stripped down to its bare
+ * alt/label text (no link, no dead scheme) rather than left as the original
+ * ref, since a clipboard copy has no later retry path the way a per-page ZIP
+ * export failure does. A ref whose id fails `parseAttachmentRef`'s shape
+ * check (malformed/hostile — never emitted by the backend, but the regex
+ * that finds candidate refs is looser than the id-shape validator) gets the
+ * SAME bare-text treatment: `rewriteAttachmentRefs` (ZIP path) may leave such
+ * a ref untouched since a ZIP entry is inert, but a clipboard paste is not, so
+ * this function never leaves the dead scheme in place regardless of why the
+ * id didn't resolve.
+ */
+export async function resolveAttachmentRefsForCopy(md: string): Promise<string> {
+  // Bail out on the literal scheme substring, NOT on `collectAttachmentIds`'s
+  // result — a ref whose id fails shape validation is excluded from `ids`
+  // (so `ids.size` alone can be 0 even though the dead scheme is present) and
+  // still needs to reach the final `.replace()` pass below to be stripped.
+  if (!md.includes(ATTACHMENT_REF_SCHEME)) return md
+  const ids = collectAttachmentIds(md)
+
+  const resolved = new Map<string, string | null>()
+  for (const id of ids) {
+    try {
+      const meta = await readAttachmentMeta(id)
+      // Flatten any path separator in the stored filename (settable via
+      // `rename_attachment`, which has no traversal check) so the stand-in
+      // never reads as a nested path — mirrors `rewriteAttachmentRefs`'s
+      // `flatName` handling for the same reason (#2961).
+      resolved.set(id, meta.filename.replaceAll('/', '_'))
+    } catch (err) {
+      logger.warn('export-graph', 'attachment resolve failed', { attachmentId: id }, err)
+      resolved.set(id, null)
+    }
+  }
+
+  return md.replace(ATTACHMENT_REF_RE, (_match, bang: string, alt: string, url: string) => {
+    const id = parseAttachmentRef(url)
+    if (id == null) return alt
+    const filename = resolved.get(id)
+    return filename == null ? alt : `${bang}[${alt}](${filename})`
   })
 }
 
