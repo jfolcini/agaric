@@ -1,30 +1,24 @@
 use super::MaterializeTask;
-use rustc_hash::{FxHashSet, FxHasher};
+use rustc_hash::FxHashSet;
 use std::mem;
-
-pub(super) fn hash_id(s: &str) -> u64 {
-    // SipHash via `DefaultHasher` is overkill for a
-    // dedup-only fingerprint. `FxHasher` is ~3× faster on small string
-    // keys and the hash is never persisted, so the choice is a pure
-    // throughput win.
-    use std::hash::{Hash, Hasher};
-    let mut h = FxHasher::default();
-    s.hash(&mut h);
-    h.finish()
-}
+use std::sync::Arc;
 
 pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
-    // Swap to `FxHashSet`. `u64` and `Discriminant` keys
-    // hash trivially under FxHasher (no SipHash setup cost), and the
-    // sets are short-lived (one drain).
+    // Swap to `FxHashSet`. `Discriminant` keys hash trivially under
+    // FxHasher (no SipHash setup cost); the per-id sets below key on the
+    // task id itself (`Arc<str>`) rather than a 64-bit fingerprint of it —
+    // see #2911: a fingerprint collision between two DISTINCT ids would
+    // silently drop the second id's task. Inserting the `Arc<str>` is a
+    // cheap refcount bump, not a string clone. The sets are short-lived
+    // (one drain).
     let mut seen_d: FxHashSet<mem::Discriminant<MaterializeTask>> = FxHashSet::default();
-    let mut seen_bl: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_btr: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_fu: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_fr: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_frr: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_tu: FxHashSet<u64> = FxHashSet::default();
-    let mut seen_spid: FxHashSet<u64> = FxHashSet::default();
+    let mut seen_bl: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_btr: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_fu: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_fr: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_frr: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_tu: FxHashSet<Arc<str>> = FxHashSet::default();
+    let mut seen_spid: FxHashSet<Arc<str>> = FxHashSet::default();
     // #2042: RebuildPagesCacheCounts is held aside and emitted exactly once at
     // the END of the batch (see the arm + tail below).
     let mut saw_pages_cache_counts = false;
@@ -32,27 +26,27 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
     for task in tasks {
         match &task {
             MaterializeTask::ReindexBlockLinks { block_id } => {
-                if seen_bl.insert(hash_id(block_id)) {
+                if seen_bl.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::ReindexBlockTagRefs { block_id } => {
-                if seen_btr.insert(hash_id(block_id)) {
+                if seen_btr.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::UpdateFtsBlock { block_id } => {
-                if seen_fu.insert(hash_id(block_id)) {
+                if seen_fu.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::ReindexFtsReferences { block_id } => {
-                if seen_frr.insert(hash_id(block_id)) {
+                if seen_frr.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
             MaterializeTask::RemoveFtsBlock { block_id } => {
-                if seen_fr.insert(hash_id(block_id)) {
+                if seen_fr.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
@@ -62,7 +56,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // one tag's usage_count refresh). Same per-key dedup shape as the
             // per-block tasks above; only exact-`tag_id` duplicates collapse.
             MaterializeTask::RefreshTagUsageCount { tag_id } => {
-                if seen_tu.insert(hash_id(tag_id)) {
+                if seen_tu.insert(Arc::clone(tag_id)) {
                     result.push(task);
                 }
             }
@@ -78,7 +72,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
             // per-key dedup shape as ReindexBlockLinks; only exact-`block_id`
             // duplicates collapse.
             MaterializeTask::SetBlockPageId { block_id } => {
-                if seen_spid.insert(hash_id(block_id)) {
+                if seen_spid.insert(Arc::clone(block_id)) {
                     result.push(task);
                 }
             }
@@ -127,3 +121,117 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
 // (edit/delete/restore/purge) that parsed it now read from the cached
 // `OpRecord::block_id` sidecar populated at append-time / sync ingress.
 // See the comment above `CreateBlockHint` in `super` for context.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// #2911: dedup used to key per-id tasks on a 64-bit `FxHasher`
+    /// fingerprint of the id rather than the id itself, so two
+    /// DISTINCT ids that happened to collide on that 64-bit
+    /// fingerprint would silently drop the second id's task. Keying
+    /// directly on the `Arc<str>` id removes that collision class.
+    /// This test exercises every per-id arm: same id twice collapses
+    /// to one task, distinct ids both survive.
+    #[test]
+    fn per_id_arms_dedup_on_identity_not_a_fingerprint() {
+        let cases: Vec<fn(Arc<str>) -> MaterializeTask> = vec![
+            |block_id| MaterializeTask::ReindexBlockLinks { block_id },
+            |block_id| MaterializeTask::ReindexBlockTagRefs { block_id },
+            |block_id| MaterializeTask::UpdateFtsBlock { block_id },
+            |block_id| MaterializeTask::ReindexFtsReferences { block_id },
+            |block_id| MaterializeTask::RemoveFtsBlock { block_id },
+            |block_id| MaterializeTask::SetBlockPageId { block_id },
+            |tag_id| MaterializeTask::RefreshTagUsageCount { tag_id },
+        ];
+
+        for make in &cases {
+            // Same id twice -> deduped to a single task.
+            let same = dedup_tasks(vec![make(Arc::from("same-id")), make(Arc::from("same-id"))]);
+            assert_eq!(
+                same.len(),
+                1,
+                "two tasks with the same id must dedup to one"
+            );
+
+            // Distinct ids -> both survive (no false drop, e.g. from a
+            // fingerprint collision).
+            let distinct = dedup_tasks(vec![make(Arc::from("id-a")), make(Arc::from("id-b"))]);
+            assert_eq!(
+                distinct.len(),
+                2,
+                "two tasks with different ids must both be kept"
+            );
+        }
+    }
+
+    /// A mixed batch across several per-id kinds, each with both a
+    /// duplicate and a distinct id, so every arm's set is exercised in
+    /// the same drain and the counts confirm no cross-kind bleed.
+    #[test]
+    fn mixed_per_id_kinds_dedup_independently() {
+        let d = dedup_tasks(vec![
+            MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from("a"),
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from("a"), // duplicate, dropped
+            },
+            MaterializeTask::ReindexBlockLinks {
+                block_id: Arc::from("b"), // distinct, kept
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::from("a"), // different kind, same id as above: kept
+            },
+            MaterializeTask::UpdateFtsBlock {
+                block_id: Arc::from("a"), // duplicate within this kind, dropped
+            },
+            MaterializeTask::SetBlockPageId {
+                block_id: Arc::from("x"),
+            },
+            MaterializeTask::SetBlockPageId {
+                block_id: Arc::from("y"), // distinct, kept
+            },
+            MaterializeTask::RefreshTagUsageCount {
+                tag_id: Arc::from("t1"),
+            },
+            MaterializeTask::RefreshTagUsageCount {
+                tag_id: Arc::from("t1"), // duplicate, dropped
+            },
+            MaterializeTask::RefreshTagUsageCount {
+                tag_id: Arc::from("t2"), // distinct, kept
+            },
+        ]);
+
+        assert_eq!(
+            d.len(),
+            7,
+            "expected 2 ReindexBlockLinks + 1 UpdateFtsBlock + 2 SetBlockPageId \
+             + 2 RefreshTagUsageCount to survive dedup"
+        );
+        assert_eq!(
+            d.iter()
+                .filter(|t| matches!(t, MaterializeTask::ReindexBlockLinks { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            d.iter()
+                .filter(|t| matches!(t, MaterializeTask::UpdateFtsBlock { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            d.iter()
+                .filter(|t| matches!(t, MaterializeTask::SetBlockPageId { .. }))
+                .count(),
+            2
+        );
+        assert_eq!(
+            d.iter()
+                .filter(|t| matches!(t, MaterializeTask::RefreshTagUsageCount { .. }))
+                .count(),
+            2
+        );
+    }
+}
