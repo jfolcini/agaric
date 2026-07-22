@@ -474,17 +474,30 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
         .into_owned()
 }
 
-/// Replace `#[ULID]` with `#tagname` and `[[ULID]]` with `[[Page Title]]`
-/// in content, preserving all other markdown formatting.
+/// Replace `#[ULID]` with `#tagname`, `[[ULID]]` with `[[Page Title]]`, and
+/// `((ULID))` block references with a human-readable, roundtrip-safe Obsidian
+/// block-anchor wiki-link (#2963), preserving all other markdown formatting.
+///
+/// `block_refs` maps a referenced block ULID to the exact token to emit in
+/// place of `((ULID))` — precomputed by the caller (which has the target's
+/// page + title in scope): a same-page target yields an anchor-only
+/// `[[#^ULID]]` link (which the importer resolves back to a real block ref via
+/// the #2510 intra-note anchor pass — see `export_page_markdown_inner`), a
+/// cross-page target yields `[[Target Page#^ULID]]`. A `((ULID))` whose target
+/// is missing from the map (deleted / dangling) is NOT left as a raw ULID: it
+/// degrades to a clearly-marked, human-readable `(unresolved block reference)`
+/// literal that survives re-import as plain text (the raw `((ULID))` would be
+/// silently stripped by the importer's `strip_block_refs_counted`).
 fn resolve_ulids_for_export(
     content: &str,
     tag_names: &HashMap<String, String>,
     page_titles: &HashMap<String, String>,
+    block_refs: &HashMap<String, String>,
 ) -> String {
     // #1920 — `crate::cache` is the canonical definition site for both regexes;
     // `crate::fts::strip` imports them for FTS stripping. Reference the
     // canonical cache path here rather than going through `fts`.
-    use crate::cache::{PAGE_LINK_RE, TAG_REF_RE};
+    use crate::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
 
     // Replace #[ULID] → #tagname. A tag whose name contains whitespace is
     // emitted in the `#[[multi word]]` form (#1924/#1950) so it survives a
@@ -506,8 +519,7 @@ fn resolve_ulids_for_export(
         .into_owned();
 
     // Replace [[ULID]] → [[Page Title]]
-
-    PAGE_LINK_RE
+    let result = PAGE_LINK_RE
         .replace_all(&result, |caps: &regex::Captures| {
             let ulid = &caps[1];
             if let Some(title) = page_titles.get(ulid) {
@@ -516,7 +528,47 @@ fn resolve_ulids_for_export(
                 format!("[[{ulid}]]") // Keep original if not found
             }
         })
+        .into_owned();
+
+    // #2963 — Replace ((ULID)) block references with the precomputed
+    // human-readable, roundtrip-safe token (same-page `[[#^ULID]]` /
+    // cross-page `[[Page#^ULID]]`), falling back to a clearly-marked literal
+    // for a dangling target rather than leaking an opaque `((ULID))` that no
+    // external tool renders and that the importer would strip on re-import.
+    BLOCK_REF_RE
+        .replace_all(&result, |caps: &regex::Captures| {
+            let ulid = &caps[1];
+            block_refs
+                .get(ulid)
+                .cloned()
+                .unwrap_or_else(|| "(unresolved block reference)".to_string())
+        })
         .into_owned()
+}
+
+/// #2963 — append an Obsidian `^<block-ulid>` block-anchor marker to a block's
+/// resolved export content when that block is the TARGET of a same-page
+/// `((ULID))` reference elsewhere in the export.
+///
+/// The marker lands at the very end of the block's content — its bullet line —
+/// which is exactly where the importer's `strip_block_anchor_marker` reads it
+/// back into `ParsedBlock::block_anchor`, so the matching `[[#^<ULID>]]` link
+/// (emitted by [`resolve_ulids_for_export`]) resolves to a real `((<new
+/// ULID>))` block reference on re-import. A block that is not a same-page ref
+/// target is returned unchanged. The marker id is the block's own ULID, which
+/// satisfies the importer's `^[A-Za-z0-9-]+` anchor grammar and is guaranteed
+/// unique, so it is a stable document-local key linking the reference to its
+/// target.
+fn stamp_block_anchor_marker(
+    resolved: String,
+    block_id: &str,
+    same_page_ref_targets: &std::collections::HashSet<String>,
+) -> String {
+    if same_page_ref_targets.contains(block_id) {
+        format!("{resolved} ^{block_id}")
+    } else {
+        resolved
+    }
 }
 
 /// One projected `block_properties` row destined for the exported YAML
@@ -597,7 +649,7 @@ pub async fn export_page_markdown_inner(
 ) -> Result<String, AppError> {
     // #1920 — canonical path (`crate::cache` defines these; `crate::fts::strip`
     // imports them for its own use).
-    use crate::cache::{PAGE_LINK_RE, TAG_REF_RE};
+    use crate::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
     use std::collections::HashSet;
 
     // Validate ULID format upfront so malformed inputs surface
@@ -776,7 +828,14 @@ pub async fn export_page_markdown_inner(
     //    the loop fans rows into `tag_names` / `page_titles` per type,
     //    preserving the existing maps' semantics (tags drop NULL
     //    content; pages substitute `"Untitled"`).
+    //
+    //    #2963 — `((ULID))` block references are collected into a SEPARATE set
+    //    (`block_ref_ulids`): unlike a tag / page link they can target a block
+    //    of ANY type, and export resolves them against the target's PAGE (title
+    //    + same-page-vs-cross-page classification), not the block-type fan-out
+    //    used for tags/pages — so they need their own query below.
     let mut ulid_set: HashSet<String> = HashSet::new();
+    let mut block_ref_ulids: HashSet<String> = HashSet::new();
     for block in &descendants {
         if let Some(content) = block.content.as_deref() {
             for cap in TAG_REF_RE.captures_iter(content) {
@@ -784,6 +843,9 @@ pub async fn export_page_markdown_inner(
             }
             for cap in PAGE_LINK_RE.captures_iter(content) {
                 ulid_set.insert(cap[1].to_string());
+            }
+            for cap in BLOCK_REF_RE.captures_iter(content) {
+                block_ref_ulids.insert(cap[1].to_string());
             }
         }
     }
@@ -814,6 +876,61 @@ pub async fn export_page_markdown_inner(
                     page_titles.insert(r.id, r.content.unwrap_or_else(|| "Untitled".to_string()));
                 }
                 _ => {}
+            }
+        }
+    }
+
+    // 3b. (#2963) Resolve `((ULID))` block references to a human-readable,
+    //     roundtrip-safe token, and record which TARGET blocks (those on THIS
+    //     page) must carry an Obsidian `^<ULID>` block-anchor marker on their
+    //     own exported line so the emitted `[[#^<ULID>]]` link re-imports back
+    //     to a real block reference.
+    //
+    //     For each referenced target we need its owning PAGE (to classify
+    //     same-page vs cross-page and, when cross-page, to name it). One
+    //     `json_each(?)` query joins each target block to its page block:
+    //       * target on THIS page  → emit an anchor-only `[[#^<ULID>]]` link.
+    //         The importer's #2510 intra-note anchor pass rewrites it back to a
+    //         real `((<new ULID>))` block ref (base is empty ⇒ implicitly this
+    //         page), and the `^<ULID>` marker we stamp on the target's line
+    //         (see the emit loop) is what that pass matches on. This is the
+    //         only form that ROUNDTRIPS to a block ref.
+    //       * target on ANOTHER page → emit `[[<Target Page>#^<ULID>]]`. This
+    //         renders as a block link in Obsidian, but the importer's
+    //         block-anchor resolution is INTRA-NOTE only (a cross-note base
+    //         falls through to the #1282 dropped-anchor path), so on re-import
+    //         it degrades to a plain page link + a warning rather than a block
+    //         ref. Still strictly better than the opaque `((ULID))` (which no
+    //         external tool renders and which the importer strips entirely).
+    //       * target missing / deleted → absent from the map; the resolver
+    //         emits a `(unresolved block reference)` literal (never a raw ULID).
+    let mut block_ref_replacement: HashMap<String, String> = HashMap::new();
+    let mut same_page_ref_targets: HashSet<String> = HashSet::new();
+    if !block_ref_ulids.is_empty() {
+        let ulids: Vec<String> = block_ref_ulids.into_iter().collect();
+        let ids_json = serde_json::to_string(&ulids)?;
+        let rows = sqlx::query!(
+            r#"SELECT b.id AS "id!", b.page_id AS "page_id?", p.content AS "page_title?"
+               FROM blocks b
+               LEFT JOIN blocks p ON p.id = b.page_id
+               WHERE b.id IN (SELECT value FROM json_each(?1))
+                 AND b.deleted_at IS NULL"#,
+            ids_json,
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for r in rows {
+            // A target whose denormalised `page_id` equals the page being
+            // exported is same-page: anchor-only link + it will get a marker.
+            if r.page_id.as_deref() == Some(page_id) {
+                same_page_ref_targets.insert(r.id.clone());
+                block_ref_replacement.insert(r.id.clone(), format!("[[#^{}]]", r.id));
+            } else {
+                // Cross-page (or a target with no page, e.g. a page block):
+                // name the target's page (fallback "Untitled") so the link is
+                // human-readable.
+                let title = r.page_title.unwrap_or_else(|| "Untitled".to_string());
+                block_ref_replacement.insert(r.id.clone(), format!("[[{title}#^{}]]", r.id));
             }
         }
     }
@@ -1118,7 +1235,9 @@ pub async fn export_page_markdown_inner(
 
         let indent = "  ".repeat(depth);
         let content = block.content.as_deref().unwrap_or("");
-        let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
+        let resolved =
+            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
         push_block_bullet(&mut output, &indent, &resolved);
 
         // #1916 — task metadata (TODO/DONE state, priority, scheduled/due
@@ -1196,7 +1315,9 @@ pub async fn export_page_markdown_inner(
             continue;
         }
         let content = block.content.as_deref().unwrap_or("");
-        let resolved = resolve_ulids_for_export(content, &tag_names, &page_titles);
+        let resolved =
+            resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
         push_block_bullet(&mut output, "", &resolved);
         for (key, value) in [
             ("todo_state", block.todo_state.as_deref()),
