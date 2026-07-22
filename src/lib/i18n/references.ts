@@ -259,6 +259,7 @@ export const references: Record<string, string> = {
   'search.filterHelper.dateBucketLabel': 'Named date range',
   'search.filterHelper.dateOpLabel': 'Comparison operator',
   'search.filterHelper.dateValueLabel': 'Date',
+  'search.filterHelper.dateInvalid': 'Enter a valid date (YYYY-MM-DD)',
   'search.filterHelper.propKeyLabel': 'Property key',
   'search.filterHelper.propKeyPlaceholder': 'area',
   'search.filterHelper.propValueLabel': 'Property value',

@@ -169,9 +169,7 @@ export function SearchDateFilterForm({
                 data-testid="date-filter-error"
                 className="mt-1 text-xs text-destructive"
               >
-                {t('search.filterHelper.dateInvalid', {
-                  defaultValue: 'Enter a valid date (YYYY-MM-DD)',
-                })}
+                {t('search.filterHelper.dateInvalid')}
               </p>
             ) : null}
           </>

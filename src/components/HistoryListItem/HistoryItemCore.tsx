@@ -201,19 +201,11 @@ export function HistoryItemCore({
                       roleless span — axe — and a `role` attribute — oxlint
                       prefer-tag-over-role). The tooltip carries the visible
                       hint. */}
-                  <span className="sr-only">
-                    {t('history.foreignOp', {
-                      defaultValue: 'Synced from another device (audit-only; not revertible here)',
-                    })}
-                  </span>
+                  <span className="sr-only">{t('history.foreignOp')}</span>
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                <p>
-                  {t('history.foreignOp', {
-                    defaultValue: 'Synced from another device (audit-only; not revertible here)',
-                  })}
-                </p>
+                <p>{t('history.foreignOp')}</p>
               </TooltipContent>
             </Tooltip>
           )}
