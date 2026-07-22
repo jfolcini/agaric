@@ -177,7 +177,7 @@ async-trait = "0.1"
 sqlx = { version = "0.9.0", default-features = false, features = ["runtime-tokio", "sqlite", "macros", "migrate"] }
 # `thiserror` moved with `error.rs` into `agaric-core` (#2621); `agaric` no
 # longer uses it directly. `similar` likewise moved with `word_diff.rs`.
-ulid = "1.2.1"
+ulid = "2.0.1"
 # `uuid` moved with `device.rs` into `agaric-sync` (#2621, Sync-B); `agaric` no
 # longer uses it directly.
 blake3 = "1.8.5"
