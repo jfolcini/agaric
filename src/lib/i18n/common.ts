@@ -106,8 +106,13 @@ export const common: Record<string, string> = {
   'announce.navigatedToPrevious': 'Navigated to previous day/week/month',
   'announce.navigatedToNext': 'Navigated to next day/week/month',
   'announce.jumpedToToday': 'Jumped to today',
-  'announce.searchOpened': 'Search opened',
   'announce.newPageCreated': 'New page created',
+  // #2944 — single announcement for every `currentView` switch (palette
+  // `go-<view>` commands, sidebar clicks, keyboard shortcuts), replacing
+  // the one-off `announce.searchOpened` that only the `focusSearch`
+  // shortcut used. `{{view}}` is the localized nav-item label (e.g.
+  // `sidebar.search`, `sidebar.pages`).
+  'announce.navigatedTo': 'Navigated to {{view}}',
   // Phase 8 — runLastCommand global shortcut announcement.
   'announce.ranLastCommand': 'Re-ran last command',
   'announce.overlaysClosed': 'Overlays closed',
@@ -504,4 +509,18 @@ export const common: Record<string, string> = {
   // #132 — voice dictation mic button.
   'searchSheet.voiceStart': 'Search by voice',
   'searchSheet.voiceStop': 'Stop voice search',
+  // #2943 — dnd-kit screen-reader announcements for block drag-and-drop.
+  // `DndContext`'s `accessibility` prop wires these in place of dnd-kit's
+  // default announcements, which read the raw block ULID. `{{block}}` /
+  // `{{target}}` resolve to the dragged/over block's trimmed content, or
+  // `dnd.genericBlock` when that content is empty.
+  'dnd.genericBlock': 'block',
+  'dnd.pickedUp': 'Picked up {{block}}.',
+  'dnd.movedOver': '{{block}} moved over {{target}}.',
+  'dnd.movedOutside': '{{block}} is no longer over a drop target.',
+  'dnd.dropped': '{{block}} dropped over {{target}}.',
+  'dnd.droppedOutside': '{{block}} dropped.',
+  'dnd.cancelled': 'Dragging {{block}} cancelled.',
+  'dnd.screenReaderInstructions':
+    'To pick up a block, press space or enter. While dragging, use the arrow keys to move the block up, down, or change its indent level. Press space or enter again to drop the block in its new position, or press escape to cancel.',
 }

@@ -1,6 +1,7 @@
 import * as React from 'react'
 
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
+import { TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 
 /**
  * Keyboard shortcut handler for the Sidebar primitive.
@@ -10,6 +11,12 @@ import { matchesShortcutBinding } from '@/lib/keyboard-config'
  * `matchesShortcutBinding`, #724) to `toggleSidebar()` at the `window`
  * level, but bails out when the user is editing in an input/textarea or
  * any contenteditable surface (TipTap maps Ctrl+B to Bold).
+ *
+ * #2942 — also listens for `TOGGLE_SIDEBAR_EVENT`, the editor-agnostic
+ * signal the command palette's "Toggle sidebar" entry dispatches
+ * (`palette-commands.ts` is a plain module outside the React tree and
+ * can't reach `toggleSidebar()` — sidebar open/closed state lives in this
+ * provider's local context, not a store).
  */
 
 export function useSidebarKeyboard(toggleSidebar: () => void): void {
@@ -26,8 +33,13 @@ export function useSidebarKeyboard(toggleSidebar: () => void): void {
       event.preventDefault()
       toggleSidebar()
     }
+    const handleToggleEvent = () => toggleSidebar()
 
     window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, handleToggleEvent)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener(TOGGLE_SIDEBAR_EVENT, handleToggleEvent)
+    }
   }, [toggleSidebar])
 }

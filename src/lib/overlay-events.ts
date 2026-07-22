@@ -31,3 +31,21 @@ export const CLOSE_ALL_OVERLAYS_EVENT = 'agaric:closeAllOverlays'
  * dialog-state owner (`useAppDialogs`) can react from anywhere.
  */
 export const SHOW_SHORTCUTS_EVENT = 'agaric:showShortcuts'
+
+/**
+ * Global "toggle sidebar" DOM event.
+ *
+ * Dispatched on `window` to flip the sidebar open/closed from surfaces that
+ * can't reach `toggleSidebar()` directly — sidebar open/closed state lives in
+ * `SidebarProvider`'s local React context (`use-sidebar-state.ts`), not a
+ * Zustand store, so it isn't reachable from the palette command registry
+ * (`palette-commands.ts`, a plain module outside the React tree). The
+ * `toggleSidebar` keyboard shortcut (Cmd/Ctrl+B) is bound at `window` level
+ * in `use-sidebar-keyboard.ts`, which is the natural place to also listen for
+ * this event (#2942 — the command palette's "Toggle sidebar" entry).
+ *
+ * Same one-shot-signal rationale as `CLOSE_ALL_OVERLAYS_EVENT` /
+ * `SHOW_SHORTCUTS_EVENT`: a plain `CustomEvent` on `window`, no store /
+ * context threading required.
+ */
+export const TOGGLE_SIDEBAR_EVENT = 'agaric:toggleSidebar'

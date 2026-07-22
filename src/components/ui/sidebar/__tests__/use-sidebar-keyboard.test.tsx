@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useSidebarKeyboard } from '@/components/ui/sidebar/use-sidebar-keyboard'
 import { setCustomShortcut } from '@/lib/keyboard-config'
+import { TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
 
 describe('useSidebarKeyboard', () => {
   afterEach(() => {
@@ -103,6 +104,26 @@ describe('useSidebarKeyboard', () => {
 
     unmount()
     fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(toggle).not.toHaveBeenCalled()
+  })
+
+  // #2942 — the command palette's "Toggle sidebar" entry dispatches
+  // TOGGLE_SIDEBAR_EVENT (it can't reach `toggleSidebar()` directly; sidebar
+  // open/closed state lives in this provider's local context, not a store).
+  it('fires toggle on TOGGLE_SIDEBAR_EVENT', () => {
+    const toggle = vi.fn()
+    renderHook(() => useSidebarKeyboard(toggle))
+
+    window.dispatchEvent(new CustomEvent(TOGGLE_SIDEBAR_EVENT))
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('removes the TOGGLE_SIDEBAR_EVENT listener on unmount', () => {
+    const toggle = vi.fn()
+    const { unmount } = renderHook(() => useSidebarKeyboard(toggle))
+
+    unmount()
+    window.dispatchEvent(new CustomEvent(TOGGLE_SIDEBAR_EVENT))
     expect(toggle).not.toHaveBeenCalled()
   })
 })

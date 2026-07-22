@@ -16,7 +16,13 @@
  * - BlockDnDOverlay — drag preview
  */
 
-import { closestCenter, DndContext, MeasuringStrategy } from '@dnd-kit/core'
+import {
+  type Announcements,
+  closestCenter,
+  DndContext,
+  MeasuringStrategy,
+  type ScreenReaderInstructions,
+} from '@dnd-kit/core'
 import type React from 'react'
 import {
   startTransition,
@@ -950,6 +956,77 @@ export function BlockTree({
     return getDragDescendants(blocks, dnd.activeId).size + 1
   }, [blocks, dnd.activeId, dnd.isMultiDrag, dnd.dragRoots])
 
+  // #2943 — dnd-kit's DEFAULT screen-reader announcements read the raw block
+  // ULID ("Picked up draggable item 01J8…") because `DndContext` had no
+  // `accessibility` prop. Resolve a human-readable label the same way
+  // `BlockDndOverlay`'s drag-preview ghost does (`content` trimmed), falling
+  // back to a generic "block" label — never the id — when content is empty
+  // or the id can't be resolved (e.g. the drop sentinel).
+  const resolveDndBlockLabel = useCallback(
+    (id: string | number | null | undefined): string => {
+      if (id == null) return t('dnd.genericBlock')
+      const block = blocksById.get(String(id))
+      const text = block?.content?.trim()
+      return text || t('dnd.genericBlock')
+    },
+    [blocksById, t],
+  )
+
+  const dndAnnouncements = useMemo<Announcements>(
+    () => ({
+      onDragStart: ({ active }) => t('dnd.pickedUp', { block: resolveDndBlockLabel(active.id) }),
+      onDragOver: ({ active, over }) =>
+        over
+          ? t('dnd.movedOver', {
+              block: resolveDndBlockLabel(active.id),
+              target: resolveDndBlockLabel(over.id),
+            })
+          : t('dnd.movedOutside', { block: resolveDndBlockLabel(active.id) }),
+      onDragEnd: ({ active, over }) =>
+        over
+          ? t('dnd.dropped', {
+              block: resolveDndBlockLabel(active.id),
+              target: resolveDndBlockLabel(over.id),
+            })
+          : t('dnd.droppedOutside', { block: resolveDndBlockLabel(active.id) }),
+      onDragCancel: ({ active }) => t('dnd.cancelled', { block: resolveDndBlockLabel(active.id) }),
+    }),
+    [resolveDndBlockLabel, t],
+  )
+
+  const dndScreenReaderInstructions = useMemo<ScreenReaderInstructions>(
+    () => ({ draggable: t('dnd.screenReaderInstructions') }),
+    [t],
+  )
+
+  // dnd-kit renders its screen-reader instructions + live region into this
+  // container. Marking it `data-find-skip` keeps the always-present,
+  // visually-hidden SR helper text (which mentions "block") out of the
+  // in-page-find scan so it can't inflate match counts (#2943; regression
+  // caught by the in-page-find e2e on #2994).
+  const [dndA11yContainer] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const el = document.createElement('div')
+    el.setAttribute('data-find-skip', '')
+    return el
+  })
+  useEffect(() => {
+    if (!dndA11yContainer) return
+    document.body.append(dndA11yContainer)
+    return () => {
+      dndA11yContainer.remove()
+    }
+  }, [dndA11yContainer])
+
+  const dndAccessibility = useMemo(
+    () => ({
+      announcements: dndAnnouncements,
+      screenReaderInstructions: dndScreenReaderInstructions,
+      ...(dndA11yContainer ? { container: dndA11yContainer } : {}),
+    }),
+    [dndAnnouncements, dndScreenReaderInstructions, dndA11yContainer],
+  )
+
   // ── Action / resolver bags published via context ────────
   // Memoised so descendants only re-render when callbacks change.
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
@@ -1069,6 +1146,7 @@ export function BlockTree({
           onDragOver={dnd.handleDragOver}
           onDragEnd={dnd.handleDragEnd}
           onDragCancel={dnd.handleDragCancel}
+          accessibility={dndAccessibility}
         >
           <BlockActionsProvider value={blockActions}>
             <BlockResolversProvider value={blockResolvers}>

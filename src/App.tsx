@@ -37,6 +37,7 @@ import { useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { useTheme } from '@/hooks/useTheme'
 import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
+import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
 import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -211,6 +212,12 @@ function App() {
   // `currentSpaceId` / `availableSpaces` — live in a single hook so
   // App.tsx no longer carries the inline `useEffect` clusters.
   useAppSpaceLifecycle()
+
+  // #2944 — single subscriber that announces every `currentView` switch
+  // (palette `go-<view>` commands, sidebar clicks, and the `focusSearch`
+  // keyboard shortcut all funnel through `setView`) so screen-reader users
+  // hear where they landed regardless of which route they used.
+  useViewChangeAnnouncer()
 
   // ── (stretch): mount-only IPC hydration ──────────
   // Boot recovery (orphan-draft flush) and the priority-levels

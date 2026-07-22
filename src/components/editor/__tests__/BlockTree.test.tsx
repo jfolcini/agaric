@@ -299,8 +299,37 @@ vi.mock('@/components/ui/calendar', () => ({
 }))
 
 // Minimal mock for @dnd-kit
+// #2943 — capture the `accessibility` prop (announcements + screenReaderInstructions)
+// so tests can call the announcement functions directly and assert they resolve
+// human-readable block text instead of raw ULIDs.
+let capturedDndAccessibility:
+  | {
+      announcements: {
+        onDragStart: (arg: { active: { id: string } }) => string | undefined
+        onDragOver: (arg: {
+          active: { id: string }
+          over: { id: string } | null
+        }) => string | undefined
+        onDragEnd: (arg: {
+          active: { id: string }
+          over: { id: string } | null
+        }) => string | undefined
+        onDragCancel: (arg: { active: { id: string } }) => string | undefined
+      }
+      screenReaderInstructions: { draggable: string }
+    }
+  | undefined
 vi.mock('@dnd-kit/core', () => ({
-  DndContext: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
+  DndContext: ({
+    children,
+    accessibility,
+  }: {
+    children: React.ReactNode
+    accessibility?: typeof capturedDndAccessibility
+  }) => {
+    capturedDndAccessibility = accessibility
+    return <div>{children}</div>
+  },
   DragOverlay: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   closestCenter: vi.fn(),
   KeyboardSensor: vi.fn(),
@@ -372,6 +401,7 @@ beforeEach(() => {
   capturedQuerySave = undefined
   capturedQueryOpen = false
   mockCalendarOnSelect = undefined
+  capturedDndAccessibility = undefined
   useMockEditor = false
   mockActiveBlockId = null
   mockUnmountReturn = null
@@ -7136,5 +7166,121 @@ describe('#1258: page truncation notice', () => {
 
     const results = await axe(container)
     expect(results).toHaveNoViolations()
+  })
+})
+
+describe('#2943: DnD screen-reader announcements resolve block text, not ULIDs', () => {
+  it('wires an `accessibility` prop with announcements + screenReaderInstructions onto DndContext', async () => {
+    const tree = [makeBlock({ id: 'BLK_ULID_LOOKING_01J8', content: 'Buy milk' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-BLK_ULID_LOOKING_01J8')
+
+    expect(capturedDndAccessibility).toBeDefined()
+    expect(capturedDndAccessibility?.screenReaderInstructions.draggable).toBe(
+      t('dnd.screenReaderInstructions'),
+    )
+  })
+
+  it("onDragStart announces the dragged block's text, not its id", async () => {
+    const tree = [makeBlock({ id: 'BLK_ULID_LOOKING_01J8', content: 'Buy milk' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-BLK_ULID_LOOKING_01J8')
+
+    const message = capturedDndAccessibility?.announcements.onDragStart({
+      active: { id: 'BLK_ULID_LOOKING_01J8' },
+    })
+    expect(message).toBe(t('dnd.pickedUp', { block: 'Buy milk' }))
+    expect(message).not.toContain('BLK_ULID_LOOKING_01J8')
+  })
+
+  it('onDragOver announces both the dragged and over block text', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Buy milk' }),
+      makeBlock({ id: 'B', content: 'Walk the dog' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const message = capturedDndAccessibility?.announcements.onDragOver({
+      active: { id: 'A' },
+      over: { id: 'B' },
+    })
+    expect(message).toBe(t('dnd.movedOver', { block: 'Buy milk', target: 'Walk the dog' }))
+  })
+
+  it('onDragOver falls back to the "no target" announcement when over is null', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Buy milk' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const message = capturedDndAccessibility?.announcements.onDragOver({
+      active: { id: 'A' },
+      over: null,
+    })
+    expect(message).toBe(t('dnd.movedOutside', { block: 'Buy milk' }))
+  })
+
+  it('onDragEnd announces the drop target text', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Buy milk' }),
+      makeBlock({ id: 'B', content: 'Walk the dog' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const message = capturedDndAccessibility?.announcements.onDragEnd({
+      active: { id: 'A' },
+      over: { id: 'B' },
+    })
+    expect(message).toBe(t('dnd.dropped', { block: 'Buy milk', target: 'Walk the dog' }))
+  })
+
+  it('onDragCancel announces the dragged block text', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Buy milk' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const message = capturedDndAccessibility?.announcements.onDragCancel({ active: { id: 'A' } })
+    expect(message).toBe(t('dnd.cancelled', { block: 'Buy milk' }))
+  })
+
+  it('falls back to a generic "block" label — never the raw id — when content is empty', async () => {
+    const tree = [makeBlock({ id: 'BLK_EMPTY_01J9', content: '' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-BLK_EMPTY_01J9')
+
+    const message = capturedDndAccessibility?.announcements.onDragStart({
+      active: { id: 'BLK_EMPTY_01J9' },
+    })
+    expect(message).toBe(t('dnd.pickedUp', { block: t('dnd.genericBlock') }))
+    expect(message).not.toContain('BLK_EMPTY_01J9')
+  })
+
+  it('falls back to the generic "block" label for an unresolvable id (e.g. the drop sentinel)', async () => {
+    const tree = [makeBlock({ id: 'A', content: 'Buy milk' })]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-A')
+
+    const message = capturedDndAccessibility?.announcements.onDragEnd({
+      active: { id: 'A' },
+      over: { id: '__sentinel__' },
+    })
+    expect(message).toBe(t('dnd.dropped', { block: 'Buy milk', target: t('dnd.genericBlock') }))
   })
 })

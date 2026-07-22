@@ -280,6 +280,23 @@ describe('App', () => {
     })
   })
 
+  it('sidebar view switches announce the destination exactly once (#2944)', async () => {
+    const user = userEvent.setup()
+    render(<App />)
+
+    await waitFor(() => {
+      expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
+    })
+
+    const sidebar = getSidebar()
+    await user.click(sidebar.getByText(t('sidebar.pages')))
+
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith(t('announce.navigatedTo', { view: t('sidebar.pages') }))
+    })
+    expect(announce).toHaveBeenCalledTimes(1)
+  })
+
   it('switches to Tags view', async () => {
     const user = userEvent.setup()
     render(<App />)
@@ -496,7 +513,7 @@ describe('App', () => {
     })
   })
 
-  it('Ctrl+Shift+F announces "Search opened" (rebind)', async () => {
+  it('Ctrl+Shift+F announces the destination view via the central view-change announcer (#2944)', async () => {
     render(<App />)
 
     await waitFor(() => {
@@ -506,8 +523,14 @@ describe('App', () => {
     fireEvent.keyDown(window, { key: 'F', ctrlKey: true, shiftKey: true })
 
     await waitFor(() => {
-      expect(announce).toHaveBeenCalledWith(t('announce.searchOpened'))
+      expect(announce).toHaveBeenCalledWith(
+        t('announce.navigatedTo', { view: t('sidebar.search') }),
+      )
     })
+    // #2944 — `tryFocusSearch` no longer announces itself; the central
+    // `useViewChangeAnnouncer` subscriber is the only source, so the
+    // transition to 'search' must announce exactly once.
+    expect(announce).toHaveBeenCalledTimes(1)
   })
 
   it('Ctrl+N announces "New page created"', async () => {
@@ -2482,7 +2505,7 @@ describe('App', () => {
       )
     })
 
-    it('calls setWindowTitle("Personal · Agaric") on initial mount', async () => {
+    it('calls setWindowTitle("Journal · Personal · Agaric") on initial mount (#2944)', async () => {
       render(<App />)
 
       await waitFor(() => {
@@ -2490,11 +2513,22 @@ describe('App', () => {
       })
 
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+          'Journal \u00B7 Personal \u00B7 Agaric',
+        )
       })
     })
 
     it('rebinds --accent-current and re-stamps the title when the active space changes', async () => {
+      // #2944 — seed a per-space view mapping for Work so the
+      // (unrelated) space-change reconcile in `navigation.ts` doesn't
+      // default the never-visited space to 'page-editor', which would
+      // otherwise strip the view prefix from the expected title below.
+      useNavigationStore.setState({
+        currentView: 'journal',
+        currentViewBySpace: { [PERSONAL.id]: 'journal', [WORK.id]: 'journal' },
+      })
+
       render(<App />)
       await waitFor(() => {
         expect(screen.getByRole('combobox', { name: /Switch space/ })).toBeInTheDocument()
@@ -2502,7 +2536,9 @@ describe('App', () => {
 
       // Initial assert so we know the baseline call landed.
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+          'Journal \u00B7 Personal \u00B7 Agaric',
+        )
       })
       vi.mocked(setWindowTitle).mockClear()
 
@@ -2518,7 +2554,7 @@ describe('App', () => {
         )
       })
       await waitFor(() => {
-        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00B7 Agaric')
+        expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Journal \u00B7 Work \u00B7 Agaric')
       })
     })
 

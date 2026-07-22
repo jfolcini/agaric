@@ -28,17 +28,44 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { Editor } from '@tiptap/react'
+import type React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { CommandPalette } from '@/components/common/CommandPalette'
 import { mergeAndRankGroups } from '@/components/palette/ranking'
 import { setActiveEditor } from '@/editor/active-editor'
+import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
+import { announce } from '@/lib/announcer'
+import { writeText as clipboardWriteText } from '@/lib/clipboard'
+import { t } from '@/lib/i18n'
+import { notify } from '@/lib/notify'
+import { TOGGLE_SIDEBAR_EVENT } from '@/lib/overlay-events'
+import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { type PageRef, useRecentPagesStore } from '@/stores/recent-pages'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 import { useCommandPaletteStore } from '@/stores/useCommandPaletteStore'
+
+// #2944 — a palette `go-<view>` command must produce exactly one
+// view-switch announcement via the central `useViewChangeAnnouncer`
+// subscriber, not a bespoke announce call in the palette itself.
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+
+// #2942 — `create-new-page` / `go-to-today` / `export-page-markdown` call
+// through `notify.error`/`notify.success` on their guard/error/success paths.
+vi.mock('@/lib/notify', () => ({
+  notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}))
+
+// #2942 — `export-page-markdown` writes through `@/lib/clipboard`'s
+// `writeText` (not `navigator.clipboard` directly, unlike the existing
+// "Copy page link" action menu item below) — mock it directly per the
+// convention documented in `test-setup.ts` next to the shared
+// `@tauri-apps/plugin-clipboard-manager` mock.
+vi.mock('@/lib/clipboard', () => ({ writeText: vi.fn().mockResolvedValue(undefined) }))
 
 // Mock the partitioned IPC so we can drive its responses deterministically
 // from tests. Spread the actual module so other re-exports (paginationLimit,
@@ -52,6 +79,9 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     // `searchBlocksPartitioned`. Both must be mocked.
     searchBlocks: vi.fn(),
     searchBlocksPartitioned: vi.fn(),
+    // #2942 — `create-new-page` / `export-page-markdown` palette commands.
+    createPageInSpace: vi.fn(),
+    exportPageMarkdown: vi.fn(),
   }
 })
 
@@ -63,11 +93,20 @@ vi.mock('@/hooks/useIsMobile', () => ({
 }))
 
 import { useIsMobile } from '@/hooks/useIsMobile'
-import { searchBlocks, searchBlocksPartitioned } from '@/lib/tauri'
+import {
+  createPageInSpace,
+  exportPageMarkdown,
+  searchBlocks,
+  searchBlocksPartitioned,
+} from '@/lib/tauri'
 
 const mockedSearchBlocksPartitioned = vi.mocked(searchBlocksPartitioned)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
 const mockedUseIsMobile = vi.mocked(useIsMobile)
+const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
+const mockedExportPageMarkdown = vi.mocked(exportPageMarkdown)
+const mockedNotify = vi.mocked(notify)
+const mockedWriteText = vi.mocked(clipboardWriteText)
 
 type PartitionedResp = Awaited<ReturnType<typeof searchBlocksPartitioned>>
 type SearchRow = PartitionedResp['pages']['items'][number]
@@ -1020,7 +1059,7 @@ describe('CommandPalette — commands mode', () => {
     })
   })
 
-  it('renders all 6 commands with navigate / action group containers', async () => {
+  it('renders all 16 commands with navigate / action group containers (#2942)', async () => {
     render(<CommandPalette />)
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
@@ -1029,12 +1068,25 @@ describe('CommandPalette — commands mode', () => {
     })
     expect(screen.getByTestId('palette-commands-action')).toBeInTheDocument()
     for (const id of [
+      // navigate — one per NAV_ITEMS destination except `search` (see
+      // `search-everywhere` below).
+      'go-journal',
       'go-pages',
       'go-tags',
-      'go-trash',
+      'go-graph',
+      'go-templates',
+      'go-query',
+      'go-status',
       'go-history',
+      'go-trash',
       'go-settings',
+      // action
       'search-everywhere',
+      'create-new-page',
+      'go-to-today',
+      'toggle-sidebar',
+      'export-page-markdown',
+      'keyboard-shortcuts',
     ]) {
       expect(screen.getByTestId(`palette-cmd-${id}`)).toBeInTheDocument()
     }
@@ -1063,6 +1115,192 @@ describe('CommandPalette — commands mode', () => {
     expect(useCommandPaletteStore.getState().pendingViewQuery).toBe('')
     expect(useNavigationStore.getState().currentView).toBe('search')
     expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  // #2942 — one setView-only assertion per newly-added `go-<view>` command,
+  // mirroring the `go-settings` pattern above (each is a plain
+  // `useNavigationStore.getState().setView(...)` + close, so a single
+  // representative shape suffices per command).
+  it.each([
+    ['go-journal', 'journal'],
+    ['go-graph', 'graph'],
+    ['go-templates', 'templates'],
+    ['go-query', 'query'],
+    ['go-status', 'status'],
+  ] as const)('selecting "%s" calls setView("%s") and closes the palette', async (id, view) => {
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId(`palette-cmd-${id}`)).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId(`palette-cmd-${id}`))
+    expect(useNavigationStore.getState().currentView).toBe(view)
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+  })
+
+  it('selecting "create-new-page" creates a page in the current space, navigates to it, and announces (#2942)', async () => {
+    mockedCreatePageInSpace.mockResolvedValue('PAGE_NEW')
+    const navigateToPage = vi.fn()
+    useTabsStore.setState({ navigateToPage })
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-create-new-page')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+    await waitFor(() => {
+      expect(mockedCreatePageInSpace).toHaveBeenCalledWith({
+        content: 'Untitled',
+        spaceId: 'SPACE_TEST',
+      })
+    })
+    await waitFor(() => {
+      expect(navigateToPage).toHaveBeenCalledWith('PAGE_NEW', 'Untitled')
+    })
+    expect(useResolveStore.getState().resolveTitle('PAGE_NEW')).toBe('Untitled')
+    expect(useResolveStore.getState().resolveStatus('PAGE_NEW')).toBe('active')
+    expect(announce).toHaveBeenCalledWith(t('announce.newPageCreated'))
+  })
+
+  it('selecting "create-new-page" with no ready space shows an error toast and does not call the IPC (#2942)', async () => {
+    // Flip only `isReady` — leaving `currentSpaceId` untouched avoids
+    // re-triggering the cross-store space-switch subscriber (keyed off
+    // `currentSpaceId`, not `isReady`) that several per-space stores
+    // (tabs, navigation, journal, recent-pages) attach in production.
+    useSpaceStore.setState({ isReady: false })
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-create-new-page')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-create-new-page'))
+    expect(mockedNotify.error).toHaveBeenCalledWith(t('space.notReady'))
+    expect(mockedCreatePageInSpace).not.toHaveBeenCalled()
+  })
+
+  it('selecting "go-to-today" switches to the journal view, sets today\'s date, and announces (#2942)', async () => {
+    // Start already on 'journal' (beforeEach seeds 'pages'): this test covers
+    // the same-view "jump to today" case, where `setView('journal')` is a
+    // no-op and this command's own `announce` is the only source (#2944 —
+    // see the "from a non-journal view" test below for the transition case,
+    // where the central view-change announcer owns the announcement instead).
+    useNavigationStore.setState({ currentView: 'journal' })
+    const before = useJournalStore.getState().currentDate
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-to-today')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-go-to-today'))
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+    const after = useJournalStore.getState().currentDate
+    expect(after.toDateString()).toBe(new Date().toDateString())
+    expect(after).not.toBe(before)
+    expect(announce).toHaveBeenCalledWith(t('announce.jumpedToToday'))
+  })
+
+  it('selecting "go-to-today" from a non-journal view does NOT announce jumpedToToday itself (#2944 — avoids doubling up with the central view-change announcer, which owns that transition)', async () => {
+    useNavigationStore.setState({ currentView: 'pages' })
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-to-today')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-go-to-today'))
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+    expect(announce).not.toHaveBeenCalledWith(t('announce.jumpedToToday'))
+  })
+
+  it('selecting "toggle-sidebar" dispatches TOGGLE_SIDEBAR_EVENT on window and closes the palette (#2942)', async () => {
+    const listener = vi.fn()
+    window.addEventListener(TOGGLE_SIDEBAR_EVENT, listener)
+    try {
+      render(<CommandPalette />)
+      openPalette()
+      fireEvent.click(screen.getByTestId('palette-mode-chip'))
+      await waitFor(() => {
+        expect(screen.getByTestId('palette-cmd-toggle-sidebar')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('palette-cmd-toggle-sidebar'))
+      expect(listener).toHaveBeenCalledTimes(1)
+      expect(useCommandPaletteStore.getState().open).toBe(false)
+    } finally {
+      window.removeEventListener(TOGGLE_SIDEBAR_EVENT, listener)
+    }
+  })
+
+  it('selecting "export-page-markdown" copies the exported markdown and announces (#2942)', async () => {
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_OPEN', title: 'Open Page' }], label: '' }],
+      activeTabIndex: 0,
+    })
+    mockedExportPageMarkdown.mockResolvedValue('# Open Page\n\ncontent')
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-export-page-markdown')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-export-page-markdown'))
+    expect(useCommandPaletteStore.getState().open).toBe(false)
+    await waitFor(() => {
+      expect(mockedExportPageMarkdown).toHaveBeenCalledWith('PAGE_OPEN')
+    })
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('# Open Page\n\ncontent')
+    })
+    expect(mockedNotify.success).toHaveBeenCalledWith(t('pageHeader.exportCopied'))
+    expect(announce).toHaveBeenCalledWith(t('announce.exported'))
+  })
+
+  it('selecting "export-page-markdown" with no page open shows an error toast and does not call the IPC (#2942)', async () => {
+    // beforeEach seeds an empty pageStack (no active page).
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-export-page-markdown')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-export-page-markdown'))
+    expect(mockedNotify.error).toHaveBeenCalledWith(t('palette.noActivePage'))
+    expect(mockedExportPageMarkdown).not.toHaveBeenCalled()
+  })
+})
+
+// #2944 — the palette's `go-<view>` commands funnel through
+// `setView`/`currentView` exactly like the sidebar and keyboard-shortcut
+// routes, so mounting the central `useViewChangeAnnouncer` subscriber
+// alongside the palette (mirroring where `App.tsx` actually mounts it)
+// must announce the destination exactly once, with no palette-local
+// announce call duplicating it.
+function PaletteWithAnnouncer(): React.ReactElement {
+  useViewChangeAnnouncer()
+  return <CommandPalette />
+}
+
+describe('CommandPalette — view-switch announcement (#2944)', () => {
+  it('selecting "go-settings" announces the destination exactly once', async () => {
+    // beforeEach seeds currentView='pages'; settings is a real transition.
+    render(<PaletteWithAnnouncer />)
+    openPalette()
+    fireEvent.click(screen.getByTestId('palette-mode-chip'))
+    await waitFor(() => {
+      expect(screen.getByTestId('palette-cmd-go-settings')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('palette-cmd-go-settings'))
+    await waitFor(() => {
+      expect(announce).toHaveBeenCalledWith(
+        t('announce.navigatedTo', { view: t('sidebar.settings') }),
+      )
+    })
+    expect(announce).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1166,11 +1404,12 @@ describe('CommandPalette — commands mode recent commands (Phase 2)', () => {
     openPalette()
     fireEvent.click(screen.getByTestId('palette-mode-chip'))
     await waitFor(() => {
-      expect(screen.getByTestId('palette-cmd-go-pages')).toBeInTheDocument()
+      expect(screen.getByTestId('palette-cmd-go-journal')).toBeInTheDocument()
     })
-    // The first visible cmdk-item with no recents is go-pages.
+    // #2942 — the first visible cmdk-item with no recents is now go-journal
+    // (NAV_ITEMS order: journal, pages, tags, …).
     fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: '1' })
-    expect(useNavigationStore.getState().currentView).toBe('pages')
+    expect(useNavigationStore.getState().currentView).toBe('journal')
     expect(useCommandPaletteStore.getState().open).toBe(false)
   })
 
