@@ -120,6 +120,15 @@ check:
 verify:
     bash scripts/verify-ci-equivalent.sh
 
+# Verify-then-push. Runs the CI-equivalent verifier BEFORE opening the push
+# connection, so a slow verify can't leave the SSH connection idle long enough
+# for GitHub to drop it ("Connection closed by remote host"). Prefer this over
+# raw `git push` for any .rs change. Forwards all args, e.g.
+# `just push -- -u origin my-branch` or `just push -- --force-with-lease`.
+[group('verify')]
+push *ARGS:
+    bash scripts/push.sh {{ARGS}}
+
 # --- Build -----------------------------------------------------------------
 
 # Type-check and build the frontend bundle.

@@ -53,6 +53,12 @@ echo "✓ Verification passed — pushing now (pre-push verify skipped: already 
 # truthy flag — the guard rejects `SKIP_CI_VERIFY=1`.
 SKIP_REASON="push.sh: verifier already ran before opening the connection"
 
+# Belt-and-suspenders: even though the pre-push hook now short-circuits (so
+# the connection is not held idle), keep SSH keepalives on so a slow pack
+# upload or a future longer no-skip path can't be dropped mid-transfer by
+# GitHub's idle timeout. Respects any GIT_SSH_COMMAND the caller already set.
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh} -o ServerAliveInterval=15 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes"
+
 # Forward explicit push args verbatim if the caller passed any.
 if [ "$#" -gt 0 ]; then
   exec env SKIP_CI_VERIFY="$SKIP_REASON" git push "$@"
