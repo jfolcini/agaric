@@ -19,15 +19,23 @@ import {
 const ILLEGAL_SEGMENT_CHARS_RE = /[\\:*?"<>|]/g
 
 /**
- * The folder inside the export ZIP that holds emitted attachment bytes (#1490).
- * Inline images stored as `attachment:<id>` refs are not portable, so on export
- * we write each referenced attachment here and rewrite the markdown link to a
- * relative path into this folder so the exported `![]()` renders in other tools.
+ * The folder inside the export ZIP that holds emitted attachment bytes (#1490,
+ * #2961). Both inline images and block-scoped file attachments are stored as
+ * `attachment:<id>` refs that are not portable, so on export we write each
+ * referenced attachment here and rewrite the markdown link to a relative path
+ * into this folder so the exported link (image or plain file link) renders in
+ * other tools.
  */
 const ASSETS_DIR = 'assets'
 
-/** Matches an inline-image link whose URL is an internal `attachment:<id>` ref. */
-const ATTACHMENT_IMAGE_RE = /!\[([^\]]*)\]\((attachment:[^)\s]+)\)/g
+/**
+ * Matches BOTH an inline-image link (`![alt](attachment:<id>)`) and a plain
+ * file link (`[label](attachment:<id>)`) whose URL is an internal
+ * `attachment:<id>` ref. Group 1 is the optional leading `!` (present for
+ * images, absent for block-scoped file attachments), group 2 is the
+ * alt/label text, group 3 is the `attachment:<id>` URL.
+ */
+const ATTACHMENT_REF_RE = /(!?)\[([^\]]*)\]\((attachment:[^)\s]+)\)/g
 
 /**
  * Sanitize ONE path segment: trim it, strip illegal-per-segment characters,
@@ -151,10 +159,11 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
     }
     seen.add(zipPath.toLowerCase())
 
-    // #1490 — rewrite inline `attachment:<id>` image refs to portable asset
-    // paths, emitting the bytes into `assets/`. Done per page because the
-    // relative `../` prefix depends on this page's namespace depth.
-    md = await rewriteInlineAttachments(md, zip, emittedAssets, relativePrefixForDepth(zipPath))
+    // #1490 / #2961 — rewrite `attachment:<id>` refs (both inline image links
+    // AND block-scoped file links) to portable asset paths, emitting the
+    // bytes into `assets/`. Done per page because the relative `../` prefix
+    // depends on this page's namespace depth.
+    md = await rewriteAttachmentRefs(md, zip, emittedAssets, relativePrefixForDepth(zipPath))
 
     zip.file(`${zipPath}.md`, md)
   }
@@ -163,22 +172,25 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
 }
 
 /**
- * Rewrite every `![alt](attachment:<id>)` in `md` to a portable relative path
- * into the ZIP's `assets/` folder, emitting the attachment's bytes there once
- * per id (#1490). An attachment whose bytes/metadata cannot be read is left as
- * its original ref (nothing dropped) and logged. `relPrefix` climbs from the
+ * Rewrite every `attachment:<id>` ref in `md` — both inline image links
+ * (`![alt](attachment:<id>)`) and block-scoped file links
+ * (`[label](attachment:<id>)`, #2961) — to a portable relative path into the
+ * ZIP's `assets/` folder, emitting the attachment's bytes there once per id
+ * (#1490). An attachment whose bytes/metadata cannot be read is left as its
+ * original ref (nothing dropped) and logged. `relPrefix` climbs from the
  * page's folder depth back to the ZIP root so the link resolves.
  */
-async function rewriteInlineAttachments(
+async function rewriteAttachmentRefs(
   md: string,
   zip: JSZip,
   emittedAssets: Map<string, string | null>,
   relPrefix: string,
 ): Promise<string> {
-  // Collect the distinct attachment ids referenced in this page's markdown.
+  // Collect the distinct attachment ids referenced in this page's markdown
+  // (url is now capture group 3 — group 1 is the optional leading `!`).
   const ids = new Set<string>()
-  for (const m of md.matchAll(ATTACHMENT_IMAGE_RE)) {
-    const id = parseAttachmentRef(m[2] ?? '')
+  for (const m of md.matchAll(ATTACHMENT_REF_RE)) {
+    const id = parseAttachmentRef(m[3] ?? '')
     if (id != null) ids.add(id)
   }
   if (ids.size === 0) return md
@@ -192,22 +204,36 @@ async function rewriteInlineAttachments(
       const bytes = await readAttachment(id)
       // Prefix the asset filename with the attachment id so two attachments
       // sharing a filename (e.g. `image.png`) never collide in `assets/`.
-      const safeName = sanitizeSegment(meta.filename) || 'attachment'
+      // #2961 — the asset name is a single FLAT segment, so collapse any path
+      // separator in the stored filename to `_` BEFORE sanitizing. Without
+      // this, a filename like `../../evil` (settable via `rename_attachment`,
+      // which has no traversal check, and syncable from a peer device) would
+      // produce a ZIP entry `assets/<id>__../../evil` that escapes the assets
+      // root on naive extraction (Zip-Slip). `sanitizeSegment` strips `\` and
+      // neutralizes dots-only segments but does NOT strip `/`; this widened as
+      // a concern once #2961 began routing arbitrary uploaded files (not just
+      // auto-named pasted images) through this writer. See follow-up issue for
+      // the backend rename-validation root cause.
+      const flatName = meta.filename.replaceAll('/', '_')
+      const safeName = sanitizeSegment(flatName) || 'attachment'
       const assetName = `${id}__${safeName}`
       zip.file(`${ASSETS_DIR}/${assetName}`, bytes)
       emittedAssets.set(id, `${ASSETS_DIR}/${assetName}`)
     } catch (err) {
-      logger.warn('export-graph', 'inline attachment export failed', { attachmentId: id }, err)
+      logger.warn('export-graph', 'attachment export failed', { attachmentId: id }, err)
       emittedAssets.set(id, null)
     }
   }
 
   // Rewrite each ref to a portable relative path; leave un-emittable ones as-is.
-  return md.replace(ATTACHMENT_IMAGE_RE, (match, alt: string, url: string) => {
+  // The captured `!` prefix (group 1) is preserved verbatim so image refs stay
+  // images and plain file links stay plain links — the backend never emits a
+  // stray `!` immediately before a non-image link, so this is safe in practice.
+  return md.replace(ATTACHMENT_REF_RE, (match, bang: string, alt: string, url: string) => {
     const id = parseAttachmentRef(url)
     if (id == null) return match
     const assetPath = emittedAssets.get(id)
-    return assetPath == null ? match : `![${alt}](${relPrefix}${assetPath})`
+    return assetPath == null ? match : `${bang}[${alt}](${relPrefix}${assetPath})`
   })
 }
 

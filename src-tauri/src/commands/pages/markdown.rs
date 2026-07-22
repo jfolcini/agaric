@@ -726,6 +726,45 @@ pub async fn export_page_markdown_inner(
         }
     }
 
+    // 2b. (#2961) Batch-fetch block-scoped attachments for the page block
+    //     and every descendant, grouped by owning `block_id`.
+    //
+    //     `attachments` has no "inline" flag: an inline image leaves BOTH a
+    //     row here AND a `![filename](attachment:<id>)` token in the owning
+    //     block's `content` (same id); a non-image file (or an image
+    //     dropped with no editor open) leaves ONLY a row. The render loop
+    //     below dedups on that token — via a plain substring check against
+    //     `attachment:<id>`, which is reliable because ULIDs are unique —
+    //     so inline images aren't double-emitted while block-file
+    //     attachments (previously invisible in export) get a link line.
+    //
+    //     Mirrors `list_attachments_batch_inner`'s `json_each(?)` batching
+    //     and the tag/page-reference batching just below: one query for
+    //     the whole subtree instead of one per block. Run through the
+    //     #660 snapshot tx (`&mut *tx`), before `tx.commit()`, so it
+    //     observes the same consistent read as the rest of the export.
+    let mut attachment_block_ids: Vec<String> = Vec::with_capacity(descendants.len() + 1);
+    attachment_block_ids.push(page_id.to_string());
+    for block in &descendants {
+        attachment_block_ids.push(block.id.clone().into_string());
+    }
+    let attachment_ids_json = serde_json::to_string(&attachment_block_ids)?;
+    let attachment_rows = sqlx::query!(
+        r#"SELECT id, block_id, filename FROM attachments
+           WHERE block_id IN (SELECT value FROM json_each(?1))
+           ORDER BY created_at ASC, id ASC"#,
+        attachment_ids_json,
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut attachments_by_block: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for r in attachment_rows {
+        attachments_by_block
+            .entry(r.block_id)
+            .or_default()
+            .push((r.id, r.filename));
+    }
+
     // 3. Batch-resolve tag/page references: regex-extract the union of
     //    `#[ULID]` and `[[ULID]]` tokens from descendant content, then
     //    issue ONE `json_each(?)` query for the deduped ULID set.
@@ -1120,6 +1159,23 @@ pub async fn export_page_markdown_inner(
             }
         }
 
+        // #2961 — emit a link line for each block-scoped (non-inline)
+        // attachment, nested one level under this block's bullet. Skips any
+        // attachment whose id already appears as an `attachment:<id>` token
+        // in `content` — that's an inline image, already rendered above by
+        // `resolve_ulids_for_export`/`push_block_bullet` — so only
+        // genuine file attachments (PDFs/docs/images with no inline token)
+        // get a line here.
+        if let Some(atts) = attachments_by_block.get(&id) {
+            for (att_id, filename) in atts {
+                if content.contains(&format!("attachment:{att_id}")) {
+                    continue;
+                }
+                let label = attachment_link_label(filename);
+                output.push_str(&format!("{prop_indent}- [{label}](attachment:{att_id})\n"));
+            }
+        }
+
         // Push this block's children (reversed so they pop in sibling order)
         // at depth + 1.
         if let Some(kids) = children_by_parent.get(&id) {
@@ -1160,6 +1216,19 @@ pub async fn export_page_markdown_inner(
                 output.push_str(&format!("  {}:: {value}\n", prop.key));
             }
         }
+
+        // #2961 — same non-inline-attachment emission as the DFS loop above,
+        // so an orphan's attachments aren't dropped either. Indent matches
+        // this loop's `"  {key}:: {v}"` convention (one level, depth 0).
+        if let Some(atts) = attachments_by_block.get(&id) {
+            for (att_id, filename) in atts {
+                if content.contains(&format!("attachment:{att_id}")) {
+                    continue;
+                }
+                let label = attachment_link_label(filename);
+                output.push_str(&format!("  - [{label}](attachment:{att_id})\n"));
+            }
+        }
     }
 
     Ok(output)
@@ -1173,6 +1242,21 @@ pub async fn export_page_markdown_inner(
 fn is_fence_delimiter(line: &str) -> bool {
     let t = line.trim_start();
     t.strip_prefix("- ").unwrap_or(t).starts_with("```")
+}
+
+/// #2961 — sanitize an attachment's `filename` for use as markdown link
+/// TEXT (the `[label]` half of `[label](attachment:<id>)`).
+///
+/// Strips `[`, `]`, `\r` and `\n`: unescaped brackets would prematurely
+/// close the link's label span and a raw newline would break the single-line
+/// bullet the importer expects. This is purely cosmetic — the `attachment:
+/// <id>` URL (not the label) is what the ZIP-export resolver and re-import
+/// match on, so a mangled label can never misroute the attachment's bytes.
+fn attachment_link_label(filename: &str) -> String {
+    filename
+        .chars()
+        .filter(|c| !matches!(c, '[' | ']' | '\r' | '\n'))
+        .collect()
 }
 
 /// #2716 — append a block's (already ULID-resolved) `content` as a Logseq
