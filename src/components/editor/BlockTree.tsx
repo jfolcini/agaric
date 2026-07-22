@@ -999,12 +999,32 @@ export function BlockTree({
     [t],
   )
 
+  // dnd-kit renders its screen-reader instructions + live region into this
+  // container. Marking it `data-find-skip` keeps the always-present,
+  // visually-hidden SR helper text (which mentions "block") out of the
+  // in-page-find scan so it can't inflate match counts (#2943; regression
+  // caught by the in-page-find e2e on #2994).
+  const [dndA11yContainer] = useState<HTMLDivElement | null>(() => {
+    if (typeof document === 'undefined') return null
+    const el = document.createElement('div')
+    el.setAttribute('data-find-skip', '')
+    return el
+  })
+  useEffect(() => {
+    if (!dndA11yContainer) return
+    document.body.append(dndA11yContainer)
+    return () => {
+      dndA11yContainer.remove()
+    }
+  }, [dndA11yContainer])
+
   const dndAccessibility = useMemo(
     () => ({
       announcements: dndAnnouncements,
       screenReaderInstructions: dndScreenReaderInstructions,
+      ...(dndA11yContainer ? { container: dndA11yContainer } : {}),
     }),
-    [dndAnnouncements, dndScreenReaderInstructions],
+    [dndAnnouncements, dndScreenReaderInstructions, dndA11yContainer],
   )
 
   // ── Action / resolver bags published via context ────────
