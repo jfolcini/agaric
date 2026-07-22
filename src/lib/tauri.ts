@@ -1,5 +1,6 @@
 import { Channel, invoke } from '@tauri-apps/api/core'
 
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
@@ -183,20 +184,11 @@ export interface ProjectedAgendaEntry {
 // Command wrappers — type-safe Tauri invoke layer
 // ---------------------------------------------------------------------------
 
-/**
- * Unwrap a `commands.*` result, throwing on error to preserve the
- * reject-based semantics of the legacy `invoke()` wrappers. Helper for
- * the staged migration to `bindings.ts` — exported so component-level
- * call sites (which cannot use the raw `invoke()` bypass, per the
- * `no-raw-invoke` guard) can adopt the same unwrap convention the
- * wrappers in this file use.
- */
-export function unwrap<T>(
-  result: { status: 'ok'; data: T } | { status: 'error'; error: unknown },
-): T {
-  if (result.status === 'ok') return result.data
-  throw result.error
-}
+// `unwrap` now lives in `@/lib/app-error` (the tauri-free IPC-error module)
+// so files migrating off these wrappers can import it without pulling in
+// `@/lib/tauri` (#2927). Re-exported here for backward compatibility with
+// the call sites that still import it from this module.
+export { unwrap } from '@/lib/app-error'
 
 // ---------------------------------------------------------------------------
 // Phase 2.R4 — AbortSignal plumbing for the typed IPC wrappers.
@@ -2563,37 +2555,11 @@ export async function logFrontend(
 // `logger-transport.ts`.
 setLogBackendSink(logFrontend)
 
-/** Return the path to the logs directory. */
-export async function getLogDir(): Promise<string> {
-  return unwrap(await commands.getLogDir())
-}
-
-// ---------------------------------------------------------------------------
-// Op Log Compaction (F-20)
-// ---------------------------------------------------------------------------
-
-export interface CompactionStatus {
-  total_ops: number
-  /** Epoch-ms (max op_log.created_at, INTEGER since migration 0079). */
-  oldest_op_date: number | null
-  eligible_ops: number
-  retention_days: number
-}
-
-export interface CompactionResult {
-  snapshot_id: string | null
-  ops_deleted: number
-}
-
-/** Get current op log compaction status and stats. */
-export async function getCompactionStatus(): Promise<CompactionStatus> {
-  return unwrap(await commands.getCompactionStatus())
-}
-
-/** Compact the op log by removing ops older than retentionDays. */
-export async function compactOpLog(retentionDays: number): Promise<CompactionResult> {
-  return unwrap(await commands.compactOpLogCmd(retentionDays))
-}
+// `getLogDir`, the op-log compaction wrappers (`getCompactionStatus`,
+// `compactOpLog`) and their `CompactionStatus` / `CompactionResult` types
+// were removed in #2927 — call `commands.getCompactionStatus()` /
+// `commands.compactOpLogCmd(...)` directly and unwrap with the helper from
+// `@/lib/app-error`. The types live in `@/lib/bindings`.
 
 // ---------------------------------------------------------------------------
 // Link metadata
@@ -2627,43 +2593,11 @@ export async function getLinkMetadata(url: string): Promise<LinkMetadata | null>
   return unwrap(await commands.getLinkMetadata(url))
 }
 
-// ---------------------------------------------------------------------------
-// Bug report
-// ---------------------------------------------------------------------------
-
-export interface BugReport {
-  app_version: string
-  os: string
-  arch: string
-  device_id: string
-  recent_errors: string[]
-}
-
-export interface LogFileEntry {
-  name: string
-  contents: string
-}
-
-/**
- * Gather app version, OS/arch, device ID and a tail of recent error/warn
- * lines from today's log for pre-filling a bug report.
- *
- * #609: `recent_errors` arrives ALREADY redacted — the backend runs the
- * tail through the same pipeline as the redacted ZIP export, because the
- * lines are embedded in the prefilled public GitHub issue body.
- */
-export async function collectBugReportMetadata(): Promise<BugReport> {
-  return unwrap(await commands.collectBugReportMetadata())
-}
-
-/**
- * Enumerate rolled log files within the last 7 days. When `redact=true`,
- * home paths are replaced with `~`, the device ID is blanked, and long
- * lines are truncated.
- */
-export async function readLogsForReport(redact: boolean): Promise<LogFileEntry[]> {
-  return unwrap(await commands.readLogsForReport(redact))
-}
+// The bug-report wrappers (`collectBugReportMetadata`, `readLogsForReport`)
+// and their `BugReport` / `LogFileEntry` types were removed in #2927 — call
+// `commands.collectBugReportMetadata()` / `commands.readLogsForReport(...)`
+// directly and unwrap with the helper from `@/lib/app-error`. The types live
+// in `@/lib/bindings`.
 
 // ---------------------------------------------------------------------------
 // Spaces (Phase 1)

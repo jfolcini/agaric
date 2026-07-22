@@ -36,7 +36,7 @@ import {
 import { Label } from '@/components/ui/label'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
-import type { LogFileEntry } from '@/lib/tauri'
+import type { LogFileEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 
 /** Maximum chars rendered in the per-log preview sub-dialog. */

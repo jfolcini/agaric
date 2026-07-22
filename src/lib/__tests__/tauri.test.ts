@@ -18,8 +18,6 @@ import {
   batchResolve,
   cancelPairing,
   cancelSync,
-  collectBugReportMetadata,
-  compactOpLog,
   computeEditDiff,
   confirmPairing,
   countAgendaBatch,
@@ -50,11 +48,9 @@ import {
   getBlock,
   getBlockHistory,
   getBlocks,
-  getCompactionStatus,
   getDeviceId,
   ensureNotificationPermission,
   getLinkMetadata,
-  getLogDir,
   getPageAliases,
   getPeerRef,
   getProperties,
@@ -91,7 +87,6 @@ import {
   queryByTags,
   notifyTask,
   quickCaptureBlock,
-  readLogsForReport,
   redoPageOp,
   removeTag,
   resolvePageByAlias,
@@ -3555,61 +3550,6 @@ describe('logFrontend', () => {
 })
 
 // ---------------------------------------------------------------------------
-// getLogDir
-// ---------------------------------------------------------------------------
-
-describe('getLogDir', () => {
-  it('invokes get_log_dir with no arguments', async () => {
-    mockedInvoke.mockResolvedValueOnce('/home/user/.local/share/agaric/logs')
-
-    const result = await getLogDir()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_log_dir')
-    expect(result).toBe('/home/user/.local/share/agaric/logs')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// getCompactionStatus
-// ---------------------------------------------------------------------------
-
-describe('getCompactionStatus', () => {
-  it('invokes get_compaction_status with no arguments', async () => {
-    const expected = {
-      total_ops: 1000,
-      oldest_op_date: '2025-01-01T00:00:00Z',
-      eligible_ops: 200,
-      retention_days: 30,
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await getCompactionStatus()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('get_compaction_status')
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// compactOpLog
-// ---------------------------------------------------------------------------
-
-describe('compactOpLog', () => {
-  it('invokes compact_op_log_cmd with retentionDays', async () => {
-    const expected = { snapshot_id: 'SNAP1', ops_deleted: 200 }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await compactOpLog(30)
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('compact_op_log_cmd', { retentionDays: 30 })
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // fetchLinkMetadata
 // ---------------------------------------------------------------------------
 
@@ -3668,54 +3608,6 @@ describe('getLinkMetadata', () => {
     const result = await getLinkMetadata('https://uncached.example')
 
     expect(result).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
-// collectBugReportMetadata
-// ---------------------------------------------------------------------------
-
-describe('collectBugReportMetadata', () => {
-  it('invokes collect_bug_report_metadata with no arguments', async () => {
-    const expected = {
-      app_version: '0.1.0',
-      os: 'linux',
-      arch: 'x86_64',
-      device_id: 'dev-1',
-      recent_errors: ['error: connection timeout'],
-    }
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await collectBugReportMetadata()
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('collect_bug_report_metadata')
-    expect(result).toEqual(expected)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// readLogsForReport
-// ---------------------------------------------------------------------------
-
-describe('readLogsForReport', () => {
-  it('invokes read_logs_for_report with redact=true', async () => {
-    const expected = [{ name: 'today.log', contents: 'INFO startup' }]
-    mockedInvoke.mockResolvedValueOnce(expected)
-
-    const result = await readLogsForReport(true)
-
-    expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('read_logs_for_report', { redact: true })
-    expect(result).toEqual(expected)
-  })
-
-  it('invokes read_logs_for_report with redact=false', async () => {
-    mockedInvoke.mockResolvedValueOnce([])
-
-    await readLogsForReport(false)
-
-    expect(mockedInvoke).toHaveBeenCalledWith('read_logs_for_report', { redact: false })
   })
 })
 

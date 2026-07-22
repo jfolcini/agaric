@@ -10,7 +10,7 @@
 
 import JSZip from 'jszip'
 
-import type { BugReport, LogFileEntry } from '@/lib/tauri'
+import type { BugReport, LogFileEntry } from '@/lib/bindings'
 
 /**
  * #840: the exact sentinel the backend redaction pipeline writes in place of

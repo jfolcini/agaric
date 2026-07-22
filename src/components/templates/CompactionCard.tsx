@@ -15,10 +15,11 @@ import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHead
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { CompactionStatus } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { CompactionStatus } from '@/lib/tauri'
-import { compactOpLog, getCompactionStatus } from '@/lib/tauri'
 
 export function CompactionCard(): React.ReactElement {
   const { t } = useTranslation()
@@ -35,7 +36,7 @@ export function CompactionCard(): React.ReactElement {
   const fetchStatus = useCallback(async () => {
     setLoading(true)
     try {
-      const s = await getCompactionStatus()
+      const s = unwrap(await commands.getCompactionStatus())
       setStatus(s)
     } catch (err) {
       logger.warn('CompactionCard', 'getCompactionStatus failed', undefined, err)
@@ -61,7 +62,7 @@ export function CompactionCard(): React.ReactElement {
     if (status == null) return
     setCompacting(true)
     try {
-      const result = await compactOpLog(status.retention_days)
+      const result = unwrap(await commands.compactOpLogCmd(status.retention_days))
       notify.success(t('compaction.success', { count: result.ops_deleted }))
       setConfirmOpen(false)
       void fetchStatus()
