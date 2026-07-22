@@ -41,9 +41,9 @@ rules:
       - ci.yml:448
       - release.yml:132
       - release.yml:177
-      - release.yml:894
-      - release.yml:926
-      - release.yml:1175
+      - release.yml:992
+      - release.yml:1024
+      - release.yml:1273
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
