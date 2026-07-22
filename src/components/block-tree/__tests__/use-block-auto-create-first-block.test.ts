@@ -73,6 +73,31 @@ describe('useBlockAutoCreateFirstBlock', () => {
     expect(useBlockStore.getState().focusedBlockId).toBe('NEW_1')
   })
 
+  it('clears selection fields when focusing the new block (#2465 mutual-exclusivity invariant)', async () => {
+    const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
+    mockedInvoke.mockResolvedValue(newBlock)
+
+    // Set up stale selection state (e.g., cross-page block selection from a previous page)
+    useBlockStore.setState({
+      selectedBlockIds: ['STALE_1', 'STALE_2'],
+      selectionAnchorId: 'STALE_1',
+      selectionFocusId: 'STALE_2',
+    })
+
+    renderHook(() => useBlockAutoCreateFirstBlock(makeParams()))
+
+    await waitFor(() => {
+      expect(pageStore.getState().blocks).toHaveLength(1)
+    })
+
+    // After focusing the new block, the stale selection fields must be cleared
+    // to maintain the #2465 invariant: focus and selection are mutually exclusive
+    expect(useBlockStore.getState().focusedBlockId).toBe('NEW_1')
+    expect(useBlockStore.getState().selectedBlockIds).toEqual([])
+    expect(useBlockStore.getState().selectionAnchorId).toBeNull()
+    expect(useBlockStore.getState().selectionFocusId).toBeNull()
+  })
+
   it('does not clobber a block that appeared while the create IPC was in flight (#752)', async () => {
     const newBlock = makeBlock({ id: 'NEW_1', content: '', parent_id: 'PAGE_1' })
     let resolveCreate!: (value: unknown) => void
