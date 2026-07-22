@@ -872,6 +872,232 @@ async fn export_page_markdown_resolves_page_link_ulids() {
 }
 
 // ======================================================================
+// Block-reference export + roundtrip (#2963)
+// ======================================================================
+//
+// A `((ULID))` block reference must export to a human-readable, roundtrip-safe
+// Obsidian block-anchor form instead of the opaque internal ULID token. A
+// SAME-PAGE reference emits an anchor-only `[[#^<ULID>]]` link plus a matching
+// `^<ULID>` marker on the target block's own line, which the importer's #2510
+// intra-note anchor pass restores to a real `((<new ULID>))` block ref. A
+// CROSS-PAGE reference emits a human-readable `[[Target Page#^<ULID>]]` link
+// (the importer's block-anchor resolution is intra-note only, so this degrades
+// to a page link on re-import — still far better than the raw ULID, which no
+// external tool renders and which the importer strips entirely). A dangling
+// reference degrades to a clearly-marked `(unresolved block reference)`.
+
+/// #2963 — a SAME-PAGE `((ULID))` block reference exports to the anchor form
+/// AND survives a full export → re-import roundtrip as a real block ref. This
+/// is the crux test: it proves both the human-readable rewrite and that the
+/// emitted form re-imports back to `((<new target ULID>))` (not stripped).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_same_page_block_ref_roundtrips_2963() {
+    let (pool, _dir) = test_pool().await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const TARGET: &str = "01AAAAAAAAAAAAAAAAAAAABLK1";
+    const REFBLK: &str = "01AAAAAAAAAAAAAAAAAAAABLK2";
+
+    insert_block(&pool, SRC_PAGE, "page", "Source Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TARGET,
+        "content",
+        "Target block content",
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        REFBLK,
+        "content",
+        &format!("See (({TARGET})) over there"),
+        Some(SRC_PAGE),
+        Some(2),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+
+    // Human-readable, roundtrip-safe rewrite: an anchor-only link to the
+    // same-page target plus a `^<ULID>` marker on the target's own line.
+    assert!(
+        md.contains(&format!("[[#^{TARGET}]]")),
+        "same-page block ref must export as an anchor-only wiki-link, got: {md}"
+    );
+    assert!(
+        md.contains(&format!("Target block content ^{TARGET}")),
+        "the target block's exported line must carry the ^<ULID> anchor marker, got: {md}"
+    );
+    // NON-TAUTOLOGY: the pre-fix exporter emitted the raw `((ULID))` token
+    // verbatim (no `((...))` arm in `resolve_ulids_for_export`); this assertion
+    // fails against that behaviour and would also break the roundtrip below
+    // (the importer strips every `((...))`).
+    assert!(
+        !md.contains(&format!("(({TARGET}))")),
+        "the opaque ((ULID)) block-ref token must NOT survive export, got: {md}"
+    );
+
+    // Re-import the exported markdown. Delete the seed rows first so the only
+    // blocks matching the queried content are the freshly imported ones.
+    sqlx::query("DELETE FROM blocks WHERE id IN (?, ?, ?)")
+        .bind(SRC_PAGE)
+        .bind(TARGET)
+        .bind(REFBLK)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md,
+        Some("Roundtrip.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The freshly imported target block (marker stripped back off its content).
+    let new_target_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'content' \
+         AND content = 'Target block content' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    // The referencing block resolved back to a real block ref targeting it —
+    // NOT stripped, NOT a dangling page link.
+    let referencing_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE 'See%' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        referencing_content,
+        format!("See (({new_target_id})) over there"),
+        "the exported anchor link must re-import back to a block ref (roundtrip)"
+    );
+    assert!(
+        !result.warnings.iter().any(|w| w.contains("anchor")),
+        "a clean same-page block-ref roundtrip must surface no anchor warning; warnings={:?}",
+        result.warnings
+    );
+
+    mat.shutdown();
+}
+
+/// #2963 — a CROSS-PAGE `((ULID))` block reference (target on a different page)
+/// exports to a human-readable `[[Target Page#^<ULID>]]` link, never the raw
+/// ULID. The importer's block-anchor resolution is intra-note only, so this
+/// form degrades to a page link on re-import rather than a block ref — this
+/// test asserts the EXPORT shape (the documented gap for the roundtrip is
+/// reported separately).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_cross_page_block_ref_is_human_readable_2963() {
+    let (pool, _dir) = test_pool().await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const REFBLK: &str = "01AAAAAAAAAAAAAAAAAAAABLK2";
+    const PAGE_B: &str = "01BBBBBBBBBBBBBBBBBBBBPAGE";
+    const TARGET_B: &str = "01BBBBBBBBBBBBBBBBBBBBBLK1";
+
+    insert_block(&pool, PAGE_B, "page", "Other Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TARGET_B,
+        "content",
+        "Faraway block",
+        Some(PAGE_B),
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, SRC_PAGE, "page", "Source Page", None, Some(2)).await;
+    insert_block(
+        &pool,
+        REFBLK,
+        "content",
+        &format!("See (({TARGET_B})) elsewhere"),
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+
+    assert!(
+        md.contains(&format!("[[Other Page#^{TARGET_B}]]")),
+        "a cross-page block ref must export as a titled block-anchor link, got: {md}"
+    );
+    assert!(
+        !md.contains(&format!("(({TARGET_B}))")),
+        "the opaque ((ULID)) block-ref token must NOT survive export, got: {md}"
+    );
+
+    // A cross-page target is NOT on the exported page, so its own content and a
+    // stamped `<content> ^<ULID>` marker line never appear in this export (the
+    // only occurrence of `^{TARGET_B}` is inside the wiki-link itself).
+    assert!(
+        !md.contains("Faraway block"),
+        "a cross-page target's content must not leak into this page's export, got: {md}"
+    );
+    assert!(
+        !md.contains(&format!("Faraway block ^{TARGET_B}")),
+        "no anchor marker should be stamped for a cross-page target, got: {md}"
+    );
+}
+
+/// #2963 — a `((ULID))` whose target block is missing (deleted / never
+/// existed) degrades to a clearly-marked human-readable literal, never a raw
+/// ULID token.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_dangling_block_ref_marked_unresolved_2963() {
+    let (pool, _dir) = test_pool().await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const REFBLK: &str = "01AAAAAAAAAAAAAAAAAAAABLK2";
+    const GONE: &str = "01ZZZZZZZZZZZZZZZZZZZZBLK9";
+
+    insert_block(&pool, SRC_PAGE, "page", "Source Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        REFBLK,
+        "content",
+        &format!("See (({GONE})) gone"),
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+
+    assert!(
+        md.contains("(unresolved block reference)"),
+        "a dangling block ref must export as a marked unresolved literal, got: {md}"
+    );
+    assert!(
+        !md.contains(GONE),
+        "a dangling block ref must NOT leak the raw ULID, got: {md}"
+    );
+}
+
+// ======================================================================
 // Block-scoped attachment export (#2961)
 // ======================================================================
 //

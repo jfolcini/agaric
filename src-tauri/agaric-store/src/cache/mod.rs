@@ -74,6 +74,16 @@ pub static TAG_REF_RE: LazyLock<Regex> =
 pub static PAGE_LINK_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[\[([0-9A-Z]{26})\]\]").expect("invalid page-link regex"));
 
+/// The block-reference-only sibling of [`PAGE_LINK_RE`]: matches the internal
+/// `((ULID))` block-reference token (and captures the inner ULID) but NOT the
+/// `[[ULID]]` page-link form. Used by markdown export to resolve `((ULID))`
+/// block references to a human-readable, roundtrip-safe Obsidian block-anchor
+/// wiki-link (#2963). Kept distinct from [`ULID_LINK_RE`] (which matches both
+/// delimiter styles) so the exporter can rewrite block references and page
+/// links independently.
+pub static BLOCK_REF_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\(\(([0-9A-Z]{26})\)\)").expect("invalid block-ref regex"));
+
 /// Returns a reference to the lazily-compiled ULID-link regex.
 #[inline]
 fn ulid_link_re() -> &'static Regex {
