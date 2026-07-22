@@ -1257,6 +1257,93 @@ describe('useUndoStore', () => {
         expect(useUndoStore.getState().pages.has('page1')).toBe(false)
       })
     })
+
+    // -------------------------------------------------------------------------
+    // #2912 — a debounced blur-commit resolving mid-undo must NOT coalesce into
+    // the entry the in-flight undo is reverting. Pre-fix `onNewAction` merged it
+    // (same coalesceKey) into a NEW `{ refs: [...] }` object; the undo's
+    // identity-based `withoutEntry` then missed it, stranding an already-
+    // reversed ref on the surviving entry → every later Ctrl+Z atomically
+    // aborted (`undo.batchUnavailable`), killing undo for the page.
+    // -------------------------------------------------------------------------
+    describe('#2912 — no coalescing into an in-flight-undo entry', () => {
+      it('onNewAction (same coalesceKey) mid-undo pushes a FRESH entry, leaving the reverting entry intact', async () => {
+        // E = the entry Ctrl+Z reverts: one captured ref, a content-edit key.
+        useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:B')
+        const E = useUndoStore.getState().pages.get('page1')?.undoStack[0]
+        expect(E?.refs).toEqual([ref(1)])
+
+        // Hold undoOp(E) pending → undoByRefs is in flight.
+        let resolveUndo: (r: ReturnType<typeof makeUndoResult>) => void = () => {}
+        mockedUndoOp.mockImplementationOnce(
+          () =>
+            new Promise((resolve) => {
+              resolveUndo = resolve
+            }),
+        )
+
+        const undoPromise = useUndoStore.getState().undo('page1')
+        await Promise.resolve()
+
+        // A prior debounced blur-commit resolves DURING the in-flight undo,
+        // carrying the SAME coalesceKey. Pre-fix this merged into E (E' =
+        // { refs:[r1,r2] }); the fix pushes a fresh entry ABOVE E instead.
+        useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:B')
+
+        const midStack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(midStack).toHaveLength(2)
+        // Fresh entry on top carries ONLY the new op (no merge).
+        expect(midStack?.[0]?.refs).toEqual([ref(2)])
+        // E survives UNMUTATED at index 1 — its identity is preserved so the
+        // in-flight reconcile can still find and remove it.
+        expect(midStack?.[1]).toBe(E)
+        expect(midStack?.[1]?.refs).toEqual([ref(1)])
+
+        // Undo settles: reverse of r1. E is removed by identity.
+        resolveUndo(makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 100 }))
+        await undoPromise
+
+        const after = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(after).toHaveLength(1)
+        expect(after?.[0]?.refs).toEqual([ref(2)])
+
+        // Follow-up Ctrl+Z reverts ONLY r2 — the already-reversed r1 is never
+        // resubmitted, so no atomic-abort / undo.batchUnavailable.
+        mockedUndoOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 2, newSeq: 101 }),
+        )
+        await useUndoStore.getState().undo('page1')
+        expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(2) })
+        expect(mockedUndoOps).not.toHaveBeenCalled()
+      })
+
+      it('resumes normal same-key coalescing once the in-flight undo settles (guard is cleared)', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:B')
+
+        mockedUndoOp.mockResolvedValueOnce(
+          makeUndoResult({ deviceId: 'dev1', seq: 1, newSeq: 100 }),
+        )
+        await useUndoStore.getState().undo('page1')
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+
+        // No undo in flight now → same-key actions coalesce again as usual.
+        useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:B')
+        useUndoStore.getState().onNewAction('page1', [ref(3)], 'edit:B')
+
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toEqual([ref(2), ref(3)])
+      })
+
+      it('normal same-key coalescing is untouched when NO undo is in flight', () => {
+        useUndoStore.getState().onNewAction('page1', [ref(1)], 'edit:B')
+        useUndoStore.getState().onNewAction('page1', [ref(2)], 'edit:B')
+
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toEqual([ref(1), ref(2)])
+      })
+    })
   })
 })
 
