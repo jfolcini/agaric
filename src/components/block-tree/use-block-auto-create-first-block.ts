@@ -90,7 +90,7 @@ export function useBlockAutoCreateFirstBlock({
             },
           ],
         })
-        useBlockStore.setState({ focusedBlockId: result.id })
+        useBlockStore.getState().setFocused(result.id)
       })
       .catch((err: unknown) => {
         logger.error(
