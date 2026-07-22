@@ -306,6 +306,24 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
 export const useUndoStore = create<UndoStore>((set, get) => {
   /** Guard: page IDs with undo currently in progress. */
   const undoInProgress = new Set<string>()
+  /**
+   * #2912 — the SPECIFIC `UndoStackEntry` object each page's in-flight `undo()`
+   * is reverting. `undo()` reconciles by removing the reverted entry BY IDENTITY
+   * (`withoutEntry`), so if `onNewAction` coalesces a just-committed edit into
+   * that very object it builds a NEW merged `{ refs: [...] }` that REPLACES it —
+   * the identity match then misses, leaving an entry whose ref-set still
+   * contains the ops the in-flight undo already reversed. Every later Ctrl+Z on
+   * it resubmits an already-reversed ref, which the backend's atomic `undoOps`
+   * aborts (`undo.batchUnavailable`) — undo is dead for the page until a reset.
+   *
+   * Chose the "prevent coalescing" approach over reconciling by ref VALUE: it is
+   * local to the two spots that already share this closure (`undo()` records,
+   * `onNewAction` checks) and leaves every reconcile path (`withoutEntry`,
+   * `applyUndoResults`, the undoOps-failure "entry stays on stack" contract)
+   * byte-for-byte unchanged, so blast radius stays minimal. Recorded here,
+   * checked in `onNewAction`, cleared when the undo settles (success or failure).
+   */
+  const undoInProgressEntry = new Map<string, UndoStackEntry>()
   /** Guard: page IDs with redo currently in progress. */
   const redoInProgress = new Set<string>()
 
@@ -503,6 +521,11 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         const top = pageState.undoStack[0] ?? null
         const initialDepth = pageState.undoDepth
 
+        // #2912 — record the exact object we're about to revert so a
+        // concurrent `onNewAction` (a debounced blur-commit resolving mid-undo)
+        // won't coalesce into it and defeat the identity-based reconcile below.
+        if (top) undoInProgressEntry.set(pageId, top)
+
         // Optimistically ensure a page entry exists BEFORE the await so a
         // `clearPage` landing mid-flight is detectable on the success path
         // (`current` becomes undefined) — mirrors the pre-#2190 optimistic
@@ -520,6 +543,7 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         return await undoPositional(pageId, top, initialDepth)
       } finally {
         undoInProgress.delete(pageId)
+        undoInProgressEntry.delete(pageId)
       }
     },
 
@@ -607,14 +631,28 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         pages: setPageState(state.pages, pageId, (current) => {
           const base = current ?? emptyPageState()
           const top = base.undoStack[0]
+          // #2912 — never coalesce into the entry a concurrent `undo()` is
+          // reverting. `undo()` reconciles by removing that exact object by
+          // identity; replacing it here with a merged `{ refs: [...] }` would
+          // orphan the reverted ops on the surviving entry (see
+          // `undoInProgressEntry`). When the top IS that in-flight object, skip
+          // BOTH grouping paths and push a FRESH entry — it lands above the
+          // in-flight one, which the undo's reconcile then removes cleanly.
+          const topIsInFlightUndo = top !== undefined && undoInProgressEntry.get(pageId) === top
           // #2600 — a defined `coalesceKey` matching the top entry's key
           // extends its group REGARDLESS of elapsed time (a block's mid-typing
           // debounced commits pause longer than the timed window), in addition
           // to the #2468 timed window for ref bursts. `undefined` never matches.
           const sameKeyGroup =
-            top !== undefined && coalesceKey !== undefined && top.coalesceKey === coalesceKey
+            !topIsInFlightUndo &&
+            top !== undefined &&
+            coalesceKey !== undefined &&
+            top.coalesceKey === coalesceKey
           const withinWindow =
-            top !== undefined && now - top.at <= UNDO_GROUP_WINDOW_MS && now >= top.at
+            !topIsInFlightUndo &&
+            top !== undefined &&
+            now - top.at <= UNDO_GROUP_WINDOW_MS &&
+            now >= top.at
           let undoStack: UndoStackEntry[]
           if (top !== undefined && (sameKeyGroup || withinWindow)) {
             // Capture-time coalescing: this action joins the top entry's group
