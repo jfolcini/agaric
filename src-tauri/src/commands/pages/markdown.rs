@@ -1503,7 +1503,7 @@ pub async fn import_markdown_with_progress(
         check_attachment_budget(files.len(), total_bytes)?;
     }
 
-    let parse_output = import::parse_logseq_markdown(&content);
+    let mut parse_output = import::parse_logseq_markdown(&content);
 
     // Derive the page title from the filename (#1446 Part B — folder →
     // namespace). The caller may pass either a bare basename (`API.md`) or a
@@ -1632,15 +1632,176 @@ pub async fn import_markdown_with_progress(
     .await?;
     tx.enqueue_background(page_space_op);
 
-    let mut blocks_created: u64 = 0;
-    let mut properties_set: u64 = 0;
-    // Parse-time diagnostics (e.g. depth clamping, frontmatter array/invalid
-    // lines). Per-row write failures are reported via `Err(AppError)` instead
-    // — see the doc note. Made mutable so the frontmatter apply step below can
-    // append its own non-fatal diagnostics (e.g. a `ref` value whose target
-    // title couldn't be resolved).
-    let mut warnings: Vec<String> = parse_output.warnings;
+    // Running counters, threaded by value through the phases that update them
+    // (`properties_set` in the frontmatter apply + block loop; `blocks_created`
+    // / `chunks_committed` in the block loop). Declared here so the final
+    // completion telemetry can report their fully-accumulated values.
+    let blocks_created: u64 = 0;
+    let properties_set: u64 = 0;
+    let chunks_committed: u64 = 0;
 
+    // Bundle the read-only handles + derived identity + the running `warnings`
+    // list that every phase appends to, so the phase helpers below take one
+    // `&mut ImportCtx` instead of a long, repeated argument list. `warnings` is
+    // seeded from the parser's diagnostics (`std::mem::take` leaves the parsed
+    // struct otherwise intact so its other fields are still read by the phases).
+    let mut ctx = ImportCtx {
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        progress,
+        started_at,
+        space_id,
+        page_id,
+        page_title,
+        blocks_total,
+        warnings: std::mem::take(&mut parse_output.warnings),
+    };
+
+    // #1432 — leading YAML frontmatter → page-level properties.
+    let (tx, properties_set) =
+        apply_frontmatter_properties(&mut ctx, tx, &parse_output, properties_set).await?;
+
+    // #1446 Part B / #1921 — inbound `[[Page Name]]` wiki-link resolution pre-pass.
+    let (tx, resolved_page_links, pending_block_anchor_links, pending_heading_anchor_links) =
+        resolve_inbound_page_links(&mut ctx, tx, &parse_output).await?;
+
+    // #2510 — Obsidian block-anchor id → the INDEX (into `parse_output.blocks`)
+    // of the block whose trailing `^block-id` marker the parser stripped (see
+    // `ParsedBlock::block_anchor`). Consumed by the block-anchor resolution
+    // pass after the block-creation loop below, once every index has a real
+    // ULID (or `None`, if that particular block was skipped). Built here
+    // (independent of block creation) so it is ready the moment the loop
+    // finishes. A duplicate anchor id within one document (a user/Obsidian
+    // authoring mistake) last-write-wins, matching a plain map insert — not
+    // worth a dedicated ambiguity warning.
+    let anchor_to_block_index: HashMap<String, usize> = parse_output
+        .blocks
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, b)| b.block_anchor.as_ref().map(|a| (a.clone(), idx)))
+        .collect();
+
+    // #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
+    // the FIRST block whose content is that ATX heading. Mirrors
+    // `anchor_to_block_index` above and is consumed by the same
+    // post-block-creation resolution pass. COLLISION RULE: first occurrence
+    // wins (`or_insert`) — a repeated heading label always targets its first
+    // occurrence in document order. Obsidian's own `heading`, `heading-1`, …
+    // numeric-suffix disambiguation is intentionally NOT mirrored (kept simple
+    // and deterministic; documented here and in the issue). `is_code` blocks
+    // are skipped — a `# comment` inside a fenced code sample is not a heading.
+    let heading_to_block_index: HashMap<String, usize> = {
+        let mut map: HashMap<String, usize> = HashMap::new();
+        for (idx, b) in parse_output.blocks.iter().enumerate() {
+            if b.is_code {
+                continue;
+            }
+            if let Some(text) = obsidian_heading_text(&b.content) {
+                map.entry(normalize_heading_anchor(text)).or_insert(idx);
+            }
+        }
+        map
+    };
+
+    // #1924 / #1950 — inbound inline-tag resolution pre-pass.
+    let (tx, mut resolved_tag_norm, resolved_tag_tokens, existing_tag_by_norm) =
+        resolve_inbound_tags(&mut ctx, tx, &parse_output).await?;
+
+    // #2722 — frontmatter `tags:` → real page→tag associations.
+    let tx = apply_frontmatter_tags(
+        &mut ctx,
+        tx,
+        &parse_output,
+        &mut resolved_tag_norm,
+        &existing_tag_by_norm,
+    )
+    .await?;
+
+    // #2724 — the post-commit ingest (`ingest_attachments`) takes ownership of
+    // these files so it can MOVE each single-attempt file's bytes out
+    // (`std::mem::take`) on its last ingest instead of cloning them.
+    let vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
+
+    // #662 — chunked block insertion (returns the accumulated counters plus the
+    // per-block state consumed by the two post-commit phases below).
+    let (blocks_created, properties_set, chunks_committed, created_block_ids, pending_attachments) =
+        insert_blocks(
+            &mut ctx,
+            tx,
+            &parse_output,
+            resolved_page_links,
+            resolved_tag_tokens,
+            &vault_files,
+            blocks_created,
+            properties_set,
+            chunks_committed,
+        )
+        .await?;
+
+    // #2510 / #2567 — post-commit anchor resolution + block-ref rewrite.
+    resolve_anchor_links(
+        &mut ctx,
+        &parse_output,
+        &created_block_ids,
+        &pending_block_anchor_links,
+        &pending_heading_anchor_links,
+        &anchor_to_block_index,
+        &heading_to_block_index,
+    )
+    .await;
+
+    // #1925 — post-commit attachment ingest + content rewrite.
+    ingest_attachments(&mut ctx, vault_files, pending_attachments).await;
+
+    // #128 / #1932 / #1934 — completion event + diagnostics/telemetry logging.
+    Ok(finish(
+        ctx,
+        blocks_created,
+        properties_set,
+        chunks_committed,
+    ))
+}
+
+/// #2928 — shared state for the `import_markdown_with_progress` phase helpers
+/// below. Bundles the read-only handles, the derived page identity, and the
+/// running `warnings` list that each phase appends to, so the decomposed phase
+/// functions take a single `&mut ImportCtx` instead of re-threading a long
+/// argument list. The chunked transaction (`CommandTx`) is deliberately NOT a
+/// field: it borrows `pool` (also held here), which would make the struct
+/// self-referential, so it is threaded through the pre-commit phases by value
+/// instead.
+struct ImportCtx<'a> {
+    pool: &'a SqlitePool,
+    device_id: &'a str,
+    materializer: &'a Materializer,
+    app_data_dir: &'a std::path::Path,
+    progress: Option<&'a dyn ImportProgressSink>,
+    started_at: std::time::Instant,
+    space_id: String,
+    page_id: String,
+    page_title: String,
+    blocks_total: u64,
+    /// Parse-time + apply-time diagnostics, accumulated across every phase and
+    /// returned in the final [`ImportResult`].
+    warnings: Vec<String>,
+}
+
+/// #1432 — apply the leading YAML frontmatter as page-level properties. Returns
+/// the (possibly moved-through) transaction and the updated `properties_set`
+/// counter.
+async fn apply_frontmatter_properties(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    parse_output: &import::ParseOutput,
+    mut properties_set: u64,
+) -> Result<(CommandTx, u64), AppError> {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let space_id = ctx.space_id.clone();
+    let page_id = ctx.page_id.clone();
+    let warnings = &mut ctx.warnings;
     // #1432 — apply the leading YAML frontmatter as PAGE-level properties,
     // closing the export↔import asymmetry: `export_page_markdown_inner`
     // already emits page properties as frontmatter, but the importer used to
@@ -1864,7 +2025,32 @@ pub async fn import_markdown_with_progress(
         properties_set += 1;
         tx.enqueue_background(prop_op);
     }
+    Ok((tx, properties_set))
+}
 
+/// #1446 Part B / #1921 — resolve inbound `[[Page Name]]` wiki-links to internal
+/// `[[ULID]]` refs (create-if-missing), returning the transaction, the
+/// resolved-link map used by the block loop, and the deferred same-document
+/// block/heading-anchor maps resolved in the post-commit anchor phase.
+#[allow(clippy::type_complexity)]
+async fn resolve_inbound_page_links(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    parse_output: &import::ParseOutput,
+) -> Result<
+    (
+        CommandTx,
+        HashMap<String, String>,
+        HashMap<String, String>,
+        HashMap<String, PendingHeading>,
+    ),
+    AppError,
+> {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let space_id = ctx.space_id.clone();
+    let page_id = ctx.page_id.clone();
+    let warnings = &mut ctx.warnings;
     // #1446 Part B — resolve inbound `[[Page Name]]` wiki-links to internal
     // `[[ULID]]` refs, creating any missing target page (create-if-missing).
     // This is a PRE-PASS over the whole parsed document so each distinct name
@@ -2167,45 +2353,35 @@ pub async fn import_markdown_with_progress(
              the page (Obsidian block-anchor targeting is not yet supported)"
         ));
     }
+    Ok((
+        tx,
+        resolved_page_links,
+        pending_block_anchor_links,
+        pending_heading_anchor_links,
+    ))
+}
 
-    // #2510 — Obsidian block-anchor id → the INDEX (into `parse_output.blocks`)
-    // of the block whose trailing `^block-id` marker the parser stripped (see
-    // `ParsedBlock::block_anchor`). Consumed by the block-anchor resolution
-    // pass after the block-creation loop below, once every index has a real
-    // ULID (or `None`, if that particular block was skipped). Built here
-    // (independent of block creation) so it is ready the moment the loop
-    // finishes. A duplicate anchor id within one document (a user/Obsidian
-    // authoring mistake) last-write-wins, matching a plain map insert — not
-    // worth a dedicated ambiguity warning.
-    let anchor_to_block_index: HashMap<String, usize> = parse_output
-        .blocks
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, b)| b.block_anchor.as_ref().map(|a| (a.clone(), idx)))
-        .collect();
-
-    // #2567 — normalized heading text → INDEX (into `parse_output.blocks`) of
-    // the FIRST block whose content is that ATX heading. Mirrors
-    // `anchor_to_block_index` above and is consumed by the same
-    // post-block-creation resolution pass. COLLISION RULE: first occurrence
-    // wins (`or_insert`) — a repeated heading label always targets its first
-    // occurrence in document order. Obsidian's own `heading`, `heading-1`, …
-    // numeric-suffix disambiguation is intentionally NOT mirrored (kept simple
-    // and deterministic; documented here and in the issue). `is_code` blocks
-    // are skipped — a `# comment` inside a fenced code sample is not a heading.
-    let heading_to_block_index: HashMap<String, usize> = {
-        let mut map: HashMap<String, usize> = HashMap::new();
-        for (idx, b) in parse_output.blocks.iter().enumerate() {
-            if b.is_code {
-                continue;
-            }
-            if let Some(text) = obsidian_heading_text(&b.content) {
-                map.entry(normalize_heading_anchor(text)).or_insert(idx);
-            }
-        }
-        map
-    };
-
+/// #1924 / #1950 — resolve inbound inline tags (`#tag`, `#[[Tag With Space]]`)
+/// to `#[ULID]` refs (resolve-or-create), returning the transaction plus the
+/// per-pass tag state reused by the block loop and the frontmatter-tag pass.
+#[allow(clippy::type_complexity)]
+async fn resolve_inbound_tags(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    parse_output: &import::ParseOutput,
+) -> Result<
+    (
+        CommandTx,
+        HashMap<String, String>,
+        HashMap<String, String>,
+        HashMap<String, String>,
+    ),
+    AppError,
+> {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let space_id = ctx.space_id.clone();
+    let warnings = &mut ctx.warnings;
     // #1924 / #1950 — resolve inbound inline tags (`#tag` and `#[[Tag With
     // Space]]`) to internal `#[ULID]` refs, creating any missing tag block
     // (resolve-or-create). This mirrors the wiki-link pre-pass above and the
@@ -2341,7 +2517,28 @@ pub async fn import_markdown_with_progress(
             }
         }
     }
+    Ok((
+        tx,
+        resolved_tag_norm,
+        resolved_tag_tokens,
+        existing_tag_by_norm,
+    ))
+}
 
+/// #2722 — apply page-level frontmatter `tags:` as real `block_tags`
+/// associations, reusing the inline-tag pre-pass state. Returns the transaction.
+async fn apply_frontmatter_tags(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    parse_output: &import::ParseOutput,
+    resolved_tag_norm: &mut HashMap<String, String>,
+    existing_tag_by_norm: &HashMap<String, String>,
+) -> Result<CommandTx, AppError> {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let space_id = ctx.space_id.clone();
+    let page_id = ctx.page_id.clone();
+    let warnings = &mut ctx.warnings;
     // #2722 — apply page-level frontmatter `tags:` as REAL `block_tags`
     // associations on the imported page, instead of the inert text property the
     // pre-#2722 importer stamped (which silently disabled tag filtering on
@@ -2482,7 +2679,42 @@ pub async fn import_markdown_with_progress(
             }
         }
     }
+    Ok(tx)
+}
 
+/// #662 — chunked block-insertion loop + final commit. Seeded with and returns
+/// the running counters, plus the per-block-index created ULIDs and the pending
+/// attachment refs consumed by the post-commit phases. Consumes `tx` (it commits
+/// the final chunk).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+async fn insert_blocks(
+    ctx: &mut ImportCtx<'_>,
+    mut tx: CommandTx,
+    parse_output: &import::ParseOutput,
+    resolved_page_links: HashMap<String, String>,
+    resolved_tag_tokens: HashMap<String, String>,
+    vault_files: &[VaultFile],
+    mut blocks_created: u64,
+    mut properties_set: u64,
+    mut chunks_committed: u64,
+) -> Result<
+    (
+        u64,
+        u64,
+        u64,
+        Vec<Option<String>>,
+        Vec<(String, Vec<import::AttachmentRef>)>,
+    ),
+    AppError,
+> {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let pool = ctx.pool;
+    let page_id = ctx.page_id.clone();
+    let page_title = ctx.page_title.clone();
+    let blocks_total = ctx.blocks_total;
+    let progress = ctx.progress;
+    let warnings = &mut ctx.warnings;
     // #662 — number of blocks written into the *current* chunk's
     // transaction. Reset to 0 each time a chunk is flushed. A new chunk is
     // only opened at a top-level (depth-0) subtree boundary, so a chunk
@@ -2499,14 +2731,10 @@ pub async fn import_markdown_with_progress(
     // the held `import_markdown` IMMEDIATE tx — so NO attachment ingest runs
     // while any import chunk tx is open. `vault_files` empty/None ⇒ this stays
     // empty and the whole phase is a no-op.
-    // #2724 — `mut` so the post-commit ingest can MOVE each file's bytes out
-    // (`std::mem::take`) on its last ingest instead of cloning them.
-    let mut vault_files: Vec<VaultFile> = vault_files.unwrap_or_default();
     let mut pending_attachments: Vec<(String, Vec<import::AttachmentRef>)> = Vec::new();
     // #1932 (OBS-LOG-05) — count committed chunks so a partial import (a
     // mid-chunk abort) leaves a log trail of how many chunks/blocks were
     // already made durable before the failure, rather than a lone error line.
-    let mut chunks_committed: u64 = 0;
 
     // Track parent stack: (depth, block_id). Survives chunk flushes
     // unchanged — every id in it refers to a block committed in this or an
@@ -2746,7 +2974,33 @@ pub async fn import_markdown_with_progress(
         );
         AppError::from(e)
     })?;
+    Ok((
+        blocks_created,
+        properties_set,
+        chunks_committed,
+        created_block_ids,
+        pending_attachments,
+    ))
+}
 
+/// #2510 / #2567 — post-commit resolution of deferred same-document block- and
+/// heading-anchor wiki-links to real `((block ULID))` refs (with the #1282
+/// page-link fallback). Warn-and-continue only; never aborts the durable import.
+#[allow(clippy::too_many_arguments)]
+async fn resolve_anchor_links(
+    ctx: &mut ImportCtx<'_>,
+    parse_output: &import::ParseOutput,
+    created_block_ids: &[Option<String>],
+    pending_block_anchor_links: &HashMap<String, String>,
+    pending_heading_anchor_links: &HashMap<String, PendingHeading>,
+    anchor_to_block_index: &HashMap<String, usize>,
+    heading_to_block_index: &HashMap<String, usize>,
+) {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let pool = ctx.pool;
+    let page_id = ctx.page_id.clone();
+    let warnings = &mut ctx.warnings;
     // #2510 — block-anchor resolution + content rewrite phase. Runs HERE,
     // AFTER the import writer tx has fully committed (mirrors the #1925
     // attachment phase immediately below, for the same reason: `edit_block_inner`
@@ -2959,7 +3213,21 @@ pub async fn import_markdown_with_progress(
             ));
         }
     }
+}
 
+/// #1925 — post-commit attachment ingest + content rewrite. Takes ownership of
+/// `vault_files` so single-attempt files' bytes can be moved out. Warn-and-
+/// continue only; never aborts the durable import.
+async fn ingest_attachments(
+    ctx: &mut ImportCtx<'_>,
+    mut vault_files: Vec<VaultFile>,
+    pending_attachments: Vec<(String, Vec<import::AttachmentRef>)>,
+) {
+    let materializer = ctx.materializer;
+    let device_id = ctx.device_id;
+    let pool = ctx.pool;
+    let app_data_dir = ctx.app_data_dir;
+    let warnings = &mut ctx.warnings;
     // #1925 — attachment ingest + content rewrite phase. Runs HERE, AFTER the
     // import writer tx has fully committed and released the writer lock, so it
     // never overlaps the held IMMEDIATE tx. `add_attachment_with_bytes_inner`
@@ -3200,7 +3468,23 @@ pub async fn import_markdown_with_progress(
             }
         }
     }
+}
 
+/// #128 / #1932 / #1934 — emit the `Complete` progress event, log the collected
+/// diagnostics + completion telemetry, and build the returned [`ImportResult`].
+fn finish(
+    ctx: ImportCtx<'_>,
+    blocks_created: u64,
+    properties_set: u64,
+    chunks_committed: u64,
+) -> ImportResult {
+    let ImportCtx {
+        progress,
+        page_title,
+        warnings,
+        started_at,
+        ..
+    } = ctx;
     // #128 — `Complete` is emitted only after the final chunk commits, so
     // a consumer can treat it as the "whole import is durable" signal.
     // Mirrors the returned `ImportResult` counts.
@@ -3240,12 +3524,12 @@ pub async fn import_markdown_with_progress(
         "import: completed markdown import"
     );
 
-    Ok(ImportResult {
+    ImportResult {
         page_title,
         blocks_created,
         properties_set,
         warnings,
-    })
+    }
 }
 
 /// Tauri command: export a page as Markdown. Delegates to [`export_page_markdown_inner`].
