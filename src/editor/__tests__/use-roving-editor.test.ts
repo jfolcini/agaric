@@ -2047,90 +2047,55 @@ describe('shouldSplitOnBlur — hard breaks (#710-5)', () => {
   })
 })
 
-// #1890 — the markdown serialize on the active block is coalesced to once per
-// animation frame instead of running on every keystroke. These tests drive a
-// real editor and stub requestAnimationFrame so the frame boundary is explicit.
-describe('#1890 — per-frame serialize coalescing (renderHook)', () => {
+// #2938 — the `update` handler is a PURE SIGNAL: it fires the registered
+// callback synchronously on every keystroke WITHOUT serializing the document
+// (the per-frame `getJSON()` + `serialize(...)` that taxed typing latency is
+// gone). Consumers serialize on demand at debounce-fire / flush time via
+// `getMarkdown()`. These tests drive a real editor and assert that the signal
+// carries no markdown and that no serialize runs on the typing hot path.
+describe('#2938 — update handler is a pure change signal (renderHook)', () => {
   async function setup() {
     const hook = renderHook(() => useRovingEditor())
     await waitFor(() => expect(hook.result.current.editor).not.toBeNull())
     return hook
   }
 
-  // Realistic rAF stub: a Map keyed by handle, with cancel that actually
-  // removes the callback (so a cancelled frame never runs). The editor itself
-  // also schedules frames via the same global, so we assert on serialize
-  // behaviour (the `onMarkdownChange` callback), never on raw rAF call counts.
-  function stubRaf() {
-    const frames = new Map<number, FrameRequestCallback>()
-    let nextId = 0
-    const rafSpy = vi
-      .spyOn(globalThis, 'requestAnimationFrame')
-      .mockImplementation((cb: FrameRequestCallback) => {
-        nextId += 1
-        frames.set(nextId, cb)
-        return nextId
-      })
-    const cancelSpy = vi
-      .spyOn(globalThis, 'cancelAnimationFrame')
-      .mockImplementation((id: number) => {
-        frames.delete(id)
-      })
-    // Run every currently-queued frame once. Frames scheduled *during* the
-    // flush (e.g. a re-serialize triggered downstream) are left for next time.
-    const flush = () => {
-      const pending = [...frames.values()]
-      frames.clear()
-      act(() => {
-        for (const cb of pending) cb(0)
-      })
-    }
-    return { flush, restore: () => (rafSpy.mockRestore(), cancelSpy.mockRestore()) }
-  }
-
-  it('coalesces a burst of updates into a single serialize per frame', async () => {
-    const raf = stubRaf()
+  it('fires synchronously on each edit, carrying NO markdown and running NO serialize', async () => {
     const { result, unmount: unmountHook } = await setup()
-    const onChange = vi.fn()
+    const onUpdate = vi.fn()
     act(() => {
-      result.current.setOnMarkdownChange(onChange)
+      result.current.setOnUpdate(onUpdate)
       result.current.mount('block-1', 'hello')
     })
 
     const editor = result.current.editor as Editor
-    // Three keystrokes within the same frame — each fires an `update` event.
+    // Serializes during mount (parse only, no serialize) are irrelevant; reset
+    // so we measure ONLY the typing hot path.
+    mockedSerialize.mockClear()
+    onUpdate.mockClear()
+
+    // Three keystrokes — each fires one `update` event.
     act(() => {
       editor.commands.insertContent('a')
       editor.commands.insertContent('b')
       editor.commands.insertContent('c')
     })
 
-    // Nothing serialized until the frame boundary.
-    expect(onChange).not.toHaveBeenCalled()
+    // The signal fired SYNCHRONOUSLY once per update (no rAF coalescing) and
+    // carried NO argument — and, crucially, NOTHING was serialized on the way.
+    expect(onUpdate).toHaveBeenCalledTimes(3)
+    expect(onUpdate.mock.calls[0]).toHaveLength(0)
+    expect(mockedSerialize).not.toHaveBeenCalled()
 
-    // Flush: the burst collapsed to a single serialize of the latest document.
-    raf.flush()
-    expect(onChange).toHaveBeenCalledTimes(1)
-    expect(onChange.mock.calls[0]?.[0]).toContain('abc')
-
-    // A later update schedules a fresh frame (the pending ref was reset).
-    act(() => {
-      editor.commands.insertContent('d')
-    })
-    raf.flush()
-    expect(onChange).toHaveBeenCalledTimes(2)
-
-    raf.restore()
     editor.destroy()
     unmountHook()
   })
 
-  it('drops a queued serialize frame on unmount (no callback after teardown)', async () => {
-    const raf = stubRaf()
+  it('detaches the signal on unmount (no fire after teardown)', async () => {
     const { result, unmount: unmountHook } = await setup()
-    const onChange = vi.fn()
+    const onUpdate = vi.fn()
     act(() => {
-      result.current.setOnMarkdownChange(onChange)
+      result.current.setOnUpdate(onUpdate)
       result.current.mount('block-1', 'hello')
     })
 
@@ -2138,56 +2103,48 @@ describe('#1890 — per-frame serialize coalescing (renderHook)', () => {
     act(() => {
       editor.commands.insertContent('x')
     })
-    // A serialize frame is queued but not yet flushed.
-    expect(onChange).not.toHaveBeenCalled()
+    expect(onUpdate).toHaveBeenCalled()
+    onUpdate.mockClear()
 
-    // Unmounting cancels the pending frame...
+    // Unmount detaches the `update` listener...
     act(() => {
       result.current.unmount()
     })
-    // ...so flushing the queue never runs the deferred serialize.
-    raf.flush()
-    expect(onChange).not.toHaveBeenCalled()
+    // ...so further edits to the (now reset) editor emit no signal.
+    act(() => {
+      editor.commands.insertContent('y')
+    })
+    expect(onUpdate).not.toHaveBeenCalled()
 
-    raf.restore()
     editor.destroy()
     unmountHook()
   })
 
-  it('mount() drops a stale serialize frame queued before it (doc-swap race, no unmount)', async () => {
-    const raf = stubRaf()
+  it('does not signal for the outgoing block on a doc-swap mount (no unmount)', async () => {
     const { result, unmount: unmountHook } = await setup()
-    const onChange = vi.fn()
+    const onUpdate = vi.fn()
     act(() => {
-      result.current.setOnMarkdownChange(onChange)
+      result.current.setOnUpdate(onUpdate)
       result.current.mount('block-1', 'hello')
     })
 
     const editor = result.current.editor as Editor
-    // Type into block-1 so a serialize frame is queued but NOT yet flushed.
-    act(() => {
-      editor.commands.insertContent('z')
-    })
-    expect(onChange).not.toHaveBeenCalled()
+    onUpdate.mockClear()
 
     // Re-mount a different block WITHOUT a preceding unmount (the consumer can
-    // reach mount with activeBlockId stale/null). mount() must cancel the
-    // outgoing block's queued frame so it does not flush against the swapped-in
-    // document and emit a spurious change.
+    // reach mount with activeBlockId stale/null). mount() detaches the listener
+    // during the doc swap, so the swap's internal transactions emit no signal.
     act(() => {
       result.current.mount('block-2', 'world')
     })
-    raf.flush()
-    expect(onChange).not.toHaveBeenCalled()
+    expect(onUpdate).not.toHaveBeenCalled()
 
-    // Sanity: the new block still serializes normally on a real edit.
+    // Sanity: the new block still signals on a real edit.
     act(() => {
       editor.commands.insertContent('!')
     })
-    raf.flush()
-    expect(onChange).toHaveBeenCalledTimes(1)
+    expect(onUpdate).toHaveBeenCalledTimes(1)
 
-    raf.restore()
     editor.destroy()
     unmountHook()
   })

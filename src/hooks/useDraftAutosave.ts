@@ -1,5 +1,7 @@
-import { useEffect, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
+import type { RefObject } from 'react'
 
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { isPoolBusy, retryOnPoolBusy } from '@/lib/app-error'
 import { logger } from '@/lib/logger'
 import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
@@ -17,6 +19,13 @@ const DRAFT_MAX_LATENCY_MS = 5000
 
 /**
  * Autosave hook for block draft content.
+ *
+ * #2938 — driven by a change SIGNAL (`onContentChange`, called from the
+ * editor's `update` event via EditableBlock), NOT by a per-frame mirrored
+ * `liveContent` prop. The signal only (re)arms timers; the block's markdown is
+ * serialized ON DEMAND from the live roving editor (`rovingEditorRef`) at
+ * debounce-fire time and at every flush (unmount, background/close). This
+ * removes the per-keystroke serialize + React commit that taxed typing latency.
  *
  * Debounces `saveDraft` calls with a 2-second interval while the user is
  * typing. The persisted draft row is flushed (written as an `edit_block` op
@@ -56,24 +65,33 @@ const DRAFT_MAX_LATENCY_MS = 5000
  * silently rather than logging a misleading "saveDraft failed" warning
  * on every key release.
  */
-export function useDraftAutosave(blockId: string | null, content: string) {
+export function useDraftAutosave(
+  blockId: string | null,
+  rovingEditorRef: RefObject<RovingEditorHandle>,
+) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const blockIdRef = useRef(blockId)
   blockIdRef.current = blockId
-  // #770 gap 2 — the latest live editor content, mirrored into a ref so
-  // Effect B's unmount-while-focused cleanup can persist the most recent
-  // keystrokes BEFORE flushing. Without this, only the ≤2 s-stale debounced
-  // `saveDraft` row is flushed and any typing since the last debounce tick is
-  // lost on an unmount (page switch / journal day remount).
-  const contentRef = useRef(content)
-  contentRef.current = content
-  // #770 gap 3 — track the (blockId, content) Effect A last observed so it can
-  // distinguish a genuine "user cleared the text" transition (same block,
-  // non-empty → empty) from a block that merely STARTED empty (fresh focus /
-  // refocus, or a switch landing on an empty block). Updated INSIDE Effect A
-  // (never during render) so it stays consistent with that effect's run
-  // cadence and out of any dependency array.
-  const lastSeenRef = useRef<{ blockId: string | null; content: string }>({ blockId, content })
+  // #2938 — serialize the live editor ON DEMAND (only at debounce-fire / flush
+  // time), instead of consuming a per-frame mirrored `liveContent`. `readLive`
+  // reads the authoritative markdown from whatever the roving editor currently
+  // holds; callers guard block identity so a cross-block read never lands under
+  // the wrong id. `isEditorEmpty` is a CHEAP structural check (no serialize)
+  // used for the clear-detection transition (#770 gap 3).
+  const readLive = useCallback(
+    (): string => rovingEditorRef.current?.getMarkdown() ?? '',
+    [rovingEditorRef],
+  )
+  const isEditorEmpty = useCallback(
+    (): boolean => rovingEditorRef.current?.editor?.isEmpty ?? true,
+    [rovingEditorRef],
+  )
+  // #770 gap 3 — whether this block has been observed holding non-empty content
+  // during the current focus session, so `onContentChange` can distinguish a
+  // genuine "user cleared the text" transition (non-empty → empty) from a block
+  // that merely STARTED empty (fresh focus / refocus, or a switch landing on an
+  // empty block). Reset on every block change by the reset effect below.
+  const hadContentRef = useRef(false)
   const versionRef = useRef(0)
   // #1065 — per-block "discarded" markers. Set synchronously by
   // `discardDraft`, consulted by Effect B's cleanup to skip the flush, and
@@ -159,40 +177,49 @@ export function useDraftAutosave(blockId: string | null, content: string) {
         })
       })
   }
+  // Mirror `discardDraftFor` into a ref so the memoized `onContentChange` can
+  // call the latest version without listing it as a dep (which would churn its
+  // identity every render and force EditableBlock to re-register the signal).
+  // `discardDraftFor` only touches refs + stable imports, so this is safe.
+  const discardDraftForRef = useRef(discardDraftFor)
+  discardDraftForRef.current = discardDraftFor
 
-  // Effect A — debounced saveDraft. Re-runs on every content change (i.e.
-  // every keystroke); its cleanup ONLY clears the pending timer. It must
-  // never flush: flushing here would fire one write-lock-acquiring
+  // #2938 — the debounced-saveDraft driver, formerly "Effect A" (keyed on
+  // `[blockId, content]`), is now imperative: `onContentChange` is called from
+  // the editor's `update` change SIGNAL (via EditableBlock) on every keystroke.
+  // It only (re)arms a timer — NO per-keystroke serialize, NO React commit. The
+  // actual markdown is serialized ON DEMAND (`readLive`) when the timer fires.
+  //
+  // It must never flush: flushing here would fire one write-lock-acquiring
   // `flush_draft` IPC per keystroke (#715).
-  useEffect(() => {
-    // Snapshot what the previous Effect A run observed, then record this run's
-    // (blockId, content) for the next one. Done first so every early-return
-    // path below still advances the marker.
-    const lastSeen = lastSeenRef.current
-    lastSeenRef.current = { blockId, content }
-
-    // A block change starts a fresh typing run for the max-latency cap.
-    if (lastSeen.blockId !== blockId) pendingSinceRef.current = null
-
-    if (!blockId) return
+  const onContentChange = useCallback(() => {
+    const id = blockIdRef.current
+    if (!id) return
 
     // #770 gap 3 — emptying a block's text must NOT leave the previous draft
-    // row behind. The early-return on empty content used to strand a stale
-    // row that a hard kill would resurrect as old text at boot
-    // (`flush_all_drafts` → `edit_block`). User intent on emptying is "this
-    // block is now blank", so treat a genuine clear as a discard: drop the row
-    // and mark the block discarded so the unmount flush is suppressed too.
-    if (!content) {
-      // Discard ONLY on a genuine clear: the SAME block went from non-empty
-      // to empty. A block that merely STARTED empty (fresh focus / refocus, or
-      // a block→block switch landing on an empty block) must not discard —
-      // there is no user-authored row to drop, and firing a discard there
-      // would set the #1065 marker and wrongly suppress a later unmount flush
-      // (regressing #715's refocus test).
-      const userCleared = lastSeen.blockId === blockId && lastSeen.content !== ''
-      if (userCleared) discardDraftFor(blockId)
+    // row behind (a hard kill would resurrect it as old text at boot via
+    // `flush_all_drafts` → `edit_block`). Detect the clear via the CHEAP
+    // structural `isEditorEmpty` check (no serialize) so this stays off the
+    // per-keystroke hot path.
+    if (isEditorEmpty()) {
+      // Discard ONLY on a genuine clear: this block was observed non-empty and
+      // is now empty. A block that merely STARTED empty (fresh focus / refocus,
+      // or a switch landing on an empty block) must not discard — there is no
+      // user-authored row to drop, and firing a discard there would set the
+      // #1065 marker and wrongly suppress a later unmount flush (regressing
+      // #715's refocus test). `discardDraftFor` cancels the pending timer and
+      // resets the max-latency clock.
+      if (hadContentRef.current) {
+        hadContentRef.current = false
+        discardDraftForRef.current(id)
+      } else {
+        // Nothing to persist; drop any pending save for the now-empty block.
+        if (timerRef.current) clearTimeout(timerRef.current)
+        pendingSinceRef.current = null
+      }
       return
     }
+    hadContentRef.current = true
 
     const capturedVersion = ++versionRef.current
 
@@ -203,17 +230,26 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     if (pendingSinceRef.current === null) pendingSinceRef.current = Date.now()
     const overdue = Date.now() - pendingSinceRef.current >= DRAFT_MAX_LATENCY_MS
 
+    if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(
       () => {
         if (versionRef.current !== capturedVersion) return // stale — discardDraft was called
         pendingSinceRef.current = null
+        // #2938 — serialize the live editor at FIRE time. Guard block identity:
+        // if the roving editor switched away between arming and firing, the
+        // live doc holds another block's content — skip rather than persist it
+        // under `id` (blur/persistUnmount own the outgoing block's save).
+        const re = rovingEditorRef.current
+        if (!re || re.activeBlockId !== id) return
+        const md = readLive()
+        if (!md) return
         // #1065 — a genuine fresh save for this block clears any prior
         // "discarded" marker so a real edit made after a discard can flush.
-        discardedRef.current.delete(blockId)
-        retryOnPoolBusy(() => saveDraft(blockId, content), {
+        discardedRef.current.delete(id)
+        retryOnPoolBusy(() => saveDraft(id, md), {
           onRetry: (attempt) => {
             logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
-              blockId,
+              blockId: id,
               attempt,
             })
           },
@@ -225,16 +261,24 @@ export function useDraftAutosave(blockId: string | null, content: string) {
           const label = isPoolBusy(err)
             ? 'saveDraft exhausted pool_busy retries'
             : 'saveDraft failed'
-          logger.warn('useDraftAutosave', label, { blockId }, err)
+          logger.warn('useDraftAutosave', label, { blockId: id }, err)
         })
       },
       overdue ? 0 : DRAFT_DEBOUNCE_MS,
     )
+  }, [isEditorEmpty, readLive, rovingEditorRef])
 
+  // #2938 — per-block reset. A block change (or unmount) starts a fresh typing
+  // run for the max-latency cap and clear-detection, and cancels any pending
+  // debounce so it never fires against a superseded block. (Formerly folded
+  // into Effect A's per-render bookkeeping + cleanup.)
+  useEffect(() => {
+    pendingSinceRef.current = null
+    hadContentRef.current = false
     return () => {
       if (timerRef.current) clearTimeout(timerRef.current)
     }
-  }, [blockId, content])
+  }, [blockId])
 
   // Effect B — flush on block change / unmount only. Keyed on `blockId`
   // alone so content changes can never re-trigger it (#715).
@@ -270,19 +314,19 @@ export function useDraftAutosave(blockId: string | null, content: string) {
       // Effect B fires its cleanup on two paths: a block switch (a re-render
       // moved `blockId` to another id) and an unmount while focused (no
       // re-render — `blockIdRef.current` still equals this closure's
-      // `blockId`). `contentRef.current` mirrors the CURRENT render's content,
-      // so on a block switch it has ALREADY advanced to the NEW block's text;
-      // saving it into the OLD block's draft row here would corrupt the old
-      // block (it would be flushed as `edit_block(oldBlock, newBlockText)`).
-      // The block-switch path's flush must therefore read the existing stored
-      // row untouched — the editor content for the old block was already
-      // persisted by `useEditorBlur`/`persistUnmount`'s `edit_block` on the
-      // way out. We only do the final save when `blockIdRef.current === blockId`
-      // (the unmount path), where `contentRef.current` genuinely is this
-      // block's latest live content.
+      // `blockId`). #2938 — on a block switch the roving editor has ALREADY
+      // re-mounted the NEW block, so serializing it here (`readLive()`) would
+      // yield the NEW block's text and corrupt the OLD block's row (flushing it
+      // as `edit_block(oldBlock, newBlockText)`). The block-switch path's flush
+      // must therefore read the existing stored row untouched — the editor
+      // content for the old block was already persisted by
+      // `useEditorBlur`/`persistUnmount`'s `edit_block` on the way out. We only
+      // do the final live-serialize save when `blockIdRef.current === blockId`
+      // (the unmount path), where the editor genuinely still holds this block's
+      // latest content.
       //
       // On the unmount path the debounced `saveDraft` row may be up to ~2 s
-      // behind the editor, so we persist `contentRef.current` AND ensure it
+      // behind the editor, so we persist the LATEST live content AND ensure it
       // lands in `block_drafts` BEFORE `flush_draft_inner`'s `BEGIN IMMEDIATE`
       // reads the row. The write pool is `max_connections(2)`, NOT a single
       // serialized writer, and Tauri v2 spawns each command as an independent
@@ -293,28 +337,34 @@ export function useDraftAutosave(blockId: string | null, content: string) {
       // the flush reads the OLD row. So we CHAIN: only dispatch the flush once
       // the save's IPC promise has resolved (the autocommit INSERT committed).
       //
-      // Empty content is handled by Effect A's discard path (#770 gap 3) —
-      // which sets the discarded marker, so we never reach here with empty
-      // content for that block.
+      // #2938 — the "latest live content" is now serialized ON DEMAND from the
+      // roving editor at THIS cleanup moment (children unmount before their
+      // ancestor that owns `useEditor`, so the editor is still alive here),
+      // rather than read from a per-frame mirrored ref. Restricted to the
+      // unmount-while-focused path (`blockIdRef.current === blockId`): there the
+      // editor still holds THIS block's document. On a block switch `blockIdRef`
+      // has already advanced and the editor may hold the NEW block's doc, so we
+      // must flush the OLD block's stored row untouched (reading the live editor
+      // would corrupt it as `edit_block(oldBlock, newBlockText)`).
+      //
+      // Empty content is handled by `onContentChange`'s discard path (#770 gap
+      // 3) — which sets the discarded marker, so we never reach here with empty
+      // content for that block (and `readLive()` returning '' also short-circuits
+      // the save below).
       const isUnmountWhileFocused = blockIdRef.current === blockId
-      const latest = contentRef.current
-      const ensureSaved =
-        isUnmountWhileFocused && latest
-          ? retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
-              logger.warn(
-                'useDraftAutosave',
-                'final saveDraft before flush failed',
-                { blockId },
-                err,
-              )
-            })
-          : Promise.resolve()
+      const latest = isUnmountWhileFocused ? readLive() : ''
+      const ensureSaved = latest
+        ? retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
+            logger.warn('useDraftAutosave', 'final saveDraft before flush failed', { blockId }, err)
+          })
+        : Promise.resolve()
       void ensureSaved.then(() =>
         retryOnPoolBusy(() => flushDraft(blockId)).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'flushDraft failed', { blockId }, err)
         }),
       )
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- #715/#770 gap 2: keyed on `blockId` ALONE so content changes can never re-trigger the flush. `readLive` is referentially stable (memoized on the stable `rovingEditorRef`), so listing it would not change re-run behavior; it is serialized on demand at cleanup time.
   }, [blockId])
 
   // Effect C — background/close flush of the live content. The debounced
@@ -329,7 +379,13 @@ export function useDraftAutosave(blockId: string | null, content: string) {
   useEffect(() => {
     if (!blockId) return
     const persistLatest = () => {
-      const latest = contentRef.current
+      // #2938 — serialize the live editor ON DEMAND at the moment the page is
+      // hidden / unloading. Guard block identity: only persist when the roving
+      // editor is still mounted on THIS block, otherwise the live document
+      // belongs to another block and would be saved under the wrong id.
+      const re = rovingEditorRef.current
+      if (!re || re.activeBlockId !== blockId) return
+      const latest = readLive()
       if (!latest) return
       retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
         logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
@@ -344,6 +400,7 @@ export function useDraftAutosave(blockId: string | null, content: string) {
       document.removeEventListener('visibilitychange', onVisibilityChange)
       window.removeEventListener('pagehide', persistLatest)
     }
+    // oxlint-disable-next-line react-hooks/exhaustive-deps -- keyed on `blockId` ALONE; `rovingEditorRef` (stable ref) and `readLive` (memoized on it) are read on demand inside `persistLatest` and are referentially stable, so listing them would not change re-run behavior.
   }, [blockId])
 
   /**
@@ -355,5 +412,5 @@ export function useDraftAutosave(blockId: string | null, content: string) {
     if (blockIdRef.current) discardDraftFor(blockIdRef.current, saveOutcome, failedContent)
   }
 
-  return { discardDraft }
+  return { discardDraft, onContentChange }
 }

@@ -59,7 +59,7 @@ function makeHandle(blockId: string, content: string): RovingEditorHandle {
     getMarkdown: vi.fn(() => content),
     splitAtCaret: vi.fn(() => null),
     originalMarkdown: '',
-    setOnMarkdownChange: vi.fn(),
+    setOnUpdate: vi.fn(),
     markCommitted: vi.fn(),
   }
 }

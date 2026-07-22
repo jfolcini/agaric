@@ -374,11 +374,15 @@ export interface RovingEditorHandle {
   /** The markdown string that was passed to `mount()`. */
   originalMarkdown: string
   /**
-   * Register a callback to be invoked on every TipTap `update` event while
-   * the editor is mounted. Pass `null` to unregister.
-   * The callback receives the current markdown string.
+   * Register a callback invoked on every TipTap `update` event while the editor
+   * is mounted, as a pure change SIGNAL (no arguments). Pass `null` to
+   * unregister. #2938 — the callback receives NO serialized markdown: it only
+   * signals that the document changed so consumers can (re)arm their debounce
+   * timers and serialize the live editor on demand at fire time (via
+   * `getMarkdown()`), instead of paying a per-keystroke serialize + React
+   * commit.
    */
-  setOnMarkdownChange: (cb: ((md: string) => void) | null) => void
+  setOnUpdate: (cb: (() => void) | null) => void
   /**
    * #2600 — rebase the "original markdown" baseline to `markdown` WITHOUT
    * unmounting. After a mid-typing debounced commit persists the current
@@ -428,7 +432,12 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
 
   const activeBlockIdRef = useRef<string | null>(null)
   const originalMarkdownRef = useRef<string>('')
-  const onMarkdownChangeRef = useRef<((md: string) => void) | null>(null)
+  // #2938 — a pure change SIGNAL fired on every TipTap `update` while mounted.
+  // It carries NO serialized markdown: serializing per keystroke (previously
+  // once per animation frame) is the typing-latency tax this issue removes.
+  // Consumers (draft-autosave, content-commit) merely (re)arm their debounce
+  // timers here and serialize the live editor ON DEMAND at fire/flush time.
+  const onUpdateRef = useRef<(() => void) | null>(null)
 
   // Refs to hold latest callbacks — extensions capture these at creation
   // time but the refs always point to the current versions, preventing
@@ -467,13 +476,6 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   searchSlashCommandsRef.current = searchSlashCommands
   const searchPropertyKeysRef = useRef(searchPropertyKeys)
   searchPropertyKeysRef.current = searchPropertyKeys
-
-  // #1890 — coalesce the per-keystroke markdown serialize (the one FE perf
-  // path the React Compiler can't memoize, since it runs in an editor update
-  // handler, not render). Holds the id of a scheduled animation frame, or null
-  // when none is pending. Cancelled on teardown so a deferred serialize never
-  // fires against a torn-down or doc-swapped editor.
-  const pendingSerializeFrameRef = useRef<number | null>(null)
 
   // #726 — build the extensions array EXACTLY ONCE and keep its identity stable
   // across renders. `@tiptap/react`'s `useEditor` (called below with the default
@@ -612,58 +614,37 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     [],
   )
 
-  // Fires on every TipTap `update` while mounted. Serializes the current
-  // document to markdown and forwards it to the registered listener (if any)
-  // — replaces the old 500ms polling interval in EditableBlock (#536).
-  // #1890 — serialize the active block once per animation frame instead of on
-  // every keystroke. Rapid typing fires many `update` events within one frame;
-  // we coalesce them into a single serialize that reads the latest document at
-  // flush time. The frame is cancelled on teardown (see `cancelPendingSerialize`).
+  // Fires on every TipTap `update` while mounted — replaces the old 500ms
+  // polling interval in EditableBlock (#536).
+  //
+  // #2938 — this is now a PURE SIGNAL. It does NOT serialize the document and
+  // does NOT touch React state; it only notifies the registered listener that
+  // "something changed" so that listener can (re)arm its debounce timers. The
+  // actual `getJSON()` + `serialize(...)` happens ON DEMAND when a debounce
+  // timer (draft-autosave 2000ms / content-commit 700ms) or a flush fires,
+  // reading the live editor at that moment. Because the handler performs no
+  // React commit, it cannot re-enter ProseMirror's dispatch via the
+  // `DOMObserver` (the #1489 "setState inside dispatch → render → DOM write →
+  // dispatch" loop) — there is no render here to begin with.
   const handleEditorUpdate = useCallback(() => {
-    if (pendingSerializeFrameRef.current !== null) return
-    pendingSerializeFrameRef.current = requestAnimationFrame(() => {
-      pendingSerializeFrameRef.current = null
-      const cb = onMarkdownChangeRef.current
-      if (!cb || !editor) return
-      const json = editor.getJSON() as DocNode
-      cb(serialize(json, notifyUnknownNodeTypeToast))
-    })
-  }, [editor])
-
-  const cancelPendingSerialize = useCallback(() => {
-    if (pendingSerializeFrameRef.current !== null) {
-      cancelAnimationFrame(pendingSerializeFrameRef.current)
-      pendingSerializeFrameRef.current = null
-    }
+    onUpdateRef.current?.()
   }, [])
-
-  // #1890 — drop any queued serialize frame when the host component unmounts,
-  // so the coalesced callback never runs after teardown.
-  useEffect(() => cancelPendingSerialize, [cancelPendingSerialize])
 
   const mount = useCallback(
     (blockId: string, markdown: string, opts?: MountOptions) => {
       if (!editor) return
 
-      // #1890 — defensively drop any serialize frame still queued from a prior
-      // session before swapping in the new block's document. `unmount` already
-      // cancels on the normal block→block path, but `mount` can be reached
-      // without a preceding `unmount` (e.g. the consumer skips unmount when
-      // `activeBlockId` is null). Without this, a stale frame would flush AFTER
-      // `replaceDocSilently` below and serialize the NEW doc — a spurious change
-      // notification for a block the user never edited. Cancelling here makes
-      // mount self-sufficient instead of relying on every caller routing
-      // through unmount first.
-      //
-      // Detach the update listener too: it is re-attached at the END of mount.
-      // If a prior mount left it attached (the no-unmount path), mount's own
-      // `replaceDocSilently` / focus dispatches below would feed
-      // `handleEditorUpdate` and schedule a serialize of the just-swapped-in
-      // document — and `editor.on` would stack a SECOND listener copy. `off` is
-      // idempotent, so this is a no-op on the normal unmount→mount path where
-      // unmount already detached it.
+      // Detach the update listener before swapping in the new block's document:
+      // it is re-attached at the END of mount. If a prior mount left it attached
+      // (the no-unmount path — the consumer can reach mount without a preceding
+      // unmount when `activeBlockId` is null), mount's own `replaceDocSilently`
+      // / focus dispatches below would fire `handleEditorUpdate` and signal a
+      // change for the just-swapped-in document — and `editor.on` would stack a
+      // SECOND listener copy. `off` is idempotent, so this is a no-op on the
+      // normal unmount→mount path where unmount already detached it. (#2938 —
+      // the signal no longer serializes, so there is no queued serialize frame
+      // to cancel here anymore.)
       editor.off('update', handleEditorUpdate)
-      cancelPendingSerialize()
 
       // B-77 fix layer 2: Exit all suggestion plugins BEFORE replacing the
       // document so setMeta({ exit: true }) fires while decorations still
@@ -762,18 +743,16 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       editor.commands.focus(opts?.cursorPlacement ?? null)
       editor.on('update', handleEditorUpdate)
     },
-    [editor, handleEditorUpdate, cancelPendingSerialize],
+    [editor, handleEditorUpdate],
   )
 
   const unmount = useCallback((): string | null => {
     if (!editor) return null
     const unmountBlockId = activeBlockIdRef.current
 
-    // Detach the markdown-change listener before wiping state, and drop any
-    // serialize frame still queued for the outgoing block (#1890) — otherwise
-    // it would fire against the about-to-be-replaced document.
+    // Detach the update-signal listener before wiping state so it cannot fire
+    // against the about-to-be-replaced document.
     editor.off('update', handleEditorUpdate)
-    cancelPendingSerialize()
 
     // B-77 fix layer 4: Exit all suggestion plugins before wiping the
     // document.  Without this, blur → unmount → replaceDocSilently
@@ -845,7 +824,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       changed: delta?.changed ?? false,
     })
     return delta?.changed ? delta.newMarkdown : null
-  }, [editor, handleEditorUpdate, cancelPendingSerialize])
+  }, [editor, handleEditorUpdate])
 
   const getMarkdown = useCallback((): string | null => {
     if (!editor) return null
@@ -879,8 +858,8 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
   // Without this, every parent re-render produced a fresh handle object
   // that propagated to `SortableBlockWrapper` and defeated its `React.memo`
   // (design-system-perf-review-2026-05-09.md item 5.)
-  const setOnMarkdownChange = useCallback((cb: ((md: string) => void) | null) => {
-    onMarkdownChangeRef.current = cb
+  const setOnUpdate = useCallback((cb: (() => void) | null) => {
+    onUpdateRef.current = cb
   }, [])
 
   // #2600 — rebase the delta baseline after a mid-typing debounced commit.
@@ -905,9 +884,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       get originalMarkdown() {
         return originalMarkdownRef.current
       },
-      setOnMarkdownChange,
+      setOnUpdate,
       markCommitted,
     }),
-    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnMarkdownChange, markCommitted],
+    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnUpdate, markCommitted],
   )
 }

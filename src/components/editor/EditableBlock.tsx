@@ -289,80 +289,53 @@ function EditableBlockInner({
   const splitBlockRef = useRef(splitBlock)
   splitBlockRef.current = splitBlock
 
-  // ── Draft autosave: subscribe to TipTap update events while focused ──
-  const [liveContent, setLiveContent] = useState('')
-
-  useEffect(() => {
-    if (!isFocused) {
-      setLiveContent('')
-      return
-    }
-    // #1489 — coalesce the markdown-change → React re-render onto the next
-    // animation frame instead of calling `setLiveContent` synchronously inside
-    // ProseMirror's transaction dispatch.
-    //
-    // The serializing callback fires from the editor's `update` event, which is
-    // emitted SYNCHRONOUSLY from `EditorView.dispatch`. Calling `setLiveContent`
-    // there re-renders this component (and the sibling toolbars that read the
-    // editor) inside the same dispatch flush; that React commit writes back to
-    // the editor's contenteditable DOM, which ProseMirror's `DOMObserver`
-    // re-reads as a change and turns into ANOTHER `dispatch` → `update` →
-    // `setLiveContent` … an infinite "Maximum update depth exceeded" loop. A
-    // long single-line URL (or a `[text](url)` link) reliably triggers it; short
-    // content settles before tipping the limit. A microtask is NOT enough — the
-    // `DOMObserver` flushes on the same microtask queue — so we defer to the
-    // next animation frame, which lets the current dispatch + DOM read fully
-    // settle before the re-render. Coalescing keeps only the most recent
-    // markdown; autosave still receives it (one frame later) so behavior is
-    // unchanged for the user. When `requestAnimationFrame` is unavailable
-    // (jsdom without the polyfill — there is no DOMObserver loop there) we apply
-    // synchronously so unit tests observe the value immediately.
-    let rafId: number | null = null
-    let pending: string | null = null
-    const hasRaf = typeof requestAnimationFrame === 'function'
-    const flush = () => {
-      rafId = null
-      const next = pending
-      pending = null
-      // Re-check identity at flush time: a block switch may have landed between
-      // the editor `update` and this frame.
-      if (next !== null && rovingEditorRef.current.activeBlockId === blockId) {
-        setLiveContent(next)
-      }
-    }
-    // Register whenever focused — do NOT gate on `activeBlockId === blockId`
-    // here. On a block→block focus switch React runs this effect before the
-    // auto-mount effect (:179), so `activeBlockId` still points at the OLD
-    // block and the newly-focused block would never register its callback
-    // (silent draft-autosave loss, #1015). Block identity is enforced inside
-    // the callback instead, so late/cross-block fires are ignored.
-    rovingEditorRef.current.setOnMarkdownChange((md) => {
-      if (rovingEditorRef.current.activeBlockId !== blockId) return
-      if (!hasRaf) {
-        setLiveContent(md)
-        return
-      }
-      pending = md
-      if (rafId === null) rafId = requestAnimationFrame(flush)
-    })
-    return () => {
-      rovingEditorRef.current.setOnMarkdownChange(null)
-      pending = null
-      if (rafId !== null && typeof cancelAnimationFrame === 'function') {
-        cancelAnimationFrame(rafId)
-      }
-      rafId = null
-    }
-  }, [isFocused, blockId])
-
-  const { discardDraft } = useDraftAutosave(isFocused ? blockId : null, liveContent)
+  // ── Draft autosave + content commit: driven by the editor update signal ──
+  // #2938 — both are armed by a change SIGNAL from the editor's `update` event
+  // (wired below), NOT by a per-frame mirrored `liveContent` React state. The
+  // signal only (re)arms the debounce timers; each serializes the live editor
+  // ON DEMAND when it fires or flushes. This removes the per-keystroke
+  // serialize + React commit that taxed typing latency.
+  const { discardDraft, onContentChange } = useDraftAutosave(
+    isFocused ? blockId : null,
+    rovingEditorRef,
+  )
 
   // #2600 — commit content to the op log on a short idle debounce (in addition
   // to blur) so concurrent same-block edits interleave through the LoroText
   // char-CRDT instead of collapsing to "later blur wins". Selection-safe: the
   // editor is uncontrolled after mount, so the store update this dispatches
   // never re-feeds the live editor or perturbs the caret.
-  useDebouncedContentCommit({ isFocused, blockId, liveContent, rovingEditorRef, edit })
+  const { schedule: scheduleContentCommit } = useDebouncedContentCommit({
+    isFocused,
+    blockId,
+    rovingEditorRef,
+    edit,
+  })
+
+  // #2938 — subscribe to the editor's `update` change signal while focused. The
+  // callback fires SYNCHRONOUSLY inside ProseMirror's dispatch, but it writes no
+  // React state and does no serialize — it only (re)arms the two debounce timers
+  // via refs. With no render inside dispatch, the #1489 "setState → DOMObserver
+  // → dispatch" feedback loop cannot form (the previous rAF-coalesced
+  // `setLiveContent` existed solely to break that loop; there is nothing to
+  // break now).
+  useEffect(() => {
+    if (!isFocused) return
+    // Register whenever focused — do NOT gate on `activeBlockId === blockId`
+    // here. On a block→block focus switch React runs this effect before the
+    // auto-mount effect, so `activeBlockId` still points at the OLD block and
+    // the newly-focused block would never register its callback (silent
+    // draft-autosave loss, #1015). Block identity is enforced inside the
+    // callback instead, so late/cross-block fires are ignored.
+    rovingEditorRef.current.setOnUpdate(() => {
+      if (rovingEditorRef.current.activeBlockId !== blockId) return
+      onContentChange()
+      scheduleContentCommit()
+    })
+    return () => {
+      rovingEditorRef.current.setOnUpdate(null)
+    }
+  }, [isFocused, blockId, onContentChange, scheduleContentCommit])
 
   // Scroll the editor wrapper into view when the block becomes focused, and
   // keep its caret above the on-screen soft keyboard while focused (#917).

@@ -142,18 +142,20 @@ function makeRovingEditor(
     unmount: ReturnType<typeof vi.fn>
     getMarkdown: ReturnType<typeof vi.fn>
     originalMarkdown: string
-    setOnMarkdownChange: ReturnType<typeof vi.fn>
+    setOnUpdate: ReturnType<typeof vi.fn>
     markCommitted: ReturnType<typeof vi.fn>
   }> = {},
 ) {
   return {
-    editor: 'editor' in overrides ? overrides.editor : { fake: true },
+    // #2938 — a non-empty editor by default (`isEmpty: false`) so a fired update
+    // signal arms the draft debounce; tests that exercise emptiness override it.
+    editor: 'editor' in overrides ? overrides.editor : { fake: true, isEmpty: false },
     mount: overrides.mount ?? vi.fn(),
     unmount: overrides.unmount ?? vi.fn(() => null),
     activeBlockId: overrides.activeBlockId ?? null,
     getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),
     originalMarkdown: overrides.originalMarkdown ?? 'existing content',
-    setOnMarkdownChange: overrides.setOnMarkdownChange ?? vi.fn(),
+    setOnUpdate: overrides.setOnUpdate ?? vi.fn(),
     markCommitted: overrides.markCommitted ?? vi.fn(),
   }
 }
@@ -169,29 +171,6 @@ function makeRovingEditor(
  */
 function getBlockEditorWrapper(): HTMLElement {
   return screen.getByTestId('block-editor')
-}
-
-/**
- * #1489 — EditableBlock coalesces its `setLiveContent` onto an animation frame
- * to break a real-browser ProseMirror DOMObserver feedback loop. jsdom has no
- * such loop, so for tests that drive the markdown-change callback we stub `rAF`
- * to run synchronously, letting `liveContent` (and the autosave it feeds) land
- * immediately — exactly as before the coalescing. Returns a restore fn. NOTE:
- * the fake-timer setups in these blocks deliberately exclude `rAF` from
- * `toFake`, so this synchronous stub stays in force under fake timers.
- */
-function stubSyncRaf(): () => void {
-  const origRaf = globalThis.requestAnimationFrame
-  const origCancel = globalThis.cancelAnimationFrame
-  globalThis.requestAnimationFrame = ((cb: FrameRequestCallback): number => {
-    cb(0)
-    return 0
-  }) as typeof globalThis.requestAnimationFrame
-  globalThis.cancelAnimationFrame = (() => {}) as typeof globalThis.cancelAnimationFrame
-  return () => {
-    globalThis.requestAnimationFrame = origRaf
-    globalThis.cancelAnimationFrame = origCancel
-  }
 }
 
 describe('EditableBlock', () => {
@@ -1422,14 +1401,15 @@ describe('EditableBlock', () => {
       vi.useFakeTimers({
         toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       })
-      const restoreRaf = stubSyncRaf()
       mockSaveDraft.mockRejectedValueOnce(new Error('IPC failure'))
 
-      let onChange: ((md: string) => void) | null = null
+      let onUpdate: (() => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-          onChange = cb
+        // #2938 — the draft is serialized on demand at fire time via getMarkdown.
+        getMarkdown: vi.fn(() => 'typed content'),
+        setOnUpdate: vi.fn((cb: (() => void) | null) => {
+          onUpdate = cb
         }),
       })
 
@@ -1437,9 +1417,9 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
-      // Fire an update so liveContent is set
+      // Fire an update SIGNAL so the draft debounce arms.
       await act(async () => {
-        onChange?.('typed content')
+        onUpdate?.()
       })
 
       // Advance past the 2s debounce — saveDraft fires and rejects
@@ -1450,7 +1430,6 @@ describe('EditableBlock', () => {
       // saveDraft was called — rejection caught by hook's .catch()
       expect(mockSaveDraft).toHaveBeenCalledWith('B1', 'typed content')
 
-      restoreRaf()
       vi.useRealTimers()
     })
 
@@ -1479,14 +1458,15 @@ describe('EditableBlock', () => {
       vi.useFakeTimers({
         toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       })
-      const restoreRaf = stubSyncRaf()
       mockFlushDraft.mockRejectedValueOnce(new Error('IPC failure'))
 
-      let onChange: ((md: string) => void) | null = null
+      let onUpdate: (() => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-          onChange = cb
+        // #2938 — unmount cleanup serializes the live editor on demand.
+        getMarkdown: vi.fn(() => 'unsaved'),
+        setOnUpdate: vi.fn((cb: (() => void) | null) => {
+          onUpdate = cb
         }),
       })
 
@@ -1494,9 +1474,9 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
-      // Fire an update so liveContent is set
+      // Fire an update SIGNAL so the draft debounce arms.
       await act(async () => {
-        onChange?.('unsaved')
+        onUpdate?.()
       })
 
       // Unmount triggers cleanup — flushDraft fires and rejects.
@@ -1511,7 +1491,6 @@ describe('EditableBlock', () => {
 
       expect(mockFlushDraft).toHaveBeenCalledWith('B1')
 
-      restoreRaf()
       vi.useRealTimers()
     })
   })
@@ -1519,27 +1498,25 @@ describe('EditableBlock', () => {
   // ── F-18: Draft autosave integration ──────────────────────────────
 
   describe('draft autosave', () => {
-    let restoreRaf: () => void
     beforeEach(() => {
       vi.useFakeTimers({
         toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       })
-      restoreRaf = stubSyncRaf()
     })
 
     afterEach(() => {
-      restoreRaf()
       vi.useRealTimers()
     })
 
     it('calls saveDraft after 2s of editing', async () => {
-      // Capture the markdown-change callback the component registers (#536:
-      // event-driven via TipTap onUpdate instead of a 500ms poll).
-      let onChange: ((md: string) => void) | null = null
+      // #2938 — capture the update SIGNAL (no markdown arg); the draft is
+      // serialized on demand from getMarkdown when the debounce fires.
+      let onUpdate: (() => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-          onChange = cb
+        getMarkdown: vi.fn(() => 'typed content'),
+        setOnUpdate: vi.fn((cb: (() => void) | null) => {
+          onUpdate = cb
         }),
       })
 
@@ -1547,9 +1524,9 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
-      // Simulate a TipTap update firing with new content.
+      // Simulate a TipTap update firing.
       await act(async () => {
-        onChange?.('typed content')
+        onUpdate?.()
       })
 
       // Now advance 2s for the debounce in useDraftAutosave to fire
@@ -1587,11 +1564,12 @@ describe('EditableBlock', () => {
     })
 
     it('flushes draft on unmount without blur', async () => {
-      let onChange: ((md: string) => void) | null = null
+      let onUpdate: (() => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'B1',
-        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-          onChange = cb
+        getMarkdown: vi.fn(() => 'unsaved content'),
+        setOnUpdate: vi.fn((cb: (() => void) | null) => {
+          onUpdate = cb
         }),
       })
 
@@ -1599,9 +1577,9 @@ describe('EditableBlock', () => {
         <EditableBlock blockId="B1" content="original" isFocused rovingEditor={roving as never} />,
       )
 
-      // Fire an update so liveContent is set
+      // Fire an update SIGNAL so the draft debounce arms.
       await act(async () => {
-        onChange?.('unsaved content')
+        onUpdate?.()
       })
 
       // Unmount without blur — useDraftAutosave cleanup calls flushDraft.
@@ -1626,16 +1604,17 @@ describe('EditableBlock', () => {
     // registration on the newly-focused block, silently disabling its draft
     // autosave. We model that exact moment by rendering a focused block whose
     // `activeBlockId` reports the previous block.
-    it('registers the markdown-change callback even when activeBlockId still points at the old block (#1015)', async () => {
-      let onChange: ((md: string) => void) | null = null
-      const mockSetOnMarkdownChange = vi.fn((cb: ((md: string) => void) | null) => {
-        if (cb) onChange = cb
+    it('registers the update callback even when activeBlockId still points at the old block (#1015)', async () => {
+      let onUpdate: (() => void) | null = null
+      const mockSetOnUpdate = vi.fn((cb: (() => void) | null) => {
+        if (cb) onUpdate = cb
       })
       const roving = makeRovingEditor({
         // The destination block is focused, but the roving editor has not yet
         // re-mounted — activeBlockId is still the previously-focused block.
         activeBlockId: 'OLD_BLOCK',
-        setOnMarkdownChange: mockSetOnMarkdownChange,
+        getMarkdown: vi.fn(() => 'typed on new block'),
+        setOnUpdate: mockSetOnUpdate,
       })
 
       render(
@@ -1648,13 +1627,13 @@ describe('EditableBlock', () => {
       )
 
       // Regression: with the old early-return guard this was never called.
-      expect(mockSetOnMarkdownChange).toHaveBeenCalled()
-      expect(onChange).toBeTypeOf('function')
+      expect(mockSetOnUpdate).toHaveBeenCalled()
+      expect(onUpdate).toBeTypeOf('function')
 
       // Once the editor actually mounts on the new block, edits autosave.
       roving.activeBlockId = 'NEW_BLOCK'
       await act(async () => {
-        onChange?.('typed on new block')
+        onUpdate?.()
       })
       await act(async () => {
         vi.advanceTimersByTime(2000)
@@ -1662,16 +1641,16 @@ describe('EditableBlock', () => {
       expect(mockSaveDraft).toHaveBeenCalledWith('NEW_BLOCK', 'typed on new block')
     })
 
-    // The identity check now lives inside the callback: a markdown-change
-    // event that arrives while activeBlockId still reports a different block
-    // must be ignored, so it can't write the new block's keystrokes under a
-    // stale id.
-    it('ignores markdown-change events while activeBlockId does not match the block (#1015)', async () => {
-      let onChange: ((md: string) => void) | null = null
+    // The identity check now lives inside the callback: an update signal that
+    // arrives while activeBlockId still reports a different block must be
+    // ignored, so it can't arm this block's autosave for another block's edits.
+    it('ignores update signals while activeBlockId does not match the block (#1015)', async () => {
+      let onUpdate: (() => void) | null = null
       const roving = makeRovingEditor({
         activeBlockId: 'OLD_BLOCK',
-        setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-          if (cb) onChange = cb
+        getMarkdown: vi.fn(() => 'stale fire'),
+        setOnUpdate: vi.fn((cb: (() => void) | null) => {
+          if (cb) onUpdate = cb
         }),
       })
 
@@ -1684,9 +1663,9 @@ describe('EditableBlock', () => {
         />,
       )
 
-      // Event fires before the mount swaps activeBlockId → must be dropped.
+      // Signal fires before the mount swaps activeBlockId → must be dropped.
       await act(async () => {
-        onChange?.('stale fire')
+        onUpdate?.()
       })
       await act(async () => {
         vi.advanceTimersByTime(2000)
@@ -1695,59 +1674,35 @@ describe('EditableBlock', () => {
     })
   })
 
-  // ── #1489: long single-line URL must not loop setLiveContent ─────────
+  // ── #1489 / #2938: long single-line URL must not loop inside dispatch ────
   //
-  // In a real browser, calling `setLiveContent` SYNCHRONOUSLY from the editor's
-  // `update` event (emitted inside `EditorView.dispatch`) re-renders the editor
-  // subtree within the same dispatch flush; that re-render writes back into the
-  // contenteditable, which ProseMirror's DOMObserver re-reads as a change and
-  // re-dispatches → "Maximum update depth exceeded". A long single-line URL is
-  // the reliable trigger. The fix coalesces the state update onto the next
-  // animation frame so the dispatch unwinds first. jsdom has no DOMObserver, so
-  // these tests assert the COALESCING CONTRACT that defuses the loop: the
-  // callback never sets state synchronously, and N synchronous fires collapse to
-  // a single frame-deferred update of the latest value.
-  describe('long-URL update loop (#1489)', () => {
-    /** Install a manual rAF queue so the test controls when frames flush. */
-    function installManualRaf(): { flush: () => void; pending: () => number; restore: () => void } {
-      const origRaf = globalThis.requestAnimationFrame
-      const origCancel = globalThis.cancelAnimationFrame
-      let queue: FrameRequestCallback[] = []
-      globalThis.requestAnimationFrame = ((cb: FrameRequestCallback): number => {
-        queue.push(cb)
-        return queue.length
-      }) as typeof globalThis.requestAnimationFrame
-      globalThis.cancelAnimationFrame = ((id: number) => {
-        queue[id - 1] = (() => {}) as FrameRequestCallback
-      }) as typeof globalThis.cancelAnimationFrame
-      return {
-        flush: () => {
-          const batch = queue
-          queue = []
-          for (const cb of batch) cb(0)
-        },
-        pending: () => queue.length,
-        restore: () => {
-          globalThis.requestAnimationFrame = origRaf
-          globalThis.cancelAnimationFrame = origCancel
-        },
-      }
-    }
-
-    it('does not set live content synchronously and coalesces a burst of fires', async () => {
-      const raf = installManualRaf()
-      // useDraftAutosave observes `liveContent`; spy on the value it receives by
-      // recording every saveDraft the debounce eventually fires. Using a small
-      // debounce probe via fake timers keeps this deterministic.
+  // In a real browser, doing ANY React state write SYNCHRONOUSLY from the
+  // editor's `update` event (emitted inside `EditorView.dispatch`) re-renders
+  // the editor subtree within the same dispatch flush; that re-render writes
+  // back into the contenteditable, which ProseMirror's DOMObserver re-reads as
+  // a change and re-dispatches → "Maximum update depth exceeded". A long
+  // single-line URL is the reliable trigger. #2938 removes the culprit entirely:
+  // the update signal no longer serializes and no longer writes React state — it
+  // ONLY (re)arms debounce timers via refs. jsdom has no DOMObserver, so this
+  // test asserts the structural guarantee: N synchronous fires perform NO
+  // serialize and NO per-fire save; the trailing debounce serializes the latest
+  // value exactly once.
+  describe('long-URL update loop (#1489 / #2938)', () => {
+    it('the update signal never serializes or writes state per fire — no dispatch re-render loop', async () => {
       vi.useFakeTimers({
         toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
       })
       try {
-        let onChange: ((md: string) => void) | null = null
+        let latest = ''
+        // getMarkdown is the serialize proxy: if the signal path serialized per
+        // keystroke, this would be called during the burst.
+        const getMarkdown = vi.fn(() => latest)
+        let onUpdate: (() => void) | null = null
         const roving = makeRovingEditor({
           activeBlockId: 'B1',
-          setOnMarkdownChange: vi.fn((cb: ((md: string) => void) | null) => {
-            onChange = cb
+          getMarkdown,
+          setOnUpdate: vi.fn((cb: (() => void) | null) => {
+            onUpdate = cb
           }),
         })
 
@@ -1761,27 +1716,22 @@ describe('EditableBlock', () => {
         )
 
         // Simulate the runaway burst a long URL produces: many synchronous
-        // `update` fires before any frame can run. PRE-FIX each call would have
-        // synchronously re-rendered + scheduled the autosave; POST-FIX they only
-        // queue ONE animation frame and touch no React state yet.
+        // `update` fires. PRE-FIX each call synchronously serialized + committed
+        // React state inside dispatch (the DOMObserver loop). POST-#2938 each
+        // fire only re-arms a timer: NO serialize, NO React commit.
         await act(async () => {
-          for (let i = 0; i < 50; i++) onChange?.(`https://example.com/${'a'.repeat(i)}`)
+          for (let i = 0; i < 50; i++) {
+            latest = `https://example.com/${'a'.repeat(i)}`
+            onUpdate?.()
+          }
         })
 
-        // Coalesced + deferred: the burst scheduled a frame but has NOT yet
-        // driven any React state update — advancing the debounce window with no
-        // frame flushed leaves saveDraft un-called (PRE-FIX, each synchronous
-        // fire would have updated `liveContent` and saveDraft WOULD fire here).
-        expect(raf.pending()).toBeGreaterThanOrEqual(1)
-        await act(async () => {
-          vi.advanceTimersByTime(2000)
-        })
+        // The hot path serialized nothing and saved nothing — the signal only
+        // (re)armed the debounce.
+        expect(getMarkdown).not.toHaveBeenCalled()
         expect(mockSaveDraft).not.toHaveBeenCalled()
 
-        // Flush the single frame → only the LATEST value lands, then autosave.
-        await act(async () => {
-          raf.flush()
-        })
+        // The trailing debounce fires ONCE and serializes the latest value once.
         await act(async () => {
           vi.advanceTimersByTime(2000)
         })
@@ -1789,7 +1739,6 @@ describe('EditableBlock', () => {
         expect(mockSaveDraft).toHaveBeenCalledWith('B1', `https://example.com/${'a'.repeat(49)}`)
       } finally {
         vi.useRealTimers()
-        raf.restore()
       }
     })
   })
