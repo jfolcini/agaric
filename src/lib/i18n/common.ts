@@ -136,6 +136,11 @@ export const common: Record<string, string> = {
   'announce.undoFailed': 'Undo failed',
   'announce.redone': 'Redone',
   'announce.redoFailed': 'Redo failed',
+  // #2941 — Ctrl+Z/Ctrl+Y in the Journal view can't resolve which day's
+  // page to target (weekly/monthly render many day-pages at once with no
+  // tracked "last touched" day), so instead of silently no-oping we
+  // announce why nothing happened.
+  'announce.undoUnavailableJournal': 'Undo is not available in Journal view',
   'announce.blockRestored': 'Block restored from trash',
   'announce.blockPurged': 'Block permanently deleted',
   'announce.batchRestored_one': '{{count}} block restored from trash',

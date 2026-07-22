@@ -4,7 +4,7 @@ import type { Root } from 'react-dom/client'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
+import { performActivePageUndo, useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 
 // -- Hoisted mocks (vi.mock factories are hoisted above module scope) ---------
 
@@ -459,6 +459,123 @@ describe('useUndoShortcuts', () => {
     expect(removeSpy).toHaveBeenCalledWith('keydown', expect.any(Function))
 
     removeSpy.mockRestore()
+  })
+})
+
+// #2941 — journal view (the default landing view) used to silently no-op on
+// Ctrl+Z/Ctrl+Y. There is no reliable already-tracked signal for which
+// day-page to target (weekly/monthly render many day-pages at once, and
+// nothing globally records a "last focused page"), so instead of a real
+// undo/redo the handler now surfaces a toast + announcement and leaves the
+// op log untouched — the safe fallback documented on the issue.
+describe('journal view undo/redo (#2941)', () => {
+  beforeEach(() => {
+    mockedNavGetState.mockReturnValue({
+      currentView: 'journal',
+    } as unknown as ReturnType<typeof useNavigationStore.getState>)
+    mockedTabsGetState.mockReturnValue({
+      tabs: [{ id: '0', pageStack: [], label: '' }],
+      activeTabIndex: 0,
+      replacePage: mockReplacePage,
+    } as unknown as ReturnType<typeof useTabsStore.getState>)
+  })
+
+  it('shows an "unavailable" toast on Ctrl+Z instead of dispatching undo', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    expect(mockUndo).not.toHaveBeenCalled()
+    expect(mockedToast).toHaveBeenCalledWith(
+      "Undo isn't available in Journal view yet — use a block's History to revert it",
+      { duration: 2500 },
+    )
+
+    unmount()
+  })
+
+  it('shows an "unavailable" toast on Ctrl+Y instead of dispatching redo', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'y', ctrlKey: true })
+
+    expect(mockRedo).not.toHaveBeenCalled()
+    expect(mockedToast).toHaveBeenCalledWith(
+      "Undo isn't available in Journal view yet — use a block's History to revert it",
+      { duration: 2500 },
+    )
+
+    unmount()
+  })
+
+  it('announces the unavailable-undo message for screen readers', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'z', ctrlKey: true })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('Undo is not available in Journal view')
+
+    unmount()
+  })
+
+  it('calls preventDefault for Ctrl+Z in journal view', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    const event = new KeyboardEvent('keydown', {
+      key: 'z',
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    const spy = vi.spyOn(event, 'preventDefault')
+    document.dispatchEvent(event)
+
+    expect(spy).toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('does NOT toast or intercept unrelated keystrokes in journal view', () => {
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    expect(mockedToast).not.toHaveBeenCalled()
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+
+    unmount()
+  })
+
+  it('the focused-block guard still short-circuits in journal view (in-editor undo owns Ctrl+Z)', () => {
+    useBlockStore.setState({ focusedBlockId: 'BLOCK_A' })
+
+    const { unmount } = renderHook(() => useUndoShortcuts())
+
+    const menuItem = document.createElement('button')
+    document.body.append(menuItem)
+
+    fireEvent.keyDown(menuItem, { key: 'z', ctrlKey: true })
+
+    expect(mockUndo).not.toHaveBeenCalled()
+    expect(mockedToast).not.toHaveBeenCalled()
+    expect(mockedAnnounce).not.toHaveBeenCalled()
+
+    menuItem.remove()
+    unmount()
+  })
+
+  describe('performActivePageUndo (swipe-to-delete fallback path)', () => {
+    it('surfaces the same unavailable feedback and does not undo', async () => {
+      const handled = await performActivePageUndo()
+
+      expect(handled).toBe(false)
+      expect(mockUndo).not.toHaveBeenCalled()
+      expect(mockedToast).toHaveBeenCalledWith(
+        "Undo isn't available in Journal view yet — use a block's History to revert it",
+        { duration: 2500 },
+      )
+      expect(mockedAnnounce).toHaveBeenCalledWith('Undo is not available in Journal view')
+    })
   })
 })
 
