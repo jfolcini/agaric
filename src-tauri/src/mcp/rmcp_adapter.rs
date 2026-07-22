@@ -186,7 +186,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             registry,
             activity_ctx,
             surface,
-            session_id: Ulid::new().to_string(),
+            session_id: Ulid::r#gen().to_string(),
         }
     }
 }
@@ -268,7 +268,7 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             actor: Actor::Agent {
                 name: origin_agent_name,
             },
-            request_id: Ulid::new().to_string(),
+            request_id: Ulid::r#gen().to_string(),
         };
         // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
         // by the explicit-parameter path of [`ToolRegistry::call_tool`].
@@ -1141,7 +1141,7 @@ mod tests {
     /// ULID is never folded in, so the common case keeps `agent:<name>`.
     #[test]
     fn durable_agent_name_named_client_is_unchanged() {
-        let session = Ulid::new().to_string();
+        let session = Ulid::r#gen().to_string();
         assert_eq!(
             durable_agent_name("claude-desktop", &session),
             "claude-desktop"
@@ -1169,8 +1169,8 @@ mod tests {
     fn durable_agent_name_anonymous_connections_get_distinct_origins() {
         // Each connection mints exactly one session ULID (reused, not
         // re-minted by `durable_agent_name`).
-        let session_a = Ulid::new().to_string();
-        let session_b = Ulid::new().to_string();
+        let session_a = Ulid::r#gen().to_string();
+        let session_b = Ulid::r#gen().to_string();
         assert_ne!(
             session_a, session_b,
             "distinct connections → distinct ULIDs"

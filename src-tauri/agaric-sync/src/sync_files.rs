@@ -1068,7 +1068,7 @@ pub async fn write_attachment_streaming(
     // are not practically possible. We render in lower-case hex to
     // stay portable across filesystems that fold case in unhelpful
     // ways (NTFS, APFS-default).
-    let suffix = u128::from(ulid::Ulid::new());
+    let suffix = u128::from(ulid::Ulid::r#gen());
     let temp_path = match final_path.file_name() {
         Some(name) => {
             let mut s = std::ffi::OsString::from(name);

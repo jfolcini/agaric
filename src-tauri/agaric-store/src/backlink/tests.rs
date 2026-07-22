@@ -842,7 +842,7 @@ async fn filter_created_in_range_after_only() {
     insert_block(&pool, "TARGET", "page", "target").await;
     // These have synthetic IDs; ULID_to_ms will extract timestamps.
     // Use a recent ULID that encodes a timestamp > 2025-01-01
-    let recent_ulid = ulid::Ulid::new().to_string();
+    let recent_ulid = ulid::Ulid::r#gen().to_string();
     insert_block(&pool, &recent_ulid, "content", "recent").await;
     insert_block_link(&pool, &recent_ulid, "TARGET").await;
 
@@ -861,7 +861,7 @@ async fn filter_created_in_range_after_only() {
 async fn filter_created_in_range_before_only() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TARGET", "page", "target").await;
-    let recent_ulid = ulid::Ulid::new().to_string();
+    let recent_ulid = ulid::Ulid::r#gen().to_string();
     insert_block(&pool, &recent_ulid, "content", "recent").await;
     insert_block_link(&pool, &recent_ulid, "TARGET").await;
 
@@ -881,7 +881,7 @@ async fn filter_created_in_range_before_only() {
 async fn filter_created_in_range_both() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TARGET", "page", "target").await;
-    let recent_ulid = ulid::Ulid::new().to_string();
+    let recent_ulid = ulid::Ulid::r#gen().to_string();
     insert_block(&pool, &recent_ulid, "content", "recent").await;
     insert_block_link(&pool, &recent_ulid, "TARGET").await;
 
@@ -905,7 +905,7 @@ async fn filter_created_in_range_both() {
 async fn filter_created_in_range_rejects_unparseable_bound_670() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "TARGET", "page", "target").await;
-    let recent_ulid = ulid::Ulid::new().to_string();
+    let recent_ulid = ulid::Ulid::r#gen().to_string();
     insert_block(&pool, &recent_ulid, "content", "recent").await;
     insert_block_link(&pool, &recent_ulid, "TARGET").await;
 

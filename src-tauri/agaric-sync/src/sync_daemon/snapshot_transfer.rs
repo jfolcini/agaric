@@ -1360,7 +1360,7 @@ async fn receive_snapshot_to_temp(
     // prefix — collisions across overlapping snapshot transfers
     // are not practically possible. Render in lower-case hex so
     // the suffix is portable across case-folding filesystems.
-    let suffix: u128 = u128::from(ulid::Ulid::new());
+    let suffix: u128 = u128::from(ulid::Ulid::r#gen());
     let path = app_data_dir.join(format!("snapshot-recv-{suffix:032x}.tmp"));
 
     // The guard owns the path from the moment it is constructed —
