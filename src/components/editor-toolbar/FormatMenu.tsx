@@ -48,6 +48,10 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
       italic: ctx.editor.isActive('italic'),
       code: ctx.editor.isActive('code'),
       strike: ctx.editor.isActive('strike'),
+      // #2995 — strike is excluded from the mark set inside inline `code` /
+      // `codeBlock`; `can()` reports false there so the button greys out
+      // instead of rendering as a no-op toggle.
+      canStrike: ctx.editor.can().toggleStrike(),
       underline: ctx.editor.isActive('underline'),
       highlight: ctx.editor.isActive('highlight'),
     }),
@@ -58,6 +62,9 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
       {markToggles.map((btn) => {
         const tooltip = withShortcutHint(t(btn.label), MARK_TOGGLE_SHORTCUT_IDS[btn.label])
         const active = btn.activeKey ? (state[btn.activeKey as keyof typeof state] ?? false) : false
+        const disabled = btn.disabledWhenFalse
+          ? !state[btn.disabledWhenFalse as keyof typeof state]
+          : undefined
         return (
           <Tooltip key={btn.label} delayDuration={200}>
             <TooltipTrigger asChild>
@@ -66,6 +73,7 @@ export function FormatMenu({ editor }: FormatMenuProps): React.ReactElement {
                 size="icon-xs"
                 aria-label={t(btn.label)}
                 aria-pressed={active}
+                disabled={disabled}
                 className={cn(active && toolbarActiveClass)}
                 {...toolbarPressHandlers(btn.action)}
               >

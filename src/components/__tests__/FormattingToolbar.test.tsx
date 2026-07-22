@@ -62,6 +62,10 @@ const mockEditorState = {
   isInsideTable: false,
   canUndo: false,
   canRedo: false,
+  // #2995 — mirrors `editor.can().toggleStrike()` for the Format popover's
+  // mark toggles; false inside inline `code` / `codeBlock` where the strike
+  // mark is schema-excluded.
+  canStrike: true,
 }
 
 vi.mock('@tiptap/react', () => ({
@@ -220,6 +224,7 @@ describe('FormattingToolbar', () => {
     mockEditorState.isInsideTable = false
     mockEditorState.canUndo = false
     mockEditorState.canRedo = false
+    mockEditorState.canStrike = true
     mockGetAttributes.mockReturnValue({})
     mockResolve.mockReturnValue({})
     mockTextBetween.mockReturnValue('')
@@ -306,6 +311,42 @@ describe('FormattingToolbar', () => {
       // External Link still lives ONLY in the selection bubble — not in the
       // Format popover or the toolbar.
       expect(screen.queryByRole('button', { name: t('toolbar.link') })).toBeNull()
+    })
+
+    // #2995 — strike is excluded from the mark set inside inline `code` /
+    // `codeBlock`, so the Format popover's toggle must grey out there
+    // instead of rendering as an available-but-inert control.
+    it('disables strikethrough in the Format popover when canStrike is false (code context)', () => {
+      mockEditorState.canStrike = false
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const formatGroup = screen.getByRole('toolbar', { name: t('toolbar.format') })
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.strikethrough') }),
+      ).toBeDisabled()
+    })
+
+    it('enables strikethrough in the Format popover when canStrike is true (normal text)', () => {
+      mockEditorState.canStrike = true
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const formatGroup = screen.getByRole('toolbar', { name: t('toolbar.format') })
+      expect(
+        within(formatGroup).getByRole('button', { name: t('toolbar.strikethrough') }),
+      ).not.toBeDisabled()
+    })
+
+    it('does not disable other Format popover mark toggles when strikethrough is disabled', () => {
+      mockEditorState.canStrike = false
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const formatGroup = screen.getByRole('toolbar', { name: t('toolbar.format') })
+      for (const key of [
+        'toolbar.bold',
+        'toolbar.italic',
+        'toolbar.code',
+        'toolbar.highlight',
+        'toolbar.underline',
+      ]) {
+        expect(within(formatGroup).getByRole('button', { name: t(key) })).not.toBeDisabled()
+      }
     })
 
     it('renders separators between button groups', () => {

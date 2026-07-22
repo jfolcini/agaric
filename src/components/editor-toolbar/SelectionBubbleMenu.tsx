@@ -150,6 +150,10 @@ export function SelectionBubbleMenu({
       italic: ctx.editor.isActive('italic'),
       code: ctx.editor.isActive('code'),
       strike: ctx.editor.isActive('strike'),
+      // #2995 — strike is excluded from the mark set inside inline `code` /
+      // `codeBlock`; `can()` reports false there so the button greys out
+      // instead of rendering as a no-op toggle.
+      canStrike: ctx.editor.can().toggleStrike(),
       underline: ctx.editor.isActive('underline'),
       highlight: ctx.editor.isActive('highlight'),
       link: ctx.editor.isActive('link'),
@@ -282,6 +286,9 @@ export function SelectionBubbleMenu({
         const active = btn.activeKey
           ? (state[btn.activeKey as keyof typeof state] as boolean)
           : false
+        const disabled = btn.disabledWhenFalse
+          ? !state[btn.disabledWhenFalse as keyof typeof state]
+          : undefined
         return (
           <Tip key={btn.label} label={tooltip}>
             <Button
@@ -290,6 +297,7 @@ export function SelectionBubbleMenu({
               aria-label={t(btn.label)}
               aria-pressed={active}
               aria-keyshortcuts={ariaKeyshortcutsFor(btn.label)}
+              disabled={disabled}
               className={cn(active && toolbarActiveClass)}
               onPointerDown={(e) => {
                 e.preventDefault()

@@ -126,10 +126,17 @@ export function createMarkToggles(editor: Editor): ToolbarButtonConfig[] {
       action: () => editor.chain().focus().toggleCode().run(),
     },
     {
+      // #2995 — strike is excluded from the mark set inside inline `code` /
+      // `codeBlock` (schema exclusion), so toggling it there is a silent
+      // no-op. Gate on `can()` rather than hardcoding codeBlock/code checks:
+      // it covers both contexts and stays correct if schema exclusions
+      // change. Shared by SelectionBubbleMenu + FormatMenu, so both grey out
+      // consistently from this one definition.
       icon: Strikethrough,
       label: 'toolbar.strikethrough',
       tip: 'toolbar.strikethroughTip',
       activeKey: 'strike',
+      disabledWhenFalse: 'canStrike',
       action: () => editor.chain().focus().toggleStrike().run(),
     },
     {
