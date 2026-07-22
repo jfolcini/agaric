@@ -605,6 +605,132 @@ async fn apply_op_tx_purge_block_engine_path() {
     );
 }
 
+/// #2868 regression: a REMOTE-applied `PurgeBlock` (inbound op replayed
+/// through `apply_op_tx`, NOT the local command path) must clear the
+/// per-space Loro engine tombstone — not merely the SQL rows.
+///
+/// The trigger is that a purge ALWAYS targets an already SOFT-DELETED
+/// block (the app requires soft-delete before purge). The canonical
+/// `resolve_block_space` filters `deleted_at IS NULL`, so on the remote
+/// purge path it returned `None` for the soft-deleted seed, the engine
+/// fan-out was skipped, a `sql_only_fallback` was recorded, and the Loro
+/// tombstone was left behind to resurrect the purged block as trash on a
+/// snapshot-syncing peer. The fix resolves the space via the
+/// soft-delete-tolerant reader (`resolve_soft_deleted_block_space`) so the
+/// engine purge runs.
+///
+/// This is the discriminating scenario the sibling
+/// `apply_op_tx_purge_block_engine_path` misses: THAT test purges a LIVE
+/// block, whose space resolves regardless, so it passed even with the bug.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_2868() {
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = crate::loro::shared::LoroState::new();
+
+    seed_block_via_loro(&pool, &state).await;
+
+    // Soft-delete the seed via the loro path — the required purge
+    // precondition AND exactly what makes `resolve_block_space` return
+    // `None` for it below.
+    let delete_payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(BLOCK_ID),
+    });
+    let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
+        .await
+        .expect("append delete");
+    let mut tx = pool.begin().await.expect("begin delete");
+    super::apply_op_tx(&mut tx, &delete_record, None, &state)
+        .await
+        .expect("apply delete");
+    tx.commit().await.expect("commit delete");
+
+    // Sanity: the engine tombstone EXISTS pre-purge (soft-deleted node is
+    // still present in the tree, just marked deleted). Without this the
+    // post-purge `is_none()` assertion would be vacuous.
+    {
+        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let mut guard = state
+            .registry
+            .for_space(&space, DEVICE_ID)
+            .expect("for_space");
+        let pre = guard.engine_mut().read_block(BLOCK_ID).expect("read pre");
+        let deleted = guard
+            .engine_mut()
+            .read_deleted(BLOCK_ID)
+            .expect("read_deleted pre");
+        drop(guard);
+        assert!(
+            pre.is_some(),
+            "engine must still hold the soft-deleted node"
+        );
+        assert!(deleted, "engine node must be marked soft-deleted pre-purge");
+    }
+
+    // Snapshot the SQL-only fallback counter: the fixed remote purge must
+    // NOT advance it (mirrors `tag_convergence_tests`). Under nextest's
+    // process-per-test isolation this process-global counter is not shared
+    // with concurrent tests, so a zero delta is a sound signal that the
+    // engine arm actually ran.
+    let fallback_before = super::sql_only_fallback::count();
+
+    // REMOTE purge: replay the inbound `PurgeBlock` op through the shared
+    // apply kernel (the materializer's inbound path). The LOCAL command
+    // path does NOT route purge through `apply_op_tx`, so this exercises the
+    // remote path exclusively.
+    let purge_payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+        block_id: BlockId::from_trusted(BLOCK_ID),
+    });
+    let purge_record = crate::op_log::append_local_op(&pool, DEVICE_ID, purge_payload)
+        .await
+        .expect("append purge");
+    let mut tx = pool.begin().await.expect("begin purge");
+    super::apply_op_tx(&mut tx, &purge_record, None, &state)
+        .await
+        .expect("apply purge");
+    tx.commit().await.expect("commit purge");
+
+    // SQL: the cascade still ran (row is gone) — existing behavior preserved.
+    let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(BLOCK_ID)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch count");
+    assert_eq!(count.0, 0, "purge must remove the SQL row");
+
+    // ENGINE (the #2868 fix): the tombstone is CLEARED — the block is fully
+    // gone from the per-space Loro engine, not left soft-deleted to
+    // resurrect on a snapshot-syncing peer.
+    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEVICE_ID)
+        .expect("for_space");
+    let engine_snap = guard.engine_mut().read_block(BLOCK_ID).expect("read_block");
+    let residual_deleted_at = guard
+        .engine_mut()
+        .read_deleted_at(BLOCK_ID)
+        .expect("read_deleted_at");
+    drop(guard);
+    assert!(
+        engine_snap.is_none(),
+        "REMOTE purge must clear the engine tombstone; block still present as {engine_snap:?}",
+    );
+    assert!(
+        residual_deleted_at.is_none(),
+        "no residual soft-delete marker may linger for the purged block",
+    );
+
+    // The fixed remote purge must NOT have taken the SQL-only fallback.
+    let fallback_after = super::sql_only_fallback::count();
+    assert_eq!(
+        fallback_after - fallback_before,
+        0,
+        "remote purge of a soft-deleted block must resolve its space and run \
+         the engine arm — a nonzero sql_only_fallback delta means it degraded \
+         to SQL-only and left the engine tombstone (#2868)",
+    );
+}
+
 /// AddTag loro-path: seed two blocks (a target + a tag), apply
 /// AddTag, verify SQL row + engine `read_tags` both reflect the
 /// association.
