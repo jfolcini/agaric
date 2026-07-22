@@ -234,12 +234,17 @@ function tryFindInPage(e: KeyboardEvent, t: (key: string) => string): boolean {
 /**
  * `focusSearch` (Ctrl+Shift+F by default) opens the global
  * find-in-files view.
+ *
+ * #2944 — the destination announcement is no longer inlined here; it was
+ * the only one of the three `setView` routes (palette / sidebar /
+ * shortcut) that announced itself. `useViewChangeAnnouncer` now covers
+ * all three from a single `currentView` subscriber, so this handler only
+ * has to change the view.
  */
-function tryFocusSearch(e: KeyboardEvent, t: (key: string) => string): boolean {
+function tryFocusSearch(e: KeyboardEvent): boolean {
   if (!matchesShortcutBinding(e, 'focusSearch')) return false
   e.preventDefault()
   useNavigationStore.getState().setView('search')
-  announce(t('announce.searchOpened'))
   return true
 }
 
@@ -372,7 +377,7 @@ export function useAppKeyboardShortcuts({ t, isMobile }: UseAppKeyboardShortcuts
       // re-fire view changes / new-page creation on every keypress.
       if (e.repeat) return
       if (tryFindInPage(e, t)) return
-      if (tryFocusSearch(e, t)) return
+      if (tryFocusSearch(e)) return
       if (tryRunLastCommand(e, t)) return
       if (tryPaletteOpen(e)) return
       tryCreateNewPage(e, t)

@@ -393,12 +393,26 @@ export const references: Record<string, string> = {
   'palette.modeChipLabel': 'Switch palette mode (current: {{mode}})',
   'palette.cmdGroupNavigate': 'Navigate',
   'palette.cmdGroupAction': 'Actions',
+  // #2942 — one entry per `NAV_ITEMS` destination (`nav-items.ts`), in the
+  // same order the sidebar renders them.
+  'palette.cmdGoJournal': 'Open Journal view',
   'palette.cmdGoPages': 'Open Pages view',
   'palette.cmdGoTags': 'Open Tags view',
+  'palette.cmdGoGraph': 'Open Graph view',
+  'palette.cmdGoTemplates': 'Open Templates view',
+  'palette.cmdGoQuery': 'Open Query view',
+  'palette.cmdGoStatus': 'Open Status view',
   'palette.cmdGoTrash': 'Open Trash',
   'palette.cmdGoHistory': 'Open History',
   'palette.cmdGoSettings': 'Open Settings',
   'palette.cmdSearchEverywhere': 'Search across all pages…',
+  // #2942 — global actions that already existed as keyboard shortcuts but
+  // had no palette entry.
+  'palette.cmdCreateNewPage': 'Create new page',
+  'palette.cmdGoToToday': 'Go to today',
+  'palette.cmdToggleSidebar': 'Toggle sidebar',
+  'palette.cmdExportPageMarkdown': 'Export page as Markdown',
+  'palette.noActivePage': 'No page is open to export',
   'palette.cmdKeyboardShortcuts': 'Keyboard shortcuts',
   'palette.commandsEmpty': 'No commands match — clear the input to see all.',
   // Phase 2 — recent commands strip rendered above Navigate/Actions

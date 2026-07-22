@@ -16,23 +16,34 @@
  *    navigate the user across the space boundary on click.
  * 3. Visual identity — re-bind the `--accent-current` CSS
  *    variable on `document.documentElement` and re-stamp the OS
- *    window title as `"<SpaceName> · Agaric"`. `setWindowTitle`
- *    no-ops outside Tauri (vitest jsdom).
+ *    window title. #2944 — the title now also reflects the active
+ *    view (and open page name when in page-editor view), e.g.
+ *    `"<Page/View> · <SpaceName> · Agaric"`, reactive to view/page
+ *    changes as well as space changes. `setWindowTitle` no-ops
+ *    outside Tauri (vitest jsdom).
  *
  * The hook subscribes internally to `useSpaceStore` for the space
  * inputs (App.tsx already subscribes for AppSidebar; the redundant
- * Zustand subscription is cheap and dedups).
+ * Zustand subscription is cheap and dedups), and to `useNavigationStore`
+ * / `useTabsStore` for the view/page inputs.
  */
 
 import { useEffect, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 
+import { NAV_ITEMS } from '@/components/common/nav-items'
 import { setWindowTitle } from '@/lib/tauri'
+import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
 export function useAppSpaceLifecycle(): void {
+  const { t } = useTranslation()
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const availableSpaces = useSpaceStore((s) => s.availableSpaces)
+  const currentView = useNavigationStore((s) => s.currentView)
+  const pageStack = useTabsStore(selectPageStack)
 
   // Preload the resolve cache (pages + tags) once on app boot, and
   // Again whenever the active space changes.
@@ -66,10 +77,32 @@ export function useAppSpaceLifecycle(): void {
     document.documentElement.style.setProperty('--accent-current', `var(--${accentToken})`)
 
     const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId) ?? null
+    // #2944 \u2014 no active space yet (fresh boot before the space store
+    // hydrates) keeps the original bare-Agaric title: there's no space to
+    // qualify the view/page label against.
+    if (activeSpace == null || activeSpace.name === '') {
+      void setWindowTitle('Agaric')
+      return
+    }
+
+    // #2944 \u2014 page-editor has its own open page instead of a static nav
+    // label (mirrors `useHeaderLabel`'s branch in ViewDispatcher.tsx); every
+    // other view resolves its localized nav label from the same `NAV_ITEMS`
+    // manifest the sidebar renders from, so the title always agrees with
+    // what's on screen.
+    const activePage = pageStack.length > 0 ? pageStack.at(-1) : null
+    let viewLabel: string | null = null
+    if (currentView === 'page-editor' && activePage != null) {
+      viewLabel = activePage.title
+    } else {
+      const navItem = NAV_ITEMS.find((item) => item.id === currentView)
+      viewLabel = navItem ? t(navItem.labelKey) : null
+    }
+
     const titleText =
-      activeSpace != null && activeSpace.name !== ''
-        ? `${activeSpace.name} \u00B7 Agaric`
-        : 'Agaric'
+      viewLabel != null && viewLabel !== ''
+        ? `${viewLabel} \u00B7 ${activeSpace.name} \u00B7 Agaric`
+        : `${activeSpace.name} \u00B7 Agaric`
     void setWindowTitle(titleText)
-  }, [currentSpaceId, availableSpaces])
+  }, [currentSpaceId, availableSpaces, currentView, pageStack, t])
 }

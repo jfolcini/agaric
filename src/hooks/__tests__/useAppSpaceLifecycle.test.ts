@@ -12,8 +12,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { setWindowTitle } from '@/lib/tauri'
+import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
+import { useTabsStore } from '@/stores/tabs'
 
 vi.mock('@/lib/tauri', async () => {
   const actual = await vi.importActual<typeof import('@/lib/tauri')>('@/lib/tauri')
@@ -32,6 +34,19 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_PERSONAL', name: 'Personal', accent_color: 'accent-emerald' }],
     isReady: true,
   })
+  // #2944 — the title now also reflects the active view/page, so pin
+  // both to a known baseline ('journal', no open page) for every test
+  // that doesn't explicitly exercise that behaviour. `currentViewBySpace`
+  // is seeded for both fixture spaces too: switching `currentSpaceId`
+  // fires `navigationSlice`'s own space-change reconcile (unrelated to
+  // this hook), which defaults a never-visited space's view to
+  // 'page-editor' — seeding it keeps that pre-existing mechanism from
+  // leaking into these space/title assertions.
+  useNavigationStore.setState({
+    currentView: 'journal',
+    currentViewBySpace: { SPACE_PERSONAL: 'journal', SPACE_WORK: 'journal' },
+  })
+  useTabsStore.setState({ tabs: [{ id: '0', pageStack: [], label: '' }], activeTabIndex: 0 })
 })
 
 afterEach(() => {
@@ -72,10 +87,12 @@ describe('useAppSpaceLifecycle — visual identity', () => {
     )
   })
 
-  it('calls setWindowTitle with the active space name on mount', async () => {
+  it('calls setWindowTitle with the active view and space name on mount', async () => {
     renderHook(() => useAppSpaceLifecycle())
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+        'Journal \u00B7 Personal \u00B7 Agaric',
+      )
     })
   })
 
@@ -98,7 +115,9 @@ describe('useAppSpaceLifecycle — visual identity', () => {
 
     const { rerender } = renderHook(() => useAppSpaceLifecycle())
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Personal \u00B7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+        'Journal \u00B7 Personal \u00B7 Agaric',
+      )
     })
     vi.mocked(setWindowTitle).mockClear()
 
@@ -111,7 +130,39 @@ describe('useAppSpaceLifecycle — visual identity', () => {
       )
     })
     await waitFor(() => {
-      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Work \u00B7 Agaric')
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Journal \u00B7 Work \u00B7 Agaric')
+    })
+  })
+
+  it('re-stamps the title when the active view changes', async () => {
+    renderHook(() => useAppSpaceLifecycle())
+    await waitFor(() => {
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+        'Journal \u00B7 Personal \u00B7 Agaric',
+      )
+    })
+    vi.mocked(setWindowTitle).mockClear()
+
+    useNavigationStore.setState({ currentView: 'pages' })
+
+    await waitFor(() => {
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith('Pages \u00B7 Personal \u00B7 Agaric')
+    })
+  })
+
+  it('uses the open page title (not a generic label) when in page-editor view', async () => {
+    useNavigationStore.setState({ currentView: 'page-editor' })
+    useTabsStore.setState({
+      tabs: [{ id: '0', pageStack: [{ pageId: 'PAGE_1', title: 'My Great Page' }], label: '' }],
+      activeTabIndex: 0,
+    })
+
+    renderHook(() => useAppSpaceLifecycle())
+
+    await waitFor(() => {
+      expect(vi.mocked(setWindowTitle)).toHaveBeenCalledWith(
+        'My Great Page \u00B7 Personal \u00B7 Agaric',
+      )
     })
   })
 })
