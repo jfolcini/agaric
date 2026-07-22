@@ -6,6 +6,7 @@ import { logger } from '@/lib/logger'
 import {
   exportPageMarkdown,
   listAllPagesInSpace,
+  listSpaces,
   readAttachment,
   readAttachmentMeta,
 } from '@/lib/tauri'
@@ -121,6 +122,47 @@ function relativePrefixForDepth(zipPath: string): string {
 }
 
 /**
+ * Return `base`, or a disambiguated variant, so a caller can add distinct
+ * entries to a flat namespace tracked case-insensitively in `seen`. If
+ * `base` is not already in `seen` it is returned as-is. Otherwise it is
+ * first suffixed with the first 8 chars of `id` (the shared-prefix window
+ * ULIDs minted in the same ~256ms bulk-import chunk can collide on, #2723);
+ * if THAT still collides, an incrementing counter is appended until unique.
+ * Whichever name is returned is added to `seen` (case-folded) before
+ * returning, so callers never re-add it themselves.
+ *
+ * Shared by the page path-collision dedup inside {@link exportSpacePagesIntoZip}
+ * (originally inline here, #1490/#2723) and the all-spaces exporter's
+ * space-folder-name dedup (#2964) — both need the exact same "same name
+ * twice must never overwrite one of them" guarantee.
+ */
+function disambiguate(base: string, id: string, seen: Set<string>): string {
+  let candidate = base
+  if (seen.has(candidate.toLowerCase())) {
+    const withId = `${base}_${id.slice(0, 8)}`
+    candidate = withId
+    let suffixCounter = 2
+    while (seen.has(candidate.toLowerCase())) {
+      candidate = `${withId}-${suffixCounter}`
+      suffixCounter += 1
+    }
+  }
+  seen.add(candidate.toLowerCase())
+  return candidate
+}
+
+/**
+ * Map a space's display name to a filesystem-safe top-level ZIP folder name
+ * for {@link exportAllSpacesAsZip} (#2964). Unlike a page title, a space
+ * name is never namespaced, so any `/` it happens to contain is flattened to
+ * `_` (not treated as a nesting separator, unlike {@link titleToZipPath})
+ * before the usual per-segment sanitization (`sanitizeSegment`) runs.
+ */
+function spaceNameToFolderName(name: string): string {
+  return sanitizeSegment(name.replaceAll('/', '_'))
+}
+
+/**
  * Result of {@link exportGraphAsZip} (#2965). `skippedPages` and
  * `skippedAttachments` let the caller distinguish a fully-successful export
  * from a partial one — the ZIP-building loop below never rejects on a
@@ -183,8 +225,23 @@ function buildExportReport(
   return lines.join('\n')
 }
 
+/** Per-space accumulation returned by {@link exportSpacePagesIntoZip}. */
+interface SpaceExportAccumulation {
+  exportedPages: number
+  skippedPageEntries: SkippedPageEntry[]
+  skippedAttachmentEntries: SkippedAttachmentEntry[]
+}
+
 /**
- * Export all pages as a ZIP of markdown files.
+ * Export every page of `spaceId` into `zip`, with every entry's path
+ * prefixed by `pathPrefix` — `''` for {@link exportGraphAsZip}'s top-level
+ * single-space layout, or `"<folder>/"` for {@link exportAllSpacesAsZip}'s
+ * per-space folder (#2964). This holds the exact page-export /
+ * attachment-rewrite / collision-dedup logic `exportGraphAsZip` has always
+ * run (#1490/#2723/#2965) — extracted so the all-spaces exporter can reuse
+ * it verbatim once per space instead of duplicating it. `exportGraphAsZip`
+ * itself is unchanged by this extraction: it calls this helper with
+ * `pathPrefix: ''`, which reproduces its prior inline behavior byte-for-byte.
  *
  * Each page becomes a `.md` file whose path mirrors its namespace: the title is
  * split on `/` into nested folders (`Project/Backend/API` → `Project/Backend/
@@ -195,36 +252,24 @@ function buildExportReport(
  * silently overwritten in the output ZIP.
  *
  * Inline images (`attachment:<id>` refs, #1434) are not portable, so each
- * referenced attachment's bytes are emitted under `assets/` and the markdown
- * link is rewritten to a relative path (`![alt](../assets/<file>)`) so the
- * exported image renders in other tools (#1490 residual).
+ * referenced attachment's bytes are emitted under `<pathPrefix>assets/` and the
+ * markdown link is rewritten to a relative path (`![alt](../assets/<file>)`) so
+ * the exported image renders in other tools (#1490 residual).
  *
- * `spaceId` (Phase 4) — only pages in the active space are
- * included in the export. The caller (DataTab) guards on a null active
- * space and short-circuits to an empty export before reaching this
- * function, since listAllPagesInSpace now requires an active
- * SpaceScope (#2248) rather than accepting an empty-string sentinel.
- *
- * #2965 — per-page/attachment failures are still caught and skipped (partial
- * output beats none), but are now COUNTED and returned instead of silently
- * disappearing behind an unconditional success; when anything was skipped an
- * `export-report.txt` listing what and where is also written into the ZIP.
+ * Per-page/attachment failures are caught and skipped (partial output beats
+ * none) but are COUNTED and returned via `skippedPageEntries` /
+ * `skippedAttachmentEntries` (#2965) rather than silently disappearing —
+ * callers combine these into their own `export-report.txt`.
  */
-export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGraphResult> {
-  const zip = new JSZip()
-
-  // #2969 — flush the focused block's pending debounced content commit (if
-  // any) before reading ANY page's markdown below, so a just-typed run of
-  // keystrokes isn't silently missing from the export.
-  await flushActiveDraft()
-
-  // Load every page in the space.  `listAllPagesInSpace` returns every
-  // page in one query (no pagination, no clamp) — bounded by the
-  // space's intrinsic page count, which is what the export needs.
-  // b1 — required-active: with no active space there is nothing to
-  // export, so short-circuit to an empty page set (yielding an empty
-  // zip) instead of dispatching a Global scope the backend rejects.
-  const pages = spaceId == null ? [] : await listAllPagesInSpace(spaceId)
+async function exportSpacePagesIntoZip(
+  zip: JSZip,
+  spaceId: string,
+  pathPrefix: string,
+): Promise<SpaceExportAccumulation> {
+  // `listAllPagesInSpace` returns every page in one query (no pagination, no
+  // clamp) — bounded by the space's intrinsic page count, which is what the
+  // export needs.
+  const pages = await listAllPagesInSpace(spaceId)
 
   // Cache of emitted assets keyed by attachment id, so an image referenced from
   // multiple pages is written once and every page links to the same file.
@@ -245,52 +290,35 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGr
       md = await exportPageMarkdown(page.id)
     } catch (err) {
       logger.warn('export-graph', 'page export failed', { pageId: page.id }, err)
-      skippedPageEntries.push({ title: page.content ?? page.id })
+      skippedPageEntries.push({ title: `${pathPrefix}${page.content ?? page.id}` })
       continue
     }
 
     // Namespace `/` → nested folders, sanitizing per segment; dedup true
-    // collisions (same full path) with a ULID suffix on the final segment.
-    // `seen` is tracked case-insensitively (#2723) so 'API' and 'api' don't
-    // emit distinct entries that clash at extraction on case-insensitive
-    // filesystems (Windows/macOS). The suffixed candidate is RE-CHECKED
-    // against `seen` (#2723): a ULID's first 8 chars are entirely within its
-    // 10-char timestamp component, so pages minted in the same ~256ms window
-    // (e.g. a bulk import's single chunk transaction) can share that prefix.
-    // When the id-suffixed candidate still collides, keep appending an
-    // incrementing counter until it's unique, so a 3rd+ same-path page is
-    // never silently dropped instead of overwriting the ZIP entry.
-    let zipPath = titleToZipPath(page.content ?? 'Untitled')
-    if (seen.has(zipPath.toLowerCase())) {
-      const base = `${zipPath}_${page.id.slice(0, 8)}`
-      let candidate = base
-      let suffixCounter = 2
-      while (seen.has(candidate.toLowerCase())) {
-        candidate = `${base}-${suffixCounter}`
-        suffixCounter += 1
-      }
-      zipPath = candidate
-    }
-    seen.add(zipPath.toLowerCase())
+    // collisions (same full path, case-insensitively so 'API'/'api' don't
+    // clash at extraction on case-insensitive filesystems) via `disambiguate`
+    // (#1490/#2723 — see its doc comment for the suffix/counter scheme).
+    const zipPath = disambiguate(titleToZipPath(page.content ?? 'Untitled'), page.id, seen)
 
     // #1490 / #2961 — rewrite `attachment:<id>` refs (both inline image links
     // AND block-scoped file links) to portable asset paths, emitting the
-    // bytes into `assets/`. Done per page because the relative `../` prefix
-    // depends on this page's namespace depth.
+    // bytes into `<pathPrefix>assets/`. Done per page because the relative
+    // `../` prefix depends on this page's namespace depth.
     const rewritten = await rewriteAttachmentRefs(
       md,
       zip,
       emittedAssets,
       relativePrefixForDepth(zipPath),
+      pathPrefix,
     )
     md = rewritten.md
     for (const attachmentId of rewritten.skippedAttachmentIds) {
       if (!skippedAttachmentSeenIn.has(attachmentId)) {
-        skippedAttachmentSeenIn.set(attachmentId, zipPath)
+        skippedAttachmentSeenIn.set(attachmentId, `${pathPrefix}${zipPath}`)
       }
     }
 
-    zip.file(`${zipPath}.md`, md)
+    zip.file(`${pathPrefix}${zipPath}.md`, md)
     exportedPages += 1
   }
 
@@ -298,6 +326,47 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGr
     skippedAttachmentSeenIn,
     ([attachmentId, referencedIn]) => ({ attachmentId, referencedIn }),
   )
+
+  return { exportedPages, skippedPageEntries, skippedAttachmentEntries }
+}
+
+/**
+ * Export all pages of the active space as a ZIP of markdown files.
+ *
+ * `spaceId` (Phase 4) — only pages in the active space are
+ * included in the export. The caller (DataTab) guards on a null active
+ * space and short-circuits to an empty export before reaching this
+ * function, since listAllPagesInSpace now requires an active
+ * SpaceScope (#2248) rather than accepting an empty-string sentinel.
+ *
+ * #2965 — per-page/attachment failures are still caught and skipped (partial
+ * output beats none), but are now COUNTED and returned instead of silently
+ * disappearing behind an unconditional success; when anything was skipped an
+ * `export-report.txt` listing what and where is also written into the ZIP.
+ *
+ * #2964 — the page-export/attachment-rewrite/dedup logic itself now lives in
+ * {@link exportSpacePagesIntoZip} (called here with `pathPrefix: ''`, which
+ * reproduces this function's prior behavior exactly) so
+ * {@link exportAllSpacesAsZip} can reuse it per space instead of duplicating it.
+ */
+export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGraphResult> {
+  const zip = new JSZip()
+
+  // #2969 — flush the focused block's pending debounced content commit (if
+  // any) before reading ANY page's markdown below, so a just-typed run of
+  // keystrokes isn't silently missing from the export.
+  await flushActiveDraft()
+
+  // b1 — required-active: with no active space there is nothing to
+  // export, so short-circuit to an empty accumulation (yielding an empty
+  // zip) instead of dispatching a Global scope the backend rejects.
+  const emptyAccumulation: SpaceExportAccumulation = {
+    exportedPages: 0,
+    skippedPageEntries: [],
+    skippedAttachmentEntries: [],
+  }
+  const { exportedPages, skippedPageEntries, skippedAttachmentEntries } =
+    spaceId == null ? emptyAccumulation : await exportSpacePagesIntoZip(zip, spaceId, '')
 
   if (skippedPageEntries.length > 0 || skippedAttachmentEntries.length > 0) {
     zip.file('export-report.txt', buildExportReport(skippedPageEntries, skippedAttachmentEntries))
@@ -309,6 +378,80 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGr
     exportedPages,
     skippedPages: skippedPageEntries.length,
     skippedAttachments: skippedAttachmentEntries.length,
+  }
+}
+
+/** Result of {@link exportAllSpacesAsZip} (#2964). */
+export interface ExportAllSpacesResult {
+  blob: Blob
+  /** Number of spaces enumerated by `listSpaces()`. `0` means the vault has
+   * no spaces at all — the caller (DataTab) surfaces a distinct "nothing to
+   * export" message for this case instead of silently downloading an empty
+   * ZIP with no signal. */
+  spaceCount: number
+  /** Pages successfully written to the ZIP, summed across every space. */
+  exportedPages: number
+  /** Pages whose `export_page_markdown` call failed and were dropped, summed
+   * across every space. */
+  skippedPages: number
+  /** Distinct attachment ids that could not be read/emitted, summed across
+   * every space (an attachment is per-space-scoped, so the same id in two
+   * different spaces counts twice — they are genuinely distinct files). */
+  skippedAttachments: number
+}
+
+/**
+ * Export EVERY space's pages into a single ZIP, one top-level folder per
+ * space (#2964) — the whole-vault counterpart to `exportGraphAsZip`, which
+ * only ever sees the active space. Reuses {@link exportSpacePagesIntoZip} once
+ * per space (the same page-export/attachment-rewrite/collision-dedup logic,
+ * #1490/#2723/#2965) so this is genuinely additive over the single-space path,
+ * not a parallel reimplementation.
+ *
+ * Folder names are a filesystem-safe form of each space's display name
+ * ({@link spaceNameToFolderName}); two spaces whose names sanitize to the same
+ * folder name are disambiguated with the exact id-suffix scheme page-title
+ * collisions already use ({@link disambiguate}), so one space's pages can never
+ * be silently merged into another's folder.
+ *
+ * See {@link ExportAllSpacesResult.spaceCount} for the zero-spaces contract.
+ */
+export async function exportAllSpacesAsZip(): Promise<ExportAllSpacesResult> {
+  const zip = new JSZip()
+
+  // #2969 — see exportGraphAsZip: flush before reading ANY page's markdown.
+  await flushActiveDraft()
+
+  const spaces = await listSpaces()
+
+  const folderNamesSeen = new Set<string>()
+  let exportedPages = 0
+  const allSkippedPages: SkippedPageEntry[] = []
+  const allSkippedAttachments: SkippedAttachmentEntry[] = []
+
+  for (const space of spaces) {
+    const folder = disambiguate(spaceNameToFolderName(space.name), space.id, folderNamesSeen)
+    const {
+      exportedPages: spaceExportedPages,
+      skippedPageEntries,
+      skippedAttachmentEntries,
+    } = await exportSpacePagesIntoZip(zip, space.id, `${folder}/`)
+    exportedPages += spaceExportedPages
+    allSkippedPages.push(...skippedPageEntries)
+    allSkippedAttachments.push(...skippedAttachmentEntries)
+  }
+
+  if (allSkippedPages.length > 0 || allSkippedAttachments.length > 0) {
+    zip.file('export-report.txt', buildExportReport(allSkippedPages, allSkippedAttachments))
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  return {
+    blob,
+    spaceCount: spaces.length,
+    exportedPages,
+    skippedPages: allSkippedPages.length,
+    skippedAttachments: allSkippedAttachments.length,
   }
 }
 
@@ -344,13 +487,21 @@ interface RewriteAttachmentRefsResult {
  * original ref (nothing dropped) and logged, and its id is reported back via
  * `skippedAttachmentIds` (#2965) so the caller can count/report it instead of
  * the failure disappearing behind an unconditional export success. `relPrefix`
- * climbs from the page's folder depth back to the ZIP root so the link resolves.
+ * climbs from the page's folder depth back to the ZIP root (or, for the
+ * all-spaces exporter, back to the space's own top-level folder — see
+ * {@link exportSpacePagesIntoZip}) so the link resolves. `assetsPathPrefix`
+ * (default `''`) is prepended to the ZIP entry the bytes are written under
+ * (`<assetsPathPrefix>assets/<file>`), so a per-space folder's assets land
+ * nested inside that same folder rather than at the ZIP root (#2964); it does
+ * NOT affect `relPrefix`, since the relative `../` hop count between a page
+ * and its assets is unchanged by an outer folder both are nested under.
  */
 async function rewriteAttachmentRefs(
   md: string,
   zip: JSZip,
   emittedAssets: Map<string, string | null>,
   relPrefix: string,
+  assetsPathPrefix = '',
 ): Promise<RewriteAttachmentRefsResult> {
   const ids = collectAttachmentIds(md)
   if (ids.size === 0) return { md, skippedAttachmentIds: [] }
@@ -377,7 +528,7 @@ async function rewriteAttachmentRefs(
       const flatName = meta.filename.replaceAll('/', '_')
       const safeName = sanitizeSegment(flatName) || 'attachment'
       const assetName = `${id}__${safeName}`
-      zip.file(`${ASSETS_DIR}/${assetName}`, bytes)
+      zip.file(`${assetsPathPrefix}${ASSETS_DIR}/${assetName}`, bytes)
       emittedAssets.set(id, `${ASSETS_DIR}/${assetName}`)
     } catch (err) {
       logger.warn('export-graph', 'attachment export failed', { attachmentId: id }, err)

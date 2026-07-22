@@ -438,6 +438,18 @@ export const common: Record<string, string> = {
   'data.exportSkippedPages_other': '{{count}} pages skipped',
   'data.exportSkippedAttachments_one': '{{count}} attachment skipped',
   'data.exportSkippedAttachments_other': '{{count}} attachments skipped',
+  // #2964 — whole-vault "Export all spaces" action: every space's pages in
+  // one ZIP, one top-level folder per space. Separate from the
+  // `data.export*` keys above, which only ever cover the active space.
+  'data.exportAllSpacesDesc': 'Download every space as a single ZIP, with one folder per space.',
+  'data.exportAllSpacesButton': 'Export All Spaces',
+  'data.exportingAllSpaces': 'Exporting all spaces...',
+  'data.exportAllSpacesSuccess_one': 'Exported {{count}} space',
+  'data.exportAllSpacesSuccess_other': 'Exported {{count}} spaces',
+  'data.exportAllSpacesFailed': 'Export failed',
+  // The vault genuinely has no spaces at all — distinct from a space that
+  // simply has no pages, so an empty ZIP is never downloaded silently.
+  'data.exportAllSpacesNoSpaces': 'No spaces to export',
   'help.reportBugTitle': 'Report a bug',
   'help.reportBugDescription':
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',

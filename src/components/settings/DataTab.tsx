@@ -17,7 +17,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { isAppError } from '@/lib/app-error'
 import { enexNoteToMarkdown, parseEnex, sanitizeNoteTitleToFilename } from '@/lib/enex-import'
-import { downloadBlob, exportGraphAsZip } from '@/lib/export-graph'
+import { downloadBlob, exportAllSpacesAsZip, exportGraphAsZip } from '@/lib/export-graph'
 import { formatBytes } from '@/lib/format'
 import { scanAttachmentRefs } from '@/lib/import-attachments'
 import { jexNoteToMarkdown, parseJex } from '@/lib/jex-import'
@@ -352,6 +352,11 @@ export function DataTab(): React.ReactElement {
   const [currentFileBlocksDone, setCurrentFileBlocksDone] = useState(0)
   const [currentFileBlocksTotal, setCurrentFileBlocksTotal] = useState(0)
   const [exporting, setExporting] = useState(false)
+  // #2964 — separate loading flag for the whole-vault "Export all spaces"
+  // action so it can run/report independently of the single active-space
+  // "Export All" button above (each disables only itself, mirroring how
+  // the two actions are otherwise fully independent).
+  const [exportingAllSpaces, setExportingAllSpaces] = useState(false)
   // Stable id wires the disabled-button's
   // `aria-describedby` to the visible `t('data.importSpaceNotReady')`
   // hint, so screen-reader users hear WHY the button is unactionable.
@@ -1115,6 +1120,46 @@ export function DataTab(): React.ReactElement {
     setExporting(false)
   }, [t, currentSpaceId, availableSpaces])
 
+  // #2964 — whole-vault export: every space's pages, one top-level ZIP
+  // folder per space (`exportAllSpacesAsZip` handles the folder-naming +
+  // collision disambiguation). Mirrors `handleExportAll`'s loading/toast
+  // shape so the two actions read as siblings, not divergent patterns.
+  const handleExportAllSpaces = useCallback(async () => {
+    setExportingAllSpaces(true)
+    try {
+      const { blob, spaceCount, skippedPages, skippedAttachments } = await exportAllSpacesAsZip()
+      // A vault with zero spaces has nothing to export — surface that
+      // explicitly rather than silently downloading an empty ZIP with no
+      // signal (#2964). NOTE: this must NOT `return` early — an early
+      // return here would skip the `setExportingAllSpaces(false)` below
+      // (it's not in a `finally`), permanently stranding the button
+      // disabled/showing its loading label after every zero-space export.
+      if (spaceCount === 0) {
+        notify.warning(t('data.exportAllSpacesNoSpaces'))
+      } else {
+        const date = new Date().toISOString().slice(0, 10)
+        downloadBlob(blob, `agaric-export-all-spaces-${date}.zip`)
+        if (skippedPages > 0 || skippedAttachments > 0) {
+          const details = [
+            skippedPages > 0 ? t('data.exportSkippedPages', { count: skippedPages }) : null,
+            skippedAttachments > 0
+              ? t('data.exportSkippedAttachments', { count: skippedAttachments })
+              : null,
+          ]
+            .filter((d): d is string => d !== null)
+            .join('; ')
+          notify.warning(t('data.exportPartial', { detail: details }))
+        } else {
+          notify.success(t('data.exportAllSpacesSuccess', { count: spaceCount }))
+        }
+      }
+    } catch (err) {
+      logger.error('DataSettingsTab', 'export all spaces failed', undefined, err)
+      notify.error(t('data.exportAllSpacesFailed'))
+    }
+    setExportingAllSpaces(false)
+  }, [t])
+
   // #1927 — name of the space an import will land in, for the target
   // label below the controls. `null` when no space is active (the
   // not-ready hint covers that case instead).
@@ -1564,6 +1609,20 @@ export function DataTab(): React.ReactElement {
           <Button variant="outline" size="sm" disabled={exporting} onClick={handleExportAll}>
             <Download className="h-3.5 w-3.5" />{' '}
             {exporting ? t('data.exporting') : t('data.exportButton')}
+          </Button>
+          {/* #2964 — whole-vault export: every space, one top-level ZIP
+              folder per space. A separate action from "Export All" above,
+              which only ever sees the currently-active space. */}
+          <p className="text-xs text-muted-foreground mt-3 mb-3">{t('data.exportAllSpacesDesc')}</p>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={exportingAllSpaces}
+            onClick={handleExportAllSpaces}
+            data-testid="export-all-spaces-button"
+          >
+            <Download className="h-3.5 w-3.5" />{' '}
+            {exportingAllSpaces ? t('data.exportingAllSpaces') : t('data.exportAllSpacesButton')}
           </Button>
         </CardContent>
       </Card>
