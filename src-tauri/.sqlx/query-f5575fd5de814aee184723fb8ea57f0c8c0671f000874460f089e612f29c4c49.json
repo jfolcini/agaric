@@ -1,0 +1,98 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT block_id AS \"block_id!\", key AS \"key!\", value_text, value_date,\n                      value_num, value_ref, value_bool AS \"value_bool: i64\"\n               FROM block_properties\n               WHERE block_id IN (SELECT value FROM json_each(?1))\n                 AND key NOT IN (\n                    'space', 'is_space', 'created_at', 'completed_at',\n                    'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',\n                    'repeat-origin', 'template'\n                 )\n               ORDER BY block_id ASC, key ASC",
+  "describe": {
+    "columns": [
+      {
+        "name": "block_id!",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "block_id"
+          }
+        }
+      },
+      {
+        "name": "key!",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "key"
+          }
+        }
+      },
+      {
+        "name": "value_text",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_text"
+          }
+        }
+      },
+      {
+        "name": "value_date",
+        "ordinal": 3,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_date"
+          }
+        }
+      },
+      {
+        "name": "value_num",
+        "ordinal": 4,
+        "type_info": "Float",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_num"
+          }
+        }
+      },
+      {
+        "name": "value_ref",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_ref"
+          }
+        }
+      },
+      {
+        "name": "value_bool: i64",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "block_properties",
+            "name": "value_bool"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true
+    ]
+  },
+  "hash": "f5575fd5de814aee184723fb8ea57f0c8c0671f000874460f089e612f29c4c49"
+}
