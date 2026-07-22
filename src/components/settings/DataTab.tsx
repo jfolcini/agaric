@@ -1080,7 +1080,7 @@ export function DataTab(): React.ReactElement {
   const handleExportAll = useCallback(async () => {
     setExporting(true)
     try {
-      const blob = await exportGraphAsZip(currentSpaceId)
+      const { blob, skippedPages, skippedAttachments } = await exportGraphAsZip(currentSpaceId)
       const date = new Date().toISOString().slice(0, 10)
       // Include the active space name so a ZIP downloaded weeks
       // ago can still be matched to the space it came from. Skip the
@@ -1090,7 +1090,24 @@ export function DataTab(): React.ReactElement {
       const sanitizedSpaceName = sanitizeSpaceNameForFilename(activeSpace?.name ?? '')
       const spacePart = sanitizedSpaceName.length > 0 ? `${sanitizedSpaceName}-` : ''
       downloadBlob(blob, `agaric-export-${spacePart}${date}.zip`)
-      notify.success(t('data.exportSuccess'))
+      // #2965 — `exportGraphAsZip` no longer silently swallows per-page /
+      // per-attachment failures behind an unconditional success: surface a
+      // warning (with a details ledger already written into the ZIP as
+      // `export-report.txt`) whenever anything was dropped, and keep the
+      // plain success toast for the happy (0-skipped) path unchanged.
+      if (skippedPages > 0 || skippedAttachments > 0) {
+        const details = [
+          skippedPages > 0 ? t('data.exportSkippedPages', { count: skippedPages }) : null,
+          skippedAttachments > 0
+            ? t('data.exportSkippedAttachments', { count: skippedAttachments })
+            : null,
+        ]
+          .filter((d): d is string => d !== null)
+          .join('; ')
+        notify.warning(t('data.exportPartial', { detail: details }))
+      } else {
+        notify.success(t('data.exportSuccess'))
+      }
     } catch (err) {
       logger.error('DataSettingsTab', 'export failed', undefined, err)
       notify.error(t('data.exportFailed'))

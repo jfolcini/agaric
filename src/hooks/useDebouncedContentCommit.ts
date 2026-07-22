@@ -48,13 +48,24 @@
  *
  * The trailing debounce collapses a typing burst into at most one op per idle
  * pause; the backend diff-splice keeps each op's payload minimal.
+ *
+ * ## Export flush (#2969)
+ *
+ * While focused, this hook registers its commit as an awaitable "flush now"
+ * callback in `active-draft-flush.ts` — the minimal bridge that lets export
+ * entry points outside the editor's component subtree (PageHeader's
+ * copy-to-clipboard export, `exportGraphAsZip`) force the focused block's
+ * pending debounced content out before reading a page's markdown. See that
+ * module's doc comment for the scope note (content-commit path only, not
+ * checkbox/split/property — those stay blur-only).
  */
 
-import { useEffect } from 'react'
+import { useCallback, useEffect } from 'react'
 import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { registerActiveDraftFlush } from '@/lib/active-draft-flush'
 import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 
@@ -75,7 +86,9 @@ export function useDebouncedContentCommit(params: {
 }): void {
   const { isFocused, blockId, liveContent, rovingEditorRef, edit } = params
 
-  const debounced = useDebouncedCallback(() => {
+  // Extracted so both the debounce timer AND the export "flush now" bridge
+  // (#2969) share exactly one commit implementation.
+  const commitNow = useCallback(async (): Promise<void> => {
     const re = rovingEditorRef.current
     // Stale-fire guard: the active block may have switched between schedule
     // and fire (block→block focus move).
@@ -95,20 +108,23 @@ export function useDebouncedContentCommit(params: {
     // property line is present in the block.
     if (parseInlineProperties(md).length > 0) return
 
-    edit(blockId, md)
-      .then((ok) => {
-        // Rebase the delta baseline ONLY after a durable commit, and only if
-        // the editor is still mounted on this block. On failure — or if the
-        // block was blurred while the IPC was in flight — leave the baseline
-        // untouched so the blur `unmount()` re-commits `md` (the tail is never
-        // lost); the worst case is a benign duplicate near-empty op.
-        if (!ok) return
-        const cur = rovingEditorRef.current
-        if (cur && cur.activeBlockId === blockId) cur.markCommitted(md)
-      })
-      .catch((err) => {
-        logger.warn('editor', 'debounced content commit failed', { blockId }, err)
-      })
+    try {
+      const ok = await edit(blockId, md)
+      // Rebase the delta baseline ONLY after a durable commit, and only if
+      // the editor is still mounted on this block. On failure — or if the
+      // block was blurred while the IPC was in flight — leave the baseline
+      // untouched so the blur `unmount()` re-commits `md` (the tail is never
+      // lost); the worst case is a benign duplicate near-empty op.
+      if (!ok) return
+      const cur = rovingEditorRef.current
+      if (cur && cur.activeBlockId === blockId) cur.markCommitted(md)
+    } catch (err) {
+      logger.warn('editor', 'debounced content commit failed', { blockId }, err)
+    }
+  }, [blockId, edit, rovingEditorRef])
+
+  const debounced = useDebouncedCallback(() => {
+    void commitNow()
   }, CONTENT_COMMIT_DEBOUNCE_MS)
 
   useEffect(() => {
@@ -120,8 +136,18 @@ export function useDebouncedContentCommit(params: {
     }
     // Reschedule on every liveContent change while focused. `schedule` resets
     // the timer internally, so a typing burst collapses into ONE trailing
-    // commit per idle pause. (Deliberately no cleanup-cancel: cancelling on
-    // each keystroke-driven change would defeat the trailing debounce.)
+    // commit per idle pause. (Deliberately no cleanup-cancel of the DEBOUNCE
+    // TIMER on every liveContent change — cancelling it here would defeat the
+    // trailing debounce. The cleanup below only unregisters the export-flush
+    // bridge, which is cheap to re-register every keystroke.)
     debounced.schedule(liveContent)
-  }, [isFocused, blockId, liveContent, debounced])
+    // #2969 — expose "flush this block's pending debounced commit right now"
+    // to export entry points outside the editor's component subtree. Cancel
+    // the pending timer first so a stale trailing tick can't race the
+    // immediate commit and re-send stale content afterward.
+    return registerActiveDraftFlush(blockId, async () => {
+      debounced.cancel()
+      await commitNow()
+    })
+  }, [isFocused, blockId, liveContent, debounced, commitNow])
 }

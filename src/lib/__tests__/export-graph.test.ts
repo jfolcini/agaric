@@ -13,10 +13,20 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// #2969 — mocked so the ordering test below can observe when it fires
+// relative to `export_page_markdown`; every other test gets a no-op
+// resolved flush (reset in `beforeEach`) so existing assertions are
+// unaffected.
+vi.mock('@/lib/active-draft-flush', () => ({
+  flushActiveDraft: vi.fn(),
+}))
+
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { logger } from '@/lib/logger'
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedLogger = vi.mocked(logger)
+const mockedFlushActiveDraft = vi.mocked(flushActiveDraft)
 
 // Canonical active-space ULID. `exportGraphAsZip` is required-active (b1):
 // the page fetch only runs for an active space.
@@ -24,6 +34,7 @@ const SPACE_ID = '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedFlushActiveDraft.mockResolvedValue(undefined)
 })
 
 describe('exportGraphAsZip', () => {
@@ -42,7 +53,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
 
     expect(blob).toBeInstanceOf(Blob)
     expect(blob.size).toBeGreaterThan(0)
@@ -69,7 +80,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     expect(blob).toBeInstanceOf(Blob)
 
     // Inspect the ZIP — a regression that collapsed duplicates into a single
@@ -109,7 +120,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
     const sameNameMd = filenames.filter((f) => f.startsWith('Same Name') && f.endsWith('.md'))
@@ -139,7 +150,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
     const mdFiles = filenames.filter((f) => f.endsWith('.md'))
@@ -160,7 +171,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -179,7 +190,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -197,7 +208,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -236,7 +247,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -265,7 +276,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const md = await unzipped.file('Notes.md')?.async('string')
     // Unresolvable attachment → original ref preserved, nothing dropped.
@@ -305,7 +316,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -349,7 +360,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -374,7 +385,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const md = await unzipped.file('Notes.md')?.async('string')
     // Unresolvable attachment → original ref preserved, nothing dropped.
@@ -416,7 +427,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const md = await unzipped.file('Mixed.md')?.async('string')
 
@@ -428,7 +439,7 @@ describe('exportGraphAsZip', () => {
   it('returns empty ZIP when no pages exist', async () => {
     mockedInvoke.mockResolvedValue([])
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     expect(blob).toBeInstanceOf(Blob)
   })
 
@@ -452,7 +463,7 @@ describe('exportGraphAsZip', () => {
       return null
     })
 
-    const blob = await exportGraphAsZip(SPACE_ID)
+    const { blob } = await exportGraphAsZip(SPACE_ID)
     const unzipped = await JSZip.loadAsync(await blob.arrayBuffer())
     const filenames = Object.keys(unzipped.files)
 
@@ -475,10 +486,118 @@ describe('exportGraphAsZip', () => {
     // rejected by the backend).
     mockedInvoke.mockResolvedValue([])
 
-    const blob = await exportGraphAsZip(null)
+    const { blob } = await exportGraphAsZip(null)
 
     expect(blob).toBeInstanceOf(Blob)
     expect(mockedInvoke).not.toHaveBeenCalledWith('list_all_pages_in_space', expect.anything())
+  })
+
+  // #2969 — the focused block's pending debounced content commit must be
+  // flushed (and AWAITED) before any page markdown is read, so a just-typed
+  // run of keystrokes (most notably via the Ctrl+Shift+E shortcut, which
+  // never blurs the editor) isn't silently missing from the export.
+  it('awaits flushActiveDraft before reading any page markdown (#2969)', async () => {
+    const order: string[] = []
+    mockedFlushActiveDraft.mockImplementation(async () => {
+      order.push('flush')
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Notes' }]
+      }
+      if (cmd === 'export_page_markdown') {
+        order.push('export')
+        return '# content'
+      }
+      return null
+    })
+
+    await exportGraphAsZip(SPACE_ID)
+
+    expect(order).toEqual(['flush', 'export'])
+  })
+})
+
+describe('exportGraphAsZip skip accounting (#2965)', () => {
+  it('counts a failed page export, writes export-report.txt naming it, and still returns the successful pages', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'Good' },
+          { id: 'P2', content: 'Broken' },
+        ]
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        if (id === 'P2') throw new Error('boom')
+        return '# ok'
+      }
+      return null
+    })
+
+    const result = await exportGraphAsZip(SPACE_ID)
+
+    expect(result.exportedPages).toBe(1)
+    expect(result.skippedPages).toBe(1)
+    expect(result.skippedAttachments).toBe(0)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    expect(Object.keys(unzipped.files)).toContain('Good.md')
+    const report = await unzipped.file('export-report.txt')?.async('string')
+    expect(report).toBeDefined()
+    expect(report).toContain('Skipped pages (1):')
+    expect(report).toContain('Broken')
+  })
+
+  it('counts a failed attachment ONCE even when referenced from multiple pages, and lists it in export-report.txt', async () => {
+    const attId = 'ATT_GONE'
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [
+          { id: 'P1', content: 'Page One' },
+          { id: 'P2', content: 'Page Two' },
+        ]
+      }
+      if (cmd === 'export_page_markdown') {
+        return `[missing](attachment:${attId})`
+      }
+      if (cmd === 'read_attachment_meta') throw new Error('gone')
+      return null
+    })
+
+    const result = await exportGraphAsZip(SPACE_ID)
+
+    expect(result.exportedPages).toBe(2)
+    expect(result.skippedPages).toBe(0)
+    // Same broken attachment referenced from both pages — distinct count, not
+    // per-reference.
+    expect(result.skippedAttachments).toBe(1)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const report = await unzipped.file('export-report.txt')?.async('string')
+    expect(report).toBeDefined()
+    expect(report).toContain('Skipped attachments (1):')
+    expect(report).toContain(attId)
+    expect(report).toContain('Page One.md')
+  })
+
+  it('omits export-report.txt and reports zero skips on the happy path (behavior unchanged)', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_all_pages_in_space') {
+        return [{ id: 'P1', content: 'Fine' }]
+      }
+      if (cmd === 'export_page_markdown') return '# fine'
+      return null
+    })
+
+    const result = await exportGraphAsZip(SPACE_ID)
+
+    expect(result.exportedPages).toBe(1)
+    expect(result.skippedPages).toBe(0)
+    expect(result.skippedAttachments).toBe(0)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    expect(unzipped.file('export-report.txt')).toBeNull()
   })
 })
 

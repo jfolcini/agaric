@@ -6,6 +6,7 @@ import {
   CONTENT_COMMIT_DEBOUNCE_MS,
   useDebouncedContentCommit,
 } from '@/hooks/useDebouncedContentCommit'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 
 vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -305,5 +306,97 @@ describe('useDebouncedContentCommit (#2600)', () => {
     // Must NOT stamp the now-different block's baseline.
     expect(markCommitted).not.toHaveBeenCalled()
     expect(state.original).toBe('base')
+  })
+
+  // #2969 — while focused, the hook registers an on-demand "flush this
+  // block's pending debounced commit right now" callback in
+  // `active-draft-flush.ts`, so export entry points outside the editor's
+  // component subtree can force out just-typed content before reading it.
+  it('flushes the pending commit immediately (and cancels the timer) when flushActiveDraft is called', async () => {
+    const { handle, markCommitted, state } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'typed but not yet idle',
+      original: 'base',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    renderHook(() =>
+      useDebouncedContentCommit({
+        isFocused: true,
+        blockId: 'B1',
+        liveContent: 'typed but not yet idle',
+        rovingEditorRef,
+        edit,
+      }),
+    )
+
+    // Well within the debounce window — the timer commit has NOT fired yet.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS - 100)
+    })
+    expect(edit).not.toHaveBeenCalled()
+
+    // The export path's on-demand flush commits immediately.
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'typed but not yet idle')
+    expect(markCommitted).toHaveBeenCalledExactlyOnceWith('typed but not yet idle')
+    expect(state.original).toBe('typed but not yet idle')
+
+    // The cancelled debounce timer must not ALSO fire a duplicate commit.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
+    })
+    expect(edit).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not schedule a flush registration while unfocused, so flushActiveDraft is a no-op', async () => {
+    const { handle } = makeHandle({ activeBlockId: 'B1', markdown: 'x', original: '' })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    renderHook(() =>
+      useDebouncedContentCommit({
+        isFocused: false,
+        blockId: 'B1',
+        liveContent: 'x',
+        rovingEditorRef,
+        edit,
+      }),
+    )
+
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(edit).not.toHaveBeenCalled()
+  })
+
+  it('unregisters its flush on unmount, so a later flushActiveDraft call is a no-op', async () => {
+    const { handle } = makeHandle({
+      activeBlockId: 'B1',
+      markdown: 'typed',
+      original: 'base',
+    })
+    const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
+    const rovingEditorRef = { current: handle }
+
+    const { unmount } = renderHook(() =>
+      useDebouncedContentCommit({
+        isFocused: true,
+        blockId: 'B1',
+        liveContent: 'typed',
+        rovingEditorRef,
+        edit,
+      }),
+    )
+
+    unmount()
+
+    await act(async () => {
+      await flushActiveDraft()
+    })
+    expect(edit).not.toHaveBeenCalled()
   })
 })
