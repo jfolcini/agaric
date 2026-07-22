@@ -94,7 +94,7 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
 
     // Redirect to different domain + password input or login-related action/path
     if !original_domain.is_empty() && !final_domain.is_empty() && original_domain != final_domain {
-        let body_lower = body.to_lowercase();
+        let body_lower = body.to_ascii_lowercase();
         if body_lower.contains("<input type=\"password\"")
             || body_lower.contains("<input type='password'")
         {
@@ -114,7 +114,7 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
 
     // Body < 5KB + meta http-equiv="refresh" pointing to different domain
     if body.len() < 5 * 1024 {
-        let body_lower = body.to_lowercase();
+        let body_lower = body.to_ascii_lowercase();
         if body_lower.contains("<meta http-equiv=\"refresh\"")
             || body_lower.contains("<meta http-equiv='refresh'")
             || body_lower.contains("<meta http-equiv=refresh")
@@ -136,7 +136,7 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
     // (c): driven by `AUTH_TITLE_KEYWORDS` so a new keyword is a
     // one-line array push.
     if let Some(title) = parse_title(body) {
-        let title_lower = title.to_lowercase();
+        let title_lower = title.to_ascii_lowercase();
         if AUTH_TITLE_KEYWORDS
             .iter()
             .any(|kw| title_lower.contains(kw))
@@ -154,7 +154,10 @@ pub fn detect_auth_required(status: u16, original_url: &str, final_url: &str, bo
 
 /// Extract content from `<title>...</title>`.
 fn extract_title_tag(html: &str) -> Option<String> {
-    let lower = html.to_lowercase();
+    // ASCII-only lowercasing keeps byte offsets aligned with `html` so the
+    // `&html[content_start..]` slice below never lands mid-UTF-8-char. Tag
+    // names are ASCII, so this is behaviour-preserving. (#2958)
+    let lower = html.to_ascii_lowercase();
     let start = lower.find("<title")?;
     let after_tag = lower[start..].find('>')?;
     let content_start = start + after_tag + 1;
@@ -187,7 +190,10 @@ fn find_first_tag<F, T>(html: &str, tag_open: &str, mut f: F) -> Option<T>
 where
     F: FnMut(&str, &str) -> Option<T>,
 {
-    let lower = html.to_lowercase();
+    // ASCII-only lowercasing keeps byte offsets aligned with `html` so the
+    // `&html[abs_start..=tag_end]` slice below never lands mid-UTF-8-char.
+    // Tag names are ASCII, so this is behaviour-preserving. (#2958)
+    let lower = html.to_ascii_lowercase();
     let mut search_pos = 0;
     while let Some(rel_start) = lower[search_pos..].find(tag_open) {
         let abs_start = search_pos + rel_start;
@@ -249,7 +255,10 @@ fn extract_link_icon_href(html: &str) -> Option<String> {
 /// Extract an attribute value from an HTML tag string.
 /// Handles both double and single quoted values.
 fn extract_attribute_value(tag: &str, attr: &str) -> Option<String> {
-    let lower = tag.to_lowercase();
+    // ASCII-only lowercasing keeps byte offsets aligned with `tag` so the
+    // `tag[val_start..]` slices below never land mid-UTF-8-char. Attribute
+    // names are ASCII, so this is behaviour-preserving. (#2958)
+    let lower = tag.to_ascii_lowercase();
     let dq_pattern = format!("{attr}=\"");
     let sq_pattern = format!("{attr}='");
 
@@ -281,7 +290,11 @@ pub(super) fn extract_meta_refresh_url(html: &str) -> Option<String> {
         {
             // Parse content="0;url=https://..." or content="0; url=https://..."
             let content = extract_attribute_value(tag_orig, "content")?;
-            let content_lower = content.to_lowercase();
+            // ASCII-only lowercasing keeps byte offsets aligned with `content`
+            // so the `content[url_pos + 4..]` slice below never lands
+            // mid-UTF-8-char. `url=` is ASCII, so this is
+            // behaviour-preserving. (#2958)
+            let content_lower = content.to_ascii_lowercase();
             let url_pos = content_lower.find("url=")?;
             // I-Search-8: some servers wrap the URL inside quotes within the
             // `content` attribute (e.g. `content="0;url='https://example.com'"`).
