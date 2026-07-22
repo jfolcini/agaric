@@ -96,6 +96,68 @@ describe('useSpaceStore', () => {
       )
     })
 
+    // #2921 — hard-vs-soft failure classification.
+    describe('#2921 hard vs soft failure', () => {
+      it('SOFT: a usable prior snapshot (availableSpaces) survives — stays ready and fires a deduped toast once', async () => {
+        useSpaceStore.setState({ availableSpaces: [PERSONAL], currentSpaceId: PERSONAL.id })
+        mockedListSpaces.mockRejectedValueOnce(new Error('network down'))
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        const state = useSpaceStore.getState()
+        expect(state.isReady).toBe(true)
+        expect(state.availableSpaces).toEqual([PERSONAL])
+        expect(toast.error).toHaveBeenCalledTimes(1)
+        expect(toast.error).toHaveBeenCalledWith(expect.any(String), { id: 'spaces-load-failed' })
+      })
+
+      it('SOFT: a usable prior snapshot (persisted currentSpaceId, empty availableSpaces) also stays ready', async () => {
+        // Rehydrated-but-not-yet-refreshed shape: currentSpaceId came back
+        // from persisted storage but availableSpaces hasn't been fetched
+        // yet this session.
+        useSpaceStore.setState({ availableSpaces: [], currentSpaceId: WORK.id })
+        mockedListSpaces.mockRejectedValueOnce(new Error('network down'))
+
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(useSpaceStore.getState().isReady).toBe(true)
+        expect(toast.error).toHaveBeenCalledTimes(1)
+      })
+
+      it('HARD: no prior snapshot (empty availableSpaces AND null currentSpaceId) still resolves (never rejects), flips isReady, records a hard-error outcome, and does not toast', async () => {
+        useSpaceStore.setState({ availableSpaces: [], currentSpaceId: null })
+        const err = new Error('backend unreachable')
+        mockedListSpaces.mockRejectedValueOnce(err)
+
+        // `refreshAvailableSpaces` never rejects — SpaceSwitcher's
+        // fire-and-forget `void refreshAvailableSpaces()` mount refresh
+        // and SpaceManageDialog's awaited-but-uncaught refresh both rely
+        // on that contract holding even on a hard failure.
+        await expect(useSpaceStore.getState().refreshAvailableSpaces()).resolves.toBeUndefined()
+
+        const state = useSpaceStore.getState()
+        // `isReady` still flips (never freeze the UI here) — the boot
+        // store is the one that reacts to `lastRefreshOutcome` and
+        // decides whether to gate rendering on it via BootGate's `error`
+        // state instead.
+        expect(state.isReady).toBe(true)
+        expect(state.lastRefreshOutcome).toEqual({ kind: 'hard-error', error: err })
+        expect(toast.error).not.toHaveBeenCalled()
+      })
+
+      it('a subsequent successful refresh clears a prior hard-error outcome', async () => {
+        useSpaceStore.setState({ availableSpaces: [], currentSpaceId: null })
+        mockedListSpaces.mockRejectedValueOnce(new Error('backend unreachable'))
+        await useSpaceStore.getState().refreshAvailableSpaces()
+        expect(useSpaceStore.getState().lastRefreshOutcome.kind).toBe('hard-error')
+
+        mockedListSpaces.mockResolvedValueOnce([PERSONAL, WORK])
+        await useSpaceStore.getState().refreshAvailableSpaces()
+
+        expect(useSpaceStore.getState().lastRefreshOutcome).toEqual({ kind: 'ok' })
+      })
+    })
+
     it('falls back to the first available space when the persisted id no longer exists', async () => {
       // Persisted `BOGUS` id (e.g. space deleted on another device).
       useSpaceStore.setState({ currentSpaceId: 'BOGUS' })

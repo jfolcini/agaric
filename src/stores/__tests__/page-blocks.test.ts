@@ -372,18 +372,28 @@ describe('PageBlockStore', () => {
       // Pre-bootstrap state: the space store has not hydrated yet.
       // Earlier code would forward `?? ''` to the page-load IPC and
       // rely on the backend treating `''` as a no-match SQL filter.
-      // We now fail closed: no IPC, no state change.  The page stays
-      // in its initial `loading: true` slot until the space hydrates
-      // and load() is re-invoked.
+      // We now fail closed: no IPC, no block-state change.
       useSpaceStore.setState({ currentSpaceId: null })
       const blocksBefore = store.getState().blocks
-      const loadingBefore = store.getState().loading
 
       await store.getState().load()
 
       expect(mockedInvoke).not.toHaveBeenCalled()
       expect(store.getState().blocks).toBe(blocksBefore)
-      expect(store.getState().loading).toBe(loadingBefore)
+    })
+
+    // #2921 — a stuck `loading: true` with no `currentSpaceId` left every
+    // BlockTree mounted in that window on a perpetual skeleton (nothing
+    // else ever re-invokes `load()` for it). `load()` must clear `loading`
+    // even on this early-return path.
+    it('#2921 — clears loading (no perpetual skeleton) when currentSpaceId is null', async () => {
+      useSpaceStore.setState({ currentSpaceId: null })
+      expect(store.getState().loading).toBe(true)
+
+      await store.getState().load()
+
+      expect(mockedInvoke).not.toHaveBeenCalled()
+      expect(store.getState().loading).toBe(false)
     })
 
     // ── #773 — sync-delete focus reconciliation ─────────────────────────

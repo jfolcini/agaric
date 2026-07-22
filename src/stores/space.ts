@@ -43,6 +43,22 @@ export const DEFAULT_ACCENT_TOKEN = 'accent-blue'
  */
 export const LEGACY_SPACE_KEY = '__legacy__'
 
+/**
+ * #2921 — outcome of the most recent `refreshAvailableSpaces()` call.
+ * `refreshAvailableSpaces()` itself never rejects (non-boot callers —
+ * `SpaceSwitcher`'s fire-and-forget mount refresh, `SpaceManageDialog`'s
+ * awaited-but-uncaught refresh — rely on that contract), so a caller that
+ * needs to react to a HARD failure (no usable prior snapshot: empty
+ * `availableSpaces` AND `currentSpaceId === null`) reads this field
+ * instead. The boot store's `boot()` is the one production reader: it
+ * awaits `refreshAvailableSpaces()` then checks this to decide between
+ * transitioning to `'ready'` or surfacing BootGate's error/retry screen.
+ * A SOFT failure (a usable snapshot exists) reports `{ kind: 'ok' }` —
+ * same as success — because the app stays usable on the prior snapshot;
+ * only the deduped toast in `refreshAvailableSpaces` marks that case.
+ */
+export type SpaceRefreshOutcome = { kind: 'ok' } | { kind: 'hard-error'; error: unknown }
+
 interface SpaceState {
   /** ULID of the active space, or `null` until the first refresh completes. */
   currentSpaceId: string | null
@@ -50,6 +66,8 @@ interface SpaceState {
   availableSpaces: SpaceRow[]
   /** `false` until the first `refreshAvailableSpaces()` resolves (success or error). */
   isReady: boolean
+  /** See {@link SpaceRefreshOutcome}. Defaults to `{ kind: 'ok' }`. */
+  lastRefreshOutcome: SpaceRefreshOutcome
 
   /** Set the active space. Caller is responsible for ensuring `id` is valid. */
   setCurrentSpace: (id: string) => void
@@ -95,6 +113,7 @@ export const useSpaceStore = create<SpaceState>()(
         currentSpaceId: null,
         availableSpaces: [],
         isReady: false,
+        lastRefreshOutcome: { kind: 'ok' },
 
         setCurrentSpace: (id: string) => {
           set({ currentSpaceId: id })
@@ -125,7 +144,12 @@ export const useSpaceStore = create<SpaceState>()(
                 LOG_MODULE,
                 'list_spaces returned a non-array response; treating as empty',
               )
-              set({ availableSpaces: [], currentSpaceId: null, isReady: true })
+              set({
+                availableSpaces: [],
+                currentSpaceId: null,
+                isReady: true,
+                lastRefreshOutcome: { kind: 'ok' },
+              })
               return
             }
             const spaces = raw
@@ -135,6 +159,7 @@ export const useSpaceStore = create<SpaceState>()(
               availableSpaces: spaces,
               currentSpaceId: nextCurrent,
               isReady: true,
+              lastRefreshOutcome: { kind: 'ok' },
             })
             // When the previously-active space disappeared from the
             // server-truth list (e.g. deleted on another device and synced
@@ -150,12 +175,32 @@ export const useSpaceStore = create<SpaceState>()(
               }
             }
           } catch (err) {
-            // Never freeze the UI on backend error — mark ready and leave
-            // `availableSpaces` untouched so a previously-loaded snapshot
-            // (if any) remains usable. Log via the shared logger so the
-            // failure surfaces in the daily log file, not a silent catch.
+            // #2921 — distinguish a HARD failure (no usable prior snapshot
+            // to fall back on) from a SOFT one (a snapshot exists — either
+            // rehydrated from persisted `currentSpaceId` or from an earlier
+            // successful refresh this session). Never freeze the UI in
+            // EITHER case — `isReady` still flips so components gated on it
+            // (SearchPanel, PageBrowser, CommandPalette, …) don't hang —
+            // but a HARD failure additionally records `lastRefreshOutcome`
+            // so the boot store can read it right after its own `await`
+            // returns and surface BootGate's error/retry screen instead of
+            // silently landing on `ready` with an empty space list (the
+            // every-page-load-no-ops / perpetual-skeleton bug).
             logger.warn(LOG_MODULE, 'failed to load spaces', undefined, err)
-            set({ isReady: true })
+            const { availableSpaces, currentSpaceId } = get()
+            const hasUsableSnapshot = availableSpaces.length > 0 || currentSpaceId !== null
+            if (hasUsableSnapshot) {
+              // SOFT — tell the user via a deduped toast (stable `id`) so a
+              // repeating background refresh failure (e.g. sync polling)
+              // doesn't stack toasts.
+              notify.error(i18n.t('error.spacesLoadFailed'), { id: 'spaces-load-failed' })
+            }
+            set({
+              isReady: true,
+              lastRefreshOutcome: hasUsableSnapshot
+                ? { kind: 'ok' }
+                : { kind: 'hard-error', error: err },
+            })
           }
         },
       }),

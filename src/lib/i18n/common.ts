@@ -21,6 +21,10 @@ export const common: Record<string, string> = {
   // canonical — but a restart usually re-runs recovery cleanly).
   'boot.recoveryDegradedBody':
     'A startup recovery step did not finish, so recent edits may not appear yet. Your data is safe — restarting Agaric usually fixes this. Avoid making large edits until it is resolved.',
+  // #2921 — generic fallback shown on the BootGate error screen when
+  // `refreshAvailableSpaces()` hard-fails during boot (no prior snapshot)
+  // and the caught value carries no readable message of its own.
+  'boot.spacesLoadFailed': 'Could not load your spaces. Check your connection and try again.',
   'sidebar.groupWorkspace': 'Workspace',
   'sidebar.groupSystem': 'System',
   'sidebar.pages': 'Pages',
