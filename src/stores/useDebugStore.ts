@@ -19,6 +19,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import { guardedPersistStorage } from '@/lib/guarded-storage'
+
 interface DebugState {
   /** When true, error surfaces append the raw error code/kind. Default false. */
   debugMode: boolean
@@ -36,6 +38,12 @@ export const useDebugStore = create<DebugState>()(
     {
       name: 'agaric:debug',
       version: 1,
+      // Uses the notify-free `guardedPersistStorage`, not `safePersistStorage`:
+      // `error-display` reads `getDebugMode` from this store, so importing
+      // `notify` (which imports `error-display`) here would close an import
+      // cycle. This store stays guarded against setItem throws, just without
+      // the write-failure toast.
+      storage: guardedPersistStorage,
       // Only the flag is persisted; the action closures are recreated on
       // each load and must never be written to storage.
       partialize: (state) => ({ debugMode: state.debugMode }),

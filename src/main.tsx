@@ -88,7 +88,23 @@ async function main() {
   // in which case it lazily registers the tracer + installs the invoke
   // trace-context propagation patch. Awaited (after mock setup so the IPC bridge
   // exists) so the patch is in place before the app dispatches its first command.
-  await initFrontendObservability()
+  //
+  // Best-effort (#2924): `initFrontendObservability` deliberately re-throws on
+  // a transient dynamic-import/chunk-load failure or a throwing patch install
+  // (see the comment on that function) so a *subsequent* call can retry. But
+  // that means a single opt-in tracing failure must never abort the render —
+  // tracing is diagnostic, not render-critical. Catch it here, log via the
+  // regular logger, and keep going with tracing simply left uninitialised.
+  try {
+    await initFrontendObservability()
+  } catch (err) {
+    logger.warn(
+      'main',
+      'frontend observability init failed — continuing without tracing',
+      undefined,
+      err,
+    )
+  }
 
   const rootEl = document.getElementById('root')
   if (!rootEl) throw new Error('Root element not found')
@@ -111,4 +127,62 @@ async function main() {
   )
 }
 
-main()
+// #2924: `main()` above is async and was previously invoked bare — any
+// rejection before `createRoot(...).render(...)` (a mock-setup import
+// failure in dev/e2e, a missing `#root`, or any other pre-mount throw)
+// aborted silently. React never mounts in that case, so the root
+// `ErrorBoundary` doesn't exist yet to catch anything — the user was left
+// with a blank window and nothing but a console log (the `unhandledrejection`
+// listener above only logs, it doesn't render).
+//
+// This is the last line of defence: build a minimal static fallback screen
+// by hand, with plain DOM APIs only (no React — it may not have loaded, and
+// even if it did, nothing has mounted for it to render into). The wording
+// mirrors `ErrorBoundary`'s fallback (`src/components/common/ErrorBoundary.tsx`)
+// so a pre-mount crash and a post-mount crash look the same to the user.
+function renderFatalBootError(error: unknown): void {
+  const message =
+    error instanceof Error ? error.message : String(error ?? 'An unexpected error occurred')
+  logger.error('main', 'Fatal error before the app could render', {
+    stack: error instanceof Error ? (error.stack ?? '') : '',
+  })
+
+  const container = document.getElementById('root') ?? document.body
+  container.innerHTML = ''
+
+  const wrapper = document.createElement('div')
+  wrapper.setAttribute(
+    'style',
+    'display:flex;min-height:100vh;flex-direction:column;align-items:center;justify-content:center;gap:1rem;font-family:system-ui,sans-serif;padding:2rem;text-align:center;',
+  )
+
+  const panel = document.createElement('div')
+  panel.setAttribute('role', 'alert')
+  panel.setAttribute(
+    'style',
+    'display:flex;flex-direction:column;align-items:center;gap:0.75rem;border:1px solid #e5484d;border-radius:0.5rem;padding:2rem;max-width:28rem;',
+  )
+
+  const heading = document.createElement('h2')
+  heading.textContent = 'Something went wrong'
+  heading.setAttribute('style', 'font-size:1.125rem;font-weight:600;margin:0;')
+
+  const description = document.createElement('p')
+  description.textContent = message
+  description.setAttribute('style', 'font-size:0.875rem;color:#666;margin:0;max-width:24rem;')
+
+  const reloadButton = document.createElement('button')
+  reloadButton.type = 'button'
+  reloadButton.textContent = 'Reload'
+  reloadButton.setAttribute(
+    'style',
+    'padding:0.5rem 1rem;border:1px solid currentColor;border-radius:0.375rem;background:transparent;cursor:pointer;font:inherit;',
+  )
+  reloadButton.addEventListener('click', () => window.location.reload())
+
+  panel.append(heading, description, reloadButton)
+  wrapper.append(panel)
+  container.append(wrapper)
+}
+
+main().catch(renderFatalBootError)

@@ -196,6 +196,35 @@ describe('PageBlockStore', () => {
       expect(store.getState().blocks).toEqual([])
     })
 
+    it('#2926 — a failed load shows a retry toast whose action re-invokes load()', async () => {
+      mockedInvoke.mockRejectedValueOnce(new Error('network'))
+
+      await store.getState().load()
+
+      expect(toast.error).toHaveBeenCalledWith(
+        translate('error.loadBlocksFailed'),
+        expect.objectContaining({
+          id: 'load-blocks-failed',
+          action: expect.objectContaining({ onClick: expect.any(Function) }),
+        }),
+      )
+
+      // Simulate the user clicking the toast's "Retry" action: it should
+      // re-invoke load(), issuing a fresh IPC call and (on success)
+      // recovering the tree.
+      mockedInvoke.mockResolvedValueOnce(subtreeResp([]))
+      const [, opts] = vi.mocked(toast.error).mock.calls.at(-1) as unknown as [
+        unknown,
+        { action: { onClick: () => void } },
+      ]
+      opts.action.onClick()
+      await vi.waitFor(() => {
+        expect(store.getState().loading).toBe(false)
+      })
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+    })
+
     it('passes rootBlockId through to load_page_subtree', async () => {
       const s = createPageBlockStore('PARENT_42')
       mockedInvoke.mockResolvedValue(subtreeResp([]))

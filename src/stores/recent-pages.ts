@@ -33,6 +33,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import { activeSpaceKey } from '@/lib/active-space'
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
@@ -535,6 +536,7 @@ export const useRecentPagesStore = create<RecentPagesState>()(
     {
       name: 'agaric:recent-pages',
       version: 1,
+      storage: safePersistStorage,
       partialize: (state) => ({
         recentPages: state.recentPages,
         recentPagesBySpace: state.recentPagesBySpace,

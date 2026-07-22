@@ -26,6 +26,7 @@ import { persist } from 'zustand/middleware'
 
 import { isDateFormattedPage } from '@/lib/date-utils'
 import { parseDate } from '@/lib/parse-date'
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -585,6 +586,7 @@ export const useTabsStore = create<TabsStore>()(
     {
       name: 'agaric:tabs',
       version: 1,
+      storage: safePersistStorage,
       partialize: (state) => ({
         tabs: state.tabs,
         activeTabIndex: state.activeTabIndex,

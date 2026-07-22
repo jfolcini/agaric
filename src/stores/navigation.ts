@@ -39,6 +39,7 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { createPerSpaceSlice } from '@/stores/createPerSpaceSlice'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
@@ -248,6 +249,7 @@ export const useNavigationStore = create<NavigationStore>()(
     {
       name: 'agaric:navigation',
       version: 3,
+      storage: safePersistStorage,
       // selectedBlockId is intentionally NOT persisted — it is a one-shot
       // UI affordance consumed and cleared by PageEditor / DailyView on
       // mount, not a setting that should survive relaunch.

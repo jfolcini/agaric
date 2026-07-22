@@ -19,6 +19,7 @@ import { persist, subscribeWithSelector } from 'zustand/middleware'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 import type { SpaceRow } from '@/lib/tauri'
 import { listSpaces } from '@/lib/tauri'
 
@@ -160,6 +161,7 @@ export const useSpaceStore = create<SpaceState>()(
       }),
       {
         name: 'agaric:space',
+        storage: safePersistStorage,
         // Persist only the id — `availableSpaces` is server truth and must
         // be re-fetched every boot so a space deleted on another device
         // doesn't linger in the switcher.

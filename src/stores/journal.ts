@@ -24,6 +24,7 @@ import { persist } from 'zustand/middleware'
 
 import { activeSpaceKey } from '@/lib/active-space'
 import { createSpaceSubscriber } from '@/lib/createSpaceSubscriber'
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 
 export type JournalMode = 'daily' | 'weekly' | 'monthly' | 'agenda' | 'stream'
 export type JournalPanel = 'due' | 'references' | 'done'
@@ -198,6 +199,7 @@ export const useJournalStore = create<JournalStore>()(
     {
       name: 'agaric:journal',
       version: 1,
+      storage: safePersistStorage,
       // Persist only the per-space slices — the flat `currentDate` /
       // `mode` fields are derived (mirror of the active-space slice)
       // and would round-trip lossily through JSON anyway (Date objects

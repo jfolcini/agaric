@@ -24,6 +24,7 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
+import { safePersistStorage } from '@/lib/safe-persist-storage'
 import type { FilterPrimitive } from '@/lib/tauri'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
@@ -110,6 +111,7 @@ export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()(
     {
       name: 'agaric:page-browser-filters',
       version: 1,
+      storage: safePersistStorage,
       // Persist the chip lists and the monotonic id counter so `_addId` keys
       // stay unique across a restart (a fresh 0 would collide with rehydrated
       // chips). Function members are not serialisable and are excluded.
