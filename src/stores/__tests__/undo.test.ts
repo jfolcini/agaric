@@ -13,11 +13,15 @@ import {
 // `onNewAction` time are reverted by exact ref instead (`undoOp` for a single
 // op, ONE atomic `undoOps` for a coalesced group); `undoPageGroup` remains
 // the positional fallback for ref-less entries and pre-tracking history.
+// #2901 — `listPageHistory` / `undoPageOp` (singular, positional-by-depth)
+// back `undoDeleteOf`, moved in from SortableBlock's old `undoSwipeDelete`.
 vi.mock('@/lib/tauri', () => ({
   undoPageGroup: vi.fn(),
   undoOp: vi.fn(),
   undoOps: vi.fn(),
   redoPageOp: vi.fn(),
+  listPageHistory: vi.fn(),
+  undoPageOp: vi.fn(),
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -29,17 +33,38 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+// #2901 — `announce` touches a singleton DOM node; mock it so store tests stay
+// DOM-side-effect-free (matches the `vi.mock('@/lib/announcer', ...)`
+// convention used throughout the component test suites).
+vi.mock('@/lib/announcer', () => ({
+  announce: vi.fn(),
+}))
+
 import { toast } from 'sonner'
 
+import { announce } from '@/lib/announcer'
 import { logger } from '@/lib/logger'
-import { redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
+import type { HistoryEntry, PageResponse } from '@/lib/tauri'
+import {
+  listPageHistory,
+  redoPageOp,
+  undoOp,
+  undoOps,
+  undoPageGroup,
+  undoPageOp,
+} from '@/lib/tauri'
 
 const mockedUndoPageGroup = vi.mocked(undoPageGroup)
 const mockedUndoOp = vi.mocked(undoOp)
 const mockedUndoOps = vi.mocked(undoOps)
 const mockedRedoPageOp = vi.mocked(redoPageOp)
+const mockedListPageHistory = vi.mocked(listPageHistory)
+const mockedUndoPageOp = vi.mocked(undoPageOp)
+const mockedAnnounce = vi.mocked(announce)
 const mockedLogger = vi.mocked(logger)
 const mockedToastWarning = vi.mocked(toast.warning)
+const mockedToastError = vi.mocked(toast.error)
+const mockedToastDefault = vi.mocked(toast)
 
 /** Helper — build a mock UndoResult. */
 function makeUndoResult(
@@ -1343,6 +1368,209 @@ describe('useUndoStore', () => {
         expect(stack).toHaveLength(1)
         expect(stack?.[0]?.refs).toEqual([ref(1), ref(2)])
       })
+    })
+  })
+
+  // ---------------------------------------------------------------------------
+  // undoDeleteOf (#2901, finding 42)
+  //
+  // Moved wholesale from SortableBlock's `undoSwipeDelete`: the swipe-delete
+  // toast's Undo is pinned to the delete op it promises to reverse, not a
+  // positional depth-0 group undo. Tapping the toast first blurs any dirty
+  // roving editor, whose flush lands a fresh `edit_block` op ON TOP of the
+  // delete — a naive depth-0 undo would reverse that edit (or group it with
+  // the delete) instead. The fix: locate the block's newest `delete_block` op
+  // in the page history, undo at ITS depth, verify the reversed ref, and roll
+  // a mis-undo back (redo) before probing one deeper.
+  // ---------------------------------------------------------------------------
+  describe('undoDeleteOf (#2901, finding 42)', () => {
+    const DELETE_REF = { device_id: 'dev-1', seq: 5 }
+    // `undoDeleteOf` does not reach into `@/stores/page-blocks` itself (that
+    // would close an `undo.ts <-> page-blocks.ts` import cycle, #761/#2465);
+    // the caller supplies the page reload as a callback, so tests pass this
+    // mock directly as the third argument instead of mocking `getPageStore`.
+    const mockLoad = vi.fn().mockResolvedValue(undefined)
+
+    function historyEntry(
+      opType: string,
+      blockId: string,
+      opRef: { device_id: string; seq: number },
+    ): HistoryEntry {
+      return {
+        device_id: opRef.device_id,
+        seq: opRef.seq,
+        op_type: opType,
+        payload: JSON.stringify({ block_id: blockId }),
+        created_at: 1000 + opRef.seq,
+        is_replicated: false,
+      }
+    }
+
+    function historyPage(items: HistoryEntry[]): PageResponse<HistoryEntry> {
+      return { items, next_cursor: null, has_more: false, total_count: null }
+    }
+
+    beforeEach(() => {
+      mockLoad.mockClear()
+    })
+
+    it('undoes at depth 0 when the delete is still the newest op', async () => {
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+      )
+      mockedUndoPageOp.mockResolvedValue(makeUndoResult({ deviceId: 'dev-1', seq: 5 }))
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).toHaveBeenCalledExactlyOnceWith({ pageId: 'page1', undoDepth: 0 })
+      expect(mockedRedoPageOp).not.toHaveBeenCalled()
+    })
+
+    // Non-tautology: this only passes if the depth argument is actually
+    // computed from the delete op's INDEX in the history — a hardcoded
+    // `undoDepth: 0` (the bug this whole mechanism exists to prevent) fails
+    // this assertion.
+    it('undoes at the delete op depth (NOT depth 0) when a tap-time flush landed an edit on top', async () => {
+      // Newest-first page history at tap time: the tap's own blur-flush edit
+      // of ANOTHER block sits above the delete.
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([
+          historyEntry('edit_block', 'BLOCK_EDITED', { device_id: 'dev-1', seq: 6 }),
+          historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF),
+        ]),
+      )
+      mockedUndoPageOp.mockResolvedValue(makeUndoResult({ deviceId: 'dev-1', seq: 5 }))
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).toHaveBeenCalledExactlyOnceWith({ pageId: 'page1', undoDepth: 1 })
+      expect(mockedRedoPageOp).not.toHaveBeenCalled()
+    })
+
+    // Non-tautology: this only passes if a mis-targeted undo is actually
+    // rolled back via `redoPageOp` and the delete re-targeted one depth
+    // deeper — removing the rollback probe (or not re-trying) fails this.
+    it('rolls a mis-undo back (redo) and probes one deeper when the undo reversed a racing edit', async () => {
+      // The history read raced the tap's flush: the edit is NOT visible yet,
+      // so the delete looks like depth 0 …
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+      )
+      // … but by the time the undo transaction runs, the edit committed on
+      // top: depth 0 reverses the EDIT, not the delete.
+      const editRef = { device_id: 'dev-1', seq: 6 }
+      const misUndo = makeUndoResult({ deviceId: editRef.device_id, seq: editRef.seq, newSeq: 200 })
+      mockedUndoPageOp
+        .mockResolvedValueOnce(misUndo)
+        .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev-1', seq: 5, newSeq: 201 }))
+      mockedRedoPageOp.mockResolvedValue(makeUndoResult({ deviceId: editRef.device_id, seq: 200 }))
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
+      // The wrong undo was rolled back by reversing ITS reverse op…
+      expect(mockedRedoPageOp).toHaveBeenCalledExactlyOnceWith({
+        undoDeviceId: misUndo.new_op_ref.device_id,
+        undoSeq: misUndo.new_op_ref.seq,
+      })
+      // …then the delete was re-targeted one depth deeper.
+      expect(mockedUndoPageOp).toHaveBeenLastCalledWith({ pageId: 'page1', undoDepth: 1 })
+    })
+
+    it('on success: resets redo/positional bookkeeping via onNewAction, notifies + announces, and refreshes the page store', async () => {
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+      )
+      mockedUndoPageOp.mockResolvedValue(makeUndoResult({ deviceId: 'dev-1', seq: 5 }))
+
+      // Seed stale redo/positional bookkeeping the way a prior Ctrl+Z would
+      // leave behind, to prove `undoDeleteOf`'s internal `onNewAction(pageId)`
+      // call actually invalidates it — this targeted undo bypasses the normal
+      // ref/positional undo paths that would otherwise do so (the "bypasses
+      // the undo store's positional bookkeeping" comment this move resolves).
+      useUndoStore.setState({
+        pages: new Map([
+          [
+            'page1',
+            {
+              undoStack: [],
+              redoStack: [{ device_id: 'dev-1', seq: 99 }],
+              undoDepth: 3,
+              redoGroupSizes: [1],
+            },
+          ],
+        ]),
+      })
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      const pageState = useUndoStore.getState().pages.get('page1')
+      expect(pageState?.redoStack).toEqual([])
+      expect(pageState?.undoDepth).toBe(0)
+      expect(pageState?.redoGroupSizes).toEqual([])
+
+      expect(mockedToastDefault).toHaveBeenCalledTimes(1)
+      expect(mockedAnnounce).toHaveBeenCalledTimes(1)
+      expect(mockedToastError).not.toHaveBeenCalled()
+      expect(mockLoad).toHaveBeenCalledTimes(1)
+    })
+
+    it('surfaces an error (and does not undo) when the delete op cannot be found', async () => {
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([historyEntry('edit_block', 'BLOCK_OTHER', { device_id: 'dev-1', seq: 9 })]),
+      )
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).not.toHaveBeenCalled()
+      expect(mockedToastError).toHaveBeenCalledTimes(1)
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'UndoStore',
+        'swipe-delete undo: delete op not found in page history',
+        { pageId: 'page1', blockId: 'BLOCK_SWIPE' },
+      )
+    })
+
+    it('surfaces an error when the history read rejects (IPC failure path)', async () => {
+      const err = new Error('backend down')
+      mockedListPageHistory.mockRejectedValue(err)
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).not.toHaveBeenCalled()
+      expect(mockedToastError).toHaveBeenCalledTimes(1)
+      expect(mockedLogger.error).toHaveBeenCalledWith(
+        'UndoStore',
+        'swipe-delete undo failed',
+        { pageId: 'page1', blockId: 'BLOCK_SWIPE' },
+        err,
+      )
+    })
+
+    it('surfaces an error when both probed depths reverse the wrong op', async () => {
+      mockedListPageHistory.mockResolvedValue(
+        historyPage([historyEntry('delete_block', 'BLOCK_SWIPE', DELETE_REF)]),
+      )
+      // Neither probed depth (0, then 1) reverses the target op — each wrong
+      // probe is rolled back via redoPageOp before the next (or before giving
+      // up), so both iterations roll back: redoPageOp is called TWICE.
+      mockedUndoPageOp
+        .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev-1', seq: 6, newSeq: 200 }))
+        .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev-1', seq: 7, newSeq: 201 }))
+      mockedRedoPageOp
+        .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev-1', seq: 200 }))
+        .mockResolvedValueOnce(makeUndoResult({ deviceId: 'dev-1', seq: 201 }))
+
+      await useUndoStore.getState().undoDeleteOf('page1', 'BLOCK_SWIPE', mockLoad)
+
+      expect(mockedUndoPageOp).toHaveBeenCalledTimes(2)
+      expect(mockedRedoPageOp).toHaveBeenCalledTimes(2)
+      expect(mockedToastError).toHaveBeenCalledTimes(1)
+      expect(mockedLogger.warn).toHaveBeenCalledWith(
+        'UndoStore',
+        'swipe-delete undo: could not pin the delete op',
+        { pageId: 'page1', blockId: 'BLOCK_SWIPE' },
+      )
     })
   })
 })

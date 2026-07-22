@@ -66,7 +66,6 @@
   "src/components/editor/BlockPropertyEditor.tsx",
   "src/components/editor/BlockTree.tsx",
   "src/components/editor/EditableBlock.tsx",
-  "src/components/editor/SortableBlock.tsx",
   "src/components/editor/useImageProperties.ts",
   "src/components/filters/FilterPillRow.tsx",
   "src/components/filters/FilterSortControls.tsx",

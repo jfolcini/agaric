@@ -35,11 +35,20 @@
 
 import { create } from 'zustand'
 
+import { announce } from '@/lib/announcer'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { paginationLimit } from '@/lib/safe-limit'
 import type { OpRef, UndoResult } from '@/lib/tauri'
-import { redoPageOp, undoOp, undoOps, undoPageGroup } from '@/lib/tauri'
+import {
+  listPageHistory,
+  redoPageOp,
+  undoOp,
+  undoOps,
+  undoPageGroup,
+  undoPageOp,
+} from '@/lib/tauri'
 
 export type { OpRef, UndoResult }
 
@@ -219,6 +228,40 @@ interface UndoStore {
    * conservative #731 full reset; relaxing it is future work.
    */
   reanchorAfterRemoteOps: (pageId: string) => void
+
+  /**
+   * #2901 — toast-Undo for a swipe-delete, pinned to THAT delete op (finding
+   * 42). Moved from `SortableBlock`'s `undoSwipeDelete` so the undo store
+   * owns the depth/redo-anchor invariants in one place instead of a row
+   * component reaching around it with raw write IPC calls.
+   *
+   * The tap on the toast first blurs any dirty roving editor, whose flush
+   * lands a fresh `edit_block` op ON TOP of the delete — a positional
+   * depth-0 group undo (`performActivePageUndo`) would then reverse the
+   * user's typed edit (or group the flush-edit with the delete and revert
+   * BOTH). Instead: locate the block's newest `delete_block` op in the page
+   * history, undo at ITS depth, and verify the reversed ref. When the undo
+   * reverses something else (the history read raced the tap's in-flight
+   * flush), roll the mis-undo back via `redoPageOp` and probe one deeper —
+   * the race can only shift the delete by the single op the same tap
+   * appended. Anything else fails loudly.
+   *
+   * `reloadPage` refreshes the page's block subtree after a successful
+   * targeted undo. This store deliberately does NOT import `getPageStore`
+   * from `@/stores/page-blocks` to fetch it directly: `page-blocks.ts`
+   * already imports `useUndoStore` (for `onNewAction` on stale-space heals),
+   * so an `undo.ts -> page-blocks.ts` import would close a module cycle
+   * (`check-import-cycles.mjs`, #761) and reverse the documented one-way
+   * store layering (`docs/architecture/frontend.md`, #2465). The caller —
+   * `SortableBlock`, which already sits inside a `PageBlockStoreProvider` —
+   * supplies the reload as a callback instead:
+   * `() => getPageStore(pageId)?.getState().load()`.
+   */
+  undoDeleteOf: (
+    pageId: string,
+    blockId: string,
+    reloadPage: () => void | Promise<void>,
+  ) => Promise<void>
 }
 
 /** Pristine per-page baseline. */
@@ -301,6 +344,29 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
   const idx = undoStack.indexOf(entry)
   if (idx < 0) return undoStack
   return [...undoStack.slice(0, idx), ...undoStack.slice(idx + 1)]
+}
+
+/**
+ * #2901 — how far back `undoDeleteOf`'s toast-Undo scans page history for its
+ * delete op. The delete is the newest op at swipe time; only ops landing in
+ * the toast's 5s window (typically the tap's own blur-flush edit) can sit
+ * above it, so a small window is plenty.
+ */
+const SWIPE_UNDO_HISTORY_SCAN = 50
+
+/** Best-effort `block_id` from an op-log payload JSON string. */
+function historyEntryBlockId(payload: string): string | null {
+  try {
+    const parsed = JSON.parse(payload) as Record<string, unknown>
+    return typeof parsed['block_id'] === 'string' ? parsed['block_id'] : null
+  } catch {
+    return null
+  }
+}
+
+function notifySwipeUndoFailed(): void {
+  notify.error(t('undo.undoFailedMessage'))
+  announce(t('announce.undoFailed'))
 }
 
 export const useUndoStore = create<UndoStore>((set, get) => {
@@ -501,6 +567,72 @@ export const useUndoStore = create<UndoStore>((set, get) => {
   }
 
   // ---------------------------------------------------------------------------
+  // Swipe-delete toast undo (#2901, finding 42) — see `undoDeleteOf` doc above.
+  // ---------------------------------------------------------------------------
+
+  async function undoDeleteOfImpl(
+    pageId: string,
+    blockId: string,
+    reloadPage: () => void | Promise<void>,
+  ): Promise<void> {
+    try {
+      const history = await listPageHistory({
+        pageId,
+        limit: paginationLimit(SWIPE_UNDO_HISTORY_SCAN),
+      })
+      const index = history.items.findIndex(
+        (entry) =>
+          entry.op_type === 'delete_block' && historyEntryBlockId(entry.payload) === blockId,
+      )
+      const target = index >= 0 ? history.items[index] : undefined
+      if (!target) {
+        logger.warn('UndoStore', 'swipe-delete undo: delete op not found in page history', {
+          pageId,
+          blockId,
+        })
+        notifySwipeUndoFailed()
+        return
+      }
+
+      for (const depth of [index, index + 1]) {
+        const result = await undoPageOp({ pageId, undoDepth: depth })
+        if (
+          result.reversed_op.device_id === target.device_id &&
+          result.reversed_op.seq === target.seq
+        ) {
+          // #2901 — this targeted positional undo bypasses the undo store's
+          // normal ref-addressed/positional bookkeeping (it reverts a specific
+          // historical depth, not the top-of-stack entry), so treat it as a
+          // new action: stale depth/redo anchors can no longer target ops the
+          // targeted undo just shifted. Formerly a cross-module call from
+          // `SortableBlock`; now internal to the store that owns it.
+          get().onNewAction(pageId)
+          notify(t('undo.op.deleteBlock', { defaultValue: t('undo.undoneMessage') }), {
+            duration: 1500,
+          })
+          announce(t('announce.undone'))
+          await reloadPage()
+          return
+        }
+        // Wrong op reversed — roll the mis-undo back (reverse ITS reverse op)
+        // before probing one deeper.
+        await redoPageOp({
+          undoDeviceId: result.new_op_ref.device_id,
+          undoSeq: result.new_op_ref.seq,
+        })
+      }
+      logger.warn('UndoStore', 'swipe-delete undo: could not pin the delete op', {
+        pageId,
+        blockId,
+      })
+      notifySwipeUndoFailed()
+    } catch (err) {
+      logger.error('UndoStore', 'swipe-delete undo failed', { pageId, blockId }, err)
+      notifySwipeUndoFailed()
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // Store actions
   // ---------------------------------------------------------------------------
 
@@ -694,5 +826,8 @@ export const useUndoStore = create<UndoStore>((set, get) => {
         ),
       }))
     },
+
+    undoDeleteOf: (pageId: string, blockId: string, reloadPage: () => void | Promise<void>) =>
+      undoDeleteOfImpl(pageId, blockId, reloadPage),
   }
 })
