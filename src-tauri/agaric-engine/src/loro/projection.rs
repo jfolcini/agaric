@@ -199,18 +199,29 @@ pub async fn reproject_dense_positions(
 }
 
 /// Project an `EditBlock` engine state into SQL via
-/// `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS
-/// NULL`. The `content` value comes from the engine's post-apply
-/// read-back, not the payload's `to_text` field directly. In a
-/// single-author scenario the two are identical; in a concurrent-edit
-/// scenario the engine's character-level merge produces different
-/// content from either peer's `to_text` (the CRDT convergence win).
+/// `UPDATE blocks SET content = ? WHERE id = ?`. The `content` value
+/// comes from the engine's post-apply read-back, not the payload's
+/// `to_text` field directly. In a single-author scenario the two are
+/// identical; in a concurrent-edit scenario the engine's character-level
+/// merge produces different content from either peer's `to_text` (the
+/// CRDT convergence win).
+///
+/// #2909: the UPDATE intentionally does NOT filter `deleted_at IS NULL`.
+/// The engine ([`apply_edit_block_via_loro`]) applies the diff-splice
+/// whenever the block exists in its tree — deleted or not — so the
+/// engine's LoroText (the sync-exported source of truth) is authoritative
+/// for content. Filtering `deleted_at` here would silently no-op the
+/// UPDATE on a tombstoned row, leaving `blocks.content` permanently
+/// divergent from the CRDT with no restore path to reconcile it. Writing
+/// content to a soft-deleted row is harmless because every read path
+/// already filters `deleted_at`, and it does NOT resurrect the block (the
+/// UPDATE never touches `deleted_at`).
 pub async fn project_edit_block_to_sql(
     conn: &mut SqliteConnection,
     snapshot: &BlockSnapshot,
 ) -> Result<(), AppError> {
     sqlx::query!(
-        "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
+        "UPDATE blocks SET content = ? WHERE id = ?",
         snapshot.content,
         snapshot.block_id,
     )
@@ -344,10 +355,25 @@ pub async fn project_set_property_to_sql(
             .await?;
             return Ok(());
         }
+        // FK safety (#2908): `value_ref` is a FK to `blocks(id)` (migration
+        // 0062, ON DELETE CASCADE) under `foreign_keys = ON`. A payload can
+        // legitimately carry a `value_ref` whose target block has been purged
+        // (a since-deleted cross reference, or an op replayed via undo/redo
+        // against a now-gone target). An unguarded INSERT would raise FK 787
+        // and abort the whole command/undo transaction — every retry failing
+        // identically, wedging the undo entry. Guard the row exactly like the
+        // sync-path twin `reproject_block_properties_from_engine` (projection.rs,
+        // #377) and boot recovery (db/recovery.rs, #2043, which documents that
+        // this projection LACKS the guard): insert only when `value_ref` is
+        // NULL (no FK to satisfy — the value lives in another column) or its
+        // target block exists. A dangling `value_ref` is dropped (row-absent),
+        // the only valid representation — NULL-ing it would leave an all-NULL
+        // row that violates the `exactly_one_value` CHECK (migration 0062).
         sqlx::query!(
             "INSERT OR REPLACE INTO block_properties \
                  (block_id, key, value_text, value_num, value_date, value_ref, value_bool) \
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+             SELECT ?, ?, ?, ?, ?, ?, ? \
+             WHERE ? IS NULL OR EXISTS (SELECT 1 FROM blocks WHERE id = ?)",
             block_id,
             payload.key,
             payload.value_text,
@@ -355,6 +381,8 @@ pub async fn project_set_property_to_sql(
             payload.value_date,
             payload.value_ref,
             value_bool_int,
+            payload.value_ref,
+            payload.value_ref,
         )
         .execute(&mut *conn)
         .await?;
@@ -1645,8 +1673,15 @@ mod tests {
         assert_eq!(row.0, "edited content");
     }
 
+    /// #2909: an EditBlock projection against a SOFT-DELETED block must
+    /// UPDATE `blocks.content` (the engine applies the diff-splice whenever
+    /// the block exists in its tree, so the engine snapshot is authoritative
+    /// for content) and must NOT resurrect the block (the UPDATE never touches
+    /// `deleted_at`). Before the fix the `AND deleted_at IS NULL` filter made
+    /// the UPDATE a silent no-op, leaving SQL content permanently divergent
+    /// from the CRDT. The non-deleted control is `project_edit_block_updates_content`.
     #[tokio::test]
-    async fn project_edit_block_does_not_resurrect_deleted_block() {
+    async fn project_edit_block_updates_soft_deleted_content_without_resurrecting() {
         let (pool, _dir) = fresh_pool().await;
         sqlx::query(
             "INSERT INTO blocks \
@@ -1658,21 +1693,30 @@ mod tests {
         .await
         .unwrap();
 
-        let snap = snapshot(BLOCK_A, "content", "should-not-apply", None, 0);
+        let snap = snapshot(BLOCK_A, "content", "edited-while-tombstoned", None, 0);
         let mut conn = pool.acquire().await.expect("acquire");
         project_edit_block_to_sql(&mut conn, &snap)
             .await
             .expect("project");
         drop(conn);
 
-        // The WHERE deleted_at IS NULL filter must have prevented the
-        // UPDATE; content is still 'original'.
-        let row: (String,) = sqlx::query_as("SELECT content FROM blocks WHERE id = ?")
-            .bind(BLOCK_A)
-            .fetch_one(&pool)
-            .await
-            .expect("fetch row");
-        assert_eq!(row.0, "original");
+        // Content now tracks the engine snapshot (no longer skipped)...
+        let row: (String, Option<i64>) =
+            sqlx::query_as("SELECT content, deleted_at FROM blocks WHERE id = ?")
+                .bind(BLOCK_A)
+                .fetch_one(&pool)
+                .await
+                .expect("fetch row");
+        assert_eq!(
+            row.0, "edited-while-tombstoned",
+            "content must align with the engine even on a tombstoned row (#2909)"
+        );
+        // ...but the block stays soft-deleted (the UPDATE never touches deleted_at).
+        assert_eq!(
+            row.1,
+            Some(1767225600000),
+            "editing a soft-deleted block must NOT resurrect it"
+        );
     }
 
     #[tokio::test]
@@ -1874,6 +1918,108 @@ mod tests {
         assert_eq!(
             count.0, 0,
             "cleared property must be row-absent, not an all-NULL row"
+        );
+    }
+
+    /// #2908: a non-reserved `SetProperty` whose `value_ref` points at a
+    /// block with no `blocks` row (a since-purged target, or an op replayed
+    /// via undo against a now-gone block) must NOT raise FK 787 (`value_ref`
+    /// REFERENCES `blocks(id)`, migration 0062, under `foreign_keys = ON`) and
+    /// abort the command/undo transaction. The FK guard skips the INSERT for a
+    /// dangling ref (row-absent), exactly like the sync-path twin
+    /// `reproject_block_properties_from_engine`.
+    #[tokio::test]
+    async fn project_set_property_dangling_value_ref_is_row_absent_no_fk_787() {
+        let (pool, _dir) = fresh_pool().await;
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // BLOCK_B is never inserted → the ref dangles.
+        let dangling_payload = SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_A),
+            key: "related".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::from_trusted(BLOCK_B)),
+            value_bool: None,
+        };
+        let mut conn = pool.acquire().await.expect("acquire");
+        // Before the fix this aborts with FOREIGN KEY constraint failed (787);
+        // the guard must make it a clean no-op (row-absent).
+        project_set_property_to_sql(&mut conn, &dangling_payload)
+            .await
+            .expect("dangling value_ref must not raise FK 787");
+        drop(conn);
+
+        let count: (i64,) = sqlx::query_as(
+            "SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = 'related'",
+        )
+        .bind(BLOCK_A)
+        .fetch_one(&pool)
+        .await
+        .expect("fetch count");
+        assert_eq!(
+            count.0, 0,
+            "a dangling value_ref must be dropped (row-absent), not inserted"
+        );
+    }
+
+    /// #2908 happy path: when the `value_ref` target block DOES exist, the FK
+    /// guard's `EXISTS` clause is satisfied and the row is stored with the ref.
+    #[tokio::test]
+    async fn project_set_property_existing_value_ref_is_stored() {
+        let (pool, _dir) = fresh_pool().await;
+        // Owning block and the ref target both exist.
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', '', NULL, 0)",
+        )
+        .bind(BLOCK_A)
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'content', 'target', NULL, 1)",
+        )
+        .bind(BLOCK_B)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let ref_payload = SetPropertyPayload {
+            block_id: BlockId::from_trusted(BLOCK_A),
+            key: "related".into(),
+            value_text: None,
+            value_num: None,
+            value_date: None,
+            value_ref: Some(BlockId::from_trusted(BLOCK_B)),
+            value_bool: None,
+        };
+        let mut conn = pool.acquire().await.expect("acquire");
+        project_set_property_to_sql(&mut conn, &ref_payload)
+            .await
+            .expect("project value_ref");
+        drop(conn);
+
+        let row: (Option<String>,) =
+            sqlx::query_as("SELECT value_ref FROM block_properties WHERE block_id = ? AND key = ?")
+                .bind(BLOCK_A)
+                .bind("related")
+                .fetch_one(&pool)
+                .await
+                .expect("fetch value_ref row");
+        assert_eq!(
+            row.0,
+            Some(BLOCK_B.into()),
+            "an existing value_ref target must be stored"
         );
     }
 
