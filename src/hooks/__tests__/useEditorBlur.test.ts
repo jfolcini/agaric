@@ -1339,7 +1339,9 @@ describe('useEditorBlur', () => {
       })
 
       const { result } = renderHook(() => {
-        const { discardDraft } = useDraftAutosave('B1', 'typed paragraph')
+        const { discardDraft } = useDraftAutosave('B1', {
+          current: roving,
+        } as unknown as Parameters<typeof useDraftAutosave>[1])
         return useEditorBlur({
           rovingEditor: roving,
           blockId: 'B1',
@@ -1371,7 +1373,9 @@ describe('useEditorBlur', () => {
       })
 
       const { result } = renderHook(() => {
-        const { discardDraft } = useDraftAutosave('B1', 'typed paragraph')
+        const { discardDraft } = useDraftAutosave('B1', {
+          current: roving,
+        } as unknown as Parameters<typeof useDraftAutosave>[1])
         return useEditorBlur({
           rovingEditor: roving,
           blockId: 'B1',

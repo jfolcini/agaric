@@ -60,7 +60,7 @@
  * checkbox/split/property — those stay blur-only).
  */
 
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -75,16 +75,22 @@ export const CONTENT_COMMIT_DEBOUNCE_MS = 700
 export function useDebouncedContentCommit(params: {
   isFocused: boolean
   blockId: string
-  /**
-   * The rAF-coalesced live markdown from EditableBlock; used only as the
-   * change SIGNAL that reschedules the debounce. The commit re-reads the
-   * authoritative markdown from the editor at fire time.
-   */
-  liveContent: string
   rovingEditorRef: RefObject<RovingEditorHandle>
   edit: (blockId: string, content: string) => Promise<boolean>
-}): void {
-  const { isFocused, blockId, liveContent, rovingEditorRef, edit } = params
+}): {
+  /**
+   * #2938 — (re)arm the trailing content-commit debounce. Called from the
+   * editor's `update` change signal (via EditableBlock) on every keystroke.
+   * Cheap: it only resets a timer — no serialize, no React state. The commit
+   * re-reads the authoritative markdown from the live editor at fire time.
+   */
+  schedule: () => void
+} {
+  const { isFocused, blockId, rovingEditorRef, edit } = params
+  // Read the latest `isFocused` inside the identity-stable `schedule` without
+  // rebuilding it every render (which would churn EditableBlock's registration).
+  const isFocusedRef = useRef(isFocused)
+  isFocusedRef.current = isFocused
 
   // Extracted so both the debounce timer AND the export "flush now" bridge
   // (#2969) share exactly one commit implementation.
@@ -127,6 +133,18 @@ export function useDebouncedContentCommit(params: {
     void commitNow()
   }, CONTENT_COMMIT_DEBOUNCE_MS)
 
+  // #2938 — the change signal arms the trailing debounce imperatively (no
+  // React state, no per-keystroke serialize). The value passed to `schedule`
+  // is unused: `commitNow` re-reads the authoritative markdown from the live
+  // editor at fire time. `debounced.schedule` resets the timer internally, so
+  // a typing burst collapses into ONE trailing commit per idle pause.
+  const schedule = useCallback(() => {
+    // Ignore stray signals while unfocused: the blur handler's unmount-commit
+    // owns any tail typing, and the effect below has already cancelled the timer.
+    if (!isFocusedRef.current) return
+    debounced.schedule('')
+  }, [debounced])
+
   useEffect(() => {
     if (!isFocused) {
       // Blur (isFocused → false) cancels the pending tick; the blur handler's
@@ -134,13 +152,6 @@ export function useDebouncedContentCommit(params: {
       debounced.cancel()
       return
     }
-    // Reschedule on every liveContent change while focused. `schedule` resets
-    // the timer internally, so a typing burst collapses into ONE trailing
-    // commit per idle pause. (Deliberately no cleanup-cancel of the DEBOUNCE
-    // TIMER on every liveContent change — cancelling it here would defeat the
-    // trailing debounce. The cleanup below only unregisters the export-flush
-    // bridge, which is cheap to re-register every keystroke.)
-    debounced.schedule(liveContent)
     // #2969 — expose "flush this block's pending debounced commit right now"
     // to export entry points outside the editor's component subtree. Cancel
     // the pending timer first so a stale trailing tick can't race the
@@ -149,5 +160,7 @@ export function useDebouncedContentCommit(params: {
       debounced.cancel()
       await commitNow()
     })
-  }, [isFocused, blockId, liveContent, debounced, commitNow])
+  }, [isFocused, blockId, debounced, commitNow])
+
+  return { schedule }
 }

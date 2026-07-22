@@ -36,14 +36,24 @@ function makeHandle(init: { activeBlockId: string | null; markdown: string; orig
     mount: vi.fn(),
     unmount: vi.fn(() => null),
     splitAtCaret: vi.fn(() => null),
-    setOnMarkdownChange: vi.fn(),
+    setOnUpdate: vi.fn(),
   } as unknown as RovingEditorHandle
   return { handle, state, markCommitted }
 }
 
 type Props = Parameters<typeof useDebouncedContentCommit>[0]
 
-describe('useDebouncedContentCommit (#2600)', () => {
+/**
+ * #2938 — the hook no longer takes a `liveContent` prop: it returns an
+ * imperative `schedule()` that EditableBlock calls from the editor's `update`
+ * change signal (no serialize, no React state). Each test arms the debounce by
+ * calling `schedule()`; the commit re-reads `state.markdown` at fire time.
+ */
+function renderCommit(props: Props) {
+  return renderHook((p: Props) => useDebouncedContentCommit(p), { initialProps: props })
+}
+
+describe('useDebouncedContentCommit (#2600 / #2938)', () => {
   beforeEach(() => {
     vi.useFakeTimers()
   })
@@ -61,16 +71,14 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'hello',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({
+      isFocused: true,
+      blockId: 'B1',
+      rovingEditorRef,
+      edit,
+    })
 
+    act(() => result.current.schedule())
     expect(edit).not.toHaveBeenCalled()
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
@@ -81,35 +89,31 @@ describe('useDebouncedContentCommit (#2600)', () => {
     expect(state.original).toBe('hello')
   })
 
-  it('collapses a typing burst into ONE trailing commit', async () => {
+  it('serializes ONLY at fire time — many schedule() signals do not re-read the editor per signal', async () => {
     const { handle, state } = makeHandle({ activeBlockId: 'B1', markdown: 'a', original: '' })
+    const getSpy = vi.spyOn(handle, 'getMarkdown')
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    const { rerender } = renderHook((props: Props) => useDebouncedContentCommit(props), {
-      initialProps: {
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'a',
-        rovingEditorRef,
-        edit,
-      } satisfies Props,
-    })
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
 
-    // Three keystrokes, each < debounce apart: the timer keeps resetting.
+    // Simulate a typing burst: many signals, timer keeps resetting.
     for (const md of ['ab', 'abc', 'abcd']) {
       state.markdown = md
-      rerender({ isFocused: true, blockId: 'B1', liveContent: md, rovingEditorRef, edit })
+      act(() => result.current.schedule())
       await act(async () => {
         await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS - 100)
       })
     }
+    // No serialize happened per signal, and no commit yet.
+    expect(getSpy).not.toHaveBeenCalled()
     expect(edit).not.toHaveBeenCalled()
 
-    // Idle pause → the single trailing commit fires with the FINAL content.
+    // Idle pause → ONE trailing commit that serializes the FINAL content once.
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
+    expect(getSpy).toHaveBeenCalledTimes(1)
     expect(edit).toHaveBeenCalledExactlyOnceWith('B1', 'abcd')
   })
 
@@ -122,15 +126,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'same',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -140,11 +137,6 @@ describe('useDebouncedContentCommit (#2600)', () => {
   })
 
   it('defers to the flush parser while an inline `key:: value` property line is present (#2675)', async () => {
-    // Committing mid-typing would rebase the baseline (markCommitted), so the
-    // eventual blur unmount() would report a null delta and the save-time
-    // property parser in useBlockFlush would never run — the property line
-    // would silently stay literal. The debounce must skip, leaving both the
-    // commit and the baseline to the property-aware blur flush.
     const { handle, markCommitted, state } = makeHandle({
       activeBlockId: 'B1',
       markdown: 'context:: home',
@@ -153,15 +145,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'context:: home',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -180,15 +165,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'use std::vector<int> here',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -202,15 +180,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'x',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -218,20 +189,13 @@ describe('useDebouncedContentCommit (#2600)', () => {
     expect(edit).not.toHaveBeenCalled()
   })
 
-  it('does not schedule a commit while unfocused', async () => {
+  it('does not commit while unfocused — schedule() is a no-op', async () => {
     const { handle } = makeHandle({ activeBlockId: 'B1', markdown: 'x', original: '' })
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: false,
-        blockId: 'B1',
-        liveContent: 'x',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: false, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS * 3)
     })
@@ -248,15 +212,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(false)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'typed',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -282,15 +239,8 @@ describe('useDebouncedContentCommit (#2600)', () => {
     )
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'typed',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS)
     })
@@ -321,17 +271,10 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'typed but not yet idle',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { result } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
 
-    // Well within the debounce window — the timer commit has NOT fired yet.
+    // Arm the debounce, then advance well within the window — no commit yet.
+    act(() => result.current.schedule())
     await act(async () => {
       await vi.advanceTimersByTimeAsync(CONTENT_COMMIT_DEBOUNCE_MS - 100)
     })
@@ -357,15 +300,7 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: false,
-        blockId: 'B1',
-        liveContent: 'x',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    renderCommit({ isFocused: false, blockId: 'B1', rovingEditorRef, edit })
 
     await act(async () => {
       await flushActiveDraft()
@@ -382,15 +317,7 @@ describe('useDebouncedContentCommit (#2600)', () => {
     const edit = vi.fn<Props['edit']>().mockResolvedValue(true)
     const rovingEditorRef = { current: handle }
 
-    const { unmount } = renderHook(() =>
-      useDebouncedContentCommit({
-        isFocused: true,
-        blockId: 'B1',
-        liveContent: 'typed',
-        rovingEditorRef,
-        edit,
-      }),
-    )
+    const { unmount } = renderCommit({ isFocused: true, blockId: 'B1', rovingEditorRef, edit })
 
     unmount()
 
