@@ -23,7 +23,10 @@
 #                 --range REVSPEC` (same scripts the pre-commit hooks use,
 #                 just with a different diff source).
 #
-#   Phase E — `cargo sqlx prepare --check` if any .rs changed in range.
+#   Phase E — `cargo sqlx prepare --check` if any .rs changed in range,
+#             against all four committed `.sqlx/` caches (workspace root +
+#             `agaric-store`/`agaric-engine`/`agaric-sync`) — mirrors every
+#             `sqlx-offline-check` lane in `_validate.yml`.
 #
 #   Phase F — `agaric-mcp` release build + MCP UDS smoke + externalBin
 #             host-triple verify. **Only when MCP paths change**
@@ -339,20 +342,68 @@ if [ "$HAS_RS" = "1" ]; then
     fi
 fi
 
-# ── Phase E: cargo sqlx prepare --check (only if Rust changed) ─────
+# ── Phase E: cargo sqlx prepare --check, ALL FOUR lanes (only if Rust
+# changed) ──────────────────────────────────────────────────────────
+#
+# Mirrors every `sqlx-offline-check` lane in `_validate.yml`: the workspace
+# root (`src-tauri`) plus each layered-workspace member with its own
+# crate-local `.sqlx/` cache — `agaric-store`, `agaric-engine`, `agaric-sync`
+# (#2621 split). Checking only the root here let member-crate cache drift
+# (e.g. #2849) slip past local verification and land only visible on CI —
+# the exact gap this phase now closes.
+#
+# The root lane reuses `src-tauri/.env`'s `DATABASE_URL=sqlite:dev.db`
+# (relative — fine because the app crate IS the workspace root) and runs
+# `cargo sqlx migrate run` first so a freshly-pulled `dev.db` with pending
+# migrations doesn't masquerade as query drift. Each member lane needs its
+# own ABSOLUTE-path throwaway DB: `query!` resolves a *relative* sqlite path
+# at compile time from rustc's CWD — the WORKSPACE ROOT, not the crate dir —
+# so a relative URL there creates the DB under the crate but looks for it
+# under `src-tauri/`, failing every query ("unable to open database file").
+# Each member's `migrations -> ../migrations` symlink lets `migrate run`
+# resolve the shared workspace migrations against that throwaway DB.
 
 if [ "$HAS_RS" = "1" ]; then
     echo ""
-    echo "→ Phase E: cargo sqlx prepare --check"
-    sqlx_log="$(mktemp -t pre-push-sqlx.XXXXXX)"
-    if ! ( cd src-tauri && cargo sqlx prepare --check -- --tests ) > "$sqlx_log" 2>&1; then
-        echo "  ✗ sqlx prepare check failed"
+    echo "→ Phase E: cargo sqlx prepare --check (4 lanes: root, agaric-store, agaric-engine, agaric-sync)"
+
+    sqlx_check_failed=0
+
+    sqlx_log="$(mktemp -t pre-push-sqlx-root.XXXXXX)"
+    if ! ( cd src-tauri && cargo sqlx migrate run && cargo sqlx prepare --check -- --tests ) > "$sqlx_log" 2>&1; then
+        echo "  ✗ sqlx prepare check failed (root: src-tauri)"
         tail -100 "$sqlx_log" | sed 's/^/      /'
-        rm -f "$sqlx_log"
-        exit 1
+        sqlx_check_failed=1
+    else
+        echo "  ✓ sqlx prepare check (root: src-tauri)"
     fi
     rm -f "$sqlx_log"
-    echo "  ✓ sqlx prepare check"
+
+    for crate in agaric-store agaric-engine agaric-sync; do
+        db="${TMPDIR:-/tmp}/$crate-sqlx-prepare.db"
+        rm -f "$db"
+        sqlx_log="$(mktemp -t "pre-push-sqlx-$crate.XXXXXX")"
+        if ! ( cd "src-tauri/$crate" \
+                && DATABASE_URL="sqlite:$db" cargo sqlx database create \
+                && DATABASE_URL="sqlite:$db" cargo sqlx migrate run \
+                && DATABASE_URL="sqlite:$db" cargo sqlx prepare --check -- --tests \
+             ) > "$sqlx_log" 2>&1; then
+            echo "  ✗ sqlx prepare check failed ($crate)"
+            tail -100 "$sqlx_log" | sed 's/^/      /'
+            sqlx_check_failed=1
+        else
+            echo "  ✓ sqlx prepare check ($crate)"
+        fi
+        rm -f "$sqlx_log" "$db"
+    done
+
+    if [ "$sqlx_check_failed" = "1" ]; then
+        echo ""
+        echo "✗ Pre-push verification FAILED at Phase E (sqlx prepare --check)."
+        echo "  Iterate: just gen-sqlx (regenerates all 4 caches), then re-check the failing crate(s) above."
+        echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
+        exit 1
+    fi
 fi
 
 # ── Phase F: MCP build + UDS smoke + externalBin verify (gated) ────
