@@ -71,20 +71,29 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
 
   const handleAddAlias = useCallback(() => {
     if (aliasInput.trim()) {
+      const previous = aliases
       const next = [...aliases, aliasInput.trim()]
       setAliases(next)
       announce(t('announce.aliasAdded'))
-      setPageAliases(pageId, next).catch((err: unknown) => {
-        logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        notify.error(t('pageHeader.aliasUpdateFailed'))
-        announce(t('announce.aliasFailed'))
-      })
-      setAliasInput('')
+      setPageAliases(pageId, next)
+        .then(() => setAliasInput(''))
+        .catch((err: unknown) => {
+          logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
+          notify.error(t('pageHeader.aliasUpdateFailed'))
+          announce(t('announce.aliasFailed'))
+          // Guard against clobbering a later, already-successful mutation:
+          // if a second add/remove landed (and possibly resolved) while
+          // this write was in flight, `aliases` has moved on from `next`
+          // and rolling back to `previous` here would silently discard
+          // that later state. Only roll back if nothing has superseded us.
+          setAliases((current) => (current === next ? previous : current))
+        })
     }
   }, [aliasInput, aliases, pageId, t])
 
   const handleRemoveAlias = useCallback(
     (alias: string) => {
+      const previous = aliases
       const next = aliases.filter((a) => a !== alias)
       setAliases(next)
       announce(t('announce.aliasRemoved'))
@@ -92,6 +101,9 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
         logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
         notify.error(t('pageHeader.aliasUpdateFailed'))
         announce(t('announce.aliasFailed'))
+        // See the matching comment in handleAddAlias: only roll back if
+        // this call's optimistic update is still the current state.
+        setAliases((current) => (current === next ? previous : current))
       })
     },
     [aliases, pageId, t],

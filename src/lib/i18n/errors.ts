@@ -50,4 +50,9 @@ export const errors: Record<string, string> = {
   'error.moveBlockDownFailed': 'Failed to move block down',
   'error.createPageFailed': 'Failed to create page',
   'error.pasteBlocksFailed': 'Failed to paste blocks',
+  // #2925 — surfaced by `safePersistStorage` when a Zustand store's
+  // localStorage write fails (typically QuotaExceededError). Deduped to a
+  // single toast per burst, since the write path can't say which store
+  // action triggered it.
+  'error.settingsSaveFailed': 'Failed to save your changes locally — local storage may be full',
 }

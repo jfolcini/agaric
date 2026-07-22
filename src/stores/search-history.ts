@@ -15,6 +15,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
+import { safePersistStorage } from '@/lib/safe-persist-storage'
+
 /**
  * Maximum history entries per space.
  *
@@ -150,6 +152,7 @@ export const useSearchHistoryStore = create<SearchHistoryState>()(
     {
       name: 'agaric:search-history',
       version: 1,
+      storage: safePersistStorage,
       partialize: (state) => ({
         bySpace: state.bySpace,
         historyEnabled: state.historyEnabled,

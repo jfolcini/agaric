@@ -91,6 +91,12 @@ const EXEMPT_FILES = Object.freeze(
     // One-time legacy default resolver for a useLocalStoragePreference-
     // backed key; not a store this guard's contract targets.
     'src/components/journal/UnfinishedTasks.tsx',
+    // The guarded persist-storage wrapper itself (#2925): this IS the
+    // localStorage-access layer that hardens zustand's `persist` middleware
+    // against setItem throws. It is the sanctioned home for the raw calls
+    // the other stores route through, so it cannot use the typed-preference
+    // accessors (which are themselves higher-level consumers of storage).
+    'src/lib/guarded-storage.ts',
   ]),
 )
 

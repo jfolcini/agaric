@@ -377,7 +377,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           },
           err,
         )
-        notify.error(i18n.t('error.loadBlocksFailed'), { id: 'load-blocks-failed' })
+        notify.retry(i18n.t('error.loadBlocksFailed'), () => void get().load(), {
+          id: 'load-blocks-failed',
+        })
       }
     },
 
