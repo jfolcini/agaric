@@ -2,7 +2,12 @@ import { invoke } from '@tauri-apps/api/core'
 import JSZip from 'jszip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { exportGraphAsZip, resolveAttachmentRefsForCopy, sanitizeSegment } from '@/lib/export-graph'
+import {
+  exportAllSpacesAsZip,
+  exportGraphAsZip,
+  resolveAttachmentRefsForCopy,
+  sanitizeSegment,
+} from '@/lib/export-graph'
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -598,6 +603,147 @@ describe('exportGraphAsZip skip accounting (#2965)', () => {
 
     const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
     expect(unzipped.file('export-report.txt')).toBeNull()
+  })
+})
+
+describe('exportAllSpacesAsZip (#2964)', () => {
+  it('iterates every space and nests each one under its own top-level folder', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_spaces') {
+        return [
+          { id: 'SPACE_A', name: 'Personal', accent_color: null },
+          { id: 'SPACE_B', name: 'Work', accent_color: null },
+        ]
+      }
+      if (cmd === 'list_all_pages_in_space') {
+        const scoped = (args as { scope: { space_id: string } }).scope.space_id
+        if (scoped === 'SPACE_A') return [{ id: 'P1', content: 'Notes' }]
+        if (scoped === 'SPACE_B') return [{ id: 'P2', content: 'Roadmap' }]
+        return []
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        return `# ${id}`
+      }
+      return null
+    })
+
+    const result = await exportAllSpacesAsZip()
+
+    expect(result.spaceCount).toBe(2)
+    expect(result.exportedPages).toBe(2)
+    expect(result.skippedPages).toBe(0)
+    expect(result.skippedAttachments).toBe(0)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const filenames = Object.keys(unzipped.files)
+    expect(filenames).toContain('Personal/Notes.md')
+    expect(filenames).toContain('Work/Roadmap.md')
+
+    // Each space is scoped to its OWN page list — Work's folder never picks
+    // up Personal's pages or vice versa.
+    const personalMd = await unzipped.file('Personal/Notes.md')?.async('string')
+    const workMd = await unzipped.file('Work/Roadmap.md')?.async('string')
+    expect(personalMd).toBe('# P1')
+    expect(workMd).toBe('# P2')
+  })
+
+  it('disambiguates two spaces whose names sanitize to the same folder name', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_spaces') {
+        return [
+          { id: 'SPACE_1AAAAAAA', name: 'Team', accent_color: null },
+          { id: 'SPACE_2BBBBBBB', name: 'Team', accent_color: null },
+        ]
+      }
+      if (cmd === 'list_all_pages_in_space') {
+        const scoped = (args as { scope: { space_id: string } }).scope.space_id
+        return [{ id: `P_${scoped}`, content: 'Notes' }]
+      }
+      if (cmd === 'export_page_markdown') return '# content'
+      return null
+    })
+
+    const result = await exportAllSpacesAsZip()
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const topLevelFolders = new Set(
+      Object.keys(unzipped.files)
+        .filter((f) => f.endsWith('.md'))
+        .map((f) => f.split('/')[0] ?? ''),
+    )
+
+    // Two distinct folders — the second space's id-derived suffix
+    // disambiguates it from the first, same scheme as duplicate page titles.
+    expect(topLevelFolders.size).toBe(2)
+    expect(topLevelFolders).toContain('Team')
+    expect([...topLevelFolders].some((f) => f !== 'Team' && f.startsWith('Team_'))).toBe(true)
+  })
+
+  it('handles the zero-spaces case without producing a silent empty ZIP', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces') return []
+      return null
+    })
+
+    const result = await exportAllSpacesAsZip()
+
+    expect(result.spaceCount).toBe(0)
+    expect(result.exportedPages).toBe(0)
+    expect(result.blob).toBeInstanceOf(Blob)
+    // No per-space page fetch is ever dispatched when there are no spaces.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('list_all_pages_in_space', expect.anything())
+  })
+
+  it('sums skipped pages/attachments across spaces and writes one combined export-report.txt', async () => {
+    mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd === 'list_spaces') {
+        return [
+          { id: 'SPACE_A', name: 'Personal', accent_color: null },
+          { id: 'SPACE_B', name: 'Work', accent_color: null },
+        ]
+      }
+      if (cmd === 'list_all_pages_in_space') {
+        const scoped = (args as { scope: { space_id: string } }).scope.space_id
+        if (scoped === 'SPACE_A') return [{ id: 'PA_OK', content: 'Good' }]
+        if (scoped === 'SPACE_B') return [{ id: 'PB_BAD', content: 'Broken' }]
+        return []
+      }
+      if (cmd === 'export_page_markdown') {
+        const id = (args as { pageId: string }).pageId
+        if (id === 'PB_BAD') throw new Error('boom')
+        return '# ok'
+      }
+      return null
+    })
+
+    const result = await exportAllSpacesAsZip()
+
+    expect(result.exportedPages).toBe(1)
+    expect(result.skippedPages).toBe(1)
+
+    const unzipped = await JSZip.loadAsync(await result.blob.arrayBuffer())
+    const report = await unzipped.file('export-report.txt')?.async('string')
+    expect(report).toBeDefined()
+    expect(report).toContain('Broken')
+  })
+
+  it('awaits flushActiveDraft before reading any space or page (#2969 parity)', async () => {
+    const order: string[] = []
+    mockedFlushActiveDraft.mockImplementation(async () => {
+      order.push('flush')
+    })
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_spaces') {
+        order.push('list_spaces')
+        return [{ id: 'SPACE_A', name: 'Personal', accent_color: null }]
+      }
+      if (cmd === 'list_all_pages_in_space') return []
+      return null
+    })
+
+    await exportAllSpacesAsZip()
+
+    expect(order).toEqual(['flush', 'list_spaces'])
   })
 })
 

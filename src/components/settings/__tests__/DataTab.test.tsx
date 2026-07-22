@@ -22,10 +22,12 @@ import type { SpaceRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const mockExportGraphAsZip = vi.fn()
+const mockExportAllSpacesAsZip = vi.fn()
 const mockDownloadBlob = vi.fn()
 
 vi.mock('@/lib/export-graph', () => ({
   exportGraphAsZip: (...args: unknown[]) => mockExportGraphAsZip(...args),
+  exportAllSpacesAsZip: (...args: unknown[]) => mockExportAllSpacesAsZip(...args),
   downloadBlob: (...args: unknown[]) => mockDownloadBlob(...args),
 }))
 
@@ -312,7 +314,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    // Exact string match (not `/Export All/i`, #2964) — the new
+    // "Export All Spaces" button's accessible name contains "Export All" as
+    // a substring, which a substring-matching regex would ambiguously match
+    // too. An exact-name match still targets this single-space button only.
+    const exportBtn = screen.getByRole('button', { name: 'Export All' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -348,7 +354,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    // Exact string match (not `/Export All/i`, #2964) — the new
+    // "Export All Spaces" button's accessible name contains "Export All" as
+    // a substring, which a substring-matching regex would ambiguously match
+    // too. An exact-name match still targets this single-space button only.
+    const exportBtn = screen.getByRole('button', { name: 'Export All' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -368,7 +378,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    // Exact string match (not `/Export All/i`, #2964) — the new
+    // "Export All Spaces" button's accessible name contains "Export All" as
+    // a substring, which a substring-matching regex would ambiguously match
+    // too. An exact-name match still targets this single-space button only.
+    const exportBtn = screen.getByRole('button', { name: 'Export All' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -392,7 +406,11 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    // Exact string match (not `/Export All/i`, #2964) — the new
+    // "Export All Spaces" button's accessible name contains "Export All" as
+    // a substring, which a substring-matching regex would ambiguously match
+    // too. An exact-name match still targets this single-space button only.
+    const exportBtn = screen.getByRole('button', { name: 'Export All' })
     await user.click(exportBtn)
 
     await waitFor(() => {
@@ -422,13 +440,152 @@ describe('DataTab', () => {
 
     render(<DataTab />)
 
-    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    // Exact string match (not `/Export All/i`, #2964) — the new
+    // "Export All Spaces" button's accessible name contains "Export All" as
+    // a substring, which a substring-matching regex would ambiguously match
+    // too. An exact-name match still targets this single-space button only.
+    const exportBtn = screen.getByRole('button', { name: 'Export All' })
     await user.click(exportBtn)
 
     await waitFor(() => {
       expect(toast.success).toHaveBeenCalledWith('Export complete')
     })
     expect(toast.warning).not.toHaveBeenCalled()
+  })
+
+  // #2964 — whole-vault "Export all spaces" action, a sibling of the
+  // single active-space "Export All" button above (which
+  // `exportAllSpacesAsZip` never touches, and vice versa).
+  describe('export all spaces (#2964)', () => {
+    it('the new button triggers exportAllSpacesAsZip and downloads the ZIP, leaving the single-space button untouched', async () => {
+      const user = userEvent.setup()
+      const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+      mockExportAllSpacesAsZip.mockResolvedValueOnce({
+        blob: mockBlob,
+        spaceCount: 2,
+        exportedPages: 5,
+        skippedPages: 0,
+        skippedAttachments: 0,
+      })
+
+      render(<DataTab />)
+
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      await user.click(exportAllSpacesBtn)
+
+      await waitFor(() => {
+        expect(mockExportAllSpacesAsZip).toHaveBeenCalled()
+        expect(mockDownloadBlob).toHaveBeenCalledWith(
+          mockBlob,
+          expect.stringMatching(/agaric-export-all-spaces-\d{4}-\d{2}-\d{2}\.zip/),
+        )
+        expect(toast.success).toHaveBeenCalledWith('Exported 2 spaces')
+      })
+      // The single-space exporter is a fully separate action — clicking the
+      // all-spaces button must never invoke it.
+      expect(mockExportGraphAsZip).not.toHaveBeenCalled()
+    })
+
+    it('the old single-space "Export All" button still triggers exportGraphAsZip only', async () => {
+      const user = userEvent.setup()
+      const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+      mockExportGraphAsZip.mockResolvedValueOnce({
+        blob: mockBlob,
+        exportedPages: 1,
+        skippedPages: 0,
+        skippedAttachments: 0,
+      })
+
+      render(<DataTab />)
+
+      const exportBtn = screen.getByRole('button', { name: 'Export All' })
+      await user.click(exportBtn)
+
+      await waitFor(() => {
+        expect(mockExportGraphAsZip).toHaveBeenCalled()
+      })
+      expect(mockExportAllSpacesAsZip).not.toHaveBeenCalled()
+    })
+
+    it('shows a distinct "no spaces" warning and does not download when the vault has zero spaces', async () => {
+      const user = userEvent.setup()
+      mockExportAllSpacesAsZip.mockResolvedValueOnce({
+        blob: new Blob(['zip'], { type: 'application/zip' }),
+        spaceCount: 0,
+        exportedPages: 0,
+        skippedPages: 0,
+        skippedAttachments: 0,
+      })
+
+      render(<DataTab />)
+
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      await user.click(exportAllSpacesBtn)
+
+      await waitFor(() => {
+        expect(toast.warning).toHaveBeenCalledWith('No spaces to export')
+      })
+      expect(mockDownloadBlob).not.toHaveBeenCalled()
+      expect(toast.success).not.toHaveBeenCalled()
+      // Regression guard: the zero-spaces branch must re-enable the button
+      // (not strand it disabled/loading forever) — a prior version of this
+      // handler `return`ed from inside the `try` before its trailing
+      // `setExportingAllSpaces(false)`, which is not in a `finally`.
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Export All Spaces' })).not.toBeDisabled()
+      })
+    })
+
+    it('shows a warning toast (not plain success) when the all-spaces export skipped items', async () => {
+      const user = userEvent.setup()
+      const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+      mockExportAllSpacesAsZip.mockResolvedValueOnce({
+        blob: mockBlob,
+        spaceCount: 2,
+        exportedPages: 3,
+        skippedPages: 1,
+        skippedAttachments: 2,
+      })
+
+      render(<DataTab />)
+
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      await user.click(exportAllSpacesBtn)
+
+      await waitFor(() => {
+        expect(mockDownloadBlob).toHaveBeenCalledWith(mockBlob, expect.any(String))
+        expect(toast.warning).toHaveBeenCalledWith(
+          'Export finished with some items skipped: 1 page skipped; 2 attachments skipped',
+        )
+      })
+      expect(toast.success).not.toHaveBeenCalled()
+    })
+
+    it('shows an error toast on export-all-spaces failure', async () => {
+      const user = userEvent.setup()
+      mockExportAllSpacesAsZip.mockRejectedValueOnce(new Error('export all failed'))
+
+      render(<DataTab />)
+
+      const exportAllSpacesBtn = screen.getByRole('button', { name: 'Export All Spaces' })
+      await user.click(exportAllSpacesBtn)
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Export failed')
+      })
+      expect(mockDownloadBlob).not.toHaveBeenCalled()
+    })
+
+    it('has no a11y violations in the export card with the new button present', async () => {
+      const { container } = render(<DataTab />)
+
+      expect(screen.getByRole('button', { name: 'Export All Spaces' })).toBeInTheDocument()
+
+      await waitFor(async () => {
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      })
+    })
   })
 
   it('shows per-file progress text during multi-file import', async () => {
