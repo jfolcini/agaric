@@ -12,6 +12,10 @@ export const errors: Record<string, string> = {
   'loadMore.progress': 'Loaded {{loaded}} of {{total}}',
   'error.generic': 'Something went wrong',
   'error.loadFailed': 'Failed to load data',
+  // #2921 — soft-failure toast when a background `refreshAvailableSpaces()`
+  // rejects but a usable prior snapshot exists (so the app stays on the
+  // previously-loaded spaces instead of freezing).
+  'error.spacesLoadFailed': 'Failed to refresh spaces',
   'error.saveFailed': 'Failed to save',
   'error.createBlockFailed': 'Failed to create block',
   'error.sectionCrashed': '{{section}} encountered an error',

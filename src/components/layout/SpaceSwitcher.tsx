@@ -85,9 +85,13 @@ export function SpaceSwitcher(): React.JSX.Element {
   const activeSpace = availableSpaces.find((s) => s.id === currentSpaceId)
 
   useEffect(() => {
-    // Fire-and-forget refresh on mount. `refreshAvailableSpaces` never
-    // rejects — internal errors are logged and `isReady` is still
-    // flipped so the UI does not freeze.
+    // Fire-and-forget refresh on mount. #2921 — `refreshAvailableSpaces`
+    // never rejects (a HARD failure is recorded on `lastRefreshOutcome`
+    // instead of thrown, so this fire-and-forget call can never produce
+    // an unhandled rejection). By the time SpaceSwitcher mounts, boot has
+    // already succeeded and the app always keeps at least one space, so
+    // `availableSpaces` is non-empty and any refresh error here takes the
+    // SOFT path anyway (logged + toasted, `isReady` stays flipped).
     void refreshAvailableSpaces()
   }, [refreshAvailableSpaces])
 

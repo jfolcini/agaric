@@ -159,12 +159,26 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
       // and relied on the backend treating `''` as a no-match SQL
       // filter. That contract is unwritten; a backend change to
       // interpret `''` as wildcard would silently leak cross-space
-      // blocks into the page tree. Skip the fetch and leave state
-      // (including the initial `loading: true`) untouched — the boot
-      // sequence hydrates the space store before any BlockTree mounts,
-      // so this branch is a defensive no-op rather than a hot path.
+      // blocks into the page tree. Skip the fetch — the boot sequence
+      // hydrates the space store before any BlockTree mounts, so this
+      // branch is a defensive no-op rather than a hot path.
+      // #2921 — still clear `loading`. A prior version left the initial
+      // `loading: true` untouched here, which was fine when boot always
+      // reached `currentSpaceId != null` before any tree mounted — but a
+      // hard space-load failure now routes through BootGate's error
+      // screen instead, and a refresh that legitimately returns zero
+      // spaces leaves `currentSpaceId` `null` on first boot with no
+      // persisted id to fall back on (`reconcileCurrentSpaceId` returns
+      // `null` when `available` is empty). Without this, a tree that
+      // mounts in that window is stuck
+      // on its initial skeleton forever, since nothing else ever calls
+      // `load()` again for it. `blocks`/`blocksById` are left as-is
+      // (empty on a fresh store) — there is nothing to show yet.
       const spaceId = useSpaceStore.getState().currentSpaceId
-      if (spaceId == null) return
+      if (spaceId == null) {
+        set({ loading: false })
+        return
+      }
       const rootParentId = get().rootParentId
       if (rootParentId == null) return
       // #753 — claim a generation (see `loadGeneration` doc above).
