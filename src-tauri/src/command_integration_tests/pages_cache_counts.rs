@@ -1207,21 +1207,26 @@ async fn same_page_indent_skips_three_rebuilds_without_stale_state_2700() {
     assert_no_stale_page_caches(&s.pool, "a same-page indent").await;
 }
 
-/// #2700 (nested-page carve-out regression) — a same-page INDENT whose moved
-/// subtree CONTAINS a nested page must NOT skip the page_id-derived rebuilds:
-/// `rederive_page_and_space_ids` flattens the nested page's content descendants
-/// onto the moved root's page, changing their `page_id` even though the moved
-/// root's `page_id` is unchanged. Without the `!subtree_has_nested_page` guard
-/// the reduced fan-out leaves `page_link_cache` stale (the demonstrable
-/// stale-backlink-source repro); with it, the move is treated as cross-page and
-/// the full set runs. This test FAILS on the un-guarded code and PASSES with it.
+/// #2906 (nested-page boundary regression) — a same-page INDENT whose moved
+/// subtree CONTAINS a nested page must leave every page-derived cache
+/// consistent. `rederive_page_and_space_ids` now STOPS its `page_id` cascade at
+/// nested-page boundaries, so the nested page's content descendants keep the
+/// nested page's `page_id` instead of being flattened onto the moved root's
+/// page. An unchanged root `page_id` therefore implies every descendant's
+/// `page_id` is unchanged, the move is correctly treated as same-page, and the
+/// three `page_id`-derived rebuilds are skipped as pure waste — yet the caches
+/// stay correct because the in-tx rederive never disturbed them.
+///
+/// Before #2906 the cascade flattened B's `page_id` Q→P while the reduced
+/// same-page fan-out skipped `RebuildPageLinkCache`, so `page_link_cache`
+/// carried a stale `P→X` edge and this test FAILED. With the boundary stop B
+/// stays on Q, the `Q→X` edge is untouched, and it PASSES.
 ///
 /// Tree: `P(page) → R(content) → Q(page,nested) → B(content, links [[X]])`,
 /// plus sibling `S(content)` on P. Indent R under S (both on P): R.page_id
-/// stays P, but B.page_id flips Q→P, so the page_link_cache edge must move from
-/// `Q→X` to `P→X`.
+/// stays P and B.page_id stays Q, so the page_link_cache edge stays `Q→X`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn same_page_indent_with_nested_page_forces_full_rebuild_2700() {
+async fn same_page_indent_with_nested_page_stays_consistent_2906() {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
@@ -1301,18 +1306,19 @@ async fn same_page_indent_with_nested_page_forces_full_rebuild_2700() {
         "page_link_cache must hold the nested B→X edge before the move (test would be vacuous)"
     );
 
-    // Indent R under S. Both are content on page P, so R.page_id stays P and a
-    // root-only check would (wrongly) treat this as same-page — but B (under
-    // nested page Q) flips Q→P, so the guard must force the full rebuild set.
+    // Indent R under S. Both are content on page P, so R.page_id stays P; and
+    // because the in-tx rederive stops at Q's page boundary (#2906), B stays on
+    // Q. The move is correctly same-page, so the reduced fan-out skips the
+    // page_id-derived rebuilds.
     move_block_inner(&pool, DEV, &mat, r.id.clone(), Some(s.id.clone()), 0)
         .await
         .unwrap();
     settle(&mat).await;
 
-    // With the guard, the reduced fan-out ran the full RebuildPageLinkCache, so
-    // page_link_cache already reflects B's new source page P — forcing another
-    // rebuild changes nothing. Without the guard, the reduced fan-out skipped
-    // the rebuild, page_link_cache still carries the stale Q→X edge, and this
-    // forced rebuild flips it to P→X → the assertion fails.
+    // The in-tx rederive kept B on Q, so page_link_cache still holds the
+    // correct Q→X edge and forcing a full rebuild changes nothing. Before the
+    // #2906 boundary stop, the rederive would have flattened B onto P while the
+    // reduced fan-out skipped the rebuild, leaving a stale Q→X edge that this
+    // forced rebuild would flip to P→X → the assertion would fail.
     assert_no_stale_page_caches(&pool, "a same-page indent dragging a nested page").await;
 }

@@ -1919,6 +1919,311 @@ async fn move_and_undo_rederive_page_and_space_ids_synchronously() {
     );
 }
 
+/// Read every block's `(id, page_id, space_id)` triple, ordered, so the
+/// in-tx rederive state can be diffed against a full canonical rebuild.
+async fn snapshot_page_space_ids(
+    pool: &sqlx::SqlitePool,
+) -> Vec<(String, Option<String>, Option<String>)> {
+    sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        "SELECT id, page_id, space_id FROM blocks ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// #2906 — a cross-parent move of a subtree that CONTAINS a nested page must
+/// NOT flatten that nested page's descendants onto the outer page. The in-tx
+/// `rederive_page_and_space_ids` cascade stops at nested-page boundaries, so a
+/// content block under the nested page keeps the nested page's `page_id` and
+/// the nested page's authoritative `space_id`.
+///
+/// STRONGEST FORM: after the move (observing ONLY the synchronous in-tx
+/// rederive — no `flush_background`), a full canonical `rebuild_page_ids` +
+/// `rebuild_space_ids` produces a ZERO-row diff. i.e. in-tx == full rebuild.
+///
+/// Tree under source page A (space A):
+///   root(content) → { sib(content), nested(page, space A) → inner(content)
+///                                                          → deep(content) }
+/// Move `root` from page A to destination page B (space B). Expected:
+///   root, sib   → page B, space B   (plain descendants follow the moved root)
+///   nested      → page nested (self), space A   (page keeps own attribution)
+///   inner, deep → page nested, space A          (NOT flattened to B)
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_subtree_with_nested_page_keeps_nested_page_ids_2906() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await; // space A
+    ensure_test_space_b(&pool).await; // space B
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    let root = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "root".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let sib = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "sib".into(),
+        Some(root.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let nested = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "page".into(),
+        "nested".into(),
+        Some(root.id.clone()),
+        Some(2),
+    )
+    .await
+    .unwrap();
+    let inner = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "inner".into(),
+        Some(nested.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let deep = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "deep".into(),
+        Some(inner.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Authoritative page-group spaces: A + nested in space A, B in space B.
+    assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, nested.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
+    // Normalize the baseline so every block carries its correct page_id/space_id
+    // (inner/deep → page nested / space A) before the move under test.
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+
+    let read = |id: String| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_as::<_, (Option<String>, Option<String>)>(
+                "SELECT page_id, space_id FROM blocks WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    // --- MOVE root (with its whole subtree) from A to B. No flush after, so
+    //     ONLY the synchronous in-tx rederive is under test. ---
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        root.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let nested_id = nested.id.as_str();
+    let (root_p, root_s) = read(root.id.clone().into_string()).await;
+    let (sib_p, sib_s) = read(sib.id.clone().into_string()).await;
+    let (nested_p, nested_s) = read(nested.id.clone().into_string()).await;
+    let (inner_p, inner_s) = read(inner.id.clone().into_string()).await;
+    let (deep_p, deep_s) = read(deep.id.clone().into_string()).await;
+
+    // Plain descendants follow the moved root onto page B / space B.
+    assert_eq!(
+        root_p.as_deref(),
+        Some(page_b.id.as_str()),
+        "root page_id → B"
+    );
+    assert_eq!(
+        root_s.as_deref(),
+        Some(TEST_SPACE_B_ID),
+        "root space_id → B"
+    );
+    assert_eq!(
+        sib_p.as_deref(),
+        Some(page_b.id.as_str()),
+        "sib page_id → B"
+    );
+    assert_eq!(sib_s.as_deref(), Some(TEST_SPACE_B_ID), "sib space_id → B");
+
+    // The nested page keeps its own attribution (page = self, space A).
+    assert_eq!(
+        nested_p.as_deref(),
+        Some(nested_id),
+        "nested page keeps own page_id"
+    );
+    assert_eq!(
+        nested_s.as_deref(),
+        Some(TEST_SPACE_ID),
+        "nested page keeps its authoritative space A (pages are not re-attributed by a move)"
+    );
+
+    // THE BUG: inner/deep must NOT be flattened onto page B / space B — they
+    // keep the nested page's attribution.
+    assert_eq!(
+        inner_p.as_deref(),
+        Some(nested_id),
+        "inner keeps nested page's page_id (NOT flattened to outer page B)"
+    );
+    assert_eq!(
+        inner_s.as_deref(),
+        Some(TEST_SPACE_ID),
+        "inner keeps nested page's space A (NOT flattened to space B)"
+    );
+    assert_eq!(
+        deep_p.as_deref(),
+        Some(nested_id),
+        "deep keeps nested page's page_id (NOT flattened to outer page B)"
+    );
+    assert_eq!(
+        deep_s.as_deref(),
+        Some(TEST_SPACE_ID),
+        "deep keeps nested page's space A (NOT flattened to space B)"
+    );
+
+    // STRONGEST FORM: the in-tx rederive already equals the full canonical
+    // rebuild — running it changes ZERO rows.
+    let before = snapshot_page_space_ids(&pool).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    let after = snapshot_page_space_ids(&pool).await;
+    assert_eq!(
+        before, after,
+        "in-tx rederive must match a full RebuildPageIds/rebuild_space_ids (zero-row diff)"
+    );
+}
+
+/// #2906 no-regression companion: a plain subtree move (NO nested page) must
+/// re-derive `page_id`/`space_id` for every descendant AND still equal a full
+/// canonical rebuild (zero-row diff).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_plain_subtree_matches_full_rebuild_2906() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    ensure_test_space(&pool).await; // space A
+    ensure_test_space_b(&pool).await; // space B
+
+    let page_a = create_block_inner(&pool, DEV, &mat, "page".into(), "A".into(), None, Some(1))
+        .await
+        .unwrap();
+    let page_b = create_block_inner(&pool, DEV, &mat, "page".into(), "B".into(), None, Some(2))
+        .await
+        .unwrap();
+    let root = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "root".into(),
+        Some(page_a.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let child = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "child".into(),
+        Some(root.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    let grand = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "grand".into(),
+        Some(child.id.clone()),
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
+    assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+
+    // --- MOVE root (with child+grand) from A to B; no flush. ---
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        root.id.clone(),
+        Some(page_b.id.clone()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    // Every moved block must now be on page B / space B (plain cascade).
+    for id in [
+        root.id.clone().into_string(),
+        child.id.clone().into_string(),
+        grand.id.clone().into_string(),
+    ] {
+        let (p, s) = sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT page_id, space_id FROM blocks WHERE id = ?",
+        )
+        .bind(&id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(p.as_deref(), Some(page_b.id.as_str()), "{id} page_id → B");
+        assert_eq!(s.as_deref(), Some(TEST_SPACE_B_ID), "{id} space_id → B");
+    }
+
+    // Zero-row diff vs the full canonical rebuild.
+    let before = snapshot_page_space_ids(&pool).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    let after = snapshot_page_space_ids(&pool).await;
+    assert_eq!(
+        before, after,
+        "plain subtree move must match a full rebuild (zero-row diff)"
+    );
+}
+
 // ======================================================================
 // Restore_blocks_by_ids / purge_blocks_by_ids
 // ======================================================================

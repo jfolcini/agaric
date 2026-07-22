@@ -1307,14 +1307,14 @@ fn invalidations_for_op(
             // the local command proved keeps EVERY moved block's `page_id`
             // (`move_same_page == Some(true)`) makes all three pure waste, so
             // they are skipped. That proof lives at the command site
-            // (`move_ops.rs`): the moved root's `page_id` is unchanged AND the
-            // moved subtree contains no NESTED page. Both conjuncts are required
-            // — `rederive_page_and_space_ids` flattens content descendants of a
-            // nested page onto the moved root's page, so a root-only page_id
-            // check is NOT sufficient when a nested page rides along (it would
-            // leave `page_link_cache` / `projected_agenda_cache` stale). With no
-            // nested page in the subtree, an unchanged root `page_id` does imply
-            // unchanged descendant `page_id`s, so the skip is safe.
+            // (`move_ops.rs`): the moved root's `page_id` is unchanged. Since a
+            // move only reparents the root and `rederive_page_and_space_ids`
+            // stops its `page_id` cascade at nested-page boundaries (#2906), an
+            // unchanged root `page_id` implies every descendant's `page_id` is
+            // unchanged too — a content block under a nested page keeps that
+            // nested page's `page_id` rather than being flattened onto the moved
+            // root's page — so the skip is safe even when the moved subtree
+            // drags a nested page along.
             // `None` (remote replay / inbound-sync / boot — the hint is only
             // threaded on the LOCAL move command) or `Some(false)` (a proven
             // cross-page reparent) keeps the full conservative set. Note
