@@ -431,6 +431,13 @@ export const common: Record<string, string> = {
   'data.exporting': 'Exporting...',
   'data.exportSuccess': 'Export complete',
   'data.exportFailed': 'Export failed',
+  // #2965 — partial-export warning: some pages/attachments were skipped but
+  // the ZIP (with an `export-report.txt` ledger) still downloaded.
+  'data.exportPartial': 'Export finished with some items skipped: {{detail}}',
+  'data.exportSkippedPages_one': '{{count}} page skipped',
+  'data.exportSkippedPages_other': '{{count}} pages skipped',
+  'data.exportSkippedAttachments_one': '{{count}} attachment skipped',
+  'data.exportSkippedAttachments_other': '{{count}} attachments skipped',
   'help.reportBugTitle': 'Report a bug',
   'help.reportBugDescription':
     'Found a problem? Send us what happened and — if you like — the recent logs from your device.',

@@ -14,6 +14,7 @@
  */
 
 import { invoke } from '@tauri-apps/api/core'
+import type { InvokeArgs } from '@tauri-apps/api/core'
 import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type React from 'react'
@@ -39,8 +40,19 @@ vi.mock('@/lib/clipboard', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }))
 
+// #2969 — mocked so the ordering tests below can observe whether/when it
+// fires relative to `export_page_markdown`. Every other test gets a no-op
+// resolved flush (reset in `beforeEach`), matching the real module's
+// behavior when nothing is registered.
+vi.mock('@/lib/active-draft-flush', () => ({
+  flushActiveDraft: vi.fn(),
+}))
+
+import { flushActiveDraft } from '@/lib/active-draft-flush'
+
 const mockedInvoke = vi.mocked(invoke)
 const mockedWriteText = vi.mocked(writeText)
+const mockedFlushActiveDraft = vi.mocked(flushActiveDraft)
 const emptyPage = { items: [], next_cursor: null, has_more: false, total_count: null }
 let pageStore: StoreApi<PageBlockState>
 
@@ -117,6 +129,7 @@ const mockedAnnounce = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockedFlushActiveDraft.mockResolvedValue(undefined)
   // PageHeader subscribes to starred state via `useStarredPages`,
   // which reads/writes `localStorage['starred-pages']` directly.
   // Clear the key so each test starts from an unstarred baseline.
@@ -1737,6 +1750,80 @@ describe('PageHeader export rewrites attachment refs before copying', () => {
     })
     const copied = mockedWriteText.mock.calls[0]?.[0]
     expect(copied).not.toContain('attachment:')
+  })
+})
+
+// ── Export flushes a pending draft before reading content (#2969) ──
+
+describe('PageHeader export flushes the active draft first (#2969)', () => {
+  function mockInvokeForExport(markdown: string) {
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_blocks') return emptyPage
+      if (cmd === 'list_tags_for_block') return []
+      if (cmd === 'get_properties') return []
+      if (cmd === 'list_property_defs')
+        return { items: [], next_cursor: null, has_more: false, total_count: null }
+      if (cmd === 'get_page_aliases') return []
+      if (cmd === 'export_page_markdown') return markdown
+      return null
+    })
+  }
+
+  it('awaits flushActiveDraft before reading page markdown via the kebab menu export', async () => {
+    const user = userEvent.setup()
+    const order: string[] = []
+    mockedFlushActiveDraft.mockImplementation(async () => {
+      order.push('flush')
+    })
+    mockInvokeForExport('# fresh content')
+    // Wrap the already-mocked `export_page_markdown` to also record order,
+    // without disturbing the other command branches set up above.
+    const baseImpl = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'export_page_markdown') order.push('export')
+      return baseImpl?.(cmd, args)
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    await user.click(screen.getByRole('button', { name: /page actions/i }))
+    await user.click(await screen.findByText(/Export as Markdown/i))
+
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('# fresh content')
+    })
+    expect(mockedFlushActiveDraft).toHaveBeenCalled()
+    expect(order).toEqual(['flush', 'export'])
+  })
+
+  it('awaits flushActiveDraft before reading page markdown via the Ctrl+Shift+E shortcut', async () => {
+    const order: string[] = []
+    mockedFlushActiveDraft.mockImplementation(async () => {
+      order.push('flush')
+    })
+    mockInvokeForExport('# fresh content')
+    const baseImpl = mockedInvoke.getMockImplementation()
+    mockedInvoke.mockImplementation(async (cmd: string, args?: InvokeArgs) => {
+      if (cmd === 'export_page_markdown') order.push('export')
+      return baseImpl?.(cmd, args)
+    })
+
+    renderPageHeader(<PageHeader pageId="PAGE_1" title="Test Page" />)
+
+    document.dispatchEvent(
+      new KeyboardEvent('keydown', {
+        key: 'E',
+        ctrlKey: true,
+        shiftKey: true,
+        bubbles: true,
+      }),
+    )
+
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('# fresh content')
+    })
+    expect(mockedFlushActiveDraft).toHaveBeenCalled()
+    expect(order).toEqual(['flush', 'export'])
   })
 })
 

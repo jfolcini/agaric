@@ -27,6 +27,7 @@ import { useEmojiRecents } from '@/hooks/useEmojiRecents'
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { resolveAttachmentRefsForCopy } from '@/lib/export-graph'
@@ -202,6 +203,11 @@ export function PageHeader({ pageId, title, onBack }: PageHeaderProps) {
   // clipboard, so pasted markdown has no dead links (#2967).
   const copyPageMarkdownToClipboard = useCallback(async (): Promise<void> => {
     try {
+      // #2969 — flush the focused block's pending debounced content commit
+      // (if any) before reading the page's markdown, so a just-typed run of
+      // keystrokes — most notably via the Ctrl+Shift+E shortcut below, which
+      // never blurs the editor — isn't silently missing from the export.
+      await flushActiveDraft()
       const rawMarkdown = await exportPageMarkdown(pageId)
       const markdown = await resolveAttachmentRefsForCopy(rawMarkdown)
       await writeText(markdown)

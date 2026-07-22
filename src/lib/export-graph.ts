@@ -1,5 +1,6 @@
 import JSZip from 'jszip'
 
+import { flushActiveDraft } from '@/lib/active-draft-flush'
 import { ATTACHMENT_REF_SCHEME, parseAttachmentRef } from '@/lib/attachment-ref'
 import { logger } from '@/lib/logger'
 import {
@@ -120,6 +121,69 @@ function relativePrefixForDepth(zipPath: string): string {
 }
 
 /**
+ * Result of {@link exportGraphAsZip} (#2965). `skippedPages` and
+ * `skippedAttachments` let the caller distinguish a fully-successful export
+ * from a partial one — the ZIP-building loop below never rejects on a
+ * per-page or per-attachment failure (partial output is more useful than
+ * none), but silently reporting SUCCESS regardless is misleading: the user
+ * has no way to learn that something was dropped. `skippedAttachments`
+ * counts DISTINCT attachment ids that could not be read/emitted (an
+ * attachment referenced from several pages that fails is counted once, not
+ * once per referencing page).
+ */
+export interface ExportGraphResult {
+  blob: Blob
+  /** Pages successfully written to the ZIP. */
+  exportedPages: number
+  /** Pages whose `export_page_markdown` call failed and were dropped. */
+  skippedPages: number
+  /** Distinct attachment ids that could not be read/emitted. */
+  skippedAttachments: number
+}
+
+/** One line of the `export-report.txt` skip ledger — see {@link buildExportReport}. */
+interface SkippedPageEntry {
+  title: string
+}
+interface SkippedAttachmentEntry {
+  attachmentId: string
+  /** ZIP path of a page that references this attachment (first one seen). */
+  referencedIn: string
+}
+
+/**
+ * Render the plain-text `export-report.txt` written into the ZIP whenever
+ * anything was skipped (#2965). Kept dead simple (no counts-in-docs style
+ * table, just a flat list) since this is a one-shot artifact, not a
+ * long-lived doc.
+ */
+function buildExportReport(
+  skippedPages: SkippedPageEntry[],
+  skippedAttachments: SkippedAttachmentEntry[],
+): string {
+  const lines: string[] = [
+    'Agaric export report',
+    '',
+    'Some items could not be exported and were skipped. Everything else in',
+    'this ZIP exported normally.',
+    '',
+  ]
+  if (skippedPages.length > 0) {
+    lines.push(`Skipped pages (${skippedPages.length}):`)
+    for (const p of skippedPages) lines.push(`  - ${p.title}`)
+    lines.push('')
+  }
+  if (skippedAttachments.length > 0) {
+    lines.push(`Skipped attachments (${skippedAttachments.length}):`)
+    for (const a of skippedAttachments) {
+      lines.push(`  - ${a.attachmentId} (referenced in ${a.referencedIn}.md)`)
+    }
+    lines.push('')
+  }
+  return lines.join('\n')
+}
+
+/**
  * Export all pages as a ZIP of markdown files.
  *
  * Each page becomes a `.md` file whose path mirrors its namespace: the title is
@@ -140,9 +204,19 @@ function relativePrefixForDepth(zipPath: string): string {
  * space and short-circuits to an empty export before reaching this
  * function, since listAllPagesInSpace now requires an active
  * SpaceScope (#2248) rather than accepting an empty-string sentinel.
+ *
+ * #2965 — per-page/attachment failures are still caught and skipped (partial
+ * output beats none), but are now COUNTED and returned instead of silently
+ * disappearing behind an unconditional success; when anything was skipped an
+ * `export-report.txt` listing what and where is also written into the ZIP.
  */
-export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
+export async function exportGraphAsZip(spaceId: string | null): Promise<ExportGraphResult> {
   const zip = new JSZip()
+
+  // #2969 — flush the focused block's pending debounced content commit (if
+  // any) before reading ANY page's markdown below, so a just-typed run of
+  // keystrokes isn't silently missing from the export.
+  await flushActiveDraft()
 
   // Load every page in the space.  `listAllPagesInSpace` returns every
   // page in one query (no pagination, no clamp) — bounded by the
@@ -156,17 +230,22 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
   // multiple pages is written once and every page links to the same file.
   // `null` marks an attachment we already failed to emit (skip silently next time).
   const emittedAssets = new Map<string, string | null>()
+  // First page (zip path) each failed attachment id was seen in — for the report.
+  const skippedAttachmentSeenIn = new Map<string, string>()
 
   // Export each page to markdown. Per-page failures are logged and skipped so a
   // single broken page does not reject the whole export — partial output is more
   // useful than none.
   const seen = new Set<string>()
+  let exportedPages = 0
+  const skippedPageEntries: SkippedPageEntry[] = []
   for (const page of pages) {
     let md: string
     try {
       md = await exportPageMarkdown(page.id)
     } catch (err) {
       logger.warn('export-graph', 'page export failed', { pageId: page.id }, err)
+      skippedPageEntries.push({ title: page.content ?? page.id })
       continue
     }
 
@@ -198,12 +277,39 @@ export async function exportGraphAsZip(spaceId: string | null): Promise<Blob> {
     // AND block-scoped file links) to portable asset paths, emitting the
     // bytes into `assets/`. Done per page because the relative `../` prefix
     // depends on this page's namespace depth.
-    md = await rewriteAttachmentRefs(md, zip, emittedAssets, relativePrefixForDepth(zipPath))
+    const rewritten = await rewriteAttachmentRefs(
+      md,
+      zip,
+      emittedAssets,
+      relativePrefixForDepth(zipPath),
+    )
+    md = rewritten.md
+    for (const attachmentId of rewritten.skippedAttachmentIds) {
+      if (!skippedAttachmentSeenIn.has(attachmentId)) {
+        skippedAttachmentSeenIn.set(attachmentId, zipPath)
+      }
+    }
 
     zip.file(`${zipPath}.md`, md)
+    exportedPages += 1
   }
 
-  return zip.generateAsync({ type: 'blob' })
+  const skippedAttachmentEntries: SkippedAttachmentEntry[] = Array.from(
+    skippedAttachmentSeenIn,
+    ([attachmentId, referencedIn]) => ({ attachmentId, referencedIn }),
+  )
+
+  if (skippedPageEntries.length > 0 || skippedAttachmentEntries.length > 0) {
+    zip.file('export-report.txt', buildExportReport(skippedPageEntries, skippedAttachmentEntries))
+  }
+
+  const blob = await zip.generateAsync({ type: 'blob' })
+  return {
+    blob,
+    exportedPages,
+    skippedPages: skippedPageEntries.length,
+    skippedAttachments: skippedAttachmentEntries.length,
+  }
 }
 
 /**
@@ -220,23 +326,34 @@ function collectAttachmentIds(md: string): Set<string> {
   return ids
 }
 
+/** Return shape of {@link rewriteAttachmentRefs} — see #2965. */
+interface RewriteAttachmentRefsResult {
+  md: string
+  /** Distinct attachment ids referenced by THIS page that could not be
+   * read/emitted (deduped within the page; the caller dedupes globally
+   * across pages for the returned `skippedAttachments` count). */
+  skippedAttachmentIds: string[]
+}
+
 /**
  * Rewrite every `attachment:<id>` ref in `md` — both inline image links
  * (`![alt](attachment:<id>)`) and block-scoped file links
  * (`[label](attachment:<id>)`, #2961) — to a portable relative path into the
  * ZIP's `assets/` folder, emitting the attachment's bytes there once per id
  * (#1490). An attachment whose bytes/metadata cannot be read is left as its
- * original ref (nothing dropped) and logged. `relPrefix` climbs from the
- * page's folder depth back to the ZIP root so the link resolves.
+ * original ref (nothing dropped) and logged, and its id is reported back via
+ * `skippedAttachmentIds` (#2965) so the caller can count/report it instead of
+ * the failure disappearing behind an unconditional export success. `relPrefix`
+ * climbs from the page's folder depth back to the ZIP root so the link resolves.
  */
 async function rewriteAttachmentRefs(
   md: string,
   zip: JSZip,
   emittedAssets: Map<string, string | null>,
   relPrefix: string,
-): Promise<string> {
+): Promise<RewriteAttachmentRefsResult> {
   const ids = collectAttachmentIds(md)
-  if (ids.size === 0) return md
+  if (ids.size === 0) return { md, skippedAttachmentIds: [] }
 
   // Emit each not-yet-emitted attachment's bytes once, caching the asset's
   // ZIP-relative path (or `null` on failure) so a repeat ref reuses it.
@@ -268,16 +385,26 @@ async function rewriteAttachmentRefs(
     }
   }
 
-  // Rewrite each ref to a portable relative path; leave un-emittable ones as-is.
+  // Rewrite each ref to a portable relative path; leave un-emittable ones as-is
+  // (and note them in `skippedAttachmentIds`, deduped within this page — #2965).
   // The captured `!` prefix (group 1) is preserved verbatim so image refs stay
   // images and plain file links stay plain links — the backend never emits a
   // stray `!` immediately before a non-image link, so this is safe in practice.
-  return md.replace(ATTACHMENT_REF_RE, (match, bang: string, alt: string, url: string) => {
-    const id = parseAttachmentRef(url)
-    if (id == null) return match
-    const assetPath = emittedAssets.get(id)
-    return assetPath == null ? match : `${bang}[${alt}](${relPrefix}${assetPath})`
-  })
+  const skippedAttachmentIds = new Set<string>()
+  const rewritten = md.replace(
+    ATTACHMENT_REF_RE,
+    (match, bang: string, alt: string, url: string) => {
+      const id = parseAttachmentRef(url)
+      if (id == null) return match
+      const assetPath = emittedAssets.get(id)
+      if (assetPath == null) {
+        skippedAttachmentIds.add(id)
+        return match
+      }
+      return `${bang}[${alt}](${relPrefix}${assetPath})`
+    },
+  )
+  return { md: rewritten, skippedAttachmentIds: Array.from(skippedAttachmentIds) }
 }
 
 /**

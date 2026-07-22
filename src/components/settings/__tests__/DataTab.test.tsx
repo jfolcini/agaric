@@ -303,7 +303,12 @@ describe('DataTab', () => {
   it('export button calls exportGraphAsZip', async () => {
     const user = userEvent.setup()
     const mockBlob = new Blob(['zip'], { type: 'application/zip' })
-    mockExportGraphAsZip.mockResolvedValueOnce(mockBlob)
+    mockExportGraphAsZip.mockResolvedValueOnce({
+      blob: mockBlob,
+      exportedPages: 1,
+      skippedPages: 0,
+      skippedAttachments: 0,
+    })
 
     render(<DataTab />)
 
@@ -323,7 +328,12 @@ describe('DataTab', () => {
   it('export filename includes the sanitized active space name', async () => {
     const user = userEvent.setup()
     const mockBlob = new Blob(['zip'], { type: 'application/zip' })
-    mockExportGraphAsZip.mockResolvedValueOnce(mockBlob)
+    mockExportGraphAsZip.mockResolvedValueOnce({
+      blob: mockBlob,
+      exportedPages: 1,
+      skippedPages: 0,
+      skippedAttachments: 0,
+    })
 
     const STAR_SPACE: SpaceRow = {
       id: 'SPACE_STAR',
@@ -364,6 +374,61 @@ describe('DataTab', () => {
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith('Export failed')
     })
+  })
+
+  // #2965 — `exportGraphAsZip` no longer silently reports success when it
+  // dropped pages/attachments: the caller must surface a warning toast (still
+  // downloading the ZIP, which carries its own `export-report.txt`) instead
+  // of the plain success toast.
+  it('shows a warning toast (not the plain success toast) when pages/attachments were skipped (#2965)', async () => {
+    const user = userEvent.setup()
+    const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+    mockExportGraphAsZip.mockResolvedValueOnce({
+      blob: mockBlob,
+      exportedPages: 2,
+      skippedPages: 2,
+      skippedAttachments: 1,
+    })
+
+    render(<DataTab />)
+
+    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    await user.click(exportBtn)
+
+    await waitFor(() => {
+      // Still downloads the (partial) ZIP.
+      expect(mockDownloadBlob).toHaveBeenCalledWith(
+        mockBlob,
+        expect.stringMatching(/agaric-export-.+\.zip/),
+      )
+      expect(toast.warning).toHaveBeenCalledWith(
+        'Export finished with some items skipped: 2 pages skipped; 1 attachment skipped',
+      )
+    })
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  // #2965 — the zero-skipped (happy) path must be unchanged: plain success
+  // toast, no warning.
+  it('shows the plain success toast and no warning when nothing was skipped (#2965)', async () => {
+    const user = userEvent.setup()
+    const mockBlob = new Blob(['zip'], { type: 'application/zip' })
+    mockExportGraphAsZip.mockResolvedValueOnce({
+      blob: mockBlob,
+      exportedPages: 3,
+      skippedPages: 0,
+      skippedAttachments: 0,
+    })
+
+    render(<DataTab />)
+
+    const exportBtn = screen.getByRole('button', { name: /Export All/i })
+    await user.click(exportBtn)
+
+    await waitFor(() => {
+      expect(toast.success).toHaveBeenCalledWith('Export complete')
+    })
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it('shows per-file progress text during multi-file import', async () => {
