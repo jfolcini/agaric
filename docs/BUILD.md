@@ -223,6 +223,8 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 
 Wall clock on a warm cache: ≈3-4 min (was ≈5-8 min when each hook ran sequentially via prek's per-hook scheduler).
 
+**Push with `just push` (or [`scripts/push.sh`](../scripts/push.sh)), not raw `git push`, for anything that changes `.rs`.** Because the verify runs *inside* the pre-push hook — which fires only after `git push` has already opened and is holding the SSH connection — a several-minute verify leaves that connection idle long enough for GitHub to close it, and the pack upload then fails (`Connection to github.com closed by remote host` / `failed to push some refs`) even though the gate passed in full. `just push` / `scripts/push.sh` runs the verifier *first*, then invokes `git push` with the hook short-circuited, so the freshly opened connection uploads immediately. It forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
+
 `SKIP_CI_VERIFY='<reason>' git push` short-circuits the script. The value must be a real reason (≥8 chars), NOT a truthy flag — a bare `SKIP_CI_VERIFY=1` (or `true`/`yes`/`on`/…) is hard-rejected. Use e.g. `SKIP_CI_VERIFY='docs typo, no source change' git push`. Reserve it for docs-only typo fixes that obviously cannot affect CI behaviour; anything that touches source code should let the verifier run.
 
 ### Release pre-flight
