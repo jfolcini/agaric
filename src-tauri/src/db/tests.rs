@@ -1499,6 +1499,79 @@ async fn recovery_clear_space_fans_out_to_page_group_534() {
     );
 }
 
+/// #2894 convergence: the derived-state recovery `remove_tag` arm now routes
+/// through the shared `project_remove_tag_to_sql` projection instead of a
+/// hand-rolled inline DELETE. This pins that the projection reproduces the
+/// SAME settled `block_tags` state: a tag added then removed (later op wins,
+/// LWW replay order) is absent, while an independently-added tag survives as a
+/// positive control that the replay actually ran. Drives ops straight through
+/// `recover_derived_state_from_op_log` on the real (migrated) schema — not the
+/// transient command path — asserting the reprojected SQL state.
+#[tokio::test]
+async fn recovery_remove_tag_via_projection_matches_settled_state_2894() {
+    // PAGE1 / CHILD1 / SPACE1 all exist as blocks (seed helper), so the
+    // add_tag FK guards pass and the tag rows land before the remove replays.
+    let (pool, _dir) = seed_space_recovery_pool(&[
+        // CHILD1 tagged with PAGE1 (this one is later removed) ...
+        (1, "add_tag", r#"{"block_id":"CHILD1","tag_id":"PAGE1"}"#),
+        // ... and with SPACE1 (kept — positive control).
+        (2, "add_tag", r#"{"block_id":"CHILD1","tag_id":"SPACE1"}"#),
+        // remove_tag must win over the earlier add (LWW replay order).
+        (3, "remove_tag", r#"{"block_id":"CHILD1","tag_id":"PAGE1"}"#),
+    ])
+    .await;
+
+    let removed: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'CHILD1' AND tag_id = 'PAGE1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        removed, 0,
+        "remove_tag routed through project_remove_tag_to_sql must delete the (CHILD1, PAGE1) pair"
+    );
+
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'CHILD1' AND tag_id = 'SPACE1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept, 1,
+        "the independently-added (CHILD1, SPACE1) tag must survive — positive control the replay ran"
+    );
+}
+
+/// #2894 convergence: a `remove_tag` op targeting a pair that was never added
+/// (no matching `block_tags` row) must be a harmless no-op on the recovery
+/// path, exactly as the shared `project_remove_tag_to_sql` DELETE is — proving
+/// the converged arm keeps the old inline DELETE's idempotence and does not
+/// abort the replay tx.
+#[tokio::test]
+async fn recovery_remove_tag_absent_pair_is_noop_2894() {
+    let (pool, _dir) = seed_space_recovery_pool(&[
+        // Establish one real tag so the derived-recovery replay has work
+        // (and the block_tags gate stays open) ...
+        (1, "add_tag", r#"{"block_id":"CHILD1","tag_id":"SPACE1"}"#),
+        // ... then remove a pair that was never added: 0-row DELETE, no error.
+        (2, "remove_tag", r#"{"block_id":"CHILD1","tag_id":"PAGE1"}"#),
+    ])
+    .await;
+
+    let kept: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_tags WHERE block_id = 'CHILD1' AND tag_id = 'SPACE1'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        kept, 1,
+        "the real tag must survive a no-op remove of an unrelated, never-added pair"
+    );
+}
+
 /// #605 regression: op-log recovery of a `set_property(space)` op whose
 /// target space block is absent (purged, or never present in the local
 /// op_log) must be SKIPPED — `blocks.space_id` is `REFERENCES blocks(id)`
