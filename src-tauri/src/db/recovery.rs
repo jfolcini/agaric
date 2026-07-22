@@ -710,6 +710,32 @@ async fn recover_blocks_from_op_log(
                             .and_then(serde_json::Value::as_i64)
                     });
 
+                // #2894: this arm shares the byte-identical UPDATE shape with the
+                // shared projection (`project_move_block_to_sql`:
+                // `UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?`),
+                // but is INTENTIONALLY left inline rather than routed through it.
+                // The projection binds `snapshot.position: i64` (a concrete rank —
+                // the engine read-back is never NULL); this recovery replay reads
+                // a raw op-log payload and binds `new_position: Option<i64>`,
+                // preserving a defensive `position = NULL` write for the
+                // (well-formed ops never hit it, but corruption-path) case where
+                // BOTH `new_index` and `new_position` are absent from the JSON.
+                // Converging would force that NULL corner onto the projection's
+                // non-nullable `i64` — there is no move-side sentinel mapping to
+                // fall back on (unlike the *create* path, where
+                // `apply_create_block_sql_only` folds an absent position into the
+                // `i64::MAX` NULL_POSITION_SENTINEL; `MoveBlockPayload.new_position`
+                // is a non-optional `i64`, so `apply_move_block_sql_only` never
+                // synthesizes that sentinel and `index_to_provisional_position`
+                // caps strictly below it). Converging is therefore an observable
+                // change in exactly the malformed-op-log corner this recovery
+                // exists to survive, and inconsistent with the `create_block`
+                // arm's NULL convention. The convergence is the UPDATE *shape*
+                // (which already matches), not the bind: leaving it inline is
+                // behaviour-preserving. The projection also has no cycle probe
+                // here (unlike the engine-less `apply_move_block_sql_only`
+                // fallback, which runs the shared `move_would_cycle` probe), so
+                // recovery's cycle-probe-free behaviour is likewise unchanged.
                 sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
                     .bind(new_parent_id)
                     .bind(new_position)
@@ -1301,10 +1327,26 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     let block_id = payload["block_id"].as_str().unwrap_or("");
                     let tag_id = payload["tag_id"].as_str().unwrap_or("");
 
-                    sqlx::query("DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?")
-                        .bind(block_id)
-                        .bind(tag_id)
-                        .execute(&mut *tx)
+                    // #2894: route the `block_tags` delete through the shared
+                    // projection (`project_remove_tag_to_sql`) — the exact fn the
+                    // engine arm (`apply_remove_tag_via_loro`) and the SQL-only
+                    // fallback (`apply_remove_tag_sql_only`) both run — so the
+                    // `DELETE FROM block_tags WHERE block_id = ? AND tag_id = ?`
+                    // shape lives in ONE place and cannot drift between the three
+                    // paths. This is the exact analogue of the already-converged
+                    // `delete_property` arm above (#2043): a keyed DELETE cannot
+                    // trip FK 787 (it removes a child row), is idempotent (0-row
+                    // no-op when the pair is absent), and reads only `block_id` /
+                    // `tag_id` straight from the payload — so unlike the `add_tag`
+                    // / `set_property` arms it needs NO recovery-only FK-existence
+                    // guard, and routing it through the projection is
+                    // byte-for-byte equivalent. The inherited-tag cleanup that the
+                    // command/sql_only wrappers run AFTER the projection
+                    // (`remove_inherited_tag`) is deliberately NOT invoked here:
+                    // this replay rebuilds only `block_tags`, exactly as the old
+                    // inline DELETE did (the `block_tag_inherited` view is
+                    // reconstructed by its own recompute path, not this loop).
+                    crate::loro::projection::project_remove_tag_to_sql(&mut tx, block_id, tag_id)
                         .await?;
                 }
                 // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
