@@ -193,6 +193,9 @@ export const history: Record<string, string> = {
   'history.revertedSuccessfully': 'Reverted successfully',
   'history.revertPanelFailed': 'Failed to revert',
   'history.notRestorable': "This entry can't be restored",
+  // #2481 — foreign op badge (audit-only, not revertible here). Shared by
+  // the sr-only accessible name and the visible tooltip content.
+  'history.foreignOp': 'Synced from another device (audit-only; not revertible here)',
   'history.loadDiffFailed': 'Failed to load diff',
   // Part B — segmented control + primary button in the per-block
   // history panel's expanded preview state.
