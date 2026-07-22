@@ -69,7 +69,7 @@ import { useBlockMountLimit } from '@/hooks/useBlockMountLimit'
 import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
 import { useBlockNavigateToLink } from '@/hooks/useBlockNavigateToLink'
 import { useBlockProperties } from '@/hooks/useBlockProperties'
-import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
+import { useScopedBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useBlockResolve } from '@/hooks/useBlockResolve'
 import { BlockResolversProvider } from '@/hooks/useBlockResolvers'
 import { useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
@@ -90,7 +90,7 @@ import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
 import { deleteDraft } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
-import { usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
+import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
 /**
@@ -1080,7 +1080,25 @@ export function BlockTree({
   // invalidation key mirrors AgendaResults: bump the provider's refetch on
   // every `block:properties-changed` event AND on space switch, so an edit to
   // an image property re-syncs the rendered width/alignment/caption.
-  const { invalidationKey: propertyInvalidationKey } = useBlockPropertyEvents()
+  //
+  // #2905 — SCOPED, not the app-global counter: journal week/month views
+  // mount one BlockTree per day, all sharing the same
+  // `block:properties-changed` event stream. The global counter
+  // (`useBlockPropertyEvents`) bumps for ANY block's property edit anywhere,
+  // so it used to re-issue every mounted tree's `getBatchProperties` IPC for
+  // an edit that may touch none of them. `useScopedBlockPropertyEvents` only
+  // bumps THIS tree's key when the changed block is owned by this tree's own
+  // page store (`storeOwnsBlock`, the same ownership gate used by the
+  // document-level listener guards) — a payload-less/bulk event still falls
+  // back to a blanket bump, so no invalidation this tree might care about is
+  // ever dropped.
+  const ownsBlockForPropertyEvents = useCallback(
+    (blockId: string) => storeOwnsBlock(pageStore, blockId),
+    [pageStore],
+  )
+  const { invalidationKey: propertyInvalidationKey } = useScopedBlockPropertyEvents({
+    ownsBlock: ownsBlockForPropertyEvents,
+  })
   const currentSpaceId = useSpaceStore((s) => s.currentSpaceId)
   const batchPropertiesInvalidationKey = `${propertyInvalidationKey}|${currentSpaceId ?? ''}`
 
