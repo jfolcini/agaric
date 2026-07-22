@@ -4,12 +4,14 @@ import { Fragment, useEffect, useState } from 'react'
 import { renderMermaidBlock } from '@/components/RichContentRenderer/marks/mermaid'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { CodeBlockNode } from '@/editor/types'
-import { curatedLowlight } from '@/lib/lowlight-curated'
 
-// `curatedLowlight` shared instance (see `src/lib/lowlight-curated.ts`).
-// Aliased locally so the existing `lowlight.highlight(...)` call-sites below
-// keep their concise form and we avoid touching unrelated lines.
-const lowlight = curatedLowlight
+// #2939 — `curatedLowlight` bundles highlight.js grammars (~51 kB chunk). It is
+// imported DYNAMICALLY inside the idle-time highlight upgrade below, not
+// statically, so the grammars stay off the cold-start path. First paint already
+// renders plain text and upgrades to highlighted output post-commit, so folding
+// the chunk load into that same deferred step is invisible. Type-only import of
+// the instance's shape keeps the module TipTap/highlight-free at startup.
+type CuratedLowlight = (typeof import('@/lib/lowlight-curated'))['curatedLowlight']
 
 // ============================================================================
 // Hast → React (syntax-highlighted code blocks, avoids innerHTML)
@@ -215,7 +217,11 @@ export function __highlightCacheStats(): { entries: number; bytes: number } {
  * Run the (expensive) highlighter. Returns the HAST tree, or `null` when the
  * block is over the cap or the highlighter throws (fall back to plain text).
  */
-function computeHighlight(code: string, language: string): HastRootNode | null {
+function computeHighlight(
+  lowlight: CuratedLowlight,
+  code: string,
+  language: string,
+): HastRootNode | null {
   if (code.length > HIGHLIGHT_MAX_LENGTH) return null
   try {
     return (language
@@ -282,9 +288,21 @@ function HighlightedCode({ code, language, keyPrefix }: HighlightedCodeProps): R
     let cancelled = false
     const cancel = scheduleIdle(() => {
       if (cancelled) return
-      const result = computeHighlight(code, language)
-      writeHighlightCache(code, language, result)
-      setState({ code, language, tree: result })
+      // #2939 — load the highlight.js grammars lazily (off the cold-start path)
+      // as part of this deferred upgrade. On import failure fall back to
+      // known-plain so we don't re-schedule every render.
+      void import('@/lib/lowlight-curated')
+        .then(({ curatedLowlight }) => {
+          if (cancelled) return
+          const result = computeHighlight(curatedLowlight, code, language)
+          writeHighlightCache(code, language, result)
+          setState({ code, language, tree: result })
+        })
+        .catch(() => {
+          if (cancelled) return
+          writeHighlightCache(code, language, null)
+          setState({ code, language, tree: null })
+        })
     })
     return () => {
       cancelled = true

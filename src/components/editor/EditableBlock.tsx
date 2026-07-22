@@ -6,16 +6,14 @@
  * On blur: serializes, compares, flushes if dirty, auto-splits on \n.
  */
 
-import { EditorContent } from '@tiptap/react'
 import type { TFunction } from 'i18next'
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { SelectionBubbleMenu } from '@/components/editor-toolbar/SelectionBubbleMenu'
+import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { StaticBlock } from '@/components/editor/StaticBlock'
-import { FormattingToolbar } from '@/components/FormattingToolbar'
+import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { shouldSplitOnBlur } from '@/editor/use-roving-editor'
 import { useDebouncedContentCommit } from '@/hooks/useDebouncedContentCommit'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
 import { useEditorBlur } from '@/hooks/useEditorBlur'
@@ -427,7 +425,17 @@ function EditableBlockInner({
     [blockId, t],
   )
 
-  if (!isFocused) {
+  // #2939 — the editing UI (EditorContent portal + toolbars) is provided by the
+  // lazily-loaded editor-runtime chunk via context, so this hot render-path
+  // module never statically imports @tiptap. Until the runtime has loaded AND
+  // produced a live editor for this focused block, keep showing the read-only
+  // StaticBlock so the block's content stays visible — the read-only → editable
+  // swap is seamless (same content, same position). With idle prefetch the
+  // editor is virtually always live by the time a block is focused, so in
+  // practice the swap is instantaneous, exactly as before.
+  const EditorSurface = useContext(EditorSurfaceContext)
+
+  if (!isFocused || rovingEditor.editor == null || EditorSurface == null) {
     return (
       <StaticBlock
         blockId={blockId}
@@ -461,22 +469,12 @@ function EditableBlockInner({
       onDrop={handleDrop}
       onPaste={handlePaste}
     >
-      {rovingEditor.editor && (
-        <FormattingToolbar
-          editor={rovingEditor.editor}
-          blockId={blockId}
-          currentPriority={currentPriority}
-        />
-      )}
-      {rovingEditor.editor && (
-        <SelectionBubbleMenu editor={rovingEditor.editor} blockId={blockId} />
-      )}
-      <EditorContent editor={rovingEditor.editor} />
-      {isDragOver && (
-        <p className="px-3 pb-1 text-xs text-primary/70 select-none" aria-live="polite">
-          {t('block.attachDropZoneCaption')}
-        </p>
-      )}
+      <EditorSurface
+        editor={rovingEditor.editor}
+        blockId={blockId}
+        currentPriority={currentPriority ?? null}
+        isDragOver={isDragOver}
+      />
     </section>
   )
 }

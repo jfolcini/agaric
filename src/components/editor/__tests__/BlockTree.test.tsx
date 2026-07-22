@@ -78,8 +78,13 @@ const mockMount = vi.fn()
 const mockUnmount = vi.fn(() => mockUnmountReturn)
 const mockGetMarkdown = vi.fn(() => mockGetMarkdownReturn)
 
-vi.mock('@/editor/use-roving-editor', () => ({
-  useRovingEditor: (opts: {
+// #2939 — BlockTree now consumes the roving editor via `useLazyRovingEditor`
+// (which lazily loads the real editor and returns a drop-in handle facade plus a
+// headless `editorHost` and the `editorSurface` component). SortableBlock is
+// mocked in this suite, so the editor UI is never rendered here; return the same
+// mock handle as before, with a null host/surface.
+vi.mock('@/hooks/useLazyRovingEditor', () => ({
+  useLazyRovingEditor: (opts: {
     searchTags?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     searchPages?: (query: string) => PickerItem[] | Promise<PickerItem[]>
     onCreatePage?: (label: string) => Promise<string>
@@ -94,11 +99,15 @@ vi.mock('@/editor/use-roving-editor', () => ({
     capturedSearchSlashCommands = opts.searchSlashCommands
     capturedOnSlashCommand = opts.onSlashCommand
     return {
-      editor: useMockEditor ? mockEditor : null,
-      mount: mockMount,
-      unmount: mockUnmount,
-      getMarkdown: mockGetMarkdown,
-      activeBlockId: mockActiveBlockId,
+      rovingEditor: {
+        editor: useMockEditor ? mockEditor : null,
+        mount: mockMount,
+        unmount: mockUnmount,
+        getMarkdown: mockGetMarkdown,
+        activeBlockId: mockActiveBlockId,
+      },
+      editorHost: null,
+      editorSurface: null,
     }
   },
 }))

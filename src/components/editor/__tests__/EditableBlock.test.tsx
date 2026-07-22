@@ -12,34 +12,59 @@
  *  - a11y compliance for both states
  */
 
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { render as rtlRender, act, fireEvent, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactElement, ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { EditableBlock } from '@/components/editor/EditableBlock'
+import {
+  EditorSurfaceContext,
+  type EditorSurfaceProps,
+} from '@/components/editor/editor-surface-context'
 import { EDITOR_PORTAL_SELECTOR } from '@/hooks/useEditorBlur'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-// Mock shouldSplitOnBlur from use-roving-editor — controls split detection
+// Mock shouldSplitOnBlur from content-delta (#2939 — moved out of
+// use-roving-editor so the render path is TipTap-free) — controls split
+// detection. `useEditorBlur` also imports it from here, so this single mock
+// covers both consumers.
 const mockShouldSplitOnBlur = vi.fn((md: string) => md.includes('\n'))
-vi.mock('@/editor/use-roving-editor', () => ({
+vi.mock('@/editor/content-delta', () => ({
   shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
 }))
 
-// Mock EditorContent — TipTap doesn't render in jsdom so we stub it
-vi.mock('@tiptap/react', () => ({
-  EditorContent: ({ editor }: { editor: unknown }) =>
-    editor != null ? <div data-testid="editor-content">TipTap Editor</div> : null,
-}))
+// #2939 — EditableBlock renders its editing UI (EditorContent + toolbars)
+// through the EditorSurface published on `EditorSurfaceContext` by the lazily
+// loaded editor runtime. Stub that surface here (TipTap doesn't render in jsdom)
+// and inject it via a `render` wrapper below, so focused blocks show the editor
+// UI exactly as before. `editor != null` mirrors the real EditorContent's null
+// guard (EditableBlock only mounts the surface once a live editor exists).
+function MockEditorSurface({ editor, blockId }: EditorSurfaceProps): ReactElement {
+  return (
+    <>
+      <div data-testid="formatting-toolbar" data-block-id={blockId} />
+      {editor != null ? <div data-testid="editor-content">TipTap Editor</div> : <></>}
+    </>
+  )
+}
 
-// Mock FormattingToolbar — tested separately in FormattingToolbar.test.tsx
-vi.mock('@/components/FormattingToolbar', () => ({
-  FormattingToolbar: ({ blockId }: { blockId?: string }) => (
-    <div data-testid="formatting-toolbar" data-block-id={blockId} />
-  ),
-}))
+// Shadow RTL's `render` so every EditableBlock render (and `rerender`) is wrapped
+// in the surface provider — otherwise a focused block would fall back to the
+// read-only StaticBlock (context value null = "editor runtime not loaded"). Using
+// the `wrapper` option (not manual JSX) keeps the provider across `rerender`.
+function SurfaceWrapper({ children }: { children: ReactNode }): ReactElement {
+  return (
+    <EditorSurfaceContext.Provider value={MockEditorSurface}>
+      {children}
+    </EditorSurfaceContext.Provider>
+  )
+}
+function render(ui: ReactElement, options?: Parameters<typeof rtlRender>[1]) {
+  return rtlRender(ui, { wrapper: SurfaceWrapper, ...options })
+}
 
 // Mock SelectionBubbleMenu — tested separately in SelectionBubbleMenu.test.tsx
 vi.mock('@/components/editor-toolbar/SelectionBubbleMenu', () => ({
