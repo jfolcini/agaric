@@ -670,3 +670,217 @@ describe('useBlockProperties handleToggleTodo F-37 dependency warning', () => {
     expect(mockedToastWarning).not.toHaveBeenCalled()
   })
 })
+
+// ---------------------------------------------------------------------------
+// #2922 — rapid toggle race: serialization + guarded revert
+// ---------------------------------------------------------------------------
+
+describe('useBlockProperties #2922 rapid toggle race', () => {
+  it('serializes rapid double toggle: the second IPC does not start until the first settles, and reads the settled state', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
+
+    let resolveFirst!: () => void
+    const firstIpc = new Promise<undefined>((resolve) => {
+      resolveFirst = () => resolve(undefined)
+    })
+    mockedInvoke.mockImplementationOnce(() => firstIpc)
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let secondToggle!: Promise<void>
+    await act(async () => {
+      // Space,Space — neither press is awaited individually, mirroring two
+      // rapid keydowns landing before the first IPC resolves.
+      void result.current.handleToggleTodo('BLOCK_1') // TODO -> DOING (IPC pending)
+      secondToggle = result.current.handleToggleTodo('BLOCK_1') // queued behind it
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // Without serialization the second toggle would compute its own
+    // optimistic DONE state and call `set_todo_state` immediately, giving two
+    // calls here. With serialization it stays queued: only the first call
+    // has fired.
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'set_todo_state', {
+      blockId: 'BLOCK_1',
+      state: 'DOING',
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
+
+    await act(async () => {
+      resolveFirst()
+      await secondToggle
+    })
+
+    // The second toggle computed `nextState` from the SETTLED predecessor
+    // (DOING), cycling to DONE — not from the pre-toggle snapshot (TODO)
+    // captured when it was enqueued.
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'set_todo_state', {
+      blockId: 'BLOCK_1',
+      state: 'DONE',
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DONE')
+  })
+
+  it('does not revert on IPC failure once a newer state has superseded this call’s write', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
+
+    let rejectFirst!: (err: Error) => void
+    const firstIpc = new Promise<undefined>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    mockedInvoke.mockImplementationOnce(() => firstIpc)
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let toggle!: Promise<void>
+    act(() => {
+      toggle = result.current.handleToggleTodo('BLOCK_1') // TODO -> DOING, IPC in flight
+    })
+
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
+
+    // Simulate a newer write superseding this call while its IPC is still in
+    // flight (e.g. a second toggle's IPC landing via a different path, a
+    // sync echo, or an undo) — the live state moves past what this call
+    // optimistically wrote.
+    act(() => {
+      pageStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, todo_state: 'DONE' } : b)),
+      }))
+    })
+
+    await act(async () => {
+      rejectFirst(new Error('IPC failed'))
+      await toggle
+    })
+
+    // The failed call's revert must NOT clobber the newer DONE state with
+    // the pre-toggle snapshot (TODO) it captured before the IPC started.
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DONE')
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to set task state')
+  })
+
+  it('still reverts a normal, unsuperseded single toggle on its own IPC failure', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' })] })
+    mockedInvoke.mockRejectedValueOnce(new Error('IPC failed'))
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    await act(async () => {
+      await result.current.handleToggleTodo('BLOCK_1')
+    })
+
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('TODO')
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to set task state')
+  })
+
+  it('serializes rapid double priority toggle the same way as todo toggling', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
+
+    let resolveFirst!: () => void
+    const firstIpc = new Promise<undefined>((resolve) => {
+      resolveFirst = () => resolve(undefined)
+    })
+    mockedInvoke.mockImplementationOnce(() => firstIpc)
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let secondToggle!: Promise<void>
+    await act(async () => {
+      void result.current.handleTogglePriority('BLOCK_1') // 1 -> 2 (IPC pending)
+      secondToggle = result.current.handleTogglePriority('BLOCK_1') // queued behind it
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+    expect(mockedInvoke).toHaveBeenNthCalledWith(1, 'set_priority', {
+      blockId: 'BLOCK_1',
+      level: '2',
+    })
+
+    await act(async () => {
+      resolveFirst()
+      await secondToggle
+    })
+
+    expect(mockedInvoke).toHaveBeenNthCalledWith(2, 'set_priority', {
+      blockId: 'BLOCK_1',
+      level: '3',
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('3')
+  })
+
+  it('does not revert a failed priority IPC once a newer priority has superseded it', async () => {
+    pageStore.setState({ blocks: [makeBlock({ id: 'BLOCK_1', priority: '1' })] })
+
+    let rejectFirst!: (err: Error) => void
+    const firstIpc = new Promise<undefined>((_resolve, reject) => {
+      rejectFirst = reject
+    })
+    mockedInvoke.mockImplementationOnce(() => firstIpc)
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let toggle!: Promise<void>
+    act(() => {
+      toggle = result.current.handleTogglePriority('BLOCK_1') // 1 -> 2, IPC in flight
+    })
+
+    act(() => {
+      pageStore.setState((s) => ({
+        blocks: s.blocks.map((b) => (b.id === 'BLOCK_1' ? { ...b, priority: '3' } : b)),
+      }))
+    })
+
+    await act(async () => {
+      rejectFirst(new Error('IPC failed'))
+      await toggle
+    })
+
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.priority).toBe('3')
+    expect(mockedToastError).toHaveBeenCalledWith('Failed to set priority')
+  })
+
+  it('serializes toggles on different blocks independently (no cross-block blocking)', async () => {
+    pageStore.setState({
+      blocks: [
+        makeBlock({ id: 'BLOCK_1', todo_state: 'TODO' }),
+        makeBlock({ id: 'BLOCK_2', todo_state: 'TODO' }),
+      ],
+    })
+
+    let resolveBlock1!: () => void
+    const block1Ipc = new Promise<undefined>((resolve) => {
+      resolveBlock1 = () => resolve(undefined)
+    })
+    mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
+      const blockId = (args as { blockId?: string } | undefined)?.blockId
+      if (cmd === 'set_todo_state' && blockId === 'BLOCK_1') return block1Ipc
+      return Promise.resolve(undefined)
+    })
+
+    const { result } = renderHook(() => useBlockProperties(), { wrapper })
+
+    let block2Toggle!: Promise<void>
+    await act(async () => {
+      void result.current.handleToggleTodo('BLOCK_1') // pending IPC, blocks BLOCK_1's queue only
+      block2Toggle = result.current.handleToggleTodo('BLOCK_2')
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+
+    // BLOCK_2's toggle is independent of BLOCK_1's in-flight IPC.
+    await act(async () => {
+      await block2Toggle
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_2')?.todo_state).toBe('DOING')
+
+    await act(async () => {
+      resolveBlock1()
+    })
+    expect(pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')?.todo_state).toBe('DOING')
+  })
+})
