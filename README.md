@@ -164,9 +164,12 @@ just dev                     # cargo tauri dev
 just test                    # Vitest + cargo nextest
 just check                   # prek run --all-files (local CI mirror)
 just verify                  # pre-push CI-equivalent verifier
+just push                    # verify-then-push (use instead of raw `git push`)
 ```
 
 `just` is optional — nothing in the build, CI, or git hooks depends on it; each recipe just shells out to the canonical `npm`/`cargo`/`prek`/`scripts/*` entry point.
+
+**Prefer `just push` (or [`scripts/push.sh`](scripts/push.sh)) over raw `git push` for anything that changes `.rs`.** A raw `git push` holds the SSH connection open while the multi-minute pre-push verify runs, so GitHub drops the idle connection and the upload fails (`Connection to github.com closed by remote host`) even though the local gate passed. `just push` runs the verifier *first*, then pushes on a fresh connection; it forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
 
 ### Testing
 
