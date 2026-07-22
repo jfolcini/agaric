@@ -6,6 +6,8 @@
 
 import { describe, expect, it } from 'vitest'
 
+import { doc, listItem, orderedList, paragraph, text } from '@/editor/__tests__/builders'
+import { parse } from '@/editor/markdown-parse'
 import {
   convertBlockContent,
   detectBlockType,
@@ -140,5 +142,42 @@ describe('turnIdToBlockType', () => {
   it('returns null for non-turn or unknown ids', () => {
     expect(turnIdToBlockType('h1')).toBeNull()
     expect(turnIdToBlockType('turn-bogus')).toBeNull()
+  })
+})
+
+describe('list button — marker and content land on the SAME line (#2999)', () => {
+  // The toolbar/slash list button (`useSlashCommandStructural`'s
+  // `handleNumberedList`/`handleBulletList`, and the `TurnIntoMenu` /
+  // `TURN_INTO_BLOCK` path via `convertBlockContent`) both funnel through
+  // this exact "prepend the marker to the current content" shape:
+  // `` `1. ${content}` `` / `` `- ${content}` ``. These tests pin that the
+  // generated markdown is a SINGLE line, and that parsing it back produces
+  // exactly ONE list item with exactly ONE paragraph child — i.e. the
+  // marker and the typed text belong to the same node, not two. This rules
+  // out a data-model split as the cause of #2999 (the marker rendering on
+  // its own line above the content): the split was a CSS
+  // `list-style-position: inside` + block-level `<p>` child issue in
+  // `.ProseMirror ol/ul` (src/index.css), not a markdown/doc structure bug.
+  it('numbered-list: turning a plain-text block produces one line, one paragraph', () => {
+    const markdown = convertBlockContent('buy milk', 'numbered-list')
+    expect(markdown).toBe('1. buy milk')
+    expect(markdown.split('\n')).toHaveLength(1)
+    expect(parse(markdown)).toEqual(doc(orderedList(listItem(paragraph(text('buy milk'))))))
+  })
+
+  it('bullet-list: turning a plain-text block produces one line, one paragraph', () => {
+    const markdown = convertBlockContent('buy milk', 'bullet-list')
+    expect(markdown).toBe('- buy milk')
+    expect(markdown.split('\n')).toHaveLength(1)
+  })
+
+  it('numbered-list: clicking on an EMPTY block still yields one line, one item', () => {
+    // The most common repro path — clicking the list button on a fresh,
+    // still-empty block. `readCurrentContent` returns '' here, mirrored by
+    // converting from an empty string.
+    const markdown = convertBlockContent('', 'numbered-list')
+    expect(markdown).toBe('1. ')
+    expect(markdown.split('\n')).toHaveLength(1)
+    expect(parse(markdown)).toEqual(doc(orderedList(listItem(paragraph()))))
   })
 })
