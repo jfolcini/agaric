@@ -17,7 +17,7 @@ Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend
 
 ## After-clone setup
 
-Run `bash scripts/setup.sh` (or its aliases `npm run setup` / `just setup`) and you are ready for `cargo tauri dev`. The steps that actually gate a fresh clone are:
+Run `bash scripts/setup.sh` (or its aliases `npm run setup` / `just setup`) to provision the Node/npm/`.env`/dev-DB/hook-toolchain side of a fresh clone. It does **not** install a Rust toolchain or the `cargo-tauri` binary that `cargo tauri dev` needs — those are separate prerequisites (see the platform sections below, and [Hook toolchain](#hook-toolchain) for `cargo-tauri` specifically). The steps that actually gate a fresh clone are:
 
 0. **Node** — the `engines` floor is `>=24` (pinned in `.nvmrc`); a mismatched `node` makes `npm ci` abort with `EBADENGINE`. The script provisions the pinned version via `nvm` (Node from `nodejs.org`, both it and `raw.githubusercontent.com` for `nvm.sh` reachable over plain HTTPS — never `git clone`, so it works inside repo-scoped sandboxes too) when your active `node` is older, and leaves it as the `nvm` default. Already on Node ≥24? It's a no-op.
 1. `npm ci` — frontend deps.
@@ -206,22 +206,29 @@ prek run --all-files     # every hook (slow; the full gate)
 prek run                 # only staged-file hooks (pre-commit)
 ```
 
-The `prek.toml` file is the single source of truth for hooks. CI invokes the same `_validate.yml` reusable workflow that mirrors `prek run --all-files`, so a green local prek implies a green CI validate job.
+The `prek.toml` file is the single source of truth for hooks. CI invokes the same `_validate.yml` reusable workflow, but a green local prek run does **not** imply a green CI `validate-all`: local checks are range-scoped to the commits you're pushing (see below), while CI's `vitest`, `playwright`, and `cargo-tests` jobs run the *full* (non-range-scoped) vitest, Playwright, and `cargo nextest` suites over the whole tree, and the `lint` job runs `cargo clippy --workspace --all-targets -- -D warnings` on any backend change (staged `pre-push` locally, so it never runs on a local `git commit` at all). Treat a green local push as "no local regression in what I touched," not as a CI guarantee.
 
 ### Pre-commit vs pre-push split
 
-Pre-commit (every `git commit`): fast hooks only — oxlint, oxfmt, tsc, cargo fmt/clippy, vitest related-subset, cargo-test related-subset, lychee, sqruff, taplo, typos, zizmor, markdownlint, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
+Pre-commit (every `git commit`): fast hooks only, staged-file-scoped — oxlint, oxfmt, tsc, cargo fmt (auto-fix), markdownlint, md-link-targets, doc-vs-code-paths, zizmor, sqruff, taplo, typos, snapshot redaction, IPC error-path, axe-presence, and so on. Per-commit overhead stays sub-30 s on a warm cache.
 
-Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — that runs `scripts/verify-ci-equivalent.sh`. The script parallelizes every blocking check that `.github/workflows/_validate.yml` runs in CI:
+**`vitest`, `cargo-test` (nextest), `cargo-clippy`, `cargo-fmt --check`, `knip`, `npm-audit`, and `lychee` are staged `pre-push` in `prek.toml`, not pre-commit** — they're either too slow (clippy compiles the whole workspace + all targets; nextest falls back to the full suite on a foundational-module touch), too whole-repo (knip is a whole-repo dead-code scan), or too network-dependent (lychee, npm-audit hit external endpoints) for the commit path. `cargo-fmt --check` is the odd one out: it's a read-only backstop re-verification for the case where the pre-commit `cargo-fmt` auto-fixer was bypassed (`--no-verify`, or hooks not yet installed). All of these run once at push time, inside the chokepoint hook below.
 
-| Phase | Checks (run in parallel) |
-| --- | --- |
-| Phase 1 | externalBin placeholder (1 s, prerequisite for Phase 2) |
-| Phase 2 (parallel) | vitest (full, ≈70 s) ‖ playwright (full, ≈80 s) ‖ cargo nextest --profile ci + agaric-mcp build + sqlx prepare --check |
-| Phase 3 (sequential) | MCP UDS smoke test, full release build of agaric-mcp, externalBin artifact verification |
-| Phase 4 (warn-only) | cargo audit, npm audit signatures — surface warnings but never block |
+Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — that runs [`scripts/verify-ci-equivalent.sh`](../scripts/verify-ci-equivalent.sh). Unlike CI, it is **range-scoped** to the commits being pushed (`@{upstream}..HEAD`, override with `PRE_PUSH_RANGE`) and runs its phases sequentially, not in parallel:
 
-Wall clock on a warm cache: ≈3-4 min (was ≈5-8 min when each hook ran sequentially via prek's per-hook scheduler).
+| Phase | What runs | Scope |
+| --- | --- | --- |
+| A | `prek run --all-files --hook-stage pre-commit`, category-aware `SKIP` | Whole tree, but only the categories (frontend/backend/CI/docs) present in the push range |
+| — | `check-migrations-immutable.sh --range` backstop | Push range |
+| B | externalBin placeholder | Only if Rust changed |
+| C | `vitest related` (`test-related-ts.sh --range`) | Push range |
+| D | `cargo nextest related` (`test-related-rust.sh --range`) | Push range; only if Rust changed |
+| D2 | `cargo test --doc --workspace` | Only if Rust changed |
+| E | `cargo sqlx prepare --check`, all 4 lanes (root + `agaric-store`/`agaric-engine`/`agaric-sync`) | Only if Rust changed |
+| F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
+| G | `cargo audit` + `npm audit signatures` (warn-only, never blocks) | Always |
+
+**Playwright is deliberately skipped locally** — CI still runs the full e2e suite on every PR; run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
 
 **Push with `just push` (or [`scripts/push.sh`](../scripts/push.sh)), not raw `git push`, for anything that changes `.rs`.** Because the verify runs *inside* the pre-push hook — which fires only after `git push` has already opened and is holding the SSH connection — a several-minute verify leaves that connection idle long enough for GitHub to close it, and the pack upload then fails (`Connection to github.com closed by remote host` / `failed to push some refs`) even though the gate passed in full. `just push` / `scripts/push.sh` runs the verifier *first*, then invokes `git push` with the hook short-circuited, so the freshly opened connection uploads immediately. It forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
 

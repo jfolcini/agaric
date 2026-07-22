@@ -1,6 +1,6 @@
 # Troubleshooting
 
-Six local-dev failure modes you are likely to hit on this codebase, each with
+Seven local-dev failure modes you are likely to hit on this codebase, each with
 the symptom, the cause, and the exact fix. For full setup and build details see
 [`BUILD.md`](./BUILD.md).
 
@@ -11,7 +11,8 @@ the symptom, the cause, and the exact fix. For full setup and build details see
 - [3. Specta bindings out of sync](#3-specta-bindings-out-of-sync)
 - [4. Materializer test deadlock](#4-materializer-test-deadlock)
 - [5. `dev.db` does not exist](#5-devdb-does-not-exist)
-- [6. Large file blocked by pre-commit](#6-large-file-blocked-by-pre-commit)
+- [6. `sqlx prepare --check` fails with a stale-schema error, not a missing `dev.db`](#6-sqlx-prepare---check-fails-with-a-stale-schema-error-not-a-missing-devdb)
+- [7. Large file blocked by pre-commit](#7-large-file-blocked-by-pre-commit)
 
 ## 1. Mold linker not found
 
@@ -188,7 +189,45 @@ Alternatively, just launch the app once; it opens its pool with
 cargo tauri dev
 ```
 
-## 6. Large file blocked by pre-commit
+## 6. `sqlx prepare --check` fails with a stale-schema error, not a missing `dev.db`
+
+### Symptom
+
+`dev.db` already exists (distinct from [section 5](#5-devdb-does-not-exist),
+where it's absent), but it's behind the migrations directory — e.g. you
+pulled a branch that added new migrations. `cargo sqlx prepare --check`
+(pre-push Phase E of `scripts/verify-ci-equivalent.sh`, and the equivalent
+`sqlx-offline-check` lanes in CI) fails with a schema-mismatch error rather
+than a missing-file error, for example:
+
+```text
+error: error returned from database: (code: 1) no such column: <new-column>
+```
+
+### Cause
+
+`cargo sqlx prepare --check` compiles every `sqlx::query!`/`query_as!` macro
+against the live schema at `DATABASE_URL` (`sqlite:dev.db`). A persistent
+`dev.db` that predates a newly pulled migration is missing the column/table
+the new query macros expect, so the offline-cache check fails even though
+`.sqlx/` itself is up to date.
+
+### Fix
+
+Apply the pending migrations to the existing `dev.db` — either re-run the
+canonical provisioning script (idempotent):
+
+```bash
+scripts/setup-dev-db.sh
+```
+
+or apply just the migrations directly from `src-tauri/`:
+
+```bash
+cd src-tauri && cargo sqlx migrate run
+```
+
+## 7. Large file blocked by pre-commit
 
 ### Symptom
 

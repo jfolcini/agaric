@@ -237,4 +237,60 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = "true" ] && command -v setsid >/dev/null 2>&1; 
 else
   bash scripts/setup-hooks.sh || echo "warning: hook toolchain setup skipped — run scripts/setup-hooks.sh before committing"
 fi
-echo "Ready. Run: cargo tauri dev"
+
+# --- Rust-side preflight (advisory, best-effort) ----------------------------
+# Everything above verifies the NODE toolchain end-to-end, but this script
+# used to end with an unconditional "Ready. Run: cargo tauri dev" without
+# having checked the Rust side at all — a box missing rustc/cargo, tauri-cli,
+# or (on Linux) the system webkit2gtk dev libs got the exact same all-clear as
+# a fully ready one, and the developer's first `cargo tauri dev` failed with a
+# far less actionable error than a preflight note would have given (#2950).
+#
+# Advisory only, matching this script's existing tolerance: never exit
+# non-zero over a missing Rust tool (rustup / tauri-cli installs and system
+# package managers are handled by the developer or scripts/setup-hooks.sh, not
+# here) — just collect problems and fold them into the final summary, mirroring
+# the warn-and-collect `MISSING:` pattern in scripts/setup-hooks.sh.
+rust_problems=()
+
+if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
+  rust_problems+=("rustc/cargo not found — install via https://rustup.rs, then re-run scripts/setup.sh")
+else
+  # rust-toolchain.toml pins an exact channel (e.g. `channel = "1.95.0"`); note
+  # (don't fail on) a mismatch — rustup auto-selects the pinned toolchain
+  # per-directory via that file, so an out-of-date DEFAULT toolchain usually
+  # self-heals on the first cargo invocation in this repo, but a stale rustup
+  # install (missing the pinned version entirely) will not.
+  pinned_channel="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' rust-toolchain.toml 2>/dev/null | head -1)"
+  have_rustc_version="$(rustc --version 2>/dev/null | awk '{print $2}')"
+  if [ -n "$pinned_channel" ] && [ -n "$have_rustc_version" ] && [ "$have_rustc_version" != "$pinned_channel" ]; then
+    echo "note: active rustc ${have_rustc_version} differs from the ${pinned_channel} pin in rust-toolchain.toml — rustup should auto-select the pinned toolchain for this repo; if a build still picks the wrong one, run 'rustup toolchain install ${pinned_channel}'."
+  fi
+fi
+
+if command -v cargo >/dev/null 2>&1; then
+  if ! cargo tauri --version >/dev/null 2>&1 && ! command -v cargo-tauri >/dev/null 2>&1; then
+    rust_problems+=("cargo-tauri not found — install with 'cargo install tauri-cli --locked', or run 'npx tauri dev' instead of 'cargo tauri dev'")
+  fi
+fi
+
+if [ "$(uname -s)" = "Linux" ] && command -v pkg-config >/dev/null 2>&1; then
+  # Package name vs. pkg-config module name mismatch: apt ships this as
+  # `libwebkit2gtk-4.1-dev` (see docs/BUILD.md), but the .pc file it installs
+  # is `webkit2gtk-4.1.pc` — no `lib` prefix. Verified against a box with the
+  # apt package installed: `pkg-config --exists libwebkit2gtk-4.1` (with the
+  # `lib` prefix) falsely reports missing; `webkit2gtk-4.1` is the real module
+  # name and correctly reports present.
+  if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+    rust_problems+=("libwebkit2gtk-4.1 (system webkit) not found via pkg-config — install it (e.g. 'sudo apt-get install libwebkit2gtk-4.1-dev') before running the Tauri app")
+  fi
+fi
+
+if [ "${#rust_problems[@]}" -eq 0 ]; then
+  echo "Ready. Run: cargo tauri dev"
+else
+  echo "Ready except:"
+  for p in "${rust_problems[@]}"; do
+    echo "  - $p"
+  done
+fi

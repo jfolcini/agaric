@@ -329,14 +329,20 @@ fi
 # would compile-fail invisibly. Run the doc-tests explicitly here so executable
 # doc-comment examples on pure helpers stay honest (#2555). Cheap while there
 # are few doc-tests; each compiles as its own binary, so scope grows the cost.
+#
+# `--workspace` (#2951): CI's "Cargo test --doc" step in _validate.yml runs
+# `cargo test --doc --workspace` from `src-tauri` — without `--workspace` here
+# only the root `agaric` crate's doc-tests ran locally, so a broken doc-test
+# on a #2621 member crate (agaric-store/agaric-engine/agaric-sync) compiled
+# clean locally and only failed once pushed to CI.
 
 if [ "$HAS_RS" = "1" ]; then
     echo ""
-    echo "→ Phase D2: cargo test --doc"
-    if ! ( cd src-tauri && cargo test --doc ); then
+    echo "→ Phase D2: cargo test --doc --workspace"
+    if ! ( cd src-tauri && cargo test --doc --workspace ); then
         echo ""
-        echo "✗ Pre-push verification FAILED at Phase D2 (cargo test --doc)."
-        echo "  Iterate: ( cd src-tauri && cargo test --doc )"
+        echo "✗ Pre-push verification FAILED at Phase D2 (cargo test --doc --workspace)."
+        echo "  Iterate: ( cd src-tauri && cargo test --doc --workspace )"
         echo "  Bypass (use sparingly): SKIP_CI_VERIFY='<reason>' git push"
         exit 1
     fi
