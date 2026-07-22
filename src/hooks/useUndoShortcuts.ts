@@ -2,8 +2,21 @@
  * useUndoShortcuts — global keyboard shortcuts for undo/redo.
  *
  * Registers Ctrl+Z (undo) and Ctrl+Y / Ctrl+Shift+Z (redo) on the document.
- * Only fires when the page-editor view is active and the focus is
- * NOT inside a contentEditable, input, or textarea element.
+ * Performs a real page-level undo/redo only when the page-editor view is
+ * active and the focus is NOT inside a contentEditable, input, or textarea
+ * element.
+ *
+ * #2941 — Journal view (the default landing view) is a DIFFERENT case, not
+ * covered by "not page-editor". Journal days ARE pages — per-page undo
+ * already works there via the swipe-to-delete "Undo" toast (`performPageUndo`
+ * pinned to the day's own pageId, read from the block's page-store React
+ * context). But THIS document-level listener has no page context to read: it
+ * has no reliable, already-tracked signal for which day-page the user last
+ * touched (weekly/monthly render many day-pages at once and nothing records
+ * a global "last focused page"). Rather than silently no-op (the pre-#2941
+ * bug users hit on the default view), the journal branch surfaces a toast
+ * pointing at the working per-block History alternative. See
+ * `notifyJournalUndoUnavailable` below.
  */
 
 import { useEffect } from 'react'
@@ -74,13 +87,33 @@ export async function performPageUndo(pageId: string): Promise<void> {
 }
 
 /**
+ * Surface feedback for Ctrl+Z/Ctrl+Y in Journal view (#2941) instead of the
+ * previous silent no-op. Shared by the keyboard handler and
+ * `performActivePageUndo` (its swipe-to-delete fallback path — see
+ * `SortableBlock.tsx`) so both routes give identical feedback. Uses the
+ * standalone `t` so it is safe to call outside the component tree.
+ */
+function notifyJournalUndoUnavailable(): void {
+  notify(translate('undo.journalUndoUnavailableMessage'), { duration: 2500 })
+  announce(translate('announce.undoUnavailableJournal'))
+}
+
+/**
  * Resolve the currently-active page (top of the page stack, page-editor view
  * only) and undo its last op. Returns `false` when there is no active page to
  * act on (so callers can decide whether to no-op). Mirrors the pageId
  * derivation used by the Ctrl+Z shortcut handler.
+ *
+ * #2941 — in Journal view this can't resolve a target page (see the module
+ * doc comment), so it surfaces the same "unavailable" feedback the keyboard
+ * handler does rather than silently doing nothing.
  */
 export async function performActivePageUndo(): Promise<boolean> {
   const navState = useNavigationStore.getState()
+  if (navState.currentView === 'journal') {
+    notifyJournalUndoUnavailable()
+    return false
+  }
   const pageStack = selectPageStack(useTabsStore.getState())
   if (navState.currentView !== 'page-editor' || pageStack.length === 0) return false
   const pageId = pageStack.at(-1)?.pageId
@@ -113,6 +146,23 @@ export function useUndoShortcuts(): void {
       }
 
       const navState = useNavigationStore.getState()
+
+      // #2941 — Journal view (the default landing view) has no reliable
+      // signal for which day-page to target (see module doc comment), so
+      // instead of the previous silent no-op, tell the user why Ctrl+Z/
+      // Ctrl+Y had no effect here. Gated on the shortcut actually matching
+      // so unrelated keystrokes in Journal view aren't intercepted.
+      if (navState.currentView === 'journal') {
+        if (
+          matchesShortcutBinding(e, 'undoLastPageOp') ||
+          matchesShortcutBinding(e, 'redoLastUndoneOp')
+        ) {
+          e.preventDefault()
+          notifyJournalUndoUnavailable()
+        }
+        return
+      }
+
       const pageStack = selectPageStack(useTabsStore.getState())
       if (navState.currentView !== 'page-editor' || pageStack.length === 0) return
 

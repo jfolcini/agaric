@@ -42,6 +42,13 @@ export const shortcuts: Record<string, string> = {
   'keyboard.condition.notEditing': 'not editing',
   'keyboard.condition.withSelection': 'with selection',
   'keyboard.condition.outsideEditor': 'outside editor',
+  // #2941 — undo/redo previously listed the generic `outsideEditor`
+  // condition, which reads as "works anywhere you aren't typing in a
+  // block" — untrue: it silently did nothing in Journal view (the default
+  // landing view) since page-level undo only ever resolved a page from the
+  // page-editor's page stack. Spelling out "viewing a page" here matches
+  // `inPageEditor` below and stops the cheatsheet over-promising.
+  'keyboard.condition.outsideEditorInPage': 'outside editor, viewing a page',
   'keyboard.condition.listItemFocused': 'When a list item is focused',
   'keyboard.condition.hasSelection': 'When items are selected',
   'keyboard.moveToPreviousBlock': 'Move to previous block',
