@@ -9095,3 +9095,284 @@ async fn import_repeated_ref_in_block_ingests_full_bytes_2724() {
 
     mat.shutdown();
 }
+
+// ======================================================================
+// #2962 — descendant `block_properties` (custom, non-reserved keys) were
+// silently dropped on export.
+// ======================================================================
+
+/// #2962 — a descendant block's CUSTOM `block_properties` row (a `key::
+/// value` line whose key is neither a reserved `blocks` column nor an
+/// internal/recurrence key) must be emitted as a `key:: value` line under
+/// that block. Pre-fix, only the PAGE block's frontmatter and the 4 reserved
+/// columns (todo_state/priority/scheduled_date/due_date) were emitted for
+/// descendants — a custom property like `assignee:: Alice` was silently
+/// dropped even though import faithfully parses and persists it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_custom_descendant_block_property_2962() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA2962P";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAA2962T1";
+    insert_block(&pool, PAGE, "page", "Custom Prop Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Write the report",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'assignee', 'Alice')",
+    )
+    .bind(TASK)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert!(
+        md.contains("- Write the report\n"),
+        "bullet content missing, got:\n{md}"
+    );
+    assert!(
+        md.contains("  assignee:: Alice\n"),
+        "custom descendant property must be emitted, got:\n{md}"
+    );
+}
+
+/// #2962 — a NESTED descendant (depth >= 2) custom property must be indented
+/// one level under ITS OWN bullet, not the page-root indentation, and the
+/// batched `block_properties` read must resolve correctly across an entire
+/// subtree (not just direct children of the page).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_emits_custom_property_for_nested_descendant_2962() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA2962N";
+    const PARENT: &str = "01AAAAAAAAAAAAAAAAAA2962N1";
+    const CHILD: &str = "01AAAAAAAAAAAAAAAAAA2962N2";
+    insert_block(&pool, PAGE, "page", "Nested Prop Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        PARENT,
+        "content",
+        "Parent block",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        CHILD,
+        "content",
+        "Child block",
+        Some(PARENT),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'effort', 2)")
+        .bind(CHILD)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    assert!(
+        md.contains("  - Child block\n"),
+        "child bullet must be indented one level; got:\n{md}"
+    );
+    assert!(
+        md.contains("    effort:: 2\n"),
+        "nested descendant's custom property must be indented one level under \
+         ITS OWN (depth-1) bullet, i.e. two levels total; got:\n{md}"
+    );
+}
+
+/// #2962 — a full round-trip: markdown carrying a custom body `key:: value`
+/// property on a descendant block, imported and then re-exported, must still
+/// carry that property. Closes the one-way data-loss hole: pre-fix, import
+/// persisted the custom property into `block_properties` but export never
+/// read it back, so a re-export of an imported file silently dropped it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_round_trips_custom_descendant_block_property_2962() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    let md_in = "- Write the report\n  assignee:: Bob\n  status:: done\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md_in.into(),
+        Some("RoundTrip2962.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    settle(&mat).await;
+
+    let page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'RoundTrip2962'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    let md_out = export_page_markdown_inner(&pool, &page_id).await.unwrap();
+
+    assert!(
+        md_out.contains("  assignee:: Bob\n"),
+        "custom property 'assignee' must survive the import -> export round trip; got:\n{md_out}"
+    );
+    assert!(
+        md_out.contains("  status:: done\n"),
+        "custom property 'status' must survive the import -> export round trip; got:\n{md_out}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2962 — a descendant block carrying BOTH a reserved `blocks`-column
+/// property (via `set_task_columns`) AND a custom `block_properties` row
+/// must export each exactly ONCE: the new custom-property emission path must
+/// not duplicate the pre-existing reserved-column emission now that both run
+/// for the same block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_descendant_reserved_columns_not_duplicated_2962() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA2962D";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAA2962D1";
+    insert_block(&pool, PAGE, "page", "Dedup Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Write the report",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    set_task_columns(
+        &pool,
+        TASK,
+        Some("TODO"),
+        Some("A"),
+        Some("2026-06-21"),
+        Some("2026-06-28"),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'assignee', 'Alice')",
+    )
+    .bind(TASK)
+    .execute(&pool)
+    .await
+    .unwrap();
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    for expected in [
+        "  todo_state:: TODO\n",
+        "  priority:: A\n",
+        "  scheduled_date:: 2026-06-21\n",
+        "  due_date:: 2026-06-28\n",
+        "  assignee:: Alice\n",
+    ] {
+        assert_eq!(
+            md.matches(expected).count(),
+            1,
+            "{expected:?} must appear exactly once, got:\n{md}"
+        );
+    }
+}
+
+/// #2962 — recurrence bookkeeping keys (`repeat`, `repeat-until`,
+/// `repeat-count`, `repeat-seq`, `repeat-origin`) and the other internal
+/// keys the page-level frontmatter query already excludes (`space`,
+/// `is_space`, `created_at`, `completed_at`, `template`) must NOT be
+/// round-tripped through a descendant block's markdown export either. This
+/// is a DELIBERATE, symmetric-by-design exclusion (recurrence is managed by
+/// its own state-transition helpers, not markdown) — the new
+/// custom-property emission path must not regress it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962() {
+    let (pool, _dir) = test_pool().await;
+    const PAGE: &str = "01AAAAAAAAAAAAAAAAAAA2962X";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAA2962X1";
+    insert_block(&pool, PAGE, "page", "Internal Keys Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Recurring task",
+        Some(PAGE),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let seed = |key: &'static str, val: &'static str| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query(
+                "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
+            )
+            .bind(TASK)
+            .bind(key)
+            .bind(val)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+    };
+    seed("repeat", "daily").await;
+    seed("repeat-until", "2026-12-31").await;
+    seed("repeat-count", "5").await;
+    seed("repeat-seq", "3").await;
+    seed("repeat-origin", "01AAAAAAAAAAAAAAAAAA2962X1").await;
+    seed("is_space", "true").await;
+    seed("created_at", "2020-01-01").await;
+    seed("completed_at", "2020-01-02").await;
+    seed("template", "weekly").await;
+    // A non-excluded custom key seeded alongside, so the test also proves the
+    // exclusion is key-specific, not a wholesale suppression of this block's
+    // properties.
+    seed("assignee", "Carol").await;
+
+    let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
+
+    for internal in [
+        "repeat::",
+        "repeat-until::",
+        "repeat-count::",
+        "repeat-seq::",
+        "repeat-origin::",
+        "is_space::",
+        "created_at::",
+        "completed_at::",
+        "template::",
+    ] {
+        assert!(
+            !md.contains(internal),
+            "internal/recurrence key {internal:?} must NOT be exported for a \
+             descendant block, got:\n{md}"
+        );
+    }
+    assert!(
+        md.contains("  assignee:: Carol\n"),
+        "a non-excluded custom key on the same block must still export, got:\n{md}"
+    );
+}

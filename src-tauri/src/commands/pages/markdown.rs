@@ -532,6 +532,43 @@ struct FrontmatterRow {
     value_bool: Option<i64>,
 }
 
+/// Render a [`FrontmatterRow`]'s single populated value column as plain text
+/// (#2962). Shared by the page-frontmatter emit loop and the descendant
+/// `key:: value` property emit loop in [`export_page_markdown_inner`] so both
+/// paths resolve a `block_properties` row identically.
+///
+/// Precedence: date, then text, then ref (resolved to a page title via
+/// `ref_titles`, falling back to the raw ULID when unresolved), then numeric,
+/// then bool. A `block_properties` row stores its value in exactly one
+/// column (enforced by the `exactly_one_value` CHECK), so at most one branch
+/// ever fires; the ordering is a defensive fallback, not a real precedence
+/// rule.
+fn frontmatter_row_value(prop: &FrontmatterRow, ref_titles: &HashMap<String, String>) -> String {
+    if let Some(d) = prop.value_date.as_deref() {
+        d.to_string()
+    } else if let Some(t) = prop.value_text.as_deref() {
+        t.to_string()
+    } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
+        ref_titles
+            .get(rf)
+            .cloned()
+            .unwrap_or_else(|| rf.to_string())
+    } else if let Some(n) = prop.value_num {
+        // Render integers without a trailing ".0"; keep fractional values
+        // as-is. `{n}` on an f64 already emits "3" for 3.0 in Rust's default
+        // float formatting, so no lossy `as i64` cast is needed.
+        format!("{n}")
+    } else if let Some(b) = prop.value_bool {
+        if b != 0 {
+            "true".to_string()
+        } else {
+            "false".to_string()
+        }
+    } else {
+        String::new()
+    }
+}
+
 /// Export a page and its full descendant subtree as a Markdown string with
 /// human-readable tag/page references and optional YAML frontmatter.
 ///
@@ -772,15 +809,88 @@ pub async fn export_page_markdown_inner(
     .fetch_all(&mut *tx)
     .await?;
 
+    // 4a. (#2962) Batch-read `block_properties` for EVERY descendant block in
+    // ONE query — mirrors the page-property batch read directly above — so
+    // custom `key:: value` properties on descendant blocks round-trip
+    // through export instead of being silently dropped (pre-fix, only the 4
+    // reserved `blocks` columns were emitted per descendant; any custom
+    // `block_properties` row was invisible to the exporter even though
+    // import faithfully parses and persists it).
+    //
+    // The exclusion list is identical to the page-property query above: the
+    // import parser (`FRONTMATTER_RESERVED_KEYS` in
+    // `agaric-engine::import::parse_logseq_markdown`) filters this exact key
+    // set from EVERY block's body `key:: value` lines — page AND
+    // descendant alike — before it ever reaches `block_properties`, so no
+    // descendant row can carry one of these keys. The `NOT IN` here is
+    // therefore belt-and-braces symmetry with the page query, not new
+    // behavior. In particular the `repeat*` keys are recurrence bookkeeping
+    // that is DELIBERATELY not round-tripped through markdown (a separate,
+    // symmetric-by-design exclusion on both the export and import sides) —
+    // this query must not start emitting them.
+    //
+    // The 4 reserved `blocks` columns (todo_state/priority/scheduled_date/
+    // due_date) need no exclusion here: migration 0088's `key_not_reserved`
+    // CHECK constraint forbids them from ever landing in `block_properties`
+    // at all, so they simply cannot appear in these rows. They continue to
+    // be emitted from the `blocks` columns in the descendant walk below,
+    // exactly as before.
+    let descendant_ids: Vec<String> = descendants
+        .iter()
+        .map(|b| b.id.clone().into_string())
+        .collect();
+    let mut descendant_properties: HashMap<String, Vec<FrontmatterRow>> = HashMap::new();
+    if !descendant_ids.is_empty() {
+        let ids_json = serde_json::to_string(&descendant_ids)?;
+        let rows = sqlx::query!(
+            r#"SELECT block_id AS "block_id!", key AS "key!", value_text, value_date,
+                      value_num, value_ref, value_bool AS "value_bool: i64"
+               FROM block_properties
+               WHERE block_id IN (SELECT value FROM json_each(?1))
+                 AND key NOT IN (
+                    'space', 'is_space', 'created_at', 'completed_at',
+                    'repeat', 'repeat-until', 'repeat-count', 'repeat-seq',
+                    'repeat-origin', 'template'
+                 )
+               ORDER BY block_id ASC, key ASC"#,
+            ids_json,
+        )
+        .fetch_all(&mut *tx)
+        .await?;
+        for r in rows {
+            descendant_properties
+                .entry(r.block_id)
+                .or_default()
+                .push(FrontmatterRow {
+                    key: r.key,
+                    value_text: r.value_text,
+                    value_date: r.value_date,
+                    value_num: r.value_num,
+                    value_ref: r.value_ref,
+                    value_bool: r.value_bool,
+                });
+        }
+    }
+
     // Resolve value_ref ULIDs to page titles where possible. Unresolved
     // refs (target missing/deleted) fall back to the raw ULID so the value
-    // never renders empty.
+    // never renders empty. Covers BOTH the page's own properties and every
+    // descendant block's properties in the single batched lookup below.
     let mut ref_ids: HashSet<String> = HashSet::new();
     for r in &property_rows {
         if let Some(rf) = r.value_ref.as_deref()
             && !rf.is_empty()
         {
             ref_ids.insert(rf.to_string());
+        }
+    }
+    for rows in descendant_properties.values() {
+        for r in rows {
+            if let Some(rf) = r.value_ref.as_deref()
+                && !rf.is_empty()
+            {
+                ref_ids.insert(rf.to_string());
+            }
         }
     }
     let mut ref_titles: HashMap<String, String> = HashMap::new();
@@ -895,36 +1005,14 @@ pub async fn export_page_markdown_inner(
             output.push_str(&format!("tags: {}\n", yaml_flow_sequence(&tag_names_fm)));
         }
         for prop in &properties {
-            // Precedence: date, then text, then ref (resolved to page title
-            // or raw ULID), then numeric, then bool. A `block_properties` row
-            // stores its value in exactly one column, so at most one of these
-            // is populated; the order is a defensive fallback.
-            let num_str;
-            let value: &str = if let Some(d) = prop.value_date.as_deref() {
-                d
-            } else if let Some(t) = prop.value_text.as_deref() {
-                t
-            } else if let Some(rf) = prop.value_ref.as_deref().filter(|s| !s.is_empty()) {
-                ref_titles.get(rf).map_or(rf, String::as_str)
-            } else if let Some(n) = prop.value_num {
-                // Render integers without a trailing ".0"; keep fractional
-                // values as-is. `{n}` on an f64 already emits "3" for 3.0 in
-                // Rust's default float formatting, so no lossy `as i64` cast
-                // is needed.
-                num_str = format!("{n}");
-                &num_str
-            } else if let Some(b) = prop.value_bool {
-                if b != 0 { "true" } else { "false" }
-            } else {
-                ""
-            };
+            let value = frontmatter_row_value(prop, &ref_titles);
             // #2715 — route the scalar through the YAML emit helper so a value
             // carrying a newline, a leading `---`, quotes, or other
             // YAML-significant content is quoted / block-scalar-encoded instead
             // of written verbatim (which could inject keys or break out of the
             // frontmatter fence). `yaml_scalar_emit` is symmetric with the
             // import-side `parse_frontmatter` re-parse.
-            output.push_str(&yaml_scalar_emit(&prop.key, value));
+            output.push_str(&yaml_scalar_emit(&prop.key, &value));
         }
         output.push_str("---\n\n");
     }
@@ -1016,6 +1104,22 @@ pub async fn export_page_markdown_inner(
             }
         }
 
+        // #2962 — custom `block_properties` on this block (anything NOT one
+        // of the 4 reserved `blocks` columns above) round-trip the same way:
+        // one `key:: value` line per property, indented one level under the
+        // bullet. This is the exact shape `parse_logseq_markdown` reads back
+        // into `block.properties` (see the reserved-column comment above) —
+        // no new syntax, just the previously-missing emission for the
+        // escape-hatch custom-property case. `descendant_properties` was
+        // batch-read once for the whole subtree, so this is a HashMap lookup,
+        // not a per-block query.
+        if let Some(props) = descendant_properties.get(&id) {
+            for prop in props {
+                let value = frontmatter_row_value(prop, &ref_titles);
+                output.push_str(&format!("{prop_indent}{}:: {value}\n", prop.key));
+            }
+        }
+
         // Push this block's children (reversed so they pop in sibling order)
         // at depth + 1.
         if let Some(kids) = children_by_parent.get(&id) {
@@ -1046,6 +1150,14 @@ pub async fn export_page_markdown_inner(
         ] {
             if let Some(v) = value.filter(|s| !s.is_empty()) {
                 output.push_str(&format!("  {key}:: {v}\n"));
+            }
+        }
+        // #2962 — same custom-property emission as the DFS branch above, for
+        // the orphan-stray safety net.
+        if let Some(props) = descendant_properties.get(&id) {
+            for prop in props {
+                let value = frontmatter_row_value(prop, &ref_titles);
+                output.push_str(&format!("  {}:: {value}\n", prop.key));
             }
         }
     }
