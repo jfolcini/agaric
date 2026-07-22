@@ -323,17 +323,26 @@ async fn move_block_in_tx(
 
     crate::materializer::apply_op_projected(&mut *tx, &op_record, state, false).await?;
 
-    // #2700: re-read the moved block's `page_id` AFTER the rederive. An
-    // unchanged root `page_id` is NECESSARY but — because of the nested-page
-    // flattening described in the carve-out below — NOT sufficient to prove the
-    // whole subtree stayed on one page. Combined with the
-    // `!subtree_has_nested_page` guard it becomes sufficient: a same-parent
-    // sibling reorder or a same-page indent of a nested-page-free subtree hits
-    // this branch and the materializer skips the three `page_id`-derived
-    // rebuilds (`RebuildPagesCache`, `RebuildPageLinkCache`,
-    // `RebuildProjectedAgendaCache`) — see `dispatch_move_background` /
-    // `invalidations_for_op`'s MoveBlock arm. A genuine cross-page reparent
-    // (page_id changed, including → NULL) keeps the full conservative set.
+    // #2700 / #2906: re-read the moved block's `page_id` AFTER the rederive. A
+    // move only reparents the root, so every descendant keeps its position
+    // relative to its nearest page ancestor: a content block under the moved
+    // root resolves to the root's page, and a content block under a NESTED page
+    // keeps that nested page's `page_id` (the in-tx
+    // `rederive_page_and_space_ids` now stops its cascade at nested-page
+    // boundaries — #2906). An unchanged root `page_id` therefore proves the
+    // WHOLE moved subtree's `page_id`s are unchanged, so a root-only check is
+    // sufficient to treat the move as same-page and the materializer skips the
+    // three `page_id`-derived rebuilds (`RebuildPagesCache`,
+    // `RebuildPageLinkCache`, `RebuildProjectedAgendaCache`) — see
+    // `dispatch_move_background` / `invalidations_for_op`'s MoveBlock arm. A
+    // genuine cross-page reparent (page_id changed, including → NULL) keeps the
+    // full conservative set.
+    //
+    // Before #2906 the rederive FLATTENED a nested page's content descendants
+    // onto the moved root's page, so a root-only check was NOT sufficient when
+    // the subtree dragged a nested page along and this branch additionally
+    // required `!subtree_has_nested_page`. Now that the cascade honours page
+    // boundaries the flattening is gone, so that carve-out has been removed.
     let new_page_id: Option<String> =
         // dynamic-sql: static single-column page_id read; runtime query_scalar so no `.sqlx` entry.
         sqlx::query_scalar::<_, Option<String>>("SELECT page_id FROM blocks WHERE id = ?")
@@ -342,41 +351,7 @@ async fn move_block_in_tx(
             .await?
             .flatten();
 
-    // #2700 (nested-page carve-out): the "root page_id unchanged ⇒ whole
-    // subtree page_ids unchanged" invariant is FALSE when the moved subtree
-    // contains a NESTED page block. `rederive_page_and_space_ids`
-    // (agaric-store `block_descendants`) collects ALL descendants of the moved
-    // root by recursing on `parent_id` with NO `block_type != 'page'` boundary
-    // guard, then `UPDATE … page_id = <moved root's page> WHERE … block_type !=
-    // 'page'` — so a content block sitting UNDER a nested page inside the moved
-    // subtree gets FLATTENED from the nested page onto the moved root's page.
-    // Its `page_id` therefore changes even though the moved root's did not,
-    // which makes `page_link_cache` (source-page roll-up) and
-    // `projected_agenda_cache` (template carve-out) go stale if we skip their
-    // rebuilds. Guard against it: only treat the move as same-page when the
-    // moved subtree (the moved block's descendants) contains no nested page.
-    // The common editor case — reordering/indenting a plain content subtree —
-    // keeps the optimization; any move that drags a nested page along forces
-    // the full conservative rebuild set. Non-macro `query_scalar` → no `.sqlx`
-    // regen. The descendant set is invariant across the move (a move only
-    // reparents the root), so reading it here (post-apply) is equivalent to
-    // pre-apply.
-    // dynamic-sql: static recursive-CTE existence check over the moved subtree; runtime query_scalar so no `.sqlx` entry.
-    let subtree_has_nested_page: bool = sqlx::query_scalar::<_, i64>(
-        "WITH RECURSIVE d(id) AS ( \
-             SELECT id FROM blocks WHERE parent_id = ?1 AND deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id FROM blocks b JOIN d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL) \
-         SELECT EXISTS( \
-             SELECT 1 FROM blocks \
-             WHERE id IN (SELECT id FROM d) AND block_type = 'page')",
-    )
-    .bind(&block_id)
-    .fetch_one(&mut ***tx)
-    .await?
-        != 0;
-    let same_page = old_page_id == new_page_id && !subtree_has_nested_page;
+    let same_page = old_page_id == new_page_id;
 
     // 6. Enqueue the op for background dispatch. The CALLER's single
     //    `commit_and_dispatch` drains every enqueued op in FIFO order (one op

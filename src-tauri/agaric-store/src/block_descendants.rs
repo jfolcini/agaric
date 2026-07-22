@@ -705,13 +705,21 @@ pub async fn restore_deleted_ancestor_chain(
 ///      root's own `id` for a page.
 ///   2. UPDATE the root's `page_id` (skipped for pages — a page is always
 ///      its own `page_id`).
-///   3. Cascade `page_id` to every non-page active descendant.
-///   4. Cascade `space_id` to the root + every non-page active descendant,
-///      deriving it from each row's owning page's `space_id`.
+///   3. Cascade `page_id` to every non-page active descendant that belongs to
+///      the root's OWN page — the recursion STOPS at a nested-page boundary,
+///      so a content block under a nested page keeps that nested page's
+///      `page_id` instead of being flattened onto the moved root's page
+///      (#2906).
+///   4. Cascade `space_id` to the root + those same non-page active
+///      descendants, deriving it from each row's owning page's `space_id`.
 ///
 /// The recursive CTEs filter `deleted_at IS NULL` in both members (a
 /// conflict copy inherits `parent_id` from the original and would otherwise
-/// be reparented under the subtree) and bound `depth < 100` (invariant #9).
+/// be reparented under the subtree), bound `depth < 100` (invariant #9), and
+/// carry each row's `block_type` so the walk can stop at nested pages —
+/// mirroring the canonical `DESIRED_PAGE_ID_SQL` / `rebuild_space_ids` in
+/// `cache::page_id`, so the in-tx rederive reaches the SAME state a full
+/// `RebuildPageIds` + `rebuild_space_ids` would.
 ///
 /// Operates on a borrowed `&mut SqliteConnection` (obtained by callers via
 /// `&mut **tx` from their existing `CommandTx` / `Transaction`). Opens no
@@ -759,16 +767,26 @@ pub async fn rederive_page_and_space_ids(
         new_page_id
     };
 
-    // 3. Cascade page_id to non-page active descendants.
+    // 3. Cascade page_id to non-page active descendants that belong to the
+    //    root's OWN page. The recursion carries each row's `block_type` and
+    //    STOPS at a nested-page boundary (`d.block_type != 'page'`): a nested
+    //    page is itself collected (so it can be excluded from the UPDATE — a
+    //    page always keeps its own id as page_id), but its subtree is NOT
+    //    descended into, so a content block under a nested page keeps that
+    //    nested page's `page_id` rather than being flattened onto the moved
+    //    root's page (#2906). This mirrors the canonical `DESIRED_PAGE_ID_SQL`
+    //    ancestor walk in `cache::page_id` (`a.cur_type != 'page'`), so the
+    //    in-tx rederive reaches the SAME state a full `RebuildPageIds` would.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT b.id, 0 FROM blocks b \
+        "WITH RECURSIVE descendants(id, depth, block_type) AS ( \
+             SELECT b.id, 0, b.block_type FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
              UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
+             SELECT b.id, d.depth + 1, b.block_type FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
              WHERE b.deleted_at IS NULL AND d.depth < 100 \
+               AND d.block_type != 'page' \
          ) \
          UPDATE blocks SET page_id = ?2 \
          WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
@@ -781,16 +799,25 @@ pub async fn rederive_page_and_space_ids(
     // 4. #533: keep space_id in step with the just-refreshed page_id for the
     //    whole subtree (root + non-page active descendants), synchronously —
     //    space-scoped lists are read right after commit. Non-page rows derive
-    //    space_id from their owning page; pages keep their own.
+    //    space_id from their owning page; pages keep their own (a page's
+    //    space_id is authoritative, set by the `space` op, not re-derived here).
+    //    The recursion carries `block_type` and STOPS at a nested-page boundary
+    //    (`d.block_type != 'page'`), exactly as step 3: a content block under a
+    //    nested page derives its space from that nested page (unchanged by the
+    //    move — pages own their space), so it is left untouched here rather than
+    //    re-attributed to the moved root's space (#2906). This mirrors the
+    //    canonical `rebuild_space_ids` (each non-page block's space = its own
+    //    `page_id`'s space), so the in-tx rederive matches a full rebuild.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
     sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT b.id, 0 FROM blocks b \
+        "WITH RECURSIVE descendants(id, depth, block_type) AS ( \
+             SELECT b.id, 0, b.block_type FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
              UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
+             SELECT b.id, d.depth + 1, b.block_type FROM blocks b \
              JOIN descendants d ON b.parent_id = d.id \
              WHERE b.deleted_at IS NULL AND d.depth < 100 \
+               AND d.block_type != 'page' \
          ) \
          UPDATE blocks SET space_id = ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
