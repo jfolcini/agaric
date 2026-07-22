@@ -36,12 +36,18 @@ import { emptyPage, makeBlock } from '@/__tests__/fixtures'
 // without touching BlockTree itself, so the `autoCreateFirstBlock`
 // effect still runs end-to-end. We do NOT mock `../BlockTree`.
 
-vi.mock('@/editor/use-roving-editor', () => ({
-  useRovingEditor: () => ({
-    editor: null,
-    mount: vi.fn(),
-    unmount: vi.fn(() => null),
-    activeBlockId: null,
+// #2939 — BlockTree consumes the roving editor via the lazy `useLazyRovingEditor`
+// facade; return a stub handle with a null host/surface (no real editor mounts).
+vi.mock('@/hooks/useLazyRovingEditor', () => ({
+  useLazyRovingEditor: () => ({
+    rovingEditor: {
+      editor: null,
+      mount: vi.fn(),
+      unmount: vi.fn(() => null),
+      activeBlockId: null,
+    },
+    editorHost: null,
+    editorSurface: null,
   }),
 }))
 

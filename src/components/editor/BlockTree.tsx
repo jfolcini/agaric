@@ -49,13 +49,14 @@ import { BlockHistorySheet } from '@/components/editor/BlockHistorySheet'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockPropertyDrawerSheet } from '@/components/editor/BlockPropertyDrawerSheet'
 import { BlockZoomBar } from '@/components/editor/BlockZoomBar'
+import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
 import { EmojiPickerDialog } from '@/components/EmojiPicker'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
 import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
 import { useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
-import { type RovingEditorHandle, useRovingEditor } from '@/editor/use-roving-editor'
+import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { BlockActionsProvider } from '@/hooks/useBlockActions'
@@ -75,6 +76,7 @@ import { useBlockSlashCommands } from '@/hooks/useBlockSlashCommands'
 import { useBlockTreeEventListeners } from '@/hooks/useBlockTreeEventListeners'
 import { useBlockTreeKeyboardShortcuts } from '@/hooks/useBlockTreeKeyboardShortcuts'
 import { useBlockZoom } from '@/hooks/useBlockZoom'
+import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
@@ -325,7 +327,10 @@ export function BlockTree({
     return defaultPlaceholder
   }, [focusedBlockId, blocks, blocksById, t])
 
-  const rovingEditor = useRovingEditor({
+  // #2939 — lazy roving editor. `rovingEditor` is a drop-in `RovingEditorHandle`
+  // facade (identical contract for every consumer below); the heavy TipTap
+  // module + `Editor` instance load off the cold-start path via `editorHost`.
+  const { rovingEditor, editorHost, editorSurface } = useLazyRovingEditor({
     resolveBlockTitle: resolve.resolveBlockTitle,
     resolveTagName: resolve.resolveTagName,
     onNavigate: (id: string) => handleNavigateRef.current(id),
@@ -1081,153 +1086,162 @@ export function BlockTree({
 
   if (loading) {
     return (
-      <div
-        className="block-tree-loading space-y-3 p-2"
-        // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level skeleton container; native <output> is display:inline and would collapse the space-y-3 vertical stacking of the skeleton rows
-        role="status"
-        aria-busy="true"
-        aria-label={t('blockTree.loadingLabel')}
-      >
-        <Skeleton className="h-6 w-full rounded" />
-        <Skeleton className="h-6 w-5/6 rounded" />
-        <Skeleton className="h-6 w-4/6 rounded" />
-        <Skeleton className="h-6 w-full rounded" />
-      </div>
+      // #2939 — keep the (headless) editor host mounted across load toggles so
+      // the roving editor instance persists like it did when constructed
+      // eagerly. `editorSurface` is published once the runtime chunk loads.
+      <EditorSurfaceContext.Provider value={editorSurface}>
+        {editorHost}
+        <div
+          className="block-tree-loading space-y-3 p-2"
+          // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level skeleton container; native <output> is display:inline and would collapse the space-y-3 vertical stacking of the skeleton rows
+          role="status"
+          aria-busy="true"
+          aria-label={t('blockTree.loadingLabel')}
+        >
+          <Skeleton className="h-6 w-full rounded" />
+          <Skeleton className="h-6 w-5/6 rounded" />
+          <Skeleton className="h-6 w-4/6 rounded" />
+          <Skeleton className="h-6 w-full rounded" />
+        </div>
+      </EditorSurfaceContext.Provider>
     )
   }
 
   return (
-    <BatchAttachmentsProvider blockIds={windowedBlockIds}>
-      <BatchPropertiesProvider
-        blockIds={windowedBlockIds}
-        invalidationKey={batchPropertiesInvalidationKey}
-      >
-        <BlockZoomBar
-          breadcrumbs={zoomBreadcrumb}
-          onNavigate={handleZoomIn}
-          onZoomToRoot={zoomToRoot}
-        />
-        {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
+    <EditorSurfaceContext.Provider value={editorSurface}>
+      {editorHost}
+      <BatchAttachmentsProvider blockIds={windowedBlockIds}>
+        <BatchPropertiesProvider
+          blockIds={windowedBlockIds}
+          invalidationKey={batchPropertiesInvalidationKey}
+        >
+          <BlockZoomBar
+            breadcrumbs={zoomBreadcrumb}
+            onNavigate={handleZoomIn}
+            onZoomToRoot={zoomToRoot}
+          />
+          {/* #1258 — the backend caps a page at PAGE_SUBTREE_MAX_BLOCKS and used
           to drop the excess silently. A non-blocking notice (matches the
           SearchPanel capped-notice pattern) tells the user the page is only
           partially displayed. */}
-        {truncatedTotal != null && (
-          <div
-            // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
-            role="status"
-            data-testid="page-truncated-notice"
-            className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+          {truncatedTotal != null && (
+            <div
+              // oxlint-disable-next-line jsx-a11y/prefer-tag-over-role -- block-level notice card (border/padding/rounded); <output> is inline-level and would break the boxed layout
+              role="status"
+              data-testid="page-truncated-notice"
+              className="mb-2 rounded-lg border border-alert-warning-border bg-alert-warning p-3 text-sm text-alert-warning-foreground"
+            >
+              {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
+            </div>
+          )}
+          <BlockBatchActionMenu
+            selectedBlockIds={selectedBlockIds}
+            batchInProgress={batchInProgress}
+            batchDeleteConfirm={batchDeleteConfirm}
+            onBatchSetTodo={handleBatchSetTodo}
+            onBatchSetPriority={handleBatchSetPriority}
+            onBatchDelete={handleBatchDelete}
+            onSetBatchDeleteConfirm={setBatchDeleteConfirm}
+            onClearSelection={clearSelected}
+          />
+          <DndContext
+            sensors={dnd.sensors}
+            collisionDetection={closestCenter}
+            measuring={DND_MEASURING}
+            // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
+            // already runs the custom `useAutoScrollOnDrag` RAF loop against the
+            // #main-content container. Running both is additive (jank), and the
+            // built-in one ignores `prefers-reduced-motion`, defeating the custom
+            // loop's reduced-motion opt-out.
+            autoScroll={false}
+            onDragStart={dnd.handleDragStart}
+            onDragMove={dnd.handleDragMove}
+            onDragOver={dnd.handleDragOver}
+            onDragEnd={dnd.handleDragEnd}
+            onDragCancel={dnd.handleDragCancel}
+            accessibility={dndAccessibility}
           >
-            {t('blockTree.truncatedNotice', { shown: blocks.length, total: truncatedTotal })}
-          </div>
-        )}
-        <BlockBatchActionMenu
-          selectedBlockIds={selectedBlockIds}
-          batchInProgress={batchInProgress}
-          batchDeleteConfirm={batchDeleteConfirm}
-          onBatchSetTodo={handleBatchSetTodo}
-          onBatchSetPriority={handleBatchSetPriority}
-          onBatchDelete={handleBatchDelete}
-          onSetBatchDeleteConfirm={setBatchDeleteConfirm}
-          onClearSelection={clearSelected}
-        />
-        <DndContext
-          sensors={dnd.sensors}
-          collisionDetection={closestCenter}
-          measuring={DND_MEASURING}
-          // #752 — disable dnd-kit's built-in edge auto-scroll: `useBlockDnD`
-          // already runs the custom `useAutoScrollOnDrag` RAF loop against the
-          // #main-content container. Running both is additive (jank), and the
-          // built-in one ignores `prefers-reduced-motion`, defeating the custom
-          // loop's reduced-motion opt-out.
-          autoScroll={false}
-          onDragStart={dnd.handleDragStart}
-          onDragMove={dnd.handleDragMove}
-          onDragOver={dnd.handleDragOver}
-          onDragEnd={dnd.handleDragEnd}
-          onDragCancel={dnd.handleDragCancel}
-          accessibility={dndAccessibility}
-        >
-          <BlockActionsProvider value={blockActions}>
-            <BlockResolversProvider value={blockResolvers}>
-              <BlockListRenderer
-                visibleItems={dnd.visibleItems}
-                blocks={blocks}
-                loading={loading}
-                rootParentId={rootParentId}
-                focusedBlockId={focusedBlockId}
-                selectedBlockIds={selectedBlockIds}
-                projected={dnd.projected}
-                activeId={dnd.activeId}
-                overId={dnd.overId}
-                dropAfter={dnd.dropAfter}
-                viewport={viewport}
-                rovingEditor={rovingEditor}
-                onContainerPointerDown={handleContainerPointerDown}
-                hasChildrenSet={hasChildrenSet}
-                collapsedIds={collapsedIds}
-                hiddenMountCount={hiddenMountCount}
-                onExpandMount={expandMountLimit}
-              />
-            </BlockResolversProvider>
-          </BlockActionsProvider>
-          <BlockDndOverlay
-            activeBlock={activeBlock}
-            projected={dnd.projected}
-            activeId={dnd.activeId}
-            count={draggingCount}
+            <BlockActionsProvider value={blockActions}>
+              <BlockResolversProvider value={blockResolvers}>
+                <BlockListRenderer
+                  visibleItems={dnd.visibleItems}
+                  blocks={blocks}
+                  loading={loading}
+                  rootParentId={rootParentId}
+                  focusedBlockId={focusedBlockId}
+                  selectedBlockIds={selectedBlockIds}
+                  projected={dnd.projected}
+                  activeId={dnd.activeId}
+                  overId={dnd.overId}
+                  dropAfter={dnd.dropAfter}
+                  viewport={viewport}
+                  rovingEditor={rovingEditor}
+                  onContainerPointerDown={handleContainerPointerDown}
+                  hasChildrenSet={hasChildrenSet}
+                  collapsedIds={collapsedIds}
+                  hiddenMountCount={hiddenMountCount}
+                  onExpandMount={expandMountLimit}
+                />
+              </BlockResolversProvider>
+            </BlockActionsProvider>
+            <BlockDndOverlay
+              activeBlock={activeBlock}
+              projected={dnd.projected}
+              activeId={dnd.activeId}
+              count={draggingCount}
+            />
+          </DndContext>
+
+          {/* Floating date picker for /DATE slash command */}
+          {datePickerOpen && (
+            <BlockDatePicker
+              onSelect={(day) => day && handleDatePick(day)}
+              onClose={() => setDatePickerOpen(false)}
+            />
+          )}
+
+          {/* Floating template picker for /TEMPLATE slash command */}
+          {templatePickerOpen && (
+            <TemplatePicker
+              templatePages={templatePages}
+              onSelect={handleTemplateSelect}
+              onClose={() => setTemplatePickerOpen(false)}
+            />
+          )}
+
+          {/* Visual query builder for the /query slash command (#215) */}
+          <QueryBuilderModal
+            open={queryBuilderOpen}
+            onOpenChange={setQueryBuilderOpen}
+            onSave={handleQuerySave}
           />
-        </DndContext>
 
-        {/* Floating date picker for /DATE slash command */}
-        {datePickerOpen && (
-          <BlockDatePicker
-            onSelect={(day) => day && handleDatePick(day)}
-            onClose={() => setDatePickerOpen(false)}
+          {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
+          <EmojiPickerDialog
+            open={emojiPickerOpen}
+            onOpenChange={setEmojiPickerOpen}
+            onSelect={handleEmojiSelect}
           />
-        )}
 
-        {/* Floating template picker for /TEMPLATE slash command */}
-        {templatePickerOpen && (
-          <TemplatePicker
-            templatePages={templatePages}
-            onSelect={handleTemplateSelect}
-            onClose={() => setTemplatePickerOpen(false)}
+          {/* History side-sheet for per-block history */}
+          <BlockHistorySheet
+            blockId={historyBlockId}
+            open={!!historyBlockId}
+            onOpenChange={(open) => {
+              if (!open) setHistoryBlockId(null)
+            }}
           />
-        )}
 
-        {/* Visual query builder for the /query slash command (#215) */}
-        <QueryBuilderModal
-          open={queryBuilderOpen}
-          onOpenChange={setQueryBuilderOpen}
-          onSave={handleQuerySave}
-        />
-
-        {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
-        <EmojiPickerDialog
-          open={emojiPickerOpen}
-          onOpenChange={setEmojiPickerOpen}
-          onSelect={handleEmojiSelect}
-        />
-
-        {/* History side-sheet for per-block history */}
-        <BlockHistorySheet
-          blockId={historyBlockId}
-          open={!!historyBlockId}
-          onOpenChange={(open) => {
-            if (!open) setHistoryBlockId(null)
-          }}
-        />
-
-        {/* Property drawer for per-block properties */}
-        <BlockPropertyDrawerSheet
-          blockId={propertyDrawerBlockId}
-          open={!!propertyDrawerBlockId}
-          onOpenChange={(open) => {
-            if (!open) setPropertyDrawerBlockId(null)
-          }}
-        />
-      </BatchPropertiesProvider>
-    </BatchAttachmentsProvider>
+          {/* Property drawer for per-block properties */}
+          <BlockPropertyDrawerSheet
+            blockId={propertyDrawerBlockId}
+            open={!!propertyDrawerBlockId}
+            onOpenChange={(open) => {
+              if (!open) setPropertyDrawerBlockId(null)
+            }}
+          />
+        </BatchPropertiesProvider>
+      </BatchAttachmentsProvider>
+    </EditorSurfaceContext.Provider>
   )
 }

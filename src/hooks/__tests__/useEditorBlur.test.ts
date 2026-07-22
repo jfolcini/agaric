@@ -52,9 +52,13 @@ const LEGACY_PORTAL_PATTERNS = [
   '.block-context-menu',
 ] as const
 
-// Mock shouldSplitOnBlur from use-roving-editor
+// Mock shouldSplitOnBlur from content-delta (#2939 — the hot render-path
+// modules import it from here now, not from use-roving-editor). Preserve the
+// module's other real exports (computeContentDelta / ContentDelta) so only the
+// split decision is controlled.
 const mockShouldSplitOnBlur = vi.fn((md: string) => md.includes('\n'))
-vi.mock('@/editor/use-roving-editor', () => ({
+vi.mock('@/editor/content-delta', async (importActual) => ({
+  ...(await importActual<typeof import('@/editor/content-delta')>()),
   shouldSplitOnBlur: (...args: unknown[]) => mockShouldSplitOnBlur(...(args as [string])),
 }))
 

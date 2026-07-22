@@ -7,10 +7,9 @@
  */
 
 import type { Editor } from '@tiptap/core'
-import type { Node as PMNode } from '@tiptap/pm/model'
-import { Selection } from '@tiptap/pm/state'
 import { useCallback, useEffect } from 'react'
 
+import { getSelectionProbe } from '@/editor/pm-selection-probe'
 import { isTabIndentEnabled } from '@/lib/editor-preferences'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 
@@ -133,12 +132,19 @@ export interface EditorState {
  * `Selection.atStart/atEnd` (the first/last selectable position, duck-typed
  * via `doc.resolve` — never `instanceof`, see the anti-pattern note in
  * AGENTS.md). Test doubles without `resolve` keep the numeric fallback.
+ *
+ * #2939 — the real `Selection` class is reached through `getSelectionProbe()`
+ * rather than a static `@tiptap/pm/state` import, so this cold-start-path module
+ * stays off the editor chunk. The probe is registered by the editor-runtime
+ * chunk on load; a real ProseMirror doc (with `resolve`) can only exist once
+ * that chunk has loaded, so whenever the probe path is taken the probe is set.
  */
 function isAtDocStart(state: EditorState): boolean {
   const { from, empty } = state.selection
   if (!empty) return false
-  if (typeof state.doc.resolve === 'function') {
-    return Selection.atStart(state.doc as unknown as PMNode).from === from
+  const probe = getSelectionProbe()
+  if (probe && typeof state.doc.resolve === 'function') {
+    return probe.atStartFrom(state.doc) === from
   }
   return from <= 1
 }
@@ -146,8 +152,9 @@ function isAtDocStart(state: EditorState): boolean {
 function isAtDocEnd(state: EditorState): boolean {
   const { to, empty } = state.selection
   if (!empty) return false
-  if (typeof state.doc.resolve === 'function') {
-    return Selection.atEnd(state.doc as unknown as PMNode).to === to
+  const probe = getSelectionProbe()
+  if (probe && typeof state.doc.resolve === 'function') {
+    return probe.atEndTo(state.doc) === to
   }
   return to >= state.doc.content.size - 1
 }

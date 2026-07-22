@@ -11,9 +11,11 @@ import { TableCell } from '@tiptap/extension-table-cell'
 import { TableHeader } from '@tiptap/extension-table-header'
 import { TableRow } from '@tiptap/extension-table-row'
 import Text from '@tiptap/extension-text'
+import { Selection } from '@tiptap/pm/state'
 import { common, createLowlight } from 'lowlight'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
+import { setSelectionProbe } from '@/editor/pm-selection-probe'
 import {
   type BlockKeyboardCallbacks,
   type DeleteBlockOpts,
@@ -21,6 +23,19 @@ import {
   handleBlockKeyDown,
   useBlockKeyboard,
 } from '@/editor/use-block-keyboard'
+
+// #2939 — in production the editor-runtime chunk registers the ProseMirror
+// boundary probe on load (so `use-block-keyboard` stays TipTap-free on the
+// cold-start path). These tests drive REAL ProseMirror docs, so register the
+// same probe here; otherwise `isAtDocStart/isAtDocEnd` fall back to the numeric
+// heuristic, which is wrong inside blockquote/list docs (the very cases the
+// structural tests below assert).
+beforeAll(() => {
+  setSelectionProbe({
+    atStartFrom: (doc) => Selection.atStart(doc as never).from,
+    atEndTo: (doc) => Selection.atEnd(doc as never).to,
+  })
+})
 
 // -- Helpers ------------------------------------------------------------------
 

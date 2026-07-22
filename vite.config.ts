@@ -89,70 +89,60 @@ const reactCompiler = process.env['REACT_COMPILER'] !== '0' && !process.env['VIT
  * Total payload is unchanged (and Tauri ships via local asset protocol
  * anyway). The win is parallelism + cache granularity + a clean build.
  */
-function manualChunks(id: string): string | undefined {
-  if (!id.includes('node_modules')) return undefined
-
-  // Editor stack — only needed when a block is focused for editing, but
-  // currently statically imported by the roving-editor pipeline. Keeping
-  // it as a single chunk still wins because it parses in parallel with
-  // the entry chunk instead of blocking it.
-  if (
-    id.includes('/@tiptap/') ||
-    id.includes('/prosemirror-') ||
-    id.includes('/linkifyjs/') ||
-    id.includes('/rope-sequence/') ||
-    id.includes('/w3c-keyname/')
-  ) {
-    return 'editor'
-  }
-
-  // Syntax highlighting — bundled via lowlight for code-block-lowlight.
-  // highlight.js alone is ~260 kB of language grammars.
-  if (id.includes('/lowlight/') || id.includes('/highlight.js/') || id.includes('/@wooorm/')) {
-    return 'highlight'
-  }
-
+// Vendor chunk groups for Rolldown's native `codeSplitting`. Each `test` runs
+// against a module's absolute id; a module lands in the HIGHEST-`priority`
+// matching group. Anything unmatched (lucide icons, match-sorter, sonner,
+// date-fns, @tanstack/react-virtual, zustand, …) stays with the entry / default
+// splitting — tiny or needed on first paint.
+//
+// #2939 — priority order matters. The vendor groups that hold common runtime
+// deps (react-vendor, highlight, floating-vendor) sit ABOVE the broad `editor`
+// group so that (a) a dep shipped NESTED under @tiptap/*/node_modules (e.g.
+// react/jsx-runtime, use-sync-external-store) is chunked by what it actually is
+// rather than dragged into the editor chunk, and (b) @floating-ui/dom +
+// fast-equals — shared between the now-dynamic editor stack and startup
+// Radix/useEditorState — are pinned into a tiny always-loaded vendor chunk
+// instead of Rolldown parking them in the dynamic editor chunk and forcing that
+// ~507 kB chunk onto the cold-start path.
+const VENDOR_CHUNK_GROUPS = [
+  // React baseline — extracted so app-code changes don't bust its cache.
+  {
+    name: 'react-vendor',
+    test: /[\\/]node_modules[\\/](react|react-dom|scheduler|react-i18next|i18next|use-sync-external-store)[\\/]/,
+    priority: 60,
+  },
+  // Syntax highlighting — highlight.js grammars (~260 kB) + lowlight. Loaded
+  // lazily by both the read-only renderer (idle) and the editor chunk.
+  {
+    name: 'highlight',
+    test: /[\\/]node_modules[\\/](highlight\.js|lowlight|@wooorm)[\\/]/,
+    priority: 55,
+  },
+  // Floating UI + fast-equals — shared between startup overlays (Radix) and the
+  // dynamic editor stack; MUST outrank `editor` to keep the editor chunk lazy.
+  {
+    name: 'floating-vendor',
+    test: /[\\/]node_modules[\\/](@floating-ui|fast-equals)[\\/]/,
+    priority: 50,
+  },
+  // Editor stack — @tiptap + prosemirror. Reached ONLY via the dynamic
+  // `RovingEditorHost` import (#2939), so this chunk is no longer modulepreloaded
+  // from index.html: it loads on an idle callback after first paint, or on the
+  // first edit interaction.
+  {
+    name: 'editor',
+    test: /[\\/]node_modules[\\/](@tiptap[\\/]|prosemirror-|linkifyjs[\\/]|rope-sequence[\\/]|w3c-keyname[\\/]|orderedmap[\\/]|crelt[\\/])/,
+    priority: 40,
+  },
   // Drag-and-drop — only exercised in block trees and sortable lists.
-  if (id.includes('/@dnd-kit/')) {
-    return 'dnd'
-  }
-
-  // Date picker (calendar popover) — used by date properties and
-  // journal date selection.
-  if (id.includes('/react-day-picker/')) {
-    return 'datepicker'
-  }
-
-  // Radix UI + floating-ui — overlay primitives. Bundled together because
-  // Radix dialogs/popovers are pulled in by sonner toasts (confirm dialogs,
-  // etc.), so splitting them further produces brittle chunk graphs.
-  if (id.includes('/@radix-ui/') || id.includes('/@floating-ui/')) {
-    return 'ui-radix'
-  }
-
-  // React + React-DOM — the unavoidable baseline. Extracted so a change
-  // in app code doesn't invalidate this (long-term caching win).
-  if (
-    id.includes('/react-dom/') ||
-    id.includes('/react/') ||
-    id.includes('/scheduler/') ||
-    id.includes('/react-i18next/') ||
-    id.includes('/i18next/')
-  ) {
-    return 'react-vendor'
-  }
-
-  // d3-* (force, selection, drag, zoom, quadtree) — only exercised by
-  // the graph-view simulation.
-  if (id.includes('/d3-')) {
-    return 'd3'
-  }
-
-  // Leave the remainder (lucide icons, match-sorter, sonner, date-fns,
-  // @tanstack/react-virtual, zustand, fast-equals, etc.) in the entry
-  // chunk. They're either tiny or needed on first paint.
-  return undefined
-}
+  { name: 'dnd', test: /[\\/]node_modules[\\/]@dnd-kit[\\/]/, priority: 30 },
+  // Date picker (calendar popover) — date properties + journal date selection.
+  { name: 'datepicker', test: /[\\/]node_modules[\\/]react-day-picker[\\/]/, priority: 30 },
+  // Radix UI overlay primitives (dialogs/popovers, also pulled by sonner toasts).
+  { name: 'ui-radix', test: /[\\/]node_modules[\\/]@radix-ui[\\/]/, priority: 30 },
+  // d3-* (force, selection, drag, zoom, quadtree) — only the graph-view sim.
+  { name: 'd3', test: /[\\/]node_modules[\\/]d3-/, priority: 30 },
+]
 
 export default defineConfig({
   plugins: [
@@ -229,7 +219,24 @@ export default defineConfig({
     sourcemap: !!process.env['TAURI_DEBUG'],
     rollupOptions: {
       output: {
-        manualChunks,
+        // Vendor chunking via Rolldown's native `codeSplitting` (see
+        // VENDOR_CHUNK_GROUPS). #2939 — this REPLACES the previous Rollup-compat
+        // `manualChunks` function. That function's return value is silently
+        // ignored by Rolldown for a module shared between a DYNAMIC chunk and a
+        // STATIC one: once the editor stack became dynamically-imported
+        // (`RovingEditorHost`), @floating-ui/dom + fast-equals — shared with
+        // startup Radix/useEditorState — were pulled INTO the editor chunk and
+        // the static side made to import it, dragging the whole ~507 kB editor
+        // chunk onto the cold-start path (modulepreloaded). `codeSplitting`
+        // groups with explicit `priority` ARE honoured, so the editor chunk now
+        // holds only @tiptap/prosemirror and stays lazy. Priority also fixes the
+        // nested-dependency problem (deps like react/jsx-runtime shipped under
+        // @tiptap/*/node_modules): the higher-priority vendor group wins over the
+        // broad editor group, so common runtime deps never anchor the editor
+        // chunk to startup.
+        codeSplitting: {
+          groups: VENDOR_CHUNK_GROUPS,
+        },
       },
     },
   },
