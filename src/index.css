@@ -1156,15 +1156,29 @@
    different marker style, indent, and rule weight than the read-only view,
    which uses `list-disc/list-decimal list-inside` (RichContentRenderer/marks/
    {block,orderedList}.tsx) and `my-2 border-t border-border`
-   (marks/horizontalRule.tsx). These rules mirror that look so a list or
-   divider reads the same whether you're editing it or reading it
-   (#1960 editor↔view parity). */
+   (marks/horizontalRule.tsx).
+
+   #2999 — the editor's `<li>` always wraps its text in a block-level `<p>`
+   (TipTap `ListItem`'s schema is `paragraph block*`), unlike the read-only
+   renderer, which flattens each item's inline content directly into the
+   `<li>` with no block wrapper. Per the CSS list spec, `list-style-position:
+   inside` combined with a block-level first child forces the ::marker onto
+   its own line ABOVE the block instead of beside its first line of text —
+   so clicking the list button rendered the number/bullet on one line and
+   the typed text on a separate line below it (and backspacing at the start
+   of that "line" first collapsed the phantom split before merging into the
+   previous block). `list-outside` (with explicit padding, since Tailwind's
+   preflight zeroes `ul/ol` padding) keeps the marker in the item's margin
+   box regardless of the child being block or inline, which is immune to
+   this split and is also what the read-only view effectively already
+   reads as. Read-only view is left on `list-inside` since it has no `<p>`
+   wrapper and isn't affected. */
 .ProseMirror ul {
-  @apply list-disc list-inside;
+  @apply list-disc list-outside pl-5;
   margin: 0;
 }
 .ProseMirror ol {
-  @apply list-decimal list-inside;
+  @apply list-decimal list-outside pl-5;
   margin: 0;
 }
 .ProseMirror hr {
