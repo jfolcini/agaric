@@ -110,6 +110,9 @@ const mockEditorState = {
   italic: false,
   code: false,
   strike: false,
+  // #2995 — mirrors `editor.can().toggleStrike()`; false inside inline
+  // `code` / `codeBlock` where the strike mark is schema-excluded.
+  canStrike: true,
   underline: false,
   highlight: false,
   link: false,
@@ -278,6 +281,7 @@ describe('SelectionBubbleMenu', () => {
     mockEditorState.italic = false
     mockEditorState.code = false
     mockEditorState.strike = false
+    mockEditorState.canStrike = true
     mockEditorState.highlight = false
     mockEditorState.link = false
     mockGetAttributes.mockReturnValue({})
@@ -481,6 +485,45 @@ describe('SelectionBubbleMenu', () => {
         const classes = btn.className.split(/\s+/)
         expect(classes).not.toContain('bg-accent')
       }
+    })
+  })
+
+  // #2995 — strikethrough is a no-op inside inline `code` / `codeBlock`
+  // (schema excludes the strike mark there); the button must grey out
+  // rather than render as an available-but-inert control.
+  describe('disabled marks (#2995)', () => {
+    it('disables strikethrough when editor.can().toggleStrike() is false (code context)', () => {
+      mockEditorState.canStrike = false
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.strikethrough') })
+      expect(btn).toBeDisabled()
+    })
+
+    it('enables strikethrough when editor.can().toggleStrike() is true (normal text)', () => {
+      mockEditorState.canStrike = true
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      const btn = screen.getByRole('button', { name: t('toolbar.strikethrough') })
+      expect(btn).not.toBeDisabled()
+    })
+
+    it('does not disable the other mark toggles when strikethrough is disabled', () => {
+      mockEditorState.canStrike = false
+      render(<SelectionBubbleMenu editor={makeEditor()} />)
+      for (const label of [
+        t('toolbar.bold'),
+        t('toolbar.italic'),
+        t('toolbar.code'),
+        t('toolbar.highlight'),
+        t('toolbar.underline'),
+      ]) {
+        expect(screen.getByRole('button', { name: label })).not.toBeDisabled()
+      }
+    })
+
+    it('passes axe audit with strikethrough disabled', async () => {
+      mockEditorState.canStrike = false
+      const { container } = render(<SelectionBubbleMenu editor={makeEditor()} />)
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 
