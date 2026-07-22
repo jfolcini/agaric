@@ -4059,6 +4059,65 @@ describe('PageBlockStore', () => {
       // Y itself gets a new reference (position rewritten).
       expect(blocks[2]).not.toBe(blockY)
     })
+
+    it('#2916 — reorder now serializes behind a queued moveUp on the same block (no interleave)', async () => {
+      // #774's per-block mover queue lists moveUp/moveDown/indent/dedent/
+      // reorder as serialized sibling-slot movers, but `reorder` was not
+      // actually routed through `enqueueMove` — a DnD reorder could race a
+      // queued keyboard mover on the SAME block. Fire moveUp('B') then
+      // reorder('B', ...) back-to-back, WITHOUT awaiting the first: if
+      // reorder is properly queued, its `move_block` IPC (and the target-slot
+      // computation feeding it) must not fire until moveUp's full round-trip
+      // settles — mirroring the "serialized double moveDown" test above.
+      const blockA = makeBlock({ id: 'A', position: 0, parent_id: null, depth: 0 })
+      const blockB = makeBlock({ id: 'B', position: 1, parent_id: null, depth: 0 })
+      const blockC = makeBlock({ id: 'C', position: 2, parent_id: null, depth: 0 })
+      const blockD = makeBlock({ id: 'D', position: 3, parent_id: null, depth: 0 })
+      store.setState({ blocks: [blockA, blockB, blockC, blockD] })
+
+      const resolvers: Array<(v: unknown) => void> = []
+      mockedInvoke.mockImplementation(async () => new Promise((resolve) => resolvers.push(resolve)))
+
+      // moveUp('B') swaps B before A → [B, A, C, D] (optimistic splice) and
+      // sends move_block(B, null, 0). reorder('B', 3) is fired immediately
+      // after, without awaiting moveUp — same block, so #774 must chain it.
+      const p1 = store.getState().moveUp('B')
+      const p2 = store.getState().reorder('B', 3)
+
+      // Only moveUp's IPC has fired. If `reorder` were NOT wrapped in
+      // `enqueueMove`, its body would run synchronously right here too,
+      // issuing a SECOND `move_block` call in this same turn (computed off
+      // the pre-moveUp-settle snapshot) — this assertion is what catches
+      // that regression.
+      await vi.waitFor(() => expect(resolvers).toHaveLength(1))
+      expect(mockedInvoke).toHaveBeenCalledTimes(1)
+      expect(mockedInvoke).toHaveBeenNthCalledWith(
+        1,
+        'move_block',
+        expect.objectContaining({ blockId: 'B', newParentId: null, newIndex: 0 }),
+      )
+
+      // Settle moveUp's round-trip.
+      resolvers[0]?.({ block_id: 'B', new_parent_id: null, new_position: 0 })
+      await p1
+
+      // Only now does reorder's queued body run and send ITS `move_block`
+      // call, reading the post-moveUp state ([B, A, C, D]) rather than a
+      // stale pre-move snapshot.
+      await vi.waitFor(() => expect(resolvers).toHaveLength(2))
+      expect(mockedInvoke).toHaveBeenNthCalledWith(
+        2,
+        'move_block',
+        expect.objectContaining({ blockId: 'B', newParentId: null, newIndex: 3 }),
+      )
+
+      resolvers[1]?.({ block_id: 'B', new_parent_id: null, new_position: 3 })
+      await p2
+
+      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      // Final order: A, C, D, B.
+      expect(store.getState().blocks.map((b) => b.id)).toEqual(['A', 'C', 'D', 'B'])
+    })
   })
 
   // ---------------------------------------------------------------------------

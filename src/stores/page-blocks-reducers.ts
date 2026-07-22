@@ -467,101 +467,102 @@ export function createReducers({
       }
     },
 
-    reorder: async (blockId: string, newIndex: number) => {
-      const { blocks, rootParentId } = get()
-      const block = blocks.find((b) => b.id === blockId)
-      if (!block) return
-      const parentId = block.parent_id
+    reorder: (blockId: string, newIndex: number) =>
+      enqueueMove(blockId, async (): Promise<void> => {
+        const { blocks, rootParentId } = get()
+        const block = blocks.find((b) => b.id === blockId)
+        if (!block) return
+        const parentId = block.parent_id
 
-      // #400: `newIndex` is a 0-based sibling slot among the block's OTHER
-      // same-parent children. A reorder to the block's current slot is a no-op.
-      //
-      // #928 (f6): the two bases coincide at the block's own slot even though
-      // they count differently — `siblingSlot` returns the index INCLUDING the
-      // block itself, while `newIndex` is the backend slot-basis EXCLUDING self.
-      // Dropping a block onto its own position yields the same count whether
-      // self is counted before it or excluded, so equality here is exact.
-      const currentSlot = siblingSlot(blocks, block)
-      if (newIndex === currentSlot) return
+        // #400: `newIndex` is a 0-based sibling slot among the block's OTHER
+        // same-parent children. A reorder to the block's current slot is a no-op.
+        //
+        // #928 (f6): the two bases coincide at the block's own slot even though
+        // they count differently — `siblingSlot` returns the index INCLUDING the
+        // block itself, while `newIndex` is the backend slot-basis EXCLUDING self.
+        // Dropping a block onto its own position yields the same count whether
+        // self is counted before it or excluded, so equality here is exact.
+        const currentSlot = siblingSlot(blocks, block)
+        if (newIndex === currentSlot) return
 
-      // R5 (#404): same-parent reorder mirrors the resulting sibling order
-      // locally and does NOT call load(). #2849 — apply that splice
-      // OPTIMISTICALLY, BEFORE the IPC, so the UI updates instantly; the moved
-      // block keeps its current `position` (array order is authoritative) and
-      // the backend's dense rank is healed in on resolve.
-      const handle = applyProvisionalMove(set, blockId, (state) => {
-        const cur = state.blocks
-        const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
-        // Splice the moved subtree to its new slot among the siblings in the
-        // flat tree. Build moved + remaining, then locate the insertion anchor
-        // from the target sibling slot.
-        const descendants = getDragDescendants(cur, blockId)
-        const movedSet = new Set([blockId, ...descendants])
-        const movedItems = cur.filter((b) => movedSet.has(b.id))
-        const remaining = cur.filter((b) => !movedSet.has(b.id))
-        // `remaining` can be scanned twice below for the same anchor id
-        // (getDragDescendants + the insertion anchor lookup) across the
-        // branches. Build the id→index map once so every anchor lookup here
-        // becomes an O(1) `.get()` instead of a `.findIndex()` scan (#2041).
-        const remainingIndex = buildIndexById(remaining)
+        // R5 (#404): same-parent reorder mirrors the resulting sibling order
+        // locally and does NOT call load(). #2849 — apply that splice
+        // OPTIMISTICALLY, BEFORE the IPC, so the UI updates instantly; the moved
+        // block keeps its current `position` (array order is authoritative) and
+        // the backend's dense rank is healed in on resolve.
+        const handle = applyProvisionalMove(set, blockId, (state) => {
+          const cur = state.blocks
+          const curBlock = cur.find((b) => b.id === blockId) as FlatBlock
+          // Splice the moved subtree to its new slot among the siblings in the
+          // flat tree. Build moved + remaining, then locate the insertion anchor
+          // from the target sibling slot.
+          const descendants = getDragDescendants(cur, blockId)
+          const movedSet = new Set([blockId, ...descendants])
+          const movedItems = cur.filter((b) => movedSet.has(b.id))
+          const remaining = cur.filter((b) => !movedSet.has(b.id))
+          // `remaining` can be scanned twice below for the same anchor id
+          // (getDragDescendants + the insertion anchor lookup) across the
+          // branches. Build the id→index map once so every anchor lookup here
+          // becomes an O(1) `.get()` instead of a `.findIndex()` scan (#2041).
+          const remainingIndex = buildIndexById(remaining)
 
-        // The flat index in `remaining` of the (newIndex)-th same-parent
-        // sibling; if newIndex is past the last sibling, insert after the last
-        // sibling's subtree. parentDepth+1 is the sibling depth.
-        const siblingsRemaining = remaining.filter(
-          (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
-        )
-        let insertAt: number
-        if (newIndex >= siblingsRemaining.length) {
-          const lastSib = siblingsRemaining.at(-1)
-          if (lastSib) {
-            const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
-            insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
-            while (
-              insertAt < remaining.length &&
-              lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
-            ) {
-              insertAt++
+          // The flat index in `remaining` of the (newIndex)-th same-parent
+          // sibling; if newIndex is past the last sibling, insert after the last
+          // sibling's subtree. parentDepth+1 is the sibling depth.
+          const siblingsRemaining = remaining.filter(
+            (b) => (b.parent_id ?? null) === (parentId ?? null) && b.depth === curBlock.depth,
+          )
+          let insertAt: number
+          if (newIndex >= siblingsRemaining.length) {
+            const lastSib = siblingsRemaining.at(-1)
+            if (lastSib) {
+              const lastSibDesc = getDragDescendants(remaining, lastSib.id, remainingIndex)
+              insertAt = (remainingIndex.get(lastSib.id) ?? -1) + 1
+              while (
+                insertAt < remaining.length &&
+                lastSibDesc.has((remaining[insertAt] as FlatBlock).id)
+              ) {
+                insertAt++
+              }
+            } else {
+              // No remaining siblings — insert right after the parent, or at the
+              // start of the list when at root level.
+              insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
             }
           } else {
-            // No remaining siblings — insert right after the parent, or at the
-            // start of the list when at root level.
-            insertAt = parentId == null ? 0 : (remainingIndex.get(parentId) ?? -1) + 1
+            const anchor = siblingsRemaining[newIndex] as FlatBlock
+            insertAt = remainingIndex.get(anchor.id) ?? -1
           }
-        } else {
-          const anchor = siblingsRemaining[newIndex] as FlatBlock
-          insertAt = remainingIndex.get(anchor.id) ?? -1
-        }
 
-        const newBlocks = [...remaining]
-        newBlocks.splice(insertAt, 0, ...movedItems)
-        // Same-parent swap: only array order changed, no block object was
-        // rewritten — nothing to touch in the Map (the position heal on resolve
-        // re-allocates the one moved block).
-        return { blocks: newBlocks, touchedIds: [] }
-      })
+          const newBlocks = [...remaining]
+          newBlocks.splice(insertAt, 0, ...movedItems)
+          // Same-parent swap: only array order changed, no block object was
+          // rewritten — nothing to touch in the Map (the position heal on resolve
+          // re-allocates the one moved block).
+          return { blocks: newBlocks, touchedIds: [] }
+        })
 
-      try {
-        // #730 — pool_busy retry (see edit/createBelow).
-        const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
+        try {
+          // #730 — pool_busy retry (see edit/createBelow).
+          const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
 
-        // Defensive: a reorder never crosses parents. If the backend echoes a
-        // different parent, the provisional guess was wrong — reload reconciles
-        // FE with the backend (overwriting the provisional splice).
-        if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
-          await get().load()
+          // Defensive: a reorder never crosses parents. If the backend echoes a
+          // different parent, the provisional guess was wrong — reload reconciles
+          // FE with the backend (overwriting the provisional splice).
+          if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
+            await get().load()
+            notifyUndoNewAction(rootParentId, resp.op_refs)
+            return
+          }
+
+          await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
           notifyUndoNewAction(rootParentId, resp.op_refs)
-          return
+        } catch (err) {
+          await rollbackProvisionalMove(set, get, handle)
+          logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
+          notify.error(i18n.t('error.reorderBlockFailed'))
         }
-
-        await reconcileProvisionalMoveSuccess(set, get, handle, resp.new_position)
-        notifyUndoNewAction(rootParentId, resp.op_refs)
-      } catch (err) {
-        await rollbackProvisionalMove(set, get, handle)
-        logger.error('page-blocks', 'Failed to reorder block', { blockId }, err)
-        notify.error(i18n.t('error.reorderBlockFailed'))
-      }
-    },
+      }),
 
     moveToParent: async (blockId: string, newParentId: string | null, newIndex: number) => {
       const { rootParentId, blocks } = get()
