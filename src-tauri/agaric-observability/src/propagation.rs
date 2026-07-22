@@ -19,10 +19,10 @@ use opentelemetry_sdk::propagation::TraceContextPropagator;
 /// doing any propagation work, so a non-traced invoke costs one map lookup.
 const TRACEPARENT: &str = "traceparent";
 
-/// Adapts Tauri's (`http` crate) `HeaderMap` to the OpenTelemetry [`Extractor`]
+/// Adapts the (`http` crate) `HeaderMap` to the OpenTelemetry [`Extractor`]
 /// trait so the standard `TraceContextPropagator` can read `traceparent` /
 /// `tracestate` out of an invoke's headers.
-struct HeaderExtractor<'a>(&'a tauri::http::HeaderMap);
+struct HeaderExtractor<'a>(&'a http::HeaderMap);
 
 impl Extractor for HeaderExtractor<'_> {
     fn get(&self, key: &str) -> Option<&str> {
@@ -30,7 +30,7 @@ impl Extractor for HeaderExtractor<'_> {
     }
 
     fn keys(&self) -> Vec<&str> {
-        self.0.keys().map(tauri::http::HeaderName::as_str).collect()
+        self.0.keys().map(http::HeaderName::as_str).collect()
     }
 }
 
@@ -42,7 +42,7 @@ impl Extractor for HeaderExtractor<'_> {
 /// the header is absent or malformed. This is the only place that knows the W3C
 /// wire format; everything upstream just sets a header.
 #[must_use]
-pub fn extract_trace_context(headers: &tauri::http::HeaderMap) -> Option<opentelemetry::Context> {
+pub fn extract_trace_context(headers: &http::HeaderMap) -> Option<opentelemetry::Context> {
     // Fast path: the overwhelming majority of invokes (and every invoke when
     // observability is off, since the frontend shim only sets the header when
     // enabled) carry no traceparent. One lookup, then bail.
@@ -64,7 +64,7 @@ pub fn extract_trace_context(headers: &tauri::http::HeaderMap) -> Option<opentel
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tauri::http::HeaderMap;
+    use http::HeaderMap;
 
     /// A well-formed `traceparent` is extracted into a context whose span
     /// carries the same (remote) trace + span ids — the foundation of cross-IPC

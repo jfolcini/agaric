@@ -18,7 +18,7 @@
 //! **`BatchLogProcessor`** wrapping the file log exporter; the OTel logs bridge
 //! feeds it `tracing` events as span-correlated `LogRecord`s.
 //!
-//! Both providers are returned *owned* so the [`crate::observability::guard`]
+//! Both providers are returned *owned* so the [`crate::guard`]
 //! can flush + shut them down on app exit; a tracer is obtained from the tracer
 //! provider for the tracing layer.
 

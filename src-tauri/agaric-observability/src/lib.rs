@@ -89,25 +89,30 @@
 //!    mirror what already goes to `agaric.log` and ride the same redaction pass
 //!    (M7); a leak-guard test asserts log attribute keys stay PII-free too.
 
-mod config;
-mod exporter;
-mod guard;
+// The submodules cross-referenced from module docs (here + in the app crate's
+// `bug_report` collector, which documents the on-disk sink layout) are `pub mod`
+// so those intra-doc links resolve; the rest stay private (their public items
+// are re-exported at the crate root below). #2878.
+pub mod config;
+pub mod exporter;
+pub mod guard;
 mod ingest;
 mod layer;
-mod metrics;
-mod metrics_exporter;
+pub mod metrics;
+pub mod metrics_exporter;
 // M8 (#2110, #2121) — the opt-in, off-by-default, loopback-only OTLP/HTTP span
 // exporter. The ONLY network-egress path in this crate; built only when
 // `AGARIC_OTEL_ENDPOINT` resolves to a loopback collector (validated in
 // `config::validate_loopback_endpoint`) and additive to the file sink.
 mod otlp;
 mod propagation;
-mod provider;
+pub mod provider;
 mod sampling;
 
 pub use config::{ObservabilityConfig, from_env};
 pub use guard::ObservabilityGuard;
 pub use ingest::{FrontendSpan, FrontendSpanIngestor, build_frontend_ingestor};
+pub use metrics::MaterializerCounters;
 // #2110 M5 — runtime head-sampling toggle. `set_sampling_ratio` is driven by the
 // `set_trace_sampling` command (one call toggles backend + frontend); the
 // tracer provider uses `RuntimeSampler` (re-exported to `provider`).
@@ -172,9 +177,18 @@ impl Observability {
 /// metrics signals degrades on its own: if only its sink is unwritable, the
 /// other pipelines still run without it.
 ///
+/// `counters` carries the process-global materializer atom readers this crate
+/// surfaces as observable counters; the app wires them in so this crate stays a
+/// leaf that never depends up on the materializer (#2878). See
+/// [`MaterializerCounters`].
+///
 /// This function never touches the network and never panics.
 #[must_use]
-pub fn init(log_dir: &std::path::Path, config: &ObservabilityConfig) -> Observability {
+pub fn init(
+    log_dir: &std::path::Path,
+    config: &ObservabilityConfig,
+    counters: MaterializerCounters,
+) -> Observability {
     if !config.enabled {
         return Observability::disabled();
     }
@@ -210,7 +224,7 @@ pub fn init(log_dir: &std::path::Path, config: &ObservabilityConfig) -> Observab
         Some(metric_exporter) => {
             let meter_provider = metrics::build_meter_provider(config, metric_exporter);
             opentelemetry::global::set_meter_provider(meter_provider.clone());
-            metrics::register_instruments(&meter_provider);
+            metrics::register_instruments(&meter_provider, counters);
             // #2282 — flip the process-global IPC-metrics gate now that the
             // meter is installed and `agaric.ipc.duration` is actually
             // captured. Until this point (and in the default observability-off
@@ -238,6 +252,15 @@ mod tests {
     use opentelemetry_sdk::trace::{InMemorySpanExporter, Sampler, SdkTracerProvider};
     use tracing_subscriber::layer::SubscriberExt;
 
+    /// Zero-valued materializer counter readers for the `init` tests, which
+    /// assert layer/guard construction, not counter collection.
+    fn noop_counters() -> MaterializerCounters {
+        MaterializerCounters {
+            sql_only_fallback: || 0,
+            descendant_fanout_dropped: || 0,
+        }
+    }
+
     /// `init` with a disabled config must be a complete no-op: no layer, no
     /// guard. This is the off-by-default invariant.
     #[test]
@@ -248,7 +271,7 @@ mod tests {
             sampling_ratio: 1.0,
             endpoint: None,
         };
-        let obs = init(tmp.path(), &cfg);
+        let obs = init(tmp.path(), &cfg, noop_counters());
         assert!(obs.layers.is_empty(), "disabled ⇒ no OTel layers");
         assert!(obs.guard.is_none(), "disabled ⇒ no guard");
     }
@@ -263,7 +286,7 @@ mod tests {
             sampling_ratio: 1.0,
             endpoint: None,
         };
-        let obs = init(tmp.path(), &cfg);
+        let obs = init(tmp.path(), &cfg, noop_counters());
         assert_eq!(
             obs.layers.len(),
             2,

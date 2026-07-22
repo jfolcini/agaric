@@ -93,7 +93,12 @@ pub mod mcp;
 pub use agaric_engine::merge;
 // OpenTelemetry trace observability (#2110, M1a). Backend traces to a LOCAL
 // FILE only — zero network egress, gated OFF by default (AGARIC_OTEL unset).
-pub mod observability;
+// #2878 — the module + its heavy OTel dep tree moved into the
+// `agaric-observability` leaf crate; aliased here so every
+// `crate::observability::…` path resolves unchanged. The app passes its two
+// materializer counter readers in via `observability::MaterializerCounters` at
+// `init` time (the crate depends only on `agaric-core`, never up on the app).
+pub use agaric_observability as observability;
 // `op` moved into `agaric-store` (#2621, wave S2). Re-exported so every
 // `crate::op::…` path (op_log, materializer, commands, …) resolves unchanged.
 pub use agaric_store::op;
@@ -787,7 +792,17 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // registry, so when observability is disabled the subscriber chain is
     // byte-identical to before.
     let obs_config = observability::ObservabilityConfig::from_env();
-    let obs = observability::init(&log_dir, &obs_config);
+    // #2878 — wire the materializer's process-global counter readers into the
+    // observability crate so its M6 observable counters can surface them without
+    // that leaf crate depending up on the materializer.
+    let obs = observability::init(
+        &log_dir,
+        &obs_config,
+        observability::MaterializerCounters {
+            sql_only_fallback: materializer::sql_only_fallback_count,
+            descendant_fanout_dropped: materializer::descendant_fanout_dropped_count,
+        },
+    );
     let obs_guard = obs.guard;
     let obs_enabled = !obs.layers.is_empty();
 

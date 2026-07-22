@@ -1,0 +1,112 @@
+# agaric-observability — OpenTelemetry backend observability for the
+# layered-workspace split (#2878, follow-up to #2621).
+#
+# The `src/observability/` module (issue #2110 M1a/M1b/M6 — trace + log +
+# metric pipelines that write to LOCAL FILES, off by default) was a cohesive,
+# relatively stable subsystem that pulled the entire heavy OpenTelemetry
+# dependency tree (`opentelemetry`, `opentelemetry_sdk`, `opentelemetry-otlp`,
+# `opentelemetry-appender-tracing`) into the 246K-LOC `agaric_lib` front-end.
+# Peeling it into its own leaf crate means (a) those deps + this module's
+# generic-heavy exporter/provider code only recompile when observability itself
+# changes, and (b) the four OTel crates leave the app crate's direct dependency
+# list entirely (nothing outside this module referenced them).
+#
+# The only outward coupling — `metrics::register_instruments` reading two
+# process-global materializer atoms — is inverted: the app wires the counter
+# readers in through `MaterializerCounters` at `init` time, so this crate
+# depends only on `agaric-core` (never up on the materializer/app). The `agaric`
+# crate re-exports this whole crate (`pub use agaric_observability as
+# observability;`) so every `crate::observability::…` path resolves unchanged.
+[package]
+name = "agaric-observability"
+version = "0.1.0"
+edition = "2024"
+# Keep in lockstep with ../Cargo.toml (the app crate) + rust-toolchain.toml.
+rust-version = "1.95.0"
+license = "GPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Versions/features mirror the app crate's `[dependencies]` exactly so cargo's
+# feature unification keeps a single build of each crate across the workspace.
+# `agaric-core` — the metrics/ingest paths use `text_utils::truncate_at_char_boundary`.
+agaric-core = { path = "../agaric-core", version = "0.1.0" }
+
+# The OpenTelemetry stack (features mirror ../Cargo.toml exactly). See the app
+# crate's [dependencies] comments for the rationale on each feature set; the
+# on-disk exporters, the loopback-only OTLP path, and the thread-based (no
+# rt-tokio) batch/periodic processors all moved here with the code.
+opentelemetry = { version = "0.32", features = ["logs", "metrics"] }
+opentelemetry_sdk = { version = "0.32", features = ["logs", "metrics"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["trace", "http-proto", "reqwest-blocking-client"] }
+opentelemetry-appender-tracing = "0.32"
+# The tracing↔OTel trace bridge (`tracing_opentelemetry::layer()`). Pins
+# opentelemetry 0.32 + opentelemetry_sdk 0.32, matching the versions above.
+tracing-opentelemetry = "0.33"
+
+tracing = { version = "0.1.44", features = ["attributes"] }
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+tracing-appender = "0.2.4"
+
+chrono = { version = "0.4.44", features = ["serde"] }
+# `propagation` adapts an `http::HeaderMap` to the OTel `Extractor`. Previously
+# reached via `tauri::http::HeaderMap` (a re-export of the `http` crate); the
+# direct dep keeps this crate free of `tauri` (the identical type — callers pass
+# the same `&http::HeaderMap` Tauri hands them). Pinned to the version Tauri
+# resolves so there is a single `http` build in the workspace.
+http = "1"
+# `otlp` builds the blocking reqwest client for the loopback OTLP exporter.
+reqwest = { version = "0.13.4", default-features = false, features = ["rustls", "json", "http2", "charset"] }
+# `config` validates the OTLP endpoint is loopback-only.
+url = "2"
+# `ingest`'s `FrontendSpan` / `FrontendSpanAttr` (the `ingest_otel_spans`
+# command arg types) derive `serde::Deserialize` + `specta::Type`.
+serde = { version = "1", features = ["derive"] }
+specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
+
+[dev-dependencies]
+# Test-only OTel feature: the InMemory{Span,Log,Metric}Exporters the pipeline
+# tests assert against. Cargo unifies this onto the normal `opentelemetry_sdk`
+# dep for test builds; the release build never sees the `testing` feature.
+opentelemetry_sdk = { version = "0.32", features = ["testing", "logs", "metrics"] }
+tempfile = "3.27.0"
+
+# Mirror the app crate's lint posture so clippy/rustc behave identically under
+# CI (the app crate declares these as package-level tables, not
+# `[workspace.lints]`, so we replicate them here — same pattern as the other
+# workspace members).
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+cast_possible_truncation = "warn"
+cast_sign_loss = "warn"
+cast_possible_wrap = "warn"
+fallible_impl_from = "deny"
+needless_pass_by_value = "warn"
+redundant_closure_for_method_calls = "warn"
+manual_let_else = "warn"
+large_futures = "warn"
+default_trait_access = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+uninlined_format_args = "warn"
+semicolon_if_nothing_returned = "warn"
+map_unwrap_or = "warn"
+cast_lossless = "warn"
+manual_string_new = "warn"
+single_match_else = "warn"
+needless_raw_string_hashes = "warn"
+range_plus_one = "warn"
+manual_assert = "warn"
+unnested_or_patterns = "warn"
+stable_sort_primitive = "warn"
+single_char_pattern = "warn"
+implicit_clone = "warn"
+bool_to_int_with_if = "warn"
+ignored_unit_patterns = "warn"
+explicit_iter_loop = "warn"
+if_not_else = "warn"
