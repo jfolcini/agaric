@@ -1556,13 +1556,21 @@ describe('PageBlockStore', () => {
       })
     })
 
-    it('rolls back on createBelow failure during splitBlock', async () => {
+    // #2913 — when the FIRST createBelow fails AFTER the first-line
+    // `edit(blockId, plan.first)` already committed the truncated `plan.first`
+    // DURABLY to the backend, the rollback must re-converge the BACKEND too, not
+    // just the store. The pre-fix code did a local-only `set()` restore, so the
+    // store showed `previousContent` while the DB held `plan.first` — the next
+    // load() (sync tick / navigation / blocks:changed) silently truncated the
+    // block. The fix issues a COMPENSATING `edit(blockId, previousContent)`.
+    it('#2913 — compensates the backend (edit) on first-createBelow failure, not a local-only restore', async () => {
       const block = makeBlock({ id: 'A', position: 0, content: 'original' })
       store.setState({ blocks: [block] })
 
       const previousContent = store.getState().blocks[0]?.content
 
-      // edit('A', 'line1') → invoke('edit_block', ...) — succeeds
+      // edit('A', 'line1') → invoke('edit_block', ...) — succeeds (commits the
+      // truncated first line DURABLY).
       mockedInvoke.mockResolvedValueOnce({
         id: 'A',
         block_type: 'text',
@@ -1573,11 +1581,65 @@ describe('PageBlockStore', () => {
       })
       // createBelow('A', 'line2') → invoke('create_block', ...) — rejects
       mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+      // COMPENSATING edit('A', 'original') → invoke('edit_block', ...) — succeeds,
+      // re-converging store AND backend on the full pre-split content.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'original',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
 
       await store.getState().splitBlock('A', 'line1\nline2')
 
-      // Original block should revert to its original content after the failed createBelow
+      // Non-tautology: a compensating BACKEND write must have been issued with the
+      // full pre-split content. The pre-fix local-only `set()` restore issued NO
+      // such edit_block call — this assertion fails against the old code.
+      expect(mockedInvoke).toHaveBeenCalledWith('edit_block', {
+        blockId: 'A',
+        toText: 'original',
+      })
+      // And the store re-converges on the restored content.
       expect(store.getState().blocks[0]?.content).toBe(previousContent)
+    })
+
+    // #2913 — if the COMPENSATING edit ALSO fails, fall back to an exact restore
+    // from the backend via load() (mirroring remove()'s failure fallback), so the
+    // store never lingers on content the backend does not hold.
+    it('#2913 — falls back to load() when the compensating edit also fails', async () => {
+      const block = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, content: 'original' })
+      store.setState({ blocks: [block] })
+
+      // edit('A', 'line1') succeeds; createBelow rejects; compensating edit rejects.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'line1',
+        parent_id: 'PAGE_1',
+        position: 0,
+        deleted_at: null,
+      })
+      mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+      mockedInvoke.mockRejectedValueOnce(new Error('compensating edit failed'))
+      // load() reconciles from the backend, which still holds the pre-split text.
+      mockedInvoke.mockResolvedValueOnce(
+        subtreeResp([
+          makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, content: 'original' }),
+        ]),
+      )
+
+      await store.getState().splitBlock('A', 'line1\nline2')
+
+      // Non-tautology: load() must have been invoked as the reconciling fallback —
+      // the pre-fix code never called load() on this path.
+      expect(mockedInvoke).toHaveBeenCalledWith(
+        'load_page_subtree',
+        expect.objectContaining({ rootBlockId: 'PAGE_1' }),
+      )
+      // The exact backend restore lands in the store.
+      expect(store.getState().blocks[0]?.content).toBe('original')
     })
 
     // #976 finding 7 — the `splitInProgress` re-entrancy guard is cleared in a
@@ -1601,10 +1663,20 @@ describe('PageBlockStore', () => {
         deleted_at: null,
       })
       mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+      // #2913 — the first-createBelow failure now issues a compensating
+      // edit('A','original') to re-converge the backend; mock it as succeeding.
+      mockedInvoke.mockResolvedValueOnce({
+        id: 'A',
+        block_type: 'text',
+        content: 'original',
+        parent_id: null,
+        position: 0,
+        deleted_at: null,
+      })
 
       await store.getState().splitBlock('A', 'line1\nline2')
-      // edit + failed create = 2 IPCs.
-      expect(mockedInvoke).toHaveBeenCalledTimes(2)
+      // edit + failed create + compensating edit = 3 IPCs.
+      expect(mockedInvoke).toHaveBeenCalledTimes(3)
 
       // Second split on the SAME block must run — if the guard were still set,
       // splitBlock would early-return and issue zero further IPCs.
@@ -1627,8 +1699,9 @@ describe('PageBlockStore', () => {
 
       await store.getState().splitBlock('A', 'x\ny')
 
-      // Two more IPCs (edit + create) fired → the guard was cleared on the error path.
-      expect(mockedInvoke).toHaveBeenCalledTimes(4)
+      // Two more IPCs (edit + create) fired → the guard was cleared on the error
+      // path. 3 (first split incl. compensating edit) + 2 = 5.
+      expect(mockedInvoke).toHaveBeenCalledTimes(5)
       const blocks = store.getState().blocks
       expect(blocks.map((b) => b.content)).toEqual(['x', 'y'])
     })

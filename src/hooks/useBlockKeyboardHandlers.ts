@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import type { RefObject } from 'react'
 import { useCallback, useEffect, useRef } from 'react'
 
+import { consumePendingSplit } from '@/components/block-tree/use-block-flush'
 import { parse } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
 import { pmEndOfFirstBlock } from '@/editor/types'
@@ -769,6 +770,32 @@ export function useBlockKeyboardHandlers({
       }
 
       handleFlush()
+      // #2914 — when `handleFlush` took the multi-block SPLIT path it published
+      // the in-flight `splitBlock` (which ALREADY creates the trailing sibling
+      // blocks) via `consumePendingSplit`. AWAIT it and focus the last block it
+      // produced instead of firing a parallel `createBelow` for an empty Enter
+      // block: the split's own chained createBelow calls and a concurrent
+      // createBelow would otherwise compute `siblingSlot` from overlapping
+      // pre-await snapshots (`splitInProgress` guards only re-entrant splits,
+      // not the concurrent create). The single-block (non-split) flush returns
+      // null here and falls through to the unchanged create-empty-block path.
+      const pendingSplit = consumePendingSplit(focusedBlockId)
+      if (pendingSplit) {
+        const lastSplitId = await pendingSplit
+        if (lastSplitId) {
+          // The last split block carries real content (the paste's final line),
+          // so — like the caret-split path — it is NOT added to
+          // justCreatedBlockIds (Escape must not auto-delete it as an empty stub).
+          setFocused(lastSplitId)
+          announce(t('announce.blockCreated'))
+        } else {
+          // Split failed (splitBlock rolled back + toasted) or produced no new
+          // block — re-mount the source editor so the user isn't stranded on an
+          // unmounted block.
+          rovingEditorRef.current.mount(focusedBlockId, savedContent)
+        }
+        return
+      }
       const newBlockId = await createBelow(focusedBlockId)
       if (newBlockId) {
         justCreatedBlockIds.current.add(newBlockId)
