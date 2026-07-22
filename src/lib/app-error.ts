@@ -122,6 +122,27 @@ export function validationCode(err: unknown): ValidationCode | null {
 }
 
 /**
+ * Unwrap a `commands.*` result, throwing on error to preserve the
+ * reject-based semantics of the legacy `invoke()` wrappers. Helper for
+ * the staged migration off the hand-written `@/lib/tauri` wrappers to the
+ * generated `@/lib/bindings` layer (#2927): component call sites — which
+ * cannot use the raw `invoke()` bypass, per the `no-raw-invoke` guard —
+ * adopt the `commands.foo(...).then(unwrap)` / `unwrap(await commands.foo())`
+ * convention instead of a bespoke wrapper.
+ *
+ * Lives here (the tauri-free IPC-error module) rather than in `tauri.ts`
+ * so a migrated file can drop its `@/lib/tauri` import entirely. Still
+ * re-exported from `@/lib/tauri` for backward compatibility with existing
+ * importers.
+ */
+export function unwrap<T>(
+  result: { status: 'ok'; data: T } | { status: 'error'; error: unknown },
+): T {
+  if (result.status === 'ok') return result.data
+  throw result.error
+}
+
+/**
  * Default retry schedule for {@link retryOnPoolBusy}.
  *
  * Three attempts, with delays measured from the start of each attempt:

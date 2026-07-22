@@ -43,6 +43,9 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { BugReport, LogFileEntry } from '@/lib/bindings'
 import {
   BUG_REPORT_TEMPLATE,
   buildGitHubIssueUrl,
@@ -56,8 +59,6 @@ import { downloadBlob } from '@/lib/export-graph'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { openUrl } from '@/lib/open-url'
-import type { BugReport, LogFileEntry } from '@/lib/tauri'
-import { collectBugReportMetadata, readLogsForReport } from '@/lib/tauri'
 
 interface BugReportDialogProps {
   open: boolean
@@ -105,7 +106,7 @@ export function BugReportDialog({
   // `setLoadingMetadata` flag stays external because it's tied to the
   // open/close lifecycle rather than the IPC itself.
   const { execute: executeCollectMetadata } = useIpcCommand<void, BugReport>({
-    call: () => collectBugReportMetadata(),
+    call: () => commands.collectBugReportMetadata().then(unwrap),
     module: MODULE,
     errorLogMessage: 'failed to collect metadata',
     logLevel: 'warn',
@@ -149,7 +150,9 @@ export function BugReportDialog({
 
     let cancelled = false
     setLoadingLogs(true)
-    readLogsForReport(redact)
+    commands
+      .readLogsForReport(redact)
+      .then(unwrap)
       .then((entries) => {
         if (!cancelled) setLogs(entries)
       })
@@ -234,7 +237,7 @@ export function BugReportDialog({
     true
   >({
     call: async ({ redact: r, metadata: md }) => {
-      const entries = await readLogsForReport(r)
+      const entries = unwrap(await commands.readLogsForReport(r))
       // #840: thread the redact toggle into the ZIP composer so metadata.json
       // scrubs device_id to the same sentinel the logs use when redaction is on.
       const blob = await buildReportZip(entries, md, r)
@@ -311,7 +314,7 @@ export function BugReportDialog({
   // aria-busy on the sub-dialog.
   const { execute: executePreview } = useIpcCommand<{ filename: string; redact: boolean }, string>({
     call: async ({ filename, redact: r }) => {
-      const entries = await readLogsForReport(r)
+      const entries = unwrap(await commands.readLogsForReport(r))
       const entry = entries.find((e) => e.name === filename)
       if (entry == null) {
         throw new Error(`log entry not found: ${filename}`)

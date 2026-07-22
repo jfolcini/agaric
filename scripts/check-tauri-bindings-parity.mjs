@@ -77,8 +77,23 @@ const KNOWN_UNWRAPPED = new Set([
   'beginGcalOauth',
   // (b) wrapped under a different name in tauri.ts — see the wrapper
   // body for the corresponding `commands.*` call.
-  'compactOpLogCmd', // wrapped as `compactOpLog`
   'listAttachmentsBatch', // wrapped as `getBatchAttachments`
+  // (d) #2927 — the diagnostics / op-log slice migrated off the hand-written
+  // `@/lib/tauri` wrappers to direct `commands.*` calls (unwrapped with the
+  // helper from `@/lib/app-error`). Their wrappers were deleted, so these
+  // bindings are now consumed directly at their (few) call sites:
+  //   - `compactOpLogCmd`         → CompactionCard
+  //   - `getCompactionStatus`     → CompactionCard
+  //   - `collectBugReportMetadata`→ BugReportDialog
+  //   - `readLogsForReport`       → BugReportDialog
+  //   - `getLogDir`               → dead (no caller); binding + mock kept
+  // Part of the staged retirement of `src/lib/tauri.ts` (see the
+  // `tauri-import-baseline` ratchet).
+  'compactOpLogCmd',
+  'getCompactionStatus',
+  'collectBugReportMetadata',
+  'readLogsForReport',
+  'getLogDir',
   // (a) #2110 M3b — OTel frontend-span ingest. Infrastructure command invoked
   // by the frontend tracer's IPC exporter, not by UI code, so it has no
   // throw-on-error / coercion ergonomics value; consumed directly.

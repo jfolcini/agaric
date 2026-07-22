@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
+import type { BugReport } from '@/lib/bindings'
 import {
   _internals,
   BUG_REPORT_TEMPLATE,
@@ -8,7 +9,6 @@ import {
   formatReportFields,
   truncateDeviceId,
 } from '@/lib/bug-report'
-import type { BugReport } from '@/lib/tauri'
 
 // #609: UUID-shaped, like the real per-device identifier — the issue body
 // must never embed it in full (the same value is scrubbed to

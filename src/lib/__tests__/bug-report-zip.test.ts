@@ -1,8 +1,8 @@
 import JSZip from 'jszip'
 import { describe, expect, it } from 'vitest'
 
+import type { BugReport, LogFileEntry } from '@/lib/bindings'
 import { bugReportZipFilename, buildReportZip } from '@/lib/bug-report-zip'
-import type { BugReport, LogFileEntry } from '@/lib/tauri'
 
 const METADATA: BugReport = {
   app_version: '0.1.0',
