@@ -9,14 +9,47 @@
  * - Callbacks re-render when store version bumps
  */
 
-import { act, renderHook } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import type { Mock } from 'vitest'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+// #2996 — `useTagClickHandler` now verifies an unresolved tag target via
+// `getBlock` before navigating (mirroring the `[[` block-link guard). Mock the
+// tauri wrapper and the notifier so the guard path is observable.
+vi.mock('@/lib/tauri', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/lib/tauri')>()),
+  getBlock: vi.fn(),
+}))
+vi.mock('@/lib/notify', () => ({
+  notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
+}))
+
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { notify } from '@/lib/notify'
+import { getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
+
+const mockedGetBlock = vi.mocked(getBlock)
+const mockedNotifyError = vi.mocked(notify.error)
+
+function makeBlockRow(overrides: Partial<Awaited<ReturnType<typeof getBlock>>>) {
+  return {
+    id: 'X',
+    block_type: 'tag',
+    content: null,
+    parent_id: null,
+    position: null,
+    deleted_at: null,
+    todo_state: null,
+    priority: null,
+    due_date: null,
+    scheduled_date: null,
+    page_id: null,
+    ...overrides,
+  } as Awaited<ReturnType<typeof getBlock>>
+}
 
 beforeEach(() => {
   useResolveStore.setState({
@@ -123,6 +156,10 @@ describe('useTagClickHandler', () => {
   let navigateToPage: Mock & ((pageId: string, title: string, blockId?: string | undefined) => void)
 
   beforeEach(() => {
+    // #2996 — reset the guard-path IPC/notifier mocks so per-test call-count
+    // assertions don't observe calls from a prior test.
+    mockedGetBlock.mockReset()
+    mockedNotifyError.mockReset()
     // Swap navigateToPage for a spy by calling setState — this triggers
     // Zustand subscriber notifications so hooks re-capture the new ref.
     navigateToPage = vi.fn() as typeof navigateToPage
@@ -147,25 +184,53 @@ describe('useTagClickHandler', () => {
     expect(navigateToPage).toHaveBeenCalledWith('TAG_X', 'project')
   })
 
-  it('falls back to "Tag" when the resolve cache has no entry', () => {
-    const { result } = renderHook(() => useTagClickHandler())
-    result.current('UNRESOLVED')
+  // #2996 — an unresolved tag is no longer navigated to blindly. The handler
+  // verifies existence via `getBlock` first; a live tag navigates with its
+  // fetched content (mirroring the `[[` block-link guard).
+  it('verifies an uncached tag via getBlock and navigates when it exists', async () => {
+    mockedGetBlock.mockResolvedValueOnce(makeBlockRow({ id: 'UNCACHED', content: 'realtag' }))
 
-    expect(navigateToPage).toHaveBeenCalledWith('UNRESOLVED', 'Tag')
+    const { result } = renderHook(() => useTagClickHandler())
+    result.current('UNCACHED')
+
+    await waitFor(() => expect(navigateToPage).toHaveBeenCalledWith('UNCACHED', 'realtag'))
+    expect(mockedGetBlock).toHaveBeenCalledWith('UNCACHED')
+    expect(mockedNotifyError).not.toHaveBeenCalled()
   })
 
-  it('picks up freshly cached tag names after a store update', () => {
-    const { result } = renderHook(() => useTagClickHandler())
-    // First call without cache entry — falls back to 'Tag'.
-    result.current('LATE')
-    expect(navigateToPage).toHaveBeenLastCalledWith('LATE', 'Tag')
+  // #2996 — guard: a pill pointing at a tag that does not exist must NOT
+  // navigate anywhere; it surfaces the not-found notice instead.
+  it('does NOT navigate and notifies when the tag target does not exist', async () => {
+    mockedGetBlock.mockRejectedValueOnce(new Error('not found'))
 
-    // Cache arrives later; hook re-renders so cacheRef stays fresh.
+    const { result } = renderHook(() => useTagClickHandler())
+    result.current('GHOST')
+
+    await waitFor(() => expect(mockedNotifyError).toHaveBeenCalledTimes(1))
+    expect(navigateToPage).not.toHaveBeenCalled()
+  })
+
+  // #2996 — guard: a tag that exists but was deleted must not navigate either.
+  it('does NOT navigate and notifies when the tag target is deleted', async () => {
+    mockedGetBlock.mockResolvedValueOnce(
+      makeBlockRow({ id: 'DELETED', content: 'gone', deleted_at: 1753142400000 }),
+    )
+
+    const { result } = renderHook(() => useTagClickHandler())
+    result.current('DELETED')
+
+    await waitFor(() => expect(mockedNotifyError).toHaveBeenCalledTimes(1))
+    expect(navigateToPage).not.toHaveBeenCalled()
+  })
+
+  it('takes the synchronous fast path (no getBlock) for a cached, live tag', () => {
     act(() => {
       useResolveStore.getState().set('LATE', 'late-tag', false)
     })
+    const { result } = renderHook(() => useTagClickHandler())
     result.current('LATE')
     expect(navigateToPage).toHaveBeenLastCalledWith('LATE', 'late-tag')
+    expect(mockedGetBlock).not.toHaveBeenCalled()
   })
 
   it('returns a stable callback across re-renders when nothing changes', () => {

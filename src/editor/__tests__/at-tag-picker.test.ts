@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { AtTagPicker } from '@/editor/extensions/at-tag-picker'
 import { TagRef } from '@/editor/extensions/tag-ref'
+import type { PickerItem } from '@/editor/SuggestionList'
 
 describe('AtTagPicker', () => {
   it('creates an extension with the correct name', () => {
@@ -559,5 +560,83 @@ describe('AtTagPicker real-editor chain result', () => {
     expect($from.parentOffset).toBe(paragraph.content.size)
     expect(editor.state.selection.from).toBe(doc.content.size - 1)
     expect(editor.state.selection.empty).toBe(true)
+  })
+})
+
+// ── #2998: toolbar @ button opens the picker ──────────────────────────
+//
+// The toolbar "insert tag" button (see `lib/toolbar-config.ts` →
+// `createRefsAndBlocks`) inserts the `@` trigger (prepending a space when the
+// caret is not already after whitespace, since the picker's
+// `allowedPrefixes: [' ', ' ', '\n']` gate would otherwise ignore a
+// mid-word `@`). It must OPEN the floating tag menu — the same search/create
+// popup that TYPING `@` opens — not merely type the glyph. The TipTap
+// Suggestion plugin re-detects a trigger match on any transaction (including a
+// programmatic `insertContent`), so inserting the trigger with a valid prefix
+// drives the picker's `items` lookup. This pins that behaviour so the button
+// can never silently regress to "types a bare character".
+
+describe('AtTagPicker toolbar-trigger integration (#2998)', () => {
+  let editor: Editor | undefined
+
+  afterEach(() => {
+    editor?.destroy()
+    editor = undefined
+  })
+
+  function buildEditor(items: (query: string) => PickerItem[], initialText: string): Editor {
+    return new Editor({
+      element: document.createElement('div'),
+      extensions: [
+        Document,
+        Paragraph,
+        Text,
+        TagRef.configure({ resolveName: (id) => `Tag:${id}` }),
+        AtTagPicker.configure({ items }),
+      ],
+      content: {
+        type: 'doc',
+        content: [
+          {
+            type: 'paragraph',
+            content: initialText ? [{ type: 'text', text: initialText }] : [],
+          },
+        ],
+      },
+    })
+  }
+
+  // Replicates the toolbar button action: prepend a space when the previous
+  // char is not already a valid picker prefix, then insert `@`.
+  function clickInsertTagButton(ed: Editor): void {
+    const { from } = ed.state.selection
+    const prev = from > 0 ? ed.state.doc.textBetween(from - 1, from) : ''
+    const needsSpace = prev !== '' && prev !== ' ' && prev !== '\u00A0' && prev !== '\n'
+    ed.chain()
+      .focus()
+      .insertContent(needsSpace ? ' @' : '@')
+      .run()
+  }
+
+  it('opens the picker (drives the items lookup) when clicked mid-word', async () => {
+    const items = vi.fn((_query: string) => [{ id: 'T1', label: 'work', isCreate: false }])
+    editor = buildEditor(items, 'foo')
+    editor.commands.focus('end')
+
+    clickInsertTagButton(editor)
+
+    // The suggestion plugin fired the picker's items lookup → the floating
+    // search/create menu is open, exactly as typing `@` would do.
+    await vi.waitFor(() => expect(items).toHaveBeenCalled())
+  })
+
+  it('opens the picker when clicked at the start of an empty block', async () => {
+    const items = vi.fn((_query: string) => [{ id: 'T2', label: 'home', isCreate: false }])
+    editor = buildEditor(items, '')
+    editor.commands.focus('start')
+
+    clickInsertTagButton(editor)
+
+    await vi.waitFor(() => expect(items).toHaveBeenCalled())
   })
 })
