@@ -31,7 +31,7 @@ import { notify } from '@/lib/notify'
 import { computeSelectionRoots } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import type { PageBlockState } from '@/stores/page-blocks'
-import { storeOwnsBlock } from '@/stores/page-blocks'
+import { addOwnedBlockListener, storeOwnsBlock } from '@/stores/page-blocks'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -119,21 +119,20 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
 
   // ── Keyboard shortcut for collapse toggle (`collapseExpand`, default
   // Mod+. — routed through matchesShortcutBinding so rebinds work, #724) ──
-  useEffect(() => {
-    const handleCollapseKey = (e: KeyboardEvent) => {
-      if (matchesShortcutBinding(e, 'collapseExpand')) {
-        // #713 — only the tree that owns the focused block may act, and
-        // `preventDefault()` must stay inside the handled branch so the
-        // chord passes through when this tree doesn't handle it.
-        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
-        if (!hasChildrenSet.has(focusedBlockId)) return
+  useEffect(
+    () =>
+      addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e, ownedBlockId) => {
+        if (!matchesShortcutBinding(e, 'collapseExpand')) return
+        // #713 — the ownership gate is enforced by addOwnedBlockListener; only
+        // the tree that owns the focused block reaches here, and
+        // `preventDefault()` stays inside the handled branch so the chord
+        // passes through when this tree doesn't handle it.
+        if (!hasChildrenSet.has(ownedBlockId)) return
         e.preventDefault()
-        toggleCollapse(focusedBlockId)
-      }
-    }
-    document.addEventListener('keydown', handleCollapseKey)
-    return () => document.removeEventListener('keydown', handleCollapseKey)
-  }, [focusedBlockId, pageStore, hasChildrenSet, toggleCollapse])
+        toggleCollapse(ownedBlockId)
+      }),
+    [focusedBlockId, pageStore, hasChildrenSet, toggleCollapse],
+  )
 
   // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────
   // #713 note: these fire only when NO block is focused, so there is no
@@ -179,25 +178,22 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // store owns the anchoring selected block may extend (and preventDefault);
   // a non-owning tree falls through so the chord isn't double-handled.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    // #713 — only act when this tree's store owns the anchoring block (the last
+    // selected). Otherwise another tree owns the selection; addOwnedBlockListener
+    // falls through WITHOUT preventDefault so it isn't claimed here. A null
+    // anchor (empty selection — the old `selectedBlockIds.length === 0` guard)
+    // fails the gate too, so the handler never runs.
+    const anchorId = selectedBlockIds.at(-1) ?? null
+    return addOwnedBlockListener(pageStore, anchorId, 'keydown', (e) => {
       // Editor active → browser owns Shift+Arrow text selection.
       if (focusedBlockId) return
       if (e.defaultPrevented) return
       if (!e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return
       const direction = e.key === 'ArrowDown' ? 'down' : e.key === 'ArrowUp' ? 'up' : null
       if (direction === null) return
-      // Need a selection to anchor on (block-select mode entry point).
-      if (selectedBlockIds.length === 0) return
-      // #713 — only act when this tree's store owns the anchoring block (the
-      // last selected). Otherwise another tree owns the selection; fall
-      // through WITHOUT preventDefault so it isn't claimed here.
-      const anchorId = selectedBlockIds.at(-1)
-      if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
       e.preventDefault()
       extendSelection(direction, visibleIds)
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
+    })
   }, [focusedBlockId, pageStore, selectedBlockIds, visibleIds, extendSelection])
 
   // ── Keyboard shortcut: toggle block selection (#1733 — Ctrl+Space) ──
@@ -210,20 +206,19 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // the tree whose store owns the anchoring block may handle (and
   // preventDefault); other trees fall through so the chord isn't double-handled.
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => {
+    // #713 ownership gate mirrors extendSelection: only the tree whose store
+    // owns the anchoring block (the last selected) may handle (and
+    // preventDefault); other trees fall through so the chord isn't
+    // double-handled. A null anchor (empty selection) fails the gate too.
+    const anchorId = selectedBlockIds.at(-1) ?? null
+    return addOwnedBlockListener(pageStore, anchorId, 'keydown', (e, ownedAnchorId) => {
       // Editor active → leave the chord to the editor / browser.
       if (focusedBlockId) return
       if (e.defaultPrevented) return
       if (!matchesShortcutBinding(e, 'toggleBlockSelectionKbd')) return
-      // Need a selection to define the anchor (block-select mode entry point).
-      if (selectedBlockIds.length === 0) return
-      const anchorId = selectedBlockIds.at(-1)
-      if (anchorId == null || !storeOwnsBlock(pageStore, anchorId)) return
       e.preventDefault()
-      toggleSelected(anchorId)
-    }
-    document.addEventListener('keydown', handler)
-    return () => document.removeEventListener('keydown', handler)
+      toggleSelected(ownedAnchorId)
+    })
   }, [focusedBlockId, pageStore, selectedBlockIds, toggleSelected])
 
   // ── Keyboard shortcuts: block cut / copy / paste (#913) ─────────────
@@ -238,6 +233,12 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // on blocks IN ITS OWN store. Copy/cut filter the selection to ids this store
   // owns; paste anchors on an owned block. A non-owning tree returns WITHOUT
   // side effects and WITHOUT `preventDefault()` so the chord passes through.
+  //
+  // #2903 — NOT routed through `addOwnedBlockListener`: the gate here is a
+  // FILTER over the SET of selected ids this store owns (copy/cut act on all of
+  // them, not a single focused/anchor block), so there is no one block id for
+  // the helper's single-block gate. The `state.blocksById.has(id)` filter is the
+  // same ownership predicate `storeOwnsBlock` uses, applied per id.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // Only in block-select mode: no block is being edited. A focused block
@@ -326,6 +327,12 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // the editor DOM has focus.  This document-level handler covers the case
   // where the user clicked elsewhere on the page and presses Escape — the
   // editor is still mounted but not focused.
+  //
+  // #2903 — NOT routed through `addOwnedBlockListener`: the gate here is on the
+  // LIVE store focus (`fid` re-read from `useBlockStore` at dispatch, because
+  // the point of this path is that the render prop / editor DOM focus has
+  // diverged), not the render-time `focusedBlockId` the helper captures. Keeping
+  // it raw preserves the live-read gate.
   useEffect(() => {
     const handleUnfocusedEscape = (e: KeyboardEvent) => {
       if (e.key !== 'Escape' || e.defaultPrevented) return
@@ -355,6 +362,11 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   //   - no block is focused in the editor (Escape would blur the editor)
   //   - no multi-selection is active (Escape clears selection)
   //   - no popup/overlay is open (suggestion popups handle their own Escape)
+  //
+  // #2903 — NOT routed through `addOwnedBlockListener`: zoom-out Escape fires
+  // with NO block focused, so there is no owned block to gate on. The tie-break
+  // is `isLastInteractedTree` (#774), a different mechanism than the
+  // `storeOwnsBlock` gate the helper wraps.
   useEffect(() => {
     const handleZoomOutEscape = (e: KeyboardEvent) => {
       if (e.defaultPrevented) return
@@ -389,82 +401,78 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   // zoomed (matching Logseq/Workflowy). A zoomed leaf shows an empty view, so
   // BlockTree seeds a first child under the zoom root (`useBlockZoomEmptySeed`)
   // — keyboard zoom-in must not pre-reject leaves or that seeding never runs.
-  useEffect(() => {
-    const handleZoomInKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented) return
-      if (!matchesShortcutBinding(e, 'zoomIn')) return
-      // #713 — ownership gate keeps the flush/zoom side effects provably
-      // scoped to the tree whose store owns the focused block.
-      if (!storeOwnsBlock(pageStore, focusedBlockId)) return
-      e.preventDefault()
-      // Flush any pending editor edits before navigating so the zoom
-      // doesn't strand an unsaved buffer (mirrors the drag/zoom-out paths).
-      handleFlush()
-      setFocused(null)
-      zoomIn(focusedBlockId)
-    }
-    document.addEventListener('keydown', handleZoomInKey)
-    return () => document.removeEventListener('keydown', handleZoomInKey)
-  }, [focusedBlockId, pageStore, zoomIn, handleFlush, setFocused])
+  useEffect(
+    () =>
+      addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e, ownedBlockId) => {
+        if (e.defaultPrevented) return
+        if (!matchesShortcutBinding(e, 'zoomIn')) return
+        // #713 — the gate (addOwnedBlockListener) keeps the flush/zoom side
+        // effects provably scoped to the tree whose store owns the focused block.
+        e.preventDefault()
+        // Flush any pending editor edits before navigating so the zoom
+        // doesn't strand an unsaved buffer (mirrors the drag/zoom-out paths).
+        handleFlush()
+        setFocused(null)
+        zoomIn(ownedBlockId)
+      }),
+    [focusedBlockId, pageStore, zoomIn, handleFlush, setFocused],
+  )
 
   // ── Keyboard shortcut for task cycling (`cycleTaskState`, default
   // Ctrl+Enter / Cmd+Enter — routed through matchesShortcutBinding, #724) ──
-  useEffect(() => {
-    const handleTaskKey = (e: KeyboardEvent) => {
-      if (matchesShortcutBinding(e, 'cycleTaskState')) {
+  useEffect(
+    () =>
+      addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e, ownedBlockId) => {
+        if (!matchesShortcutBinding(e, 'cycleTaskState')) return
         // #713 — without this gate every mounted tree (journal week/month)
         // fired its own `handleToggleTodo`, each computing the next state
         // from its OWN store (where the block may not exist → `current =
         // null` → 'TODO'), racing N conflicting `set_todo_state` IPCs.
-        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+        // addOwnedBlockListener now enforces it structurally.
         e.preventDefault()
-        handleToggleTodo(focusedBlockId)
-      }
-    }
-    document.addEventListener('keydown', handleTaskKey)
-    return () => document.removeEventListener('keydown', handleTaskKey)
-  }, [focusedBlockId, pageStore, handleToggleTodo])
+        handleToggleTodo(ownedBlockId)
+      }),
+    [focusedBlockId, pageStore, handleToggleTodo],
+  )
 
   // ── Keyboard shortcut: open date picker (configurable) ───────────────
-  useEffect(() => {
-    const handleDateShortcut = (e: KeyboardEvent) => {
-      if (matchesShortcutBinding(e, 'openDatePicker')) {
-        // #713 — gate BEFORE preventDefault: a non-owning tree must neither
-        // open its own dialog nor swallow the chord.
-        if (!storeOwnsBlock(pageStore, focusedBlockId)) return
+  useEffect(
+    () =>
+      addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e) => {
+        if (!matchesShortcutBinding(e, 'openDatePicker')) return
+        // #713 — the gate (addOwnedBlockListener) runs BEFORE preventDefault: a
+        // non-owning tree neither opens its own dialog nor swallows the chord.
         e.preventDefault()
         datePickerCursorPos.current = rovingEditor.editor?.state.selection.$anchor.pos ?? undefined
         setDatePickerMode('date')
         setDatePickerOpen(true)
-      }
-    }
-    document.addEventListener('keydown', handleDateShortcut)
-    return () => document.removeEventListener('keydown', handleDateShortcut)
-  }, [
-    focusedBlockId,
-    pageStore,
-    rovingEditor.editor,
-    datePickerCursorPos,
-    setDatePickerMode,
-    setDatePickerOpen,
-  ])
+      }),
+    [
+      focusedBlockId,
+      pageStore,
+      rovingEditor.editor,
+      datePickerCursorPos,
+      setDatePickerMode,
+      setDatePickerOpen,
+    ],
+  )
 
   // ── Keyboard shortcut: heading level (configurable) ──────────────────
-  useEffect(() => {
-    const handleHeadingShortcut = (e: KeyboardEvent) => {
-      for (let level = 1; level <= 6; level++) {
-        if (matchesShortcutBinding(e, `heading${level}`)) {
-          // #713 — a non-owning tree's slash-command path would route into
-          // `applyContentEdit` against ITS idle editor (content-overwrite
-          // risk); only the owning tree may handle the chord.
-          if (!storeOwnsBlock(pageStore, focusedBlockId)) return
-          e.preventDefault()
-          handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
-          return
+  useEffect(
+    () =>
+      addOwnedBlockListener(pageStore, focusedBlockId, 'keydown', (e) => {
+        for (let level = 1; level <= 6; level++) {
+          if (matchesShortcutBinding(e, `heading${level}`)) {
+            // #713 — a non-owning tree's slash-command path would route into
+            // `applyContentEdit` against ITS idle editor (content-overwrite
+            // risk); the gate (addOwnedBlockListener) confines the chord to the
+            // owning tree.
+            e.preventDefault()
+            handleSlashCommand({ id: `h${level}`, label: `Heading ${level}` })
+            return
+          }
         }
-      }
-    }
-    document.addEventListener('keydown', handleHeadingShortcut)
-    return () => document.removeEventListener('keydown', handleHeadingShortcut)
-  }, [focusedBlockId, pageStore, handleSlashCommand])
+      }),
+    [focusedBlockId, pageStore, handleSlashCommand],
+  )
 }
