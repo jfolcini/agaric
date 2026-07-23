@@ -16,10 +16,26 @@
 //
 // Selector policy (all statically validated against component source):
 //   - `[data-slot="sidebar"]`               ui/sidebar.tsx (the nav shell)
-//   - `aria/<Label>` scoped to the sidebar  AppSidebar.tsx renderNavItem
-//     (accessible name === the i18n nav label: Journal / Tags / Pages /
-//     Settings) — scoping to the sidebar avoids the like-named QuickAccessBar
-//     chip, mirroring smoke.e2e.ts.
+//   - `.//button[.//span[normalize-space(.)="<Label>"]]` scoped to the sidebar
+//     AppSidebar.tsx renderNavItem renders each nav destination as
+//     `<SidebarMenuButton><icon/><span>{label}</span>`, i.e. a `<button>`
+//     (ui/sidebar.tsx SidebarMenuButton: `Comp = 'button'`) whose only label
+//     `<span>` holds the i18n nav label (Journal / Tags / Pages / Settings).
+//
+//     WHY XPATH, NOT `aria/<Label>` (the #155 first-live-run defect): WDIO's
+//     accessible-name selector matches document-wide and does NOT reliably
+//     restrict to the parent element's subtree even when chained off
+//     `sidebar.$(...)`. The Journal VIEW renders an `<h1>` whose text is ALSO
+//     `t('sidebar.journal')` -> "Journal" (JournalPage.tsx:193 passes it as the
+//     FeaturePageHeader `title`; feature-page-header.tsx:91 emits
+//     `<h1 data-slot="feature-page-header-title">{title}</h1>`), so the nav
+//     button and the page heading share the accessible name "Journal". A bare
+//     `aria/Journal` could therefore resolve the heading (or the like-named
+//     QuickAccessBar chip) instead of the nav button — the click no-ops and
+//     `aria-current="page"` never appears. XPath's leading `.` IS honoured by
+//     WDIO relative to the sidebar root, so this only ever matches the nav
+//     button. (The nav label spans contain no child elements, so
+//     `normalize-space(.)` equals the exact label text.)
 //   - `aria-current="page"`                 AppSidebar.tsx renderNavItem sets
 //     it on the active nav button (spread onto the DOM <button> by
 //     SidebarMenuButton `{...props}`). This is a VIEW-AGNOSTIC readiness
@@ -38,8 +54,21 @@ export const APP_READY_TIMEOUT = 60_000
 export const NAV_TIMEOUT = 30_000
 export const ACTION_TIMEOUT = 30_000
 
-/** Primary nav destinations addressable by their accessible name. */
+/** Primary nav destinations addressable by their sidebar label. */
 export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Settings'
+
+/**
+ * Resolve a primary sidebar nav `<button>` by its exact visible label, using a
+ * genuinely subtree-scoped XPath (leading `.` — honoured by WDIO relative to
+ * the sidebar root). Matches ONLY the nav button whose label `<span>` is exactly
+ * `label` (AppSidebar.tsx renderNavItem), never the like-named Journal `<h1>`
+ * heading or a QuickAccessBar chip. See the selector-policy header for the full
+ * rationale behind not using `aria/<label>` here.
+ */
+function sidebarNavButton(label: NavLabel) {
+  const sidebar = $('[data-slot="sidebar"]')
+  return sidebar.$(`.//button[.//span[normalize-space(.)="${label}"]]`)
+}
 
 /**
  * Wait until the app has booted against the real backend: the desktop sidebar
@@ -49,7 +78,7 @@ export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Settings'
 export async function waitForAppReady(): Promise<void> {
   const sidebar = $('[data-slot="sidebar"]')
   await sidebar.waitForExist({ timeout: APP_READY_TIMEOUT })
-  const journalNav = sidebar.$('aria/Journal')
+  const journalNav = sidebarNavButton('Journal')
   await journalNav.waitForDisplayed({ timeout: NAV_TIMEOUT })
 }
 
@@ -60,13 +89,20 @@ export async function waitForAppReady(): Promise<void> {
  * `currentView === item.id` — a robust, view-agnostic signal that survives the
  * async reprojection the real backend performs on every view change.
  *
+ * Idempotent: if the target is ALREADY the active view (the button already
+ * reports `aria-current="page"` — e.g. the default boot view is Journal), the
+ * click is skipped. This avoids a spurious no-op click on an already-active
+ * destination and makes an early `navigateTo('Journal')` cheap.
+ *
  * The nav is re-queried inside the sidebar on each call so the helper needs no
  * caller-passed element; the sidebar `[data-slot="sidebar"]` node is stable
  * (React keys the nav buttons by id, so `aria-current` updates in place).
  */
 export async function navigateTo(label: NavLabel): Promise<void> {
-  const sidebar = $('[data-slot="sidebar"]')
-  const nav = sidebar.$(`aria/${label}`)
+  const nav = sidebarNavButton(label)
+  await nav.waitForDisplayed({ timeout: NAV_TIMEOUT })
+  // Tolerate the target already being active — skip the click if so.
+  if ((await nav.getAttribute('aria-current')) === 'page') return
   await nav.waitForClickable({ timeout: NAV_TIMEOUT })
   await nav.click()
   await browser.waitUntil(async () => (await nav.getAttribute('aria-current')) === 'page', {

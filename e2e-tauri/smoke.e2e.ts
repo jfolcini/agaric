@@ -29,10 +29,16 @@ describe('Agaric real-backend smoke (#155)', () => {
     const sidebar = await $('[data-slot="sidebar"]')
     await sidebar.waitForExist({ timeout: 60_000 })
 
-    // 2. The Journal nav button (accessible name exactly "Journal") confirms the
-    //    nav rendered. `aria/` matches by accessible name; scoping the follow-up
-    //    interactions to the sidebar avoids the QuickAccessBar's like-named chip.
-    const journalNav = await sidebar.$('aria/Journal')
+    // 2. The Journal nav button confirms the nav rendered. Resolve it with a
+    //    subtree-scoped XPath (leading `.`, honoured by WDIO relative to the
+    //    sidebar) matching the `<button>` whose label `<span>` is exactly
+    //    "Journal" (AppSidebar.tsx renderNavItem). We deliberately do NOT use
+    //    `aria/Journal`: WDIO's accessible-name selector matches document-wide
+    //    and would also match the Journal VIEW's `<h1>` (feature-page-header.tsx
+    //    renders the `t('sidebar.journal')` title as an `<h1>` — same accessible
+    //    name as the nav button) or the QuickAccessBar chip. This was the #155
+    //    first-live-run nav defect; see helpers.ts for the full rationale.
+    const journalNav = await sidebar.$('.//button[.//span[normalize-space(.)="Journal"]]')
     await journalNav.waitForDisplayed({ timeout: 30_000 })
 
     // 3. Add a block via the Journal daily view's "Add block" action. The
@@ -57,7 +63,18 @@ describe('Agaric real-backend smoke (#155)', () => {
     await browser.keys(['Enter'])
     await browser.keys(['Escape'])
 
-    // 6. Assert the block persisted and rendered: a committed (non-focused)
+    // 6. Diagnostics probe (#155 harness hardening): before the strict marker
+    //    assert, log how many editor vs. committed (static) block rows exist.
+    //    This makes a failure at step 7 self-diagnosing — 0 static rows means
+    //    the block never committed through the live backend; a static row
+    //    present but without our marker means "committed, text mismatch".
+    const staticBlocks = await $$('[data-testid="block-static"]')
+    const editorBlocks = await $$('[data-testid="block-editor"]')
+    console.warn(
+      `[smoke probe] block-static=${staticBlocks.length} block-editor=${editorBlocks.length} marker=${JSON.stringify(marker)}`,
+    )
+
+    // 7. Assert the block persisted and rendered: a committed (non-focused)
     //    block renders as StaticBlock (`data-testid="block-static"`) now
     //    containing our marker text. This only passes if the real backend
     //    accepted the create op and the frontend reprojected it.

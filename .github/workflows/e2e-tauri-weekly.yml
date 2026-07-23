@@ -133,3 +133,16 @@ jobs:
             **/*.log
           if-no-files-found: ignore
           retention-days: 14
+
+      - name: Upload failure diagnostics (screenshots)
+        # On-failure artifacts written by wdio.conf.ts's afterTest hook (issue
+        # #155): per-test screenshots under e2e-tauri/artifacts/. The distilled
+        # page-source/testid/URL/sidebar excerpts are logged to stdout (captured
+        # in the run log). SHA pinned byte-identical to the logs step above.
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-tauri-diagnostics
+          path: e2e-tauri/artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
