@@ -60,7 +60,19 @@ describe('Agaric real-backend edit persistence (#3085)', () => {
     await navigateTo('Pages')
     await navigateTo('Journal')
 
-    // 5. The combined, edited text must still be present — proof the edit was
+    // 5. Diagnostics probe (#155 harness hardening): before the strict combined
+    //    text assert, log how many committed (static) vs. editor block rows the
+    //    reprojected Journal holds. A failure below is then self-diagnosing — 0
+    //    static rows means the edit never round-tripped through the live
+    //    backend; a static row present without the combined text means the edit
+    //    committed but the text diverged.
+    const staticBlocks = await $$('[data-testid="block-static"]')
+    const editorBlocks = await $$('[data-testid="block-editor"]')
+    console.warn(
+      `[block-edit-persist probe] block-static=${staticBlocks.length} block-editor=${editorBlocks.length} expected=${JSON.stringify(combined)}`,
+    )
+
+    // 6. The combined, edited text must still be present — proof the edit was
     //    durably written, not just an in-memory reprojection.
     const persisted = blockStaticByMarker(combined)
     await persisted.waitForDisplayed({ timeout: NAV_TIMEOUT })

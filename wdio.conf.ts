@@ -22,6 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process'
+import { mkdirSync } from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -53,6 +54,21 @@ declare global {
       }
     }
   }
+}
+
+// On-failure diagnostics land here; the weekly workflow uploads this directory
+// as a CI artifact (`if: failure()`) so a red run is diagnosable without a
+// local WebKit driver.
+const ARTIFACTS_DIR = path.resolve(rootDir, 'e2e-tauri', 'artifacts')
+
+// Diagnostics excerpts are capped so a giant real-backend DOM can't flood the
+// spec reporter; the screenshot + uploaded artifacts carry the full picture.
+const DIAG_EXCERPT_CAP = 3000
+
+/** Make a string safe as a single path segment for a screenshot filename. */
+function sanitizeForFilename(value: string): string {
+  const cleaned = value.replace(/[^a-zA-Z0-9._-]+/g, '-').replace(/^-+|-+$/g, '')
+  return (cleaned || 'failure').slice(0, 120)
 }
 
 let tauriDriver: ChildProcess | undefined
@@ -155,5 +171,84 @@ export const config: WebdriverIO.Config = {
 
   afterSession: () => {
     killTauriDriver()
+  },
+
+  // -------------------------------------------------------------------------
+  // On-failure diagnostics (issue #155 harness hardening).
+  //
+  // The weekly lane runs once, headless, on CI with no local WebKit driver to
+  // reproduce a failure — so a red run must carry its own evidence. On any
+  // failing test this captures: (a) a screenshot, (b) a DISTILLED page-source
+  // excerpt (the set of `data-testid`s present + text fragments around every
+  // "wdio" marker — NOT the full HTML), and (c) the current URL and the
+  // sidebar's innerHTML. Each capture is independently try/caught: a
+  // diagnostics failure must never mask the real test failure or abort teardown.
+  // -------------------------------------------------------------------------
+  afterTest: async (test, _context, result) => {
+    if (result.passed) return
+
+    const label = sanitizeForFilename(`${test.parent ?? 'suite'}-${test.title ?? 'test'}`)
+
+    // (a) Screenshot.
+    try {
+      mkdirSync(ARTIFACTS_DIR, { recursive: true })
+      const file = path.join(ARTIFACTS_DIR, `${label}.png`)
+      await browser.saveScreenshot(file)
+      console.warn(`[afterTest] saved screenshot: ${file}`)
+    } catch (error) {
+      console.warn(`[afterTest] screenshot capture failed: ${String(error)}`)
+    }
+
+    // (c) Current URL.
+    try {
+      console.warn(`[afterTest] url=${await browser.getUrl()}`)
+    } catch (error) {
+      console.warn(`[afterTest] getUrl failed: ${String(error)}`)
+    }
+
+    // (b) Distilled page source — testids present + marker fragments only.
+    let source = ''
+    try {
+      source = await browser.getPageSource()
+    } catch (error) {
+      console.warn(`[afterTest] getPageSource failed: ${String(error)}`)
+    }
+    if (source) {
+      try {
+        const testids = [
+          ...new Set([...source.matchAll(/data-testid="([^"]*)"/g)].map((m) => m[1] ?? '')),
+        ]
+        console.warn(
+          `[afterTest] data-testids present (${testids.length}): ${testids.join(', ').slice(0, DIAG_EXCERPT_CAP)}`,
+        )
+      } catch (error) {
+        console.warn(`[afterTest] testid scan failed: ${String(error)}`)
+      }
+      try {
+        // The specs' markers all start with "wdio", so text around every "wdio"
+        // occurrence shows whether the marked block/tag rendered at all —
+        // distinguishing "never committed" from "committed but text mismatch".
+        const fragments = [
+          ...new Set([...source.matchAll(/.{0,60}wdio.{0,60}/gis)].map((m) => m[0] ?? '')),
+        ]
+        const joined = fragments.join(' | ').slice(0, DIAG_EXCERPT_CAP)
+        console.warn(`[afterTest] marker fragments: ${joined || '(none — no "wdio" text in DOM)'}`)
+      } catch (error) {
+        console.warn(`[afterTest] marker scan failed: ${String(error)}`)
+      }
+    }
+
+    // (c) Sidebar innerHTML (capped) — the nav is where 4 specs failed.
+    try {
+      const sidebar = await $('[data-slot="sidebar"]')
+      if (await sidebar.isExisting()) {
+        const html = await sidebar.getHTML()
+        console.warn(`[afterTest] sidebar HTML (capped): ${html.slice(0, DIAG_EXCERPT_CAP)}`)
+      } else {
+        console.warn('[afterTest] sidebar [data-slot="sidebar"] not present')
+      }
+    } catch (error) {
+      console.warn(`[afterTest] sidebar HTML capture failed: ${String(error)}`)
+    }
   },
 }
