@@ -354,6 +354,26 @@ describe('CodeLanguageSelector', () => {
       expect(mockUpdateAttributes).toHaveBeenCalledWith('codeBlock', { language: 'typescript' })
       expect(onClose).toHaveBeenCalledTimes(1)
     })
+
+    it('Escape on the filter input closes the picker without applying a language (#3001)', async () => {
+      const user = userEvent.setup()
+      const onClose = vi.fn()
+      render(
+        <CodeLanguageSelector
+          editor={makeEditor()}
+          isCodeBlock
+          currentLanguage=""
+          onClose={onClose}
+        />,
+      )
+
+      const filter = screen.getByRole('textbox', { name: t('toolbar.codeBlockLanguage') })
+      await user.type(filter, '{Escape}')
+
+      expect(onClose).toHaveBeenCalledTimes(1)
+      expect(mockUpdateAttributes).not.toHaveBeenCalled()
+      expect(mockToggleCodeBlock).not.toHaveBeenCalled()
+    })
   })
 
   describe('custom language input (#215 P2-10)', () => {

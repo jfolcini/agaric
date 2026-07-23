@@ -419,7 +419,7 @@ describe('FormattingToolbar', () => {
       expect(screen.getByRole('button', { name: t('toolbar.turnInto') })).toBeInTheDocument()
     })
 
-    it('lists block-type transforms as menuitemradio entries', () => {
+    it('lists non-variant block-type transforms as menuitemradio entries', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       // The Popover mock always renders content, so the menu is in the DOM.
       const menu = screen.getByRole('menu', { name: t('toolbar.turnInto') })
@@ -427,10 +427,22 @@ describe('FormattingToolbar', () => {
         'contextMenu.turnIntoType.bulletList',
         'contextMenu.turnIntoType.numberedList',
         'contextMenu.turnIntoType.quote',
-        'contextMenu.turnIntoType.code',
-        'contextMenu.turnIntoType.callout',
       ]) {
         expect(within(menu).getByRole('menuitemradio', { name: t(key) })).toBeInTheDocument()
+      }
+    })
+
+    it('renders code / callout as variant-picker disclosures, not radios (#3001)', () => {
+      render(<FormattingToolbar editor={makeEditor()} />)
+      const menu = screen.getByRole('menu', { name: t('toolbar.turnInto') })
+      for (const key of ['contextMenu.turnIntoType.code', 'contextMenu.turnIntoType.callout']) {
+        // These rows expand an inline searchable picker rather than applying a
+        // default variant one-shot, so they are `menuitem` disclosures with a
+        // popup, not `menuitemradio`.
+        expect(within(menu).queryByRole('menuitemradio', { name: t(key) })).not.toBeInTheDocument()
+        const row = within(menu).getByRole('menuitem', { name: t(key) })
+        expect(row).toHaveAttribute('aria-haspopup', 'menu')
+        expect(row).toHaveAttribute('aria-expanded')
       }
     })
 
