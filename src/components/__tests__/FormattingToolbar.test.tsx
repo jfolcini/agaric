@@ -436,12 +436,13 @@ describe('FormattingToolbar', () => {
       render(<FormattingToolbar editor={makeEditor()} />)
       const menu = screen.getByRole('menu', { name: t('toolbar.turnInto') })
       for (const key of ['contextMenu.turnIntoType.code', 'contextMenu.turnIntoType.callout']) {
-        // These rows expand an inline searchable picker rather than applying a
-        // default variant one-shot, so they are `menuitem` disclosures with a
-        // popup, not `menuitemradio`.
+        // These rows expand an inline searchable picker (a labelled
+        // `role="dialog"`) rather than applying a default variant one-shot, so
+        // they are `menuitem` disclosures with `aria-haspopup="dialog"`, not
+        // `menuitemradio`.
         expect(within(menu).queryByRole('menuitemradio', { name: t(key) })).not.toBeInTheDocument()
         const row = within(menu).getByRole('menuitem', { name: t(key) })
-        expect(row).toHaveAttribute('aria-haspopup', 'menu')
+        expect(row).toHaveAttribute('aria-haspopup', 'dialog')
         expect(row).toHaveAttribute('aria-expanded')
       }
     })
