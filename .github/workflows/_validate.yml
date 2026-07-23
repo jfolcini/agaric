@@ -11,6 +11,8 @@ name: Validate (prek-equivalent)
 # fanned out from a `detect-changes` per-category classifier that is
 # fail-closed (an unrecognized or undiffable path runs everything):
 #   - detect-changes — classifies the diff into docs_only/frontend/backend/ci.
+#   - verify-version-agreement — always-on 5-way version mutual-agreement
+#                        check (#2975); no path gating, no docs-only skip.
 #   - lint            — the full prek hook suite (clippy, cargo-deny,
 #                        cargo-audit, zizmor, sqlx-prepare, …); skipped on a
 #                        provably docs-only diff.
@@ -248,6 +250,46 @@ jobs:
             echo "backend=$backend"
             echo "ci=$ci"
           } >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
+  # verify-version-agreement (#2975) — the 5-way version mutual-agreement
+  # check, always-on (no detect-changes gating, no docs-only fast path).
+  # Extracted from release.yml's `verify-version` job, which only runs on a
+  # tag push — so version drift between the manifests was previously caught
+  # mid-release instead of at PR time. This job reuses the EXACT SAME
+  # extraction expressions and runs them on every PR/push, but checks only
+  # that the five manifests agree with EACH OTHER — there is no tag yet at
+  # PR time, so the tag-equality half of release.yml's check does not apply
+  # here and is intentionally NOT duplicated. release.yml's `verify-version`
+  # job is unchanged and still separately asserts the tag matches the
+  # manifests at release time; this job does not replace it.
+  # ---------------------------------------------------------------------------
+  verify-version-agreement:
+    runs-on: ubuntu-24.04
+    # Trivial jq / grep / awk over the 5 manifests + fail-fast comparison —
+    # same budget as release.yml's verify-version job.
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify the 5 version manifests mutually agree
+        run: |
+          set -euo pipefail
+          CONF=$(jq -r .version src-tauri/tauri.conf.json)
+          CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | cut -d'"' -f2)
+          PKG=$(jq -r .version package.json)
+          PKG_LOCK=$(jq -r .version package-lock.json)
+          CARGO_LOCK=$(awk '/^name = "agaric"$/{getline; print; exit}' src-tauri/Cargo.lock | cut -d'"' -f2)
+          echo "conf=$CONF cargo=$CARGO cargo.lock=$CARGO_LOCK pkg=$PKG pkg.lock=$PKG_LOCK"
+          fail=0
+          for v in "$CARGO" "$CARGO_LOCK" "$PKG" "$PKG_LOCK"; do
+            if [ "$v" != "$CONF" ]; then fail=1; fi
+          done
+          if [ "$fail" -ne 0 ]; then
+            echo "::error::Version drift — tauri.conf.json=$CONF, Cargo.toml=$CARGO, Cargo.lock=$CARGO_LOCK, package.json=$PKG, package-lock.json=$PKG_LOCK. Bump all of them in lockstep."
+            exit 1
+          fi
 
   # ---------------------------------------------------------------------------
   # lint — prek hook suite (excluding vitest/cargo-test/no-commit-to-branch),
@@ -1565,7 +1607,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -1630,6 +1672,10 @@ jobs:
             gate_fail "detect-changes did not succeed (result=$classifier) — failing gate (fail-closed); pinning frontend=backend=true, docs_only=false."
           fi
           echo "resolved: docs_only=$docs_only frontend=$frontend backend=$backend"
+
+          # verify-version-agreement is always-on (#2975) — no category gates
+          # it, so a skip is never acceptable.
+          check_job verify-version-agreement "false"
 
           # ---- Per-category acceptance --------------------------------------
           # lint is CROSS-CUTTING: it runs on any non-docs change, so its skip
