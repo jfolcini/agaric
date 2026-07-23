@@ -18,6 +18,88 @@ use crate::ulid::{AttachmentId, BlockId};
 
 use super::*;
 
+/// Maximum stored attachment display-filename length, in bytes.
+///
+/// 255 bytes is the near-universal single-path-component cap on mainstream
+/// filesystems (ext4, APFS, NTFS all limit one name component to 255).
+/// Capping here keeps a stored `filename` writable as a real path component
+/// by any downstream consumer (graph-export ZIP `assets/<filename>`, a future
+/// on-disk export / reveal-in-folder).
+const MAX_ATTACHMENT_FILENAME_BYTES: usize = 255;
+
+/// Validate and normalize a user-supplied attachment *display* filename,
+/// rejecting anything that could be interpreted as a path once the stored
+/// `attachments.filename` is joined to build a filesystem or ZIP path (#2989).
+///
+/// The bytes always live at the backend-generated `fs_path`
+/// (`attachments/<ULID>`), never at a path derived from `filename` — but
+/// several consumers DO join `filename` to a base dir to produce a portable,
+/// human-readable path (the graph-export ZIP's `assets/<filename>`, a future
+/// on-disk export / reveal-in-folder). A traversal-shaped `filename`
+/// (`../../evil.sh`) stored here is therefore a latent path-traversal /
+/// Zip-Slip primitive. #2988 hardened only the ZIP writer; this closes the
+/// root cause — the bad name being STORED at all.
+///
+/// This **rejects** (returns [`AppError::Validation`]) rather than silently
+/// sanitizing, because both call sites (`add_attachment_inner`,
+/// `rename_attachment_inner`) are LOCAL, user-initiated commands: a clear
+/// error is better UX than a surprising silent rewrite, and rejecting here
+/// stops THIS device from ever *originating* a traversal-shaped op into the
+/// op-log (whence it would replicate to peers).
+///
+/// NOTE (defense-in-depth follow-up): the sync/replay APPLY path
+/// (`agaric_engine::apply::apply_rename_attachment_tx` /
+/// `apply_add_attachment_tx`, and the `db::recovery` replay loop) writes a
+/// peer's filename straight to the row with no validation — that is the true
+/// hostile-peer surface. Hardening it must *sanitize* rather than reject,
+/// since a reject on apply would wedge the whole replay pipeline on one
+/// hostile op (a DoS). It is out of scope for this local-command fix.
+///
+/// Returns the trimmed filename on success (leading/trailing whitespace is
+/// normalized away). Interior spaces, dots, and unicode letters
+/// (`report 2024.pdf`, `my.file.pdf`, `résumé.pdf`) pass through unchanged.
+fn validate_attachment_filename(filename: &str) -> Result<String, AppError> {
+    let trimmed = filename.trim();
+
+    if trimmed.is_empty() {
+        return Err(AppError::validation(
+            "attachment filename cannot be empty".into(),
+        ));
+    }
+
+    if trimmed.len() > MAX_ATTACHMENT_FILENAME_BYTES {
+        return Err(AppError::validation(format!(
+            "attachment filename exceeds the maximum of {MAX_ATTACHMENT_FILENAME_BYTES} bytes"
+        )));
+    }
+
+    // Path separators (POSIX `/` and Windows `\`) let the name span directory
+    // levels once joined to a base path — the core traversal vector.
+    if trimmed.contains('/') || trimmed.contains('\\') {
+        return Err(AppError::validation(
+            "attachment filename may not contain path separators ('/' or '\\')".into(),
+        ));
+    }
+
+    // Control characters (NUL, newlines, …): never valid in a real filename
+    // and a classic path-truncation / injection vector.
+    if trimmed.chars().any(char::is_control) {
+        return Err(AppError::validation(
+            "attachment filename may not contain control characters".into(),
+        ));
+    }
+
+    // `.`, `..`, or any all-dots name resolves to the current/parent directory
+    // (or is otherwise non-representable) when used as a path component.
+    if trimmed.chars().all(|c| c == '.') {
+        return Err(AppError::validation(
+            "attachment filename may not consist solely of dots".into(),
+        ));
+    }
+
+    Ok(trimmed.to_string())
+}
+
 /// Add a file attachment to a block.
 ///
 /// Validates the block exists and is not deleted, checks file size and MIME
@@ -68,6 +150,12 @@ pub async fn add_attachment_inner(
              application/json, application/zip, application/x-tar"
         )));
     }
+
+    // #2989 (SECURITY): reject/normalize a path-traversal-shaped display
+    // filename so a traversal name (`../../evil.sh`) can never be STORED — the
+    // stored `filename` is later joined to build human-readable export/ZIP
+    // paths. `filename` is shadowed with the trimmed, validated value.
+    let filename = validate_attachment_filename(&filename)?;
 
     // Reject `fs_path` values that would escape the app data dir
     // (absolute paths, `..` traversal, drive prefixes). The full path
@@ -556,9 +644,13 @@ pub async fn rename_attachment_inner(
     };
     let old_filename = row.filename;
 
-    if new_filename.is_empty() {
-        return Err(AppError::validation("filename cannot be empty".into()));
-    }
+    // #2989 (SECURITY): validate/normalize the new display filename, rejecting
+    // path-traversal shapes (`../../evil.sh`, `..\evil`, `.`/`..`/dots-only,
+    // separators, control chars, over-length) — the stored `filename` is later
+    // joined to build human-readable export/ZIP paths. Replaces the old
+    // empty-only check. `new_filename` is shadowed with the validated value so
+    // the op payload and the UPDATE both record the trimmed form.
+    let new_filename = validate_attachment_filename(&new_filename)?;
 
     let payload = OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {
         attachment_id: attachment_id.clone(),

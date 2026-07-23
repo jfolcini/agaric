@@ -3968,6 +3968,197 @@ async fn rename_attachment_updates_filename() {
     mat.shutdown();
 }
 
+/// #2989 (SECURITY): `rename_attachment_inner` must reject path-traversal /
+/// otherwise-unsafe display filenames so a traversal name (`../../evil.sh`)
+/// can never be STORED (the stored `filename` is later joined to build
+/// human-readable export/ZIP paths). Pre-fix the command only checked
+/// `is_empty()`, so every `bad` case below was accepted — this test fails
+/// against the pre-fix code (non-tautology). Legitimate names (spaces, dots,
+/// unicode) must still pass unchanged.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rename_attachment_rejects_traversal_filenames() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/photo.png"), vec![0u8; 16]).unwrap();
+
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "photo.png".into(),
+        "image/png".into(),
+        16,
+        "attachments/photo.png".into(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Every unsafe shape must be rejected with a Validation error.
+    let over_length = "a".repeat(256); // 256 bytes > 255 cap
+    let bad_names: &[&str] = &[
+        "../../evil.sh", // POSIX traversal
+        "..\\evil.sh",   // Windows traversal (backslash separator)
+        "sub/dir/x.png", // interior separator
+        ".",             // current dir
+        "..",            // parent dir
+        "...",           // dots-only
+        "   ",           // whitespace-only -> empty after trim
+        "",              // empty
+        "evil\0.sh",     // NUL / control char (path truncation vector)
+        over_length.as_str(),
+    ];
+
+    for bad in bad_names {
+        let res =
+            rename_attachment_inner(&pool, DEV, &mat, att.id.clone(), (*bad).to_string()).await;
+        assert!(
+            matches!(res, Err(AppError::Validation { .. })),
+            "rename to {bad:?} must be rejected with a Validation error, got {res:?}"
+        );
+
+        // A rejected rename must NOT mutate the stored filename.
+        let current = sqlx::query_scalar!("SELECT filename FROM attachments WHERE id = ?", att.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            current, "photo.png",
+            "rejected rename to {bad:?} must leave the stored filename unchanged"
+        );
+    }
+
+    // Legitimate names still succeed and are stored verbatim (interior spaces,
+    // interior dots, unicode letters).
+    for good in ["report 2024.pdf", "my.file.pdf", "résumé.pdf"] {
+        rename_attachment_inner(&pool, DEV, &mat, att.id.clone(), good.to_string())
+            .await
+            .unwrap_or_else(|e| panic!("legitimate rename to {good:?} must succeed, got {e:?}"));
+        settle(&mat).await;
+        let current = sqlx::query_scalar!("SELECT filename FROM attachments WHERE id = ?", att.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            current, good,
+            "legitimate filename {good:?} must persist unchanged"
+        );
+    }
+
+    // Leading/trailing whitespace is normalized away (interior spaces kept).
+    rename_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        att.id.clone(),
+        "  spaced name.pdf  ".into(),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    let trimmed = sqlx::query_scalar!("SELECT filename FROM attachments WHERE id = ?", att.id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        trimmed, "spaced name.pdf",
+        "leading/trailing whitespace should be trimmed, interior spaces kept"
+    );
+
+    mat.shutdown();
+}
+
+/// #2989 (SECURITY): `add_attachment_inner` must likewise reject a
+/// traversal-shaped display filename at creation time (pre-fix it applied NO
+/// filename check at all, so this fails against pre-fix code — non-tautology).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_rejects_traversal_filename() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/blob.png"), vec![0u8; 16]).unwrap();
+
+    // Traversal-shaped DISPLAY filename (the fs_path itself is a valid,
+    // backend-shaped path — this isolates the filename check).
+    let res = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "../../evil.sh".into(),
+        "image/png".into(),
+        16,
+        "attachments/blob.png".into(),
+        None,
+    )
+    .await;
+    assert!(
+        matches!(res, Err(AppError::Validation { .. })),
+        "add with a traversal display filename must be rejected, got {res:?}"
+    );
+
+    // No row should have been inserted for the rejected add.
+    let count: i64 = sqlx::query_scalar!(
+        "SELECT COUNT(*) FROM attachments WHERE block_id = ?",
+        block.id
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(count, 0, "rejected add must not insert an attachments row");
+
+    // A legitimate filename at the same fs_path succeeds and stores verbatim.
+    let ok = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "diagram final.png".into(),
+        "image/png".into(),
+        16,
+        "attachments/blob.png".into(),
+        None,
+    )
+    .await
+    .expect("legitimate add must succeed");
+    assert_eq!(ok.filename, "diagram final.png");
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_attachment_removes_row() {
     let (pool, _dir) = test_pool().await;
