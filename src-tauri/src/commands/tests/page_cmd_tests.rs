@@ -1098,6 +1098,156 @@ async fn export_page_markdown_dangling_block_ref_marked_unresolved_2963() {
 }
 
 // ======================================================================
+// Structured inline query export + roundtrip (#2968)
+// ======================================================================
+//
+// A structured inline query block stores its filter as
+// `{{query v2:<base64url(JSON FilterExpr)>}}`. Pre-#2968 export emitted that
+// opaque token verbatim: unreadable in any external tool, and any tag/page
+// ULIDs embedded in the encoded FilterExpr dangled after a re-import (they
+// named the OLD vault's blocks). Export now rewrites it to a human-readable,
+// roundtrip-safe `{{query v2n:<base64url(names)> <description>}}` form, and
+// import remaps the embedded NAMES back to the new vault's ids.
+
+/// #2968 — a structured inline query whose FilterExpr embeds a TAG ULID exports
+/// human-readably (no opaque `v2:` payload, no dangling ULID; the resolved tag
+/// NAME appears in plaintext) AND survives a full export → re-import roundtrip:
+/// the re-imported query resolves to the NEW vault's freshly-created tag, not a
+/// dangling old-vault id.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_inline_query_tag_roundtrips_2968() {
+    use crate::commands::pages::inline_query_md::{InlineQuerySpec, decode_v2, encode_v2};
+    use crate::filters::{FilterExpr, FilterPrimitive};
+
+    let (pool, _dir) = test_pool().await;
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
+    const QBLK: &str = "01AAAAAAAAAAAAAAAAAAAABLK1";
+    const TAG_ULID: &str = "01TAG00000000000000000TAG1";
+
+    // A tag block the query references by its (embedded) ULID.
+    insert_block(&pool, TAG_ULID, "tag", "rust", None, Some(1)).await;
+    insert_block(&pool, SRC_PAGE, "page", "Query Page", None, Some(1)).await;
+
+    // The stored inline-query content: a single `Tag` leaf over the tag ULID.
+    let spec = InlineQuerySpec {
+        filter: FilterExpr::Leaf {
+            primitive: FilterPrimitive::Tag {
+                tag: TAG_ULID.to_string(),
+            },
+        },
+        table: false,
+    };
+    let stored_payload = encode_v2(&spec).unwrap();
+    let query_content = format!("{{{{query {stored_payload}}}}}");
+    insert_block(
+        &pool,
+        QBLK,
+        "content",
+        &query_content,
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+
+    // Human-readable: the resolved tag NAME appears in plaintext.
+    assert!(
+        md.contains("tag:rust"),
+        "the query's tag ULID must resolve to a readable name, got: {md}"
+    );
+    assert!(
+        md.contains("v2n:"),
+        "expected the names-carrying marker, got: {md}"
+    );
+    // NON-TAUTOLOGY: pre-fix, export emitted the ORIGINAL opaque `v2:` payload
+    // verbatim (this exact base64 string). It must be gone.
+    assert!(
+        !md.contains(&stored_payload),
+        "the opaque v2 payload must NOT survive export, got: {md}"
+    );
+    // The raw embedded tag ULID must never appear.
+    assert!(
+        !md.contains(TAG_ULID),
+        "the embedded tag ULID must NOT leak into export, got: {md}"
+    );
+
+    // Re-import into a fresh vault. Delete the seed rows first so the only
+    // matching blocks afterwards are the freshly imported ones.
+    sqlx::query("DELETE FROM blocks WHERE id IN (?, ?, ?)")
+        .bind(TAG_ULID)
+        .bind(SRC_PAGE)
+        .bind(QBLK)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let _result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md,
+        Some("QueryRoundtrip.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    // The importer created a fresh `rust` tag in the new vault.
+    let new_tag_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'tag' \
+         AND content = 'rust' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_ne!(
+        new_tag_id, TAG_ULID,
+        "the new vault's tag must be a fresh id"
+    );
+
+    // The re-imported query block is back in the canonical `v2:` stored form,
+    // and its embedded ref now targets the NEW vault's tag — not dangling.
+    let imported_content: String = sqlx::query_scalar(
+        "SELECT content FROM blocks WHERE block_type = 'content' \
+         AND content LIKE '{{query %' AND deleted_at IS NULL",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        !imported_content.contains(TAG_ULID),
+        "the old-vault tag ULID must not survive the roundtrip, got: {imported_content}"
+    );
+    let payload = imported_content
+        .strip_prefix("{{query ")
+        .and_then(|s| s.strip_suffix("}}"))
+        .expect("canonical query token shape");
+    let decoded = decode_v2(payload).expect("re-imported payload decodes to a v2 spec");
+    match decoded.filter {
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::Tag { tag },
+        } => assert_eq!(
+            tag, new_tag_id,
+            "the query must remap to the new vault's tag id (functional roundtrip)"
+        ),
+        other => panic!("unexpected re-imported filter: {other:?}"),
+    }
+
+    mat.shutdown();
+}
+
+// ======================================================================
 // Block-scoped attachment export (#2961)
 // ======================================================================
 //

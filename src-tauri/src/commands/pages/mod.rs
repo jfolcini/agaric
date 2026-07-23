@@ -9,6 +9,7 @@
 
 pub(crate) mod aliases;
 pub(crate) mod bibliography;
+pub(crate) mod inline_query_md;
 pub(crate) mod links;
 pub(crate) mod listing;
 pub(crate) mod markdown;
