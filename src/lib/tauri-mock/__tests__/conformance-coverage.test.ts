@@ -255,8 +255,10 @@ const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]>
   ['set_property', 'reserved-key-routes-to-column'],
   ['delete_property', 'reserved-key-clears-column'],
 
-  // ── Not yet covered ──
-  // ['create_block', 'tag-space-scope'],               // TODO(#3081): do NOT uncomment — #3081/#3092 ships no conformance fixture (the harness's `assign_all_to_test_space` masks the space-less orphan and the snapshot omits `space_id`, so create→space-scope can't be pinned via a fixture). Coverage lives in the Rust integration test + the mock round-trip; REMOVE this tuple when #3081 lands.
+  // create_block/tag-space-scope (#3081, shipped in #3092) is deliberately NOT a
+  // tuple: the harness cannot express it (assign_all_to_test_space masks space-less
+  // orphans; the snapshot omits space_id). Its coverage is the Rust integration test
+  // (tag_integration.rs *_3081) + the mock round-trip tests.
 ]
 
 // ---------------------------------------------------------------------------
