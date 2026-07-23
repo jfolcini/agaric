@@ -236,6 +236,46 @@ describe('enexNotesToUnits', () => {
   it('returns an empty list for no notes', () => {
     expect(enexNotesToUnits([])).toEqual([])
   })
+
+  it('#2899 — converts attachment bytes lazily inside load(), not up front for every note', async () => {
+    // Track WHEN each attachment's `bytes` is actually read (a getter, not a
+    // plain field, so the read is observable). The pre-#2899 code did
+    // `note.attachments.map((a) => ({ ..., bytes: Array.from(a.bytes) }))`
+    // INSIDE the `enexNotesToUnits` `.map()` callback (i.e. at unit-build
+    // time, before any `load()` runs) — that would read `a.bytes` for every
+    // note immediately, so the `expect(accessed).toEqual([])` assertion
+    // right after `enexNotesToUnits(...)` below would fail against the old
+    // code (it would already read `['a.png', 'b.png']`).
+    const accessed: string[] = []
+    const makeAttachment = (path: string, raw: number[]): EnexNote['attachments'][number] => {
+      const bytes = new Uint8Array(raw)
+      return {
+        path,
+        mime: 'application/octet-stream',
+        get bytes() {
+          accessed.push(path)
+          return bytes
+        },
+      }
+    }
+    const notes = [
+      note('Alpha', [makeAttachment('a.png', [1, 2, 3])]),
+      note('Beta', [makeAttachment('b.png', [4, 5, 6])]),
+    ]
+
+    const units = enexNotesToUnits(notes)
+    // Building the units must not have touched any attachment's bytes yet.
+    expect(accessed).toEqual([])
+
+    await units[0]?.load()
+    // Only the FIRST note's attachment was materialized so far — the
+    // second note's bytes are still untouched (peak memory is O(one note),
+    // not O(all notes)).
+    expect(accessed).toEqual(['a.png'])
+
+    await units[1]?.load()
+    expect(accessed).toEqual(['a.png', 'b.png'])
+  })
 })
 
 describe('jexNotesToUnits', () => {
@@ -268,5 +308,37 @@ describe('jexNotesToUnits', () => {
     expect(loaded?.vaultFiles).toHaveLength(1)
     expect(loaded?.vaultFiles?.[0]?.path).toBe('pic.png')
     expect(loaded?.vaultFiles?.[0]?.bytes).toEqual([1, 2, 3])
+  })
+
+  it('#2899 — converts resource bytes lazily inside load(), not up front for every note', async () => {
+    // Same proof as the `.enex` producer above: the pre-#2899 code read
+    // every note's `a.bytes` inside the `jexNotesToUnits` `.map()` callback
+    // (unit-build time), so `accessed` would already be non-empty right
+    // after `jexNotesToUnits(...)` against that code.
+    const accessed: string[] = []
+    const makeResource = (path: string, raw: number[]): JexNote['attachments'][number] => {
+      const bytes = new Uint8Array(raw)
+      return {
+        path,
+        mime: 'application/octet-stream',
+        get bytes() {
+          accessed.push(path)
+          return bytes
+        },
+      }
+    }
+    const notes = [
+      note('Alpha', [makeResource('a.png', [1, 2, 3])]),
+      note('Beta', [makeResource('b.png', [4, 5, 6])]),
+    ]
+
+    const units = jexNotesToUnits(notes)
+    expect(accessed).toEqual([])
+
+    await units[0]?.load()
+    expect(accessed).toEqual(['a.png'])
+
+    await units[1]?.load()
+    expect(accessed).toEqual(['a.png', 'b.png'])
   })
 })
