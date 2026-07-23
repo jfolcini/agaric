@@ -152,6 +152,12 @@ cd src-tauri && cargo nextest run -E 'test(/_(376|606|708)$/)'
 
 Runs the per-migration round-trip / data-preservation tests. These live in `db::tests` (`src-tauri/src/db/tests.rs`) — and a few siblings under `snapshot`/`spaces` — and follow the `_<issue>` suffix convention (`_376` = #376/PR #394 round-trip + cascade-preservation harness, `_606` = #606 satellite-preservation, `_708` = #708 spaces-registry). There is no module or test named `migration_tests`; the suffix-regex filter is what actually selects them. A new migration needs a corresponding test fixture that inserts representative data + reads it back (use a matching `_<issue>` suffix so this filter keeps catching it); lock the schema's external contract early.
 
+## Migration → mock: update the JS mock in the same PR (#3084)
+
+The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained **second implementation** of the schema and command behavior. When a migration changes a table or column the mock reads or writes — a promoted native column, a renamed/dropped table, a new FK — the mock **silently keeps modeling the old schema** and drifts from the backend. This is exactly the tag-space bug: the mock modeled a retired `block_properties(key='space')` row after the tag moved to a native column, and the tag vanished in production.
+
+Rule: **a migration that touches a mock-referenced table/column must update the mock in the SAME PR** (ref #3084), and add/adjust a `conformance/fixtures/*.json` fixture so the #763 harness pins the new behavior. The [`conformance-coverage.test.ts`](../../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) ratchet (#3083) enforces that mutating commands stay fixture-covered; the mock-parity + conformance suites are what turn a forgotten mock update red. See root [`AGENTS.md` § Testing invariants (anti-drift)](../../AGENTS.md#testing-invariants-anti-drift).
+
 ## Cross-references
 
 - Root [`AGENTS.md`](../../AGENTS.md) §Key Architectural Invariants — invariant #1 (op log is append-only).

@@ -59,6 +59,7 @@
       "command": "purge_block"
     }
   ],
+  "scenarios": ["hard-delete-removes-row"],
   "seed": {
     "blocks": [
       {

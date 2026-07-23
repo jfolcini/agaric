@@ -126,6 +126,7 @@
       "command": "delete_property"
     }
   ],
+  "scenarios": ["delete-one-of-many-properties"],
   "seed": {
     "blocks": [
       {

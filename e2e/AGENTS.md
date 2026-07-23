@@ -21,6 +21,15 @@ E2E runs against the Vite dev server, not the Tauri runtime. `src/lib/tauri-mock
 
 Coverage includes `list_page_links` (scans seed data for `[[ULID]]` links), `import_markdown` (heading parsing + block splitting), template seed data with variable blocks. Exports `SEED_IDS` for deterministic references and `resetMock()` for cleanup.
 
+## The mock is a contract, not a convenience
+
+`src/lib/tauri-mock/` is a hand-maintained **second implementation** of the Rust backend. It silently drifts (create_block page_id, purge_block cascade, reserved-key property routing, the tag-space bug all shipped past a mock that looked fine), so treat it as a contract that must be proven equivalent to the real backend — not a rendering shim.
+
+- **Every state-mutating handler must be pinned by a conformance fixture.** The #763 harness (`conformance/fixtures/*.json`) replays op sequences against a backend-authored `expected`, asserted by BOTH `src-tauri/src/command_integration_tests/conformance.rs` (real backend) and `src/lib/tauri-mock/__tests__/conformance.test.ts` (mock). [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083) is the ratchet: a new mutating command fails the suite unless it gains a fixture or a justified allowlist waiver.
+- **Conformance workflow.** Add a fixture to `conformance/fixtures/` (seed + ops + optional `scenarios` string tags). NEVER hand-write `expected` — the backend authors it: `CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'` (from `src-tauri/`) writes the backend-derived snapshot back into the JSON. Then run `npx vitest run src/lib/tauri-mock` — a red `conformance.test.ts` means the mock diverges; fix `handlers.ts` (never change the backend to match the mock; a subtle, unsafe-to-mirror divergence is left as a `// DRIFT(#763)` skip + issue).
+- **Critical round-trips deserve a real-backend smoke.** The Playwright specs here run against the **mock**, so they cannot catch a mock↔backend divergence on their own — that is the conformance harness's job. A browser-driven **real-Tauri** smoke harness (tauri-driver + WebdriverIO) is scoped but **not yet shipped** (#155, see `docs/session-log/session-949-155-e2e-tauri-harness-scope.md`); real FTS / query / cursor round-trips are covered today at the command-inner boundary in `src-tauri/src/commands/tests/`. Do not assume a Playwright green proves backend parity.
+- **The tag-space failure.** The mock modeled a **retired** schema (`block_properties(key='space')`); a UI test asserted `setProperty` was called and passed, while the tag vanished in the real backend. A conformance fixture that re-queries the settled tag state is what catches this class.
+
 ## Patterns
 
 ```ts

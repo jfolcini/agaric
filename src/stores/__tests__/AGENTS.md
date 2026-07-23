@@ -60,6 +60,10 @@ function renderWithStore(ui: React.ReactElement) {
 
 Pure state-machine stores like `navigation.test.ts` need no mocks — `setState` + `getState` only.
 
+## Assert durable, re-queried effect — never call-shape (anti-drift)
+
+For a store action that **mutates backend state**, `expect(invoke).toHaveBeenCalledWith(…)` is insufficient — it proves the store *asked* for the change, not that the change *persisted correctly*. The tauri mock is a second implementation that drifts from the real backend, so a call-shape-only assertion passes against a mock that does the wrong thing. Re-query and assert the resulting state: after the action, re-`load()` / read the projection and assert the observable result (the surviving row, the typed column, the cleared field). The tag-space bug shipped exactly here — a test asserted `setProperty(key: 'space')` was called, never re-queried, and the tag silently vanished in production (mock modeled the retired `block_properties(key='space')` schema). See root [`AGENTS.md` § Testing invariants (anti-drift)](../../../AGENTS.md#testing-invariants-anti-drift).
+
 ## Undo / redo store
 
 Per-page state in `Map<string, PageUndoState>` keyed by page ID. Each page tracks `undoDepth`, `redoStack`, `redoGroupSizes` independently.

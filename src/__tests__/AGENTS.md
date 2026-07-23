@@ -87,6 +87,14 @@ Property categories:
 
 RTL `cleanup()` registered manually in `afterEach` (vitest globals disabled).
 
+## Assert durable, re-queried effect — never call-shape (anti-drift)
+
+A test for a **mutation** must assert the durable, re-queried resulting state — not merely that a mock function was called. `expect(invoke).toHaveBeenCalledWith('set_property', …)` proves the frontend *asked* for a change; it says nothing about whether the change *persisted correctly*. The mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation that silently drifts from the real Rust backend, so a call-shape-only assertion passes against a mock that does the wrong thing.
+
+- **Persist, then re-query, then assert.** Drive the action, then read the state back (`getProperty` / `getBlock` / re-fetch the store) and assert the observable result — the surviving edge, the typed column, the tombstone — not the call.
+- **Cautionary example (the tag-space bug).** A test asserted `setProperty` was called with `key: 'space'` and stopped there. It never re-queried, so it never noticed the mock modeled a **retired** schema (`block_properties(key='space')`); in production the tag routed to a native column and the tag vanished. A re-query assertion (`getTagsForBlock` after the add) would have caught it.
+- **Behavioral parity is enforced by the #763 conformance harness** (`conformance/fixtures/*.json`, asserted by both the real backend and the mock) and ratcheted by [`src/lib/tauri-mock/__tests__/conformance-coverage.test.ts`](../lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083): a new state-mutating command needs a fixture or a justified waiver. See root [`AGENTS.md` § Testing invariants (anti-drift)](../../AGENTS.md#testing-invariants-anti-drift).
+
 ## Quality standards
 
 1. **Determinism.** No random data in assertions; no date-dependent assertions without computing expected values. Replace flaky conditional checks with deterministic queries.

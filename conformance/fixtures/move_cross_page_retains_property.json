@@ -86,6 +86,7 @@
       "command": "move_block"
     }
   ],
+  "scenarios": ["move-cross-page-retains-property"],
   "seed": {
     "blocks": [
       {

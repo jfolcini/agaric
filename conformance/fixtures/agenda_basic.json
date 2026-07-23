@@ -81,6 +81,7 @@
       "command": "set_scheduled_date"
     }
   ],
+  "scenarios": ["agenda-reserved-columns"],
   "seed": {
     "blocks": [
       {

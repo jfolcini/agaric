@@ -89,6 +89,7 @@
       "command": "add_tag"
     }
   ],
+  "scenarios": ["tag-readd-after-remove"],
   "seed": {
     "blocks": [
       {

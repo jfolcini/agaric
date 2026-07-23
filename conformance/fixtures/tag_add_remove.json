@@ -112,6 +112,7 @@
       "command": "remove_tag"
     }
   ],
+  "scenarios": ["tag-dedupe-lww", "tag-remove-single-edge"],
   "seed": {
     "blocks": [
       {

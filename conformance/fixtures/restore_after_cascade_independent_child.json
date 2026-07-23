@@ -94,6 +94,7 @@
       "command": "restore_block"
     }
   ],
+  "scenarios": ["same-cohort-restore"],
   "seed": {
     "blocks": [
       {
