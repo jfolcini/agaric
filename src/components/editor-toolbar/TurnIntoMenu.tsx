@@ -132,7 +132,11 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
               <Button
                 key={opt.id}
                 role="menuitem"
-                aria-haspopup="menu"
+                // The panel this opens is a labelled `role="dialog"` (a filter
+                // input + selectable option rows), NOT a `role="menu"` — so it
+                // advertises `aria-haspopup="dialog"`, matching the real panel
+                // semantics instead of claiming a menu it does not render.
+                aria-haspopup="dialog"
                 aria-expanded={isOpen}
                 aria-controls={isOpen ? panelId : undefined}
                 variant="ghost"
@@ -190,9 +194,20 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
 
       {/* Inline variant pickers — expanded in place for a single-interaction pick
           (#3001). Rendered OUTSIDE the `role="menu"` above: their input/buttons are
-          not valid menu children (aria-required-children). */}
+          not valid menu children (aria-required-children). Each is a labelled
+          `role="dialog"` so the disclosure's `aria-haspopup="dialog"` is honest and
+          the panel carries an accessible name (aria-dialog-name). */}
+      {/* oxlint-disable jsx-a11y/prefer-tag-over-role -- a native <dialog> is
+          display:none unless opened via showModal()/open and carries UA chrome
+          (centering, border) that would break these inline, in-flow disclosure
+          panels; the divs keep role="dialog" while staying laid out inside the
+          popover (mirrors AddFilterPopover). */}
       {expanded === 'code' && (
-        <div id="turn-into-subpicker-code">
+        <div
+          id="turn-into-subpicker-code"
+          role="dialog"
+          aria-label={t('toolbar.codeBlockLanguage')}
+        >
           <Separator className="my-1" />
           <CodeLanguageSelector
             editor={editor}
@@ -203,11 +218,12 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
         </div>
       )}
       {expanded === 'callout' && (
-        <div id="turn-into-subpicker-callout">
+        <div id="turn-into-subpicker-callout" role="dialog" aria-label={t('toolbar.callout')}>
           <Separator className="my-1" />
           <CalloutTypeSelector onClose={onClose} />
         </div>
       )}
+      {/* oxlint-enable jsx-a11y/prefer-tag-over-role */}
     </div>
   )
 }

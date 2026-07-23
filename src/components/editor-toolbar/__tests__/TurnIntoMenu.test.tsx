@@ -14,7 +14,9 @@
  *    code block. A regression to a hardcoded `isCodeBlock` would fail here.
  *  - When the focused block ALREADY is a code block / callout, the matching
  *    picker starts expanded so re-picking the variant stays one interaction.
- *  - Disclosure rows expose `aria-haspopup` / `aria-expanded` / `aria-controls`.
+ *  - Disclosure rows expose `aria-haspopup="dialog"` / `aria-expanded` /
+ *    `aria-controls`, and the panel they open is a labelled `role="dialog"`
+ *    (matching the real filter-input + option-list panel — not a `role="menu"`).
  *
  * The child pickers are replaced with prop-capturing doubles: this suite is the
  * unit boundary for the menu's own state machine, not the pickers' internals.
@@ -23,6 +25,7 @@
 import { fireEvent, render, screen } from '@testing-library/react'
 import type { Editor } from '@tiptap/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { axe } from 'vitest-axe'
 
 import { TurnIntoMenu } from '@/components/editor-toolbar/TurnIntoMenu'
 import { t } from '@/lib/i18n'
@@ -175,7 +178,9 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
       render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
 
       const row = calloutRow()
-      expect(row).toHaveAttribute('aria-haspopup', 'menu')
+      // The disclosure opens a labelled role="dialog" panel (filter input +
+      // option rows), NOT a menu — so it must advertise haspopup="dialog".
+      expect(row).toHaveAttribute('aria-haspopup', 'dialog')
       expect(row).toHaveAttribute('aria-expanded', 'false')
       expect(row).not.toHaveAttribute('aria-controls')
 
@@ -183,8 +188,20 @@ describe('TurnIntoMenu — single-step disclosures (#3001)', () => {
 
       expect(calloutRow()).toHaveAttribute('aria-expanded', 'true')
       expect(calloutRow()).toHaveAttribute('aria-controls', 'turn-into-subpicker-callout')
-      // The controlled panel actually exists in the DOM with that id.
-      expect(document.getElementById('turn-into-subpicker-callout')).toBeInTheDocument()
+      // The controlled panel exists with that id and is a NAMED dialog, so the
+      // haspopup="dialog" advertisement matches a real, labelled dialog.
+      const panel = document.getElementById('turn-into-subpicker-callout')
+      expect(panel).toBeInTheDocument()
+      expect(panel).toHaveAttribute('role', 'dialog')
+      expect(panel).toHaveAccessibleName()
+    })
+
+    it('has no a11y violations with a disclosure expanded', async () => {
+      const { container } = render(<TurnIntoMenu editor={makeEditor()} onClose={vi.fn()} />)
+
+      fireEvent.pointerDown(calloutRow(), { button: 0 })
+
+      expect(await axe(container)).toHaveNoViolations()
     })
   })
 })

@@ -188,25 +188,17 @@ test.describe('Secondary selector popovers (#1170)', () => {
     await page.keyboard.press('Control+a')
     await page.keyboard.press('Delete')
 
-    // #1960 — Turn into → Code block, then re-open Turn into to set the
-    // language via the contextual picker (shown only while the block is code).
+    // #3001 — Turn into → Code block is a single-step disclosure: opening it
+    // expands the searchable language picker in place, so type + language are
+    // chosen in one interaction (no convert-then-reopen round trip).
     const blockEditor = page.locator('[data-testid="block-editor"]')
     await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: 'Code block' }).click()
-    await expect(editor.locator('pre')).toBeVisible()
-
-    // Place the caret inside the new code block so the contextual language
-    // picker appears when Turn into re-opens (it keys off the active block).
-    // The editor's active-state read is rAF-coalesced (#1489), so let the
-    // selection propagate to the toolbar before re-opening.
-    await editor.locator('pre').click()
-    await page.waitForTimeout(250)
-    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Code block', exact: true }).click()
     const langInput = page.getByRole('textbox', { name: 'Code block language' })
     await langInput.fill('rust')
     await page.getByRole('button', { name: 'rust', exact: true }).click()
 
-    // Still a code block after the language is applied.
+    // The block became a code block with the language applied.
     await expect(editor.locator('pre')).toBeVisible()
   })
 
