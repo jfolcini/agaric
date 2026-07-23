@@ -29,7 +29,6 @@ import {
   listPageAliasesByPrefix,
   searchBlocks,
   searchBlocksLimit,
-  setProperty,
 } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -538,34 +537,27 @@ export function useBlockResolve(): UseBlockResolveReturn {
 
   const onCreateTag = useCallback(async (name: string): Promise<string> => {
     try {
-      const block = await createBlock({ blockType: 'tag', content: name })
-      // #2996/#2997 — space-scope the freshly created tag so it (a) surfaces in
-      // `listAllTagsInSpace` (the `@` picker index queried by `searchTags`) on
-      // the next lookup and (b) resolves to a navigable tag page. A bare
-      // `createBlock({ blockType: 'tag' })` leaves the tag an ORPHAN (no `space`
-      // property): the backend only adopts an orphan into a space when the tag
-      // is first APPLIED to a block (see `commands/tags.rs`) or by the next-boot
-      // `migrate_orphan_tags_to_space`. Until then `listAllTagsInSpace`
-      // (WHERE `space_id = ?`) excludes it, so a picker-created tag stays
-      // invisible to `@` search and its pill navigates nowhere sensible. We emit
-      // the same `SetProperty(key='space', value_ref=<space>)` the backend
-      // adoption path uses — mirroring how the `[[` page path routes creation
-      // through the space-aware `createPageInSpace`. Best-effort: a failed scope
-      // write still returns the tag (as an orphan) so creation never hard-fails
-      // on the scoping step (the tag is adopted on first apply / next boot).
+      // #3081/#2996/#2997 — create the tag ATOMICALLY space-scoped in ONE
+      // command: pass the active `spaceId` so the backend stamps
+      // `blocks.space_id` in the SAME transaction as the `CreateBlock` op
+      // (mirroring how the `[[` page path routes through the space-aware
+      // `createPageInSpace`). This makes the tag (a) surface in
+      // `listAllTagsInSpace` (the `@` picker index queried by `searchTags`) and
+      // (b) resolve to a navigable tag page, immediately and durably.
+      //
+      // The previous bare `createBlock` + best-effort, catch-swallowed
+      // `setProperty({ key: 'space' })` follow-up left the tag an ORPHAN
+      // (`space_id = NULL`) whenever that separate op failed — and
+      // `listAllTagsInSpace` (WHERE `space_id = ?`) then hides it, so the tag
+      // vanished on the next lookup (#3081). The atomic create removes that
+      // swallow-on-failure window: a scoping failure fails the whole create and
+      // surfaces via the catch below instead of silently orphaning the tag.
       const spaceId = useSpaceStore.getState().currentSpaceId
-      if (spaceId != null) {
-        try {
-          await setProperty({ blockId: block.id, key: 'space', valueRef: spaceId })
-        } catch (scopeErr) {
-          logger.warn(
-            'useBlockResolve',
-            'onCreateTag: space-scope write failed; tag left orphan',
-            { name, tagId: block.id },
-            scopeErr,
-          )
-        }
-      }
+      const block = await createBlock({
+        blockType: 'tag',
+        content: name,
+        ...(spaceId != null && { spaceId }),
+      })
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
       return block.id

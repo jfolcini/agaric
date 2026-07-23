@@ -189,7 +189,18 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       const trimmed = name.trim()
       if (!trimmed) return
       try {
-        const resp = await createBlock({ blockType: 'tag', content: trimmed })
+        // #3081 — create the tag ATOMICALLY space-scoped (thread the active
+        // spaceId) so the backend stamps `blocks.space_id` in the same
+        // transaction as the CreateBlock op. Previously the tag was born an
+        // orphan and only adopted into the space if it was later applied to a
+        // block; a tag created for the page (or when `addTag` failed) could
+        // stay orphaned and vanish from the space-scoped Tags view (#3081).
+        const spaceId = useSpaceStore.getState().currentSpaceId
+        const resp = await createBlock({
+          blockType: 'tag',
+          content: trimmed,
+          ...(spaceId != null && { spaceId }),
+        })
         const entry = { id: resp.id, name: trimmed }
         setAllTags((prev) => [...prev, entry])
         useResolveStore.getState().set(resp.id, trimmed, false)

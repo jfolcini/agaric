@@ -201,6 +201,16 @@ export const propertiesHandlers = {
       value_ref: valueRef,
       value_bool: valueBool === null ? null : valueBool ? 1 : 0,
     })
+    // #533/#3081 — `space` is column-backed: the backend projects a
+    // `SetProperty(space)` op to the denormalized `blocks.space_id` column (it
+    // writes NO `block_properties` row). Mirror that here so the mock's
+    // `list_all_tags_in_space` / space-scoped queries (which read `space_id`)
+    // stay consistent with the backend for any path that still sets space via
+    // a property write.
+    if (key === 'space') {
+      const target = blocks.get(blockId)
+      if (target) target['space_id'] = valueRef
+    }
     const op = pushOp('set_property', { block_id: blockId, key, from_value: fromValue })
     const b = blocks.get(blockId)
     // #2468 — `WithOps<BlockRow>`.

@@ -145,6 +145,9 @@ describe('get_block', () => {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      // #3081 — seed pages are stamped with their `blocks.space_id` (the
+      // backend's sole space-membership source of truth).
+      space_id: 'SPACE_PERSONAL',
     })
   })
 
@@ -299,6 +302,66 @@ describe('list_tags_by_prefix', () => {
     >
     expect(result).toHaveLength(1)
     expect(result[0]?.['name']).toBe('project-alpha')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// list_all_tags_in_space — #3081 durable space-scope round-trip
+//
+// Mirrors the backend: `list_all_tags_in_space` filters on the tag block's own
+// `blocks.space_id` column. The regression: a newly-created tag was left an
+// ORPHAN (space_id = NULL) and VANISHED from the Tags view on re-entry. These
+// tests PERSIST a create through the mock and RE-QUERY, asserting the tag
+// SURVIVES (durable effect), not merely that a handler was called.
+// ---------------------------------------------------------------------------
+
+describe('list_all_tags_in_space (#3081)', () => {
+  const activeScope = { kind: 'active', space_id: 'SPACE_PERSONAL' } as const
+
+  it('returns the space-scoped seed tags', () => {
+    const rows = invoke('list_all_tags_in_space', { scope: activeScope }) as Array<
+      Record<string, unknown>
+    >
+    const names = rows.map((r) => r['name'])
+    expect(names).toEqual(expect.arrayContaining(['work', 'personal', 'idea']))
+  })
+
+  it('a tag created space-scoped SURVIVES create -> re-query (does not vanish)', () => {
+    // Create through the SAME IPC the frontend `createBlock` now routes through:
+    // an ACTIVE scope, so the mock stamps `space_id` on the tag row atomically.
+    const created = invoke('create_block', {
+      blockType: 'tag',
+      content: 'urgent',
+      parentId: null,
+      index: null,
+      scope: activeScope,
+      blockId: null,
+    }) as Record<string, unknown>
+    expect(created['block_type']).toBe('tag')
+
+    // Re-query the space-scoped list (what the Tags view does on re-entry).
+    const rows = invoke('list_all_tags_in_space', { scope: activeScope }) as Array<
+      Record<string, unknown>
+    >
+    const found = rows.find((r) => r['tag_id'] === created['id'])
+    expect(found, 'freshly-created tag must survive re-query').toBeDefined()
+    expect(found?.['name']).toBe('urgent')
+  })
+
+  it('a tag created with GLOBAL scope is NOT listed in the active space', () => {
+    const created = invoke('create_block', {
+      blockType: 'tag',
+      content: 'unscoped',
+      parentId: null,
+      index: null,
+      scope: { kind: 'global' },
+      blockId: null,
+    }) as Record<string, unknown>
+
+    const rows = invoke('list_all_tags_in_space', { scope: activeScope }) as Array<
+      Record<string, unknown>
+    >
+    expect(rows.some((r) => r['tag_id'] === created['id'])).toBe(false)
   })
 })
 

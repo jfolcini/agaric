@@ -238,8 +238,38 @@ pub async fn create_block_inner_with_space(
         return get_active_block_inner(pool, new_page_id).await;
     }
 
-    // Non-page block types ignore `scope` and follow the legacy path —
-    // `content`, `tag` blocks have no space invariant.
+    // #3081 — a `tag` block created under an ACTIVE space is stamped with its
+    // space membership ATOMICALLY (CreateBlock + SetProperty(space) in one
+    // `BEGIN IMMEDIATE` transaction), mirroring the page path above. This
+    // replaces the old frontend pattern of a bare `createBlock` followed by a
+    // best-effort, catch-swallowed `setProperty({ key: 'space' })`: when that
+    // second, separate op failed (or was skipped by the #708 registration
+    // gate), the tag was left with `blocks.space_id = NULL` — an ORPHAN that
+    // `list_all_tags_in_space` (WHERE `space_id = ?`) hides, so a freshly
+    // created tag vanished on the next visit to the Tags view.
+    //
+    // `SpaceScope::Global` for a tag (no active space) falls through to the
+    // legacy create below: nothing to stamp, so the tag is still created and
+    // can be adopted into a space on first apply.
+    if block_type == "tag"
+        && let SpaceScope::Active(sid) = scope
+    {
+        return create_tag_in_space_inner(
+            pool,
+            device_id,
+            materializer,
+            content,
+            parent_id.map(BlockId::into_string),
+            index,
+            sid,
+            client_id,
+        )
+        .await;
+    }
+
+    // Other non-page block types (`content`) ignore `scope` and follow the
+    // legacy path — their space membership is denormalized from their owning
+    // page, not stamped on the block directly.
     let _ignore_scope = scope;
     create_block_inner_with_id(
         pool,
@@ -252,6 +282,114 @@ pub async fn create_block_inner_with_space(
         client_id,
     )
     .await
+}
+
+/// #3081 — create a `tag` block and atomically stamp its space membership.
+///
+/// Mirrors [`crate::commands::create_page_in_space_inner`]: both the
+/// `CreateBlock` and the `SetProperty(space = <space_id>)` ops are appended
+/// inside a single `BEGIN IMMEDIATE` transaction, so a tag can never exist in
+/// the op log without its `space` membership. In steady state a sync peer
+/// materializes the two ops in emit order (create → set) and never observes a
+/// tag without its `blocks.space_id`.
+///
+/// This closes the vanishing-tag window (#3081): the previous two-step pattern
+/// (bare `create_block` + a separate best-effort `set_property(space)`) could
+/// leave `blocks.space_id = NULL` when the follow-up op failed or was silently
+/// skipped, hiding the tag from `list_all_tags_in_space`.
+///
+/// The `space_id` is validated up front as a live, registered space (the same
+/// check the page helper performs). This makes a bogus / unregistered space a
+/// LOUD [`AppError::Validation`] rather than a silently-skipped stamp: the
+/// projection's #708 registration gate (`project_set_property_to_sql`) drops a
+/// `SetProperty(space)` whose target is not in the `spaces` registry, so
+/// validating registration here guarantees the subsequent stamp lands (a
+/// legitimately-active space is always registered — the `is_space` INSERT fires
+/// the migration-0089 registration trigger).
+///
+/// Unlike the page helper there is no parent/child cross-space check: manually
+/// created tags are top-level (`parent_id = None`). `parent_id` / `index` are
+/// threaded only for signature parity with the generic create path.
+#[allow(clippy::too_many_arguments)]
+async fn create_tag_in_space_inner(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    content: String,
+    parent_id: Option<String>,
+    index: Option<i64>,
+    space_id: &SpaceId,
+    client_id: Option<BlockId>,
+) -> Result<BlockRow, AppError> {
+    // Normalize the ULID to uppercase per AGENTS.md invariant #8 (Tauri's
+    // strict `SpaceId` is already uppercase; be defensive for other callers).
+    let space_id = space_id.as_str().to_ascii_uppercase();
+
+    let mut tx = CommandTx::begin_immediate(pool, "create_tag_in_space").await?;
+    // #2604 — rollback-safe engine apply (rewind on tx abort).
+    tx.arm_engine_rollback(materializer.loro_state());
+
+    // 1. Validate `space_id` up front, inside the tx (TOCTOU-safe against a
+    //    concurrent delete). The target must be a live, non-conflict block
+    //    carrying `is_space = 'true'` — i.e. a registered space, so the
+    //    `SetProperty(space)` projection below is guaranteed to pass the #708
+    //    gate instead of being silently skipped.
+    let space_ok = sqlx::query_scalar!(
+        r#"SELECT 1 as "ok: i32" FROM blocks b
+           WHERE b.id = ?
+             AND b.deleted_at IS NULL
+             AND EXISTS (
+                 SELECT 1 FROM block_properties p
+                 WHERE p.block_id = b.id
+                   AND p.key = 'is_space'
+                   AND p.value_text = 'true'
+             )"#,
+        space_id,
+    )
+    .fetch_optional(&mut **tx)
+    .await?;
+    if space_ok.is_none() {
+        return Err(AppError::validation(format!(
+            "space_id '{space_id}' does not refer to a live space block (is_space = 'true')"
+        )));
+    }
+
+    // 2. Create the tag block (`CreateBlock` op + materialized row).
+    let (block, tag_op_record) = create_block_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        "tag".to_string(),
+        content,
+        parent_id,
+        index,
+        client_id,
+    )
+    .await?;
+    let tag_id = block.id.clone();
+    tx.enqueue_background(tag_op_record);
+
+    // 3. Stamp the space membership in the SAME tx. Emitted after the create
+    //    so peers materialize (create → set) in order.
+    let (_block, space_op_record) = set_property_in_tx(
+        &mut tx,
+        materializer.loro_state(),
+        device_id,
+        tag_id.clone().into_string(),
+        SPACE_PROPERTY_KEY,
+        None,
+        None,
+        None,
+        Some(space_id),
+        None,
+    )
+    .await?;
+    tx.enqueue_background(space_op_record);
+
+    tx.commit_and_dispatch(materializer).await?;
+    // Return the create-step BlockRow (its content is authoritative; the
+    // space membership lives in `blocks.space_id`, not on `BlockRow`).
+    Ok(block)
 }
 
 /// Edit a block's content.
