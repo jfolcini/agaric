@@ -165,6 +165,77 @@ pub(crate) async fn ensure_blocks_table_exists(
 /// and never runs without a positive corruption signal.
 pub(crate) const DERIVED_RECOVERY_PENDING_KEY: &str = "recovery.derived_replay_pending";
 
+/// #2920: `app_settings` key marking that the engine-first reprojection
+/// ([`reproject_blocks_from_engine`]) skipped at least one space or block and is
+/// therefore INCOMPLETE. Written whenever a reprojection commits with skips (or
+/// every snapshot failed to decode), cleared ONLY by a fully-clean reprojection.
+///
+/// The boot path ([`crate::db::pool::init_pools`]) re-attempts reprojection
+/// whenever this marker is present — even though the `blocks` table is present
+/// again on a later boot, which makes the `blocks_recovered` gate this-boot-only
+/// and would otherwise never re-fire. Without this marker a partial engine
+/// recovery is silently, permanently lost (remote-authored content invisible in
+/// SQL). Mirrors the [`DERIVED_RECOVERY_PENDING_KEY`] philosophy: retries on
+/// every boot until the reprojection lands fully. A block that fails
+/// DETERMINISTICALLY (e.g. an unrecognised `block_type` the local CHECK rejects)
+/// keeps the marker armed until a re-sync or an upgrade makes it projectable —
+/// one extra (idempotent) reprojection per boot, which is the correct trade for
+/// never silently dropping the recovery.
+pub(crate) const ENGINE_REPROJECT_PENDING_KEY: &str = "recovery.engine_reproject_pending";
+
+/// #2920: set (`pending = true`) or clear (`pending = false`) the
+/// [`ENGINE_REPROJECT_PENDING_KEY`] retry marker. Generic over the executor so
+/// the caller can write it atomically inside the reprojection transaction
+/// (`&mut *tx`) or standalone against the pool. `app_settings` (migration 0053)
+/// always exists here — this only runs after migrations.
+async fn set_engine_reproject_pending<'e, E>(
+    exec: E,
+    pending: bool,
+) -> Result<(), crate::error::AppError>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    if pending {
+        sqlx::query(
+            "INSERT OR REPLACE INTO app_settings (key, value, updated_at) VALUES (?, '1', ?)",
+        )
+        .bind(ENGINE_REPROJECT_PENDING_KEY)
+        .bind(now_ms())
+        .execute(exec)
+        .await?;
+    } else {
+        sqlx::query("DELETE FROM app_settings WHERE key = ?")
+            .bind(ENGINE_REPROJECT_PENDING_KEY)
+            .execute(exec)
+            .await?;
+    }
+    Ok(())
+}
+
+/// #2920: is an engine-first reprojection retry pending from a prior boot that
+/// skipped some spaces/blocks? Gates the boot re-attempt of
+/// [`reproject_blocks_from_engine`] independently of the this-boot-only
+/// `blocks_recovered` signal. Guards on `app_settings` existence so an
+/// ancient/odd schema returns `false` rather than erroring the boot.
+pub(crate) async fn engine_reproject_pending(
+    pool: &SqlitePool,
+) -> Result<bool, crate::error::AppError> {
+    let table_exists: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'",
+    )
+    .fetch_one(pool)
+    .await?;
+    if table_exists == 0 {
+        return Ok(false);
+    }
+    let pending: i64 =
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(ENGINE_REPROJECT_PENDING_KEY)
+            .fetch_one(pool)
+            .await?;
+    Ok(pending > 0)
+}
+
 /// #429: read an `op_log` row's `created_at` as an rfc3339 string, for use as
 /// `blocks.deleted_at` when recovery replays a `delete_block` on a pre-0080
 /// database (post-0080 the column is INTEGER ms — see [`op_created_at_ms`],
@@ -340,6 +411,10 @@ pub(crate) async fn reproject_blocks_from_engine(
         project_block_full_to_sql, reproject_block_deleted_at_from_engine,
         reproject_block_properties_from_engine, reproject_block_tags_from_engine,
     };
+    // #2920: `tx.begin()` on the shared transaction opens a nested SAVEPOINT so a
+    // per-block projection failure rolls back only that block, not the whole
+    // recovery. Requires the `Acquire` trait in scope.
+    use sqlx::Acquire;
 
     // `loro_doc_state` may be absent on an ancient pre-0052 database.
     let table_exists: i64 = sqlx::query_scalar(
@@ -379,6 +454,14 @@ pub(crate) async fn reproject_blocks_from_engine(
     let mut tx = pool.begin().await?;
     let mut spaces_reprojected = 0usize;
     let mut blocks_reprojected = 0usize;
+    // #2920: per-space AND per-block failures are NON-FATAL. Every space shares
+    // this ONE transaction (committed by the boot path), so a single
+    // un-readable / un-projectable block must NOT `?`-abort the whole rebuild
+    // and roll back the spaces and blocks that projected cleanly. Track what was
+    // skipped so the retry marker can be armed below (and so a next boot
+    // re-attempts) instead of the recovery being silently, permanently lost.
+    let mut skipped_spaces = 0usize;
+    let mut skipped_blocks_total = 0usize;
 
     for (space_id_str, bytes) in &snapshots {
         // Build a throwaway engine and load this space's persisted snapshot. A
@@ -392,6 +475,7 @@ pub(crate) async fn reproject_blocks_from_engine(
                 "recovery (#2504): failed to load persisted Loro snapshot — remote-authored \
                  content for this space cannot be reprojected and will be missing until re-sync"
             );
+            skipped_spaces += 1;
             continue;
         }
 
@@ -404,49 +488,198 @@ pub(crate) async fn reproject_blocks_from_engine(
             spaces_reprojected += 1;
             continue;
         }
+        let n = block_ids.len();
+        // Per-block skip flags for THIS space. A block flagged here is excluded
+        // from every later pass, so a failure in one pass can't cascade into a
+        // hard error in the next (e.g. a tag edge onto a block whose core row
+        // never landed).
+        let mut skipped = vec![false; n];
 
-        // Snapshot every block's engine state under one read pass (mirrors the
-        // inbound-sync #540 shape), then run the SQL passes below.
+        // Engine core read: fast O(N) bulk path, with a per-block fallback
+        // (#2920). If the bulk read fails because ONE block's engine metadata is
+        // corrupt, re-read block-by-block so only the bad block(s) are skipped
+        // instead of aborting the entire space.
         let id_refs: Vec<&str> = block_ids.iter().map(crate::ulid::BlockId::as_str).collect();
-        let core = engine.read_blocks_bulk(&id_refs)?;
-        let mut states = Vec::with_capacity(block_ids.len());
-        for block_id in &block_ids {
-            let props = engine.read_all_properties_typed(block_id.as_str())?;
-            let tags = engine.read_tags(block_id.as_str())?;
-            let deleted_at = engine.read_deleted_at(block_id.as_str())?;
-            states.push((props, tags, deleted_at));
+        let core = match engine.read_blocks_bulk(&id_refs) {
+            Ok(core) => core,
+            Err(e) => {
+                tracing::warn!(
+                    space_id = %space_id_str,
+                    error = %e,
+                    "recovery (#2920): bulk engine core-read failed; falling back to per-block \
+                     reads to isolate the corrupt block(s)"
+                );
+                let mut v = Vec::with_capacity(n);
+                for (i, block_id) in block_ids.iter().enumerate() {
+                    match engine.read_block(block_id.as_str()) {
+                        Ok(snap) => v.push(snap),
+                        Err(e) => {
+                            tracing::error!(
+                                space_id = %space_id_str,
+                                block_id = %block_id.as_str(),
+                                error = %e,
+                                "recovery (#2920): engine core-read failed for block; skipping it \
+                                 (remote content for this block missing until re-sync)"
+                            );
+                            skipped[i] = true;
+                            v.push(None);
+                        }
+                    }
+                }
+                v
+            }
+        };
+
+        // Per-block engine state reads (properties / tags / deleted_at), each
+        // non-fatal (#2920). Aligned with `block_ids` by index; a skipped block
+        // holds `None`.
+        let mut states = Vec::with_capacity(n);
+        for (i, block_id) in block_ids.iter().enumerate() {
+            if skipped[i] {
+                states.push(None);
+                continue;
+            }
+            let props = match engine.read_all_properties_typed(block_id.as_str()) {
+                Ok(p) => p,
+                Err(e) => {
+                    tracing::error!(
+                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                        "recovery (#2920): engine property-read failed for block; skipping it"
+                    );
+                    skipped[i] = true;
+                    states.push(None);
+                    continue;
+                }
+            };
+            let tags = match engine.read_tags(block_id.as_str()) {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::error!(
+                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                        "recovery (#2920): engine tag-read failed for block; skipping it"
+                    );
+                    skipped[i] = true;
+                    states.push(None);
+                    continue;
+                }
+            };
+            let deleted_at = match engine.read_deleted_at(block_id.as_str()) {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::error!(
+                        space_id = %space_id_str, block_id = %block_id.as_str(), error = %e,
+                        "recovery (#2920): engine deleted_at-read failed for block; skipping it"
+                    );
+                    skipped[i] = true;
+                    states.push(None);
+                    continue;
+                }
+            };
+            states.push(Some((props, tags, deleted_at)));
         }
 
-        // Pass A — core columns + properties. Upserts EVERY block (incl. tag
-        // blocks) so all `blocks` rows a later `block_tags.tag_id` FK references
-        // exist before Pass B.
-        for (block_id, snapshot) in block_ids.iter().zip(&core) {
-            project_block_full_to_sql(&mut tx, &space_id, block_id, snapshot.as_ref()).await?;
-        }
-        for (block_id, (props, _, _)) in block_ids.iter().zip(&states) {
-            reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
-        }
-        // Pass B — tags (after Pass A for the FK ordering above).
-        for (block_id, (_, tags, _)) in block_ids.iter().zip(&states) {
-            reproject_block_tags_from_engine(&mut tx, block_id, tags).await?;
-        }
-        // Pass C — soft-delete state (after Pass A so every `parent_id` row the
-        // descendant-cascade CTE walks exists).
-        for (block_id, (_, _, deleted_at)) in block_ids.iter().zip(&states) {
-            reproject_block_deleted_at_from_engine(&mut tx, block_id, deleted_at.as_deref())
-                .await?;
+        // Pass A — core columns + properties. FIRST upsert EVERY (non-skipped)
+        // block's core row (incl. tag blocks) so all `blocks` rows a later
+        // `block_tags.tag_id` FK references exist before Pass B/C. Each block
+        // runs under its OWN savepoint (#2920): a failing INSERT (e.g. an
+        // unrecognised `block_type` the local schema's CHECK rejects) rolls back
+        // only that block and flags it skipped, leaving the shared tx intact so
+        // the remaining blocks and spaces still commit.
+        for (i, (block_id, snapshot)) in block_ids.iter().zip(&core).enumerate() {
+            if skipped[i] {
+                continue;
+            }
+            let mut sp = tx.begin().await?;
+            match project_block_full_to_sql(&mut sp, &space_id, block_id, snapshot.as_ref()).await {
+                Ok(()) => {
+                    sp.commit().await?;
+                }
+                Err(e) => {
+                    sp.rollback().await?;
+                    tracing::error!(
+                        space_id = %space_id_str,
+                        block_id = %block_id.as_str(),
+                        error = %e,
+                        "recovery (#2920): SQL core-projection failed for block; skipping it and \
+                         continuing (other blocks and spaces still commit)"
+                    );
+                    skipped[i] = true;
+                }
+            }
         }
 
+        // Pass B/C/D — properties, then tags (FK-ordered after every Pass A core
+        // row exists), then soft-delete state. Grouped per block under one
+        // savepoint (#2920): all Pass A rows are already present, so the
+        // intra-block grouping preserves the cross-block FK ordering while still
+        // isolating a per-block failure.
+        for (i, block_id) in block_ids.iter().enumerate() {
+            if skipped[i] {
+                continue;
+            }
+            let Some((props, tags, deleted_at)) = states[i].as_ref() else {
+                continue;
+            };
+            let mut sp = tx.begin().await?;
+            let res = async {
+                reproject_block_properties_from_engine(&mut sp, block_id, props, &value_types)
+                    .await?;
+                reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
+                reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
+                    .await?;
+                Ok::<(), crate::error::AppError>(())
+            }
+            .await;
+            match res {
+                Ok(()) => {
+                    sp.commit().await?;
+                }
+                Err(e) => {
+                    sp.rollback().await?;
+                    tracing::error!(
+                        space_id = %space_id_str,
+                        block_id = %block_id.as_str(),
+                        error = %e,
+                        "recovery (#2920): SQL derived-projection failed for block; skipping it \
+                         and continuing"
+                    );
+                    skipped[i] = true;
+                }
+            }
+        }
+
+        let space_skipped = skipped.iter().filter(|&&s| s).count();
+        skipped_blocks_total += space_skipped;
         spaces_reprojected += 1;
-        blocks_reprojected += block_ids.len();
+        blocks_reprojected += n - space_skipped;
     }
+
+    let anything_skipped = skipped_spaces > 0 || skipped_blocks_total > 0;
 
     if spaces_reprojected == 0 {
-        // Every snapshot failed to decode — nothing rebuilt. Roll back the
-        // (empty) tx and let the op-log pass's local content stand.
+        // Every snapshot failed to DECODE — nothing rebuilt. Roll back the
+        // (empty) tx and let the op-log pass's local content stand. Arm the
+        // engine-reproject retry marker (#2920) so a subsequent boot re-attempts
+        // instead of the blocks-table-present gate silently skipping recovery
+        // forever (the decode may succeed on a later boot, e.g. after a re-sync).
         tx.rollback().await?;
+        set_engine_reproject_pending(pool, true).await?;
+        tracing::error!(
+            skipped_spaces,
+            "recovery (#2920): every engine snapshot failed to decode — SQL primary state NOT \
+             rebuilt from the engine; retry marker armed for the next boot"
+        );
         return Ok(false);
     }
+
+    // #2920: arm-or-clear the engine-reproject retry marker ATOMICALLY with the
+    // reprojected content. If any space or block was skipped the reprojection is
+    // INCOMPLETE, so leave the marker SET — the boot path re-attempts whenever it
+    // is present, even though `blocks` is present again on the next boot (the
+    // this-boot-only `blocks_recovered` gate would otherwise never re-fire,
+    // permanently and silently losing the skipped remote content). Only a
+    // fully-clean reprojection clears it.
+    set_engine_reproject_pending(&mut *tx, anything_skipped).await?;
 
     tx.commit().await?;
 
@@ -489,12 +722,28 @@ pub(crate) async fn reproject_blocks_from_engine(
         tracing::warn!(error = %e, "recovery (#2504): tag-inheritance rebuild after engine reproject failed (non-fatal; inherited-tag reads stale until next rebuild)");
     }
 
-    tracing::warn!(
-        spaces_reprojected,
-        blocks_reprojected,
-        "recovery (#2504): rebuilt SQL primary state from the Loro engine snapshots — \
-         remote-authored content restored (engine-first disaster recovery)"
-    );
+    if anything_skipped {
+        // #2920: partial recovery. Good content is durably committed above, but
+        // some spaces/blocks were skipped — the retry marker is armed so the
+        // next boot re-attempts. Log a greppable summary of what was lost this
+        // boot at error severity so the partial recovery is observable.
+        tracing::error!(
+            spaces_reprojected,
+            blocks_reprojected,
+            skipped_spaces,
+            skipped_blocks = skipped_blocks_total,
+            "recovery (#2920): engine reprojection committed the good content but SKIPPED some \
+             spaces/blocks — reprojection INCOMPLETE; retry marker armed so the next boot \
+             re-attempts (remote content for the skipped spaces/blocks is missing until then)"
+        );
+    } else {
+        tracing::warn!(
+            spaces_reprojected,
+            blocks_reprojected,
+            "recovery (#2504): rebuilt SQL primary state from the Loro engine snapshots — \
+             remote-authored content restored (engine-first disaster recovery)"
+        );
+    }
     Ok(true)
 }
 
@@ -2355,6 +2604,220 @@ mod tests {
         assert!(
             !fired,
             "no engine snapshots ⇒ engine reprojection does nothing and the op-log path stands"
+        );
+    }
+
+    // Uppercase ids so `BlockId::from_trusted`'s `to_ascii_uppercase()` round-trips
+    // them unchanged (same convention as the #2504 tests above).
+    async fn insert_snapshot(pool: &SqlitePool, space_id: &str, bytes: Vec<u8>) {
+        sqlx::query(
+            "INSERT INTO loro_doc_state (space_id, snapshot, updated_at, op_count) \
+             VALUES (?, ?, 0, 1)",
+        )
+        .bind(space_id)
+        .bind(bytes)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    async fn marker_count(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM app_settings WHERE key = ?")
+            .bind(ENGINE_REPROJECT_PENDING_KEY)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// #2920: a single un-projectable block must NOT `?`-abort the shared boot
+    /// transaction and roll back the spaces/blocks that projected cleanly.
+    ///
+    /// Space-1 holds a valid page + a valid content child PLUS one block whose
+    /// `block_type` the local schema's `block_type_valid` CHECK rejects — a
+    /// faithful "un-projectable remote block" (an unrecognised type authored by a
+    /// peer). Space-2 is fully valid. After reprojection the good page/child AND
+    /// the whole other space must be committed, the bad block skipped, and the
+    /// retry marker armed (so a next boot re-attempts) — the pre-fix behaviour
+    /// rolled the entire boot back and then silently never retried.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn engine_reproject_tolerates_bad_block_commits_good_content_and_arms_retry_2920() {
+        const PAGE: &str = "PAGE-2920";
+        const GOOD_CHILD: &str = "GOODCHILD-2920";
+        const BAD_BLOCK: &str = "BADBLOCK-2920";
+        const OTHER_SPACE_BLK: &str = "OTHERBLK-2920";
+
+        let (pool, _dir) = test_pool().await;
+
+        let snap1 = {
+            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(PAGE, "page", "Good Page", None, 0)
+                .unwrap();
+            engine
+                .apply_create_block(GOOD_CHILD, "content", "good content", Some(PAGE), 0)
+                .unwrap();
+            // Unrecognised `block_type` ⇒ the STRICT `blocks.block_type_valid`
+            // CHECK (migration 0085/0089) aborts THIS block's Pass A INSERT.
+            engine
+                .apply_create_block(BAD_BLOCK, "garbage", "unprojectable", None, 1)
+                .unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        let snap2 = {
+            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(OTHER_SPACE_BLK, "content", "other space content", None, 0)
+                .unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        insert_snapshot(&pool, "space-1", snap1).await;
+        insert_snapshot(&pool, "space-2", snap2).await;
+
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(fired, "reprojection fires when valid snapshots are present");
+
+        // Good content in space-1 committed despite the sibling bad block.
+        let page: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(PAGE)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            page, 1,
+            "the valid page must commit even though a sibling block failed"
+        );
+        let child: String = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(GOOD_CHILD)
+            .fetch_one(&pool)
+            .await
+            .expect("the valid content child must be projected");
+        assert_eq!(child, "good content");
+
+        // The bad block is skipped — not committed — and did not abort the tx.
+        let bad: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BAD_BLOCK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(bad, 0, "the un-projectable block is skipped, not committed");
+
+        // A fully-valid OTHER space still commits (one bad block in space-1 must
+        // not roll back the whole shared transaction).
+        let other: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(OTHER_SPACE_BLK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(other, 1, "a fully-valid OTHER space must still commit");
+
+        // Partial failure ⇒ retry marker armed so a subsequent boot re-attempts.
+        assert_eq!(
+            marker_count(&pool).await,
+            1,
+            "a partial reprojection must ARM the engine-reproject retry marker"
+        );
+        assert!(
+            engine_reproject_pending(&pool).await.unwrap(),
+            "the boot gate must report a pending retry after a partial reprojection"
+        );
+    }
+
+    /// #2920: a fully-clean reprojection CLEARS the retry marker (so the
+    /// all-clean path does not retry forever). Pre-arm the marker to simulate a
+    /// prior partial boot, then reproject a fully-valid snapshot.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn engine_reproject_clean_clears_retry_marker_2920() {
+        const BLK: &str = "CLEANBLK-2920";
+        let (pool, _dir) = test_pool().await;
+
+        // Simulate a prior partial boot that armed the retry marker.
+        set_engine_reproject_pending(&pool, true).await.unwrap();
+        assert!(engine_reproject_pending(&pool).await.unwrap());
+
+        let snap = {
+            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(BLK, "content", "all good", None, 0)
+                .unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        insert_snapshot(&pool, "space-1", snap).await;
+
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(fired);
+        let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(BLK)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(blk, 1, "the valid block projects");
+
+        assert_eq!(
+            marker_count(&pool).await,
+            0,
+            "a fully-clean reprojection must CLEAR the retry marker"
+        );
+        assert!(!engine_reproject_pending(&pool).await.unwrap());
+    }
+
+    /// #2920: the existing corrupt-PER-SPACE tolerance still holds AND now arms
+    /// the retry marker. Space-1 is valid, space-2's snapshot bytes are
+    /// undecodable — the valid space still commits and the skipped space arms the
+    /// retry.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn engine_reproject_tolerates_corrupt_space_and_arms_retry_2920() {
+        const GOOD: &str = "GOODSPACE-2920";
+        let (pool, _dir) = test_pool().await;
+
+        let snap = {
+            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            engine
+                .apply_create_block(GOOD, "content", "survives", None, 0)
+                .unwrap();
+            engine.export_snapshot().unwrap()
+        };
+        insert_snapshot(&pool, "space-1", snap).await;
+        // Undecodable snapshot bytes for space-2.
+        insert_snapshot(&pool, "space-2", vec![0xDE, 0xAD, 0xBE, 0xEF]).await;
+
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(
+            fired,
+            "the valid space still reprojects despite the corrupt sibling snapshot"
+        );
+        let good: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(GOOD)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            good, 1,
+            "the valid space's content commits despite a corrupt-per-space snapshot"
+        );
+        assert_eq!(
+            marker_count(&pool).await,
+            1,
+            "a skipped corrupt space must ARM the retry marker"
+        );
+    }
+
+    /// #2920: when EVERY snapshot fails to decode the reprojection returns
+    /// `Ok(false)` (op-log local content stands) but STILL arms the retry marker
+    /// — the pre-fix silent-permanent-loss trap re-attempted nothing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn engine_reproject_all_snapshots_corrupt_returns_false_and_arms_retry_2920() {
+        let (pool, _dir) = test_pool().await;
+        insert_snapshot(&pool, "space-1", vec![0x00, 0x01, 0x02]).await;
+
+        let fired = reproject_blocks_from_engine(&pool).await.unwrap();
+        assert!(
+            !fired,
+            "all snapshots undecodable ⇒ Ok(false); the op-log pass's local content stands"
+        );
+        assert_eq!(
+            marker_count(&pool).await,
+            1,
+            "an all-decode-failure must still arm the retry marker (no silent permanent loss)"
         );
     }
 }
