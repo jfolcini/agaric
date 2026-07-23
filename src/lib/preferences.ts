@@ -112,6 +112,7 @@ import {
   broadcastPreferenceChange,
   useLocalStoragePreference,
 } from '@/hooks/useLocalStoragePreference'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 
 export interface PreferenceDefinition<T> {
@@ -227,6 +228,42 @@ export function writePreference<T>(def: PreferenceDefinition<T>, value: T, keyAr
     broadcastPreferenceChange(key, oldValue, newValue)
   } catch (err) {
     logger.warn(`preference:${def.key}`, 'Failed to write localStorage preference', { key }, err)
+  }
+}
+
+/**
+ * True when the key holds a well-formed JSON object whose `schemaVersion`
+ * field disagrees with `expected`. This is the one distinction the normal
+ * read path erases: `parse` discards a schema-mismatched payload back to the
+ * default, so a caller can't otherwise tell "the user had data from an
+ * incompatible app version" apart from "nothing was ever stored". Reads the
+ * raw string directly — this module is the sanctioned raw-localStorage site.
+ *
+ * MUST be called from a render-phase `useState` lazy initializer, not an
+ * effect: `useLocalStoragePreference`'s mount write-back re-persists the
+ * parsed (empty) value and would erase the mismatched raw value before an
+ * effect could observe it. A missing key, non-JSON value, non-object payload,
+ * or a payload with no numeric `schemaVersion` is NOT a mismatch. SSR-safe;
+ * a storage throw degrades to `false`.
+ */
+export function peekPreferenceSchemaMismatch<T>(
+  def: PreferenceDefinition<T>,
+  expected: number,
+  keyArg?: string,
+): boolean {
+  if (typeof window === 'undefined') return false
+  const key = effectiveKey(def, keyArg)
+  try {
+    const raw = localStorage.getItem(key)
+    if (raw === null) return false
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return false
+    const schemaVersion = (parsed as Record<string, unknown>)['schemaVersion']
+    if (typeof schemaVersion !== 'number') return false
+    return schemaVersion !== expected
+  } catch {
+    // Storage unavailable (private mode / locked-down webview) — no signal.
+    return false
   }
 }
 
@@ -578,6 +615,103 @@ const STARRED_PAGES_PREFERENCE: PreferenceDefinition<string[]> = {
 }
 
 /**
+ * A saved Pages-view snapshot: sort + density + compound filter chips,
+ * captured under a user-chosen name (#2003 piece 1). `filters` stores
+ * `FilterPrimitive[]` verbatim — no `_addId` (that's a React-key-only field
+ * `usePageBrowserFilters` adds locally, stripped before persisting here,
+ * same as it's stripped before the IPC round-trip).
+ */
+export interface SavedPagesView {
+  /** Stable id (`crypto.randomUUID()`), never reused even after delete. */
+  id: string
+  /** User-chosen display name (not unique-enforced). */
+  name: string
+  /** ISO timestamp of creation. */
+  createdAt: string
+  sort: SortOption
+  density: DensityMode
+  filters: FilterPrimitive[]
+}
+
+/** On-disk envelope version for `PREFERENCES.savedPagesViews`. Bump on breaking shape changes. */
+export const SAVED_PAGES_VIEWS_SCHEMA_VERSION = 1
+
+/** Parsed shape of the `agaric:pages:savedViews:v1` payload. */
+export interface SavedPagesViewsPayload {
+  schemaVersion: number
+  views: SavedPagesView[]
+}
+
+const EMPTY_SAVED_PAGES_VIEWS_PAYLOAD: SavedPagesViewsPayload = {
+  schemaVersion: SAVED_PAGES_VIEWS_SCHEMA_VERSION,
+  views: [],
+}
+
+/** Light structural check — a full `FilterPrimitive` discriminant match isn't worth duplicating here. */
+function isFilterPrimitiveLike(value: unknown): value is FilterPrimitive {
+  return (
+    value !== null &&
+    typeof value === 'object' &&
+    typeof (value as Record<string, unknown>)['type'] === 'string'
+  )
+}
+
+function isSavedPagesViewLike(value: unknown): value is SavedPagesView {
+  if (value === null || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return (
+    typeof v['id'] === 'string' &&
+    v['id'] !== '' &&
+    typeof v['name'] === 'string' &&
+    typeof v['createdAt'] === 'string' &&
+    (ALL_SORTS as readonly string[]).includes(v['sort'] as string) &&
+    (ALL_DENSITIES as readonly string[]).includes(v['density'] as string) &&
+    Array.isArray(v['filters']) &&
+    v['filters'].every(isFilterPrimitiveLike)
+  )
+}
+
+/**
+ * Parse the `agaric:pages:savedViews:v1` payload. An unknown/future
+ * `schemaVersion` — or a payload that isn't a JSON object at all — discards
+ * the stored contents and returns the empty envelope stamped with the
+ * CURRENT schema version, matching this module's "invalid stored data →
+ * defaultValue" failure discipline (see module docstring). That silent
+ * discard alone can't be told apart from "nothing was ever stored" from
+ * inside `parse` — `peekSavedPagesViewsSchemaMismatch` in
+ * `saved-pages-views.ts` reads the raw string independently (bypassing this
+ * registry entry) to surface that distinction as a one-shot recovery signal
+ * to `useSavedPagesViews`, timed to run before `useLocalStoragePreference`'s
+ * mount-effect write-back would overwrite the mismatched raw value with the
+ * empty envelope.
+ */
+function parseSavedPagesViewsPayload(raw: string): SavedPagesViewsPayload {
+  const parsed: unknown = JSON.parse(raw)
+  if (parsed === null || typeof parsed !== 'object') return { ...EMPTY_SAVED_PAGES_VIEWS_PAYLOAD }
+  const p = parsed as Record<string, unknown>
+  if (p['schemaVersion'] !== SAVED_PAGES_VIEWS_SCHEMA_VERSION) {
+    return { ...EMPTY_SAVED_PAGES_VIEWS_PAYLOAD }
+  }
+  const views = Array.isArray(p['views']) ? p['views'].filter(isSavedPagesViewLike) : []
+  return { schemaVersion: SAVED_PAGES_VIEWS_SCHEMA_VERSION, views }
+}
+
+/**
+ * `agaric:pages:savedViews:v1` — user-named Pages-view snapshots (sort +
+ * density + filters), #2003 piece 1. Device-scoped; JSON envelope (unlike
+ * the bare-string preferences above) because the payload is structured and
+ * this is a brand-new key with no pre-registry on-disk shape to preserve.
+ */
+const SAVED_PAGES_VIEWS_PREFERENCE: PreferenceDefinition<SavedPagesViewsPayload> = {
+  key: 'agaric:pages:savedViews:v1',
+  scope: 'device',
+  version: 1,
+  defaultValue: EMPTY_SAVED_PAGES_VIEWS_PAYLOAD,
+  parse: parseSavedPagesViewsPayload,
+  serialize: (value) => JSON.stringify(value),
+}
+
+/**
  * `agaric:quickCaptureShortcut` — user-configured global-shortcut
  * accelerator (`src/lib/quick-capture-shortcut.ts`). Empty string sentinel =
  * "not set".
@@ -879,6 +1013,7 @@ export const PREFERENCES = {
   emojiPickerEnabled: EMOJI_PICKER_ENABLED_PREFERENCE,
   tabIndentsBlocks: TAB_INDENTS_BLOCKS_PREFERENCE,
   starredPages: STARRED_PAGES_PREFERENCE,
+  savedPagesViews: SAVED_PAGES_VIEWS_PREFERENCE,
   quickCaptureShortcut: QUICK_CAPTURE_SHORTCUT_PREFERENCE,
   sidebarWidth: SIDEBAR_WIDTH_PREFERENCE,
   filterSyntaxIntroToastShown: FILTER_SYNTAX_INTRO_TOAST_SHOWN_PREFERENCE,

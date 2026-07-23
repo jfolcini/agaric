@@ -44,9 +44,13 @@ import { usePageBrowserKeyboard } from '@/hooks/usePageBrowserKeyboard'
 import { usePageBrowserScrollRestoration } from '@/hooks/usePageBrowserScrollRestoration'
 import { isFrontendOnlySort, usePageBrowserSort } from '@/hooks/usePageBrowserSort'
 import { usePageCreation } from '@/hooks/usePageCreation'
+import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
+import { notify } from '@/lib/notify'
+import type { SavedPagesView } from '@/lib/preferences'
+import type { PagesViewTuple } from '@/lib/saved-pages-views'
 import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
@@ -159,6 +163,61 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
   })
 
   const { starredIds, isStarred, toggle: toggleStar } = useStarredPages()
+
+  // Saved Pages views (#2003 piece 1) — a named snapshot of the
+  // sort/density/filters tuple. `currentViewTuple` is memoized so
+  // `useSavedPagesViews`'s active-view match only recomputes when the tuple
+  // actually changes (`wireFilters` is itself reference-stable while its
+  // contents are unchanged, see `usePageBrowserFilters`).
+  const currentViewTuple = useMemo<PagesViewTuple>(
+    () => ({ sort: sortOption, density, filters: wireFilters }),
+    [sortOption, density, wireFilters],
+  )
+  const {
+    views: savedViews,
+    activeView: activeSavedView,
+    saveView,
+    deleteView,
+    schemaMismatchDetected,
+    clearSchemaMismatch,
+  } = useSavedPagesViews(currentViewTuple)
+
+  const handleApplySavedView = useCallback(
+    (view: SavedPagesView) => {
+      setSortOption(view.sort)
+      setDensity(view.density)
+      handleClearAllFilters()
+      for (const filter of view.filters) handleAddFilter(filter)
+      notify.success(t('pageBrowser.savedViews.applied', { name: view.name }))
+    },
+    [setSortOption, setDensity, handleClearAllFilters, handleAddFilter, t],
+  )
+
+  const handleSaveCurrentView = useCallback(
+    (name: string) => {
+      saveView(name, currentViewTuple)
+    },
+    [saveView, currentViewTuple],
+  )
+
+  const handleDeleteSavedView = useCallback(
+    (view: SavedPagesView) => {
+      deleteView(view.id)
+      notify.success(t('pageBrowser.savedViews.deleted', { name: view.name }))
+    },
+    [deleteView, t],
+  )
+
+  // One-shot recovery notice: a saved-views payload from an incompatible
+  // schema version was found on disk and silently discarded. Surface it
+  // once, then acknowledge so it doesn't re-arm on every render.
+  useEffect(() => {
+    if (schemaMismatchDetected) {
+      notify.warning(t('pageBrowser.savedViews.schemaMismatch'))
+      clearSchemaMismatch()
+    }
+  }, [schemaMismatchDetected, clearSchemaMismatch, t])
+
   const [loadMoreAnnouncement, setLoadMoreAnnouncement] = useState('')
   // Stable id base for section header `aria-labelledby` wiring. Two
   // headers (`starred` and `other`) share the same prefix.
@@ -468,6 +527,11 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
           hasTextQuery={hasTextQuery}
           hasChipFilters={hasChipFilters}
           frontendSortAtScale={frontendSortAtScale}
+          savedViews={savedViews}
+          activeSavedView={activeSavedView}
+          onApplySavedView={handleApplySavedView}
+          onDeleteSavedView={handleDeleteSavedView}
+          onSaveCurrentView={handleSaveCurrentView}
         />
       </ViewHeader>
 

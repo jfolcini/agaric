@@ -12,6 +12,7 @@ import { Plus, Rows3, Search } from 'lucide-react'
 import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { SavedViewsDropdown } from '@/components/PageBrowser/SavedViewsDropdown'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { SearchInput } from '@/components/ui/search-input'
@@ -27,6 +28,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import type { DensityMode } from '@/hooks/usePageBrowserDensity'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
+import type { SavedPagesView } from '@/lib/preferences'
 
 export interface PageBrowserHeaderProps {
   formRef: React.RefObject<HTMLFormElement | null>
@@ -80,6 +82,13 @@ export interface PageBrowserHeaderProps {
    * `default` or the server-side sorts, nor when fully loaded.
    */
   frontendSortAtScale?: boolean
+  /** Saved Pages views (#2003 piece 1) — sort/density/filters snapshots. */
+  savedViews: SavedPagesView[]
+  /** The saved view matching the current tuple, or `null` if none matches. */
+  activeSavedView: SavedPagesView | null
+  onApplySavedView: (view: SavedPagesView) => void
+  onDeleteSavedView: (view: SavedPagesView) => void
+  onSaveCurrentView: (name: string) => void
 }
 
 export function PageBrowserHeader({
@@ -101,6 +110,11 @@ export function PageBrowserHeader({
   hasTextQuery,
   hasChipFilters,
   frontendSortAtScale,
+  savedViews,
+  activeSavedView,
+  onApplySavedView,
+  onDeleteSavedView,
+  onSaveCurrentView,
 }: PageBrowserHeaderProps): React.ReactElement {
   const { t } = useTranslation()
   // PageBrowser pagination UX + small muted text near
@@ -254,6 +268,13 @@ export function PageBrowserHeader({
               <SelectItem value="expanded">{t('pageBrowser.densityExpanded')}</SelectItem>
             </SelectContent>
           </Select>
+          <SavedViewsDropdown
+            views={savedViews}
+            activeView={activeSavedView}
+            onApply={onApplySavedView}
+            onDelete={onDeleteSavedView}
+            onSaveCurrentView={onSaveCurrentView}
+          />
         </div>
       )}
     </div>
