@@ -847,6 +847,10 @@ pub async fn export_page_markdown_inner(
             for cap in BLOCK_REF_RE.captures_iter(content) {
                 block_ref_ulids.insert(cap[1].to_string());
             }
+            // #2968 — also load the tag/page ULIDs embedded inside a structured
+            // `{{query v2:…}}` payload (invisible to the plaintext-token regexes
+            // above) so they resolve to names in the readable export below.
+            super::inline_query_md::collect_export_ref_ulids(content, &mut ulid_set);
         }
     }
 
@@ -1237,6 +1241,13 @@ pub async fn export_page_markdown_inner(
         let content = block.content.as_deref().unwrap_or("");
         let resolved =
             resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        // #2968 — rewrite structured `{{query v2:…}}` payloads to the readable,
+        // roundtrip-safe `v2n:` names form (resolving embedded tag/page ULIDs).
+        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+            &resolved,
+            &tag_names,
+            &page_titles,
+        );
         let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
         push_block_bullet(&mut output, &indent, &resolved);
 
@@ -1317,6 +1328,12 @@ pub async fn export_page_markdown_inner(
         let content = block.content.as_deref().unwrap_or("");
         let resolved =
             resolve_ulids_for_export(content, &tag_names, &page_titles, &block_ref_replacement);
+        // #2968 — same readable `v2n:` query rewrite as the DFS branch above.
+        let resolved = super::inline_query_md::rewrite_inline_queries_for_export(
+            &resolved,
+            &tag_names,
+            &page_titles,
+        );
         let resolved = stamp_block_anchor_marker(resolved, &id, &same_page_ref_targets);
         push_block_bullet(&mut output, "", &resolved);
         for (key, value) in [
@@ -2219,7 +2236,14 @@ async fn resolve_inbound_page_links(
     // the SQL lookup / create-if-missing below runs on the anchor-STRIPPED base
     // name. A plain `[[Page]]` (no `#`) splits to `(Page, None)` and behaves
     // byte-for-byte as before, so Logseq / plain Markdown is unaffected.
-    let link_names = collect_inbound_page_link_names(&parse_output.blocks);
+    let mut link_names = collect_inbound_page_link_names(&parse_output.blocks);
+    // #2968 — also resolve/create the PAGE names referenced by structured
+    // `{{query v2n:…}}` inline queries, so a query's page/structural refs remap
+    // to this vault's page ids (create-if-missing) on re-import, exactly like an
+    // inbound `[[Page]]` link.
+    link_names.extend(super::inline_query_md::query_page_names(
+        &parse_output.blocks,
+    ));
     // Distinct, non-empty BASE names to look up (anchors stripped). An
     // anchor-only link like `[[#heading]]` has an EMPTY base and contributes no
     // lookup target (it never resolves/creates a page).
@@ -2561,7 +2585,17 @@ async fn resolve_inbound_tags(
         }
         map
     };
-    for token_name in collect_inbound_tag_names(&parse_output.blocks) {
+    // #2968 — also resolve/create the TAG names referenced by structured
+    // `{{query v2n:…}}` inline queries so a query's tag refs remap to this
+    // vault's tag ids (create-if-missing) on re-import, exactly like an inbound
+    // `#tag`.
+    let tag_token_names: Vec<String> = collect_inbound_tag_names(&parse_output.blocks)
+        .into_iter()
+        .chain(super::inline_query_md::query_tag_names(
+            &parse_output.blocks,
+        ))
+        .collect();
+    for token_name in tag_token_names {
         let norm = crate::tag_norm::normalize_tag_name(&token_name);
 
         // Already resolved/created in this pass (case/dedup convergence).
@@ -2932,7 +2966,17 @@ async fn insert_blocks(
         // `[[ULID]]` refs using the pre-resolved map. Names that were
         // ambiguous / unresolvable (absent from the map) keep their original
         // plain-text token; canonical `[[ULID]]` tokens are left untouched.
-        let content = rewrite_inbound_page_links(&block.content, &resolved_page_links);
+        // #2968 — first convert any readable `{{query v2n:… names …}}` payload
+        // back to the canonical stored `{{query v2:…ULIDs…}}` form, remapping
+        // embedded tag/page names to THIS vault's ids via the same resolve maps.
+        // Runs before the `[[Page]]`/`#tag` rewrites so the resulting base64url
+        // token is inert for them (its alphabet has no `[[` / `#[` sequences).
+        let content = super::inline_query_md::rewrite_inline_queries_for_import(
+            &block.content,
+            &resolved_page_links,
+            &resolved_tag_tokens,
+        );
+        let content = rewrite_inbound_page_links(&content, &resolved_page_links);
         // #1924 / #1950 — then rewrite inbound inline tags (`#tag`,
         // `#[[Tag With Space]]`) to `#[ULID]` refs using the pre-resolved
         // token→ULID map. A code block (`is_code`, born inside a ```` ``` ````
