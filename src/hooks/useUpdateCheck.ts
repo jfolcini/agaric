@@ -200,16 +200,52 @@ export async function checkForUpdatesNow(): Promise<void> {
 }
 
 /**
- * Empty-deps boot effect. Skips when:
- *  - the UA sniff says we're on mobile, OR
- *  - localStorage records a successful check less than 24 h ago.
+ * Empty-deps boot effect. Skips entirely when the UA sniff says we're
+ * on mobile (`isMobilePlatform()`).
  *
- * Fires `runUpdateCheck` in silent mode otherwise.
+ * Otherwise, in addition to firing an initial `runUpdateCheck` in
+ * silent mode, this registers a 24 h `setInterval` re-check plus
+ * `visibilitychange` (tab/window regains focus) and `online` (network
+ * restored) listeners that re-check immediately — so a long-running or
+ * autostarted instance (tray, `tauri-plugin-autostart`) doesn't stay
+ * stuck at a single boot-time check for days/weeks.
+ *
+ * Every one of these re-check triggers routes through the same
+ * `isWithinDebounceWindow` guard the boot check uses (localStorage
+ * records a successful check less than 24 h ago), plus the
+ * `runUpdateCheck` in-flight guard — that's what makes it safe to call
+ * `attemptCheck` on every focus/reconnect without a second debounce
+ * here.
  */
 export function useUpdateCheck(): void {
   useEffect(() => {
     if (isMobilePlatform()) return
-    if (isWithinDebounceWindow(Date.now())) return
-    void runUpdateCheck(true)
+
+    const attemptCheck = (): void => {
+      if (isWithinDebounceWindow(Date.now())) return
+      void runUpdateCheck(true)
+    }
+
+    attemptCheck()
+
+    const intervalId = setInterval(attemptCheck, ONE_DAY_MS)
+
+    const handleVisibilityChange = (): void => {
+      if (document.visibilityState === 'visible') {
+        attemptCheck()
+      }
+    }
+    const handleOnline = (): void => {
+      attemptCheck()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('online', handleOnline)
+
+    return () => {
+      clearInterval(intervalId)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('online', handleOnline)
+    }
   }, [])
 }
