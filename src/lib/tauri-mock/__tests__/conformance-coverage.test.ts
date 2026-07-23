@@ -251,11 +251,14 @@ const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]>
   ['move_block', 'move-cross-page-retains-property'],
   ['set_todo_state', 'agenda-reserved-columns'],
 
-  // ── Not yet covered — uncomment one line each as its fixture lands ──
-  // ['purge_block', 'subtree-with-satellites'],        // TODO(#3079): enable when fixture lands (purge cascades satellite rows)
-  // ['create_block', 'tag-space-scope'],               // TODO(#3079): enable when fixture lands (@-tag creation is space-scoped)
-  // ['set_property', 'reserved-key-routes-to-column'], // TODO(#3081): enable when fixture lands (reserved key → native column)
-  // ['delete_property', 'reserved-key-clears-column'], // TODO(#3081): enable when fixture lands (delete reserved key clears column)
+  ['purge_block', 'subtree-with-satellites'],
+  ['set_property', 'reserved-key-routes-to-column'],
+  ['delete_property', 'reserved-key-clears-column'],
+
+  // create_block/tag-space-scope (#3081, shipped in #3092) is deliberately NOT a
+  // tuple: the harness cannot express it (assign_all_to_test_space masks space-less
+  // orphans; the snapshot omits space_id). Its coverage is the Rust integration test
+  // (tag_integration.rs *_3081) + the mock round-trip tests.
 ]
 
 // ---------------------------------------------------------------------------

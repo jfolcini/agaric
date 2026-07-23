@@ -184,6 +184,13 @@ The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained **second
 
 Rule: **a migration that touches a mock-referenced table/column must update the mock in the SAME PR** (ref #3084), and add/adjust a `conformance/fixtures/*.json` fixture so the #763 harness pins the new behavior. The [`conformance-coverage.test.ts`](../../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) ratchet (#3083) enforces that mutating commands stay fixture-covered; the mock-parity + conformance suites are what turn a forgotten mock update red. See root [`AGENTS.md` § Testing invariants (anti-drift)](../../AGENTS.md#testing-invariants-anti-drift).
 
+**Guard:** the `check-migration-mock-contract` prek hook (`scripts/check-migration-mock-contract.py`) mechanically enforces the rule above. It carries an explicit CONTRACT map (backend table → the mock's in-memory store symbol + the `src/lib/tauri-mock/` files that model it) and fails on any **new** migration (one not grandfathered in `src-tauri/migrations-mock-ack-baseline.txt`) that touches a mapped table without acknowledgement. Acknowledgement is **mode-dependent**, because CI's `prek run --all-files` passes *every* mock file — which would make "a mock file changed alongside" trivially true and the CI back-stop vacuous:
+
+- **Diff-scoped** (pre-commit / pre-push, a real changed-set): pass by EITHER (a) changing a modeling mock file in the same PR, OR (b) a literal `-- mock-unaffected: <reason>` annotation line (the escape hatch for index-only / derived-cache-only changes the mock does not model).
+- **Aggregate** (CI `--all-files`, auto-detected as ≥2 already-baselined migrations in one invocation — impossible in a real diff since migrations are immutable): the mock-file signal is discarded; only (b) the annotation or baseline membership (an explicit `--update-baseline`) exempts. This is the back-stop that catches a migration committed with `--no-verify`.
+
+On a clean tree every migration is baselined, so `--all-files`, pre-commit, and pre-push all pass with no git dependence. After landing a new migration, grandfather it with `python3 scripts/check-migration-mock-contract.py --update-baseline`. A `--self-test` companion hook pins the CONTRACT map against rot (asserts every mapped file exists and still mentions its store symbol) and both invocation modes.
+
 ## Cross-references
 
 - Root [`AGENTS.md`](../../AGENTS.md) §Key Architectural Invariants — invariant #1 (op log is append-only).

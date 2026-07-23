@@ -912,6 +912,44 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
+# Migration → JS-mock schema-contract guard (#3084). The browser/e2e Tauri
+# mock (src/lib/tauri-mock/) is a hand-maintained SECOND implementation of the
+# schema; when a migration changes a table the mock models, the mock silently
+# keeps modeling the OLD schema and drifts (the tag-space bug: a retired
+# block_properties(key='space') row kept alive after space moved to the native
+# blocks.space_id column — shipped past green e2e). This DIFF-scoped guard sees
+# both changed migrations AND changed mock files in one invocation (the `files`
+# alternation below). For each NEW migration (not grandfathered in
+# src-tauri/migrations-mock-ack-baseline.txt) that touches a table in the
+# CONTRACT map, it requires EITHER a modeling mock file changed alongside it,
+# OR a `-- mock-unaffected: <reason>` annotation line in the migration. The
+# baseline makes `prek run --all-files` (CI), pre-commit, and pre-push behave
+# identically with no git dependence. Regenerate after landing a new migration:
+# `python3 scripts/check-migration-mock-contract.py --update-baseline`.
+[[repos.hooks]]
+id = "check-migration-mock-contract"
+name = "migration → mock schema-contract guard (#3084)"
+entry = "python3 scripts/check-migration-mock-contract.py"
+language = "system"
+files = '^(src-tauri/migrations/.*\.sql|src/lib/tauri-mock/.*)$'
+stages = ["pre-commit", "pre-push"]
+
+# #3084: the guard's CONTRACT map (table → mock store symbol + modeling files),
+# its migration-DDL table parser (CREATE/ALTER/DROP TABLE, CREATE TRIGGER … ON,
+# `_new_<t>` rebuild forms; CREATE INDEX excluded), and the (a) mock-changed /
+# (b) `-- mock-unaffected:` acknowledgement + baseline-exemption logic must not
+# silently regress. This companion hook runs the guard's own fixture suite
+# (`--self-test`), which also asserts every CONTRACT file exists and mentions
+# its store symbol so the map cannot rot. No file args.
+[[repos.hooks]]
+id = "check-migration-mock-contract-self-test"
+name = "migration → mock guard self-test (#3084 fixtures + CONTRACT integrity)"
+entry = "python3 scripts/check-migration-mock-contract.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: tauri-specta 10-argument ceiling guard (#1317). The tauri-specta IPC
 # bridge codegen has a HARD 10-argument limit per `#[tauri::command]`, and a
 # `State<'_, T>` param counts toward it (it costs a Rust signature slot even

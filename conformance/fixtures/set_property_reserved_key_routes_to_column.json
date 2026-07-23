@@ -54,6 +54,7 @@
       "command": "set_property"
     }
   ],
+  "scenarios": ["reserved-key-routes-to-column"],
   "seed": {
     "blocks": [
       {

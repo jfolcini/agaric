@@ -70,6 +70,7 @@
       "command": "purge_block"
     }
   ],
+  "scenarios": ["subtree-with-satellites"],
   "seed": {
     "blocks": [
       {
