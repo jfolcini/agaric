@@ -74,6 +74,10 @@ const ALLOWLIST = new Map([
   ['mcp.rs:mcp_rw_disconnect_all', 'fire-and-forget disconnect signal, returns Ok(())'],
   ['recovery.rs:get_recovery_status', 'clones a lock-guarded boot-status value'],
   ['sync_cmds.rs:get_mdns_status', 'clones a lock-guarded mDNS-status value (#2506)'],
+  [
+    'mod.rs:is_flatpak',
+    'trivial /.flatpak-info exists() check; no fallible work worth a span (#2974)',
+  ],
 
   // ── Instrumented via a cross-module helper the in-file resolver can't see ──
   [
