@@ -14,13 +14,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { HelpTab } from '@/components/settings/HelpTab'
+import { formatRelativeTime } from '@/lib/format-relative-time'
 import { t } from '@/lib/i18n'
+import type { UpdateStatusValue } from '@/lib/preferences'
 
 // Stub the updater hook surface — the manual button shouldn't actually
-// reach into the Tauri updater plugin from inside a unit test.
+// reach into the Tauri updater plugin from inside a unit test, and the
+// persisted status is fed in directly via `useUpdateStatus` so each card
+// state can be rendered deterministically.
+const { mockCheckForUpdatesNow, mockUseUpdateStatus } = vi.hoisted(() => ({
+  mockCheckForUpdatesNow: vi.fn(async () => undefined),
+  mockUseUpdateStatus: vi.fn<() => UpdateStatusValue>(),
+}))
+
 vi.mock('@/hooks/useUpdateCheck', () => ({
-  LAST_UPDATE_CHECK_STORAGE_KEY: 'agaric:last-update-check',
-  checkForUpdatesNow: vi.fn(async () => undefined),
+  checkForUpdatesNow: mockCheckForUpdatesNow,
+  useUpdateStatus: () => mockUseUpdateStatus(),
 }))
 
 const DESKTOP_UA =
@@ -41,6 +50,9 @@ beforeEach(() => {
   originalUA = navigator.userAgent
   setUserAgent(DESKTOP_UA)
   localStorage.clear()
+  mockCheckForUpdatesNow.mockClear()
+  mockUseUpdateStatus.mockReset()
+  mockUseUpdateStatus.mockReturnValue({ status: 'idle' })
 })
 
 afterEach(() => {
@@ -111,6 +123,75 @@ describe('HelpTab', () => {
       },
       { timeout: 5000 },
     )
+  })
+
+  // #3076 — the Updates card renders the persisted status for every state so
+  // the control is never a bare, stateless button.
+  describe('persistent update status (#3076)', () => {
+    it('renders "Up to date (v…)" with a relative last-checked time', () => {
+      const iso = new Date(Date.now() - 5 * 60 * 1000).toISOString()
+      mockUseUpdateStatus.mockReturnValue({
+        status: 'up-to-date',
+        currentVersion: '0.9.1',
+        lastCheckedAt: iso,
+      })
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByRole('status')).toHaveTextContent(
+        t('help.updateUpToDateLabel', { version: '0.9.1' }),
+      )
+      expect(
+        screen.getByText(t('help.updateLastCheckedLabel', { ago: formatRelativeTime(iso, t) })),
+      ).toBeInTheDocument()
+    })
+
+    it('renders a version-less "Up to date" when the running version is unknown', () => {
+      mockUseUpdateStatus.mockReturnValue({ status: 'up-to-date' })
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByRole('status')).toHaveTextContent(t('help.updateUpToDateLabelNoVersion'))
+    })
+
+    it('renders "Update available: v…" when a newer release exists', () => {
+      mockUseUpdateStatus.mockReturnValue({
+        status: 'available',
+        availableVersion: '2.0.0',
+        currentVersion: '0.9.1',
+      })
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByRole('status')).toHaveTextContent(
+        t('help.updateAvailableStatus', { version: '2.0.0' }),
+      )
+    })
+
+    it('renders the captured error message (not swallowed) on a failed check', () => {
+      mockUseUpdateStatus.mockReturnValue({ status: 'error', error: 'network down' })
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByRole('status')).toHaveTextContent(
+        t('help.updateCheckFailedLabel', { error: 'network down' }),
+      )
+    })
+
+    it('disables the button and shows "Checking…" while a check is in flight', () => {
+      mockUseUpdateStatus.mockReturnValue({ status: 'checking' })
+      render(<HelpTab onReportBugClick={vi.fn()} />)
+      expect(screen.getByRole('button', { name: t('help.updateCheckNowButton') })).toBeDisabled()
+      expect(screen.getByRole('status')).toHaveTextContent(t('help.updateCheckingLabel'))
+    })
+
+    it('has no a11y violations in the error state', async () => {
+      mockUseUpdateStatus.mockReturnValue({
+        status: 'error',
+        error: 'network down',
+        lastCheckedAt: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+      })
+      const { container } = render(<HelpTab onReportBugClick={vi.fn()} />)
+      await waitFor(
+        async () => {
+          const results = await axe(container)
+          expect(results).toHaveNoViolations()
+        },
+        { timeout: 5000 },
+      )
+    })
   })
 
   // #1422 — persistent "Touch gestures" reference card. Lists the same

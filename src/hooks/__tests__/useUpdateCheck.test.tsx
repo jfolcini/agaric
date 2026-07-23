@@ -29,7 +29,9 @@ import {
   checkForUpdatesNow,
   LAST_UPDATE_CHECK_STORAGE_KEY,
   useUpdateCheck,
+  useUpdateStatus,
 } from '@/hooks/useUpdateCheck'
+import { PREFERENCES, readPreference } from '@/lib/preferences'
 import { flushAllDrafts } from '@/lib/tauri'
 
 // ── Module mocks ────────────────────────────────────────────────────
@@ -37,6 +39,7 @@ import { flushAllDrafts } from '@/lib/tauri'
 // `vi.fn()`s pattern.
 const mockCheck = vi.fn()
 const mockRelaunch = vi.fn()
+const mockGetVersion = vi.fn()
 
 vi.mock('@tauri-apps/plugin-updater', () => ({
   check: (...args: unknown[]) => mockCheck(...args),
@@ -44,6 +47,12 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 
 vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: (...args: unknown[]) => mockRelaunch(...args),
+}))
+
+// `@tauri-apps/api/app#getVersion` backs the "Up to date (v{current})"
+// status — mocked so the no-update path resolves a deterministic version.
+vi.mock('@tauri-apps/api/app', () => ({
+  getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }))
 
 const { mockIsFlatpak } = vi.hoisted(() => ({
@@ -138,6 +147,8 @@ beforeEach(() => {
   vi.mocked(flushAllDrafts).mockResolvedValue({ flushed: 0 })
   mockCheck.mockReset()
   mockRelaunch.mockReset()
+  mockGetVersion.mockReset()
+  mockGetVersion.mockResolvedValue('0.9.1')
   mockIsFlatpak.mockReset()
   mockIsFlatpak.mockResolvedValue({ status: 'ok', data: false })
   vi.mocked(notify.message).mockReset()
@@ -511,5 +522,92 @@ describe('useUpdateCheck — periodic re-check', () => {
       await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
     })
     expect(mockCheck).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ── #3076 — persisted update-status surfaced on the Help card ─────────
+//
+// Every check outcome (available / up-to-date / error) is recorded in a
+// status the card reads, and errors are captured (not swallowed). These
+// tests drive the real `@/lib/preferences` store (unmocked) so they also
+// exercise the localStorage persistence round-trip.
+describe('update status (#3076)', () => {
+  const UPDATE_STATUS_KEY = PREFERENCES.updateStatus.key
+
+  it('captures status=available with both versions on an available update', async () => {
+    mockCheck.mockResolvedValueOnce({
+      version: '2.0.0',
+      currentVersion: '0.9.1',
+      downloadAndInstall: vi.fn(),
+    })
+
+    await checkForUpdatesNow()
+
+    const persisted = readPreference(PREFERENCES.updateStatus)
+    expect(persisted.status).toBe('available')
+    expect(persisted.availableVersion).toBe('2.0.0')
+    expect(persisted.currentVersion).toBe('0.9.1')
+    expect(persisted.lastCheckedAt).toBeTypeOf('string')
+    // Round-trips through the raw localStorage envelope, not just the store.
+    expect(JSON.parse(localStorage.getItem(UPDATE_STATUS_KEY) ?? '{}')).toMatchObject({
+      status: 'available',
+      availableVersion: '2.0.0',
+    })
+  })
+
+  it('captures status=up-to-date with the running version when nothing is new', async () => {
+    mockCheck.mockResolvedValueOnce(null)
+    mockGetVersion.mockResolvedValueOnce('0.9.1')
+
+    await checkForUpdatesNow()
+
+    const persisted = readPreference(PREFERENCES.updateStatus)
+    expect(persisted.status).toBe('up-to-date')
+    expect(persisted.currentVersion).toBe('0.9.1')
+    expect(persisted.availableVersion).toBeUndefined()
+  })
+
+  it('captures status=error with the message instead of swallowing it (manual path)', async () => {
+    mockCheck.mockRejectedValueOnce(new Error('network down'))
+
+    await checkForUpdatesNow()
+
+    const persisted = readPreference(PREFERENCES.updateStatus)
+    expect(persisted.status).toBe('error')
+    expect(persisted.error).toBe('network down')
+    expect(persisted.lastCheckedAt).toBeTypeOf('string')
+    // The manual path still surfaces a toast on failure.
+    expect(notify.error).toHaveBeenCalledWith('network down')
+  })
+
+  it('captures status=error on the SILENT boot path without a toast (no longer swallowed)', async () => {
+    // Debounce expired so the boot check actually fires.
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, old)
+    mockCheck.mockRejectedValueOnce(new Error('boot blip'))
+
+    renderHook(() => useUpdateCheck())
+
+    await waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
+    await waitFor(() => {
+      expect(readPreference(PREFERENCES.updateStatus).status).toBe('error')
+    })
+    expect(readPreference(PREFERENCES.updateStatus).error).toBe('boot blip')
+    // Silent path: no toast raised.
+    expect(notify.error).not.toHaveBeenCalled()
+  })
+
+  it('useUpdateStatus reflects the outcome reactively to a mounted reader', async () => {
+    mockCheck.mockResolvedValueOnce(null)
+    mockGetVersion.mockResolvedValueOnce('0.9.1')
+
+    const { result } = renderHook(() => useUpdateStatus())
+
+    await act(async () => {
+      await checkForUpdatesNow()
+    })
+
+    expect(result.current.status).toBe('up-to-date')
+    expect(result.current.currentVersion).toBe('0.9.1')
   })
 })

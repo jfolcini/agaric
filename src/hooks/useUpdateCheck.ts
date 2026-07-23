@@ -28,8 +28,12 @@
  * function bypasses the debounce and always surfaces a confirmation
  * toast — it is what the Settings → Help `t('help.updateCheckNowButton')` button calls.
  *
- * Boot-check errors are logged silently — a connection blip at startup
- * shouldn't pester the user. The manual path surfaces failures.
+ * Boot-check errors don't raise a toast — a connection blip at startup
+ * shouldn't pester the user — but they are NO LONGER swallowed: every
+ * outcome (checking / up-to-date / available / error) is recorded in a
+ * persisted status the Settings → Help card reads via `useUpdateStatus`,
+ * so a silent boot failure now leaves a visible "Last check failed"
+ * trace. The manual path additionally surfaces failures as a toast.
  */
 
 // Hoist `@tauri-apps/plugin-process` (used in performInstall) to the top
@@ -41,14 +45,21 @@
 // in two flows that may never fire (mobile / debounced) and (b) it's
 // the larger of the two chunks.
 import { relaunch } from '@tauri-apps/plugin-process'
-import { useEffect } from 'react'
+import { useEffect, useSyncExternalStore } from 'react'
 
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isMobilePlatform } from '@/lib/platform'
-import { PREFERENCES, readPreference, removePreference, writePreference } from '@/lib/preferences'
+import type { UpdateStatusValue } from '@/lib/preferences'
+import {
+  DEFAULT_UPDATE_STATUS,
+  PREFERENCES,
+  readPreference,
+  removePreference,
+  writePreference,
+} from '@/lib/preferences'
 import { flushAllDrafts } from '@/lib/tauri'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
@@ -69,6 +80,96 @@ function readLastCheckIso(): string | null {
 function writeLastCheckIso(iso: string): void {
   if (typeof localStorage === 'undefined') return
   writePreference(PREFERENCES.lastUpdateCheck, iso)
+}
+
+// ── Update-status store (#3076) ─────────────────────────────────────────────
+//
+// A tiny module-level external store holding the LAST update-check outcome so
+// the Settings → Help card always shows state (up-to-date / available / error /
+// checking) instead of only a bare button. Both the boot path and the manual
+// button funnel their result through `setUpdateStatus`, which mirrors the
+// outcome to `localStorage` (via the shared `preferences` util — no parallel
+// store) and notifies subscribers. `useUpdateStatus` exposes it reactively so a
+// boot check that completes while Settings is open updates the card live.
+//
+// Terminal states (up-to-date/available/error) are persisted; the transient
+// `'checking'` state is in-memory only, so a reload while the debounce window
+// is closed never leaves the card stuck on "Checking…".
+
+let currentStatus: UpdateStatusValue =
+  typeof localStorage === 'undefined'
+    ? DEFAULT_UPDATE_STATUS
+    : readPreference(PREFERENCES.updateStatus)
+
+const statusListeners = new Set<() => void>()
+
+function notifyStatusListeners(): void {
+  for (const listener of statusListeners) listener()
+}
+
+/**
+ * Publish a new update-check status. `persist` defaults to true (terminal
+ * states are written to localStorage); pass `false` for the transient
+ * `'checking'` state so it never survives a reload.
+ */
+function setUpdateStatus(next: UpdateStatusValue, persist = true): void {
+  currentStatus = next
+  if (persist && typeof localStorage !== 'undefined') {
+    writePreference(PREFERENCES.updateStatus, next)
+  }
+  notifyStatusListeners()
+}
+
+// Keep the in-memory snapshot in sync when ANOTHER window writes the status
+// (multi-window desktop): `writePreference` broadcasts a synthetic StorageEvent
+// same-tab and the browser fires the native event cross-tab. Guarded by the key
+// so unrelated preference writes don't churn the store.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== PREFERENCES.updateStatus.key) return
+    currentStatus = readPreference(PREFERENCES.updateStatus)
+    notifyStatusListeners()
+  })
+}
+
+function subscribeUpdateStatus(listener: () => void): () => void {
+  statusListeners.add(listener)
+  return () => {
+    statusListeners.delete(listener)
+  }
+}
+
+function getUpdateStatusSnapshot(): UpdateStatusValue {
+  return currentStatus
+}
+
+/**
+ * Read the last update-check outcome reactively. Returns a referentially
+ * stable snapshot between transitions (the `useSyncExternalStore` contract) —
+ * `currentStatus` is only replaced by `setUpdateStatus` / the storage listener.
+ */
+export function useUpdateStatus(): UpdateStatusValue {
+  return useSyncExternalStore(
+    subscribeUpdateStatus,
+    getUpdateStatusSnapshot,
+    getUpdateStatusSnapshot,
+  )
+}
+
+/**
+ * Resolve the currently-running app version via `@tauri-apps/api/app`. Lazy
+ * import (mirrors the updater/plugin-process chunking) + defensive: a
+ * browser/dev session without the Tauri runtime returns `undefined` rather
+ * than throwing into the check flow.
+ */
+async function resolveCurrentVersion(): Promise<string | undefined> {
+  try {
+    const { getVersion } = await import('@tauri-apps/api/app')
+    return await getVersion()
+  } catch (err) {
+    logger.warn('updater', 'getVersion() failed; current version unknown', undefined, err)
+    return undefined
+  }
 }
 
 /**
@@ -167,6 +268,8 @@ function showUpdateAvailableToast(update: {
 /** Shape of the object returned by `@tauri-apps/plugin-updater#check`. */
 type UpdaterCheckResult = {
   version: string
+  /** Currently-running version per the updater metadata (may be absent in older plugin versions). */
+  currentVersion?: string
   downloadAndInstall: () => Promise<void>
 } | null
 
@@ -198,16 +301,28 @@ function runUpdateCheck(silentOnNoUpdate: boolean): Promise<void> | undefined {
 }
 
 async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
+  // Reflect the in-flight check on the Help card, preserving any prior
+  // version context. Transient — not persisted (see `setUpdateStatus`).
+  setUpdateStatus({ ...currentStatus, status: 'checking' }, false)
+
   let update: UpdaterCheckResult
   try {
     const { check } = await import('@tauri-apps/plugin-updater')
     update = (await check()) as UpdaterCheckResult
   } catch (err) {
+    // Capture the failure on the status card instead of swallowing it — a
+    // silent boot-time failure is exactly what left users with no signal.
+    const message = err instanceof Error ? err.message : i18n.t('help.updateInstallFailedToast')
+    setUpdateStatus({
+      ...currentStatus,
+      status: 'error',
+      error: message,
+      lastCheckedAt: new Date().toISOString(),
+    })
     if (silentOnNoUpdate) {
       logger.warn('updater', 'Update check failed (silent boot path)', undefined, err)
     } else {
       logger.error('updater', 'Update check failed (manual path)', undefined, err)
-      const message = err instanceof Error ? err.message : i18n.t('help.updateInstallFailedToast')
       notify.error(message)
     }
     return
@@ -215,11 +330,26 @@ async function runUpdateCheckInner(silentOnNoUpdate: boolean): Promise<void> {
   // Persist the timestamp on every successful round-trip, regardless of
   // whether an update was found — the debounce protects against repeat
   // network hits, not against repeat "no update" confirmations.
-  writeLastCheckIso(new Date().toISOString())
+  const nowIso = new Date().toISOString()
+  writeLastCheckIso(nowIso)
   if (update != null) {
+    // `currentVersion` comes free from the updater metadata when an update
+    // exists — no extra `getVersion()` round-trip needed.
+    setUpdateStatus({
+      status: 'available',
+      currentVersion: update.currentVersion,
+      availableVersion: update.version,
+      lastCheckedAt: nowIso,
+    })
     showUpdateAvailableToast(update)
-  } else if (!silentOnNoUpdate) {
-    notify.success(i18n.t('help.updateNoneFoundToast'))
+  } else {
+    // No update: resolve the running version separately so the card can show
+    // "Up to date (v{current})".
+    const currentVersion = await resolveCurrentVersion()
+    setUpdateStatus({ status: 'up-to-date', currentVersion, lastCheckedAt: nowIso })
+    if (!silentOnNoUpdate) {
+      notify.success(i18n.t('help.updateNoneFoundToast'))
+    }
   }
 }
 
