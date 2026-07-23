@@ -462,6 +462,79 @@ async fn search_missing_query_returns_validation() {
     assert!(matches!(err, AppError::Validation { .. }), "got {err:?}");
 }
 
+/// #2956 — a malformed / truncated `space_id` must be REJECTED at the
+/// boundary via the strict `SpaceId::from_string` gate (an `AppError::Ulid`,
+/// like every sibling tool: `list_backlinks`, `list_property_defs`,
+/// `create_page`), NOT silently coerced through `from_trusted` into an
+/// `Active` id that matches nothing. Before this fix `handle_search` used
+/// `from_trusted`, so this call returned `Ok` with an empty `items` array —
+/// an agent that mangled the id would wrongly conclude the vault was empty.
+/// A seeded matching block confirms the vault is in fact non-empty, so the
+/// pre-fix "empty results" was a false negative, not a true miss.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_malformed_space_id_errors_not_empty() {
+    let (tools, mat, _dir) = mk_tools().await;
+    create_block_inner(
+        &tools.pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "needle in the haystack".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+    crate::commands::tests::common::assign_all_to_test_space(&tools.pool).await;
+
+    // Truncated / non-ULID id: must error at construction, not match nothing.
+    let err = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": "NOT-A-VALID-ULID"}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("a malformed space_id must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "malformed space_id must surface as AppError::Ulid (strict from_string gate, \
+         same as sibling tools), got {err:?}"
+    );
+
+    // Empty id: `normalize_ulid_arg` leaves it empty, so `from_string("")`
+    // must reject it too rather than producing an empty `Active` scope.
+    let err = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": ""}),
+            &test_ctx(),
+        )
+        .await
+        .expect_err("an empty space_id must be rejected, not return empty results");
+    assert!(
+        matches!(err, AppError::Ulid(_)),
+        "empty space_id must surface as AppError::Ulid, got {err:?}"
+    );
+
+    // Control: the SAME query under the VALID space still returns the hit —
+    // proving the rejections above were about the bad id, not an empty vault.
+    let ok = tools
+        .call_tool(
+            "search",
+            json!({"query": "needle", "space_id": TEST_SPACE_ID}),
+            &test_ctx(),
+        )
+        .await
+        .expect("valid space_id must still return the seeded match");
+    assert_eq!(
+        ok["items"].as_array().expect("items").len(),
+        1,
+        "the vault is non-empty for a valid space_id"
+    );
+}
+
 // -------------------------------------------------------------------
 // Explicit `limit` validation (rejects out-of-range values
 // instead of silently clamping). Six tools advertise a min/max in

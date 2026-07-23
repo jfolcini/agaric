@@ -144,6 +144,90 @@ fn durable_agent_name(sanitized: &str, session_id: &str) -> String {
     }
 }
 
+/// #2954 — drop-safe activity-feed emission guard.
+///
+/// An RW tool's DB write becomes durable inside
+/// `registry.call_tool(...).await` — specifically at `CommandTx::commit().await`
+/// (see `db/command_tx.rs::commit_and_dispatch`), which is the LAST `.await`
+/// before the value is returned: everything after the commit (materializer
+/// dispatch, unwinding back up to the adapter, `take_appends`, the normal
+/// emission) is synchronous. The activity-feed emission, however, historically
+/// ran only AFTER that await resolved, in the same connection future. If the
+/// connection future is dropped while the commit await is suspended — e.g. the
+/// bounded grace-period `timeout` in `server.rs` expires while sqlx-sqlite's
+/// worker thread is committing — the mutation is durably applied to the vault
+/// yet its `mcp:activity` entry (and the `blocks:changed` refresh event that
+/// entry carries) is never emitted.
+///
+/// This guard closes that gap. It is constructed INSIDE the `LAST_APPEND`
+/// task-local scope, immediately before the (cancellable) `call_tool` await,
+/// and disarmed on the normal path right after the op refs are captured — at
+/// which point the outer scope emits the full entry (real summary + result)
+/// itself. If instead the future is dropped before it can disarm, the guard's
+/// `Drop` drains whatever op refs the RW handler already recorded into
+/// `LAST_APPEND` (recorded by `append_local_op_in_tx` INSIDE the tx, i.e.
+/// before the commit await) and emits the completion entry so the mutation is
+/// never silently missing from the feed.
+///
+/// Draining the task-local from `Drop` is sound: tokio drops a
+/// `TaskLocalFuture`'s inner future WITH the task-local still set
+/// (`task_local.rs::PinnedDrop`), so `take_appends()` observes the correct
+/// slot here.
+struct ToolCompletionGuard {
+    activity_ctx: ActivityContext,
+    tool_name: String,
+    agent_name: String,
+    session_id: String,
+    armed: bool,
+}
+
+impl ToolCompletionGuard {
+    /// Normal-path silence: the caller has drained the op refs and will emit
+    /// the full entry itself, so the `Drop` path must NOT emit a second time.
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for ToolCompletionGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            // Normal completion — the outer scope emitted (or will emit) the
+            // authoritative entry.
+            return;
+        }
+        // Cancelled before the normal emission ran. Drain whatever ops the RW
+        // handler recorded. If none were recorded, nothing reached the op_log
+        // (a read, or a write cancelled before its first
+        // `append_local_op_in_tx`), so there is nothing to record — stay silent.
+        let mut op_refs = crate::task_locals::take_appends().into_iter();
+        let Some(op_ref) = op_refs.next() else {
+            return;
+        };
+        let additional_op_refs: Vec<crate::op::OpRef> = op_refs.collect();
+        // The tool's result value is unavailable here (the future never
+        // returned it), so the summary degrades to the bare tool name and the
+        // outcome is recorded as `Ok`: op refs are only recorded once a write
+        // has been applied, and the commit await is the final step before this
+        // drop point, so a recorded op that reached here committed. The entry
+        // still carries the op refs that drive the `blocks:changed` view
+        // refresh — the property this guard exists to preserve.
+        emit_tool_completion(
+            &self.activity_ctx,
+            ToolCompletionEvent {
+                tool_name: &self.tool_name,
+                summary: &self.tool_name,
+                actor_kind: ActorKind::Agent,
+                agent_name: Some(self.agent_name.clone()),
+                result: ActivityResult::Ok,
+                session_id: &self.session_id,
+                op_ref: Some(op_ref),
+                additional_op_refs,
+            },
+        );
+    }
+}
+
 /// Production adapter that exposes a tool registry through `rmcp`'s
 /// [`ServerHandler`] trait.
 ///
@@ -187,6 +271,143 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             activity_ctx,
             surface,
             session_id: Ulid::r#gen().to_string(),
+        }
+    }
+
+    /// Core tool dispatch shared by the `ServerHandler::call_tool` trait
+    /// method (which only adds the rmcp request/context plumbing on top).
+    ///
+    /// Split out from `call_tool` for two reasons:
+    ///  1. `call_tool` needs an rmcp `RequestContext` to extract the agent
+    ///     name; that type is impractical to construct in a unit test. This
+    ///     helper takes the already-sanitised `agent_name` directly, so a
+    ///     test can drive the real dispatch — and CANCEL it mid-flight — to
+    ///     exercise the #2954 drop-safe emission path.
+    ///  2. It keeps the (subtle) task-local scoping + drop-guard wiring in one
+    ///     place.
+    ///
+    /// `agent_name` must already be sanitised (`sanitize_agent_name`) — the
+    /// trait method does that at the trust boundary before calling here.
+    async fn dispatch_tool_call(
+        &self,
+        name: String,
+        args: Value,
+        agent_name: String,
+    ) -> Result<CallToolResult, ErrorData> {
+        // #1545 — the activity feed keeps the bare `agent_name` for display
+        // (it already carries the per-connection `session_id` separately),
+        // but the durable `op_log.origin` folds the session ULID into the
+        // label for anonymous connections so two simultaneous unnamed agents
+        // don't collapse to the same `agent:unknown` origin. Named clients
+        // are returned unchanged.
+        let origin_agent_name = durable_agent_name(&agent_name, &self.session_id);
+
+        let actor_ctx = ActorContext {
+            actor: Actor::Agent {
+                name: origin_agent_name,
+            },
+            request_id: Ulid::r#gen().to_string(),
+        };
+        // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
+        // by the explicit-parameter path of [`ToolRegistry::call_tool`].
+        let scoped_ctx = actor_ctx.clone();
+        let call_ctx = actor_ctx;
+
+        let args_for_summary = args.clone();
+
+        let registry = self.registry.clone();
+        let name_for_call = name.clone();
+
+        // #2954 — values the drop-safe emission guard needs if this connection
+        // future is cancelled mid-commit. Cloned out here so they can move into
+        // the `move` scope alongside `registry`/`args`, while the outer
+        // `self`-borrowed fields stay available to the normal emission below.
+        let guard_ctx = self.activity_ctx.clone();
+        let guard_session_id = self.session_id.clone();
+        let guard_tool_name = name.clone();
+        let guard_agent_name = agent_name.clone();
+
+        // Two task-local scopes, following the same pattern as the
+        // hand-rolled server:
+        //  - ACTOR scope so `current_actor()` reads the agent name in
+        //    every downstream `*_inner` handler.
+        //  - LAST_APPEND scope so any RW tool's `record_append`
+        //    landings are harvested for the activity entry.
+        //
+        // The whole block is `move` so `registry` and the args land
+        // on the spawned future, not on the enclosing handler.
+        let (result, op_refs) = ACTOR
+            .scope(scoped_ctx, async move {
+                crate::task_locals::LAST_APPEND
+                    .scope(std::cell::RefCell::new(Vec::new()), async move {
+                        // #2954 — arm the drop-safe emission guard for the
+                        // duration of the (cancellable) call. Only meaningful
+                        // when there is an activity context to emit into (the
+                        // RW surface); `None` on the read-only surface.
+                        let mut completion_guard = guard_ctx.map(|ctx| ToolCompletionGuard {
+                            activity_ctx: ctx,
+                            tool_name: guard_tool_name,
+                            agent_name: guard_agent_name,
+                            session_id: guard_session_id,
+                            armed: true,
+                        });
+                        let r = registry.call_tool(&name_for_call, args, &call_ctx).await;
+                        // The commit (if any) is now durable and past its only
+                        // cancellation window. Capture the op refs and disarm
+                        // the guard: the normal emission below is henceforth the
+                        // authoritative one, so the guard must not double-emit.
+                        let captured = crate::task_locals::take_appends();
+                        if let Some(g) = completion_guard.as_mut() {
+                            g.disarm();
+                        }
+                        drop(completion_guard);
+                        (r, captured)
+                    })
+                    .await
+            })
+            .await;
+
+        // Emission point.
+        // The success branch routes through the privacy-safe summariser;
+        // the error branch clips at ERROR_CLIP_CAP chars before pushing.
+        let (summary, result_variant) = match &result {
+            Ok(value) => (
+                super::summarise::summarise(&name, &args_for_summary, value),
+                ActivityResult::Ok,
+            ),
+            Err(err) => {
+                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
+                (name.clone(), ActivityResult::Err(short))
+            }
+        };
+        let mut iter = op_refs.into_iter();
+        let op_ref = iter.next();
+        let additional_op_refs: Vec<crate::op::OpRef> = iter.collect();
+        if let Some(ref ctx) = self.activity_ctx {
+            emit_tool_completion(
+                ctx,
+                ToolCompletionEvent {
+                    tool_name: &name,
+                    summary: &summary,
+                    actor_kind: ActorKind::Agent,
+                    agent_name: Some(agent_name),
+                    result: result_variant,
+                    session_id: &self.session_id,
+                    op_ref,
+                    additional_op_refs,
+                },
+            );
+        }
+
+        match result {
+            // `CallToolResult::structured` produces the MCP wire shape
+            // `{ content, structuredContent, isError: false }`.
+            Ok(value) => Ok(CallToolResult::structured(value)),
+            // Map AppError variants to JSON-RPC error codes:
+            // NotFound → resource-not-found (-32001),
+            // Validation / InvalidOperation → invalid-params (-32602),
+            // everything else → internal-error (-32603).
+            Err(err) => Err(app_error_to_rmcp(&err)),
         }
     }
 }
@@ -256,94 +477,14 @@ impl<R: ToolRegistry> ServerHandler for RmcpAdapter<R> {
             |info| sanitize_agent_name(&info.client_info.name),
         );
 
-        // #1545 — the activity feed keeps the bare `agent_name` for display
-        // (it already carries the per-connection `session_id` separately),
-        // but the durable `op_log.origin` folds the session ULID into the
-        // label for anonymous connections so two simultaneous unnamed agents
-        // don't collapse to the same `agent:unknown` origin. Named clients
-        // are returned unchanged.
-        let origin_agent_name = durable_agent_name(&agent_name, &self.session_id);
-
-        let actor_ctx = ActorContext {
-            actor: Actor::Agent {
-                name: origin_agent_name,
-            },
-            request_id: Ulid::r#gen().to_string(),
-        };
-        // Two clones needed: one moves into `ACTOR.scope`, one is borrowed
-        // by the explicit-parameter path of [`ToolRegistry::call_tool`].
-        let scoped_ctx = actor_ctx.clone();
-        let call_ctx = actor_ctx;
-
         let args = request.arguments.map_or(Value::Null, Value::Object);
-        let args_for_summary = args.clone();
 
-        let registry = self.registry.clone();
-        let name_for_call = name.clone();
-
-        // Two task-local scopes, following the same pattern as the
-        // hand-rolled server:
-        //  - ACTOR scope so `current_actor()` reads the agent name in
-        //    every downstream `*_inner` handler.
-        //  - LAST_APPEND scope so any RW tool's `record_append`
-        //    landings are harvested for the activity entry.
-        //
-        // The whole block is `move` so `registry` and the args land
-        // on the spawned future, not on the enclosing handler.
-        let (result, op_refs) = ACTOR
-            .scope(scoped_ctx, async move {
-                crate::task_locals::LAST_APPEND
-                    .scope(std::cell::RefCell::new(Vec::new()), async move {
-                        let r = registry.call_tool(&name_for_call, args, &call_ctx).await;
-                        let captured = crate::task_locals::take_appends();
-                        (r, captured)
-                    })
-                    .await
-            })
-            .await;
-
-        // Emission point.
-        // The success branch routes through the privacy-safe summariser;
-        // the error branch clips at ERROR_CLIP_CAP chars before pushing.
-        let (summary, result_variant) = match &result {
-            Ok(value) => (
-                super::summarise::summarise(&name, &args_for_summary, value),
-                ActivityResult::Ok,
-            ),
-            Err(err) => {
-                let short: String = err.to_string().chars().take(ERROR_CLIP_CAP).collect();
-                (name.clone(), ActivityResult::Err(short))
-            }
-        };
-        let mut iter = op_refs.into_iter();
-        let op_ref = iter.next();
-        let additional_op_refs: Vec<crate::op::OpRef> = iter.collect();
-        if let Some(ref ctx) = self.activity_ctx {
-            emit_tool_completion(
-                ctx,
-                ToolCompletionEvent {
-                    tool_name: &name,
-                    summary: &summary,
-                    actor_kind: ActorKind::Agent,
-                    agent_name: Some(agent_name),
-                    result: result_variant,
-                    session_id: &self.session_id,
-                    op_ref,
-                    additional_op_refs,
-                },
-            );
-        }
-
-        match result {
-            // `CallToolResult::structured` produces the MCP wire shape
-            // `{ content, structuredContent, isError: false }`.
-            Ok(value) => Ok(CallToolResult::structured(value)),
-            // Map AppError variants to JSON-RPC error codes:
-            // NotFound → resource-not-found (-32001),
-            // Validation / InvalidOperation → invalid-params (-32602),
-            // everything else → internal-error (-32603).
-            Err(err) => Err(app_error_to_rmcp(&err)),
-        }
+        // #2954 — the dispatch + activity emission (including the drop-safe
+        // `ToolCompletionGuard`) live in `dispatch_tool_call` so a test can
+        // drive and CANCEL them mid-commit without constructing an rmcp
+        // `RequestContext`. `agent_name` is already sanitised here at the
+        // trust boundary.
+        self.dispatch_tool_call(name, args, agent_name).await
     }
 }
 
@@ -488,6 +629,119 @@ mod tests {
                 "echoed_query": query,
             }))
         }
+    }
+
+    /// #2954 — mock RW registry that records an op ref (exactly as
+    /// `append_local_op_in_tx` does INSIDE the committed transaction) and
+    /// then HANGS. The hang stands in for the future being suspended past
+    /// the commit's only cancellation window — the point at which
+    /// `server.rs`'s grace-period `timeout(GRACE, fut)` drops the whole
+    /// connection future while the write is already durable.
+    struct MockHangingRwRegistry {
+        op_ref: crate::op::OpRef,
+    }
+
+    impl ToolRegistry for MockHangingRwRegistry {
+        fn list_tools(&self) -> Vec<ToolDescription> {
+            vec![ToolDescription {
+                name: "append_block".to_string(),
+                description: "Mock RW tool that hangs after recording its op.".to_string(),
+                input_schema: json!({ "type": "object" }),
+            }]
+        }
+
+        async fn call_tool(
+            &self,
+            _name: &str,
+            _args: Value,
+            _ctx: &ActorContext,
+        ) -> Result<Value, AppError> {
+            // The op-log append `append_local_op_in_tx` performs inside the
+            // (now-committed) transaction, recorded BEFORE the durable commit.
+            crate::task_locals::record_append(self.op_ref.clone());
+            // Suspend forever, standing in for the window after the write is
+            // durable but before this future resolves and the normal emission
+            // runs. The test drops the future here.
+            std::future::pending::<()>().await;
+            unreachable!("the test drops this future before it resolves");
+        }
+    }
+
+    /// #2954 — a committed RW mutation must reach the activity feed (and its
+    /// `blocks:changed` view-refresh event) even when the connection future
+    /// is cancelled mid-commit.
+    ///
+    /// Before the fix, `dispatch_tool_call` awaited `registry.call_tool(...)`
+    /// (which commits the write) and only THEN — in the same future — emitted
+    /// the activity entry. `server.rs` drops that future on grace-period
+    /// expiry (`timeout(GRACE, fut)` → `Err(_elapsed)`), so a write that
+    /// committed just before the drop was durably applied yet never emitted.
+    ///
+    /// This test drives the real dispatch path and drops it with the SAME
+    /// `tokio::time::timeout` mechanism as `server.rs`, after the op ref was
+    /// recorded but before the (never-reached) normal emission. The drop-safe
+    /// `ToolCompletionGuard` must emit the entry from its `Drop`.
+    ///
+    /// NON-VACUOUS: without the guard the dropped future emits nothing, so the
+    /// `entries.len() == 1` assertion fails.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rw_mutation_emits_activity_even_when_dropped_mid_commit() {
+        let op_ref = crate::op::OpRef {
+            device_id: "dev-cancel".to_string(),
+            seq: 42,
+        };
+        let registry = Arc::new(MockHangingRwRegistry {
+            op_ref: op_ref.clone(),
+        });
+
+        let ring = Arc::new(std::sync::Mutex::new(ActivityRing::new()));
+        let emitter = Arc::new(RecordingEmitter::new());
+        let activity_ctx = ActivityContext::new(ring.clone(), emitter.clone());
+        let adapter = RmcpAdapter::new(registry, Some(activity_ctx), McpSurface::ReadWrite);
+
+        // Drive the real dispatch, then drop it mid-flight exactly as
+        // `server.rs`'s grace-period drop does. The mock hangs forever, so the
+        // timeout always elapses and the future is dropped after the op ref was
+        // recorded but before the normal emission point.
+        let fut = adapter.dispatch_tool_call(
+            "append_block".to_string(),
+            json!({}),
+            "cancel-test-agent".to_string(),
+        );
+        let outcome = tokio::time::timeout(std::time::Duration::from_millis(200), fut).await;
+        assert!(
+            outcome.is_err(),
+            "the hung tool must force the grace-period drop (mirrors server.rs)",
+        );
+
+        // The committed mutation must still be in the feed — via the guard.
+        let entries: Vec<_> = ring.lock().unwrap().entries().iter().cloned().collect();
+        assert_eq!(
+            entries.len(),
+            1,
+            "a committed RW mutation must reach the activity feed even when the \
+             connection future is cancelled mid-commit",
+        );
+        assert_eq!(entries[0].tool_name, "append_block");
+        assert_eq!(entries[0].agent_name.as_deref(), Some("cancel-test-agent"));
+        assert_eq!(
+            entries[0].op_ref,
+            Some(op_ref),
+            "the guard must carry the recorded op ref so the `blocks:changed` \
+             view refresh still fires for the durable write",
+        );
+        assert!(
+            matches!(entries[0].result, crate::mcp::activity::ActivityResult::Ok),
+            "a committed mutation is recorded as Ok, got {:?}",
+            entries[0].result,
+        );
+
+        // The Tauri `mcp:activity` event surface must fire too.
+        assert_eq!(
+            emitter.entries().len(),
+            1,
+            "the guard must also drive the `mcp:activity` Tauri-event emitter",
+        );
     }
 
     /// Smoke-level sanity that the adapter compiles and produces the
