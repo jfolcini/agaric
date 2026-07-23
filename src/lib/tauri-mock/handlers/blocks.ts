@@ -101,12 +101,26 @@ export const blocksHandlers = {
     const scope = a['scope'] as { kind: string; space_id?: string } | undefined
     const spaceId = scope?.kind === 'active' ? (scope.space_id ?? null) : null
     const blockType = a['blockType'] as string
+    // #763 — the block's `page_id` is the ROOT page of the parent chain, not the
+    // immediate parent. The backend resolves the parent's own `page_id` (which,
+    // for a content parent, already holds the root page; for a page parent, is
+    // its own id). Stamping the raw `parentId` mis-set `page_id` to a content
+    // parent — the same class as the #1775 seed-loader / move-handler fix.
+    const createParent = parentId != null ? blocks.get(parentId) : null
+    const createPageId =
+      blockType === 'page'
+        ? id
+        : createParent == null
+          ? null
+          : createParent['block_type'] === 'page'
+            ? parentId
+            : ((createParent['page_id'] as string | null) ?? null)
     const row = {
       id,
       block_type: blockType,
       content: (a['content'] as string) ?? null,
       parent_id: parentId,
-      page_id: blockType === 'page' ? id : parentId,
+      page_id: createPageId,
       // #400: position is the dense 1-based rank assigned by the renumber pass.
       position: 0,
       deleted_at: null,
@@ -175,12 +189,23 @@ export const blocksHandlers = {
         position = siblings.length
       }
       const blockType = spec['blockType'] as string
+      // #763 — root-page `page_id` resolution (see `create_block` above): use
+      // the parent's own `page_id`, not the immediate parent id.
+      const batchParent = parentId != null ? blocks.get(parentId) : null
+      const batchPageId =
+        blockType === 'page'
+          ? id
+          : batchParent == null
+            ? null
+            : batchParent['block_type'] === 'page'
+              ? parentId
+              : ((batchParent['page_id'] as string | null) ?? null)
       const row: Record<string, unknown> = {
         id,
         block_type: blockType,
         content: (spec['content'] as string) ?? null,
         parent_id: parentId,
-        page_id: blockType === 'page' ? id : parentId,
+        page_id: batchPageId,
         position,
         deleted_at: null,
         todo_state: null,

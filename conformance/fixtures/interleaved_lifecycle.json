@@ -1,0 +1,186 @@
+{
+  "description": "Interleaved lifecycle on a seed block: edit content, cross-parent move (same page), add a tag, set a typed property, then create a new child under the destination parent. Exercises edit + move + tag + set_property + create funneled through the engine pipeline in one sequence; asserts the settled state carries the edited content, the re-parented dense position, the tag edge, the property row, and the freshly-created sibling. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [
+      {
+        "block_id": "B2",
+        "tag_id": "B4"
+      }
+    ],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "A edited",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "B",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B3",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "page",
+        "content": "project-tag",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B4",
+        "page_id": "B4",
+        "parent_id": null,
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "note",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B5",
+        "page_id": "B1",
+        "parent_id": "B3",
+        "position": 2,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 5,
+      "ops": [
+        {
+          "op_type": "edit_block"
+        },
+        {
+          "op_type": "move_block"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "key": "status",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "create_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": [
+      {
+        "block_id": "B2",
+        "key": "status",
+        "value": "active",
+        "value_type": "Text"
+      }
+    ]
+  },
+  "name": "interleaved_lifecycle",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "toText": "A edited"
+      },
+      "command": "edit_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "newIndex": 0,
+        "newParentId": "S3"
+      },
+      "command": "move_block"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S4"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "status",
+        "value": {
+          "value_text": "active"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockType": "content",
+        "content": "note",
+        "index": 1,
+        "parentId": "S3"
+      },
+      "command": "create_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "A",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "B",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      },
+      {
+        "block_type": "page",
+        "content": "project-tag",
+        "id": "S4",
+        "parent_id": null,
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
