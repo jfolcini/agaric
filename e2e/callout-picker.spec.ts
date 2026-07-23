@@ -1,8 +1,9 @@
 /**
- * E2E for the callout type picker (#215, #1960). Turn into → Callout converts
- * the block to a default (info) callout; re-opening Turn into surfaces the
- * contextual type picker (the 5 variants) since the block is now a callout.
- * Selecting one applies that callout (verified against the static render).
+ * E2E for the callout type picker (#215, #1960, single-step rework #3001).
+ * Turn into → Callout is now a disclosure: opening it expands the searchable
+ * variant picker (the 5 variants) in place, so the user picks the type AND the
+ * variant in a single interaction. Selecting "Warning" applies a warning callout
+ * to the focused block (verified against the static render).
  */
 import { expect, test } from '@playwright/test'
 
@@ -20,15 +21,10 @@ test.describe('Callout type picker (#215)', () => {
     await editor.pressSequentially('alert text')
 
     const blockEditor = page.locator('[data-testid="block-editor"]')
-    // #1960 — Turn into → Callout (defaults to info), then re-open Turn into;
-    // the contextual type picker appears for callouts → pick Warning.
+    // #3001 — Turn into → Callout is a single-step disclosure: opening it expands
+    // the searchable variant picker in place, so type + variant are one pass.
     await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
-    await page.getByRole('menuitemradio', { name: 'Callout' }).click()
-    // Caret into the new callout so Turn into surfaces the type picker.
-    // Active-state read is rAF-coalesced (#1489) — let it propagate.
-    await editor.locator('blockquote').click()
-    await page.waitForTimeout(250)
-    await blockEditor.getByRole('button', { name: 'Turn into', exact: true }).click()
+    await page.getByRole('menuitem', { name: 'Callout', exact: true }).click()
     await page.getByTestId('callout-type-warning').click()
     await saveBlock(page)
 
