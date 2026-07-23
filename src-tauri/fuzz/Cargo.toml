@@ -20,18 +20,28 @@ cargo-fuzz = true
 
 # cargo-machete scans a crate's `src/` for usage, but our targets live in
 # `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
-# false-reports `agaric` as unused. The crate genuinely depends on it — the
-# targets `use agaric_lib::{snapshot::decode_snapshot, deeplink::parse_deep_link,
-# import::parse_logseq_markdown}` and the crate fails to build without it.
-# Ignore the false positive.
+# false-reports `agaric` and `agaric-store` as unused. The crate genuinely
+# depends on both — the targets `use agaric_lib::{snapshot::decode_snapshot,
+# deeplink::parse_deep_link, import::parse_logseq_markdown,
+# link_metadata::{parse_title, parse_description, parse_favicon,
+# detect_auth_required}}` and `use agaric_store::fts::{strip::strip_for_fts_with_maps,
+# sanitize_fts_query}` (#2945) and the crate fails to build without them.
+# Ignore the false positives.
 [package.metadata.cargo-machete]
-ignored = ["agaric"]
+ignored = ["agaric", "agaric-store"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
 
 [dependencies.agaric]
 path = ".."
+
+# #2945 — `fts_strip` fuzz target drives `agaric_store::fts::{strip::
+# strip_for_fts_with_maps, sanitize_fts_query}` directly. Path/version style
+# mirrors the `agaric` dep above and the parent `src-tauri/Cargo.toml` entry.
+[dependencies.agaric-store]
+path = "../agaric-store"
+version = "0.1.0"
 
 # Excludes the fuzz crate from the parent workspace; cargo-fuzz builds it
 # standalone under nightly with sanitizer instrumentation.
@@ -61,6 +71,20 @@ bench = false
 [[bin]]
 name = "import_parse"
 path = "fuzz_targets/import_parse.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fts_strip"
+path = "fuzz_targets/fts_strip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "html_parse"
+path = "fuzz_targets/html_parse.rs"
 test = false
 doc = false
 bench = false
