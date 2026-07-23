@@ -1,0 +1,135 @@
+# =============================================================================
+# WebdriverIO + tauri-driver real-backend E2E — WEEKLY lane (issue #155)
+# =============================================================================
+# This is a STANDALONE, NON-BLOCKING workflow. It is intentionally NOT part of
+# the PR gate (`_validate.yml` / branch protection) and nothing depends on it,
+# so a red run here never blocks a merge — it is a slow, high-fidelity canary.
+#
+# Unlike the Playwright `e2e/` suite (which drives the app in headless Chromium
+# against the JS Tauri mock), this lane builds the REAL Agaric debug binary and
+# drives it in a real WebKitWebView via `tauri-driver`, exercising the genuine
+# Rust backend over real Tauri IPC. `src/main.tsx` only installs the mock when
+# `window.__TAURI_INTERNALS__` is absent; the real binary provides it, so the
+# app uses live IPC automatically — hence the binary is a plain (non-VITE_E2E)
+# debug build.
+#
+# `tauri-driver` is a CARGO binary (installed below), not an npm package. On
+# Linux it proxies `WebKitWebDriver` from the `webkit2gtk-driver` apt package.
+# Docs: https://v2.tauri.app/develop/tests/webdriver/
+#
+# Runtime validation of this harness is deferred to the first scheduled run or
+# a manual `workflow_dispatch` (WebKitWebDriver cannot run on a dev box without
+# a display / the driver packages).
+# =============================================================================
+
+name: e2e-tauri-weekly
+
+on:
+  schedule:
+    # Weekly, Mondays 04:17 UTC — off-peak and a non-:00 minute so this heavy
+    # job does not pile onto the top-of-hour cron rush on GitHub's shared runners.
+    - cron: '17 4 * * 1'
+  workflow_dispatch: {}
+
+# Never run two of these at once; a newer trigger supersedes an in-flight run.
+concurrency:
+  group: e2e-tauri-weekly-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e-tauri:
+    name: Real-backend WebdriverIO smoke
+    runs-on: ubuntu-24.04
+    # Generous ceiling: cold Rust debug build of the whole Tauri app + apt +
+    # cargo-install tauri-driver + the WebKitWebView run. Bounds a wedged run.
+    timeout-minutes: 45
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          # Keep in lockstep with rust-toolchain.toml / src-tauri/Cargo.toml.
+          toolchain: 1.95.0
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install system dependencies
+        # The Tauri Linux build deps are copied verbatim from `_validate.yml`'s
+        # "Install system dependencies" step (webkit/gtk/ssl/rsvg/soup + mold).
+        # ADDED for this lane:
+        #   - webkit2gtk-driver — provides WebKitWebDriver, which tauri-driver
+        #     proxies on Linux (the actual WebDriver backend for the WebView).
+        #   - xvfb — a virtual display so the WebKitWebView can render headless.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold \
+            webkit2gtk-driver \
+            xvfb
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        # Mirrors `_validate.yml`: the repo ships `.cargo/config.toml.example`
+        # (mold linker) staged so local builds don't require mold; CI has mold
+        # from the apt step above, so materialise the active config for a faster
+        # link step on the debug build.
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Install tauri-driver
+        # tauri-driver is a cargo binary (NOT npm); it lands in ~/.cargo/bin,
+        # where wdio.conf.ts looks for it. --locked pins its own dependency tree.
+        run: cargo install tauri-driver --locked
+
+      - name: Build Agaric debug binary
+        # `tauri build --debug --no-bundle` compiles the real app to
+        # src-tauri/target/debug/agaric (Cargo bin name) without producing
+        # installers. tauri.conf.json's beforeBuildCommand runs
+        # prepare-external-bins.mjs (builds the agaric-mcp sidecar) + the vite
+        # build, so the frontend + externalBin are ready. Plain build (no
+        # VITE_E2E) → the app talks to the real backend, not the JS mock.
+        run: npm run tauri -- build --debug --no-bundle
+
+      - name: Run WebdriverIO real-backend smoke (Xvfb)
+        # The binary is already built above, so tell wdio.conf.ts to skip its
+        # own onPrepare build. xvfb-run gives the WebKitWebView a display.
+        env:
+          WDIO_SKIP_TAURI_BUILD: '1'
+        run: xvfb-run -a npm run test:e2e-tauri
+
+      - name: Upload WebdriverIO logs
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: e2e-tauri-logs
+          path: |
+            logs/
+            wdio-logs*/
+            **/*.log
+          if-no-files-found: ignore
+          retention-days: 14
