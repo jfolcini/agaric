@@ -9,10 +9,12 @@
  * - useBlockFlush — editor flush + split + checkbox/todo persistence
  * - useBlockAutoCreateFirstBlock — H-9 first-block-on-empty-page effect
  * - useBlockTreeContextBags — memoised action + resolver bags
+ * - useBlockDialogs — dialog state + open/close/act handlers (history,
+ *   property drawer, query builder, emoji picker)
+ * - useFocusedBlockActions — focused-block command handlers for the keyboard
  * - BlockZoomBar — zoom breadcrumb UI
  * - BlockListRenderer — SortableContext + block map
- * - BlockHistorySheet — block history overlay
- * - BlockPropertyDrawerSheet — property drawer overlay
+ * - BlockTreeDialogs — the four block-level dialog mounts
  * - BlockDnDOverlay — drag preview
  */
 
@@ -24,15 +26,7 @@ import {
   type ScreenReaderInstructions,
 } from '@dnd-kit/core'
 import type React from 'react'
-import {
-  startTransition,
-  useCallback,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -44,16 +38,14 @@ import { useBlockAutoCreateFirstBlock } from '@/components/block-tree/use-block-
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
-import { QueryBuilderModal } from '@/components/dialogs/QueryBuilderModal'
-import { BlockHistorySheet } from '@/components/editor/BlockHistorySheet'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
-import { BlockPropertyDrawerSheet } from '@/components/editor/BlockPropertyDrawerSheet'
+import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
 import { BlockZoomBar } from '@/components/editor/BlockZoomBar'
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
-import { EmojiPickerDialog } from '@/components/EmojiPicker'
+import { useBlockDialogs } from '@/components/editor/useBlockDialogs'
+import { useFocusedBlockActions } from '@/components/editor/useFocusedBlockActions'
 import { Skeleton } from '@/components/ui/skeleton'
 import { getActiveEditor, setActiveEditor } from '@/editor/active-editor'
-import { insertEmojiIntoActiveEditor } from '@/editor/insert-emoji'
 import { useBlockKeyboard } from '@/editor/use-block-keyboard'
 import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -263,28 +255,26 @@ export function BlockTree({
   const justCreatedBlockIds = useRef(new Set<string>())
   const prevFocusedRef = useRef<string | null>(null)
 
-  // ── History sheet state ────────────────────────────────────────────
-  const [historyBlockId, setHistoryBlockId] = useState<string | null>(null)
-
-  // ── Property drawer state ──────────────────────────────────────────
-  const [propertyDrawerBlockId, setPropertyDrawerBlockId] = useState<string | null>(null)
-
-  // ── Query builder (#215): /query opens the visual builder; on save we
-  // write `{{query …}}` to the block it was launched from. ──────────────
-  const [queryBuilderOpen, setQueryBuilderOpen] = useState(false)
-  const [queryBuilderBlockId, setQueryBuilderBlockId] = useState<string | null>(null)
-
-  // ── Emoji picker (#286): /emoji opens the browse-grid dialog; on select we
-  // insert the chosen native emoji at the caret of the focused block editor. ─
-  const [emojiPickerOpen, setEmojiPickerOpen] = useState(false)
-
-  const handleShowHistory = useCallback((blockId: string) => {
-    setHistoryBlockId(blockId)
-  }, [])
-
-  const handleShowProperties = useCallback((blockId: string) => {
-    setPropertyDrawerBlockId(blockId)
-  }, [])
+  // ── Block-level dialog surfaces (#2930) ────────────────────────────
+  // State + open/close/act handlers for the block-history sheet, property
+  // drawer, visual query builder (#215) and emoji picker (#286). The MOUNTS
+  // render in <BlockTreeDialogs/> below, fed by this hook's returned values.
+  const {
+    historyBlockId,
+    setHistoryBlockId,
+    propertyDrawerBlockId,
+    setPropertyDrawerBlockId,
+    queryBuilderOpen,
+    setQueryBuilderOpen,
+    emojiPickerOpen,
+    setEmojiPickerOpen,
+    handleShowHistory,
+    handleShowProperties,
+    openQueryBuilder,
+    openEmojiPicker,
+    handleEmojiSelect,
+    handleQuerySave,
+  } = useBlockDialogs({ focusedBlockId, pageStore, load })
 
   // ── Extracted hooks ────────────────────────────────────────────────
   const resolve = useBlockResolve()
@@ -404,48 +394,6 @@ export function BlockTree({
     pagesListRef: resolve.pagesListRef,
     t,
   })
-
-  // ── Query builder (#215) — /query opens the modal for the focused block;
-  // on save, write the generated `{{query …}}` expression to that block. ──
-  const openQueryBuilder = () => {
-    setQueryBuilderBlockId(focusedBlockId)
-    // Mark the open as a non-urgent transition: opening it synchronously
-    // inside the slash-command handler blurs the editor while React is
-    // mid-render, and the editor's blur flush (`flushSync` in useEditorBlur)
-    // then warns "flushSync called from inside a lifecycle method".
-    // startTransition lets the current commit settle first, avoiding that.
-    startTransition(() => setQueryBuilderOpen(true))
-  }
-  // ── Emoji picker (#286) — /emoji opens the browse-grid dialog for the
-  // focused block. Mark the open as a non-urgent transition for the same
-  // reason as the query builder (avoid a flushSync-in-render warning from
-  // the editor blur flush when the dialog steals focus mid-commit). ──────────
-  const openEmojiPicker = () => {
-    startTransition(() => setEmojiPickerOpen(true))
-  }
-  // Insert the chosen native emoji at the caret via the active roving editor.
-  // The dialog dismisses itself on select (closeOnSelect default).
-  const handleEmojiSelect = useCallback((char: string) => {
-    insertEmojiIntoActiveEditor(char)
-  }, [])
-
-  const handleQuerySave = async (expression: string) => {
-    // Capture the target block once at entry; `queryBuilderBlockId` is read
-    // from closure and may change while we await the write (#1016).
-    const blockId = queryBuilderBlockId
-    if (!blockId) return
-    // `edit()` handles its own error path (rollback + generic save-failed
-    // toast) and resolves `false` on failure rather than throwing. Keep the
-    // dialog open in that case so the user doesn't lose the query they built;
-    // only close + reload once the write actually landed.
-    const ok = await pageStore.getState().edit(blockId, `{{query ${expression}}}`)
-    if (!ok) return
-    // Re-validate after the await: if the dialog closed or moved to a
-    // different block mid-flight, don't clobber the now-current state.
-    if (queryBuilderBlockId !== blockId) return
-    setQueryBuilderOpen(false)
-    await load()
-  }
 
   // ── Slash commands hook ────────────────────────────────────────────
   const {
@@ -801,38 +749,25 @@ export function BlockTree({
     [toggleSelected, rawRangeSelect],
   )
 
-  // Stable identities so `useBlockKeyboard` doesn't detach/re-attach the
-  // document keydown listener on every BlockTree render (block edits,
-  // selection changes, text input). Inline arrows here would defeat that.
-  const handleToggleFocusedTodo = useCallback(() => {
-    if (focusedBlockId) handleToggleTodo(focusedBlockId)
-  }, [focusedBlockId, handleToggleTodo])
-  const handleToggleFocusedCollapse = useCallback(() => {
-    if (focusedBlockId) toggleCollapse(focusedBlockId)
-  }, [focusedBlockId, toggleCollapse])
-  const handleShowFocusedProperties = useCallback(() => {
-    if (focusedBlockId) handleShowProperties(focusedBlockId)
-  }, [focusedBlockId, handleShowProperties])
-  // #976 (item 15) — open the block-history drawer for the focused block via
-  // the `openBlockHistory` keyboard binding, mirroring the properties path.
-  const handleShowFocusedHistory = useCallback(() => {
-    if (focusedBlockId) handleShowHistory(focusedBlockId)
-  }, [focusedBlockId, handleShowHistory])
-  // #976 (item 13) — duplicate the focused block + its subtree via the
-  // `duplicateBlock` keyboard binding, reusing the same `handleDuplicate` the
-  // context-menu row and `/duplicate` slash command fire.
-  const handleDuplicateFocused = useCallback(() => {
-    if (focusedBlockId) void handleDuplicate(focusedBlockId)
-  }, [focusedBlockId, handleDuplicate])
-  // #976 (item 14) — open the "Turn into" type picker for the focused block via
-  // the `turnIntoBlock` keyboard binding. Rather than reimplement the type list,
-  // insert the `/turn` slash trigger into the live editor so the existing slash
-  // suggestion plugin surfaces the same conversion family (`turn-*`) the context
-  // menu submenu and `/turn` command expose.
-  const handleTurnIntoFocused = useCallback(() => {
-    if (!focusedBlockId) return
-    rovingEditor.editor?.chain().focus().insertContent('/turn').run()
-  }, [focusedBlockId, rovingEditor])
+  // ── Focused-block command handlers (#2930) ─────────────────────────
+  // Stable identities feeding the document-level `useBlockKeyboard` listener;
+  // each runs its action against the currently focused block.
+  const {
+    handleToggleFocusedTodo,
+    handleToggleFocusedCollapse,
+    handleShowFocusedProperties,
+    handleShowFocusedHistory,
+    handleDuplicateFocused,
+    handleTurnIntoFocused,
+  } = useFocusedBlockActions({
+    focusedBlockId,
+    handleToggleTodo,
+    toggleCollapse,
+    handleShowProperties,
+    handleShowHistory,
+    handleDuplicate,
+    rovingEditor,
+  })
 
   useBlockKeyboard(rovingEditor.editor, {
     onFocusPrev: handleFocusPrev,
@@ -1227,36 +1162,19 @@ export function BlockTree({
             />
           )}
 
-          {/* Visual query builder for the /query slash command (#215) */}
-          <QueryBuilderModal
-            open={queryBuilderOpen}
-            onOpenChange={setQueryBuilderOpen}
-            onSave={handleQuerySave}
-          />
-
-          {/* Browse-grid emoji picker for the /emoji slash command (#286) */}
-          <EmojiPickerDialog
-            open={emojiPickerOpen}
-            onOpenChange={setEmojiPickerOpen}
-            onSelect={handleEmojiSelect}
-          />
-
-          {/* History side-sheet for per-block history */}
-          <BlockHistorySheet
-            blockId={historyBlockId}
-            open={!!historyBlockId}
-            onOpenChange={(open) => {
-              if (!open) setHistoryBlockId(null)
-            }}
-          />
-
-          {/* Property drawer for per-block properties */}
-          <BlockPropertyDrawerSheet
-            blockId={propertyDrawerBlockId}
-            open={!!propertyDrawerBlockId}
-            onOpenChange={(open) => {
-              if (!open) setPropertyDrawerBlockId(null)
-            }}
+          {/* Block-level dialog mounts: query builder (#215), emoji picker
+          (#286), block-history sheet, property drawer (#2930). */}
+          <BlockTreeDialogs
+            queryBuilderOpen={queryBuilderOpen}
+            setQueryBuilderOpen={setQueryBuilderOpen}
+            handleQuerySave={handleQuerySave}
+            emojiPickerOpen={emojiPickerOpen}
+            setEmojiPickerOpen={setEmojiPickerOpen}
+            handleEmojiSelect={handleEmojiSelect}
+            historyBlockId={historyBlockId}
+            setHistoryBlockId={setHistoryBlockId}
+            propertyDrawerBlockId={propertyDrawerBlockId}
+            setPropertyDrawerBlockId={setPropertyDrawerBlockId}
           />
         </BatchPropertiesProvider>
       </BatchAttachmentsProvider>
