@@ -59,11 +59,11 @@ import { useEditorEventDispatch } from '@/editor/use-editor-event-dispatch'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { BatchAttachmentsProvider } from '@/hooks/useBatchAttachments'
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
+import { useBlockActionOrchestration } from '@/hooks/useBlockActionOrchestration'
 import { BlockActionsProvider } from '@/hooks/useBlockActions'
 import { useBlockCollapse } from '@/hooks/useBlockCollapse'
 import { useBlockDatePicker } from '@/hooks/useBlockDatePicker'
 import { useBlockDnD } from '@/hooks/useBlockDnD'
-import { useBlockKeyboardHandlers } from '@/hooks/useBlockKeyboardHandlers'
 import { useBlockLinkResolve } from '@/hooks/useBlockLinkResolve'
 import { useBlockMountLimit } from '@/hooks/useBlockMountLimit'
 import { useBlockMultiSelect } from '@/hooks/useBlockMultiSelect'
@@ -723,7 +723,7 @@ export function BlockTree({
     handleMergeById,
     handleEnterSave,
     handleEscapeCancel,
-  } = useBlockKeyboardHandlers({
+  } = useBlockActionOrchestration({
     focusedBlockId,
     collapsedVisible,
     blocks,
