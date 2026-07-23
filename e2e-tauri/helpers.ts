@@ -78,8 +78,32 @@ function sidebarNavButton(label: NavLabel) {
 export async function waitForAppReady(): Promise<void> {
   const sidebar = $('[data-slot="sidebar"]')
   await sidebar.waitForExist({ timeout: APP_READY_TIMEOUT })
+  await dismissWelcomeModalIfPresent()
   const journalNav = sidebarNavButton('Journal')
   await journalNav.waitForDisplayed({ timeout: NAV_TIMEOUT })
+}
+
+/**
+ * First-boot only: the onboarding dialog (WelcomeModal.tsx,
+ * `data-testid="welcome-modal"`, shown while `!isOnboardingDone()`) is a modal
+ * Radix Dialog — it aria-hides the whole app root and intercepts pointer
+ * events, which broke every block-create flow in live run 30052635297 (the
+ * two specs that passed only did so because a stray overlay click dismissed
+ * it). Dismiss it deterministically via its "Get Started" button
+ * (welcome.getStarted, common.ts:291), which also persists the onboarding
+ * flag so it cannot re-open mid-session.
+ */
+export async function dismissWelcomeModalIfPresent(): Promise<void> {
+  const modal = $('[data-testid="welcome-modal"]')
+  const appeared = await modal.waitForExist({ timeout: 5_000 }).then(
+    () => true,
+    () => false,
+  )
+  if (!appeared) return
+  const getStarted = modal.$('button*=Get Started')
+  await getStarted.waitForClickable({ timeout: NAV_TIMEOUT })
+  await getStarted.click()
+  await modal.waitForExist({ reverse: true, timeout: NAV_TIMEOUT })
 }
 
 /**

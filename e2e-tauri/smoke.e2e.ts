@@ -19,6 +19,8 @@
 // `browser`, `$`, and `expect` are provided as globals by @wdio/globals at
 // runtime (typed via @wdio/globals/types in tsconfig.wdio.json).
 
+import { dismissWelcomeModalIfPresent } from './helpers'
+
 describe('Agaric real-backend smoke (#155)', () => {
   it('boots the app, renders the Journal, and round-trips a block through the live backend', async () => {
     // 1. The app auto-loads its frontend when the WebKitWebView starts (no
@@ -28,6 +30,11 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    so the sidebar is visible.
     const sidebar = await $('[data-slot="sidebar"]')
     await sidebar.waitForExist({ timeout: 60_000 })
+
+    //    First boot shows the modal onboarding dialog (WelcomeModal.tsx) which
+    //    aria-hides the app root and intercepts every click — dismiss it
+    //    before interacting (live-run 30052635297 root cause).
+    await dismissWelcomeModalIfPresent()
 
     // 2. The Journal nav button confirms the nav rendered. Resolve it with a
     //    subtree-scoped XPath (leading `.`, honoured by WDIO relative to the
