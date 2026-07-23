@@ -1402,9 +1402,62 @@ jobs:
     runs-on: ubuntu-24.04
     permissions:
       contents: write # gh release download + upload of .sig assets / latest.json
-    # Pure gh-API download + jq assembly + upload; trivial. 10-min budget.
-    timeout-minutes: 10
+    # gh-API download + jq assembly + upload, plus (#2971) a build-time minisign
+    # verification that downloads every updater payload and checks its `.sig`
+    # against the pinned pubkey before publishing. 20-min budget covers the
+    # extra payload downloads + apt install.
+    timeout-minutes: 20
     steps:
+      # Checkout is needed for src-tauri/tauri.conf.json (the pinned updater
+      # pubkey) and scripts/verify-updater-signatures.sh used by the verify step.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # #2971 — Cryptographically verify every signed updater artifact against
+      # the pubkey pinned in the app BEFORE stitching/publishing latest.json.
+      # The per-platform sign steps only assert the `.sig` FILE EXISTS; nothing
+      # proves the signing secret still matches plugins.updater.pubkey in
+      # tauri.conf.json. If that secret was ever rotated/mismatched, the release
+      # would ship an app whose in-app auto-update fails signature verification
+      # on every installed client. Running the SAME minisign check that
+      # tauri-plugin-updater's updater.rs::verify_signature runs at install time,
+      # here at build time, turns that silent post-release failure into a red
+      # release job.
+      - name: Install minisign
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y minisign
+      - name: Verify updater signatures against pinned pubkey
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # plugins.updater.pubkey is a base64-WRAPPED minisign public key (Tauri
+          # base64-encodes the whole minisign `.pub` file); each `<payload>.sig`
+          # is likewise base64-wrapped minisign signature. The verify script
+          # decodes both before invoking `minisign -V`. See the header of
+          # scripts/verify-updater-signatures.sh for the encoding details.
+          pubkey="$(jq -r '.plugins.updater.pubkey' src-tauri/tauri.conf.json)"
+          if [ -z "$pubkey" ] || [ "$pubkey" = "null" ]; then
+            echo "::error::no plugins.updater.pubkey in src-tauri/tauri.conf.json"
+            exit 1
+          fi
+          tmp="$(mktemp -d)"
+          # Pull every updater `.sig` uploaded by the build matrix, then the
+          # payload each one signs (same asset name minus the `.sig` suffix), so
+          # the script can verify `<payload>` against `<payload>.sig` side by side.
+          gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern '*.sig'
+          shopt -s nullglob
+          for sig in "$tmp"/*.sig; do
+            payload="$(basename "${sig%.sig}")"
+            gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern "$payload"
+          done
+          bash scripts/verify-updater-signatures.sh "$pubkey" "$tmp"
+
       - name: Build and upload latest.json
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
