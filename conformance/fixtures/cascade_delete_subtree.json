@@ -89,6 +89,7 @@
       "command": "delete_block"
     }
   ],
+  "scenarios": ["cascade-active-subtree"],
   "seed": {
     "blocks": [
       {

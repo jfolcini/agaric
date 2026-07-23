@@ -216,6 +216,10 @@ Before committing a new test file, verify:
 - `within()` scoping when the same role/text appears twice.
 - Portal-scoped helpers (see [`e2e/AGENTS.md`](../../../e2e/AGENTS.md)) for Radix overlay tests.
 
+## Assert durable, re-queried effect — never call-shape (anti-drift)
+
+When a component interaction **mutates backend state**, `expect(invoke).toHaveBeenCalledWith('set_property', …)` is not enough — it proves the component *asked* for the change, not that the change *persisted correctly*. The tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation that drifts from the real Rust backend, so a call-shape-only assertion passes against a mock that does the wrong thing. Assert the observable, re-queried result instead: re-render / re-fetch and assert the block, chip, or field the user would see. The tag-space bug shipped this way — a test asserted `setProperty` was called with `key: 'space'`, never re-queried, and the tag silently vanished in production (the mock modeled the retired `block_properties(key='space')` schema). Behavioral mock↔backend parity is enforced by the #763 conformance harness and ratcheted by [`conformance-coverage.test.ts`](../../lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083); see root [`AGENTS.md` § Testing invariants (anti-drift)](../../../AGENTS.md#testing-invariants-anti-drift).
+
 ## Test-asserted production patterns
 
 These are caught by tests but the rules are about how the **production code** must be written. Each one came from a real bug.

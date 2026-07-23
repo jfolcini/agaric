@@ -316,6 +316,16 @@ If a release tag fails at `verify-version`: delete it (`git push --delete origin
 - **React 19 test timing:** state updates originating from non-React event sources — worker `dispatchEvent`, `window.setTimeout` / `setInterval` callbacks, IPC promise resolutions chained off external events — no longer flush within a bare `await new Promise(r => setTimeout(r, 0))` tick. Wrap such waits in `act(async () => { ... })`, switch sync `getByText` to async `findByText`, or `waitFor` on the observable end state. Do not add arbitrary sleeps.
 - **Detailed conventions:** `src-tauri/tests/AGENTS.md` (Rust), `src/__tests__/AGENTS.md` (frontend)
 
+### Testing invariants (anti-drift)
+
+The browser/e2e Tauri mock (`src/lib/tauri-mock/`) is a hand-maintained **second implementation** of the Rust backend that silently drifts from it (create_block page_id, purge_block cascade, reserved-key property routing, the tag-space bug all shipped past a mock that looked fine). Three invariants keep the two implementations honest:
+
+1. **Assert durable, re-queried effect — never call-shape.** A mutation test that only asserts `expect(invoke).toHaveBeenCalledWith(…)` (or that a mock fn was called) is insufficient: it proves the frontend *asked* for a change, not that the change *persisted correctly*. Persist, re-query, and assert the observable resulting state. The tag-space bug shipped precisely because a test asserted `setProperty(key: 'space')` was called and never re-queried — the mock modeled a retired schema and the tag vanished in production. Details per layer: [`src/__tests__/AGENTS.md`](src/__tests__/AGENTS.md), [`src/stores/__tests__/AGENTS.md`](src/stores/__tests__/AGENTS.md), [`src/components/__tests__/AGENTS.md`](src/components/__tests__/AGENTS.md).
+2. **The mock is a contract, pinned by conformance fixtures.** Every state-mutating handler must be driven by a `conformance/fixtures/*.json` fixture whose `expected` is authored by the backend (`CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'`), asserted by BOTH the real backend (`src-tauri/src/command_integration_tests/conformance.rs`) and the mock (`src/lib/tauri-mock/__tests__/conformance.test.ts`). [`conformance-coverage.test.ts`](src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083) ratchets this: a new mutating command fails the suite without a fixture or a justified allowlist waiver. Workflow + real-backend smoke status: [`e2e/AGENTS.md`](e2e/AGENTS.md).
+3. **A schema migration updates the mock in the same PR.** When a migration changes a table/column the mock references, update the mock and its fixture together — the mock does not follow the schema on its own (#3084): [`src-tauri/migrations/AGENTS.md`](src-tauri/migrations/AGENTS.md).
+
+A fixture only guards real behavior if the backend authors its `expected` from the **production path**, not a test-only fallback — see the #891 lesson (the runner drives ops through the foreground engine pipeline, `append_local_op` + `dispatch_op` + `settle`, and asserts the *settled* reprojected state; a test that silently exercised the SQL-only fallback produced false drift).
+
 ### Running tests efficiently
 
 During development, run only the relevant check:
