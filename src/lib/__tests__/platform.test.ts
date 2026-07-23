@@ -203,7 +203,7 @@ describe('platform', () => {
   // `tauri.ts:1871` doc anchor.
   describe('isMobilePlatform dedup — single export, three import sites', () => {
     const sites = [
-      { name: 'tauri.ts', path: '../tauri.ts', spec: "from '@/lib/platform'" },
+      { name: 'tauri/system.ts', path: '../tauri/system.ts', spec: "from '@/lib/platform'" },
       {
         name: 'useUpdateCheck.ts',
         path: '../../hooks/useUpdateCheck.ts',
