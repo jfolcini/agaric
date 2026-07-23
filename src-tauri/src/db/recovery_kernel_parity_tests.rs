@@ -68,7 +68,7 @@ use super::recover_blocks_from_op_log;
 use crate::db::init_pool;
 use crate::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
-    RestoreBlockPayload,
+    PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
 use crate::ulid::BlockId;
 use sqlx::{Row, SqlitePool};
@@ -299,6 +299,171 @@ fn engine_read(
         .expect("engine read_block");
     drop(guard);
     snap
+}
+
+// ---------------------------------------------------------------------------
+// Generic single-op kernel drivers (Parts 3-6). Each appends the op via
+// `append_local_op` (assigns seq + created_at) and applies it through the real
+// `apply_op_tx` kernel — the SAME pipeline as the Part 1/2 arms — so the
+// widened corpus never writes expected state via direct SQL.
+// ---------------------------------------------------------------------------
+
+/// Drive an `EditBlock` op through the kernel; returns nothing.
+async fn edit_via_kernel(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+    to_text: &str,
+) {
+    let payload = OpPayload::EditBlock(EditBlockPayload {
+        block_id: BlockId::from_trusted(id),
+        to_text: to_text.into(),
+        prev_edit: None,
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append edit");
+    let mut tx = pool.begin().await.expect("begin edit");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply edit");
+    tx.commit().await.expect("commit edit");
+}
+
+/// Drive a `MoveBlock` op (reparent to `new_parent` at 0-based `new_index`).
+async fn move_via_kernel(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+    new_parent: Option<&str>,
+    new_index: i64,
+) {
+    let payload = OpPayload::MoveBlock(MoveBlockPayload {
+        block_id: BlockId::from_trusted(id),
+        new_parent_id: new_parent.map(BlockId::from_trusted),
+        new_position: new_index + 1,
+        new_index: Some(new_index),
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append move");
+    let mut tx = pool.begin().await.expect("begin move");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply move");
+    tx.commit().await.expect("commit move");
+}
+
+/// Drive a `DeleteBlock` op; returns the op's `created_at` (the cohort token a
+/// later `RestoreBlock`'s `deleted_at_ref` must carry — see the Part 2 doc).
+async fn delete_via_kernel(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+) -> i64 {
+    let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
+        block_id: BlockId::from_trusted(id),
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append delete");
+    let created_at = record.created_at;
+    let mut tx = pool.begin().await.expect("begin delete");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply delete");
+    tx.commit().await.expect("commit delete");
+    created_at
+}
+
+/// Drive a `RestoreBlock` op with the originating delete's cohort token.
+async fn restore_via_kernel(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+    deleted_at_ref: i64,
+) {
+    let payload = OpPayload::RestoreBlock(RestoreBlockPayload {
+        block_id: BlockId::from_trusted(id),
+        deleted_at_ref,
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append restore");
+    let mut tx = pool.begin().await.expect("begin restore");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply restore");
+    tx.commit().await.expect("commit restore");
+}
+
+/// Drive a `PurgeBlock` op (hard-delete the soft-deleted subtree).
+async fn purge_via_kernel(pool: &SqlitePool, state: &crate::loro::shared::LoroState, id: &str) {
+    let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
+        block_id: BlockId::from_trusted(id),
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append purge");
+    let mut tx = pool.begin().await.expect("begin purge");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply purge");
+    tx.commit().await.expect("commit purge");
+}
+
+/// Drive a `SetProperty` op (a satellite op the block-table recovery replay is
+/// expected to IGNORE — see `interleaved_property_op_is_inert_to_block_parity`).
+async fn set_property_via_kernel(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+    id: &str,
+    key: &str,
+    value_text: &str,
+) {
+    let payload = OpPayload::SetProperty(SetPropertyPayload {
+        block_id: BlockId::from_trusted(id),
+        key: key.into(),
+        value_text: Some(value_text.into()),
+        value_num: None,
+        value_date: None,
+        value_ref: None,
+        value_bool: None,
+    });
+    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        .await
+        .expect("append set_property");
+    let mut tx = pool.begin().await.expect("begin set_property");
+    agaric_engine::apply::kernel::apply_op_tx(&mut tx, &record, None, state)
+        .await
+        .expect("apply set_property");
+    tx.commit().await.expect("commit set_property");
+}
+
+/// `page_id` of an ACTIVE block (`deleted_at IS NULL`); `None` if the row is
+/// missing or soft-deleted. Single fixed-shape query (no dynamic SQL).
+async fn page_id_of(pool: &SqlitePool, id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT page_id FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .expect("fetch page_id")
+    .flatten()
+}
+
+/// `position` of an ACTIVE block (`deleted_at IS NULL`); `None` if the row is
+/// missing/soft-deleted or the column is NULL. Single fixed-shape query.
+async fn position_of(pool: &SqlitePool, id: &str) -> Option<i64> {
+    sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT position FROM blocks WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await
+    .expect("fetch position")
+    .flatten()
 }
 
 // ===========================================================================
@@ -650,5 +815,498 @@ async fn restore_ancestor_divergence_is_pinned() {
         is_deleted(&recovery_pool, D_PARENT).await,
         "the documented #2043 ancestor-restore divergence must be OBSERVABLE: \
          kernel restores PARENT, recovery leaves it deleted"
+    );
+}
+
+// ===========================================================================
+// Part 3 — Derived-state parity (interpreter 3 vs kernel 1): page_id + position
+//
+// Part 1 pins the `{id, block_type, content, parent_id}` shape. This part
+// extends the differential to the two DERIVED columns Part 1 deliberately
+// excluded, establishing an HONEST contract for each: `page_id` is asserted
+// EQUAL (both interpreters converge on page ownership), `position` is PINNED
+// DIVERGENT (they reconstruct sibling rank by different rules). Both reuse the
+// Part 1 create+edit+move corpus (`run_structural_kernel_arm`).
+// ===========================================================================
+
+/// **`page_id` converges.** Recovery has NO page_id op arm — it computes the
+/// column AFTER the replay loop: pages self-reference (`page_id = id WHERE
+/// block_type = 'page'`) and content blocks inherit the nearest page ancestor
+/// via a fixed-point UPDATE loop over `parent_id` (see the tail of
+/// `recover_blocks_from_op_log`). The kernel arm stamps the same ownership
+/// inline (`stamp_owner`, standing in for the deferred `SetBlockPageId`
+/// fan-out). For this corpus BOTH resolve every block to `S_PAGE` — including
+/// the MOVED block B, whose page ownership recovery must re-derive through the
+/// restructured chain B→A→PARENT→PAGE. This is the derived-state equality half
+/// of the #2894 contract: assert equality where equality is the spec.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn structural_page_id_converges_with_kernel() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let (kernel_pool, _state) = run_structural_kernel_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    for id in [S_PAGE, S_PARENT, S_A, S_B] {
+        let kernel_page = page_id_of(&kernel_pool, id).await;
+        let recovery_page = page_id_of(&recovery_pool, id).await;
+        assert_eq!(
+            kernel_page, recovery_page,
+            "recovery (#3) and kernel (#1) must agree on page_id for {id}; \
+             kernel={kernel_page:?} recovery={recovery_page:?}"
+        );
+        assert_eq!(
+            recovery_page.as_deref(),
+            Some(S_PAGE),
+            "every block in the structural corpus is owned by the page S_PAGE; \
+             recovery's page_id fixed-point loop must resolve {id} to it \
+             (the MOVED block B proves the loop follows the restructured chain)"
+        );
+    }
+}
+
+/// **`position` diverges (pinned).** The two interpreters reconstruct sibling
+/// rank by DIFFERENT rules, so the column cannot be cross-asserted equal:
+///
+///   * **kernel (#1)** projects the engine's DENSE 1-based rank among a
+///     parent's children (`LoroEngine::read_block` → `child_rank_position`,
+///     projected by `project_create_block_to_sql` / `project_move_block_to_sql`).
+///   * **recovery (#3)** replays the RAW op payload: `create_block` writes the
+///     payload's `position` verbatim (here `Some(0)` for every create — the
+///     fixture builds ops with `position: Some(0)`), and `move_block` maps
+///     `new_index` through `index_to_provisional_position` (0-based → 1-based).
+///
+/// So the two agree only where the raw payload happens to coincide with the
+/// dense rank (the moved block B, index 0 → position 1, matches its dense rank
+/// of 1 as A's sole child) and diverge on the create-only blocks (recovery 0 vs
+/// kernel's 1-based rank). This mirrors the Part 1 module-doc rationale and the
+/// sibling create/edit convergence net (#1323 Step 3), which likewise exclude
+/// `position` as the #1245/#1257/#1252 reproject-gap. The pin is the honest
+/// divergence half of the #2894 contract: pin divergence where divergence is
+/// the reality. It is NON-VACUOUS — the two arms replay a byte-identical
+/// op_log, so any change that made recovery reproject the dense rank (or the
+/// kernel stop) would flip these asserts.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn structural_position_divergence_is_pinned() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let (kernel_pool, _state) = run_structural_kernel_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    // Recovery replays the raw payloads: every create carried `position: 0`, and
+    // the move of B carried `new_index: 0` → provisional position 1.
+    assert_eq!(position_of(&recovery_pool, S_PAGE).await, Some(0));
+    assert_eq!(position_of(&recovery_pool, S_PARENT).await, Some(0));
+    assert_eq!(position_of(&recovery_pool, S_A).await, Some(0));
+    assert_eq!(position_of(&recovery_pool, S_B).await, Some(1));
+
+    // Kernel projects the engine's dense 1-based child rank. PARENT (sole child
+    // of PAGE), A (sole child of PARENT after B moved away) and B (sole child of
+    // A) are all rank 1. PAGE's create legitimately fell back to sql_only (no
+    // resolvable space at create time, see `run_structural_kernel_arm`), so its
+    // row carries the sql-only create rank rather than an engine reprojection.
+    assert_eq!(position_of(&kernel_pool, S_PARENT).await, Some(1));
+    assert_eq!(position_of(&kernel_pool, S_A).await, Some(1));
+    assert_eq!(position_of(&kernel_pool, S_B).await, Some(1));
+
+    // THE DIVERGENCE: the create-only blocks differ (recovery 0 vs kernel 1).
+    assert_ne!(
+        position_of(&kernel_pool, S_PARENT).await,
+        position_of(&recovery_pool, S_PARENT).await,
+        "position MUST diverge for a create-only block: kernel projects the \
+         dense 1-based rank, recovery replays the raw payload position (0). If \
+         this fails, recovery started reprojecting the dense rank (or the kernel \
+         stopped) — the #1245/#1257 reproject-gap the Part 1 doc cites closed."
+    );
+    assert_ne!(
+        position_of(&kernel_pool, S_A).await,
+        position_of(&recovery_pool, S_A).await,
+        "position MUST diverge for A as well (kernel 1 vs recovery 0)"
+    );
+}
+
+// ===========================================================================
+// Part 4 — Widened op corpus (interleavings beyond Part 1/2)
+//
+// Each arm drives ops through the SAME `apply_op_tx` pipeline (via the generic
+// drivers above), then replays the cloned op_log through
+// `recover_blocks_from_op_log`, asserting the two converge on the restricted
+// `{id, block_type, content, parent_id}` shape for the arms that SHOULD agree.
+// ===========================================================================
+
+// --- 4a: delete → restore → edit → move (a non-orphan restore converges) ---
+
+const W_PAGE: &str = "01HZ0000000000000000W4PG01";
+const W_P: &str = "01HZ0000000000000000W4PR01";
+const W_X: &str = "01HZ0000000000000000W4CX01";
+const W_Y: &str = "01HZ0000000000000000W4CY01";
+
+/// Build the 4a kernel arm. Corpus (all through `apply_op_tx`):
+///   1. create PAGE > P > {X, Y}
+///   2. delete X          — X is a LEAF whose parent P stays ALIVE, so the
+///      restore below is a plain cohort restore (NOT the Part 2 orphan case:
+///      no tombstoned ancestor, hence no #2043 divergence).
+///   3. restore X         — cohort token = the delete op's created_at.
+///   4. edit X            — content UPDATE lands on the now-active row.
+///   5. move X under Y    — reparent (index 0).
+async fn run_delete_restore_edit_move_arm(
+    dir: &TempDir,
+) -> (SqlitePool, crate::loro::shared::LoroState) {
+    let pool = init_pool(&dir.path().join("kernel_arm.db"))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    create_via_kernel(&pool, &state, W_PAGE, "page", None, "w-page").await;
+    stamp_owner(&pool, W_PAGE, None, W_PAGE).await;
+    seed_block_into_engine(&state, SPACE_ID, W_PAGE, "page", None, 0);
+
+    create_via_kernel(&pool, &state, W_P, "content", Some(W_PAGE), "w-p").await;
+    stamp_owner(&pool, W_P, Some(W_PAGE), W_PAGE).await;
+    create_via_kernel(&pool, &state, W_X, "content", Some(W_P), "w-x").await;
+    stamp_owner(&pool, W_X, Some(W_P), W_PAGE).await;
+    create_via_kernel(&pool, &state, W_Y, "content", Some(W_P), "w-y").await;
+    stamp_owner(&pool, W_Y, Some(W_P), W_PAGE).await;
+
+    let ts_x = delete_via_kernel(&pool, &state, W_X).await;
+    restore_via_kernel(&pool, &state, W_X, ts_x).await;
+    edit_via_kernel(&pool, &state, W_X, "w-x-edited").await;
+    move_via_kernel(&pool, &state, W_X, Some(W_Y), 0).await;
+
+    (pool, state)
+}
+
+/// #2894 widened corpus: a delete→restore→edit→move interleaving on a leaf
+/// (parent never tombstoned) converges between recovery (#3) and the kernel
+/// (#1) on the structural shape. Proves the recovery restore arm re-activates
+/// the row so the subsequent edit/move land identically to the kernel.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_restore_edit_move_converges_with_kernel() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let (kernel_pool, state) = run_delete_restore_edit_move_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    let ids = [W_PAGE, W_P, W_X, W_Y];
+    let kernel_shape = active_shape(&kernel_pool, ids).await;
+    let recovery_shape = active_shape(&recovery_pool, ids).await;
+    assert_eq!(
+        kernel_shape, recovery_shape,
+        "delete→restore→edit→move must converge; kernel={kernel_shape:?} \
+         recovery={recovery_shape:?}"
+    );
+
+    // ids sort: W4CX01(X) < W4CY01(Y) < W4PG01(PAGE) < W4PR01(P).
+    let expected: Vec<ShapeRow> = vec![
+        (
+            W_X.to_string(),
+            "content".to_string(),
+            "w-x-edited".to_string(), // edited AFTER restore
+            Some(W_Y.to_string()),    // reparented under Y by the move
+        ),
+        (
+            W_Y.to_string(),
+            "content".to_string(),
+            "w-y".to_string(),
+            Some(W_P.to_string()),
+        ),
+        (
+            W_PAGE.to_string(),
+            "page".to_string(),
+            "w-page".to_string(),
+            None,
+        ),
+        (
+            W_P.to_string(),
+            "content".to_string(),
+            "w-p".to_string(),
+            Some(W_PAGE.to_string()),
+        ),
+    ];
+    assert_eq!(kernel_shape, expected, "got {kernel_shape:?}");
+
+    // #891: prove the kernel arm drove the engine path — the edit + move on the
+    // RESTORED block must be visible in the per-space engine.
+    let x = engine_read(&state, W_X).expect("X present in engine");
+    assert_eq!(x.content, "w-x-edited");
+    assert_eq!(x.parent_id.as_deref(), Some(W_Y));
+}
+
+// --- 4b: purge in the middle of a lineage (absent from BOTH systems) ---
+
+const PG_PAGE: &str = "01HZ0000000000000000P4PG01";
+const PG_P: &str = "01HZ0000000000000000P4PR01";
+const PG_X: &str = "01HZ0000000000000000P4CX01";
+const PG_GX: &str = "01HZ0000000000000000P4GX01";
+
+/// Build the 4b kernel arm. Corpus: create PAGE > P > X > GX, then soft-delete
+/// P (production purges a TRASHED block, #2868) and purge P. The purge
+/// hard-deletes the whole P/X/GX subtree; PAGE survives.
+async fn run_purge_mid_lineage_arm(dir: &TempDir) -> SqlitePool {
+    let pool = init_pool(&dir.path().join("kernel_arm.db"))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    create_via_kernel(&pool, &state, PG_PAGE, "page", None, "pg-page").await;
+    stamp_owner(&pool, PG_PAGE, None, PG_PAGE).await;
+    seed_block_into_engine(&state, SPACE_ID, PG_PAGE, "page", None, 0);
+
+    create_via_kernel(&pool, &state, PG_P, "content", Some(PG_PAGE), "pg-p").await;
+    stamp_owner(&pool, PG_P, Some(PG_PAGE), PG_PAGE).await;
+    create_via_kernel(&pool, &state, PG_X, "content", Some(PG_P), "pg-x").await;
+    stamp_owner(&pool, PG_X, Some(PG_P), PG_PAGE).await;
+    create_via_kernel(&pool, &state, PG_GX, "content", Some(PG_X), "pg-gx").await;
+    stamp_owner(&pool, PG_GX, Some(PG_X), PG_PAGE).await;
+
+    // Trash then purge P (mid-lineage): both the kernel cascade and recovery's
+    // `purge_block` arm remove the whole subtree.
+    delete_via_kernel(&pool, &state, PG_P).await;
+    purge_via_kernel(&pool, &state, PG_P).await;
+
+    pool
+}
+
+/// #2894 widened corpus: a purge in the middle of a lineage removes the purged
+/// subtree from BOTH interpreters (no resurrection). Recovery's `purge_block`
+/// arm cascades the same subtree the kernel's `purge_block_sql_cascade` does, so
+/// P/X/GX are absent from both rebuilt tables while the surviving PAGE remains.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_mid_lineage_absent_from_both() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let kernel_pool = run_purge_mid_lineage_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    // The purged subtree must be GONE (row absent → `is_deleted` returns None,
+    // NOT merely soft-deleted) in BOTH arms. A root-only purge that left
+    // descendants behind would surface here (the #615 orphan-resurrection class).
+    for id in [PG_P, PG_X, PG_GX] {
+        assert_eq!(
+            is_deleted(&kernel_pool, id).await,
+            None,
+            "kernel: purged block {id} must be physically absent"
+        );
+        assert_eq!(
+            is_deleted(&recovery_pool, id).await,
+            None,
+            "recovery: purged block {id} must be physically absent"
+        );
+    }
+
+    // The surviving page is present + active in BOTH.
+    assert_eq!(is_deleted(&kernel_pool, PG_PAGE).await, Some(false));
+    assert_eq!(is_deleted(&recovery_pool, PG_PAGE).await, Some(false));
+}
+
+// --- 4c: re-parenting under a restored ANCESTOR (a subtree-root restore) ---
+
+const R_PAGE: &str = "01HZ0000000000000000R4PG01";
+const R_A: &str = "01HZ0000000000000000R4AA01";
+const R_B: &str = "01HZ0000000000000000R4BB01";
+const R_C: &str = "01HZ0000000000000000R4CC01";
+
+/// Build the 4c kernel arm. Corpus:
+///   1. create PAGE > A > B, and PAGE > (later) C
+///   2. delete A          — cascades {A, B} into one cohort. A is the SUBTREE
+///      ROOT (its own parent PAGE stays alive), so restoring A is a connected-
+///      cohort restore with NO tombstoned ancestor above it — this converges,
+///      UNLIKE the Part 2 orphan case (restore a CHILD under a dead parent).
+///   3. restore A         — both interpreters re-activate {A, B}.
+///   4. create C under PAGE
+///   5. move C under the restored ancestor A.
+async fn run_reparent_under_restored_ancestor_arm(
+    dir: &TempDir,
+) -> (SqlitePool, crate::loro::shared::LoroState) {
+    let pool = init_pool(&dir.path().join("kernel_arm.db"))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    create_via_kernel(&pool, &state, R_PAGE, "page", None, "r-page").await;
+    stamp_owner(&pool, R_PAGE, None, R_PAGE).await;
+    seed_block_into_engine(&state, SPACE_ID, R_PAGE, "page", None, 0);
+
+    create_via_kernel(&pool, &state, R_A, "content", Some(R_PAGE), "r-a").await;
+    stamp_owner(&pool, R_A, Some(R_PAGE), R_PAGE).await;
+    create_via_kernel(&pool, &state, R_B, "content", Some(R_A), "r-b").await;
+    stamp_owner(&pool, R_B, Some(R_A), R_PAGE).await;
+
+    // Delete the subtree root A (cascades A + B into one cohort), then restore.
+    let ts_a = delete_via_kernel(&pool, &state, R_A).await;
+    restore_via_kernel(&pool, &state, R_A, ts_a).await;
+
+    // New sibling C, then reparent it UNDER the restored ancestor A.
+    create_via_kernel(&pool, &state, R_C, "content", Some(R_PAGE), "r-c").await;
+    stamp_owner(&pool, R_C, Some(R_PAGE), R_PAGE).await;
+    move_via_kernel(&pool, &state, R_C, Some(R_A), 1).await;
+
+    (pool, state)
+}
+
+/// #2894 widened corpus: restoring a subtree ROOT (whose ancestor never died)
+/// converges between recovery and the kernel — {A, B} come back active in both
+/// — and a subsequent reparent of a fresh block C UNDER the restored ancestor A
+/// lands identically. This is the CONVERGENT restore counterpart to the Part 2
+/// orphan-restore divergence pin: here there is no tombstoned ancestor, so the
+/// #2043 flat-cohort recovery and the kernel's connected-cohort restore agree.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn reparent_under_restored_ancestor_converges() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let (kernel_pool, state) = run_reparent_under_restored_ancestor_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    let ids = [R_PAGE, R_A, R_B, R_C];
+    let kernel_shape = active_shape(&kernel_pool, ids).await;
+    let recovery_shape = active_shape(&recovery_pool, ids).await;
+    assert_eq!(
+        kernel_shape, recovery_shape,
+        "reparent-under-restored-ancestor must converge; kernel={kernel_shape:?} \
+         recovery={recovery_shape:?}"
+    );
+
+    // ids sort: R4AA01(A) < R4BB01(B) < R4CC01(C) < R4PG01(PAGE).
+    let expected: Vec<ShapeRow> = vec![
+        (
+            R_A.to_string(),
+            "content".to_string(),
+            "r-a".to_string(),
+            Some(R_PAGE.to_string()),
+        ),
+        (
+            R_B.to_string(),
+            "content".to_string(),
+            "r-b".to_string(),
+            Some(R_A.to_string()), // restored under A
+        ),
+        (
+            R_C.to_string(),
+            "content".to_string(),
+            "r-c".to_string(),
+            Some(R_A.to_string()), // reparented under the RESTORED ancestor A
+        ),
+        (
+            R_PAGE.to_string(),
+            "page".to_string(),
+            "r-page".to_string(),
+            None,
+        ),
+    ];
+    assert_eq!(kernel_shape, expected, "got {kernel_shape:?}");
+
+    // #891: the reparent under the restored ancestor took the engine path.
+    let c = engine_read(&state, R_C).expect("C present in engine");
+    assert_eq!(c.parent_id.as_deref(), Some(R_A));
+    // The restored descendant B is active in the engine too.
+    let b = engine_read(&state, R_B).expect("B present in engine");
+    assert_eq!(b.parent_id.as_deref(), Some(R_A));
+}
+
+// --- 4d: an interleaved SATELLITE op (set_property) is INERT to block parity ---
+
+const SP_PAGE: &str = "01HZ0000000000000000S4PG01";
+const SP_P: &str = "01HZ0000000000000000S4PR01";
+const SP_X: &str = "01HZ0000000000000000S4CX01";
+const SP_Y: &str = "01HZ0000000000000000S4CY01";
+
+/// Build the 4d kernel arm: create PAGE > P > {X, Y}, set a PROPERTY on X in the
+/// middle of the block ops, then edit X. The `set_property` op is interleaved to
+/// prove it does not perturb block-table parity.
+async fn run_property_interleave_arm(dir: &TempDir) -> SqlitePool {
+    let pool = init_pool(&dir.path().join("kernel_arm.db"))
+        .await
+        .expect("init_pool");
+    seed_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    create_via_kernel(&pool, &state, SP_PAGE, "page", None, "sp-page").await;
+    stamp_owner(&pool, SP_PAGE, None, SP_PAGE).await;
+    seed_block_into_engine(&state, SPACE_ID, SP_PAGE, "page", None, 0);
+
+    create_via_kernel(&pool, &state, SP_P, "content", Some(SP_PAGE), "sp-p").await;
+    stamp_owner(&pool, SP_P, Some(SP_PAGE), SP_PAGE).await;
+    create_via_kernel(&pool, &state, SP_X, "content", Some(SP_P), "sp-x").await;
+    stamp_owner(&pool, SP_X, Some(SP_P), SP_PAGE).await;
+    create_via_kernel(&pool, &state, SP_Y, "content", Some(SP_P), "sp-y").await;
+    stamp_owner(&pool, SP_Y, Some(SP_P), SP_PAGE).await;
+
+    // The satellite op, interleaved between block ops.
+    set_property_via_kernel(&pool, &state, SP_X, "status", "done").await;
+    edit_via_kernel(&pool, &state, SP_X, "sp-x-edited").await;
+
+    pool
+}
+
+/// #2894 widened corpus (satellite-op boundary). `recover_blocks_from_op_log`
+/// rebuilds ONLY the `blocks` table: its `match op_type` falls through
+/// `set_property` / `delete_property` / `add_tag` via the `_ => {}` arm ("handled
+/// post-migration so they survive migration 73's DROP TABLE"). So a property op
+/// is INERT to this net — it neither appears in nor perturbs the block-table
+/// parity. This test pins that boundary: block structural parity holds across an
+/// interleaved `set_property`, and we DO NOT assert the property/tag satellites
+/// (those are the separate interpreter `recover_derived_state_from_op_log`'s
+/// domain, out of this net's scope).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn interleaved_property_op_is_inert_to_block_parity() {
+    let kernel_dir = TempDir::new().expect("tempdir");
+    let recovery_dir = TempDir::new().expect("tempdir");
+
+    let kernel_pool = run_property_interleave_arm(&kernel_dir).await;
+    let recovery_pool = run_recovery_arm(&kernel_pool, &recovery_dir).await;
+
+    let ids = [SP_PAGE, SP_P, SP_X, SP_Y];
+    let kernel_shape = active_shape(&kernel_pool, ids).await;
+    let recovery_shape = active_shape(&recovery_pool, ids).await;
+    assert_eq!(
+        kernel_shape, recovery_shape,
+        "an interleaved set_property must not perturb block-table parity; \
+         kernel={kernel_shape:?} recovery={recovery_shape:?}"
+    );
+
+    // ids sort: S4CX01(X) < S4CY01(Y) < S4PG01(PAGE) < S4PR01(P).
+    let expected: Vec<ShapeRow> = vec![
+        (
+            SP_X.to_string(),
+            "content".to_string(),
+            "sp-x-edited".to_string(),
+            Some(SP_P.to_string()),
+        ),
+        (
+            SP_Y.to_string(),
+            "content".to_string(),
+            "sp-y".to_string(),
+            Some(SP_P.to_string()),
+        ),
+        (
+            SP_PAGE.to_string(),
+            "page".to_string(),
+            "sp-page".to_string(),
+            None,
+        ),
+        (
+            SP_P.to_string(),
+            "content".to_string(),
+            "sp-p".to_string(),
+            Some(SP_PAGE.to_string()),
+        ),
+    ];
+    assert_eq!(kernel_shape, expected, "got {kernel_shape:?}");
+
+    // The satellite op left NO trace in the recovery blocks table: the property
+    // key is not a block id (recovery only ever inserts block ids), and X's row
+    // is a plain content block. (We assert absence of a stray row, not the
+    // property itself — properties live outside this interpreter's output.)
+    assert_eq!(
+        is_deleted(&recovery_pool, "status").await,
+        None,
+        "the property key must never materialize as a block row in recovery"
     );
 }
