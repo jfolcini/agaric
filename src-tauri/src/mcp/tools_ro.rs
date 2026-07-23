@@ -1037,11 +1037,16 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
             tag_ids: tag_ids.unwrap_or_default(),
             // #2248 c — `SearchFilter` now carries a `SpaceScope`. The MCP
             // `search` tool is always space-scoped, so wrap the (required)
-            // normalized arg as `Active`. `from_trusted` preserves the prior
-            // pass-through contract: a non-ULID / empty arg becomes an
-            // `Active` id that simply matches nothing downstream, rather than
-            // erroring at construction.
-            scope: SpaceScope::Active(SpaceId::from_trusted(&normalize_ulid_arg(&args.space_id))),
+            // normalized arg as `Active`.
+            // #2956 — validate the id via the strict `from_string` constructor
+            // like every sibling tool (`list_backlinks`, `list_property_defs`,
+            // `create_page`): a malformed / truncated / empty `space_id` must
+            // error (`AppError::Ulid`, which `app_error_to_rmcp`'s catch-all
+            // maps to JSON-RPC -32603) rather than silently become an `Active`
+            // id that matches nothing (which would make an agent wrongly
+            // conclude the vault is empty). Kept consistent with the siblings,
+            // which surface the same `AppError::Ulid` → -32603.
+            scope: SpaceScope::Active(SpaceId::from_string(normalize_ulid_arg(&args.space_id))?),
             include_page_globs: f.include_page_globs,
             exclude_page_globs: f.exclude_page_globs,
             case_sensitive: f.case_sensitive,
