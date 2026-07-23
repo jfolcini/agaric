@@ -17,6 +17,7 @@
 //! Files ≤ 5 MB are sent in a single binary frame; larger files are chunked
 //! into 5 MB frames.  Integrity is verified via blake3 hash.
 
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -628,6 +629,15 @@ async fn register_received_blob(
 /// escape `app_data_dir` (absolute path, `..` traversal, drive prefix on
 /// Windows) is rejected with [`AppError::Validation`].
 ///
+/// **#2918 scope note:** this does *not* verify the returned bytes against
+/// the row's stored `content_hash`. #2918 fixed the *write* side (atomic
+/// rename + fsync, see [`write_attachment_file`]) so a crash can no longer
+/// silently leave a truncated file on disk; adding read-path corruption
+/// detection here — surfacing a distinct "attachment corrupted" error
+/// instead of returning bad bytes, as the issue's recommendation notes as
+/// optional — needs a new `AppError` variant in `agaric_core`, which is out
+/// of scope for this fix and intentionally deferred, not silently dropped.
+///
 /// ** note:** this is the buffered-shape helper kept for utility
 /// callers (and the existing test suite). The production sync sender
 /// path no longer goes through here — see
@@ -654,6 +664,41 @@ pub fn read_attachment_file(
 /// The `fs_path` is validated via [`validate_attachment_fs_path`] before
 /// Any I/O is performed.
 ///
+/// **#2918 — durable + atomic.** This is the writer the local-add path
+/// (`add_attachment_with_bytes_inner`) uses to land bytes on disk *before*
+/// the row-inserting transaction commits. The previous implementation was a
+/// plain `std::fs::write(&full_path, data)`: no fsync at all, and — because
+/// `std::fs::write` opens the *final* path directly (truncate-then-write) —
+/// a crash mid-write left a truncated/empty file sitting exactly where the
+/// soon-to-commit `attachments.fs_path` row points. There was no window-free
+/// state: the final path was visible (and short) the entire time it was
+/// being written.
+///
+/// Mirrors [`crate::device::get_or_create_device_id`]'s sibling-tempfile
+/// pattern (see that function's doc comment for the full rationale) and the
+/// same `<final>.tmp-<random>` naming [`write_attachment_streaming`] already
+/// uses for the sync-receiver path:
+///
+///   1. Write `data` to a sibling `<final>.tmp-<ulid-hex>` file (fresh
+///      per-call ULID suffix, so two concurrent writers of the same
+///      `fs_path` — or a stale temp from a prior crashed run — cannot
+///      collide) via `create_new` + `write_all`.
+///   2. `sync_all()` the temp file handle so the bytes are durable on disk
+///      before anything references them.
+///   3. `fs::rename(temp, final)` — atomic on the same filesystem (a
+///      prerequisite satisfied by the temp file being a sibling): the final
+///      path either points at the fully-written file or doesn't exist yet,
+///      never at a partial one.
+///   4. Best-effort `fs::File::open(parent).sync_all()` so the rename's
+///      directory-entry update is itself durable across crash recovery.
+///      Failure here is logged, not propagated — the rename was already
+///      kernel-atomic and the data is on disk (matches `device.rs`; notably
+///      directory fsync is unsupported on Windows).
+///
+/// On any failure writing/fsyncing the temp file or renaming it into place,
+/// the temp file is best-effort unlinked before the error is returned, so a
+/// failed write never leaves a `*.tmp-*` orphan next to the attachment.
+///
 /// ** note:** kept for utility callers. The production sync receiver
 /// path uses [`write_attachment_streaming`] which streams chunks to a
 /// `<final>.tmp-<random>` file with a `blake3::Hasher` updated mid-write,
@@ -672,12 +717,88 @@ pub fn write_attachment_file(
             ))
         })?;
     }
-    std::fs::write(&full_path, data).map_err(|e| {
-        AppError::Io(std::io::Error::new(
+
+    // Sibling tempfile in the same directory as `full_path` — required for
+    // `fs::rename` below to be atomic (same filesystem). The ULID suffix
+    // mirrors `write_attachment_streaming`'s naming so both writers of
+    // attachment bytes leave the same recognizable `*.tmp-*` shape on disk.
+    let suffix = u128::from(ulid::Ulid::r#gen());
+    let temp_path = match full_path.file_name() {
+        Some(name) => {
+            let mut s = std::ffi::OsString::from(name);
+            s.push(format!(".tmp-{suffix:032x}"));
+            full_path.with_file_name(s)
+        }
+        None => {
+            // `validate_attachment_fs_path` already rejects empty / root-dir
+            // paths, so an attachment path always has a file name. This arm
+            // is defensive only.
+            return Err(AppError::validation(
+                "attachment path has no file name component".into(),
+            ));
+        }
+    };
+
+    // Write + fsync the temp file. Any failure here (including a failed
+    // `sync_all`) must not leave a partial `*.tmp-*` file behind, so clean
+    // it up before propagating the error.
+    let write_result = (|| -> std::io::Result<()> {
+        let mut f = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temp_path)?;
+        f.write_all(data)?;
+        f.sync_all()
+    })();
+    if let Err(e) = write_result {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(AppError::Io(std::io::Error::new(
             e.kind(),
             format!("writing attachment {}: {e}", full_path.display()),
-        ))
-    })?;
+        )));
+    }
+
+    // POSIX `rename` is atomic on the same filesystem: `full_path` either
+    // points at the fully-written temp file or (pre-rename) doesn't exist
+    // yet. There is no intermediate state where it points at an
+    // empty/short file.
+    if let Err(e) = std::fs::rename(&temp_path, &full_path) {
+        let _ = std::fs::remove_file(&temp_path);
+        return Err(AppError::Io(std::io::Error::new(
+            e.kind(),
+            format!(
+                "renaming attachment into place {}: {e}",
+                full_path.display()
+            ),
+        )));
+    }
+
+    // Sync the parent directory so the rename's directory-entry update is
+    // durable across crash recovery. Best-effort: on platforms where
+    // directory fsync is not supported (notably Windows), we silently
+    // ignore the failure — the rename itself was already kernel-atomic and
+    // the data is on disk.
+    if let Some(parent) = full_path.parent() {
+        match std::fs::File::open(parent) {
+            Ok(dir) => {
+                if let Err(e) = dir.sync_all() {
+                    tracing::debug!(
+                        parent = %parent.display(),
+                        error = %e,
+                        "write_attachment_file: parent directory fsync failed (non-fatal)"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::debug!(
+                    parent = %parent.display(),
+                    error = %e,
+                    "write_attachment_file: could not open parent directory for fsync (non-fatal)"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 
