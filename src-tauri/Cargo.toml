@@ -168,6 +168,15 @@ tauri-plugin-os = "2"
 # Tauri plugin coupled stack per AGENTS.md §"Coupled Dependency Updates"
 # — move in lockstep with the rest of the tauri-plugin-* crates.
 tauri-plugin-notification = "2"
+# #2972 / #2919 — native, webview-independent error dialog shown at the two
+# boot-fatal exit points in `lib.rs` (a failed Tauri build and a failed `setup`
+# orchestration) before the process exits, so a downgrade / failed-update /
+# corrupt-DB failure no longer exits silently with only a log line. We use the
+# `gtk3` backend (not the default `xdg-portal`) because Tauri already links GTK
+# on Linux at these exact `gtk-sys`/`glib-sys`/`gobject-sys` 0.18 versions, so
+# this reuses them with no duplicate native deps and gives a natively-blocking
+# `MessageDialog::show()`.
+rfd = { version = "0.17", default-features = false, features = ["gtk3"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # #2621 (agaric-sync inversion): async methods on the `ApplyHost` trait object

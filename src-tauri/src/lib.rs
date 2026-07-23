@@ -1926,6 +1926,61 @@ fn format_panic_report(payload: &str, location: &str, backtrace: &str) -> String
     format!("PANIC at {location}: {payload}\nstack backtrace:\n{backtrace}")
 }
 
+/// #2972 / #2919 — show a BLOCKING native OS error dialog for a boot-fatal
+/// failure, independent of the webview (which may not exist yet at these
+/// failure points).
+///
+/// Used at the two boot-fatal exit points in [`run`]: a failed Tauri build
+/// (`.build(...)`) and a failed `setup` orchestration (corrupt SQLite page,
+/// failed `sqlx::migrate!` run — e.g. a `MigrateError::VersionMissing` after a
+/// downgrade — or a failed engine reprojection). Both previously called
+/// `exit(1)` after only a `tracing::error!` line, so the user double-clicked
+/// the icon and NOTHING appeared. This surfaces the error before we exit.
+///
+/// Best-effort and non-fatal: it ignores the dialog result and returns. It is a
+/// no-op under `cfg(test)` and on headless hosts (CI / `AGARIC_HEADLESS`, or —
+/// on Linux — no `DISPLAY`/`WAYLAND_DISPLAY`) so unit tests and CI never block
+/// on an un-dismissable window with no display to render it.
+fn show_fatal_error_dialog(title: &str, body: &str) {
+    // Never pop a real window from the test binary.
+    #[cfg(test)]
+    {
+        let _ = (title, body);
+    }
+    #[cfg(not(test))]
+    {
+        // On Linux a GTK dialog needs a display server; treat its absence as
+        // headless so we don't hang/fail trying to open one. Other platforms
+        // always have a windowing system available to a running GUI app.
+        let no_display = {
+            #[cfg(target_os = "linux")]
+            {
+                std::env::var_os("DISPLAY").is_none()
+                    && std::env::var_os("WAYLAND_DISPLAY").is_none()
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                false
+            }
+        };
+        // `CI` is set by every major CI provider; `AGARIC_HEADLESS` is our
+        // explicit manual override for automated / no-GUI runs.
+        let headless = std::env::var_os("CI").is_some()
+            || std::env::var_os("AGARIC_HEADLESS").is_some()
+            || no_display;
+        if headless {
+            tracing::warn!(dialog_title = %title, "headless host: skipping fatal-error dialog");
+            return;
+        }
+        rfd::MessageDialog::new()
+            .set_level(rfd::MessageLevel::Error)
+            .set_title(title)
+            .set_description(body)
+            .set_buttons(rfd::MessageButtons::Ok)
+            .show();
+    }
+}
+
 // #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
 // `--cfg fuzzing` to reach the byte-level parsers (`snapshot::decode_snapshot`,
 // `deeplink::parse_deep_link`). `run()` is the tauri app entry; its
@@ -2134,149 +2189,183 @@ pub fn run() {
             // "clone-before-move" discipline is now enforced by the
             // borrow checker.
 
-            // Resolve the OS-standard app data directory from tauri.conf.json identifier
-            let app_data_dir = app.path().app_data_dir()?;
-            std::fs::create_dir_all(&app_data_dir)?;
-            let db_path = app_data_dir.join("notes.db");
+            // #2919 / #2972 — run the boot orchestration inside a fallible block
+            // so ANY failure (corrupt SQLite page, failed `sqlx::migrate!` run —
+            // e.g. `MigrateError::VersionMissing` after a downgrade — or a failed
+            // engine reprojection) surfaces to the user in a native dialog rather
+            // than a silent `exit(1)`. We handle the error here (dialog + exit)
+            // instead of returning it so the same failure does NOT also bubble to
+            // the `.build().unwrap_or_else` handler and pop a second dialog.
+            let boot_result: Result<(), Box<dyn std::error::Error>> = (|| {
+                // Resolve the OS-standard app data directory from tauri.conf.json identifier
+                let app_data_dir = app.path().app_data_dir()?;
+                std::fs::create_dir_all(&app_data_dir)?;
+                let db_path = app_data_dir.join("notes.db");
 
-            // Tracing-appender setup using the OS-correct
-            // `app_data_dir`; keeps the worker guard alive in managed state.
-            init_logging(app, &app_data_dir);
+                // Tracing-appender setup using the OS-correct
+                // `app_data_dir`; keeps the worker guard alive in managed state.
+                init_logging(app, &app_data_dir);
 
-            // AppImage first-run desktop self-integration (Linux).
-            // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
-            // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
-            #[cfg(target_os = "linux")]
-            appimage_integration::integrate_appimage_if_running();
+                // AppImage first-run desktop self-integration (Linux).
+                // No-op unless `$APPIMAGE` is set (only inside a running AppImage),
+                // so deb/rpm, `cargo tauri dev`, and non-Linux are all excluded.
+                #[cfg(target_os = "linux")]
+                appimage_integration::integrate_appimage_if_running();
 
-            // Install the deep-link router as early as possible
-            // so launch-time `agaric://…` URLs are routed once the rest of
-            // setup completes.  The frontend `useDeepLinkRouter` hook
-            // additionally calls `getCurrent()` on mount to backfill any
-            // event the listener missed before it was registered.
-            deeplink::register_deeplink_handlers(app.handle());
+                // Install the deep-link router as early as possible
+                // so launch-time `agaric://…` URLs are routed once the rest of
+                // setup completes.  The frontend `useDeepLinkRouter` hook
+                // additionally calls `getCurrent()` on mount to backfill any
+                // event the listener missed before it was registered.
+                deeplink::register_deeplink_handlers(app.handle());
 
-            // Open the read/write pools and resolve device-id + sync cert.
-            let (pools, device_id, sync_cert) = init_persistence(&db_path, &app_data_dir)?;
+                // Open the read/write pools and resolve device-id + sync cert.
+                let (pools, device_id, sync_cert) = init_persistence(&db_path, &app_data_dir)?;
 
-            // C-2b: build the materializer BEFORE recovery so the boot-time
-            // op-log replay can drive ApplyOp tasks through the foreground queue.
-            let (lifecycle, materializer, loro_state) = build_materializer(&pools, &app_data_dir);
-            // #2249: expose engine state to the Tauri state graph — the
-            // `RunEvent::Exit` handler resolves it via `try_state` for the
-            // shutdown snapshot save.
-            app.manage(std::sync::Arc::clone(&loro_state));
+                // C-2b: build the materializer BEFORE recovery so the boot-time
+                // op-log replay can drive ApplyOp tasks through the foreground queue.
+                let (lifecycle, materializer, loro_state) =
+                    build_materializer(&pools, &app_data_dir);
+                // #2249: expose engine state to the Tauri state graph — the
+                // `RunEvent::Exit` handler resolves it via `try_state` for the
+                // shutdown snapshot save.
+                app.manage(std::sync::Arc::clone(&loro_state));
 
-            // Loro init + rehydrate, crash recovery, and per-space bootstrap
-            // (bootstrap_spaces is boot-fatal).
-            let report = recover_and_bootstrap(&pools, &device_id, &materializer)?;
+                // Loro init + rehydrate, crash recovery, and per-space bootstrap
+                // (bootstrap_spaces is boot-fatal).
+                let report = recover_and_bootstrap(&pools, &device_id, &materializer)?;
 
-            // #1255: surface a degraded boot to the user. When the C-2b
-            // op-log replay failed wholesale (`replay_errors` non-empty),
-            // the materialized view is behind the canonical `op_log` —
-            // previously this was downgraded to a `warn` and the user
-            // edited a stale view with zero signal. Store the status in
-            // managed state (so a late-mounting frontend can backfill it
-            // via `get_recovery_status`), emit a durable `recovery:degraded`
-            // event, and log at `error` (not `info`). Boot still continues —
-            // the app is usable and the op_log is canonical.
-            surface_recovery_status(app, &report);
+                // #1255: surface a degraded boot to the user. When the C-2b
+                // op-log replay failed wholesale (`replay_errors` non-empty),
+                // the materialized view is behind the canonical `op_log` —
+                // previously this was downgraded to a `warn` and the user
+                // edited a stale view with zero signal. Store the status in
+                // managed state (so a late-mounting frontend can backfill it
+                // via `get_recovery_status`), emit a durable `recovery:degraded`
+                // event, and log at `error` (not `info`). Boot still continues —
+                // the app is usable and the op_log is canonical.
+                surface_recovery_status(app, &report);
 
-            // Best-effort boot maintenance (off-critical-path spawn + the
-            // remaining synchronous enqueues + post-draft-recovery refresh).
-            spawn_boot_maintenance(&pools, &device_id, &materializer, &report);
+                // Best-effort boot maintenance (off-critical-path spawn + the
+                // remaining synchronous enqueues + post-draft-recovery refresh).
+                spawn_boot_maintenance(&pools, &device_id, &materializer, &report);
 
-            // Long-running background tasks: sweepers, maintenance daemon,
-            // periodic Loro snapshot.
-            spawn_background_tasks(&pools, &device_id, &materializer, &lifecycle);
+                // Long-running background tasks: sweepers, maintenance daemon,
+                // periodic Loro snapshot.
+                spawn_background_tasks(&pools, &device_id, &materializer, &lifecycle);
 
-            // Create scheduler wrapped in Arc for sharing with the SyncDaemon
-            let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
+                // Create scheduler wrapped in Arc for sharing with the SyncDaemon
+                let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
 
-            // #1058: gather the cheap `Arc` clones each downstream consumer
-            // needs BEFORE the originals are moved into managed state by
-            // `register_managed_state`. Passing them through the wiring
-            // function signatures is what collapses the old
-            // clone-before-move hazard — the borrow checker now enforces
-            // that the originals are still live here.
-            let daemon_wiring = SyncDaemonWiring {
-                pool: pools.write.clone(),
-                device_id: device_id.clone(),
-                materializer: materializer.clone(),
-                scheduler: scheduler.clone(),
-                cert: sync_cert.clone(),
-                sink: std::sync::Arc::new(sync_event_sinks::TauriEventSink(app.handle().clone())),
-                app_handle: app.handle().clone(),
-                lifecycle: lifecycle.clone(),
-                // `cancel_flag` is filled in below from the value
-                // `register_managed_state` allocates + registers, so the
-                // daemon and `cancel_sync` share the same flag (#528).
-                cancel_flag: Arc::new(AtomicBool::new(false)),
-            };
+                // #1058: gather the cheap `Arc` clones each downstream consumer
+                // needs BEFORE the originals are moved into managed state by
+                // `register_managed_state`. Passing them through the wiring
+                // function signatures is what collapses the old
+                // clone-before-move hazard — the borrow checker now enforces
+                // that the originals are still live here.
+                let daemon_wiring = SyncDaemonWiring {
+                    pool: pools.write.clone(),
+                    device_id: device_id.clone(),
+                    materializer: materializer.clone(),
+                    scheduler: scheduler.clone(),
+                    cert: sync_cert.clone(),
+                    sink: std::sync::Arc::new(sync_event_sinks::TauriEventSink(
+                        app.handle().clone(),
+                    )),
+                    app_handle: app.handle().clone(),
+                    lifecycle: lifecycle.clone(),
+                    // `cancel_flag` is filled in below from the value
+                    // `register_managed_state` allocates + registers, so the
+                    // daemon and `cancel_sync` share the same flag (#528).
+                    cancel_flag: Arc::new(AtomicBool::new(false)),
+                };
 
-            // Slice 2 — clone the pools + materializer +
-            // device_id the MCP RO and RW servers need before the move.
-            let mcp_ro_read_pool = pools.read.clone();
-            let mcp_ro_write_pool = pools.write.clone();
-            let mcp_ro_materializer = materializer.clone();
-            let mcp_ro_device_id = device_id.clone();
-            let mcp_rw_write_pool = pools.write.clone();
-            let mcp_rw_materializer = materializer.clone();
-            let mcp_rw_device_id = device_id.clone();
+                // Slice 2 — clone the pools + materializer +
+                // device_id the MCP RO and RW servers need before the move.
+                let mcp_ro_read_pool = pools.read.clone();
+                let mcp_ro_write_pool = pools.write.clone();
+                let mcp_ro_materializer = materializer.clone();
+                let mcp_ro_device_id = device_id.clone();
+                let mcp_rw_write_pool = pools.write.clone();
+                let mcp_rw_materializer = materializer.clone();
+                let mcp_rw_device_id = device_id.clone();
 
-            // Move all originals into Tauri managed state + install the
-            // window-focus lifecycle listener. Returns the shared sync
-            // cancel flag (#528) used by the daemon spawned next.
-            let cancel_flag = register_managed_state(
-                app,
-                pools,
-                device_id,
-                sync_cert,
-                materializer,
-                scheduler,
-                &lifecycle,
-            );
+                // Move all originals into Tauri managed state + install the
+                // window-focus lifecycle listener. Returns the shared sync
+                // cancel flag (#528) used by the daemon spawned next.
+                let cancel_flag = register_managed_state(
+                    app,
+                    pools,
+                    device_id,
+                    sync_cert,
+                    materializer,
+                    scheduler,
+                    &lifecycle,
+                );
 
-            // #2506: register the mDNS-status managed state BEFORE the daemon
-            // spawns below, so `TauriEventSink::on_sync_event` can always
-            // find it via `try_state` the moment mDNS init runs (which can
-            // happen almost immediately if peers already exist —
-            // `start_if_peers_exist_with_lifecycle` skips dormant mode).
-            // `get_mdns_status` resolves this state for a frontend that
-            // mounts after that first emission.
-            app.manage(sync_events::MdnsStatusState(std::sync::Mutex::new(
-                sync_events::MdnsStatus::default(),
-            )));
+                // #2506: register the mDNS-status managed state BEFORE the daemon
+                // spawns below, so `TauriEventSink::on_sync_event` can always
+                // find it via `try_state` the moment mDNS init runs (which can
+                // happen almost immediately if peers already exist —
+                // `start_if_peers_exist_with_lifecycle` skips dormant mode).
+                // `get_mdns_status` resolves this state for a frontend that
+                // mounts after that first emission.
+                app.manage(sync_events::MdnsStatusState(std::sync::Mutex::new(
+                    sync_events::MdnsStatus::default(),
+                )));
 
-            // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
-            // `app_data_dir` by a previous process that died mid-receive
-            // (SIGKILL / OOM / power-loss, where `SnapshotTempFile::Drop`
-            // never ran). Safe to delete unconditionally here because it
-            // runs BEFORE `wire_sync_daemon` below starts accepting inbound
-            // connections, so no snapshot receive can be in flight yet.
-            crate::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
+                // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
+                // `app_data_dir` by a previous process that died mid-receive
+                // (SIGKILL / OOM / power-loss, where `SnapshotTempFile::Drop`
+                // never ran). Safe to delete unconditionally here because it
+                // runs BEFORE `wire_sync_daemon` below starts accepting inbound
+                // connections, so no snapshot receive can be in flight yet.
+                crate::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
 
-            // Install rustls + spawn the SyncDaemon (#382/#383/#278).
-            let daemon_wiring = SyncDaemonWiring {
-                cancel_flag,
-                ..daemon_wiring
-            };
-            wire_sync_daemon(daemon_wiring);
+                // Install rustls + spawn the SyncDaemon (#382/#383/#278).
+                let daemon_wiring = SyncDaemonWiring {
+                    cancel_flag,
+                    ..daemon_wiring
+                };
+                wire_sync_daemon(daemon_wiring);
 
-            // / 4h — MCP read-only + read-write servers.
-            wire_mcp_servers(
-                app,
-                &app_data_dir,
-                McpServerWiring {
-                    ro_read_pool: mcp_ro_read_pool,
-                    ro_write_pool: mcp_ro_write_pool,
-                    ro_materializer: mcp_ro_materializer,
-                    ro_device_id: mcp_ro_device_id,
-                    rw_write_pool: mcp_rw_write_pool,
-                    rw_materializer: mcp_rw_materializer,
-                    rw_device_id: mcp_rw_device_id,
-                },
-            );
+                // / 4h — MCP read-only + read-write servers.
+                wire_mcp_servers(
+                    app,
+                    &app_data_dir,
+                    McpServerWiring {
+                        ro_read_pool: mcp_ro_read_pool,
+                        ro_write_pool: mcp_ro_write_pool,
+                        ro_materializer: mcp_ro_materializer,
+                        ro_device_id: mcp_ro_device_id,
+                        rw_write_pool: mcp_rw_write_pool,
+                        rw_materializer: mcp_rw_materializer,
+                        rw_device_id: mcp_rw_device_id,
+                    },
+                );
+
+                Ok(())
+            })();
+
+            if let Err(e) = boot_result {
+                tracing::error!(error = %e, "fatal error during application setup");
+                // #2919 — a downgrade / failed update, a corrupt vault database,
+                // or a failed reprojection reaches here. Show it, then exit.
+                show_fatal_error_dialog(
+                    "Agaric failed to start",
+                    &format!(
+                        "Agaric could not open your vault and had to close.\n\n{e}\n\n\
+                         This can happen after a failed or downgraded update, where an \
+                         older version cannot open a vault that a newer one upgraded, \
+                         or if the vault database is damaged. A pre-migration backup of \
+                         the database is kept next to it when possible, so your data \
+                         should be recoverable.\n\n\
+                         Details are in the log files under your app data directory \
+                         (the \"logs\" folder, agaric.log)."
+                    ),
+                );
+                std::process::exit(1);
+            }
 
             Ok(())
         })
@@ -2353,6 +2442,21 @@ pub fn run() {
         .build(tauri::generate_context!())
         .unwrap_or_else(|e| {
             tracing::error!(error = %e, "failed to build Tauri application");
+            // #2972 — surface the failure in a native dialog instead of exiting
+            // with no visible window. Setup-closure failures exit inside the
+            // `setup` handler (see its own dialog above), so reaching here means
+            // a Tauri-internal build failure.
+            show_fatal_error_dialog(
+                "Agaric failed to start",
+                &format!(
+                    "Agaric could not start and had to close.\n\n{e}\n\n\
+                     This can happen after a failed or downgraded update, where an \
+                     older version cannot open a vault upgraded by a newer one. \
+                     Your data has not been modified.\n\n\
+                     Details are in the log files under your app data directory \
+                     (the \"logs\" folder, agaric.log)."
+                ),
+            );
             std::process::exit(1);
         })
         .run(|app_handle, event| {

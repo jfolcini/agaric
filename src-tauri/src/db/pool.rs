@@ -105,6 +105,68 @@ async fn clear_leaked_bypass_sentinel(
     Ok(())
 }
 
+/// #2919 — take a best-effort backup of the vault database immediately before
+/// migrations run.
+///
+/// A downgrade (an older binary opening a vault a newer version migrated) or a
+/// failed/partial migration can corrupt or partially-migrate the ONLY copy of
+/// the user's data. Before `sqlx::migrate!` touches the file, snapshot it to a
+/// timestamped sibling so the user can recover.
+///
+/// Called at the very start of [`init_pools`], BEFORE the pool connects:
+/// `create_if_missing` would otherwise materialise a zero-byte shell for a
+/// fresh vault and connecting writes the WAL header, either of which would
+/// defeat the "only back up an existing vault" guards below. Running first means
+/// the file on disk is exactly the user's pre-boot vault.
+///
+/// Guards — each a silent skip, never an error:
+/// - `:memory:` / in-memory DBs (tests/benches) — no file to copy.
+/// - the file does not exist yet — a fresh vault has no data to protect.
+/// - a zero-byte file — nothing to protect.
+///
+/// Best-effort by design: a copy failure (permissions, disk full, …) logs a
+/// `warn` and returns — we NEVER abort boot because the safety copy could not be
+/// written. The migration is what must proceed; the backup is a bonus.
+///
+/// Only the main DB file is copied (not `-wal`/`-shm`). A single timestamped
+/// copy per migration run keeps this simple and bounds accumulation to
+/// one-per-boot rather than unbounded history.
+fn backup_db_before_migration(db_path: &Path) {
+    // In-memory pools (tests/benches) never touch disk.
+    if db_path.as_os_str() == ":memory:" {
+        return;
+    }
+    let Ok(meta) = std::fs::metadata(db_path) else {
+        // Fresh vault: nothing on disk yet. Not an error.
+        return;
+    };
+    // A zero-byte file (e.g. a freshly created shell) has no data to protect.
+    if !meta.is_file() || meta.len() == 0 {
+        return;
+    }
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs());
+    // `notes.db` -> `notes.db.pre-migration-<unix_ts>` (sibling in the same dir).
+    let mut backup = db_path.as_os_str().to_owned();
+    backup.push(format!(".pre-migration-{ts}"));
+    let backup = std::path::PathBuf::from(backup);
+    match std::fs::copy(db_path, &backup) {
+        Ok(bytes) => tracing::info!(
+            backup = %backup.display(),
+            bytes,
+            "pre-migration DB backup created"
+        ),
+        // Best-effort: log and PROCEED with the migration; a failed backup must
+        // never block boot.
+        Err(e) => tracing::warn!(
+            error = %e,
+            db = %db_path.display(),
+            "pre-migration DB backup failed; proceeding with migration anyway"
+        ),
+    }
+}
+
 /// Initialize separated read/write SQLite pools with WAL mode.
 ///
 /// The write pool runs migrations on creation.  The read pool sets
@@ -114,6 +176,11 @@ async fn clear_leaked_bypass_sentinel(
 /// Enables `PRAGMA foreign_keys = ON` on every connection in both pools —
 /// SQLite does NOT enforce FK constraints by default, so this is mandatory.
 pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppError> {
+    // #2919 — snapshot the existing on-disk vault before migrations run. No-op
+    // for a fresh or in-memory DB. Must precede the pool connect below so a
+    // fresh vault's `create_if_missing` shell isn't mistaken for real data.
+    backup_db_before_migration(db_path);
+
     // --- Write pool: 2 connections — SQLite serialises at engine level ---
     let write_opts = base_connect_options(db_path);
     let write_pool = SqlitePoolOptions::new()
@@ -312,5 +379,69 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    /// #2919 — a real, non-empty on-disk vault gets a byte-identical timestamped
+    /// backup written before migration. Revert-sensitive: removing the
+    /// `backup_db_before_migration` copy makes this fail.
+    #[tokio::test]
+    async fn backup_db_before_migration_copies_existing_file() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        // A migrated pool is a real, non-empty SQLite file on disk.
+        let pool = init_pool(&db_path).await.unwrap();
+        drop(pool); // release the file handle before copying
+        let original = std::fs::read(&db_path).unwrap();
+        assert!(!original.is_empty(), "migrated DB must be non-empty");
+
+        backup_db_before_migration(&db_path);
+
+        // Exactly one timestamped backup sibling, byte-identical to the DB.
+        let backups: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.path())
+            .filter(|p| {
+                p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|n| n.starts_with("notes.db.pre-migration-"))
+            })
+            .collect();
+        assert_eq!(
+            backups.len(),
+            1,
+            "exactly one pre-migration backup expected"
+        );
+        let backup_bytes = std::fs::read(&backups[0]).unwrap();
+        assert_eq!(backup_bytes, original, "backup must match the original DB");
+    }
+
+    /// #2919 — the backup is a safe no-op for the cases that must NOT produce a
+    /// copy and must NOT error: a missing file (fresh vault), the `:memory:`
+    /// sentinel, and a zero-byte shell.
+    #[tokio::test]
+    async fn backup_db_before_migration_skips_missing_and_in_memory() {
+        let dir = TempDir::new().unwrap();
+
+        // Missing file (fresh vault): no backup, no panic.
+        let missing = dir.path().join("does-not-exist.db");
+        backup_db_before_migration(&missing);
+        assert!(
+            std::fs::read_dir(dir.path()).unwrap().next().is_none(),
+            "a missing file must not produce any backup"
+        );
+
+        // In-memory sentinel path: no backup, no panic.
+        backup_db_before_migration(Path::new(":memory:"));
+
+        // Zero-byte shell: no backup.
+        let empty = dir.path().join("empty.db");
+        std::fs::File::create(&empty).unwrap();
+        backup_db_before_migration(&empty);
+        let has_backup = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .any(|e| e.file_name().to_string_lossy().contains("pre-migration"));
+        assert!(!has_backup, "a zero-byte file must not be backed up");
     }
 }
