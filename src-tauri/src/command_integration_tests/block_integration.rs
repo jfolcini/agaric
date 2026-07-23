@@ -2028,3 +2028,268 @@ async fn move_block_to_deleted_parent_returns_not_found() {
         "moving to deleted parent must return AppError::NotFound"
     );
 }
+
+// ======================================================================
+// #2936 — single-subtree-walk cross-parent move: `page_id` AND `space_id`
+// must cascade to EVERY moved descendant with byte-identical results to the
+// former two-walk form. These tests pin the correlated `space_id` cascade so
+// a regression that walks once but drops / mis-correlates the space step is
+// caught.
+// ======================================================================
+
+/// #2936 test helper: register `id` in the `spaces` table (the
+/// `blocks.space_id REFERENCES spaces(id)` FK, migration 0089, requires the
+/// row to exist before any block stamps that space).
+async fn register_space_2936(pool: &SqlitePool, id: &str) {
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #2936 test helper: stamp `blocks.space_id` directly for one block.
+async fn set_space_2936(pool: &SqlitePool, block_id: &str, space_id: &str) {
+    sqlx::query("UPDATE blocks SET space_id = ? WHERE id = ?")
+        .bind(space_id)
+        .bind(block_id)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+/// #2936 test helper: read one block's `(page_id, space_id)` straight from the
+/// projected `blocks` table.
+async fn page_and_space_2936(pool: &SqlitePool, id: &str) -> (Option<String>, Option<String>) {
+    sqlx::query_as::<_, (Option<String>, Option<String>)>(
+        "SELECT page_id, space_id FROM blocks WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+/// #2936 happy path + correlation guard: moving a multi-level subtree
+/// cross-parent into a DIFFERENT page AND space must re-stamp `page_id` and
+/// the CORRELATED `space_id` on every non-page descendant — while leaving a
+/// nested page and its content (a page boundary) untouched. This is the exact
+/// output the former two back-to-back descendant walks produced; the fix folds
+/// them into ONE walk feeding both column cascades.
+///
+/// Layout (each page is also its own space):
+///   P1 (space P1) ─ R (content) ─ C (content) ─ G (content)   [3 levels]
+///                              └─ NP (nested page) ─ NC (content)
+///   P2 (space P2)
+/// Move R (and its whole subtree) under P2, then assert.
+///
+/// NON-TAUTOLOGY — how a broken single walk fails here:
+///   * space step dropped entirely        → C/G `space_id` stay P1, `== P2` fails.
+///   * space step reads STALE `page_id`    → C/G derive space from the OLD page
+///     (P1), `== P2` fails (this is the mis-correlation / wrong-ordering bug).
+///   * `page_id` set but `space_id` stale  → the `space_id == P2` asserts fail
+///     even though the `page_id == P2` asserts pass.
+///   * space step made a blanket constant  → NC (under the nested page, whose
+///     page_id is NP) would be wrongly re-attributed to P2; the `NC space == P1`
+///     assert catches it. This is the per-row correlation guard.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn move_multilevel_subtree_cross_space_cascades_page_and_space_id() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // Two pages, each registered as its own space.
+    insert_block(&pool, "SP2936_P1", "page", "Page 1", None, Some(1)).await;
+    insert_block(&pool, "SP2936_P2", "page", "Page 2", None, Some(2)).await;
+    register_space_2936(&pool, "SP2936_P1").await;
+    register_space_2936(&pool, "SP2936_P2").await;
+    set_space_2936(&pool, "SP2936_P1", "SP2936_P1").await;
+    set_space_2936(&pool, "SP2936_P2", "SP2936_P2").await;
+
+    // 3-level content subtree under P1: R -> C -> G.
+    insert_block(
+        &pool,
+        "SP2936_R",
+        "content",
+        "root",
+        Some("SP2936_P1"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "SP2936_C",
+        "content",
+        "child",
+        Some("SP2936_R"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "SP2936_G",
+        "content",
+        "grandchild",
+        Some("SP2936_C"),
+        Some(1),
+    )
+    .await;
+    // A nested page under R, with its own content — a page boundary the cascade
+    // must NOT cross (#2906).
+    insert_block(
+        &pool,
+        "SP2936_NP",
+        "page",
+        "Nested Page",
+        Some("SP2936_R"),
+        Some(2),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "SP2936_NC",
+        "content",
+        "nested content",
+        Some("SP2936_NP"),
+        Some(1),
+    )
+    .await;
+
+    // Everything currently lives on / in space P1 (nested page + its content
+    // included — a nested page in space P1 keeps page_id = its own id).
+    for id in ["SP2936_R", "SP2936_C", "SP2936_G"] {
+        set_space_2936(&pool, id, "SP2936_P1").await;
+    }
+    set_space_2936(&pool, "SP2936_NP", "SP2936_P1").await;
+    set_space_2936(&pool, "SP2936_NC", "SP2936_P1").await;
+
+    // Move R (and its whole subtree) under P2 — a genuine cross-page AND
+    // cross-space reparent that fires the in-tx `page_id`/`space_id` rederive.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "SP2936_R".into(),
+        Some("SP2936_P2".into()),
+        0,
+    )
+    .await
+    .unwrap();
+
+    // Read straight after the move returns — the rederive runs SYNCHRONOUSLY in
+    // the writer tx, so the committed state already carries the new attribution
+    // BEFORE any background rebuild could mask a broken in-tx walk.
+    for id in ["SP2936_R", "SP2936_C", "SP2936_G"] {
+        let (page, space) = page_and_space_2936(&pool, id).await;
+        assert_eq!(
+            page.as_deref(),
+            Some("SP2936_P2"),
+            "{id}: page_id must cascade to the destination page P2"
+        );
+        assert_eq!(
+            space.as_deref(),
+            Some("SP2936_P2"),
+            "{id}: space_id must cascade (correlated with the fresh page_id) to P2 — \
+             a dropped or stale-page_id space step would leave this at P1"
+        );
+    }
+
+    // The nested page keeps its own id as page_id and its own authoritative
+    // space (a page's space is not re-derived), and it is EXCLUDED from the
+    // cascade by `block_type != 'page'`.
+    let (np_page, np_space) = page_and_space_2936(&pool, "SP2936_NP").await;
+    assert_eq!(
+        np_page.as_deref(),
+        Some("SP2936_NP"),
+        "nested page keeps its own page_id"
+    );
+    assert_eq!(
+        np_space.as_deref(),
+        Some("SP2936_P1"),
+        "nested page's own space is authoritative and not re-derived by the move"
+    );
+
+    // The nested page's content is BEHIND the page boundary: the walk stops at
+    // the nested page, so NC is never in the moved set — its page_id and space
+    // stay put. A blanket (non-correlated) space step would wrongly pull it to
+    // P2; this assertion is the correlation guard.
+    let (nc_page, nc_space) = page_and_space_2936(&pool, "SP2936_NC").await;
+    assert_eq!(
+        nc_page.as_deref(),
+        Some("SP2936_NP"),
+        "content under a nested page keeps that nested page's page_id"
+    );
+    assert_eq!(
+        nc_space.as_deref(),
+        Some("SP2936_P1"),
+        "content behind the nested-page boundary must NOT be re-attributed to the moved root's space"
+    );
+}
+
+/// #2936 exemption: a SAME-parent reorder must NOT run the `page_id`/`space_id`
+/// rederive at all (`old_parent_id != new_parent_id` gate). Proven with a
+/// sentinel: A is paged to P1 but stamped with space P2. A real cascade would
+/// OVERWRITE A's space back to P1 (its owning page's space); the reorder must
+/// leave the sentinel P2 intact, proving the walk was skipped.
+///
+/// NON-TAUTOLOGY: if the exemption were removed and the cascade ran on a plain
+/// reorder, A's `space_id` would be reset to P1 and this assertion would fail.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn same_parent_reorder_skips_page_and_space_rederive() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    insert_block(&pool, "RE2936_P1", "page", "Page 1", None, Some(1)).await;
+    insert_block(&pool, "RE2936_P2", "page", "Page 2", None, Some(2)).await;
+    register_space_2936(&pool, "RE2936_P1").await;
+    register_space_2936(&pool, "RE2936_P2").await;
+    set_space_2936(&pool, "RE2936_P1", "RE2936_P1").await;
+    set_space_2936(&pool, "RE2936_P2", "RE2936_P2").await;
+
+    insert_block(
+        &pool,
+        "RE2936_A",
+        "content",
+        "a",
+        Some("RE2936_P1"),
+        Some(1),
+    )
+    .await;
+    insert_block(
+        &pool,
+        "RE2936_B",
+        "content",
+        "b",
+        Some("RE2936_P1"),
+        Some(2),
+    )
+    .await;
+    // Sentinel: A is paged to P1 but deliberately stamped with space P2. Only a
+    // (wrongly-run) cascade would reset this to P1.
+    set_space_2936(&pool, "RE2936_A", "RE2936_P2").await;
+
+    // Reorder A within the SAME parent (P1) to a new slot — this must hit the
+    // same-parent early-out and skip the rederive entirely.
+    move_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "RE2936_A".into(),
+        Some("RE2936_P1".into()),
+        1,
+    )
+    .await
+    .unwrap();
+
+    let (page, space) = page_and_space_2936(&pool, "RE2936_A").await;
+    assert_eq!(
+        page.as_deref(),
+        Some("RE2936_P1"),
+        "same-parent reorder keeps page_id (unchanged)"
+    );
+    assert_eq!(
+        space.as_deref(),
+        Some("RE2936_P2"),
+        "same-parent reorder must NOT run the space cascade — the sentinel space P2 must survive; \
+         a reset to P1 would prove the exemption regressed"
+    );
+}

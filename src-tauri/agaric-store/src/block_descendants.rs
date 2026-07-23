@@ -767,18 +767,34 @@ pub async fn rederive_page_and_space_ids(
         new_page_id
     };
 
-    // 3. Cascade page_id to non-page active descendants that belong to the
-    //    root's OWN page. The recursion carries each row's `block_type` and
-    //    STOPS at a nested-page boundary (`d.block_type != 'page'`): a nested
-    //    page is itself collected (so it can be excluded from the UPDATE — a
-    //    page always keeps its own id as page_id), but its subtree is NOT
-    //    descended into, so a content block under a nested page keeps that
-    //    nested page's `page_id` rather than being flattened onto the moved
-    //    root's page (#2906). This mirrors the canonical `DESIRED_PAGE_ID_SQL`
-    //    ancestor walk in `cache::page_id` (`a.cur_type != 'page'`), so the
-    //    in-tx rederive reaches the SAME state a full `RebuildPageIds` would.
+    // 3+4 (#2936): a cross-parent move formerly ran TWO byte-identical
+    //    recursive descendant walks back-to-back inside the writer's IMMEDIATE
+    //    tx — one to cascade `page_id`, one to cascade `space_id` — doubling the
+    //    in-lock subtree walk. Walk the subtree ONCE here, capture its
+    //    descendant id-set, then drive BOTH column cascades from that captured
+    //    set via a `json_each` anchor (the same multi-id anchor the `crud.rs`
+    //    bulk cascades use). The captured set is invariant across the two
+    //    UPDATEs: the `page_id` cascade in step 3 mutates neither `parent_id`,
+    //    `deleted_at`, `block_type`, nor depth — the columns the walk's anchor /
+    //    recursive filters read — so re-walking after step 3 would yield an
+    //    identical set. The single walk is therefore byte-identical in *output*
+    //    to the old two walks; it just walks once instead of twice.
+    //
+    //    The recursion carries each row's `block_type` and STOPS at a
+    //    nested-page boundary (`d.block_type != 'page'`): a nested page is
+    //    itself collected (so both UPDATEs can exclude it via `block_type !=
+    //    'page'` — a page keeps its own id as page_id and its own authoritative
+    //    space_id), but its subtree is NOT descended into, so a content block
+    //    under a nested page keeps that nested page's `page_id`/`space_id`
+    //    rather than being flattened onto the moved root's page (#2906). This
+    //    mirrors the canonical `DESIRED_PAGE_ID_SQL` / `rebuild_space_ids`.
+    //
+    // dynamic-sql: single-root recursive descendant walk captured once for both
+    // column cascades (#2936); a CTE-column's nullability isn't macro-inferable,
+    // so the walk uses the runtime `query_scalar` form like the sibling
+    // multi-seed walkers in this module.
     // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    sqlx::query!(
+    let descendant_ids: Vec<String> = sqlx::query_scalar::<_, String>(
         "WITH RECURSIVE descendants(id, depth, block_type) AS ( \
              SELECT b.id, 0, b.block_type FROM blocks b \
              WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
@@ -788,11 +804,29 @@ pub async fn rederive_page_and_space_ids(
              WHERE b.deleted_at IS NULL AND d.depth < 100 \
                AND d.block_type != 'page' \
          ) \
-         UPDATE blocks SET page_id = ?2 \
-         WHERE id IN (SELECT id FROM descendants) AND block_type != 'page'",
-        root,
-        effective_page_id,
+         SELECT id FROM descendants",
     )
+    .bind(root)
+    .fetch_all(&mut *conn)
+    .await?;
+    // JSON id-array anchor for the two `json_each(?1)` cascades below. Includes
+    // the nested-page boundary rows (block_type = 'page'); each UPDATE filters
+    // them out with its own `block_type != 'page'`, exactly as the old CTEs did.
+    let descendant_json = serde_json::Value::from(descendant_ids).to_string();
+
+    // 3. Cascade page_id to the non-page descendants that belong to the root's
+    //    OWN page (the root's own page_id was already set in step 2). Same
+    //    row-set and same constant value (`?2` = effective_page_id) as the old
+    //    step-3 UPDATE — only the anchor changed from an inline re-walk to the
+    //    once-captured id-set. Nested pages are excluded via `block_type !=
+    //    'page'`, keeping the #2906 page-boundary behaviour.
+    // dynamic-sql: json_each anchor over the once-captured subtree id-set (#2936).
+    sqlx::query(
+        "UPDATE blocks SET page_id = ?2 \
+         WHERE id IN (SELECT value FROM json_each(?1)) AND block_type != 'page'",
+    )
+    .bind(&descendant_json)
+    .bind(effective_page_id.as_deref())
     .execute(&mut *conn)
     .await?;
 
@@ -801,31 +835,28 @@ pub async fn rederive_page_and_space_ids(
     //    space-scoped lists are read right after commit. Non-page rows derive
     //    space_id from their owning page; pages keep their own (a page's
     //    space_id is authoritative, set by the `space` op, not re-derived here).
-    //    The recursion carries `block_type` and STOPS at a nested-page boundary
-    //    (`d.block_type != 'page'`), exactly as step 3: a content block under a
+    //    This UPDATE runs AFTER step 3 so the correlated `blocks.page_id` read
+    //    below sees the *refreshed* page_id — the exact same ordering and
+    //    per-row derivation the old two-walk form had. A content block under a
     //    nested page derives its space from that nested page (unchanged by the
     //    move — pages own their space), so it is left untouched here rather than
-    //    re-attributed to the moved root's space (#2906). This mirrors the
-    //    canonical `rebuild_space_ids` (each non-page block's space = its own
-    //    `page_id`'s space), so the in-tx rederive matches a full rebuild.
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth, block_type) AS ( \
-             SELECT b.id, 0, b.block_type FROM blocks b \
-             WHERE b.parent_id = ?1 AND b.deleted_at IS NULL \
-             UNION ALL \
-             SELECT b.id, d.depth + 1, b.block_type FROM blocks b \
-             JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-               AND d.block_type != 'page' \
-         ) \
-         UPDATE blocks SET space_id = ( \
+    //    re-attributed to the moved root's space (#2906). The `id = ?2 OR` term
+    //    re-includes the root (excluded from step 3's set); `page_id IS NOT NULL`
+    //    preserves the exact old skip when the destination has no page (so a
+    //    NULL-page destination leaves space_id untouched, not nulled). This
+    //    mirrors the canonical `rebuild_space_ids` (each non-page block's
+    //    space = its own `page_id`'s space), so the in-tx rederive matches a
+    //    full rebuild.
+    // dynamic-sql: json_each anchor over the once-captured subtree id-set (#2936).
+    sqlx::query(
+        "UPDATE blocks SET space_id = ( \
              SELECT p.space_id FROM blocks p WHERE p.id = blocks.page_id \
          ) \
-         WHERE (id = ?1 OR id IN (SELECT id FROM descendants)) \
+         WHERE (id = ?2 OR id IN (SELECT value FROM json_each(?1))) \
            AND block_type != 'page' AND page_id IS NOT NULL",
-        root,
     )
+    .bind(&descendant_json)
+    .bind(root)
     .execute(&mut *conn)
     .await?;
 
@@ -1183,12 +1214,13 @@ mod ancestor_db_tests {
 ///
 /// * **Single-root** (`WHERE id = ?`) — the macro family above
 ///   (`descendants_cte_*!()`) is the single source of truth. Most call
-///   sites now `concat!` against the macro; the only ones that re-inline
-///   the body are the two `sqlx::query!()` *compile-time* sites
-///   (`soft_delete::trash::cascade_soft_delete` and the `page_id`/`space_id`
-///   rederive in `commands::block_cleanup`) whose macro form sqlx rejects
-///   because it demands a raw string literal — see the module-level
-///   "Sites that still inline the CTE" note.
+///   sites now `concat!` against the macro; the only one that re-inlines
+///   the body in a `sqlx::query!()` *compile-time* site is
+///   `soft_delete::trash::cascade_soft_delete`, whose macro form sqlx
+///   rejects because it demands a raw string literal — see the module-level
+///   "Sites that still inline the CTE" note. (The `page_id`/`space_id`
+///   rederive here folded its two inline walks into ONE captured walk +
+///   `json_each` cascades in #2936, so it is now a multi-root anchor site.)
 /// * **Multi-root** (`WHERE id IN (SELECT value FROM json_each(?1))`) — the
 ///   bulk delete / restore / purge paths in `commands::blocks::crud`. The
 ///   recursive arm is the SAME load-bearing shape as the single-root form
