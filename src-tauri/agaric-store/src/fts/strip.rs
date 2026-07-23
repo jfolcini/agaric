@@ -108,7 +108,10 @@ pub(crate) use crate::cache::PAGE_LINK_RE;
 /// `block_id` is threaded through solely so [`cap_indexed_text`] can name the
 /// offending block in its truncation warning (#1321). It does not affect the
 /// stripped output.
-pub(crate) fn strip_for_fts_with_maps(
+// #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
+// (src-tauri/fuzz/fuzz_targets/fts_strip.rs) can name this directly as
+// `agaric_store::fts::strip::strip_for_fts_with_maps`.
+pub fn strip_for_fts_with_maps(
     block_id: &str,
     content: &str,
     tag_names: &HashMap<String, String>,

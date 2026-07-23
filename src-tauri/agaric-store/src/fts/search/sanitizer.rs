@@ -50,7 +50,10 @@ use super::tokenizer::{QueryToken, tokenize_query};
 ///
 /// [`search_fts`]: super::cursor::search_fts
 #[must_use]
-pub(crate) fn sanitize_fts_query(query: &str) -> String {
+// #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
+// (src-tauri/fuzz/fuzz_targets/fts_strip.rs) can reach this via the
+// `agaric_store::fts::sanitize_fts_query` re-export.
+pub fn sanitize_fts_query(query: &str) -> String {
     /// Trigram tokenizer minimum match length — see migration
     /// `0006_fts5_trigram.sql` (`tokenize = 'trigram case_sensitive 0'`).
     const TRIGRAM_MIN_LEN: usize = 3;

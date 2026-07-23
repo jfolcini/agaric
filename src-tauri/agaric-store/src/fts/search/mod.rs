@@ -35,7 +35,10 @@ mod tokenizer;
 pub use cursor::search_fts;
 
 // Query sanitiser (used by backlink / query-engine paths via `crate::fts`).
-pub(crate) use sanitizer::sanitize_fts_query;
+// #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
+// can reach `agaric_store::fts::sanitize_fts_query` (re-exported one level
+// up in `fts/mod.rs`).
+pub use sanitizer::sanitize_fts_query;
 
 // Result / query-length ceilings.
 pub use constants::{MAX_QUERY_LEN, MAX_SEARCH_RESULTS};

@@ -18,7 +18,12 @@ pub mod glob_filter;
 mod index;
 pub mod metadata_filter;
 mod search;
-pub(crate) mod strip;
+// #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
+// (src-tauri/fuzz/fuzz_targets/fts_strip.rs) can name
+// `agaric_store::fts::strip::strip_for_fts_with_maps` directly; no other
+// caller behaviour changes (still crate-internal in practice — only the
+// fuzz crate, a path dependency, consumes the widened surface).
+pub mod strip;
 mod toggle_filter;
 
 #[cfg(test)]
@@ -46,7 +51,9 @@ pub use search::FtsPartitionedScan;
 pub use toggle_filter::search_with_toggles_partitioned;
 
 // Re-export crate-internal API
-pub(crate) use search::sanitize_fts_query;
+// #2945 — widened `pub(crate)` → `pub` so the libFuzzer `fts_strip` harness
+// can name `agaric_store::fts::sanitize_fts_query` directly.
+pub use search::sanitize_fts_query;
 // BE-2 — the partitioned IPC command validates its
 // `page_limit` / `block_limit` against this ceiling and rejects an
 // over-limit request (the cursor path rejects via `PageRequest::new`).
