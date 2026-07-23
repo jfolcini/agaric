@@ -1,0 +1,124 @@
+{
+  "description": "Agenda reserved-field reset (last-write-wins): set todo_state, priority, due_date, then CHANGE each to a new value. Asserts the settled block carries only the LATEST reserved-column values (todo_state=DONE, priority=3, due_date=2026-08-15), proving repeated set_* ops on the same column-backed key overwrite rather than accumulate. The op_log_digest still counts all six set_* ops. Exercises set_todo_state / set_priority / set_due_date LWW on the dedicated blocks columns. Re-author `expected` via CONFORMANCE_UPDATE=1.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "task",
+        "deleted_at": null,
+        "due_date": "2026-08-15",
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": "3",
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      }
+    ],
+    "op_log_digest": {
+      "count": 6,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        },
+        {
+          "op_type": "set_todo_state"
+        },
+        {
+          "op_type": "set_priority"
+        },
+        {
+          "op_type": "set_due_date"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "agenda_reset",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "TODO"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "1"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-07-01"
+      },
+      "command": "set_due_date"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "state": "DONE"
+      },
+      "command": "set_todo_state"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "level": "3"
+      },
+      "command": "set_priority"
+    },
+    {
+      "args": {
+        "blockId": "S2",
+        "date": "2026-08-15"
+      },
+      "command": "set_due_date"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "task",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
