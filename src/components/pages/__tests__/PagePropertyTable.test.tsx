@@ -44,6 +44,7 @@ vi.mock('lucide-react', () => ({
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
   CalendarPlus: () => <svg data-testid="calendar-plus-icon" />,
+  Check: () => <svg data-testid="check-icon" />,
   CheckCircle2: () => <svg data-testid="check-circle2-icon" />,
   ChevronDown: () => <svg data-testid="chevron-down" />,
   ChevronRight: () => <svg data-testid="chevron-right" />,
