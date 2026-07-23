@@ -1138,7 +1138,15 @@ pub async fn export_page_markdown_inner(
     let mut output = String::new();
 
     // Title
-    let title = page.content.unwrap_or_else(|| "Untitled".to_string());
+    //
+    // #2991 — `page.content` is cloned (not moved) here because the page
+    // block's own non-inline attachments (emitted just below, after
+    // frontmatter) need the raw content string for the same inline-token
+    // dedup check the descendant loops use.
+    let title = page
+        .content
+        .clone()
+        .unwrap_or_else(|| "Untitled".to_string());
     output.push_str(&format!("# {title}\n\n"));
 
     // Frontmatter (if properties, aliases, or tags exist)
@@ -1175,6 +1183,37 @@ pub async fn export_page_markdown_inner(
             output.push_str(&yaml_scalar_emit(&prop.key, &value));
         }
         output.push_str("---\n\n");
+    }
+
+    // #2991 — emit the PAGE block's own non-inline attachments.
+    //
+    // `attachments_by_block` was batch-fetched above (2b) for the page id
+    // AND every descendant, but neither render loop below iterates the page
+    // block itself: the DFS loop only walks `descendants`, and the orphan
+    // safety net only walks entries of `descendants` not reached by the DFS.
+    // An attachment attached directly to the page/title block (rather than
+    // to one of its descendant blocks) was therefore fetched but never
+    // emitted — silently dropped from the export, the same data-loss class
+    // #2961 fixed for descendant blocks, just for the root block.
+    //
+    // Dedup mirrors the DFS/orphan loops EXACTLY: an attachment id already
+    // present as an `attachment:<id>` token in the page's own `content` (an
+    // inline image) is skipped here so it isn't double-emitted — it was
+    // already rendered inline as part of the `# {title}` line above.
+    //
+    // Emitted at depth 0 (no indent), right after frontmatter and before the
+    // descendant bullets: these lines aren't nested under any bullet (the
+    // page has none — its content is the `# Title` heading), so they sit at
+    // the same top level as the first-level descendant bullets below.
+    if let Some(atts) = attachments_by_block.get(page_id) {
+        let page_content = page.content.as_deref().unwrap_or("");
+        for (att_id, filename) in atts {
+            if page_content.contains(&format!("attachment:{att_id}")) {
+                continue;
+            }
+            let label = attachment_link_label(filename);
+            output.push_str(&format!("- [{label}](attachment:{att_id})\n"));
+        }
     }
 
     // Block content (#1916).
@@ -3089,21 +3128,68 @@ async fn insert_blocks(
         // a chunk boundary (properties are emitted immediately after the
         // block create, before the next depth-0 flush check).
         //
-        // #1921 — body-block properties INTENTIONALLY do NOT share the
-        // frontmatter declaration map: they use the string-value coercion
-        // (`typed_property_args_for_string_value`, not the registry-aware
-        // variant) and their key set is unbounded across all imported blocks,
-        // so they keep using the `set_property_in_tx` wrapper (one declaration
-        // fetch per write). Only the bounded, registry-coerced FRONTMATTER keys
-        // are pre-fetched and reused above.
+        // #2982 — registry-aware coercion for body-block properties too.
+        //
+        // Pre-#2982, body-block properties deliberately did NOT share the
+        // frontmatter's registry-aware coercion: they always routed through
+        // `typed_property_args_for_string_value`, which forces every custom
+        // key's value into `value_text` (except the two reserved date keys).
+        // A descendant block's number/boolean/date-typed custom property
+        // therefore exported correctly typed (#2962) but re-imported
+        // coerced back to `value_text` — the VALUE round-tripped, its TYPE
+        // did not. Fixed by looking up the key's declared `value_type` from
+        // `property_definitions` — a single GLOBAL table (`key TEXT PRIMARY
+        // KEY`, no `space_id` column), so no space-scoping is needed here,
+        // unlike ref-target title resolution — and routing through
+        // `typed_property_args_for_registry_value`, exactly mirroring
+        // `apply_frontmatter_properties`'s registry-aware branch above.
+        //
+        // Looked up PER KEY here (not batched like the frontmatter
+        // pre-pass): body-block property keys are unbounded and vary
+        // block-to-block across the whole document, so a doc-wide pre-fetch
+        // isn't the same bounded win the frontmatter batch is. This adds NO
+        // extra query, though: `set_property_in_tx` already ran this exact
+        // `SELECT value_type, options FROM property_definitions WHERE key =
+        // ?` internally on every non-clear write (for validation only,
+        // discarding the type). We now run that lookup ourselves and call
+        // `set_property_in_tx_with_declaration` directly with the result —
+        // still exactly ONE query per property, not two.
+        //
+        // `ref`-typed keys are NOT specially resolved here (unlike the
+        // frontmatter path's title→ULID reverse lookup just above, which
+        // needs a `tx` + `space_id` round-trip against `blocks`) —
+        // `typed_property_args_for_registry_value` falls through to the text
+        // default for `ref` (see its doc comment), identical to the pre-fix
+        // routing, so a `ref`-declared custom body property's behavior is
+        // UNCHANGED by this fix. A key with no `property_definitions` row
+        // (`declaration: None`) also falls through to the existing
+        // string/text behavior — no regression for untyped custom
+        // properties.
         for (key, value) in &block.properties {
+            let declaration = sqlx::query!(
+                "SELECT value_type, options FROM property_definitions WHERE key = ?",
+                key,
+            )
+            .fetch_optional(&mut **tx)
+            .await?
+            .map(|row| crate::domain::block_ops::PropertyDeclaration {
+                value_type: row.value_type,
+                options: row.options,
+            });
             // #623 — build the correct typed `PropertyValue` shape per key:
             // reserved date keys (`due_date`/`scheduled_date`) must hit the
             // `value_date` field, or `validate_property_value` rejects the
-            // chunk.
+            // chunk. `typed_property_args_for_registry_value` preserves this
+            // reserved-key routing (it falls back to
+            // `typed_property_args_for_string_value` whenever the declared
+            // type doesn't itself claim the value).
             let (value_text, value_num, value_date, value_ref, value_bool) =
-                crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
-            let (_block, prop_op) = set_property_in_tx(
+                crate::domain::block_ops::typed_property_args_for_registry_value(
+                    key,
+                    value.clone(),
+                    declaration.as_ref().map(|d| d.value_type.as_str()),
+                );
+            let (_block, prop_op) = crate::domain::block_ops::set_property_in_tx_with_declaration(
                 &mut tx,
                 materializer.loro_state(),
                 device_id,
@@ -3114,6 +3200,7 @@ async fn insert_blocks(
                 value_date,
                 value_ref,
                 value_bool,
+                declaration,
             )
             .await?;
             properties_set += 1;

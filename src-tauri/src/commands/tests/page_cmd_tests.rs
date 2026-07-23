@@ -1489,6 +1489,105 @@ async fn export_page_markdown_emits_orphan_block_attachment_link_2961() {
     );
 }
 
+/// #2991 — an attachment attached directly to the PAGE block itself (not to
+/// any descendant) must still surface as a link line.
+///
+/// `attachments_by_block` is batch-fetched for the page id AND every
+/// descendant (2b), but pre-fix NEITHER render loop iterated the page block:
+/// the DFS loop only walks `descendants`, and the orphan safety-net loop
+/// only walks entries of `descendants` not reached by the DFS. So a
+/// page-owned attachment was fetched and then silently dropped — never
+/// emitted anywhere in the output. This assertion is non-tautological: on
+/// the pre-fix code this attachment id does not appear in `md` at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_emits_page_own_attachment_link_2991() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Page With Own Attachment",
+        None,
+        Some(1),
+    )
+    .await;
+    // A descendant block, present so the export isn't degenerate — its own
+    // (absent) attachments must not interfere with the page-owned one.
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAABLK1",
+        "content",
+        "unrelated child text",
+        Some("01AAAAAAAAAAAAAAAAAAAAPAGE"),
+        Some(1),
+    )
+    .await;
+    insert_attachment(
+        &pool,
+        "01ATT0000000000000000AT04",
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "cover.png",
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    assert!(
+        md.contains("- [cover.png](attachment:01ATT0000000000000000AT04)"),
+        "the page block's own non-inline attachment should emit a link line, got: {md}"
+    );
+    // Emitted at depth 0 (no indent) — right after frontmatter/title, not
+    // nested under any bullet (the page itself has none).
+    assert!(
+        md.contains("\n- [cover.png](attachment:01ATT0000000000000000AT04)\n"),
+        "the page's own attachment link should be top-level (no indent), got: {md}"
+    );
+}
+
+/// #2991 — a page-owned attachment already referenced inline in the page's
+/// own `content` (the title block) must NOT be double-emitted as a separate
+/// link line, mirroring the descendant-block dedup (#2961).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn export_page_markdown_dedupes_page_own_inline_attachment_2991() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "page",
+        "Cover ![pic](attachment:01ATT0000000000000000AT05) page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_attachment(
+        &pool,
+        "01ATT0000000000000000AT05",
+        "01AAAAAAAAAAAAAAAAAAAAPAGE",
+        "pic.png",
+    )
+    .await;
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
+        .await
+        .unwrap();
+
+    let occurrences = md.matches("attachment:01ATT0000000000000000AT05").count();
+    assert_eq!(
+        occurrences, 1,
+        "inline page-title attachment must not be double-emitted, got: {md}"
+    );
+    assert!(
+        !md.contains("- [pic.png](attachment:01ATT0000000000000000AT05)\n"),
+        "no separate link-line should be emitted for the page's own inline attachment, got: {md}"
+    );
+}
+
 // ======================================================================
 // Descendant pagination & batched ref-resolution
 // ======================================================================
@@ -9857,6 +9956,177 @@ async fn export_round_trips_custom_descendant_block_property_2962() {
     assert!(
         md_out.contains("  status:: done\n"),
         "custom property 'status' must survive the import -> export round trip; got:\n{md_out}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2982 — a DESCENDANT (non-page) block's registry-typed custom property
+/// must round-trip its TYPE, not just its value, through export → import.
+///
+/// Pre-fix, body `key:: value` lines (any non-page block) always routed
+/// through `typed_property_args_for_string_value`, which is NOT
+/// registry-aware (unlike the page-frontmatter import path, which uses
+/// `typed_property_args_for_registry_value`, #1921). So a `number`-typed
+/// custom property on a descendant block exported correctly typed (#2962,
+/// as `score:: 42`) but re-imported coerced into `value_text` ("42"), not
+/// `value_num` (42.0) — the VALUE survived, the TYPE did not.
+///
+/// Non-tautological: on the pre-fix code, `value_num` below is `None` and
+/// `value_text` is `Some("42")`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_round_trips_typed_descendant_block_property_2982() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // "score" collides with none of the migration-seeded built-in defs
+    // (status/priority/effort/due_date/todo_state/scheduled_date/space/
+    // is_space/repeat*/…), so declaring it fresh here is unambiguous.
+    let def = create_property_def_inner(&pool, "score".into(), "number".into(), None)
+        .await
+        .unwrap();
+    assert_eq!(def.value_type, "number");
+
+    const SRC_PAGE: &str = "01AAAAAAAAAAAAAAAAAA2982S1";
+    const TASK: &str = "01AAAAAAAAAAAAAAAAAA2982T1";
+    insert_block(&pool, SRC_PAGE, "page", "Score Source Page", None, Some(1)).await;
+    insert_block(
+        &pool,
+        TASK,
+        "content",
+        "Review the draft",
+        Some(SRC_PAGE),
+        Some(1),
+    )
+    .await;
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'score', 42)")
+        .bind(TASK)
+        .execute(&pool)
+        .await
+        .unwrap();
+    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+
+    // Export: the descendant's typed custom property renders as `score:: 42`
+    // (#2962 — already correct pre-#2982; this fix is import-side only).
+    let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
+    assert!(
+        md.contains("  score:: 42\n"),
+        "descendant's typed custom property must export correctly, got:\n{md}"
+    );
+
+    // Re-import the exported markdown as a NEW page.
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md.clone(),
+        Some("Reimported2982.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.page_title, "Reimported2982");
+    settle(&mat).await;
+
+    let new_page_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE block_type = 'page' AND content = 'Reimported2982'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let new_task_id: String = sqlx::query_scalar(
+        "SELECT id FROM blocks WHERE parent_id = ? AND content = 'Review the draft'",
+    )
+    .bind(&new_page_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        value_text: Option<String>,
+        value_num: Option<f64>,
+    }
+    let prop: PropRow = sqlx::query_as(
+        "SELECT value_text, value_num FROM block_properties WHERE block_id = ? AND key = 'score'",
+    )
+    .bind(&new_task_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        prop.value_num,
+        Some(42.0),
+        "registry-typed descendant property must re-import into value_num, not \
+         value_text (the TYPE, not just the value, must round-trip); prop={prop:?}"
+    );
+    assert_eq!(
+        prop.value_text, None,
+        "a number-typed property must NOT also land in value_text; prop={prop:?}"
+    );
+
+    mat.shutdown();
+}
+
+/// #2982 — a descendant block's UNDECLARED custom property (no
+/// `property_definitions` row for the key) must keep the pre-fix
+/// string/text fallback behavior — no regression for untyped properties.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn import_undeclared_descendant_block_property_still_uses_value_text_2982() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    ensure_test_space(&pool).await;
+    mark_block_as_space(&pool, TEST_SPACE_ID).await;
+
+    // "nickname" has no property_definitions row at all.
+    let md_in = "- Write the report\n  nickname:: Bob\n";
+    let result = import_markdown_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        md_in.into(),
+        Some("Undeclared2982.md".into()),
+        TEST_SPACE_ID.into(),
+        None,
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.blocks_created, 1);
+    settle(&mat).await;
+
+    let task_id: String =
+        sqlx::query_scalar("SELECT id FROM blocks WHERE content = 'Write the report'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    #[derive(sqlx::FromRow, Debug)]
+    struct PropRow {
+        value_text: Option<String>,
+        value_num: Option<f64>,
+    }
+    let prop: PropRow = sqlx::query_as(
+        "SELECT value_text, value_num FROM block_properties WHERE block_id = ? AND key = 'nickname'",
+    )
+    .bind(&task_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    assert_eq!(
+        prop.value_text,
+        Some("Bob".to_string()),
+        "undeclared custom property must keep the pre-fix value_text fallback; prop={prop:?}"
+    );
+    assert_eq!(
+        prop.value_num, None,
+        "undeclared custom property must not spuriously coerce into value_num; prop={prop:?}"
     );
 
     mat.shutdown();
