@@ -120,6 +120,18 @@ pub(super) struct DebounceState {
     /// — the union is always correctness-safe. Reset to `false` on disarm.
     /// The inbound-sync debounce never touches this (its fire set is fixed).
     pub(super) needs_full: bool,
+    /// #2934: LOCAL-lifecycle debounce only — whether the settled burst must
+    /// include the whole-vault `RebuildTagInheritanceCache`. OR-accumulated
+    /// across the burst: `true` when ANY op is a `RestoreBlock` (whose scoped
+    /// `recompute_subtree_inheritance` provably diverges from the full rebuild
+    /// — a restored block that BOTH directly tags T AND inherits T from a live
+    /// ancestor above the cohort loses its inherited row; see
+    /// `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`) or
+    /// when the burst `needs_full` (the full set already carries it). A pure
+    /// delete/purge content burst leaves this `false` and drops the rebuild
+    /// (#2934 — delete/purge ARE equivalent). Reset to `false` on disarm. The
+    /// inbound-sync debounce never touches this.
+    pub(super) needs_inheritance: bool,
 }
 
 /// Outcome of a NON-BLOCKING background enqueue
@@ -208,9 +220,11 @@ pub struct Materializer {
     /// of enqueuing the argument-less global rebuild set inline; the single
     /// driver task [`Self::lifecycle_rebuild_debounce_loop`] (spawned in
     /// [`Self::build`]) waits out the quiet period and fires the set exactly
-    /// once per burst (`FULL_CACHE_REBUILD_TASKS`, or the narrowed
-    /// `CONTENT_LIFECYCLE_REBUILD_TASKS` when the burst was all content
-    /// blocks). Per-block targeted FTS tasks stay enqueued inline. See
+    /// once per burst (`FULL_CACHE_REBUILD_TASKS`, or a narrowed content set:
+    /// `CONTENT_RESTORE_REBUILD_TASKS` when the burst was all content blocks but
+    /// contained a restore — which still needs the tag-inheritance rebuild,
+    /// #2934 — else `CONTENT_LIFECYCLE_REBUILD_TASKS` for a pure delete/purge
+    /// content burst). Per-block targeted FTS tasks stay enqueued inline. See
     /// [`InboundRebuildDebounce`].
     pub(super) lifecycle_rebuild_debounce: Arc<InboundRebuildDebounce>,
     /// Tracks every tokio task spawned via [`Self::spawn_task`] so

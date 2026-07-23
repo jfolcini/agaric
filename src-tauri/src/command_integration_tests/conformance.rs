@@ -4081,3 +4081,343 @@ async fn local_create_block_link_parity_local_matches_remote_2344() {
     mat_l.shutdown();
     mat_s.shutdown();
 }
+
+// ===========================================================================
+// #2934 — lifecycle-op tag-inheritance equivalence (extends the #2669 class).
+//
+// A local `delete_block` / `restore_block` / `purge_block` maintains
+// `block_tag_inherited` SYNCHRONOUSLY, inside the command transaction, scoped
+// to exactly the affected subtree:
+//   * delete  -> `tag_inheritance::remove_subtree_inherited`       (crud.rs)
+//   * restore -> `tag_inheritance::recompute_subtree_inheritance`  (crud.rs)
+//   * purge   -> the `block_cleanup::purge_subtree_tables` cascade (crud.rs)
+// so the whole-vault `RebuildTagInheritanceCache` the lifecycle fan-out used to
+// enqueue (a `DELETE FROM block_tag_inherited` + recursive-CTE recompute under
+// the `BEGIN IMMEDIATE` writer lock, on EVERY lifecycle op) was pure redundant
+// O(vault) work — the exact redundancy #2669 removed for MoveBlock/RemoveTag
+// and #2265 for inbound sync.
+//
+// These three tests PROVE the scoped in-tx update is BYTE-IDENTICAL to a
+// from-scratch full `rebuild_all` for a CONTENT-block lifecycle op, driven
+// through the real command pipeline (`*_inner` + per-space engine + `settle`)
+// and asserted on the SETTLED `block_tag_inherited`. This is the invariant that
+// justifies dropping `RebuildTagInheritanceCache` from
+// `CONTENT_LIFECYCLE_REBUILD_TASKS`. They pass BOTH before the drop (the
+// redundant rebuild is a no-op over an already-correct table) and after it (the
+// scoped update is now the ONLY maintainer, so equality proves it suffices).
+//
+// `scoped` (snapshot taken BEFORE `settle`, i.e. before the debounced lifecycle
+// fan-out can fire) isolates the command tx's own scoped update; asserting it
+// equals a fresh `rebuild_all` is the non-vacuous equivalence proof even while
+// the (soon-removed) rebuild still runs on `settle`.
+//
+// Fixture: S1(page) > AA[#T1] > { BB[#T2] > CC, DD }.
+//   AA tags T1  -> BB, CC, DD inherit T1 from AA.
+//   BB tags T2  -> CC inherits T2 from BB.
+// initial block_tag_inherited = {(BB,T1,AA),(CC,T1,AA),(CC,T2,BB),(DD,T1,AA)}.
+// ===========================================================================
+
+/// Snapshot `block_tag_inherited` as a deterministically-ordered
+/// `(block_id, tag_id, inherited_from)` triple list.
+async fn read_inherited_2934(pool: &SqlitePool) -> Vec<(String, String, String)> {
+    sqlx::query_as::<_, (String, String, String)>(
+        "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited \
+         ORDER BY block_id, tag_id, inherited_from",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// Read a block's `deleted_at` cohort stamp (the value `restore_block_inner` /
+/// the trash UI key the cohort restore on).
+async fn deleted_at_2934(pool: &SqlitePool, id: &str) -> Option<i64> {
+    sqlx::query_scalar::<_, Option<i64>>("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// Seed the shared #2934 fixture into SQL + the per-space engine, assign the
+/// test space, wire the two direct tag edges, and populate the initial
+/// `block_tag_inherited` via a full rebuild. Returns the expanded
+/// `(s1, aa, bb, cc, dd, t1, t2)` ids.
+#[allow(clippy::type_complexity)]
+async fn seed_inheritance_fixture_2934(
+    pool: &SqlitePool,
+    state: &crate::loro::shared::LoroState,
+) -> (String, String, String, String, String, String, String) {
+    let tree = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "AA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "AA", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "BB", "position": 1}),
+        json!({"id": "DD", "block_type": "content", "content": "D",    "parent_id": "AA", "position": 2}),
+    ];
+    let tags = [
+        json!({"id": "T1", "block_type": "tag", "content": "t1", "parent_id": null, "position": 3}),
+        json!({"id": "T2", "block_type": "tag", "content": "t2", "parent_id": null, "position": 4}),
+    ];
+    // Tag blocks live in SQL only (the inheritance recompute reads `block_tags`
+    // + walks `blocks.parent_id`; it never touches the engine). Content/page
+    // blocks are seeded into the engine too so the lifecycle ops route through
+    // the production engine path (mirrors the #1392 / #1549 conformance tests).
+    for blk in tags.iter().chain(tree.iter()) {
+        insert_seed_block(pool, blk).await;
+    }
+    assign_all_to_test_space(pool).await;
+    for blk in &tree {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(pool).await;
+
+    let aa = seed_label_to_id("AA");
+    let bb = seed_label_to_id("BB");
+    let t1 = seed_label_to_id("T1");
+    let t2 = seed_label_to_id("T2");
+    for (block, tag) in [(&aa, &t1), (&bb, &t2)] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block)
+            .bind(tag)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+    // Populate the initial inherited cache the way a live vault would have it.
+    crate::tag_inheritance::rebuild_all(pool).await.unwrap();
+
+    (
+        seed_label_to_id("S1"),
+        aa,
+        bb,
+        seed_label_to_id("CC"),
+        seed_label_to_id("DD"),
+        t1,
+        t2,
+    )
+}
+
+/// #2934 DELETE — `remove_subtree_inherited` (run in the delete command tx)
+/// reproduces the full rebuild byte-for-byte: soft-deleting the middle tagger
+/// BB (cascading to CC) drops every inherited row of the {BB, CC} subtree and
+/// leaves the surviving sibling DD's `(DD,T1,AA)` row intact — exactly what a
+/// from-scratch rebuild over the post-delete live tree yields. Proves the
+/// whole-vault `RebuildTagInheritanceCache` was redundant for a content delete.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn delete_content_subtree_inheritance_matches_full_rebuild_2934() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let (_s1, aa, bb, cc, dd, t1, t2) = seed_inheritance_fixture_2934(&pool, state).await;
+
+    // Non-vacuity: the fixture really does inherit across the subtree.
+    let mut initial = vec![
+        (bb.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t2.clone(), bb.clone()),
+        (dd.clone(), t1.clone(), aa.clone()),
+    ];
+    initial.sort();
+    assert_eq!(
+        read_inherited_2934(&pool).await,
+        initial,
+        "fixture precondition: BB/CC/DD inherit T1 from AA and CC inherits T2 from BB",
+    );
+
+    // Delete BB (a CONTENT block) through the real command pipeline; the cascade
+    // soft-deletes CC too. Snapshot BEFORE settle so `scoped` reflects the
+    // command tx's own `remove_subtree_inherited`, not any debounced rebuild.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    // Full rebuild over the post-delete live tree = the ground truth.
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    assert_eq!(
+        scoped, rebuilt,
+        "#2934: delete's scoped remove_subtree_inherited must equal the full rebuild",
+    );
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content delete must equal the full rebuild",
+    );
+    // Non-vacuity: only DD's row survives (BB/CC gone, AA has no other live
+    // tagged descendants).
+    assert_eq!(
+        rebuilt,
+        vec![(dd.clone(), t1.clone(), aa.clone())],
+        "#2934: after deleting the BB/CC subtree only DD's inherited T1 row must remain",
+    );
+
+    mat.shutdown();
+}
+
+/// #2934 RESTORE — restore's scoped `recompute_subtree_inheritance` does NOT
+/// reproduce the full rebuild, so the whole-vault `RebuildTagInheritanceCache`
+/// is RETAINED for restore (unlike delete/purge) and heals the divergence.
+///
+/// Divergent fixture (the case the equivalence tests above deliberately do not
+/// cover): S1(page) → AA[#T1] → BB → CC[#T1]. CC is BOTH a direct T1 tagger AND
+/// an inheritor of T1 from the live ancestor AA above the deleted cohort. After
+/// deleting then restoring BB (cohort {BB, CC}):
+///   * `rebuild_all` ground truth = {(BB,T1,AA), (CC,T1,AA)} — the rebuild has
+///     no self-tag exclusion, so CC gets its inherited-from-AA row too.
+///   * the scoped `recompute_subtree_inheritance` yields only {(BB,T1,AA)}: its
+///     step 3 (`WHERE st.id NOT IN (SELECT block_id FROM block_tags WHERE
+///     tag_id = …)`, incremental.rs) refuses to write CC's inherited row
+///     because CC directly holds T1 — so `(CC,T1,AA)` is DROPPED.
+/// The retained `RebuildTagInheritanceCache` (fired on `settle`) heals it, so
+/// the SETTLED table equals the full rebuild. This is the same divergence class
+/// as `add_tag_nested_diverges_from_rebuild_provenance_only_2669`; the policy is
+/// to keep the full rebuild whenever the scoped update is not byte-identical.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn restore_content_subtree_inheritance_diverges_needs_rebuild_2934() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    // Divergent fixture: CC is a direct T1 tagger AND inherits T1 from AA above.
+    let tree = [
+        json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
+        json!({"id": "AA", "block_type": "content", "content": "A",    "parent_id": "S1", "position": 1}),
+        json!({"id": "BB", "block_type": "content", "content": "B",    "parent_id": "AA", "position": 1}),
+        json!({"id": "CC", "block_type": "content", "content": "C",    "parent_id": "BB", "position": 1}),
+    ];
+    let t1_seed =
+        json!({"id": "T1", "block_type": "tag", "content": "t1", "parent_id": null, "position": 2});
+    insert_seed_block(&pool, &t1_seed).await;
+    for blk in &tree {
+        insert_seed_block(&pool, blk).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for blk in &tree {
+        seed_block_into_engine(state, blk);
+    }
+    assign_all_to_test_space(&pool).await;
+
+    let aa = seed_label_to_id("AA");
+    let bb = seed_label_to_id("BB");
+    let cc = seed_label_to_id("CC");
+    let t1 = seed_label_to_id("T1");
+    // AA and CC both directly tag T1.
+    for block in [&aa, &cc] {
+        sqlx::query("INSERT INTO block_tags (block_id, tag_id) VALUES (?, ?)")
+            .bind(block)
+            .bind(&t1)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    settle(&mat).await;
+    let bb_deleted_at = deleted_at_2934(&pool, &bb)
+        .await
+        .expect("BB must be soft-deleted");
+
+    // Restore the BB/CC cohort (keyed on BB's own delete stamp), then snapshot
+    // BEFORE settle to isolate the command tx's own `recompute_subtree_inheritance`.
+    restore_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()), bb_deleted_at)
+        .await
+        .expect("restore BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    // Ground truth: the rebuild emits CC's inherited-from-AA row despite CC
+    // directly tagging T1.
+    let mut expected = vec![
+        (bb.clone(), t1.clone(), aa.clone()),
+        (cc.clone(), t1.clone(), aa.clone()),
+    ];
+    expected.sort();
+    assert_eq!(
+        rebuilt, expected,
+        "#2934: the full rebuild must include CC's inherited T1-from-AA row",
+    );
+
+    // The DIVERGENCE the reviewer proved: the scoped recompute drops (CC,T1,AA).
+    // This is precisely why the rebuild is RETAINED for restore.
+    assert!(
+        !scoped.contains(&(cc.clone(), t1.clone(), aa.clone())),
+        "#2934: restore's scoped recompute is expected to DROP (CC,T1,AA) via the \
+         step-3 self-tag exclusion; if this ever holds, the scoped update became \
+         equivalent and the rebuild could be dropped. scoped = {scoped:?}",
+    );
+    assert_ne!(
+        scoped, rebuilt,
+        "#2934: restore's scoped recompute must DIVERGE from the full rebuild here \
+         (the justification for retaining RebuildTagInheritanceCache for restore)",
+    );
+
+    // The retained rebuild (fired on settle) heals the divergence: the SETTLED
+    // table equals the full rebuild.
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content restore must equal \
+         the full rebuild (RebuildTagInheritanceCache is RETAINED for restore)",
+    );
+
+    mat.shutdown();
+}
+
+/// #2934 PURGE — the `purge_subtree_tables` cascade (run in the purge command
+/// tx) leaves `block_tag_inherited` byte-identical to a full rebuild: purging
+/// the already-soft-deleted BB/CC subtree removes any of its inherited rows and
+/// touches no surviving row (a survivor can never inherit from within a purged
+/// subtree). Proves the whole-vault `RebuildTagInheritanceCache` was redundant
+/// for a content purge.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_content_subtree_inheritance_matches_full_rebuild_2934() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+
+    let (_s1, aa, bb, _cc, dd, t1, _t2) = seed_inheritance_fixture_2934(&pool, state).await;
+
+    // A block must be soft-deleted before it can be purged.
+    delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("delete BB");
+    settle(&mat).await;
+
+    purge_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
+        .await
+        .expect("purge BB");
+    let scoped = read_inherited_2934(&pool).await;
+    settle(&mat).await;
+    let settled = read_inherited_2934(&pool).await;
+
+    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    let rebuilt = read_inherited_2934(&pool).await;
+
+    assert_eq!(
+        scoped, rebuilt,
+        "#2934: purge's scoped cascade must leave block_tag_inherited equal to the full rebuild",
+    );
+    assert_eq!(
+        settled, rebuilt,
+        "#2934: the SETTLED block_tag_inherited after a content purge must equal the full rebuild",
+    );
+    // Non-vacuity: DD's inherited row survives the purge of the BB/CC subtree.
+    assert_eq!(
+        rebuilt,
+        vec![(dd.clone(), t1.clone(), aa.clone())],
+        "#2934: after purging the BB/CC subtree only DD's inherited T1 row must remain",
+    );
+
+    mat.shutdown();
+}
