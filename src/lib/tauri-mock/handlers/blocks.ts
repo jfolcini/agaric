@@ -425,11 +425,47 @@ export const blocksHandlers = {
     return { block_id: blockId, restored_count: restoredCount }
   },
 
+  // #3079 — physically erase the ENTIRE subtree, mirroring the backend's
+  // `purge_block_inner` → `descendants_cte_purge!()` + `purge_subtree_tables`.
+  // The purge CTE has NO `deleted_at` filter, so it sweeps every descendant —
+  // active OR tombstoned — and physically deletes each block PLUS its
+  // satellite rows (`block_properties`, `block_tags`, …). The old handler only
+  // removed the single target from `blocks`, leaking the descendant subtree
+  // and every satellite (the same cleanup `purge_blocks_by_ids` already does
+  // per id, but WITHOUT the descendant cascade).
   purge_block: (args) => {
     const a = args as Record<string, unknown>
-    blocks.delete(a['blockId'] as string)
-    pushOp('purge_block', { block_id: a['blockId'] })
-    return { block_id: a['blockId'], purged_count: 1 }
+    const rootId = a['blockId'] as string
+    // BFS the full descendant subtree via `parent_id` (no `deleted_at`
+    // filter — purge erases the whole subtree regardless of tombstone state).
+    const cohort: string[] = []
+    const stack: string[] = [rootId]
+    const seen = new Set<string>()
+    while (stack.length > 0) {
+      const id = stack.pop()
+      if (id == null) break
+      if (seen.has(id)) continue
+      seen.add(id)
+      if (!blocks.has(id)) continue
+      cohort.push(id)
+      for (const child of blocks.values()) {
+        if (child['parent_id'] === id && !seen.has(child['id'] as string)) {
+          stack.push(child['id'] as string)
+        }
+      }
+    }
+    // Physically delete every block in the cohort plus its satellite state
+    // (mirrors `purge_blocks_by_ids`' per-id cleanup, now applied to the whole
+    // cascaded subtree).
+    for (const id of cohort) {
+      blocks.delete(id)
+      properties.delete(id)
+      blockTags.delete(id)
+      attachments.delete(id)
+      pageAliases.delete(id)
+    }
+    pushOp('purge_block', { block_id: rootId })
+    return { block_id: rootId, purged_count: cohort.length }
   },
 
   restore_all_deleted: () => {

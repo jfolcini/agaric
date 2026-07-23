@@ -19,6 +19,39 @@ import {
 } from '@/lib/tauri-mock/handlers/shared'
 import { blocks, properties, propertyDefs, pushOp } from '@/lib/tauri-mock/seed'
 
+/**
+ * #3079 — reserved column-backed property keys and the block-row value channel
+ * each one projects into. Mirrors the backend `reserved_key_blocks_column` /
+ * `project_set_property_to_sql`: these keys are the single source of truth on
+ * the block ROW, never a `block_properties` row.
+ */
+const RESERVED_PROPERTY_COLUMN: Record<string, 'value_text' | 'value_date'> = {
+  todo_state: 'value_text',
+  priority: 'value_text',
+  due_date: 'value_date',
+  scheduled_date: 'value_date',
+}
+
+/**
+ * Route a reserved-key `set_property` onto the block's dedicated column (NOT
+ * `block_properties`) and append the op. `from_value: null` keeps the op's
+ * revert a no-op against the properties map — the column value is reverted via
+ * the dedicated `set_<key>` op, never re-materialized into block_properties.
+ * Returns the `WithOps<BlockRow>` response (or null when the block is absent).
+ */
+function setReservedColumnProperty(
+  blockId: string,
+  key: string,
+  channel: 'value_text' | 'value_date',
+  valueText: string | null,
+  valueDate: string | null,
+): Record<string, unknown> | null {
+  const b = blocks.get(blockId)
+  if (b) b[key] = channel === 'value_text' ? valueText : valueDate
+  const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
+  return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
+}
+
 export const propertiesHandlers = {
   query_by_property: (args) => {
     const a = args as Record<string, unknown>
@@ -135,6 +168,16 @@ export const propertiesHandlers = {
     // #2656 — mirror the real backend's op-log value validation so contract
     // drift fails e2e/unit instead of storing an invalid value silently.
     assertValidSetPropertyValue(key, valueText)
+    // #3079 — reserved column-backed keys (todo_state/priority/due_date/
+    // scheduled_date) are the single source of truth on the block ROW, not
+    // block_properties. Route them to the same-named block column and DO NOT
+    // add a block_properties row (see `setReservedColumnProperty`). Leaving
+    // them in the properties map (the old behaviour) double-counted them: once
+    // on the column, once as a spurious row the backend never writes.
+    const reservedChannel = RESERVED_PROPERTY_COLUMN[key]
+    if (reservedChannel !== undefined) {
+      return setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
+    }
     // Capture the prior typed value (if any) so revert can restore it.
     // `from_value: null` signals "property did not exist" — revert removes it.
     const priorRow = properties.get(blockId)?.get(key)
@@ -168,6 +211,21 @@ export const propertiesHandlers = {
     const a = args as Record<string, unknown>
     const blockId = a['blockId'] as string
     const key = a['key'] as string
+    // #3079 — reserved column-backed keys clear the block COLUMN (backend
+    // routes the delete through `reserved_key_blocks_column` → clears
+    // `blocks.<col>`), NOT a block_properties row (which never holds a
+    // reserved key). The old handler only touched the properties map, so a
+    // reserved-key delete was a silent no-op that left the column set.
+    if (RESERVED_PROPERTY_COLUMN[key] !== undefined) {
+      const b = blocks.get(blockId)
+      if (b) b[key] = null
+      const op = pushOp('delete_property', { block_id: blockId, key, from_value: null })
+      return {
+        block_id: blockId,
+        key,
+        op_refs: [{ device_id: op.device_id, seq: op.seq }],
+      }
+    }
     // Capture the prior typed value so revert can re-add it.
     const priorRow = properties.get(blockId)?.get(key)
     const fromValue = priorRow

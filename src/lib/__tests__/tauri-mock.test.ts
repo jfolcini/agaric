@@ -670,9 +670,12 @@ describe('restore_block cohort cascade', () => {
 
 describe('property commands', () => {
   it('set_property creates a property', () => {
+    // #3079 — use a NON-reserved key: reserved keys (priority/todo_state/…)
+    // now route to a dedicated `blocks` column, never a block_properties row,
+    // so a generic property-row test must use a custom key.
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
-      key: 'priority',
+      key: 'category',
       value: {
         value_text: '1',
         value_num: null,
@@ -686,13 +689,13 @@ describe('property commands', () => {
       unknown
     >[]
     expect(props).toHaveLength(1)
-    expect(props[0]).toMatchObject({ key: 'priority', value_text: '1' })
+    expect(props[0]).toMatchObject({ key: 'category', value_text: '1' })
   })
 
   it('set_property overwrites existing key', () => {
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
-      key: 'priority',
+      key: 'category',
       value: {
         value_text: '1',
         value_num: null,
@@ -703,7 +706,7 @@ describe('property commands', () => {
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
-      key: 'priority',
+      key: 'category',
       value: {
         value_text: '2',
         value_num: null,
@@ -721,9 +724,11 @@ describe('property commands', () => {
   })
 
   it('delete_property removes a property', () => {
+    // #3079 — non-reserved key so an actual block_properties row is created
+    // and then removed (reserved keys live on a column, not a property row).
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_1,
-      key: 'priority',
+      key: 'category',
       value: {
         value_text: '1',
         value_num: null,
@@ -732,7 +737,7 @@ describe('property commands', () => {
         value_bool: null,
       },
     })
-    invoke('delete_property', { blockId: SEED_IDS.BLOCK_GS_1, key: 'priority' })
+    invoke('delete_property', { blockId: SEED_IDS.BLOCK_GS_1, key: 'category' })
     const props = invoke('get_properties', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<
       string,
       unknown
@@ -768,7 +773,8 @@ describe('get_batch_properties', () => {
     })
     invoke('set_property', {
       blockId: SEED_IDS.BLOCK_GS_2,
-      key: 'priority',
+      // #3079 — non-reserved key (reserved keys route to a column, not a row).
+      key: 'category',
       value: {
         value_text: '2',
         value_num: null,
@@ -1141,15 +1147,17 @@ describe('purge_block', () => {
     expect(result.items.find((b) => b['id'] === SEED_IDS.BLOCK_GS_1)).toBeUndefined()
   })
 
-  it('purging a parent does not automatically purge children, but parent is gone', () => {
-    // Purge the "Getting Started" page itself
+  it('purging a parent cascades: the whole descendant subtree is gone', () => {
+    // #3079 — purge_block mirrors the backend's `purge_block_inner` cascade:
+    // it BFS-walks the full descendant subtree via `parent_id` and physically
+    // deletes every block (no `deleted_at` filter), not just the target. Purge
+    // the "Getting Started" page itself and its children must vanish too.
     invoke('purge_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })
     expect(() => invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })).toThrow(
       'not found',
     )
-    // Children still exist (orphaned) — mock doesn't cascade purge
-    const child = invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 }) as Record<string, unknown>
-    expect(child['parent_id']).toBe(SEED_IDS.PAGE_GETTING_STARTED)
+    // Child cascaded away with the parent (the divergence #3079 fixed).
+    expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
   })
 })
 

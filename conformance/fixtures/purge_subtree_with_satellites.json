@@ -1,0 +1,107 @@
+{
+  "description": "#3079 — purge_block physically erases the ENTIRE descendant subtree plus every satellite row (block_properties, block_tags), not just the target. A custom property and a tag are attached to a grandchild, the subtree is soft-deleted, then purged: only the untouched root page survives and the properties/block_tags tables are empty.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 4,
+      "ops": [
+        {
+          "key": "note",
+          "op_type": "set_property"
+        },
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "purge_subtree_with_satellites",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S3",
+        "key": "note",
+        "value": {
+          "value_text": "draft"
+        }
+      },
+      "command": "set_property"
+    },
+    {
+      "args": {
+        "blockId": "S3",
+        "tagId": "S1"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S2"
+      },
+      "command": "purge_block"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "parent",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "childA",
+        "id": "S3",
+        "parent_id": "S2",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "childB",
+        "id": "S4",
+        "parent_id": "S2",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
