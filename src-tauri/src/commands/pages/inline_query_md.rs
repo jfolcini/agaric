@@ -194,17 +194,29 @@ pub(crate) fn encode_v2(spec: &InlineQuerySpec) -> Option<String> {
 /// filter tree. Not re-parsed on import (the `v2n:` base64 is the machine
 /// payload) — it exists purely so the exported markdown carries the resolved
 /// tag/page NAMES in plaintext for humans and external tools.
-fn describe(expr: &FilterExpr) -> String {
+///
+/// `page_titles` resolves a `Space` primitive's `space_id` to its name (#3027
+/// Part B): a space is stored as a `page`-type block (see
+/// `insert_space_block`), so it is the SAME map the exporter already builds
+/// for `[[Page]]` / `child-of:` resolution — `describe`/`describe_primitive`
+/// never mutate the filter tree (unlike `walk_refs`), so `space_id` reaches
+/// here as the raw, un-substituted id and must be looked up explicitly rather
+/// than read off `readable_ref`.
+fn describe(expr: &FilterExpr, page_titles: &HashMap<String, String>) -> String {
     match expr {
-        FilterExpr::Leaf { primitive } => describe_primitive(primitive),
-        FilterExpr::And { children } => join_children(children, " AND "),
-        FilterExpr::Or { children } => join_children(children, " OR "),
-        FilterExpr::Not { child } => format!("NOT {}", describe(child)),
+        FilterExpr::Leaf { primitive } => describe_primitive(primitive, page_titles),
+        FilterExpr::And { children } => join_children(children, " AND ", page_titles),
+        FilterExpr::Or { children } => join_children(children, " OR ", page_titles),
+        FilterExpr::Not { child } => format!("NOT {}", describe(child, page_titles)),
     }
 }
 
-fn join_children(children: &[FilterExpr], sep: &str) -> String {
-    let parts: Vec<String> = children.iter().map(describe).collect();
+fn join_children(
+    children: &[FilterExpr],
+    sep: &str,
+    page_titles: &HashMap<String, String>,
+) -> String {
+    let parts: Vec<String> = children.iter().map(|c| describe(c, page_titles)).collect();
     match parts.len() {
         0 => String::new(),
         1 => parts.into_iter().next().unwrap_or_default(),
@@ -212,19 +224,58 @@ fn join_children(children: &[FilterExpr], sep: &str) -> String {
     }
 }
 
-/// Render a ref value for the human description: its resolved NAME, or a
+/// Neutralize markdown link/tag token boundaries in a resolved ref NAME
+/// before it is folded into the plaintext description (#3027 Part C). The
+/// description sits in RAW block content, and the importer's
+/// `collect_inbound_page_link_names` / `collect_inbound_tag_names` scan that
+/// raw content for `[[…]]` (`HUMAN_PAGE_LINK_RE`) and `#word` /
+/// `#[[…]]` (`HUMAN_TAG_RE` / `HUMAN_MULTIWORD_TAG_RE`) tokens BEFORE the
+/// query token is consumed — a page/tag whose title literally contains one of
+/// those sequences could otherwise spawn a spurious orphan page/tag on
+/// re-import, and a title containing `#` can be mangled by
+/// `split_wikilink_anchor`. Every one of those regexes requires an exact
+/// ADJACENT pair (`[[`, `]]`) or a `#` directly followed by a word char with
+/// no separator, so inserting a single space at each such boundary is enough
+/// to break the match while keeping the name legible (unlike stripping the
+/// characters outright). Simple/common names (no `[`, `]`, `#`) are returned
+/// unchanged.
+fn neutralize_ref_name(name: &str) -> String {
+    if !name.contains(['[', ']', '#']) {
+        return name.to_string();
+    }
+    let mut out = String::with_capacity(name.len() + 4);
+    let mut chars = name.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        match c {
+            '[' if chars.peek() == Some(&'[') => out.push(' '),
+            ']' if chars.peek() == Some(&']') => out.push(' '),
+            '#' if chars
+                .peek()
+                .is_some_and(|n| n.is_alphanumeric() || *n == '_') =>
+            {
+                out.push(' ');
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+/// Render a ref value for the human description: its resolved NAME
+/// (neutralized so it cannot re-parse as a link/tag token, #3027 Part C), or a
 /// clearly-marked `(unresolved)` when the value is still a raw ULID (its target
 /// could not be resolved to a name — a deleted/dangling ref). Never surfaces a
 /// bare opaque id in the readable output.
-fn readable_ref(value: &str) -> &str {
+fn readable_ref(value: &str) -> String {
     if is_ulid(value) {
-        "(unresolved)"
+        "(unresolved)".to_string()
     } else {
-        value
+        neutralize_ref_name(value)
     }
 }
 
-fn describe_primitive(p: &FilterPrimitive) -> String {
+fn describe_primitive(p: &FilterPrimitive, page_titles: &HashMap<String, String>) -> String {
     match p {
         FilterPrimitive::Tag { tag } | FilterPrimitive::TagOrRef { tag } => {
             format!("tag:{}", readable_ref(tag))
@@ -235,13 +286,26 @@ fn describe_primitive(p: &FilterPrimitive) -> String {
         FilterPrimitive::PathGlob { pattern, exclude } => {
             format!("{}path:{pattern}", if *exclude { "not-" } else { "" })
         }
-        FilterPrimitive::Space { space_id } => format!("space:{space_id}"),
+        // #3027 Part B — a `Space` primitive's `space_id` is never rewritten
+        // by `walk_refs` (it must survive export/import as the literal id in
+        // the machine payload, see `walk_primitive`), so it reaches this
+        // description arm as the raw, un-substituted id. Resolve it directly
+        // against `page_titles` (a space is a `page`-type block) rather than
+        // via `readable_ref`, and never surface the bare `space_id` — mirror
+        // the same "(unresolved)" fallback used everywhere else.
+        FilterPrimitive::Space { space_id } => format!(
+            "space:{}",
+            page_titles.get(space_id).map_or_else(
+                || "(unresolved)".to_string(),
+                |name| neutralize_ref_name(name)
+            )
+        ),
         FilterPrimitive::State { values, .. } => format!("state:{}", values.join(",")),
         FilterPrimitive::Priority { values, .. } => format!("priority:{}", values.join(",")),
         FilterPrimitive::BlockType { values, .. } => format!("block-type:{}", values.join(",")),
         FilterPrimitive::HasProperty { key, predicate } => describe_property(key, predicate),
         FilterPrimitive::HasParentMatching { matcher } => {
-            format!("has-parent-matching:[{}]", describe(matcher))
+            format!("has-parent-matching:[{}]", describe(matcher, page_titles))
         }
         // Dates / search toggles / structural markers: the allowed-key token is
         // a fine label (carries no cross-vault ref).
@@ -279,7 +343,7 @@ fn property_value_str(v: &PropertyValue) -> String {
         PropertyValue::Text { value } | PropertyValue::Date { value } => value.clone(),
         // A `Ref` value is a block ULID — mark it when unresolved so no raw
         // opaque id reaches the readable description.
-        PropertyValue::Ref { value } => readable_ref(value).to_string(),
+        PropertyValue::Ref { value } => readable_ref(value),
         PropertyValue::Num { value } => format!("{value}"),
     }
 }
@@ -304,6 +368,13 @@ fn sanitize_desc(desc: &str) -> String {
 /// `content` into `out`, so the exporter's batched title-resolution query
 /// (which otherwise only sees `#[ULID]` / `[[ULID]]` plaintext tokens) also
 /// loads the names for query-embedded refs.
+///
+/// Also folds in every `Space` primitive's `space_id` (#3027 Part B): a space
+/// is stored as a `page`-type block (see `insert_space_block`), so adding its
+/// id to the SAME set the caller resolves via the existing tag/page batched
+/// query lets `describe_primitive` resolve a space NAME from `page_titles`
+/// for the human description — without touching `walk_refs`/`walk_primitive`,
+/// since a `Space`'s raw id must never be rewritten in the machine payload.
 pub(crate) fn collect_export_ref_ulids(content: &str, out: &mut HashSet<String>) {
     if !content.contains("{{query") {
         return;
@@ -315,7 +386,34 @@ pub(crate) fn collect_export_ref_ulids(content: &str, out: &mut HashSet<String>)
                     out.insert(s.clone());
                 }
             });
+            collect_space_ulids(&spec.filter, out);
         }
+    }
+}
+
+/// Collect every `Space` primitive's `space_id` in `expr` into `out` when it
+/// looks like a ULID. Read-only counterpart to `walk_refs` (which
+/// deliberately skips `Space` — see `walk_primitive`) used ONLY to feed the
+/// description's name resolution; never mutates `expr`.
+fn collect_space_ulids(expr: &FilterExpr, out: &mut HashSet<String>) {
+    match expr {
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::Space { space_id },
+        } => {
+            if is_ulid(space_id) {
+                out.insert(space_id.clone());
+            }
+        }
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::HasParentMatching { matcher },
+        } => collect_space_ulids(matcher, out),
+        FilterExpr::Leaf { .. } => {}
+        FilterExpr::And { children } | FilterExpr::Or { children } => {
+            for child in children {
+                collect_space_ulids(child, out);
+            }
+        }
+        FilterExpr::Not { child } => collect_space_ulids(child, out),
     }
 }
 
@@ -350,7 +448,7 @@ pub(crate) fn rewrite_inline_queries_for_export(
                     *s = n.clone();
                 }
             });
-            let desc = sanitize_desc(&describe(&spec.filter));
+            let desc = sanitize_desc(&describe(&spec.filter, page_titles));
             match encode_spec_b64(&spec) {
                 Some(b64) if desc.is_empty() => format!("{{{{query v2n:{b64}}}}}"),
                 Some(b64) => format!("{{{{query v2n:{b64} {desc}}}}}"),
@@ -618,5 +716,153 @@ mod tests {
             } => assert_eq!(parent, NEW_PAGE),
             other => panic!("unexpected: {other:?}"),
         }
+    }
+
+    // ── #3027 Part B — Space primitive must never surface a raw opaque id ──
+
+    const SPACE_ULID: &str = "01SPACE000000000000000SPC1";
+
+    fn space_leaf(id: &str) -> FilterExpr {
+        FilterExpr::Leaf {
+            primitive: FilterPrimitive::Space {
+                space_id: id.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn export_resolves_space_primitive_to_name() {
+        let content = stored_v2(space_leaf(SPACE_ULID));
+        let page_titles = HashMap::from([(SPACE_ULID.to_string(), "Work".to_string())]);
+        let out = rewrite_inline_queries_for_export(&content, &HashMap::new(), &page_titles);
+
+        // NON-TAUTOLOGY: with the raw `format!("space:{space_id}")` (pre-fix),
+        // this would read "space:01SPACE..." instead — the resolved NAME must
+        // appear in the plaintext description.
+        assert!(
+            out.contains("space:Work"),
+            "expected resolved space name: {out}"
+        );
+        // The raw opaque space id must never leak into the readable desc.
+        assert!(
+            !out.contains(&format!("space:{SPACE_ULID}")),
+            "raw space id leaked into desc: {out}"
+        );
+
+        // The machine (base64url) payload is UNTOUCHED: `space_id` must decode
+        // back to the original raw id, never the resolved name — a `Space`
+        // ref is intentionally excluded from `walk_refs`'s name-substitution
+        // (see `walk_primitive`), unlike `Tag`/`ChildOf`/etc.
+        let payload = IMPORT_QUERY_RE
+            .captures(&out)
+            .expect("v2n token present")
+            .get(1)
+            .unwrap()
+            .as_str();
+        let spec = decode_v2n(payload).expect("decodes");
+        match spec.filter {
+            FilterExpr::Leaf {
+                primitive: FilterPrimitive::Space { space_id },
+            } => assert_eq!(
+                space_id, SPACE_ULID,
+                "machine payload space_id must stay raw"
+            ),
+            other => panic!("unexpected filter: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn export_marks_unknown_space_unresolved_never_raw_id() {
+        let content = stored_v2(space_leaf(SPACE_ULID));
+        // Empty `page_titles` ⇒ the space id cannot be resolved.
+        let out = rewrite_inline_queries_for_export(&content, &HashMap::new(), &HashMap::new());
+
+        // NON-TAUTOLOGY: pre-fix this would read "space:01SPACE...".
+        assert!(
+            out.contains("space:(unresolved)"),
+            "expected unresolved marker: {out}"
+        );
+        assert!(
+            !out.contains(&format!("space:{SPACE_ULID}")),
+            "raw opaque space id must never reach the description: {out}"
+        );
+    }
+
+    // ── #3027 Part C — adversarial ref names must not re-parse as refs ─────
+
+    const ADVERSARIAL_PAGE_ULID: &str = "01ADVP00000000000000000PG1";
+    const ADVERSARIAL_TAG_ULID: &str = "01ADVT00000000000000000TG1";
+
+    #[test]
+    fn export_neutralizes_page_link_syntax_in_adversarial_title() {
+        // A page titled with a literal `[[...]]` wiki-link sequence.
+        let filter = FilterExpr::Leaf {
+            primitive: FilterPrimitive::ChildOf {
+                parent: ADVERSARIAL_PAGE_ULID.to_string(),
+            },
+        };
+        let content = stored_v2(filter);
+        let page_titles = HashMap::from([(
+            ADVERSARIAL_PAGE_ULID.to_string(),
+            "Evil[[Injected]]Name".to_string(),
+        )]);
+        let out = rewrite_inline_queries_for_export(&content, &HashMap::new(), &page_titles);
+
+        // NON-TAUTOLOGY: pre-fix, `readable_ref` returns the name verbatim and
+        // this exact adversarial substring would survive unneutralized.
+        assert!(
+            !out.contains("[[Injected]]"),
+            "adversarial [[...]] survived unneutralized: {out}"
+        );
+        // Mirrors the importer's own page-link regex (`HUMAN_PAGE_LINK_RE` in
+        // markdown.rs, duplicated here to avoid a cross-module dependency on a
+        // private static): the neutralized description must not re-parse as a
+        // page link (which would spawn a spurious orphan page on import).
+        let human_page_link_re = Regex::new(r"\[\[([^\]\n]+?)\]\]").unwrap();
+        assert!(
+            !human_page_link_re.is_match(&out),
+            "description re-parses as a page link: {out}"
+        );
+        // Still legible: the underlying text survives, just de-fanged.
+        assert!(out.contains("Evil") && out.contains("Injected") && out.contains("Name"));
+    }
+
+    #[test]
+    fn export_neutralizes_bare_tag_syntax_in_adversarial_title() {
+        // A tag/page titled with a literal leading `#word` sequence.
+        let content = stored_v2(tag_leaf(ADVERSARIAL_TAG_ULID));
+        let tag_names = HashMap::from([(ADVERSARIAL_TAG_ULID.to_string(), "#urgent".to_string())]);
+        let out = rewrite_inline_queries_for_export(&content, &tag_names, &HashMap::new());
+
+        // NON-TAUTOLOGY: pre-fix this would read "tag:#urgent" verbatim.
+        assert!(
+            !out.contains("tag:#urgent"),
+            "adversarial #tag survived unneutralized: {out}"
+        );
+        // Mirrors the importer's own bare-tag regex (`HUMAN_TAG_RE` in
+        // markdown.rs, duplicated here to avoid a cross-module dependency on a
+        // private static): the neutralized description must not re-parse as
+        // an inline tag (which would spawn a spurious orphan tag on import).
+        let human_tag_re =
+            Regex::new(r"(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)").unwrap();
+        assert!(
+            !human_tag_re.is_match(&out),
+            "description re-parses as an inline tag: {out}"
+        );
+        // Still legible: the name's text survives, just de-fanged.
+        assert!(out.contains("urgent"));
+    }
+
+    #[test]
+    fn export_leaves_simple_ref_names_unaffected() {
+        // Control case: a plain name with no link/tag-significant characters
+        // must render byte-for-byte identical to before the neutralization.
+        let content = stored_v2(tag_leaf(TAG_ULID));
+        let tag_names = HashMap::from([(TAG_ULID.to_string(), "rust-lang".to_string())]);
+        let out = rewrite_inline_queries_for_export(&content, &tag_names, &HashMap::new());
+        assert!(
+            out.contains("tag:rust-lang"),
+            "simple name unaffected: {out}"
+        );
     }
 }
