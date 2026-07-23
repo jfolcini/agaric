@@ -32,8 +32,9 @@
 //   - `src/lib/bindings.ts`        generated typed-binding layer (uses
 //                                  the aliased `__TAURI_INVOKE`).
 //   - `src/lib/tauri.ts`           the hand-written wrapper layer that
-//                                  the bindings migration funnels
-//                                  through (`unwrap(await commands.*)`).
+//   - `src/lib/tauri/`             the bindings migration funnels
+//                                  through (`unwrap(await commands.*)`);
+//                                  split into per-domain modules in #2902.
 //   - `src/lib/observability/`     the invoke-instrumentation seam that
 //                                  patches `__TAURI_INTERNALS__.invoke`.
 //   - `src/lib/tauri-mock.ts` /    the e2e / dev IPC mock that stands in
@@ -57,7 +58,11 @@ const SRC_DIR = path.join(ROOT, 'src')
 const EXEMPT_FILES = Object.freeze(
   new Set(['src/lib/bindings.ts', 'src/lib/tauri.ts', 'src/lib/tauri-mock.ts']),
 )
-const EXEMPT_DIR_PREFIXES = Object.freeze(['src/lib/observability/', 'src/lib/tauri-mock/'])
+const EXEMPT_DIR_PREFIXES = Object.freeze([
+  'src/lib/observability/',
+  'src/lib/tauri-mock/',
+  'src/lib/tauri/',
+])
 
 // `invoke(` or `invoke<T>(` followed by a string literal whose first
 // char is a lowercase letter (a Tauri command name).

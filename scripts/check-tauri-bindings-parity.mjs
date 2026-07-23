@@ -4,8 +4,18 @@
 //
 // Verifies that every IPC command emitted from `src/lib/bindings.ts`
 // (the auto-generated tauri-specta surface) has a corresponding
-// ergonomics wrapper in the hand-written `src/lib/tauri.ts` layer,
-// or sits on an explicit allowlist.
+// ergonomics wrapper in the hand-written `@/lib/tauri` layer, or sits
+// on an explicit allowlist.
+//
+// (#2902) `src/lib/tauri.ts` used to hold every wrapper in one file; it
+// is now a thin re-export barrel and the wrapper definitions live in the
+// per-domain modules `src/lib/tauri/*.ts` (`blocks.ts`, `pages.ts`, …).
+// So this script scans every domain module in that directory (excluding
+// the non-command `_shared.ts` scope-helper module) and unions their
+// top-level `export function` names — exactly analogous to how
+// `check-tauri-mock-parity.mjs` scans `handlers/*.ts` for the #2931
+// tauri-mock split. The parity assertion is unchanged; only the place
+// where wrappers are discovered moved.
 //
 // Why this exists: `bindings.ts` regenerates automatically when a
 // Rust command signature changes (and the `ts_bindings_up_to_date`
@@ -31,7 +41,7 @@ import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const BINDINGS = path.join(ROOT, 'src/lib/bindings.ts')
-const TAURI = path.join(ROOT, 'src/lib/tauri.ts')
+const TAURI_DOMAIN_DIR = path.join(ROOT, 'src/lib/tauri')
 
 // ─── Known unwrapped commands ───────────────────────────────────────
 // Commands intentionally consumed directly via `commands.*` rather
@@ -117,7 +127,6 @@ const KNOWN_UNWRAPPED = new Set([
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')
-const tauriSrc = fs.readFileSync(TAURI, 'utf8')
 
 // ─── 1. Parse bindings.ts → set of command names ────────────────────
 //
@@ -134,20 +143,32 @@ if (commands.size === 0) {
   process.exit(2)
 }
 
-// ─── 2. Parse tauri.ts → set of exported wrapper names ──────────────
+// ─── 2. Parse src/lib/tauri/*.ts → set of exported wrapper names ─────
 //
-// Top-level `export function` / `export async function` declarations.
-// Skips arrow-function exports and re-exports, which are not the
-// pattern used in `tauri.ts`.
+// (#2902) Union the top-level `export function` / `export async function`
+// declarations across every per-domain module in `src/lib/tauri/`. The
+// barrel `src/lib/tauri.ts` is a sibling FILE (not inside this dir), so it
+// is naturally excluded; the `_shared.ts` scope-helper module is skipped
+// explicitly (it exports `toSpaceScope` / `requireActiveScope`, which are
+// internal helpers, not IPC wrappers). Skips arrow-function exports and
+// re-exports, which are not the pattern used in these modules.
+const domainFiles = fs
+  .readdirSync(TAURI_DOMAIN_DIR)
+  .filter((f) => f.endsWith('.ts') && f !== '_shared.ts')
+if (domainFiles.length === 0) {
+  console.error(`ERROR: found 0 domain wrapper modules in ${TAURI_DOMAIN_DIR}`)
+  process.exit(2)
+}
 const wrappers = new Set()
-for (const m of tauriSrc.matchAll(
-  /^export\s+(?:async\s+)?function\s+([a-zA-Z][a-zA-Z0-9]*)\s*\(/gm,
-)) {
-  wrappers.add(m[1])
+for (const file of domainFiles) {
+  const src = fs.readFileSync(path.join(TAURI_DOMAIN_DIR, file), 'utf8')
+  for (const m of src.matchAll(/^export\s+(?:async\s+)?function\s+([a-zA-Z][a-zA-Z0-9]*)\s*\(/gm)) {
+    wrappers.add(m[1])
+  }
 }
 if (wrappers.size === 0) {
   console.error(
-    `ERROR: parsed 0 exported function wrappers from ${TAURI} — parser is broken or file is empty.`,
+    `ERROR: parsed 0 exported function wrappers from ${TAURI_DOMAIN_DIR}/*.ts — parser is broken or the split modules are missing.`,
   )
   process.exit(2)
 }
@@ -163,11 +184,11 @@ let exitCode = 0
 
 if (missingNew.length > 0) {
   console.error(
-    'ERROR: commands in bindings.ts have no wrapper in tauri.ts and are not allowlisted:',
+    'ERROR: commands in bindings.ts have no wrapper in src/lib/tauri/*.ts and are not allowlisted:',
   )
   for (const cmd of missingNew) {
     console.error(
-      `  - ${cmd}: add a wrapper to src/lib/tauri.ts, or add to KNOWN_UNWRAPPED in this script with a justifying comment`,
+      `  - ${cmd}: add a wrapper to the appropriate src/lib/tauri/*.ts domain module, or add to KNOWN_UNWRAPPED in this script with a justifying comment`,
     )
   }
   console.error('')
@@ -195,7 +216,7 @@ if (allowlistStale.length > 0) {
 
 if (extra.length > 0) {
   console.warn(
-    'WARN: tauri.ts has wrappers for names not in bindings.ts (likely Tauri-plugin shims or renamed wrappers):',
+    'WARN: src/lib/tauri/*.ts has wrappers for names not in bindings.ts (likely Tauri-plugin shims or renamed wrappers):',
   )
   for (const cmd of extra) console.warn(`  - ${cmd}`)
 }
