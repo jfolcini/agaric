@@ -2821,3 +2821,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "recovery_kernel_parity_tests.rs"]
+mod recovery_kernel_parity_tests;
