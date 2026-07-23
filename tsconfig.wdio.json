@@ -1,0 +1,25 @@
+{
+  "//": "Dedicated typecheck for the WebdriverIO + tauri-driver real-backend e2e harness (#155). Intentionally NOT referenced by tsconfig.json, so `tsc -b` (the app build) never pulls wdio.conf.ts or e2e-tauri/** into the bundle. Run standalone: `npx tsc -p tsconfig.wdio.json`.",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.wdio.tsbuildinfo",
+    "target": "ES2023",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "types": ["node", "@wdio/globals/types", "mocha"],
+    "skipLibCheck": true,
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "erasableSyntaxOnly": true,
+    "noFallthroughCasesInSwitch": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "noImplicitReturns": true,
+    "noImplicitOverride": true
+  },
+  "include": ["wdio.conf.ts", "e2e-tauri/**/*.ts"]
+}

@@ -15,7 +15,8 @@
     "better-npm-audit",
     "license-checker",
     "tw-animate-css",
-    "istanbul-lib-coverage"
+    "istanbul-lib-coverage",
+    "@wdio/local-runner"
   ],
   "ignoreExportsUsedInFile": true
 }
