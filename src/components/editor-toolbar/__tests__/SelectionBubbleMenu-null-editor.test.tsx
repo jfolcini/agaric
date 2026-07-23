@@ -1,21 +1,37 @@
 /**
- * Null-editor safety test (#3056) for `SelectionBubbleMenu`.
+ * Null-editor safety tests for `SelectionBubbleMenu`.
  *
- * Companion to `null-editor-safety.test.tsx` (FormattingToolbar / FormatMenu /
- * TurnIntoMenu), split into its own file because `SelectionBubbleMenu` needs a
- * different rig: unlike the other three, it also dereferences the raw
- * `editor` prop directly during a mount effect (`editor.view?.dom`, to wire
- * up the `open-link-popover` listener) — a separate, pre-existing null-safety
- * gap that is NOT part of this fix (the fix only guards the `useEditorState`
- * selector's `.isActive()`/`.can()` calls). Passing a literal `null` `editor`
- * prop here would trip that unrelated line, not the guard under test.
+ * Two separate mount/teardown-race gaps, two separate rigs:
  *
- * So this file mocks `@tiptap/react`'s `useEditorState` to invoke the
- * component's REAL (unmodified) selector with `ctx.editor: null` — exactly
- * mirroring what TipTap's internal `EditorStateManager` snapshot looks like
- * during the mount/teardown race — while the component still receives a
- * normal, non-null `editor` object for everything else it touches at render
- * time. This isolates the exact code path the fix changed.
+ * 1. #3056 — the `useEditorState` selector's `ctx.editor` can be null even
+ *    though the `editor` prop is typed non-null. Covered by the
+ *    `#3056` describe block below, which mocks `@tiptap/react`'s
+ *    `useEditorState` to invoke the component's REAL (unmodified) selector
+ *    with `ctx.editor: null` — exactly mirroring what TipTap's internal
+ *    `EditorStateManager` snapshot looks like during the race — while the
+ *    component still receives a normal, non-null `editor` object for
+ *    everything else it touches at render time. This isolates the exact
+ *    code path #3056 changed. (A literal `null` `editor` prop would instead
+ *    trip the #3061 gap below, not this one — hence the `{}` stub.)
+ *
+ * 2. #3061 — the raw `editor` prop itself (not just `ctx.editor` from the
+ *    selector) can be transiently null during the same race. The mount
+ *    effect that wires up the `open-link-popover` listener used to
+ *    dereference it directly (`editor.view?.dom`), throwing
+ *    "Cannot read properties of null (reading 'view')". Covered by the
+ *    `#3061` describe block below, which renders with a literal `null`
+ *    `editor` prop (the `useEditorState`/`BubbleMenu` mocks above still
+ *    apply, so this isolates the raw-dereference fix from the #3056 one).
+ *
+ * 3. #3061 (anchor) — `virtualAnchorRef.current.getBoundingClientRect`
+ *    (handed to Radix's `PopoverAnchor virtualRef`) also dereferenced
+ *    `editor.state`/`editor.view` directly, with no guard. Radix invokes
+ *    that closure repeatedly for as long as the link popover stays open
+ *    (layout/scroll/resize recalcs), not just once at click time, so it can
+ *    run after `editor` has gone null mid-race. `@/components/ui/popover`'s
+ *    `PopoverAnchor` is mocked below to capture the `virtualRef` so the
+ *    closure can be invoked directly, independent of whether the popover is
+ *    actually open — isolating this from the #3056/#3061-dom gaps above.
  */
 
 import { render, screen } from '@testing-library/react'
@@ -76,6 +92,28 @@ vi.mock('@/components/ui/separator', () => ({
   ),
 }))
 
+// Capture the `virtualRef` handed to `PopoverAnchor` (which SelectionBubbleMenu
+// wires to `virtualAnchorRef`) so the #3061-anchor test can invoke its
+// `getBoundingClientRect` closure directly, independent of Radix's own
+// open/positioning lifecycle. Everything else re-exports the real module.
+let capturedVirtualRef: { current: { getBoundingClientRect: () => DOMRect } } | null = null
+
+vi.mock('@/components/ui/popover', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/components/ui/popover')>('@/components/ui/popover')
+  return {
+    ...actual,
+    PopoverAnchor: ({
+      virtualRef,
+    }: {
+      virtualRef: { current: { getBoundingClientRect: () => DOMRect } }
+    }) => {
+      capturedVirtualRef = virtualRef
+      return null
+    },
+  }
+})
+
 // Minimal stub — none of its members are touched at render time once the
 // mocked selector reports `state.link: false` (the link edit path, the only
 // render-time reader of `editor.state`/`editor.getAttributes`, is gated on
@@ -116,5 +154,51 @@ describe('#3056 — SelectionBubbleMenu null-editor safety', () => {
   it('passes axe audit with a null-editor snapshot', async () => {
     const { container } = render(<SelectionBubbleMenu editor={makeStubEditor()} />)
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// #3061 — a literal `null` `editor` prop, exercising the raw
+// `editor.view?.dom` dereference in the mount effect (unlike `makeStubEditor`
+// above, whose `{}` stub has a defined-but-view-less `editor` that never hit
+// this line). Before the fix, this threw "Cannot read properties of null
+// (reading 'view')" — the `useEditorState`/`BubbleMenu` mocks above still
+// apply here, so the crash (or its absence) is isolated to that one line.
+function makeNullEditor(): React.ComponentProps<typeof SelectionBubbleMenu>['editor'] {
+  return null as unknown as React.ComponentProps<typeof SelectionBubbleMenu>['editor']
+}
+
+describe('#3061 — SelectionBubbleMenu raw editor-prop null safety', () => {
+  it('renders without throwing when the `editor` prop itself is null', () => {
+    expect(() => {
+      render(<SelectionBubbleMenu editor={makeNullEditor()} />)
+    }).not.toThrow()
+  })
+
+  it('passes axe audit with a null `editor` prop', async () => {
+    const { container } = render(<SelectionBubbleMenu editor={makeNullEditor()} />)
+    expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+// `capturedVirtualRef` is a module-level `let` reassigned inside the
+// `PopoverAnchor` mock closure above, so TS's control-flow narrowing across
+// the intervening `render()` call is unreliable (it can narrow to `never`
+// after a `null` check). Isolate the null-check in its own explicitly-typed
+// helper instead of narrowing the mutable variable inline in the test.
+function requireCapturedVirtualRef(): {
+  current: { getBoundingClientRect: () => DOMRect }
+} {
+  if (!capturedVirtualRef) throw new Error('PopoverAnchor virtualRef was not captured')
+  return capturedVirtualRef
+}
+
+describe('#3061 — SelectionBubbleMenu link-popover anchor null safety', () => {
+  it('virtualAnchorRef.getBoundingClientRect does not throw when editor is null', () => {
+    capturedVirtualRef = null
+    render(<SelectionBubbleMenu editor={makeNullEditor()} />)
+
+    const ref = requireCapturedVirtualRef()
+    expect(() => ref.current.getBoundingClientRect()).not.toThrow()
+    expect(ref.current.getBoundingClientRect()).toBeInstanceOf(DOMRect)
   })
 })

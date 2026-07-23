@@ -131,6 +131,11 @@ export function SelectionBubbleMenu({
   })
   virtualAnchorRef.current = {
     getBoundingClientRect: () => {
+      // #3061 — Radix calls this closure repeatedly (layout/scroll/resize)
+      // for as long as the link popover stays open, not just once at click
+      // time, so it can run after `editor` has gone null mid mount/teardown
+      // race. Guard `editor?.view` before touching `.state`/`.view` below.
+      if (!editor?.view) return new DOMRect()
       const range = savedSelection ?? {
         from: editor.state.selection.from,
         to: editor.state.selection.to,
@@ -183,7 +188,11 @@ export function SelectionBubbleMenu({
   // menu itself is not visible (i.e. when the selection is empty), because
   // the extension dispatches the event on the editor's DOM directly.
   useEffect(() => {
-    const dom = editor.view?.dom
+    // #3061 — `editor` (typed non-null) can itself be transiently null during
+    // the same mount/teardown race #3060 guarded in the `useEditorState`
+    // selector above; `editor?.view?.dom` (rather than `editor.view?.dom`)
+    // avoids dereferencing a null `editor` here too.
+    const dom = editor?.view?.dom
     if (!dom) return
 
     const handler = (e: Event) => {
@@ -237,7 +246,11 @@ export function SelectionBubbleMenu({
     }
   } else if (editingLinkSnapshot) {
     currentLabel = editingLinkSnapshot.label
-  } else if (savedSelection && savedSelection.from !== savedSelection.to) {
+  } else if (editor && savedSelection && savedSelection.from !== savedSelection.to) {
+    // #3061 — `savedSelection` is independent React state, so it can still be
+    // set on a re-render where `editor` has gone null; the try/catch already
+    // covers stale ranges, but gate on `editor` too rather than relying on
+    // the catch to swallow a TypeError with a different cause.
     try {
       currentLabel = editor.state.doc.textBetween(savedSelection.from, savedSelection.to)
     } catch {
