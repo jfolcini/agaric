@@ -11,9 +11,13 @@
  *  - `checkForUpdatesNow` no-update confirmation toast
  *  - Install flow: flushAllDrafts → downloadAndInstall → relaunch in order
  *  - Install failure: notify.error called, no relaunch
+ *  - Periodic re-check: 24-h interval fires another check
+ *  - Periodic re-check: visibilitychange to visible fires another check
+ *  - Periodic re-check: unmount clears the interval + removes listeners
+ *  - Periodic re-check: mobile still performs zero checks
  */
 
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -274,5 +278,145 @@ describe('install flow', () => {
     expect(downloadAndInstall).not.toHaveBeenCalled()
     expect(mockRelaunch).not.toHaveBeenCalled()
     expect(notify.dismiss).toHaveBeenCalledWith('update-available')
+  })
+})
+
+describe('useUpdateCheck — periodic re-check', () => {
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+  function setVisibility(state: 'hidden' | 'visible') {
+    Object.defineProperty(document, 'visibilityState', {
+      value: state,
+      configurable: true,
+    })
+  }
+
+  beforeEach(() => {
+    vi.useFakeTimers()
+  })
+
+  afterEach(() => {
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    setVisibility('visible')
+  })
+
+  it('fires another check after the 24-h interval elapses', async () => {
+    mockCheck.mockResolvedValue(null)
+
+    renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('fires a re-check on a visibilitychange to visible', async () => {
+    mockCheck.mockResolvedValue(null)
+
+    renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+
+    // Simulate the 24-h debounce window having elapsed since the boot
+    // check (e.g. the tab sat hidden for a day) so the visibilitychange
+    // handler's isWithinDebounceWindow guard lets the re-check through
+    // instead of suppressing it.
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, old)
+
+    setVisibility('visible')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockCheck).toHaveBeenCalledTimes(2)
+  })
+
+  it('does not re-check on a visibilitychange to hidden', async () => {
+    mockCheck.mockResolvedValue(null)
+
+    renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+
+    const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, old)
+
+    setVisibility('hidden')
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+  })
+
+  it('clears the interval and removes the listeners on unmount', async () => {
+    mockCheck.mockResolvedValue(null)
+    const removeDocumentListenerSpy = vi.spyOn(document, 'removeEventListener')
+    const removeWindowListenerSpy = vi.spyOn(window, 'removeEventListener')
+
+    const { unmount } = renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+
+    unmount()
+
+    expect(removeDocumentListenerSpy).toHaveBeenCalledWith('visibilitychange', expect.any(Function))
+    expect(removeWindowListenerSpy).toHaveBeenCalledWith('online', expect.any(Function))
+
+    // Nothing fires post-unmount: not the interval, and not a
+    // visibilitychange/online event dispatched afterwards.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
+    })
+    setVisibility('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockCheck).toHaveBeenCalledTimes(1)
+
+    removeDocumentListenerSpy.mockRestore()
+    removeWindowListenerSpy.mockRestore()
+  })
+
+  it('performs zero checks on mobile across interval, visibility, and online triggers', async () => {
+    setUserAgent(ANDROID_UA)
+    mockCheck.mockResolvedValue(null)
+
+    renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
+    })
+
+    setVisibility('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+
+    expect(mockCheck).not.toHaveBeenCalled()
   })
 })
