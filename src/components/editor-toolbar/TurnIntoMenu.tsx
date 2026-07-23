@@ -7,25 +7,32 @@
  *  1. Turn-into list — every block-type transform (paragraph, headings 1–6,
  *     bullet / numbered list, quote, code, callout) iterated from the canonical
  *     `TURN_INTO_OPTIONS` so labels/icons never drift from the slash `/turn`
- *     family and the context-menu Turn-into group. Each row dispatches
- *     `TURN_INTO_BLOCK` (→ `convertBlockContent` + `applyContentEdit`) and closes
+ *     family and the context-menu Turn-into group. Most rows dispatch
+ *     `TURN_INTO_BLOCK` (→ `convertBlockContent` + `applyContentEdit`) and close
  *     the popover (one-shot). Divider is appended as the structural INSERT it is
  *     (`INSERT_DIVIDER` — there is no "divider" block type to convert to).
- *  2. Contextual sub-picker — preserves the rich options the removed buttons
- *     carried: when the focused block is a code block, the `CodeLanguageSelector`
- *     (language list); when it is a callout, the `CalloutTypeSelector` (5 types).
- *     Shown only for the matching active type, so nothing is lost by dropping the
- *     standalone buttons.
+ *  2. Inline variant pickers (#3001) — the `code` and `callout` rows are
+ *     DISCLOSURES, not one-shot buttons. Activating one expands its searchable
+ *     picker in place (`CodeLanguageSelector` / `CalloutTypeSelector`) so the user
+ *     picks the block type AND its variant (language / callout kind) in a single
+ *     interaction. This replaces the old two-step flow, where turning into a code
+ *     block or callout applied the default variant, closed the popover, and only
+ *     surfaced the variant picker on a REOPEN. When the focused block already is a
+ *     code block / callout, the matching picker starts expanded so re-picking the
+ *     variant stays one interaction too.
  *
- * Clicks use `onPointerDown + preventDefault` so focus stays in the editor and
- * the focus-keyed block command bus still targets the focused block (mirrors the
- * existing toolbar popover triggers).
+ * The pickers are rendered OUTSIDE the `role="menu"` list: their input/buttons are
+ * not valid menu children (aria-required-children). Clicks use
+ * `onPointerDown + preventDefault` so focus stays in the editor and the focus-keyed
+ * block command bus still targets the focused block (mirrors the existing toolbar
+ * popover triggers).
  */
 
 import type { Editor } from '@tiptap/react'
 import { useEditorState } from '@tiptap/react'
-import { Minus } from 'lucide-react'
+import { ChevronRight, Minus } from 'lucide-react'
 import type React from 'react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { CalloutTypeSelector } from '@/components/editor-toolbar/CalloutTypeSelector'
@@ -43,6 +50,9 @@ interface TurnIntoMenuProps {
   /** Close the hosting popover after a one-shot turn-into selection. */
   onClose: () => void
 }
+
+/** Block-type tokens whose "turn into" row expands an inline variant picker. */
+type DisclosureType = 'code' | 'callout'
 
 export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.ReactElement {
   const { t } = useTranslation()
@@ -94,6 +104,18 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
     return false
   }
 
+  // #3001 — a code block / callout already under the cursor starts with its
+  // variant picker expanded, so re-picking the variant is a single interaction
+  // (mirrors the old auto-shown sub-picker). From any other block, the row is a
+  // disclosure the user opens explicitly. Initialised once on mount; the popover
+  // content remounts on each open, so it always reflects the current block.
+  const [expanded, setExpanded] = useState<DisclosureType | null>(() =>
+    state.codeBlock ? 'code' : state.blockquote && state.calloutType !== null ? 'callout' : null,
+  )
+
+  const disclosureFor = (blockType: string): DisclosureType | null =>
+    blockType === 'code' ? 'code' : blockType === 'callout' ? 'callout' : null
+
   const rowClass = 'justify-start text-sm w-full [@media(pointer:coarse)]:min-h-11'
 
   return (
@@ -101,6 +123,37 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
       <div role="menu" aria-label={t('toolbar.turnInto')} className="flex flex-col gap-0.5">
         {TURN_INTO_OPTIONS.map((opt) => {
           const active = isActive(opt.blockType)
+          const disclosure = disclosureFor(opt.blockType)
+
+          if (disclosure) {
+            const isOpen = expanded === disclosure
+            const panelId = `turn-into-subpicker-${disclosure}`
+            return (
+              <Button
+                key={opt.id}
+                role="menuitem"
+                aria-haspopup="menu"
+                aria-expanded={isOpen}
+                aria-controls={isOpen ? panelId : undefined}
+                variant="ghost"
+                size="sm"
+                className={cn(rowClass, active && toolbarActiveClass)}
+                {...toolbarPressHandlers(() =>
+                  setExpanded((cur) => (cur === disclosure ? null : disclosure)),
+                )}
+              >
+                <opt.icon className="h-3.5 w-3.5 mr-2" />
+                <span>{t(turnIntoTypeKey(opt.blockType))}</span>
+                <ChevronRight
+                  className={cn(
+                    'ml-auto h-3.5 w-3.5 shrink-0 transition-transform',
+                    isOpen && 'rotate-90',
+                  )}
+                />
+              </Button>
+            )
+          }
+
           return (
             <Button
               key={opt.id}
@@ -135,25 +188,25 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
         </Button>
       </div>
 
-      {/* Contextual sub-picker — language for code blocks, type for callouts.
-          Rendered OUTSIDE the `role="menu"` above: its input/buttons are not
-          valid menu children (aria-required-children). */}
-      {state.codeBlock && (
-        <>
+      {/* Inline variant pickers — expanded in place for a single-interaction pick
+          (#3001). Rendered OUTSIDE the `role="menu"` above: their input/buttons are
+          not valid menu children (aria-required-children). */}
+      {expanded === 'code' && (
+        <div id="turn-into-subpicker-code">
           <Separator className="my-1" />
           <CodeLanguageSelector
             editor={editor}
-            isCodeBlock
+            isCodeBlock={state.codeBlock}
             currentLanguage={state.codeLanguage}
             onClose={onClose}
           />
-        </>
+        </div>
       )}
-      {state.blockquote && state.calloutType !== null && (
-        <>
+      {expanded === 'callout' && (
+        <div id="turn-into-subpicker-callout">
           <Separator className="my-1" />
           <CalloutTypeSelector onClose={onClose} />
-        </>
+        </div>
       )}
     </div>
   )

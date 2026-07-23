@@ -1,16 +1,20 @@
 /**
- * CodeLanguageSelector — popover content for selecting code block languages.
+ * CodeLanguageSelector — inline, searchable picker for a code block's language.
  *
- * Extracted from FormattingToolbar to keep the main component focused.
- *
- * A filter input is rendered at the top of the popover and
- * narrows the language list via `match-sorter` (same pattern as the
- * page/tag pickers in `useBlockResolve.ts`). The input is auto-focused
- * on open; ArrowUp / ArrowDown move a visual highlight across the
- * filtered subset; Enter selects the highlighted language. Space is
- * deliberately excluded from the keyboard handler so it remains a
- * regular filter character — none of the languages contain spaces
+ * Extracted from FormattingToolbar to keep the main component focused, and reworked
+ * for #3001 onto the shared inline-picker primitives (`InlinePicker.tsx`) so it and
+ * the callout picker read the same. A filter input at the top narrows the language
+ * list via `match-sorter` (same pattern as the page/tag pickers in
+ * `useBlockResolve.ts`). The input auto-focuses on open; ArrowUp / ArrowDown move a
+ * visual highlight across the filtered subset; Enter selects the highlighted
+ * language; Escape closes. Space is deliberately excluded from the keyboard handler
+ * so it stays a regular filter character — none of the languages contain spaces
  * today, but treating Space as "select" would surprise the user.
+ *
+ * Apply semantics are unchanged: outside a code block, selecting a language runs
+ * `toggleCodeBlockSafely(editor, { language })` (single toggle chain that both
+ * converts the block AND sets the language); inside one, it updates the
+ * `codeBlock` node's `language` attribute directly.
  */
 
 import type { Editor } from '@tiptap/react'
@@ -19,12 +23,13 @@ import type React from 'react'
 import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import {
+  PickerFilterInput,
+  PickerRow,
+  useInlinePickerKeyboard,
+} from '@/components/editor-toolbar/InlinePicker'
 import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
-import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
 import { CODE_LANGUAGES } from '@/lib/toolbar-config'
-import { cn } from '@/lib/utils'
 
 export interface CodeLanguageSelectorProps {
   editor: Editor
@@ -69,7 +74,7 @@ export function CodeLanguageSelector({
     onClose()
   }
 
-  const { focusedIndex, handleKeyDown } = useListKeyboardNavigation({
+  const { focusedIndex, handleFilterKeyDown } = useInlinePickerKeyboard({
     // When no built-in language matches, the single "Use «typed»" row is the
     // only selectable item, so Enter applies the custom language.
     itemCount: showCustom ? 1 : filteredLanguages.length,
@@ -81,41 +86,25 @@ export function CodeLanguageSelector({
       const lang = filteredLanguages[idx]
       if (lang) applyLanguage(lang)
     },
+    onClose,
   })
 
   return (
     <div className="flex flex-col gap-0.5">
-      <Input
-        // oxlint-disable-next-line jsx-a11y/no-autofocus -- intentional focus-on-open: language filter input is rendered inside a popover that opens on user action, so typing filters immediately
-        autoFocus
+      <PickerFilterInput
         value={filter}
-        onChange={(e) => setFilter(e.target.value)}
-        aria-label={t('toolbar.codeBlockLanguage')}
-        className="mb-1"
-        onKeyDown={(e) => {
-          // Space is a legitimate filter character — short-circuit before the
-          // shared hook would otherwise treat it as "select".
-          if (e.key === ' ') return
-          if (handleKeyDown(e)) e.preventDefault()
-        }}
+        onChange={setFilter}
+        ariaLabel={t('toolbar.codeBlockLanguage')}
+        onKeyDown={handleFilterKeyDown}
       />
       {filteredLanguages.map((lang, idx) => (
-        <Button
+        <PickerRow
           key={lang}
-          variant="ghost"
-          size="sm"
-          className={cn(
-            'justify-start text-sm',
-            currentLanguage === lang && 'bg-accent',
-            idx === focusedIndex && 'bg-accent text-accent-foreground',
-          )}
-          onPointerDown={(e) => {
-            e.preventDefault()
-            applyLanguage(lang)
-          }}
-        >
-          {lang}
-        </Button>
+          label={lang}
+          active={currentLanguage === lang}
+          focused={idx === focusedIndex}
+          onSelect={() => applyLanguage(lang)}
+        />
       ))}
       {showCustom && (
         // #215 P2-10 — no built-in match: apply the raw typed language.
@@ -123,29 +112,18 @@ export function CodeLanguageSelector({
           <span className="px-2 py-1 text-xs text-muted-foreground" data-testid="no-language-match">
             {t('toolbar.noLanguageMatch')}
           </span>
-          <Button
-            variant="ghost"
-            size="sm"
-            className={cn(
-              'justify-start text-sm',
-              focusedIndex === 0 && 'bg-accent text-accent-foreground',
-            )}
-            data-testid="use-custom-language"
-            onPointerDown={(e) => {
-              e.preventDefault()
-              applyLanguage(customLang)
-            }}
-          >
-            {t('toolbar.useCustomLanguage', { language: customLang })}
-          </Button>
+          <PickerRow
+            label={t('toolbar.useCustomLanguage', { language: customLang })}
+            focused={focusedIndex === 0}
+            testId="use-custom-language"
+            onSelect={() => applyLanguage(customLang)}
+          />
         </>
       )}
-      <Button
-        variant="ghost"
-        size="sm"
-        className={cn('justify-start text-sm', isCodeBlock && !currentLanguage && 'bg-accent')}
-        onPointerDown={(e) => {
-          e.preventDefault()
+      <PickerRow
+        label={t('toolbar.plainText')}
+        active={isCodeBlock && !currentLanguage}
+        onSelect={() => {
           if (isCodeBlock) {
             editor.chain().focus().updateAttributes('codeBlock', { language: '' }).run()
           } else {
@@ -153,9 +131,7 @@ export function CodeLanguageSelector({
           }
           onClose()
         }}
-      >
-        {t('toolbar.plainText')}
-      </Button>
+      />
     </div>
   )
 }
