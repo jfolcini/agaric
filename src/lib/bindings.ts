@@ -969,6 +969,26 @@ export const commands = {
 	 *  dimensions and return a cursor-paginated page of blocks.
 	 */
 	runAdvancedQuery: (request: AdvancedQueryRequest) => typedError<AdvancedQueryResponse, AppError>(__TAURI_INVOKE("run_advanced_query", { request })),
+	/**
+	 *  Tauri command: report whether this process is running inside a
+	 *  Flatpak sandbox.
+	 * 
+	 *  Flathub requires apps NOT to self-update (updates must flow through
+	 *  Flathub's own repo/CI, not a bundled updater reaching out to GitHub
+	 *  Releases). The frontend boot-time update check
+	 *  (`src/hooks/useUpdateCheck.ts`) calls this once on mount and skips
+	 *  firing when it returns `true` — mirroring the Rust-side guard in
+	 *  [`crate::run`] that already skips *registering*
+	 *  `tauri_plugin_updater` under Flatpak in the first place, so this is
+	 *  belt-and-suspenders for the (mobile-excluded) desktop boot path.
+	 * 
+	 *  Delegates to [`crate::running_under_flatpak`], the same
+	 *  `/.flatpak-info`-existence check the plugin-registration guard
+	 *  uses, so the two can't drift. Infallible in practice (a filesystem
+	 *  `exists()` check), but returns `Result<bool, AppError>` to match
+	 *  this module's command convention (see module doc comment).
+	 */
+	isFlatpak: () => typedError<boolean, AppError>(__TAURI_INVOKE("is_flatpak")),
 };
 
 /* Types */

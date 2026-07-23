@@ -40,6 +40,11 @@ export const systemHandlers = {
     bg_panics: 0,
   }),
 
+  // #2974 — Flathub no-self-update guard. The mock represents a plain
+  // desktop dev boot (AppImage/.deb-equivalent), never a Flatpak
+  // sandbox, so the boot-time update check should proceed unimpeded.
+  is_flatpak: () => false,
+
   // ---------------------------------------------------------------------------
   // Properties & tags queries
   // ---------------------------------------------------------------------------
@@ -88,6 +93,7 @@ export const systemHandlers = {
   | 'ingest_otel_spans'
   | 'set_trace_sampling'
   | 'get_status'
+  | 'is_flatpak'
   | 'get_recovery_status'
   | 'log_frontend'
   | 'get_log_dir'

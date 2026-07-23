@@ -65,6 +65,12 @@ const TAURI_DOMAIN_DIR = path.join(ROOT, 'src/lib/tauri')
 // `commands.*` and unwrap by hand — fine for narrow status calls,
 // not fine for the general case.
 const KNOWN_UNWRAPPED = new Set([
+  // (a) #2974 — Flatpak self-update guard. Consumed only by
+  // `useUpdateCheck`'s own `isRunningUnderFlatpak` helper, which
+  // deliberately swallows any IPC error to `false` (a throwing wrapper
+  // would be counterproductive — a transient failure must NOT disable
+  // auto-update for AppImage/.deb users). No ergonomics layer needed.
+  'isFlatpak',
   // (a) MCP read-only status + control — no ergonomics layer needed.
   'getMcpStatus',
   'getMcpSocketPath',

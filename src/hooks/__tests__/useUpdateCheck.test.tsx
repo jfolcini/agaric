@@ -15,6 +15,11 @@
  *  - Periodic re-check: visibilitychange to visible fires another check
  *  - Periodic re-check: unmount clears the interval + removes listeners
  *  - Periodic re-check: mobile still performs zero checks
+ *  - Flatpak gate: registers nothing (no check, no interval, no listeners)
+ *    when `commands.isFlatpak()` resolves `{ data: true }`
+ *  - Flatpak gate: an `isFlatpak()` rejection is swallowed and treated as
+ *    non-Flatpak — the effect proceeds normally
+ *  - Mobile bails out before the Flatpak IPC gate is ever reached
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
@@ -39,6 +44,16 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
 
 vi.mock('@tauri-apps/plugin-process', () => ({
   relaunch: (...args: unknown[]) => mockRelaunch(...args),
+}))
+
+const { mockIsFlatpak } = vi.hoisted(() => ({
+  mockIsFlatpak: vi.fn(),
+}))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    isFlatpak: (...args: unknown[]) => mockIsFlatpak(...args),
+  },
 }))
 
 vi.mock('@/lib/tauri', () => ({
@@ -102,6 +117,19 @@ function setUserAgent(ua: string) {
   })
 }
 
+/**
+ * Flush the two chained `await`s inside the `isRunningUnderFlatpak()` gate
+ * (an IPC round-trip: `commands.isFlatpak()` then the `cancelled` check) via
+ * a real macrotask boundary. More reliable than counting `await
+ * Promise.resolve()` calls by hand, since the microtask queue is always
+ * fully drained before a `setTimeout` callback runs. Only usable with real
+ * timers — the fake-timer tests use `vi.waitFor`/`vi.advanceTimersByTimeAsync`
+ * instead.
+ */
+async function flushFlatpakGate(): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
 beforeEach(() => {
   originalUA = navigator.userAgent
   setUserAgent(DESKTOP_UA)
@@ -110,6 +138,8 @@ beforeEach(() => {
   vi.mocked(flushAllDrafts).mockResolvedValue({ flushed: 0 })
   mockCheck.mockReset()
   mockRelaunch.mockReset()
+  mockIsFlatpak.mockReset()
+  mockIsFlatpak.mockResolvedValue({ status: 'ok', data: false })
   vi.mocked(notify.message).mockReset()
   vi.mocked(notify.error).mockReset()
   vi.mocked(notify.success).mockReset()
@@ -127,14 +157,16 @@ describe('useUpdateCheck — boot effect', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(mockCheck).not.toHaveBeenCalled()
+    // The mobile early-return happens before the Flatpak IPC gate, so the
+    // backend should never even be asked.
+    expect(mockIsFlatpak).not.toHaveBeenCalled()
   })
 
   it('honours the 24-h debounce when LS has a recent timestamp', async () => {
     const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString() // 1 h ago
     localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, recent)
     renderHook(() => useUpdateCheck())
-    await Promise.resolve()
-    await Promise.resolve()
+    await flushFlatpakGate()
     expect(mockCheck).not.toHaveBeenCalled()
   })
 
@@ -306,10 +338,12 @@ describe('useUpdateCheck — periodic re-check', () => {
 
     renderHook(() => useUpdateCheck())
 
+    // The initial check only fires once the Flatpak IPC gate resolves;
+    // `vi.waitFor` polls the assertion while also advancing the fake
+    // clock, so it settles regardless of the exact microtask depth.
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
     })
-    expect(mockCheck).toHaveBeenCalledTimes(1)
 
     await act(async () => {
       await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
@@ -323,9 +357,8 @@ describe('useUpdateCheck — periodic re-check', () => {
     renderHook(() => useUpdateCheck())
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
     })
-    expect(mockCheck).toHaveBeenCalledTimes(1)
 
     // Simulate the 24-h debounce window having elapsed since the boot
     // check (e.g. the tab sat hidden for a day) so the visibilitychange
@@ -349,9 +382,8 @@ describe('useUpdateCheck — periodic re-check', () => {
     renderHook(() => useUpdateCheck())
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
     })
-    expect(mockCheck).toHaveBeenCalledTimes(1)
 
     const old = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
     localStorage.setItem(LAST_UPDATE_CHECK_STORAGE_KEY, old)
@@ -373,9 +405,8 @@ describe('useUpdateCheck — periodic re-check', () => {
     const { unmount } = renderHook(() => useUpdateCheck())
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(0)
+      await vi.waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
     })
-    expect(mockCheck).toHaveBeenCalledTimes(1)
 
     unmount()
 
@@ -418,5 +449,67 @@ describe('useUpdateCheck — periodic re-check', () => {
     })
 
     expect(mockCheck).not.toHaveBeenCalled()
+    // Mobile bails out before the Flatpak IPC gate is ever reached.
+    expect(mockIsFlatpak).not.toHaveBeenCalled()
+  })
+
+  it('registers nothing when the Flatpak IPC gate reports true', async () => {
+    mockIsFlatpak.mockResolvedValueOnce({ status: 'ok', data: true })
+    mockCheck.mockResolvedValue(null)
+    const addDocumentListenerSpy = vi.spyOn(document, 'addEventListener')
+    const addWindowListenerSpy = vi.spyOn(window, 'addEventListener')
+
+    renderHook(() => useUpdateCheck())
+
+    // Let the gate resolve; since it reports Flatpak, the effect bails
+    // out before firing the initial check or registering anything.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).not.toHaveBeenCalled()
+
+    // Advancing a full day fires nothing — no interval was registered.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
+    })
+    expect(mockCheck).not.toHaveBeenCalled()
+
+    // Dispatching the events fires nothing — no listeners were registered.
+    setVisibility('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    window.dispatchEvent(new Event('online'))
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(mockCheck).not.toHaveBeenCalled()
+
+    expect(addDocumentListenerSpy).not.toHaveBeenCalledWith(
+      'visibilitychange',
+      expect.any(Function),
+    )
+    expect(addWindowListenerSpy).not.toHaveBeenCalledWith('online', expect.any(Function))
+
+    addDocumentListenerSpy.mockRestore()
+    addWindowListenerSpy.mockRestore()
+  })
+
+  it('proceeds normally (initial check + interval registered) when the Flatpak IPC gate rejects', async () => {
+    // Belt-and-suspenders default: an IPC failure must NOT silently
+    // disable auto-update for the overwhelming majority of (non-Flatpak)
+    // desktop users — `isRunningUnderFlatpak` swallows the error and
+    // treats it as "not Flatpak".
+    mockIsFlatpak.mockRejectedValueOnce(new Error('IPC unavailable'))
+    mockCheck.mockResolvedValue(null)
+
+    renderHook(() => useUpdateCheck())
+
+    await act(async () => {
+      await vi.waitFor(() => expect(mockCheck).toHaveBeenCalledTimes(1))
+    })
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(ONE_DAY_MS)
+    })
+    expect(mockCheck).toHaveBeenCalledTimes(2)
   })
 })
