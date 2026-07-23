@@ -919,6 +919,24 @@ pub async fn apply_purge_block_via_loro(
     device_id: &str,
     p: &PurgeBlockPayload,
 ) -> Result<(), AppError> {
+    // #2910: is the block being purged ITSELF a registered space? Capture this
+    // BEFORE the cascade's final `DELETE FROM blocks` fires migration 0089's
+    // `spaces.id -> blocks(id) ON DELETE CASCADE`, which removes the registry
+    // row. A registered space owns a per-space `loro_doc_state` snapshot row
+    // (keyed by `space_id` == the space block's own id, deleted by the cascade
+    // below) AND a live in-memory per-space engine; both must be torn down with
+    // the purge, or the dead space's LoroDoc is rehydrated at every boot and
+    // re-persisted indefinitely. Runtime `sqlx::query_scalar` (not the macro):
+    // no `.sqlx` regen, matching this module's SQL-cascade helpers.
+    // dynamic-sql: registered-space existence probe; runtime form keeps this
+    // change out of the compile-checked `.sqlx` cache like its cascade siblings.
+    let purged_block_is_space =
+        sqlx::query_scalar::<_, i64>("SELECT EXISTS(SELECT 1 FROM spaces WHERE id = ?)")
+            .bind(p.block_id.as_str())
+            .fetch_one(&mut *conn)
+            .await?
+            != 0;
+
     // #2868: a purge targets an already SOFT-DELETED block, so the
     // canonical `resolve_block_space` (which filters `deleted_at IS NULL`)
     // returns `None` here — dropping the engine fan-out and clearing only
@@ -932,26 +950,51 @@ pub async fn apply_purge_block_via_loro(
     // the LoroDoc (it collects seed + descendants internally), so a single
     // seed call clears the engine tombstone. A genuinely unresolvable space
     // (NULL `space_id`, pre-spaces data) still falls back to SQL-only.
-    let Some(space_id) =
-        agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await?
-    else {
-        super::sql_only_fallback::record(
-            "purge_block",
-            super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
-        );
-        return purge_block_sql_cascade(conn, p).await;
-    };
-
-    {
-        let mut guard = state
-            .registry
-            .for_space_recording(&space_id, device_id, &state.revert)?;
-        let engine = guard.engine_mut();
-        engine.apply_purge_block(p.block_id.as_str())?;
-        drop(guard);
+    //
+    // Note a purged SPACE block always takes the fallback arm: a space block
+    // carries `is_space = "true"`, never `space = <self>`, so its own
+    // `blocks.space_id` is NULL and this resolve yields `None`. The engine
+    // guard below is therefore only ever taken for a NON-space purge, on the
+    // block's OWNING space (a DIFFERENT id than `p.block_id`) — so the eviction
+    // at the end never targets an engine we are mid-applying through.
+    match agaric_store::space::resolve_soft_deleted_block_space(&mut *conn, &p.block_id).await? {
+        None => {
+            super::sql_only_fallback::record(
+                "purge_block",
+                super::sql_only_fallback::SqlOnlyFallbackReason::SpaceUnresolved,
+            );
+            purge_block_sql_cascade(conn, p).await?;
+        }
+        Some(space_id) => {
+            {
+                let mut guard =
+                    state
+                        .registry
+                        .for_space_recording(&space_id, device_id, &state.revert)?;
+                let engine = guard.engine_mut();
+                engine.apply_purge_block(p.block_id.as_str())?;
+                drop(guard);
+            }
+            purge_block_sql_cascade(conn, p).await?;
+        }
     }
 
-    purge_block_sql_cascade(conn, p).await?;
+    // #2910: the cascade above deleted this space's `loro_doc_state` row (see
+    // `purge_block_sql_cascade`) in the SAME purge transaction. Now evict the
+    // live per-space engine so neither the periodic `save_all_engines` tick nor
+    // the exit-time save can re-persist the dead space's CRDT state back into
+    // the just-deleted row, and boot rehydration never sees it again. Eviction
+    // runs AFTER the cascade and after any per-space engine guard above was
+    // dropped, and takes only the registry MAP lock (never nested with an
+    // engine lock), so it cannot deadlock (mirrors the registry's `clear`
+    // detached-engine contract). Skipped for a non-space purge.
+    if purged_block_is_space {
+        state
+            .registry
+            .evict_space(&agaric_store::space::SpaceId::from_trusted(
+                p.block_id.as_str(),
+            ));
+    }
     Ok(())
 }
 
@@ -1147,6 +1190,27 @@ pub async fn purge_block_sql_cascade(
         "DELETE FROM page_link_cache \
          WHERE source_page_id IN (SELECT id FROM _purge_descendants) \
             OR target_page_id IN (SELECT id FROM _purge_descendants)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    // #2910: a purged block that is itself a registered space owns a per-space
+    // `loro_doc_state` snapshot row keyed by `space_id` (== the space block's
+    // own id). Migration 0089 CASCADE-deletes the `spaces` REGISTRY row when the
+    // block row goes (below), but `loro_doc_state` has NO FK into blocks/spaces,
+    // so nothing else removes it — the dead space's full CRDT snapshot would be
+    // rehydrated at every boot (`rehydrate_registry`) and re-persisted by the
+    // periodic saver forever (#2910 leak). Delete it here, in the SAME purge
+    // transaction as the other cascade rows so the teardown is atomic with the
+    // purge. Keyed on the whole purged subtree for consistency with the sibling
+    // cascade deletes above; in practice only the seed can be a registered
+    // space (spaces are top-level pages, never a descendant of another block),
+    // so this matches at most one row. Runtime `sqlx::query` (not the `query!`
+    // macro): no `.sqlx` regen, matching every sibling cascade delete.
+    // dynamic-sql: subtree-scoped cascade delete driven by the `_purge_descendants`
+    // temp table; not expressible as a compile-checked `query!` macro.
+    sqlx::query(
+        "DELETE FROM loro_doc_state \
+         WHERE space_id IN (SELECT id FROM _purge_descendants)",
     )
     .execute(&mut *conn)
     .await?;

@@ -1044,4 +1044,191 @@ mod tests {
              for the space within ~5s"
         );
     }
+
+    // -----------------------------------------------------------------
+    // #2910 — purging a registered space tears down its `loro_doc_state`
+    // snapshot row AND evicts its in-memory per-space engine, so the dead
+    // space's LoroDoc is never rehydrated at boot nor re-persisted.
+    // -----------------------------------------------------------------
+
+    /// A soft-deleted space to purge, and a live space that must survive
+    /// unscathed. Local `LoroState` per test (no global-registry sharing),
+    /// but keep them distinct for readable failures. Valid Crockford base32.
+    const SPACE_PURGE_2910: &str = "01J0DEADSPACE0000000000001";
+    const SPACE_KEEP_2910: &str = "01J0KEEPSPACE0000000000002";
+    const CHILD_PURGE_2910: &str = "01J0DEADSPACEXYZ0000000001";
+
+    /// Seed a REGISTERED space: its own soft-deleted page block (own
+    /// `space_id` NULL, exactly as production — a space carries
+    /// `is_space="true"`, never `space=<self>`), a `spaces` registry row
+    /// (production writes this via the `is_space` -> 0089 trigger), and one
+    /// live content child that belongs to it.
+    async fn seed_registered_space(pool: &SqlitePool, space: &str, child: &str) {
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, page_id, deleted_at, space_id) \
+             VALUES (?, 'page', 'Dead Space', NULL, 1, ?, ?, NULL)",
+        )
+        .bind(space)
+        .bind(space)
+        .bind(now_ms())
+        .execute(pool)
+        .await
+        .expect("seed space block");
+        sqlx::query("INSERT INTO spaces (id) VALUES (?)")
+            .bind(space)
+            .execute(pool)
+            .await
+            .expect("register space");
+        sqlx::query(
+            "INSERT INTO blocks \
+                 (id, block_type, content, parent_id, position, page_id, space_id) \
+             VALUES (?, 'content', 'child of dead space', ?, 1, ?, ?)",
+        )
+        .bind(child)
+        .bind(space)
+        .bind(space)
+        .bind(space)
+        .execute(pool)
+        .await
+        .expect("seed child block");
+    }
+
+    /// Register a live engine for `space` (marks it dirty) and persist a
+    /// `loro_doc_state` snapshot row for it. The registry engine and the
+    /// persisted row are the two things #2910 must tear down.
+    async fn register_engine_and_snapshot(
+        pool: &SqlitePool,
+        state: &crate::loro::shared::LoroState,
+        space: &SpaceId,
+        block: &str,
+    ) {
+        // `for_space` marks the space dirty; scope the (non-Send parking_lot)
+        // guard so it never crosses an `.await`.
+        {
+            let mut g = state
+                .registry
+                .for_space(space, "device-1")
+                .expect("for_space");
+            g.engine_mut()
+                .apply_create_block(block, "content", "content", None, 0)
+                .expect("create block in engine");
+        }
+        let mut e = LoroEngine::with_peer_id("device-1").expect("engine");
+        e.apply_create_block(block, "content", "content", None, 0)
+            .expect("create block for snapshot");
+        save_snapshot(pool, space, &e).await.expect("save snapshot");
+    }
+
+    /// Row-gone + engine-evicted. Reverting the cascade's
+    /// `DELETE FROM loro_doc_state` resurrects the row (first assert fails);
+    /// reverting the `registry.evict_space` call keeps the engine (second
+    /// assert fails). The KEEP space proves the teardown is scoped to the
+    /// purged space, not a blanket wipe.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purge_registered_space_deletes_snapshot_and_evicts_engine_2910() {
+        use crate::apply::loro_apply::apply_purge_block_via_loro;
+        use agaric_core::ulid::BlockId;
+        use agaric_store::op::PurgeBlockPayload;
+
+        let (pool, _dir) = fresh_pool().await;
+        let state = crate::loro::shared::LoroState::new();
+        let purge = SpaceId::from_trusted(SPACE_PURGE_2910);
+        let keep = SpaceId::from_trusted(SPACE_KEEP_2910);
+
+        seed_registered_space(&pool, SPACE_PURGE_2910, CHILD_PURGE_2910).await;
+        register_engine_and_snapshot(&pool, &state, &purge, "BLK_DOOMED").await;
+        register_engine_and_snapshot(&pool, &state, &keep, "BLK_ALIVE").await;
+
+        // Pre-conditions: both spaces have a persisted row and a live engine.
+        assert!(
+            load_snapshot(&pool, &purge).await.unwrap().is_some(),
+            "seed: purged space must have a loro_doc_state row"
+        );
+        assert!(
+            state.registry.space_ids().contains(&purge),
+            "seed: purged space must have a registered engine"
+        );
+
+        // Purge the space's page block through the materialization chokepoint,
+        // inside a tx so the cascade's deferred-FK behaviour matches production.
+        let payload = PurgeBlockPayload {
+            block_id: BlockId::from_trusted(SPACE_PURGE_2910),
+        };
+        let mut tx = pool.begin().await.expect("begin");
+        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload)
+            .await
+            .expect("apply_purge_block_via_loro");
+        tx.commit().await.expect("commit");
+
+        // The purged space's snapshot row is GONE (only my explicit
+        // `DELETE FROM loro_doc_state` can remove it — the table has no FK).
+        assert!(
+            load_snapshot(&pool, &purge).await.unwrap().is_none(),
+            "#2910: the purged space's loro_doc_state row must be deleted by the cascade"
+        );
+        // The purged space's in-memory engine is EVICTED.
+        assert!(
+            !state.registry.space_ids().contains(&purge),
+            "#2910: the purged space's engine must be evicted from the registry"
+        );
+        // The unrelated live space is untouched — row and engine both survive.
+        assert!(
+            load_snapshot(&pool, &keep).await.unwrap().is_some(),
+            "#2910: an unrelated space's snapshot row must survive the purge"
+        );
+        assert!(
+            state.registry.space_ids().contains(&keep),
+            "#2910: an unrelated space's engine must survive the purge"
+        );
+    }
+
+    /// Boot-residue regression guard: after purging the space, a fresh boot
+    /// rehydration (`rehydrate_registry`, which reinstalls an engine for
+    /// EVERY persisted `loro_doc_state` row) must NOT resurrect the dead
+    /// space. If the cascade `DELETE FROM loro_doc_state` were reverted, the
+    /// stale row would survive the purge and rehydrate here — this test fails.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn purged_space_is_not_rehydrated_at_next_boot_2910() {
+        use crate::apply::loro_apply::apply_purge_block_via_loro;
+        use agaric_core::ulid::BlockId;
+        use agaric_store::op::PurgeBlockPayload;
+
+        let (pool, _dir) = fresh_pool().await;
+        let state = crate::loro::shared::LoroState::new();
+        let purge = SpaceId::from_trusted(SPACE_PURGE_2910);
+        let keep = SpaceId::from_trusted(SPACE_KEEP_2910);
+
+        seed_registered_space(&pool, SPACE_PURGE_2910, CHILD_PURGE_2910).await;
+        register_engine_and_snapshot(&pool, &state, &purge, "BLK_DOOMED").await;
+        register_engine_and_snapshot(&pool, &state, &keep, "BLK_ALIVE").await;
+
+        let payload = PurgeBlockPayload {
+            block_id: BlockId::from_trusted(SPACE_PURGE_2910),
+        };
+        let mut tx = pool.begin().await.expect("begin");
+        apply_purge_block_via_loro(&mut tx, &state, "device-1", &payload)
+            .await
+            .expect("apply_purge_block_via_loro");
+        tx.commit().await.expect("commit");
+
+        // Simulate a fresh process boot: rehydrate a brand-new registry
+        // strictly from whatever `loro_doc_state` now holds.
+        let booted = LoroEngineRegistry::new();
+        let n = rehydrate_registry(&pool, &booted, "device-1").await;
+
+        assert_eq!(
+            n, 1,
+            "#2910: only the surviving space must rehydrate at boot (the purged \
+             space's row is gone)"
+        );
+        assert!(
+            !booted.space_ids().contains(&purge),
+            "#2910: the purged (dead) space must NOT be reinstalled at boot"
+        );
+        assert!(
+            booted.space_ids().contains(&keep),
+            "the surviving space must still rehydrate at boot"
+        );
+    }
 }
