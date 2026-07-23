@@ -46,6 +46,21 @@ name: Scheduled deep checks
 #                    Markdown/Obsidian import parse). Smoke-length here (the
 #                    per-target time budget is small); a real fuzzing campaign
 #                    runs longer out-of-band.
+#   prek-all-files — #3058: `prek run --all-files` (pre-commit stage, whole
+#                    tree), HARD-FAILING — unlike every other lane above,
+#                    this one gates. No cargo build/clippy/test (the
+#                    pre-commit stage doesn't need them) so hook drift gets a
+#                    clean, undiluted signal instead of being buried inside
+#                    `full-suite`'s much slower everything-job — it still
+#                    needs the Tauri system deps + toolchain to back its 4
+#                    `cargo sqlx prepare --check` compile passes (see below).
+#                    `full-suite` below separately covers the pre-push-staged
+#                    hooks (fmt-check/clippy/knip/npm-audit/lychee) as part
+#                    of its own broader backstop; this lane's `sqlx offline
+#                    cache check` steps are the pre-push `verify-ci-equivalent`
+#                    hook's Phase E equivalent, run directly (not via that
+#                    hook) to avoid the recursion `full-suite` documents
+#                    avoiding for the same reason.
 on:
   schedule:
     # Mondays 04:17 UTC — off-peak, odd minute to avoid the top-of-hour
@@ -54,9 +69,15 @@ on:
   workflow_dispatch:
     inputs:
       mutants_timeout:
-        description: 'Per-mutant timeout (seconds) for the mutants lane'
+        description: >-
+          Test-phase timeout (seconds) for the mutants lane — applies to
+          BOTH the unmutated baseline and every individual mutant (#3057:
+          `--in-place` disables cargo-mutants' automatic 5x-baseline
+          multiplier, so this fixed value is the only timeout in effect).
+          Default carries headroom over the observed ~300s baseline
+          test-phase need.
         required: false
-        default: '300'
+        default: '900'
       fuzz_seconds:
         description: 'Per-target fuzz time budget (seconds)'
         required: false
@@ -595,14 +616,97 @@ jobs:
         working-directory: src-tauri
         # Scope, test-tool (nextest), and timeouts come from mutants.toml.
         # `--in-place` avoids the default copy-to-tmp (faster; the runner is
-        # ephemeral). Never gate: surviving mutants are triage signal.
+        # ephemeral). Never gate here: surviving mutants are triage signal
+        # (the *zero-coverage guard* step below — deliberately OUTSIDE this
+        # `|| true` — is what catches a false-green baseline timeout; see
+        # its comment for the #3057 story).
+        #
+        # #3057: cargo-mutants docs (mutants.rs/timeouts.html) — the
+        # automatic "5x baseline test time" timeout multiplier is DISABLED
+        # whenever `--baseline=skip` OR `--in-place` is set; since this lane
+        # already passes `--in-place`, `--timeout` is the ONLY timeout in
+        # effect and applies to BOTH the baseline's test phase and every
+        # mutant's. The observed failure was a ~322s baseline BUILD (no cap
+        # — `--build-timeout` is off by default, so that phase always ran to
+        # completion) followed by a baseline TEST phase that blew the old
+        # 300s `--timeout`, aborting the whole run with `total_mutants: 0`
+        # while `cargo mutants ... || true` still exited 0 (false-green).
+        # Fix, in order of what we changed:
+        #   1. `--timeout` (MUTANTS_TIMEOUT) 300 → 900: ~3x headroom over
+        #      the observed baseline test-phase failure point. We did NOT
+        #      also narrow mutants.toml's test scope — nextest is already
+        #      the full, real test arbiter for the invariant core, and
+        #      trimming it to "make the baseline faster" would weaken the
+        #      very coverage signal mutation testing exists to measure.
+        #      Raising the timeout is the honest fix; narrowing scope is not.
+        #   2. New `--build-timeout` (MUTANTS_BUILD_TIMEOUT, 600s): the build
+        #      itself was never the observed failure (it has no default cap
+        #      at all), but a bad mutant CAN make rustc const-eval loop
+        #      indefinitely with no cap to stop it — 600s gives ~1.9x
+        #      headroom over the observed ~322s baseline build without
+        #      letting one hung mutant silently eat the job's 120-minute
+        #      budget.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection).
         env:
-          MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '300' }}
+          MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
+          MUTANTS_BUILD_TIMEOUT: '600'
         run: |
-          cargo mutants --in-place --timeout "$MUTANTS_TIMEOUT" \
+          cargo mutants --in-place \
+            --timeout "$MUTANTS_TIMEOUT" \
+            --build-timeout "$MUTANTS_BUILD_TIMEOUT" \
             --output mutants-out || true
+
+      - name: Zero-coverage guard (#3057) — the load-bearing acceptance item
+        # Deliberately OUTSIDE the `|| true` above: a baseline that times out
+        # or fails aborts the run with `total_mutants: 0`, and the previous
+        # step's `|| true` would otherwise let that read as a green job (the
+        # exact false-green this issue is about). This step is the ONLY
+        # place that fails the job — and it fails ONLY on zero coverage /
+        # a non-Success baseline, never on surviving (missed) mutants, which
+        # stay pure triage signal per the `mutants` lane's whole design.
+        #
+        # Schema (sourcefrog/cargo-mutants `src/outcome.rs` `LabOutcome` /
+        # `ScenarioOutcome`): the top-level object carries an aggregate
+        # `total_mutants` counter plus an `outcomes[]` array of per-scenario
+        # entries; the baseline's entry has `scenario == "Baseline"` and a
+        # `summary` that is one of `Success` / `Failure` / `Timeout` (the
+        # baseline never produces `Unviable`/`CaughtMutant`/`MissedMutant` —
+        # those are mutant-only outcomes). We gate on:
+        #   (a) outcomes.json missing entirely (crashed before writing any
+        #       output — strictly worse than zero coverage, same verdict),
+        #   (b) total_mutants == 0 (the literal #3057 symptom), or
+        #   (c) the Baseline scenario's own summary != Success (covers
+        #       Timeout/Failure even in the — currently unreachable per the
+        #       source — case where total_mutants ended up nonzero anyway).
+        if: always()
+        working-directory: src-tauri
+        run: |
+          set -uo pipefail
+          outcomes=mutants-out/outcomes.json
+          if [ ! -f "$outcomes" ]; then
+            echo "::error::cargo-mutants wrote no $outcomes — the run crashed or aborted before producing any output; treating as zero mutation coverage (#3057)."
+            exit 1
+          fi
+          if ! jq -e . "$outcomes" >/dev/null 2>&1; then
+            echo "::error::$outcomes is not valid JSON — treating as zero mutation coverage (#3057)."
+            exit 1
+          fi
+          total=$(jq -r '.total_mutants // 0' "$outcomes")
+          baseline_summary=$(jq -r '([.outcomes[]? | select(.scenario == "Baseline") | .summary] | first) // "MISSING"' "$outcomes")
+          fail=0
+          if [ "$baseline_summary" != "Success" ]; then
+            echo "::error::cargo-mutants baseline did not succeed (summary=$baseline_summary) — the unmutated build/test baseline failed or timed out, so any results are unreliable. Consider raising MUTANTS_TIMEOUT / MUTANTS_BUILD_TIMEOUT further, or fix the underlying baseline failure."
+            fail=1
+          fi
+          if ! [ "$total" -gt 0 ] 2>/dev/null; then
+            echo "::error::cargo-mutants tested ZERO mutants (total_mutants=$total) — this is the #3057 false-green: the previous step's \`|| true\` would otherwise let this report as job success with no mutation coverage at all."
+            fail=1
+          fi
+          if [ "$fail" -eq 1 ]; then
+            exit 1
+          fi
+          echo "zero-coverage guard OK: total_mutants=$total baseline=$baseline_summary (surviving/missed mutants, if any, are triage signal — see the summary step below — and never gate this job)"
 
       - name: Mutants summary
         if: always()
@@ -940,6 +1044,182 @@ jobs:
             src-tauri/fuzz/corpus/
           if-no-files-found: ignore
           retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # prek-all-files (#3058) — the whole-tree pre-commit-stage prek backstop.
+  # Unlike every other lane in this workflow, this one GATES: these are the
+  # same hooks that block a local push, so a scheduled whole-tree finding on
+  # `main` is the strongest signal this workflow can produce.
+  #
+  # Scoped to the pre-commit stage (`prek run --all-files`, no
+  # `--hook-stage`): the pre-push-staged hooks (`cargo-fmt-check`,
+  # `cargo-clippy`, `cargo-test`, `knip`, `npm-audit`, `lychee`,
+  # `verify-ci-equivalent`) are already covered, unskipped bar the four
+  # exceptions it documents, by `full-suite` below — duplicating that here
+  # would just re-run the same slow compile+clippy work twice. This lane's
+  # own value-add on top of the literal pre-commit stage is the `sqlx
+  # offline cache check` steps: the pre-push `verify-ci-equivalent` hook's
+  # Phase E (`cargo sqlx prepare --check`, one lane per crate carrying a
+  # committed `.sqlx/` cache) equivalent, invoked directly via the same
+  # composite action `_validate.yml` uses per-PR — NOT via the
+  # `verify-ci-equivalent` hook itself, which `full-suite` documents SKIPping
+  # for the same reason we don't invoke it here either: it recurses into a
+  # nested whole-tree Phase A prek run and fail-exits on the empty push
+  # range a scheduled on-`main` run always has.
+  # ---------------------------------------------------------------------------
+  prek-all-files:
+    runs-on: ubuntu-24.04
+    # No cargo build/clippy/test/vitest/playwright/nextest here (unlike
+    # `full-suite`) — just the pre-commit hook suite + 4
+    # `cargo sqlx prepare --check` compile passes (which is why the Tauri
+    # system deps + Rust toolchain below are still needed).
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # gitleaks (a pre-commit-stage hook) inspects git history.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        uses: ./.github/actions/prepare-apt
+
+      - name: Cache apt archives (Tauri system deps)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-${{ runner.os }}-v1
+
+      - name: Install system dependencies
+        # Needed for the `cargo sqlx prepare --check` compile passes below
+        # (Tauri crates pull in the webkit/gtk stack) — the pre-commit prek
+        # hooks themselves don't compile anything.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libssl-dev \
+            librsvg2-dev \
+            libsoup-3.0-dev \
+            pkg-config \
+            mold
+
+      - name: Enable mold linker (CI-only .cargo/config.toml)
+        run: |
+          mkdir -p .cargo
+          cp .cargo/config.toml.example .cargo/config.toml
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        with:
+          toolchain: 1.95.0
+          # rustfmt backs the `cargo-fmt` hook (pre-commit); clippy isn't
+          # invoked by anything in this job (that hook is pre-push-staged,
+          # see `full-suite`) but matches every other lane's toolchain step.
+          components: clippy,rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src-tauri
+          # Cache ~/.cargo/bin so sqlx-cli (installed below) persists.
+          cache-bin: 'true'
+          # Own per-job-class key (issue #813): this tree (cargo-fmt/
+          # deny/machete + 4 sqlx-prepare compiles, no clippy/test) matches
+          # none of the other lanes' caches.
+          shared-key: rust-prek-all-files
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install npm dependencies
+        # oxlint/oxfmt/tsc and most of the local JS/TS pre-commit hooks need
+        # node_modules present.
+        run: npm ci
+
+      - name: Prepare externalBin placeholder (FEAT-4f)
+        # Tauri's build.rs validates externalBin paths on every cargo
+        # invocation, including the sqlx-prepare compile passes below.
+        run: node scripts/prepare-external-bins.mjs --placeholder-only
+
+      - name: Install prek + non-Rust lint tools via prebuilt binaries
+        # Mirrors the lint job's ungated tool install: prek runs the whole
+        # suite; zizmor/taplo/typos/sqruff are invoked by prek hooks.
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
+          # pins 1.95.0 — bump in lockstep with the lint job / `full-suite`.
+          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+
+      - name: Install cargo plugins via prebuilt binaries
+        # Back the `cargo-deny` / `cargo-machete` pre-commit hooks.
+        # cargo-nextest/cargo-audit are NOT needed: `cargo-test` and
+        # `cargo audit` are pre-push-staged, not run by this job.
+        uses: taiki-e/install-action@a6b2e2dcd845ddd7f509ce4f3ed3d922b80cc5d9 # v2.84.0
+        with:
+          tool: cargo-deny,cargo-machete
+
+      - name: Install sqlx-cli (custom features, cargo fallback)
+        # Same as the lint job: sqlx-cli's feature set isn't in taiki-e's
+        # binary list, so compile from source (cached via rust-cache
+        # cache-bin above). Backs the 4 sqlx offline-cache-check steps below
+        # — none of which is itself a prek hook (see the job header).
+        run: |
+          if ! command -v cargo-sqlx >/dev/null; then cargo install --locked sqlx-cli --no-default-features --features rustls,sqlite; fi
+
+      # sqlx offline cache checks (4 lanes) — mirror `_validate.yml`'s lint
+      # job exactly, one per crate carrying a committed `.sqlx/` cache. This
+      # is the `verify-ci-equivalent` pre-push hook's Phase E, run directly
+      # via the same composite action instead of through that hook (see the
+      # job header comment for why). `sqlite:dev.db` matches the local-dev
+      # convention (`src-tauri/.env`); the other three crates use unique
+      # per-crate throwaway DBs under `runner.temp` so their absolute paths
+      # resolve outside the workspace root (a relative sqlite path resolves
+      # against the workspace root, not the crate dir — see
+      # `_validate.yml`'s agaric-store lane comment for the failure mode
+      # that taught us this). The composite action itself creates + migrates
+      # each DB before `cargo sqlx prepare --check`, so a missing/absent DB
+      # file never false-fails this — it's created fresh every run.
+      - name: sqlx offline cache check (root, dev.db)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri
+          database-url: 'sqlite:dev.db'
+
+      - name: sqlx offline cache check (agaric-store)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-store
+          database-url: 'sqlite:${{ runner.temp }}/agaric-store-sqlx-prepare.db'
+
+      - name: sqlx offline cache check (agaric-engine)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-engine
+          database-url: 'sqlite:${{ runner.temp }}/agaric-engine-sqlx-prepare.db'
+
+      - name: sqlx offline cache check (agaric-sync)
+        uses: ./.github/actions/sqlx-offline-check
+        with:
+          working-directory: src-tauri/agaric-sync
+          database-url: 'sqlite:${{ runner.temp }}/agaric-sync-sqlx-prepare.db'
+
+      - name: Run prek — pre-commit stage, whole tree, HARD-FAIL (#3058)
+        # No `|| true`, no SKIP: unlike every other lane in this workflow,
+        # this one gates. These are the same hooks that block a local push
+        # (`prek run --all-files` with no `--hook-stage` runs the
+        # pre-commit-staged hooks), so a finding here means the whole tree —
+        # not just this week's PR diffs — has drifted.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: prek run --all-files
 
   # ---------------------------------------------------------------------------
   # full-suite — the WHOLE-TREE BACKSTOP that makes per-PR category gating safe.
