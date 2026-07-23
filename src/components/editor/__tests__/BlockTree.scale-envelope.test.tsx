@@ -1,7 +1,7 @@
 /**
  * #2467 — Measure phase: the block-tree scale envelope.
  *
- * `useBlockMountLimit` (`src/hooks/useBlockMountLimit.ts`) shipped a
+ * `useBlockMountLimit` (`src/components/block-tree/use-block-mount-limit.ts`) shipped a
  * provisional `INITIAL_MOUNT_LIMIT = 500` mount ceiling as a mitigation, but
  * that number was chosen without any browser-measured mount cost backing
  * it — see `docs/architecture/editor-and-content.md` § "Mount envelope

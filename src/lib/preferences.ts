@@ -751,7 +751,7 @@ const SETTINGS_ACTIVE_TAB_PREFERENCE: PreferenceDefinition<string> = {
 
 /**
  * `collapsed_ids` — pre-#752 GLOBAL collapsed-block-id list
- * (`src/hooks/useBlockCollapse.ts`). Read-only migration fallback; never
+ * (`src/components/block-tree/use-block-collapse.ts`). Read-only migration fallback; never
  * written again. Distinct effective key from `blockCollapse` below despite
  * the same base `key` — this one is `device`-scoped (bare key), the other
  * `page`-scoped (`collapsed_ids:<pageKey>`).
@@ -850,7 +850,7 @@ const RECENT_COMMANDS_SLASH_PREFERENCE: PreferenceDefinition<RecentCommand[]> = 
 
 /**
  * `collapsed_ids:<pageKey>` — collapsed block ids, keyed by page root id
- * (#752, `src/hooks/useBlockCollapse.ts`). Page-keyed (not space-keyed) —
+ * (#752, `src/components/block-tree/use-block-collapse.ts`). Page-keyed (not space-keyed) —
  * see `blockCollapseLegacy` above for the pre-#752 global fallback.
  */
 const BLOCK_COLLAPSE_PREFERENCE: PreferenceDefinition<string[]> = {
