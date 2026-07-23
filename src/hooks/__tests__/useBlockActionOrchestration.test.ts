@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { parse } from '@/editor/markdown-serializer'
-import { useBlockKeyboardHandlers } from '@/hooks/useBlockKeyboardHandlers'
+import { useBlockActionOrchestration } from '@/hooks/useBlockActionOrchestration'
 import { announce } from '@/lib/announcer'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
@@ -30,7 +30,7 @@ vi.mock('@/lib/logger', () => ({
 
 const mockedAnnounce = vi.mocked(announce)
 
-function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockKeyboardHandlers>[0]>) {
+function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockActionOrchestration>[0]>) {
   return {
     focusedBlockId: 'B' as string | null,
     collapsedVisible: [
@@ -79,10 +79,10 @@ beforeEach(() => {
   vi.clearAllMocks()
 })
 
-describe('useBlockKeyboardHandlers handleFocusPrev', () => {
+describe('useBlockActionOrchestration handleFocusPrev', () => {
   it('focuses previous block', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusPrev()
@@ -94,7 +94,7 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
 
   it('announces the block being edited', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusPrev()
@@ -105,7 +105,7 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
 
   it('does nothing when at first block', () => {
     const params = makeDefaultParams({ focusedBlockId: 'A' })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusPrev()
@@ -122,7 +122,7 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ],
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusPrev()
@@ -132,10 +132,10 @@ describe('useBlockKeyboardHandlers handleFocusPrev', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleFocusNext', () => {
+describe('useBlockActionOrchestration handleFocusNext', () => {
   it('focuses next block', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusNext()
@@ -147,7 +147,7 @@ describe('useBlockKeyboardHandlers handleFocusNext', () => {
 
   it('does nothing when at last block', () => {
     const params = makeDefaultParams({ focusedBlockId: 'C' })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleFocusNext()
@@ -157,10 +157,10 @@ describe('useBlockKeyboardHandlers handleFocusNext', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
+describe('useBlockActionOrchestration handleDeleteBlock', () => {
   it('deletes focused block and focuses previous', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -174,7 +174,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
   it('focuses next block when deleting first block', () => {
     const params = makeDefaultParams({ focusedBlockId: 'A' })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -188,7 +188,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
       collapsedVisible: [makeBlock({ id: 'A' })],
       focusedBlockId: 'A',
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -200,7 +200,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
   it('does nothing when focusedBlockId is null', () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -219,7 +219,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
       params.collapsedVisible.splice(1, 1)
     })
 
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -233,7 +233,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
   // lands at the END of the previous block after a Backspace-delete.
   it('forwards the cursorPlacement hint to mount when focusing the previous block', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock({ cursorPlacement: 'end' })
@@ -246,7 +246,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
 
   it('does not apply the cursorPlacement hint when deleting the first block (next block gets default caret)', () => {
     const params = makeDefaultParams({ focusedBlockId: 'A' })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock({ cursorPlacement: 'end' })
@@ -262,7 +262,7 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
     params.remove = vi.fn(async () => {
       removeCallCount++
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleDeleteBlock()
@@ -273,10 +273,10 @@ describe('useBlockKeyboardHandlers handleDeleteBlock', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleIndent', () => {
+describe('useBlockActionOrchestration handleIndent', () => {
   it('flushes and indents focused block', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     // R6 (#405): announce now fires on the action's resolution, so flush
     // microtasks (await act) before asserting the SR announcement.
@@ -291,7 +291,7 @@ describe('useBlockKeyboardHandlers handleIndent', () => {
 
   it('does nothing when focusedBlockId is null', () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleIndent()
@@ -301,10 +301,10 @@ describe('useBlockKeyboardHandlers handleIndent', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleDedent', () => {
+describe('useBlockActionOrchestration handleDedent', () => {
   it('flushes and dedents focused block', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleDedent()
@@ -316,10 +316,10 @@ describe('useBlockKeyboardHandlers handleDedent', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
+describe('useBlockActionOrchestration handleMoveUp/Down', () => {
   it('flushes and moves block up', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveUp()
@@ -332,7 +332,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
 
   it('flushes and moves block down', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveDown()
@@ -345,7 +345,7 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
 
   it('handleMoveUp does nothing when focusedBlockId is null', () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleMoveUp()
@@ -355,10 +355,10 @@ describe('useBlockKeyboardHandlers handleMoveUp/Down', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
+describe('useBlockActionOrchestration handleMoveUpById/DownById', () => {
   it('flushes and moves block by id', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleMoveUpById('C')
@@ -370,7 +370,7 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
 
   it('flushes and moves block down by id', () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleMoveDownById('A')
@@ -383,7 +383,7 @@ describe('useBlockKeyboardHandlers handleMoveUpById/DownById', () => {
 
 // ── scrollIntoView after keyboard move ───────────────────────────
 
-describe('useBlockKeyboardHandlers  scrollIntoView', () => {
+describe('useBlockActionOrchestration  scrollIntoView', () => {
   let scrollSpy: ReturnType<typeof vi.spyOn>
   let blockEl: HTMLDivElement
 
@@ -401,7 +401,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
 
   it('scrolls the moved block into view after handleMoveUp resolves', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveUp()
@@ -417,7 +417,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
 
   it('scrolls the moved block into view after handleMoveDown resolves', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveDown()
@@ -436,7 +436,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
     document.body.append(otherEl)
 
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveUpById('C')
@@ -456,7 +456,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
     document.body.append(otherEl)
 
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveDownById('A')
@@ -475,7 +475,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
       throw new Error('move failed')
     })
     const params = makeDefaultParams({ moveUp })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveUp()
@@ -497,7 +497,7 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
     if (blockEl.parentNode) blockEl.parentNode.removeChild(blockEl)
 
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       result.current.handleMoveUp()
@@ -513,11 +513,11 @@ describe('useBlockKeyboardHandlers  scrollIntoView', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
+describe('useBlockActionOrchestration handleMergeWithPrev', () => {
   it('merges with previous block', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -539,7 +539,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
       makeBlock({ id: 'B', depth: 0, content: '- bar' }),
     ]
     params.rovingEditor.unmount = vi.fn(() => '- bar')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -559,7 +559,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
       makeBlock({ id: 'B', depth: 0, content: '# h' }),
     ]
     params.rovingEditor.unmount = vi.fn(() => '# h')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -575,7 +575,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
       makeBlock({ id: 'B', depth: 0, content: 'bar' }),
     ]
     params.rovingEditor.unmount = vi.fn(() => 'bar')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -586,7 +586,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
 
   it('does nothing when at first block', async () => {
     const params = makeDefaultParams({ focusedBlockId: 'A' })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -597,7 +597,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
 
   it('does nothing when focusedBlockId is null', async () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -612,7 +612,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     params.edit = vi.fn(async () => {
       throw new Error('fail')
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -629,7 +629,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     params.remove = vi.fn(async () => {
       throw new Error('remove failed')
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -648,7 +648,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     params.edit = vi.fn(async () => {
       throw new Error('edit failed')
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -689,7 +689,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
         callOrder.push('remove')
       })
 
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeWithPrev()
       })
@@ -722,7 +722,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
       params.focusedBlockId = 'B'
       params.rovingEditor.unmount = vi.fn(() => 'Beta')
 
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeWithPrev()
       })
@@ -747,7 +747,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
       ]
       params.rovingEditor.unmount = vi.fn(() => 'Beta')
 
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeWithPrev()
       })
@@ -760,7 +760,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
     it('does NOT reparent when the merged-away block is childless', async () => {
       const params = makeDefaultParams()
       params.rovingEditor.unmount = vi.fn(() => 'Beta')
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
 
       await act(async () => {
         await result.current.handleMergeWithPrev()
@@ -786,7 +786,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
         throw new Error('reparent failed')
       })
 
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeWithPrev()
       })
@@ -811,7 +811,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
         makeBlock({ id: 'B', depth: 0, content: 'Beta' }),
       ]
 
-      const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+      const { result } = renderHook(() => useBlockActionOrchestration(params))
       await act(async () => {
         await result.current.handleMergeById('B')
       })
@@ -835,7 +835,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
           state: { doc: { content: { size: 20 } } },
           commands: { setTextSelection },
         } as unknown as NonNullable<
-          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
         >
 
         const params = makeDefaultParams()
@@ -844,7 +844,7 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
         // something to act on — but we unmount before it fires.
         ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
 
-        const { result, unmount } = renderHook(() => useBlockKeyboardHandlers(params))
+        const { result, unmount } = renderHook(() => useBlockActionOrchestration(params))
 
         await act(async () => {
           await result.current.handleMergeWithPrev()
@@ -873,14 +873,14 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
           state: { doc: { content: { size: 20 } } },
           commands: { setTextSelection },
         } as unknown as NonNullable<
-          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
         >
 
         const params = makeDefaultParams()
         params.rovingEditor.unmount = vi.fn(() => 'Beta')
         ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
 
-        const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+        const { result } = renderHook(() => useBlockActionOrchestration(params))
 
         await act(async () => {
           await result.current.handleMergeWithPrev()
@@ -912,14 +912,14 @@ describe('useBlockKeyboardHandlers handleMergeWithPrev', () => {
           state: { doc: { content: { size: 20 } } },
           commands: { setTextSelection },
         } as unknown as NonNullable<
-          Parameters<typeof useBlockKeyboardHandlers>[0]['rovingEditor']['editor']
+          Parameters<typeof useBlockActionOrchestration>[0]['rovingEditor']['editor']
         >
 
         const params = makeDefaultParams()
         params.rovingEditor.unmount = vi.fn(() => 'Beta')
         ;(params.rovingEditor as { editor: unknown }).editor = fakeEditor
 
-        const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+        const { result } = renderHook(() => useBlockActionOrchestration(params))
 
         await act(async () => {
           // Merge 'B' into 'A' — the post-merge mount sets activeBlockId = 'A'
@@ -962,7 +962,7 @@ describe('merge honors edit() resolving false (store contract)', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     params.edit = vi.fn(async () => false)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -989,7 +989,7 @@ describe('merge honors edit() resolving false (store contract)', () => {
     ]
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     params.edit = vi.fn(async () => false)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -1002,7 +1002,7 @@ describe('merge honors edit() resolving false (store contract)', () => {
   it('handleMergeById does not remove the source block when edit resolves false', async () => {
     const params = makeDefaultParams()
     params.edit = vi.fn(async () => false)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
@@ -1036,7 +1036,7 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     const deferred = deferredEdit()
     params.edit = deferred.edit
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let mergePromise!: Promise<void>
     act(() => {
@@ -1064,7 +1064,7 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     const deferred = deferredEdit()
     params.edit = deferred.edit
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let first!: Promise<void>
     let second!: Promise<void>
@@ -1088,7 +1088,7 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     const deferred = deferredEdit()
     params.edit = deferred.edit
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let mergePromise!: Promise<void>
     act(() => {
@@ -1111,7 +1111,7 @@ describe('merge in-progress guard (autorepeat Backspace)', () => {
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
     const deferred = deferredEdit()
     params.edit = deferred.edit
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     let first!: Promise<void>
     let second!: Promise<void>
@@ -1178,7 +1178,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ]
     params.blocks = params.collapsedVisible
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -1202,7 +1202,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ]
     params.blocks = params.collapsedVisible
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -1219,7 +1219,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
       makeBlock({ id: 'B', depth: 0, content: 'text' }),
     ]
     params.blocks = params.collapsedVisible
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('B')
@@ -1233,7 +1233,7 @@ describe('merge into a verbatim previous block is a no-op join', () => {
   it('paragraph prev still merges normally', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'Beta')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeWithPrev()
@@ -1244,10 +1244,10 @@ describe('merge into a verbatim previous block is a no-op join', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleMergeById', () => {
+describe('useBlockActionOrchestration handleMergeById', () => {
   it('merges block by id with previous', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
@@ -1260,7 +1260,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
 
   it('does nothing for first block', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('A')
@@ -1272,7 +1272,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
   it('unmounts editor when merging focused block', async () => {
     const params = makeDefaultParams({ focusedBlockId: 'C' })
     params.rovingEditor.unmount = vi.fn(() => 'Edited Charlie')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
@@ -1288,7 +1288,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
     params.remove = vi.fn(async () => {
       throw new Error('remove failed')
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
@@ -1305,7 +1305,7 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
     params.edit = vi.fn(async () => {
       throw new Error('edit failed')
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleMergeById('C')
@@ -1316,10 +1316,10 @@ describe('useBlockKeyboardHandlers handleMergeById', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleEnterSave', () => {
+describe('useBlockActionOrchestration handleEnterSave', () => {
   it('flushes and creates block below', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1332,7 +1332,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
 
   it('adds new block to justCreatedBlockIds', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1343,7 +1343,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
 
   it('does nothing when focusedBlockId is null', async () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1355,7 +1355,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('does not set focused when createBelow returns null', async () => {
     const params = makeDefaultParams()
     params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1366,7 +1366,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
 
   it('announces block creation on Enter', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1378,7 +1378,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('does not announce when createBelow returns null', async () => {
     const params = makeDefaultParams()
     params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1391,7 +1391,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('splits at caret: before-text stays, after-text seeds the new block', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1409,7 +1409,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('split-created block is NOT registered as a just-created empty stub', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1422,7 +1422,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('caret at end (after === "") uses the legacy empty-block path', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: '' }))
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1441,7 +1441,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
     params.edit = vi.fn(async () => false)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1459,7 +1459,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
     params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1477,7 +1477,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   it('discards the departed block draft after a successful caret split', async () => {
     const params = makeDefaultParams()
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1496,7 +1496,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     params.rovingEditor.getMarkdown = vi.fn(() => 'hello world')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello ', after: 'world' }))
     params.edit = vi.fn(async () => false)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1510,7 +1510,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
     params.rovingEditor.getMarkdown = vi.fn(() => 'helloworld')
     params.rovingEditor.splitAtCaret = vi.fn(() => ({ before: 'hello', after: 'world' }))
     params.createBelow = vi.fn(async () => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1523,7 +1523,7 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
 
   it('does not discard any draft on the legacy (non-split) Enter path', async () => {
     const params = makeDefaultParams()
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
       await result.current.handleEnterSave()
@@ -1533,11 +1533,11 @@ describe('useBlockKeyboardHandlers handleEnterSave', () => {
   })
 })
 
-describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
+describe('useBlockActionOrchestration handleEscapeCancel', () => {
   it('unmounts editor and unfocuses', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => 'changed content')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1551,7 +1551,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
   it('does not show toast when no changes', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1563,7 +1563,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
 
   it('does nothing when focusedBlockId is null', () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1584,7 +1584,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     })
     params.justCreatedBlockIds.current.add('B')
     params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1606,7 +1606,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     })
     // B is NOT in justCreatedBlockIds
     params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1621,7 +1621,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
     params.justCreatedBlockIds.current.add('B')
     // unmount returns non-null → user typed content that was discarded
     params.rovingEditor.unmount = vi.fn(() => 'some content')
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1642,7 +1642,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
       callOrder.push('unmount')
       return 'changed content'
     })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1655,7 +1655,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
   it('calls discardDraft even when no changes on Escape', () => {
     const params = makeDefaultParams()
     params.rovingEditor.unmount = vi.fn(() => null)
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()
@@ -1667,7 +1667,7 @@ describe('useBlockKeyboardHandlers handleEscapeCancel', () => {
 
   it('does not call discardDraft when focusedBlockId is null', () => {
     const params = makeDefaultParams({ focusedBlockId: null })
-    const { result } = renderHook(() => useBlockKeyboardHandlers(params))
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     act(() => {
       result.current.handleEscapeCancel()

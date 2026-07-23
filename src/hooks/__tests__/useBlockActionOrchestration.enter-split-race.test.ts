@@ -32,7 +32,7 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { useBlockKeyboardHandlers } from '@/hooks/useBlockKeyboardHandlers'
+import { useBlockActionOrchestration } from '@/hooks/useBlockActionOrchestration'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
 const mockedInvoke = vi.mocked(invoke)
@@ -110,7 +110,7 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
         pageStore: store,
         t,
       })
-      return useBlockKeyboardHandlers({
+      return useBlockActionOrchestration({
         focusedBlockId: 'A',
         collapsedVisible: store.getState().blocks,
         blocks: store.getState().blocks,

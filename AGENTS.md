@@ -154,6 +154,8 @@ Every frontend change — new component, bugfix, feature — must build on exist
 | **Shared hooks** | `src/hooks/` | Reusable stateful logic | useBlockNavigation, usePaginatedQuery, useListKeyboardNavigation, useDebouncedCallback, usePropertySave, useDateInput, useQueryExecution, useBacklinkResolution |
 | **Page components** | `src/components/` (top-level) | Full views composed from the layers above | JournalPage, PageBrowser, HistoryView, SearchPanel |
 
+**Hook filename casing (`src/editor/` vs `src/hooks/`)** — the two directories use different, deliberate conventions: `src/editor/` hook files are kebab-case (`use-block-keyboard.ts`, `use-roving-editor.ts`), matching that directory's general file-naming style; `src/hooks/` files are camelCase (`useBlockActionOrchestration.ts`, `useViewportObserver.ts`), matching the exported hook identifier. When adding a hook, name the file to match whichever directory it lives in — don't carry one directory's casing into the other.
+
 ### Before writing any frontend code
 
 1. **Check `src/components/ui/`** — does a primitive already exist? Button, Select, Dialog, Popover, Badge, ScrollArea, Tooltip, Calendar, Sheet, AlertDialog, Skeleton are all there.

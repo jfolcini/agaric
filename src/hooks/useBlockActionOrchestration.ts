@@ -153,7 +153,7 @@ function planChildReparent(
   return { childIds, newIndex }
 }
 
-export interface UseBlockKeyboardHandlersParams {
+export interface UseBlockActionOrchestrationParams {
   focusedBlockId: string | null
   collapsedVisible: FlatBlock[]
   /**
@@ -195,7 +195,7 @@ export interface UseBlockKeyboardHandlersParams {
   t: TFunction
 }
 
-export interface UseBlockKeyboardHandlersReturn {
+export interface UseBlockActionOrchestrationReturn {
   handleFocusPrev: () => void
   handleFocusNext: () => void
   handleDeleteBlock: (opts?: DeleteBlockOpts) => void
@@ -211,7 +211,7 @@ export interface UseBlockKeyboardHandlersReturn {
   handleEscapeCancel: () => void
 }
 
-export function useBlockKeyboardHandlers({
+export function useBlockActionOrchestration({
   focusedBlockId,
   collapsedVisible,
   blocks,
@@ -229,7 +229,7 @@ export function useBlockKeyboardHandlers({
   justCreatedBlockIds,
   discardDraft,
   t,
-}: UseBlockKeyboardHandlersParams): UseBlockKeyboardHandlersReturn {
+}: UseBlockActionOrchestrationParams): UseBlockActionOrchestrationReturn {
   const rovingEditorRef = useRef(rovingEditor)
   rovingEditorRef.current = rovingEditor
 
@@ -292,7 +292,7 @@ export function useBlockKeyboardHandlers({
           // BlockTree verifying wrapper (which THROWS when the block is still
           // present after remove) so the rejection doesn't go unhandled.
           logger.warn(
-            'useBlockKeyboardHandlers',
+            'useBlockActionOrchestration',
             'Failed to delete block',
             { blockId: focusedBlockId },
             err,
@@ -377,7 +377,7 @@ export function useBlockKeyboardHandlers({
       moveUp(id)
         .then(() => scrollFocusedBlockIntoView(id))
         .catch((err: unknown) => {
-          logger.warn('useBlockKeyboardHandlers', 'moveUp by id failed', { blockId: id }, err)
+          logger.warn('useBlockActionOrchestration', 'moveUp by id failed', { blockId: id }, err)
         })
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
@@ -393,7 +393,7 @@ export function useBlockKeyboardHandlers({
       moveDown(id)
         .then(() => scrollFocusedBlockIntoView(id))
         .catch((err: unknown) => {
-          logger.warn('useBlockKeyboardHandlers', 'moveDown by id failed', { blockId: id }, err)
+          logger.warn('useBlockActionOrchestration', 'moveDown by id failed', { blockId: id }, err)
         })
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
@@ -445,7 +445,7 @@ export function useBlockKeyboardHandlers({
           reverted = await edit(params.prevBlockId, params.prevContent)
         } catch (revertErr) {
           logger.warn(
-            'useBlockKeyboardHandlers',
+            'useBlockActionOrchestration',
             'Failed to revert edit after merge failure',
             {
               blockId: params.prevBlockId,
@@ -455,7 +455,7 @@ export function useBlockKeyboardHandlers({
           return
         }
         if (!reverted) {
-          logger.warn('useBlockKeyboardHandlers', 'Failed to revert edit after merge failure', {
+          logger.warn('useBlockActionOrchestration', 'Failed to revert edit after merge failure', {
             blockId: params.prevBlockId,
           })
         }
@@ -472,7 +472,7 @@ export function useBlockKeyboardHandlers({
         }
       } catch (err) {
         logger.error(
-          'useBlockKeyboardHandlers',
+          'useBlockActionOrchestration',
           params.editLogMessage,
           {
             blockId: params.editLogBlockId,
@@ -492,7 +492,7 @@ export function useBlockKeyboardHandlers({
           await params.reparentChildren()
         } catch (err) {
           logger.error(
-            'useBlockKeyboardHandlers',
+            'useBlockActionOrchestration',
             params.removeLogMessage,
             {
               blockId: params.removeLogBlockId,
@@ -509,7 +509,7 @@ export function useBlockKeyboardHandlers({
         await remove(params.removeBlockId)
       } catch (err) {
         logger.error(
-          'useBlockKeyboardHandlers',
+          'useBlockActionOrchestration',
           params.removeLogMessage,
           {
             blockId: params.removeLogBlockId,
@@ -701,14 +701,14 @@ export function useBlockKeyboardHandlers({
     // doc would take the legacy path and create a stray sibling under the
     // block being merged away. Drop the Enter until the merge settles.
     if (mergeInProgress.current) {
-      logger.warn('useBlockKeyboardHandlers', 'Enter press dropped — merge still in progress', {
+      logger.warn('useBlockActionOrchestration', 'Enter press dropped — merge still in progress', {
         blockId: focusedBlockId,
       })
       return
     }
     if (enterSaveInProgress.current) {
       logger.warn(
-        'useBlockKeyboardHandlers',
+        'useBlockActionOrchestration',
         'Enter press dropped — previous save still in progress',
         {
           blockId: focusedBlockId,
@@ -835,7 +835,7 @@ export function useBlockKeyboardHandlers({
       justCreatedBlockIds.current.delete(focusedBlockId)
       remove(focusedBlockId).catch((err: unknown) => {
         logger.warn(
-          'useBlockKeyboardHandlers',
+          'useBlockActionOrchestration',
           'Failed to remove empty just-created block on Escape',
           { blockId: focusedBlockId },
           err,
