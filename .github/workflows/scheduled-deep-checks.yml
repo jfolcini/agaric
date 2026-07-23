@@ -35,6 +35,12 @@ name: Scheduled deep checks
 #                    modules, agenda-sort, filters/model, date-utils,
 #                    tree-utils — never components or Tauri IPC).
 #                    Non-blocking, same triage-signal posture as `mutants`.
+#   file-mutation-survivors — #2947: push-based triage loop for the two
+#                    mutants lanes above. Diffs their combined survivor list
+#                    against a single open tracking issue's last-known set
+#                    and files/updates that ONE issue only on genuinely NEW
+#                    survivors (see `scripts/file-mutation-survivors.mjs`).
+#                    Scheduled-event-only; needs `issues: write`.
 #   fuzz           — #650/#2590: short coverage-guided fuzz runs over the
 #                    raw-input parsers (snapshot decode, deeplink parse,
 #                    Markdown/Obsidian import parse). Smoke-length here (the
@@ -763,6 +769,69 @@ jobs:
           path: reports/mutation/
           if-no-files-found: ignore
           retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # file-mutation-survivors (#2947) — closes the pull-based triage gap: `mutants`
+  # and `mutants-frontend` above only ever surface survivors in THIS run's step
+  # summary, so nobody is notified unless someone remembers to open it. This
+  # job downloads both lanes' survivor output (cargo-mutants' `missed.txt`,
+  # StrykerJS's per-module `mutation.json`), diffs the combined set against
+  # the SINGLE open tracking issue's last-known set (via
+  # `scripts/file-mutation-survivors.mjs`), and files/updates that ONE issue
+  # only when a genuinely NEW survivor appears — a no-op otherwise, so this
+  # never spams a new issue weekly. State lives in the tracking issue's body
+  # (a marked, machine-readable block), not a committed baseline file, so
+  # this job needs `issues: write` only — never `contents: write`.
+  #
+  # `if: always()`: runs even if `mutants` / `mutants-frontend` failed outright
+  # (both lanes are non-blocking and best-effort already) — a missing/absent
+  # artifact just contributes zero survivors from that lane (see the script's
+  # own doc comment). Scheduled-event-only per #2947: a `workflow_dispatch`
+  # smoke run (e.g. testing a `mutants_timeout` tweak) must never file/update
+  # the real tracking issue.
+  # ---------------------------------------------------------------------------
+  file-mutation-survivors:
+    needs: [mutants, mutants-frontend]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Download cargo-mutants survivor list
+        # Best-effort: if the `mutants` job never uploaded (e.g. it errored
+        # before the outcomes existed), this lane simply contributes zero
+        # rust survivors below rather than failing the whole triage step.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mutants-out
+          path: mutants-artifact
+
+      - name: Download StrykerJS survivor reports
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: mutation-frontend-report
+          path: mutation-artifact
+
+      - name: File or update the single mutation-survivor tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          node scripts/file-mutation-survivors.mjs \
+            --rust-missed mutants-artifact/missed.txt \
+            --frontend-dir mutation-artifact
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
