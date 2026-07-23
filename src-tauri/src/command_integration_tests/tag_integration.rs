@@ -365,3 +365,113 @@ async fn list_tags_for_nonexistent_block_returns_empty() {
         "nonexistent block must return empty vec (no error)"
     );
 }
+
+// ======================================================================
+// #3081 — a tag created in an active space is stamped with its space
+// membership ATOMICALLY (in the same command), so it survives create →
+// re-query via `list_all_tags_in_space`. These tests drive the REAL
+// `create_block_inner_with_space` + projection path and assert the DURABLE
+// re-queried effect (NOT call-shape), and deliberately do NOT call
+// `assign_all_to_test_space` (which would retroactively stamp any orphan and
+// mask the bug).
+// ======================================================================
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_in_active_space_is_space_stamped_and_listed_3081() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    // A real, registered space (emits CreateBlock + SetProperty(is_space) so
+    // the migration-0089 `spaces` registration trigger fires).
+    let space = test_space(&pool, "Work").await;
+
+    // Create a `tag` block scoped to the active space through the SAME IPC the
+    // frontend `createBlock({ blockType: 'tag' })` now routes through.
+    let created = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".to_string(),
+        "urgent".to_string(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(space.as_str())),
+        None,
+    )
+    .await
+    .expect("create tag scoped to active space");
+    settle(&mat).await;
+
+    assert_eq!(created.block_type, "tag");
+    assert_eq!(created.content.as_deref(), Some("urgent"));
+
+    // (1) The tag's space membership is durably stamped on `blocks.space_id`
+    //     — the SOLE source of truth the space-scoped query filters on.
+    let stamped: Option<String> =
+        sqlx::query_scalar!("SELECT space_id FROM blocks WHERE id = ?", created.id,)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        stamped.as_deref(),
+        Some(space.as_str()),
+        "the created tag must carry space_id = the active space (atomic stamp), not NULL",
+    );
+
+    // (2) The tag is RETURNED by the space-scoped list the Tags view re-queries
+    //     on re-entry — i.e. it does not vanish.
+    let listed = list_all_tags_in_space_inner(&pool, space.as_str())
+        .await
+        .expect("list_all_tags_in_space");
+    assert!(
+        listed
+            .iter()
+            .any(|t| t.tag_id == created.id.as_str() && t.name == "urgent"),
+        "the freshly-created tag must survive create -> re-query via \
+         list_all_tags_in_space; got {listed:?}",
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn create_tag_scoped_to_non_space_errors_loudly_3081() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // A well-formed ULID that is NOT a registered space. The atomic tag path
+    // validates the space up front, so this must be a LOUD `Validation` error
+    // rather than a silently-orphaned tag (the swallow-on-failure window that
+    // caused #3081 is gone).
+    let bogus_space = "01BOGUSNOTASPACE0000000001";
+    let result = create_block_inner_with_space(
+        &pool,
+        DEV,
+        &mat,
+        "tag".to_string(),
+        "orphan".to_string(),
+        None,
+        None,
+        &SpaceScope::Active(SpaceId::from_trusted(bogus_space)),
+        None,
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { .. })),
+        "creating a tag scoped to a non-space must fail with Validation, got {result:?}",
+    );
+
+    // The tag must NOT have leaked into the blocks table (all-or-nothing tx).
+    let leaked: Option<String> = sqlx::query_scalar!(
+        "SELECT id FROM blocks WHERE block_type = 'tag' AND content = 'orphan'",
+    )
+    .fetch_optional(&pool)
+    .await
+    .unwrap();
+    assert!(
+        leaked.is_none(),
+        "a rejected space-scoped tag create must roll back — no orphan tag row",
+    );
+
+    mat.shutdown();
+}

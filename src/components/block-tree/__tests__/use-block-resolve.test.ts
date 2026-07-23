@@ -23,7 +23,6 @@ vi.mock('@/lib/tauri', () => ({
   listPageAliasesByPrefix: vi.fn(),
   searchBlocks: vi.fn(),
   searchBlocksLimit: (n: number) => n,
-  setProperty: vi.fn(),
 }))
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
@@ -34,7 +33,6 @@ import {
   listAllTagsInSpace,
   listPageAliasesByPrefix,
   searchBlocks,
-  setProperty,
 } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -45,7 +43,6 @@ const mockedListAllPagesInSpace = vi.mocked(listAllPagesInSpace)
 const mockedListPageAliasesByPrefix = vi.mocked(listPageAliasesByPrefix)
 const mockedListAllTagsInSpace = vi.mocked(listAllTagsInSpace)
 const mockedSearchBlocks = vi.mocked(searchBlocks)
-const mockedSetProperty = vi.mocked(setProperty)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -62,9 +59,6 @@ beforeEach(() => {
     availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
     isReady: true,
   })
-  // #2996/#2997 — `onCreateTag` now space-scopes the new tag via `setProperty`.
-  // Default to a resolved write so the happy path doesn't reject.
-  mockedSetProperty.mockResolvedValue({} as unknown as Awaited<ReturnType<typeof setProperty>>)
 })
 
 // ── Resolve callbacks ──────────────────────────────────────────────────
@@ -402,7 +396,7 @@ describe('searchTags', () => {
 // ── onCreateTag ─────────────────────────────────────────────────────────
 
 describe('onCreateTag', () => {
-  it('calls createBlock with tag type and content', async () => {
+  it('creates the tag atomically space-scoped in ONE createBlock call', async () => {
     mockedCreateBlock.mockResolvedValueOnce({
       id: 'NEW_TAG_1',
       block_type: 'tag',
@@ -426,9 +420,13 @@ describe('onCreateTag', () => {
       newId = await result.current.onCreateTag('urgent')
     })
 
+    // #3081 — the active spaceId is threaded through so the backend stamps
+    // `blocks.space_id` in the same transaction; there is NO separate
+    // best-effort setProperty(space) follow-up.
     expect(mockedCreateBlock).toHaveBeenCalledWith({
       blockType: 'tag',
       content: 'urgent',
+      spaceId: 'SPACE_TEST',
     })
     expect(newId).toBe('NEW_TAG_1')
   })
@@ -497,14 +495,15 @@ describe('onCreateTag', () => {
     })
   })
 
-  // #2996/#2997 — the created tag must be scoped to the active space so it
-  // surfaces in `listAllTagsInSpace` (the `@` picker index) and resolves to a
-  // navigable tag page, instead of the orphan `createBlock` alone produces.
-  it('space-scopes the new tag via setProperty(space) so it is not an orphan', async () => {
+  // #3081 — with no active space the create still happens (Global scope), and
+  // `createBlock` must NOT receive a `spaceId` (the backend leaves it unscoped
+  // rather than stamping a bogus one).
+  it('omits spaceId from createBlock when there is no active space', async () => {
+    useSpaceStore.setState({ currentSpaceId: null })
     mockedCreateBlock.mockResolvedValueOnce({
-      id: 'NEW_TAG_SCOPED',
+      id: 'NEW_TAG_NOSPACE',
       block_type: 'tag',
-      content: 'scoped',
+      content: 'nospace',
       parent_id: null,
       position: null,
       deleted_at: null,
@@ -520,46 +519,14 @@ describe('onCreateTag', () => {
 
     let newId = ''
     await act(async () => {
-      newId = await result.current.onCreateTag('scoped')
+      newId = await result.current.onCreateTag('nospace')
     })
 
-    expect(newId).toBe('NEW_TAG_SCOPED')
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'NEW_TAG_SCOPED',
-      key: 'space',
-      valueRef: 'SPACE_TEST',
+    expect(newId).toBe('NEW_TAG_NOSPACE')
+    expect(mockedCreateBlock).toHaveBeenCalledWith({
+      blockType: 'tag',
+      content: 'nospace',
     })
-  })
-
-  it('still returns the created tag when the space-scope write fails (orphan fallback)', async () => {
-    mockedCreateBlock.mockResolvedValueOnce({
-      id: 'NEW_TAG_BESTEFFORT',
-      block_type: 'tag',
-      content: 'besteffort',
-      parent_id: null,
-      position: null,
-      deleted_at: null,
-      todo_state: null,
-      priority: null,
-      due_date: null,
-      scheduled_date: null,
-      page_id: null,
-      op_refs: [],
-    })
-    mockedSetProperty.mockRejectedValueOnce(new Error('scope write failed'))
-
-    const { result } = renderHook(() => useBlockResolve())
-
-    let newId = ''
-    await act(async () => {
-      newId = await result.current.onCreateTag('besteffort')
-    })
-
-    // Creation does NOT hard-fail on the scoping step.
-    expect(newId).toBe('NEW_TAG_BESTEFFORT')
-    // Resolve cache is still seeded so the chip shows the name immediately.
-    const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'NEW_TAG_BESTEFFORT'))
-    expect(cached).toEqual({ title: 'besteffort', deleted: false })
   })
 })
 

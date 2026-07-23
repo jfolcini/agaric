@@ -128,6 +128,13 @@ export const blocksHandlers = {
       priority: null,
       due_date: null,
       scheduled_date: null,
+      // #3081 — mirror the backend `blocks.space_id` column. Blocks whose space
+      // membership is stamped DIRECTLY on the block itself (`page` via
+      // `create_page_in_space`, `tag` via the atomic `create_tag_in_space`
+      // path) carry the active space here; `content` blocks derive theirs from
+      // their owning page and are left null (not modelled by this mock). This
+      // is the column `list_all_tags_in_space` filters on.
+      space_id: (blockType === 'page' || blockType === 'tag') && spaceId !== null ? spaceId : null,
     }
     blocks.set(id, row)
     // #400: `index` is a 0-based sibling slot; null appends at the end. Insert
@@ -135,11 +142,15 @@ export const blocksHandlers = {
     const rawIndex = a['index'] as number | null | undefined
     insertAtSlotAndRenumber(parentId, id, rawIndex == null ? Number.MAX_SAFE_INTEGER : rawIndex)
     const position = row['position'] as number
-    // Stamp the `space` ref property on new pages so the rest of the
-    // scope-aware mock handlers (`count_backlinks_batch`,
-    // `resolve_page_by_alias`, etc.) treat the page as living in the
-    // active space — same invariant as `create_page_in_space`.
-    if (blockType === 'page' && spaceId !== null) {
+    // Stamp the `space` ref property on new pages AND tags so the rest of the
+    // scope-aware mock handlers that still read the legacy `space` property
+    // (`load_page_subtree`, trash, `count_backlinks_batch`,
+    // `resolve_page_by_alias`, etc.) treat the block as living in the active
+    // space — same invariant as `create_page_in_space`. #3081: tags are
+    // dual-written here (property + the `blocks.space_id` column stamped above),
+    // mirroring the seed tags, so a freshly-created tag's page loads via
+    // `load_page_subtree` (property-scoped) instead of throwing PageNotInSpace.
+    if ((blockType === 'page' || blockType === 'tag') && spaceId !== null) {
       if (!properties.has(id)) properties.set(id, new Map())
       properties.get(id)?.set('space', {
         block_id: id,

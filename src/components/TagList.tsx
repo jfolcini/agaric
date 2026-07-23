@@ -102,29 +102,22 @@ export function TagList({ onTagClick }: TagListProps): React.ReactElement {
     }
     setIsCreating(true)
     try {
-      const resp = await createBlock({ blockType: 'tag', content: name })
-      // #2997 — space-scope the newly created tag so it surfaces in
-      // `listAllTagsInSpace` (the `@`/# picker index) immediately. A bare
-      // `createBlock({ blockType: 'tag' })` leaves the tag an ORPHAN (no `space`
-      // property), which the backend only adopts into a space when the tag is
-      // first APPLIED to a block or on the next-boot migration — so a
-      // manually-created tag would otherwise never appear in `@` search. Emit
-      // the same `SetProperty(key='space', value_ref=<space>)` the backend
-      // adoption path uses. Best-effort: a failed scope write still leaves the
-      // tag created (as an orphan), adopted on first apply / next boot.
+      // #3081 — create the tag ATOMICALLY space-scoped in ONE command: pass the
+      // active `spaceId` so the backend stamps `blocks.space_id` in the same
+      // transaction as the `CreateBlock` op (mirroring the page-create path).
+      // This replaces the old bare `createBlock` + best-effort, catch-swallowed
+      // `setProperty({ key: 'space' })`: when that separate follow-up op failed
+      // it left the tag an ORPHAN (`space_id = NULL`), which
+      // `listAllTagsInSpace` (WHERE `space_id = ?`) hides — so a freshly
+      // created tag vanished on the next visit to the Tags view. With the
+      // atomic create there is no swallow-on-failure window: a scoping failure
+      // now fails the whole create and surfaces via the catch below.
       const spaceId = useSpaceStore.getState().currentSpaceId
-      if (spaceId != null) {
-        try {
-          await setProperty({ blockId: resp.id, key: 'space', valueRef: spaceId })
-        } catch (scopeErr) {
-          logger.warn(
-            'TagList',
-            'space-scope write for new tag failed; tag left orphan',
-            { name, tagId: resp.id },
-            scopeErr,
-          )
-        }
-      }
+      const resp = await createBlock({
+        blockType: 'tag',
+        content: name,
+        ...(spaceId != null && { spaceId }),
+      })
       const newTag: TagCacheRow = {
         tag_id: resp.id,
         name: resp.content ?? name,

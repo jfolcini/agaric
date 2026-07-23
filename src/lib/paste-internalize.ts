@@ -123,7 +123,12 @@ export function buildImportRefInternalizers(): RefInternalizers | null {
       const existing = map.get(name)
       if (existing != null) return existing
       try {
-        const block = await createBlock({ blockType: 'tag', content: name })
+        // #3081 — create the tag ATOMICALLY space-scoped (pass the active
+        // `spaceId`) so the backend stamps `blocks.space_id` in the same
+        // transaction as the `CreateBlock` op, mirroring the page path above.
+        // Without it an imported tag would be an orphan hidden from
+        // `listAllTagsInSpace` until first apply / next boot.
+        const block = await createBlock({ blockType: 'tag', content: name, spaceId })
         map.set(name, block.id)
         useResolveStore.getState().set(block.id, name, false)
         return block.id

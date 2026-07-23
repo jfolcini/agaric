@@ -198,16 +198,21 @@ describe('TagList', () => {
     // New tag should appear
     expect(await screen.findByText('my-new-tag')).toBeInTheDocument()
 
-    // Verify invoke was called correctly
+    // #3081 — the tag is created ATOMICALLY space-scoped: the active
+    // `currentSpaceId` is threaded through as an ACTIVE scope so the backend
+    // stamps `blocks.space_id` in the same transaction. There is NO separate
+    // best-effort `set_property(space)` follow-up.
     expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
       blockType: 'tag',
       content: 'my-new-tag',
       parentId: null,
       index: null,
-      scope: { kind: 'global' },
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
       // #2849 PR2 — tag creation supplies no client id; the binding sends null.
       blockId: null,
     })
+    // No orphaning follow-up: `set_property` is never invoked for the new tag.
+    expect(mockedInvoke).not.toHaveBeenCalledWith('set_property', expect.anything())
 
     // Input should be cleared
     expect(input).toHaveValue('')

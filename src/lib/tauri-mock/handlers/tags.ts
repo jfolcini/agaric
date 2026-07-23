@@ -221,9 +221,11 @@ export const tagsHandlers = {
   },
 
   // Every tag in the given space.  No pagination, no clamp; bounded by
-  // the space's intrinsic tag count.  Mirrors the backend's space-scope
-  // filter via `block_properties(key='space').value_ref` on the tag
-  // block itself.
+  // the space's intrinsic tag count.  #3081 — mirrors the backend's
+  // space-scope filter on the tag block's own `blocks.space_id` column (the
+  // SOLE source of truth since #533), NOT a retired `block_properties(key=
+  // 'space')` row. The atomic create-tag path stamps `space_id` directly, so
+  // a freshly created tag is returned here immediately and durably.
   list_all_tags_in_space: (args) => {
     const a = args as Record<string, unknown>
     // b1 — `scope: SpaceScope`. `global` → null → no-match filter.
@@ -238,9 +240,7 @@ export const tagsHandlers = {
     for (const b of blocks.values()) {
       if (b['block_type'] !== 'tag') continue
       if (b['deleted_at']) continue
-      const blockProps = properties.get(b['id'] as string)
-      const spaceProp = blockProps?.get('space')
-      if (spaceProp?.['value_ref'] !== spaceId) continue
+      if ((b['space_id'] as string | null) !== spaceId) continue
       tagRows.push({
         tag_id: b['id'] as string,
         name: (b['content'] as string) ?? '',

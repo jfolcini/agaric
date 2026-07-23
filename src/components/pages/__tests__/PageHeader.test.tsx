@@ -572,12 +572,15 @@ describe('PageHeader tag management', () => {
     await user.click(screen.getByText(/Create "newtag"/))
 
     await waitFor(() => {
+      // #3081 — onCreateTag threads the active spaceId so the tag is created
+      // atomically space-scoped (backend stamps `blocks.space_id` in-tx); no
+      // separate best-effort `set_property(space)` follow-up.
       expect(mockedInvoke).toHaveBeenCalledWith('create_block', {
         blockType: 'tag',
         content: 'newtag',
         parentId: null,
         index: null,
-        scope: { kind: 'global' },
+        scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
         // #2849 PR2 — tag creation supplies no client id; the binding sends null.
         blockId: null,
       })

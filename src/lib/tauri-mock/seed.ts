@@ -182,6 +182,10 @@ export function makeBlock(
     priority: null,
     due_date: null,
     scheduled_date: null,
+    // #3081 — mirror the backend `blocks.space_id` column (null = unscoped /
+    // global; stamped by `create_block` for tags/pages and by the seed loader
+    // for the canonical space-scoped fixtures).
+    space_id: null,
   }
 }
 
@@ -232,12 +236,13 @@ export function seedBlocks(): void {
     SEED_IDS.PAGE_DAILY,
     SEED_IDS.PAGE_PROJECTS,
     SEED_IDS.PAGE_MEETINGS,
-    // Tag blocks are space-scoped in the backend (`block_properties` row
-    // with `key='space'`). `list_all_tags_in_space` and
-    // `load_page_subtree` both filter on this. Seed tag blocks and the
-    // meeting-notes template page need the same property or the Tags
-    // view shows zero seed tags and the template picker fails to
-    // expand.
+    // Tag blocks are space-scoped in the backend. #3081 — the SOLE source of
+    // truth is the denormalized `blocks.space_id` column (#533), which the
+    // backend stamps directly for pages and tags; `list_all_tags_in_space`
+    // filters on it. We stamp `space_id` on the block row below AND keep the
+    // legacy `space` property (page-scope handlers like `load_page_subtree` /
+    // trash still read the property). Without the `space_id` stamp the Tags
+    // view would show zero seed tags.
     SEED_IDS.TAG_WORK,
     SEED_IDS.TAG_PERSONAL,
     SEED_IDS.TAG_IDEA,
@@ -442,6 +447,28 @@ export function seedBlocks(): void {
   blocks.set(SEED_IDS.TAG_WORK, makeBlock(SEED_IDS.TAG_WORK, 'tag', 'work', null, 0))
   blocks.set(SEED_IDS.TAG_PERSONAL, makeBlock(SEED_IDS.TAG_PERSONAL, 'tag', 'personal', null, 1))
   blocks.set(SEED_IDS.TAG_IDEA, makeBlock(SEED_IDS.TAG_IDEA, 'tag', 'idea', null, 2))
+
+  // #3081 — mirror the backend `blocks.space_id` column (the SOLE source of
+  // truth, #533) on the space-scoped seed blocks. The backend stamps this
+  // directly for pages and tags; `list_all_tags_in_space` now filters on it
+  // (matching the backend) instead of a retired `block_properties(key='space')`
+  // row, so the seed tags must carry it or the Tags view shows zero seed tags.
+  // Runs AFTER the tag blocks are created above (the `space` property loop
+  // earlier runs before them).
+  for (const id of [
+    SEED_IDS.PAGE_GETTING_STARTED,
+    SEED_IDS.PAGE_QUICK_NOTES,
+    SEED_IDS.PAGE_DAILY,
+    SEED_IDS.PAGE_PROJECTS,
+    SEED_IDS.PAGE_MEETINGS,
+    SEED_IDS.PAGE_TMPL_MEETING,
+    SEED_IDS.TAG_WORK,
+    SEED_IDS.TAG_PERSONAL,
+    SEED_IDS.TAG_IDEA,
+  ]) {
+    const row = blocks.get(id)
+    if (row) row['space_id'] = 'SPACE_PERSONAL'
+  }
 
   // Content blocks — children of "Quick Notes" (with backlink to Getting Started)
   blocks.set(
