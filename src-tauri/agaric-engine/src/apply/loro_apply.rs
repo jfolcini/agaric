@@ -287,11 +287,53 @@ pub async fn apply_set_property_via_loro(
     // `resolve_block_space` would return `None` and the op would take a
     // (legitimate but now avoidable) SpaceUnresolved fallback.
     if p.key == agaric_store::op::SPACE_PROPERTY_KEY {
+        // #2907: capture the block's CURRENTLY-resolved registered space BEFORE
+        // the projection overwrites `blocks.space_id` to the target space.
+        // `resolve_block_space` reads `COALESCE(blocks.space_id, page.space_id)`,
+        // so pre-projection it yields the OLD space (or `None` for a first-time
+        // assignment during the no-space window / an unregistered target #708)
+        // and post-projection the NEW space. We need the OLD one to know whether
+        // this is a genuine cross-space reassignment (below).
+        let old_space = agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?;
+
         projection::project_set_property_to_sql(conn, p).await?;
-        if let Some(space_id) =
+        if let Some(new_space) =
             agaric_store::space::resolve_block_space(&mut *conn, &p.block_id).await?
         {
-            hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &space_id)
+            // #2907: a GENUINE reassignment — the block was already a member of a
+            // DIFFERENT registered space — must PRUNE its whole subtree from the
+            // OLD space's per-space LoroDoc before hydrating into the new one.
+            // Otherwise the subtree stays durably a member of BOTH docs (both are
+            // persisted as `loro_doc_state` snapshots): a peer importing the OLD
+            // doc re-stamps the old `space_id` onto the moved blocks and
+            // overwrites their content/parent_id/position from the stale copy
+            // (projection.rs stamps `space_id` for every changed block), so
+            // membership flip-flops and pre-move state resurrects.
+            // `engine.apply_purge_block` records a deterministic subtree delete
+            // into the OLD doc (seed + descendants; tree nodes + property/tag map
+            // entries) and commits it, so every peer that applies OR imports this
+            // op converges to "these blocks live only in the new space" — the
+            // same convergence contract as a normal PurgeBlock.
+            //
+            // Gate: only when the block resolved to a DIFFERENT registered space
+            // beforehand. A first-time assignment (`old_space == None`, the #2326
+            // no-space window) or a same-space no-op (`old == new`, incl. an
+            // unregistered target #708 that the projection left unchanged) prunes
+            // nothing — behaviour there is unchanged.
+            //
+            // We call the engine method DIRECTLY, not `apply_purge_block_via_loro`
+            // (which additionally runs the SQL purge cascade): the SQL rows must
+            // SURVIVE — they now belong to the new space — so only the OLD doc's
+            // CRDT membership is removed here.
+            if let Some(old_space) = old_space.filter(|old| *old != new_space) {
+                let mut guard =
+                    state
+                        .registry
+                        .for_space_recording(&old_space, device_id, &state.revert)?;
+                guard.engine_mut().apply_purge_block(p.block_id.as_str())?;
+                drop(guard);
+            }
+            hydrate_page_subtree_into_engine(conn, state, device_id, &p.block_id, &new_space)
                 .await?;
         }
         return Ok(());

@@ -536,3 +536,188 @@ async fn clearing_space_skips_hydration() {
         .unwrap();
     assert_eq!(page_space, None, "clearing must NULL the space_id");
 }
+
+// --------------------------------------------------------------------------
+// 7. #2907 — reassigning a page from registered space S1 to S2 PRUNES its
+//    subtree from S1's per-space LoroDoc. Before this fix the subtree stayed
+//    durably a member of BOTH docs (both persisted as `loro_doc_state`
+//    snapshots), so a peer importing S1's doc re-asserted S1 over the moved
+//    blocks and resurrected their stale content/parent/position. The test
+//    exports BOTH per-space docs after a reassignment, imports each into a
+//    FRESH peer's per-space engine, and asserts the subtree lives ONLY in S2.
+// --------------------------------------------------------------------------
+
+const SPACE2_ID: &str = "01ARZ3NDEKTSV4RRFFQ69G5FC1";
+
+fn space2() -> SpaceId {
+    SpaceId::from_trusted(SPACE2_ID)
+}
+
+/// Register a SECOND space (its `tag`/`space` block + `spaces` registry row) in
+/// an existing pool so a `SetProperty(space)` reassignment to it lands (#708).
+async fn register_second_space(pool: &SqlitePool) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, parent_id, position) \
+             VALUES (?, 'tag', 'space', NULL, 0)",
+    )
+    .bind(SPACE2_ID)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT OR IGNORE INTO spaces (id) VALUES (?)")
+        .bind(SPACE2_ID)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn reassignment_prunes_old_space_and_converges_only_in_new_2907() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    register_second_space(&pool).await;
+    let state = crate::loro::shared::LoroState::new();
+
+    // Page + subtree, assigned to S1 first — this hydrates the whole subtree
+    // into S1's per-space engine (the #2326 path).
+    create_no_space_subtree(&pool, &state).await;
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+
+    // Sanity: S1's engine holds the whole subtree after the first assignment,
+    // so there is genuinely dual-membership risk on the reassignment below.
+    {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let engine = guard.engine_mut();
+        for id in [PAGE_ID, CHILD_ID, GRAND_ID] {
+            assert!(
+                engine.read_block(id).unwrap().is_some(),
+                "precondition: block {id} must be in S1 before the reassignment"
+            );
+        }
+    }
+
+    // REASSIGN S1 -> S2 (the #2907 path). old_space=S1, new_space=S2 ⇒ prune S1.
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE2_ID))).await;
+
+    // Live-engine effect + export the OLD (S1) doc snapshot: the whole subtree
+    // must be pruned from S1's engine.
+    let s1_bytes = {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let engine = guard.engine_mut();
+        for id in [PAGE_ID, CHILD_ID, GRAND_ID] {
+            assert!(
+                engine.read_block(id).unwrap().is_none(),
+                "block {id} must be PRUNED from the OLD space's engine after reassignment"
+            );
+        }
+        engine.export_snapshot().expect("export s1")
+    };
+    // Export the NEW (S2) doc snapshot: the subtree must be present there.
+    let s2_bytes = {
+        let mut guard = state.registry.for_space(&space2(), DEVICE_ID).expect("s2");
+        let engine = guard.engine_mut();
+        assert_eq!(
+            engine
+                .read_block(PAGE_ID)
+                .unwrap()
+                .expect("page in S2")
+                .content,
+            "page"
+        );
+        engine.export_snapshot().expect("export s2")
+    };
+
+    // FRESH PEER: import each per-space doc into its own fresh engine, exactly
+    // as a peer receiving both per-space snapshots would.
+    let mut peer_s1 =
+        crate::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s1");
+    peer_s1.import(&s1_bytes).expect("import s1");
+    let mut peer_s2 =
+        crate::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s2");
+    peer_s2.import(&s2_bytes).expect("import s2");
+
+    // Convergence: the subtree lives ONLY in S2 on the fresh peer — no S1
+    // resurrection of membership or of content/parent/position.
+    for id in [PAGE_ID, CHILD_ID, GRAND_ID] {
+        assert!(
+            peer_s1.read_block(id).unwrap().is_none(),
+            "reassigned block {id} must NOT resurrect in S1's doc on a fresh peer"
+        );
+    }
+    let page = peer_s2
+        .read_block(PAGE_ID)
+        .unwrap()
+        .expect("page must be in S2 on the fresh peer");
+    assert_eq!(page.content, "page");
+    assert_eq!(page.parent_id, None);
+    let child = peer_s2
+        .read_block(CHILD_ID)
+        .unwrap()
+        .expect("child must be in S2 on the fresh peer");
+    assert_eq!(child.content, "child");
+    assert_eq!(child.parent_id.as_deref(), Some(PAGE_ID));
+    let grand = peer_s2
+        .read_block(GRAND_ID)
+        .unwrap()
+        .expect("grand must be in S2 on the fresh peer");
+    assert_eq!(grand.content, "grand");
+    assert_eq!(grand.parent_id.as_deref(), Some(CHILD_ID));
+}
+
+// --------------------------------------------------------------------------
+// 8. #2907 guard: a FIRST-time assignment (no prior space) and a SAME-space
+//    no-op set must NOT prune — the subtree stays intact in S1. This pins the
+//    "only genuine cross-space reassignments prune" gate.
+// --------------------------------------------------------------------------
+
+#[tokio::test]
+async fn first_assignment_and_same_space_set_do_not_prune_2907() {
+    let (pool, _dir) = fresh_pool_with_registered_space().await;
+    let state = crate::loro::shared::LoroState::new();
+    create_no_space_subtree(&pool, &state).await;
+
+    // FIRST assignment: old_space = None ⇒ prune nothing, hydrate S1.
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let engine = guard.engine_mut();
+        for id in [PAGE_ID, CHILD_ID, GRAND_ID] {
+            assert!(
+                engine.read_block(id).unwrap().is_some(),
+                "first assignment must NOT prune block {id} from S1"
+            );
+        }
+    }
+
+    // SAME-space re-assign: old_space == new_space ⇒ prune nothing, subtree
+    // stays intact in S1.
+    //
+    // Presence alone is NOT a sufficient guard here: a weaker gate that pruned
+    // whenever `old_space.is_some()` (ignoring `old == new`) would delete the
+    // subtree from S1's doc and then re-seed it via the idempotent hydrate —
+    // leaving every block present again, so a bare `is_some()` assertion would
+    // still pass. We therefore also pin the OLD doc's op-log FRONTIER across the
+    // same-space set: a genuine no-op advances it by nothing, whereas a
+    // spurious prune+re-hydrate appends a subtree delete + fresh creates and
+    // moves the frontier. This makes the `old != new` gate non-tautological.
+    let frontier_before = {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        guard.engine_mut().checkpoint_frontiers()
+    };
+    apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
+    {
+        let mut guard = state.registry.for_space(&space(), DEVICE_ID).expect("s1");
+        let engine = guard.engine_mut();
+        for id in [PAGE_ID, CHILD_ID, GRAND_ID] {
+            assert!(
+                engine.read_block(id).unwrap().is_some(),
+                "same-space re-assign must NOT prune block {id} from S1"
+            );
+        }
+        assert_eq!(
+            engine.checkpoint_frontiers(),
+            frontier_before,
+            "same-space re-assign must be a pure no-op on S1's doc — the op-log \
+             frontier must not advance (no spurious prune + re-hydrate churn)"
+        );
+    }
+}
