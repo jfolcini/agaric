@@ -106,33 +106,55 @@ async fn clear_leaked_bypass_sentinel(
     Ok(())
 }
 
-/// #2919 — take a best-effort backup of the vault database immediately before
-/// migrations run.
+/// #2919 / #3062 — number of timestamped pre-migration backups to retain.
+///
+/// Pruning keeps the newest [`MAX_KEPT_BACKUPS`] siblings and deletes older
+/// ones, bounding on-disk accumulation. The just-created backup counts as one
+/// of the kept set.
+const MAX_KEPT_BACKUPS: usize = 3;
+
+/// #2919 / #3062 — take a best-effort backup of the vault database immediately
+/// before migrations run, but ONLY when a migration is actually pending, and
+/// prune stale backups so they don't accumulate unbounded.
 ///
 /// A downgrade (an older binary opening a vault a newer version migrated) or a
 /// failed/partial migration can corrupt or partially-migrate the ONLY copy of
 /// the user's data. Before `sqlx::migrate!` touches the file, snapshot it to a
 /// timestamped sibling so the user can recover.
 ///
+/// #3062 — the backup used to fire on EVERY boot, even the common case where the
+/// DB is already fully migrated and no migration will run. That grew a fresh
+/// timestamped copy per launch forever. This gate skips the copy when the
+/// embedded migration set has nothing new to apply, and prunes old backups down
+/// to [`MAX_KEPT_BACKUPS`].
+///
 /// Called at the very start of [`init_pools`], BEFORE the pool connects:
 /// `create_if_missing` would otherwise materialise a zero-byte shell for a
 /// fresh vault and connecting writes the WAL header, either of which would
 /// defeat the "only back up an existing vault" guards below. Running first means
-/// the file on disk is exactly the user's pre-boot vault.
+/// the file on disk is exactly the user's pre-boot vault. The pending-migration
+/// probe opens only a short-lived READ-ONLY (`SQLITE_OPEN_READONLY`) connection,
+/// which cannot write or checkpoint, so the on-disk `.db` snapshot semantics are
+/// preserved — a read-only connection makes no committed data change, so copying
+/// the main `.db` file (not `-wal`/`-shm`) remains valid.
 ///
 /// Guards — each a silent skip, never an error:
 /// - `:memory:` / in-memory DBs (tests/benches) — no file to copy.
 /// - the file does not exist yet — a fresh vault has no data to protect.
 /// - a zero-byte file — nothing to protect.
+/// - no migration pending — the DB is already up to date; nothing to protect.
+///
+/// Fail-safe: if the pending state cannot be determined for ANY reason (the
+/// `_sqlx_migrations` table is absent, a query error, an unexpected vault
+/// state), we treat it as PENDING and back up. We never skip a backup when a
+/// migration might run.
 ///
 /// Best-effort by design: a copy failure (permissions, disk full, …) logs a
 /// `warn` and returns — we NEVER abort boot because the safety copy could not be
 /// written. The migration is what must proceed; the backup is a bonus.
 ///
-/// Only the main DB file is copied (not `-wal`/`-shm`). A single timestamped
-/// copy per migration run keeps this simple and bounds accumulation to
-/// one-per-boot rather than unbounded history.
-fn backup_db_before_migration(db_path: &Path) {
+/// Only the main DB file is copied (not `-wal`/`-shm`).
+async fn backup_db_before_migration(db_path: &Path) {
     // In-memory pools (tests/benches) never touch disk.
     if db_path.as_os_str() == ":memory:" {
         return;
@@ -145,6 +167,15 @@ fn backup_db_before_migration(db_path: &Path) {
     if !meta.is_file() || meta.len() == 0 {
         return;
     }
+
+    // #3062 — the whole point: skip the copy when the DB is already fully
+    // migrated. Prune anyway so historical accumulation still shrinks. Fail-safe
+    // returns `true` on any uncertainty, so we never skip when unsure.
+    if !has_pending_migration(db_path).await {
+        prune_old_backups(db_path, MAX_KEPT_BACKUPS);
+        return;
+    }
+
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_secs());
@@ -166,6 +197,124 @@ fn backup_db_before_migration(db_path: &Path) {
             "pre-migration DB backup failed; proceeding with migration anyway"
         ),
     }
+
+    // Bound accumulation regardless of whether the copy above succeeded.
+    prune_old_backups(db_path, MAX_KEPT_BACKUPS);
+}
+
+/// #3062 — is any embedded migration not yet recorded in the vault's
+/// `_sqlx_migrations` table?
+///
+/// The embedded migrator (`sqlx::migrate!("./migrations")`) is the source of
+/// truth for "what should be applied" — the SAME migrator [`init_pools`] runs
+/// below. We compare its up-migration versions against the versions already
+/// recorded in `_sqlx_migrations`; pending means any embedded version is
+/// missing from the applied set.
+///
+/// FAIL-SAFE: any uncertainty returns `true` (treat as pending → back up). That
+/// covers an absent `_sqlx_migrations` table, a query failure, or a file that
+/// cannot be opened read-only. We must never report "not pending" unless we have
+/// positively confirmed every embedded version is already applied.
+///
+/// The probe opens a single READ-ONLY (`SQLITE_OPEN_READONLY`) connection and
+/// closes it immediately. A read-only connection cannot write or checkpoint, so
+/// it does not mutate the vault — the pre-migration `.db` snapshot stays clean.
+async fn has_pending_migration(db_path: &Path) -> bool {
+    use sqlx::sqlite::SqliteConnectOptions;
+    use sqlx::{ConnectOptions, Connection};
+
+    let embedded: std::collections::HashSet<i64> = sqlx::migrate!("./migrations")
+        .iter()
+        .filter(|m| !m.migration_type.is_down_migration())
+        .map(|m| m.version)
+        .collect();
+    // No embedded migrations at all (shouldn't happen) — nothing can be pending.
+    if embedded.is_empty() {
+        return false;
+    }
+
+    // Read-only open: cannot create, write, or checkpoint the vault.
+    let opts = SqliteConnectOptions::new()
+        .filename(db_path)
+        .read_only(true)
+        .create_if_missing(false);
+    // Can't even open it read-only → can't confirm state → fail safe.
+    let Ok(mut conn) = opts.connect().await else {
+        return true;
+    };
+
+    let queried = sqlx::query_scalar::<_, i64>("SELECT version FROM _sqlx_migrations")
+        .fetch_all(&mut conn)
+        .await;
+    // Close the short-lived read-only connection regardless of the query result.
+    let _ = conn.close().await;
+
+    // Missing table / query error → can't confirm state → fail safe.
+    let Ok(versions) = queried else {
+        return true;
+    };
+    let applied: std::collections::HashSet<i64> = versions.into_iter().collect();
+
+    // Pending if any embedded version is not yet applied.
+    embedded.iter().any(|v| !applied.contains(v))
+}
+
+/// #3062 — delete all but the newest `keep` pre-migration backups next to
+/// `db_path`.
+///
+/// Scans the DB file's directory for siblings named
+/// `<db_filename>.pre-migration-*`, orders them by the trailing unix timestamp
+/// (falling back to filesystem mtime, then to keeping them, when the suffix
+/// isn't a plain integer), and removes everything past the newest `keep`.
+///
+/// Best-effort: a delete failure logs a `warn` and continues — pruning must
+/// NEVER abort boot.
+fn prune_old_backups(db_path: &Path, keep: usize) {
+    let Some(dir) = db_path.parent() else {
+        return;
+    };
+    let Some(file_name) = db_path.file_name().and_then(|n| n.to_str()) else {
+        return;
+    };
+    let prefix = format!("{file_name}.pre-migration-");
+
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    // (sort_key, path): sort_key is the trailing unix ts, or mtime as a
+    // fallback, so newest sorts last.
+    let mut backups: Vec<(u64, std::path::PathBuf)> = entries
+        .filter_map(std::result::Result::ok)
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let suffix = name.strip_prefix(&prefix)?;
+            let key = suffix.parse::<u64>().unwrap_or_else(|_| {
+                entry
+                    .metadata()
+                    .and_then(|m| m.modified())
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs())
+            });
+            Some((key, entry.path()))
+        })
+        .collect();
+
+    if backups.len() <= keep {
+        return;
+    }
+    // Ascending by key: oldest first, newest last.
+    backups.sort_by_key(|(key, _)| *key);
+    let remove_count = backups.len() - keep;
+    for (_, path) in backups.into_iter().take(remove_count) {
+        if let Err(e) = std::fs::remove_file(&path) {
+            tracing::warn!(
+                error = %e,
+                backup = %path.display(),
+                "failed to prune old pre-migration DB backup; continuing"
+            );
+        }
+    }
 }
 
 /// Initialize separated read/write SQLite pools with WAL mode.
@@ -180,7 +329,8 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     // #2919 — snapshot the existing on-disk vault before migrations run. No-op
     // for a fresh or in-memory DB. Must precede the pool connect below so a
     // fresh vault's `create_if_missing` shell isn't mistaken for real data.
-    backup_db_before_migration(db_path);
+    // #3062 — gated on an actually-pending migration; prunes old backups.
+    backup_db_before_migration(db_path).await;
 
     // --- Write pool: 2 connections — SQLite serialises at engine level ---
     let write_opts = base_connect_options(db_path);
@@ -389,20 +539,50 @@ mod tests {
         assert_eq!(count, 0);
     }
 
-    /// #2919 — a real, non-empty on-disk vault gets a byte-identical timestamped
-    /// backup written before migration. Revert-sensitive: removing the
-    /// `backup_db_before_migration` copy makes this fail.
+    /// Count `<db_name>.pre-migration-*` siblings in `dir`.
+    fn count_pre_migration_backups(dir: &Path, db_name: &str) -> usize {
+        let prefix = format!("{db_name}.pre-migration-");
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .count()
+    }
+
+    /// Migrate `db_path`, then remove the newest `_sqlx_migrations` record so
+    /// the embedded migrator has exactly one version that is no longer applied —
+    /// i.e. a genuinely pending migration. The deletion is checkpointed into the
+    /// main `.db` (TRUNCATE) so the file is self-contained.
+    async fn make_migration_pending(db_path: &Path) {
+        let pool = init_pool(db_path).await.unwrap();
+        let deleted = sqlx::query(
+            "DELETE FROM _sqlx_migrations \
+             WHERE version = (SELECT MAX(version) FROM _sqlx_migrations)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+        assert_eq!(deleted, 1, "expected to un-apply exactly one migration");
+        sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        drop(pool);
+    }
+
+    /// #3062 — when a migration is genuinely pending, a byte-identical
+    /// timestamped backup of the pre-migration on-disk vault is created.
+    /// Revert-sensitive: removing the `backup_db_before_migration` copy fails.
     #[tokio::test]
-    async fn backup_db_before_migration_copies_existing_file() {
+    async fn backup_created_and_byte_identical_when_migration_pending() {
         let dir = TempDir::new().unwrap();
         let db_path = dir.path().join("notes.db");
-        // A migrated pool is a real, non-empty SQLite file on disk.
-        let pool = init_pool(&db_path).await.unwrap();
-        drop(pool); // release the file handle before copying
+        make_migration_pending(&db_path).await;
         let original = std::fs::read(&db_path).unwrap();
         assert!(!original.is_empty(), "migrated DB must be non-empty");
 
-        backup_db_before_migration(&db_path);
+        backup_db_before_migration(&db_path).await;
 
         // Exactly one timestamped backup sibling, byte-identical to the DB.
         let backups: Vec<_> = std::fs::read_dir(dir.path())
@@ -424,28 +604,98 @@ mod tests {
         assert_eq!(backup_bytes, original, "backup must match the original DB");
     }
 
+    /// #3062 — the core fix: a fully-migrated DB has nothing pending, so NO
+    /// backup is created (this is what stopped the per-boot accumulation).
+    #[tokio::test]
+    async fn backup_skipped_when_no_migration_pending() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        // Fully migrated: every embedded version is recorded in `_sqlx_migrations`.
+        let pool = init_pool(&db_path).await.unwrap();
+        drop(pool);
+
+        backup_db_before_migration(&db_path).await;
+
+        assert_eq!(
+            count_pre_migration_backups(dir.path(), "notes.db"),
+            0,
+            "a fully-migrated DB must NOT produce a pre-migration backup"
+        );
+    }
+
+    /// #3062 — fail-safe: if the pending state can't be determined (a non-empty
+    /// file whose `_sqlx_migrations` table can't be read), the backup MUST still
+    /// happen. Never skip when a migration might run.
+    #[tokio::test]
+    async fn backup_created_when_pending_state_undeterminable() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        // Non-empty, but not a readable sqlx-migrated SQLite DB.
+        std::fs::write(&db_path, b"this is not a valid sqlite database file").unwrap();
+
+        backup_db_before_migration(&db_path).await;
+
+        assert_eq!(
+            count_pre_migration_backups(dir.path(), "notes.db"),
+            1,
+            "fail-safe: an undeterminable vault must still be backed up"
+        );
+    }
+
+    /// #3062 — pruning keeps exactly the newest `MAX_KEPT_BACKUPS` (3) backups by
+    /// trailing timestamp and removes all older ones.
+    #[tokio::test]
+    async fn prune_old_backups_keeps_newest_three() {
+        let dir = TempDir::new().unwrap();
+        let db_path = dir.path().join("notes.db");
+        // Six backups, oldest -> newest by trailing unix timestamp.
+        for ts in [100u64, 200, 300, 400, 500, 600] {
+            let p = dir.path().join(format!("notes.db.pre-migration-{ts}"));
+            std::fs::write(&p, format!("backup-{ts}")).unwrap();
+        }
+
+        prune_old_backups(&db_path, 3);
+
+        let mut remaining: Vec<String> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.starts_with("notes.db.pre-migration-"))
+            .collect();
+        remaining.sort();
+        assert_eq!(
+            remaining,
+            vec![
+                "notes.db.pre-migration-400".to_string(),
+                "notes.db.pre-migration-500".to_string(),
+                "notes.db.pre-migration-600".to_string(),
+            ],
+            "pruning must keep exactly the newest 3 backups by timestamp"
+        );
+    }
+
     /// #2919 — the backup is a safe no-op for the cases that must NOT produce a
     /// copy and must NOT error: a missing file (fresh vault), the `:memory:`
-    /// sentinel, and a zero-byte shell.
+    /// sentinel, and a zero-byte shell. These return before the pending probe.
     #[tokio::test]
     async fn backup_db_before_migration_skips_missing_and_in_memory() {
         let dir = TempDir::new().unwrap();
 
         // Missing file (fresh vault): no backup, no panic.
         let missing = dir.path().join("does-not-exist.db");
-        backup_db_before_migration(&missing);
+        backup_db_before_migration(&missing).await;
         assert!(
             std::fs::read_dir(dir.path()).unwrap().next().is_none(),
             "a missing file must not produce any backup"
         );
 
         // In-memory sentinel path: no backup, no panic.
-        backup_db_before_migration(Path::new(":memory:"));
+        backup_db_before_migration(Path::new(":memory:")).await;
 
         // Zero-byte shell: no backup.
         let empty = dir.path().join("empty.db");
         std::fs::File::create(&empty).unwrap();
-        backup_db_before_migration(&empty);
+        backup_db_before_migration(&empty).await;
         let has_backup = std::fs::read_dir(dir.path())
             .unwrap()
             .filter_map(std::result::Result::ok)

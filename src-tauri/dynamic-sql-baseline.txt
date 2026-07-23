@@ -32,7 +32,7 @@
 2 src-tauri/src/commands/tags.rs
 5 src-tauri/src/dag.rs
 2 src-tauri/src/dag/proptest_b2.rs
-3 src-tauri/src/db/pool.rs
+4 src-tauri/src/db/pool.rs
 37 src-tauri/src/db/recovery.rs
 1 src-tauri/src/domain/block_ops.rs
 3 src-tauri/src/draft.rs
