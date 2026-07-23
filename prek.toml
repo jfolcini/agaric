@@ -876,6 +876,42 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit", "pre-push"]
 
+# Rust: per-(crate, table) raw-write table-ownership baseline guard (#2895).
+# Agaric's SQLite store is written from four crates (app = src-tauri/src,
+# agaric-store, agaric-engine, agaric-sync). Each core table has ONE owner
+# crate; a raw `sqlx` write to a table from a NON-owner crate is how a
+# table's invariants silently drift out of one place. This hook counts raw
+# writes (`INSERT [OR ...] INTO t` / `UPDATE t` / `DELETE FROM t`) per
+# (crate, table) across all four roots and fails when a non-owner pair's
+# count EXCEEDS its checked-in baseline (src-tauri/table-ownership-baseline.txt).
+# Owner-crate writes are unconstrained; existing cross-crate sites are
+# grandfathered, so the ratchet only back-pressures NEW ones. Regenerate the
+# baseline with `python3 scripts/check-table-ownership.py --update-baseline`.
+# Ownership is aggregate, so the guard rescans the whole tree regardless of
+# which files changed. Ownership map/rules: src-tauri/migrations/AGENTS.md.
+[[repos.hooks]]
+id = "check-table-ownership"
+name = "table-ownership baseline guard (#2895)"
+entry = "python3 scripts/check-table-ownership.py"
+language = "system"
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
+stages = ["pre-commit", "pre-push"]
+
+# #2895: the ownership guard must match SQL inside `sqlx::query!("…")` macro
+# STRINGS (unlike the code-token sibling guards) while still ignoring comment
+# prose and #[cfg(test)] regions, and its write-regex must respect word
+# boundaries (`blocks` != `block_links` / `_new_blocks` / `blocks_fts`). This
+# companion hook runs the guard's own fixture suite (`--self-test`) so that
+# match/exclusion contract cannot silently regress. No file args.
+[[repos.hooks]]
+id = "check-table-ownership-self-test"
+name = "table-ownership guard self-test (#2895 write-regex fixtures)"
+entry = "python3 scripts/check-table-ownership.py --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: tauri-specta 10-argument ceiling guard (#1317). The tauri-specta IPC
 # bridge codegen has a HARD 10-argument limit per `#[tauri::command]`, and a
 # `State<'_, T>` param counts toward it (it costs a Rust signature slot even

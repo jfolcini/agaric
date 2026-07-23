@@ -80,6 +80,32 @@ A future "finish the #109 timestamp → INTEGER migration" sweep must skip these
 
 The op log (`op_log`) is the event-sourcing root. Migrations that change schema MUST NOT backfill op log rows for the new schema — that would inject synthetic ops into the user's history. Backfill should happen lazily through normal command paths, OR through a one-time materializer task triggered after the schema is in place.
 
+## Table ownership (which crate may raw-write which table)
+
+Agaric's SQLite store is written from four crates: the Tauri app (`src-tauri/src`, "app"), `agaric-store`, `agaric-engine`, and `agaric-sync`. Each core table has ONE architecturally-authoritative **owner** crate. The rule: **a new raw `sqlx` write site for a table goes in its owning crate; any other crate must call a store/owner function instead of open-coding a raw `INSERT`/`UPDATE`/`DELETE` against a table it does not own.** Cross-crate raw writes are how a table's invariants (cache coherence, op-log append ordering, soft-delete rules) drift out of one place.
+
+| Table | Owner | Notes |
+|---|---|---|
+| `peer_refs` | `store` | Fully store-owned already — the clean reference case (no cross-crate writers). |
+| `pages_cache` | `store` | Derived cache. |
+| `tags_cache` | `store` | Derived cache. |
+| `agenda_cache` | `store` | Derived cache. |
+| `block_links` | `store` | Derived cache. |
+| `page_link_cache` | `store` | Derived cache. |
+| `projected_agenda_cache` | `store` | Derived cache. |
+| `block_tag_refs` | `store` | Derived cache. |
+| `block_tag_inherited` | `store` | Derived cache. |
+| `blocks` | `engine` | Authoritative Loro→SQLite projection writer. **Multi-writer known debt** — app/store/sync also write it today. |
+| `op_log` | `store` | Canonical append primitive in `agaric-store/src/op_log/append.rs`. **Multi-writer known debt** — app/engine/sync also write it today. |
+
+`blocks` and `op_log` are NOT clean single-writer tables — they are multi-writer known debt. The ownership map picks the authoritative writer, but every existing cross-crate site is **grandfathered** in `src-tauri/table-ownership-baseline.txt`. The guard freezes the current floor and only blocks **NEW** cross-crate writes past it; it does not force a refactor of existing sites. The owner map is therefore non-load-bearing today.
+
+**Guard:** the `check-table-ownership` prek hook (`scripts/check-table-ownership.py`) counts raw writes per (crate, table) across all four crate roots — matching SQL inside `sqlx::query!("…")` strings, ignoring comment prose and `#[cfg(test)]` regions — and fails when a non-owner (crate, table) pair's count exceeds its baseline. Because ownership is an aggregate invariant, the guard rescans the whole tree on every run. Scope is the four runtime crates (`src`, `agaric-store`, `agaric-engine`, `agaric-sync`); the `diagnostics` and `fuzz` crates are manually-run dev tooling outside the shipped data path and are deliberately not scanned. Regenerate the baseline (after adding a genuinely-required cross-crate write, or after removing one to lower the floor) with:
+
+```bash
+python3 scripts/check-table-ownership.py --update-baseline
+```
+
 ## Table-rebuild migrations (`_new_<table>` prefix convention)
 
 When a table rebuild is needed (e.g. to add a `FOREIGN KEY … ON DELETE CASCADE` that SQLite cannot add via `ALTER TABLE`), create the replacement as `_new_<table>`, backfill, then rename. Two legacy migrations (0038 `block_drafts_new` and 0044 `materializer_retry_queue_new`) used a suffix form (`<table>_new`) and are exceptions to this rule. From migration 0061 onward the canonical prefix form `_new_<table>` is used; future rebuilds must follow the prefix convention.
