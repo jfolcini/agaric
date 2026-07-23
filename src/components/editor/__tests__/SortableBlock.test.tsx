@@ -258,7 +258,7 @@ const mockUseBlockSwipeActions = vi.fn((..._args: unknown[]) => ({
   handlers: { onTouchStart: vi.fn(), onTouchMove: vi.fn(), onTouchEnd: vi.fn() },
   reset: vi.fn(),
 }))
-vi.mock('@/hooks/useBlockSwipeActions', () => ({
+vi.mock('@/components/block-tree/use-block-swipe-actions', () => ({
   useBlockSwipeActions: (...args: unknown[]) => mockUseBlockSwipeActions(...args),
 }))
 

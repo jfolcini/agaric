@@ -39,7 +39,7 @@ const stableDnDReturn = {
   handleDragCancel: vi.fn(),
 }
 
-vi.mock('@/hooks/useBlockDnD', () => ({
+vi.mock('@/components/block-tree/use-block-dnd', () => ({
   useBlockDnD: (params: { rootParentId: string | null; collapsedVisible: FlatBlock[] }) => {
     capturedDnDParams = params
     return { ...stableDnDReturn, visibleItems: params.collapsedVisible }
@@ -53,7 +53,7 @@ const stableZoomIn = vi.fn()
 const stableZoomOut = vi.fn()
 const stableZoomToRoot = vi.fn()
 
-vi.mock('@/hooks/useBlockZoom', () => ({
+vi.mock('@/components/block-tree/use-block-zoom', () => ({
   useBlockZoom: (_blocks: FlatBlock[], collapseVisible: FlatBlock[]) => ({
     zoomedBlockId: mockZoomedBlockId,
     zoomIn: stableZoomIn,

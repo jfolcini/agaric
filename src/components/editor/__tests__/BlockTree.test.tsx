@@ -176,7 +176,7 @@ let capturedBlockActions:
 // callbacks from `useBlockActions()`, so the mock does the same to mirror
 // The real component's wiring.
 vi.mock('@/components/editor/SortableBlock', async () => {
-  const { useBlockActions } = await import('@/hooks/useBlockActions')
+  const { useBlockActions } = await import('@/components/block-tree/use-block-actions')
   return {
     SortableBlock: (props: {
       blockId: string

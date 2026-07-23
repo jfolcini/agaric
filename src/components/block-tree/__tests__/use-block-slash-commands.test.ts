@@ -1,0 +1,871 @@
+import { invoke } from '@tauri-apps/api/core'
+import { act, renderHook } from '@testing-library/react'
+import type { TFunction } from 'i18next'
+import { createElement, type ReactNode } from 'react'
+import { toast } from 'sonner'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { StoreApi } from 'zustand'
+
+import { makeBlock } from '@/__tests__/fixtures'
+import {
+  mergeSlashHandlerTables,
+  useBlockSlashCommands,
+} from '@/components/block-tree/use-block-slash-commands'
+import { useSlashCommandDate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandDate'
+import { useSlashCommandMarks } from '@/components/block-tree/use-block-slash-commands/useSlashCommandMarks'
+import { useSlashCommandProperty } from '@/components/block-tree/use-block-slash-commands/useSlashCommandProperty'
+import { useSlashCommandStructural } from '@/components/block-tree/use-block-slash-commands/useSlashCommandStructural'
+import { useSlashCommandTemplate } from '@/components/block-tree/use-block-slash-commands/useSlashCommandTemplate'
+import { logger } from '@/lib/logger'
+import { _resetPropertyKeysCacheForTest } from '@/lib/property-keys-cache'
+import { addRecentCommand, getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
+import {
+  RECENT_SLASH_CATEGORY,
+  SLASH_COMMANDS,
+  searchPropertyKeys,
+  searchSlashCommands,
+} from '@/lib/slash-commands'
+import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
+import { useUndoStore } from '@/stores/undo'
+
+vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
+vi.mock('@/lib/logger', () => ({
+  logger: {
+    debug: vi.fn(),
+    info: vi.fn(),
+    warn: vi.fn(),
+    error: vi.fn(),
+  },
+}))
+vi.mock('@/editor/markdown-serializer', () => ({
+  serialize: vi.fn(() => 'content'),
+}))
+vi.mock('@/lib/repeat-utils', () => ({
+  formatRepeatLabel: vi.fn((v: string) => v),
+}))
+vi.mock('@/lib/template-utils', () => ({
+  insertTemplateBlocks: vi.fn(async () => ['NEW_1']),
+  loadTemplatePagesWithPreview: vi.fn(async () => []),
+}))
+vi.mock('@/components/editor/BlockTree', () => ({
+  guessMimeType: vi.fn(() => 'application/octet-stream'),
+}))
+
+const mockedInvoke = vi.mocked(invoke)
+
+let pageStore: StoreApi<PageBlockState>
+const wrapper = ({ children }: { children: ReactNode }) =>
+  createElement(PageBlockContext.Provider, { value: pageStore }, children)
+
+const originalOnNewAction = useUndoStore.getState().onNewAction
+afterEach(() => {
+  useUndoStore.setState({
+    ...useUndoStore.getState(),
+    onNewAction: originalOnNewAction,
+    pages: new Map(),
+  })
+})
+
+function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockSlashCommands>[0]>) {
+  return {
+    focusedBlockId: 'BLOCK_1' as string | null,
+    rootParentId: 'PAGE_1' as string | null,
+    pageStore,
+    rovingEditor: {
+      editor: null,
+      mount: vi.fn() as unknown as (blockId: string, markdown: string) => void,
+    },
+    datePickerCursorPos: { current: undefined as number | undefined },
+    setDatePickerMode: vi.fn(),
+    setDatePickerOpen: vi.fn(),
+    blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
+    load: vi.fn(async () => {}),
+    t: vi.fn((key: string) => key) as unknown as TFunction,
+    openQueryBuilder: vi.fn(),
+    openEmojiPicker: vi.fn(),
+    openPropertyDrawer: vi.fn(),
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.clearAllMocks()
+  // #1105 — the slash MRU is localStorage-backed; clear it so the
+  // empty-query test sees an empty recents band and cross-test recents
+  // never leak.
+  localStorage.clear()
+  // #2468 — migrated mutations resolve `WithOps` envelopes (`op_refs`); give
+  // them wire-faithful defaults so the handlers' undo-ref capture doesn't
+  // trip on an `undefined` response.
+  mockedInvoke.mockImplementation(async (cmd: string) => {
+    if (cmd === 'edit_block') {
+      return { id: 'BLOCK_1', content: '', op_refs: [{ device_id: 'dev1', seq: 3 }] }
+    }
+    if (cmd === 'set_property') return { id: 'BLOCK_1', op_refs: [{ device_id: 'dev1', seq: 1 }] }
+    if (cmd === 'delete_property') {
+      return { block_id: 'BLOCK_1', key: 'repeat', op_refs: [{ device_id: 'dev1', seq: 2 }] }
+    }
+    return undefined
+  })
+  pageStore = createPageBlockStore('PAGE_1')
+  pageStore.setState({
+    blocks: [makeBlock({ id: 'BLOCK_1', content: 'hello', parent_id: 'PAGE_1' })],
+  })
+})
+
+describe('SLASH_COMMANDS', () => {
+  it('contains expected base commands', () => {
+    const ids = SLASH_COMMANDS.map((c) => c.id)
+    expect(ids).toContain('todo')
+    expect(ids).toContain('done')
+    expect(ids).toContain('date')
+    expect(ids).toContain('template')
+    expect(ids).toContain('attach')
+  })
+
+  it('all commands have category and icon metadata', () => {
+    for (const cmd of SLASH_COMMANDS) {
+      expect(cmd.category).toBeTruthy()
+      expect(cmd.icon).toBeTruthy()
+    }
+  })
+})
+
+describe('searchSlashCommands', () => {
+  it('returns all base commands for empty query (no recents recorded)', () => {
+    // #1105 — with an empty MRU the band is omitted, so empty `/` still
+    // yields exactly the full base catalog (re-export shares the lib MRU,
+    // localStorage is cleared in beforeEach).
+    const results = searchSlashCommands('')
+    expect(results.length).toBe(SLASH_COMMANDS.length)
+  })
+
+  it('prepends a Recent band of most-recently-run commands on empty query (#1105)', () => {
+    // Record two slash runs into the slash MRU (most-recent first).
+    addRecentCommand('done', RECENT_SLASH_PREFIX)
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('')
+
+    // Band first, tagged with the synthetic Recent category, MRU order.
+    expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
+    expect(results[1]).toMatchObject({ id: 'done', category: RECENT_SLASH_CATEGORY })
+    // Full base catalog still follows (everything stays reachable).
+    expect(results.length).toBe(SLASH_COMMANDS.length + 2)
+    const tail = results.slice(2)
+    expect(tail.map((r) => r.id)).toEqual(SLASH_COMMANDS.map((c) => c.id))
+  })
+
+  it('skips stale recent ids absent from the base catalog (#1105)', () => {
+    addRecentCommand('todo', RECENT_SLASH_PREFIX)
+    // `table:3:3` is an expanded sub-option, not a base SLASH_COMMANDS id.
+    addRecentCommand('table:3:3', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('')
+
+    // Only the base id surfaces in the band; the stale id is dropped.
+    expect(results[0]).toMatchObject({ id: 'todo', category: RECENT_SLASH_CATEGORY })
+    expect(results.length).toBe(SLASH_COMMANDS.length + 1)
+  })
+
+  it('omits the Recent band for a typed query (#1105)', () => {
+    addRecentCommand('done', RECENT_SLASH_PREFIX)
+
+    const results = searchSlashCommands('todo')
+
+    // Normal filtered list; no Recent-category rows injected.
+    expect(results.some((r) => r.category === RECENT_SLASH_CATEGORY)).toBe(false)
+    expect(results[0]?.id).toBe('todo')
+  })
+
+  it('filters by query string', () => {
+    const results = searchSlashCommands('todo')
+    expect(results.some((r) => r.id === 'todo')).toBe(true)
+    // With fuzzy matching, top results should include 'todo'
+    expect(results[0]?.id).toBe('todo')
+  })
+
+  it('includes priority commands when query matches', () => {
+    const results = searchSlashCommands('priority')
+    expect(results.some((r) => r.id === 'priority-high')).toBe(true)
+    expect(results.some((r) => r.id === 'priority-medium')).toBe(true)
+    expect(results.some((r) => r.id === 'priority-low')).toBe(true)
+  })
+
+  it('includes heading commands when query matches', () => {
+    const results = searchSlashCommands('heading')
+    expect(results.some((r) => r.id === 'h1')).toBe(true)
+    expect(results.some((r) => r.id === 'h6')).toBe(true)
+  })
+
+  it('includes repeat commands when query matches', () => {
+    const results = searchSlashCommands('repeat')
+    expect(results.some((r) => r.id === 'repeat-daily')).toBe(true)
+    expect(results.some((r) => r.id === 'repeat-remove')).toBe(true)
+  })
+
+  it('includes effort commands when query matches', () => {
+    const results = searchSlashCommands('effort')
+    expect(results.some((r) => r.id === 'effort-1h')).toBe(true)
+  })
+
+  it('includes assignee commands when query matches', () => {
+    const results = searchSlashCommands('assignee')
+    expect(results.some((r) => r.id === 'assignee-me')).toBe(true)
+  })
+
+  it('includes location commands when query matches', () => {
+    const results = searchSlashCommands('location')
+    expect(results.some((r) => r.id === 'location-office')).toBe(true)
+  })
+
+  it('handles table NxM pattern', () => {
+    const results = searchSlashCommands('table 4x6')
+    expect(results.some((r) => r.id === 'table:4:6')).toBe(true)
+    expect(results.every((r) => r.id !== 'table')).toBe(true)
+  })
+
+  it('returns empty array-like for non-matching query', () => {
+    const results = searchSlashCommands('zzzzzzzznonexistent')
+    expect(results.length).toBe(0)
+  })
+
+  it('filtered results preserve category and icon metadata', () => {
+    const results = searchSlashCommands('todo')
+    const todoItem = results.find((r) => r.id === 'todo')
+    expect(todoItem).toBeDefined()
+    expect(todoItem?.category).toBe('slashCommand.categories.tasks')
+    expect(todoItem?.icon).toBeTruthy()
+  })
+
+  it('dynamic table command includes category and icon', () => {
+    const results = searchSlashCommands('table 3x3')
+    const tableItem = results.find((r) => r.id === 'table:3:3')
+    expect(tableItem).toBeDefined()
+    expect(tableItem?.category).toBe('slashCommand.categories.structure')
+    expect(tableItem?.icon).toBeTruthy()
+  })
+
+  // -- Fuzzy matching --------------------------------------------------
+
+  it('fuzzy matches non-substring queries', () => {
+    // "tdo" is not a substring of "TODO — Mark as to-do" but fuzzy should match
+    const results = searchSlashCommands('tdo')
+    expect(results.some((r) => r.id === 'todo')).toBe(true)
+  })
+
+  it('fuzzy matches across command groups', () => {
+    // "prihi" should fuzzy match "PRIORITY 1 — Set high priority"
+    const results = searchSlashCommands('pri')
+    expect(results.some((r) => r.id === 'priority-high')).toBe(true)
+  })
+})
+
+describe('searchPropertyKeys', () => {
+  // `searchPropertyKeys` now reads through the
+  // shared module-level cache in `src/lib/property-keys-cache.ts`. Each
+  // test below provides a different mocked IPC payload, so the cache
+  // must be reset between tests to force a fresh fetch.
+  beforeEach(() => {
+    _resetPropertyKeysCacheForTest()
+  })
+  afterEach(() => {
+    _resetPropertyKeysCacheForTest()
+  })
+
+  it('returns matching property keys', async () => {
+    mockedInvoke.mockResolvedValueOnce(['effort', 'assignee', 'location'])
+    const results = await searchPropertyKeys('eff')
+    expect(results).toEqual([{ id: 'effort', label: 'effort' }])
+  })
+
+  it('returns all keys for empty query', async () => {
+    mockedInvoke.mockResolvedValueOnce(['effort', 'assignee'])
+    const results = await searchPropertyKeys('')
+    expect(results).toHaveLength(2)
+  })
+
+  it('returns empty array on error', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const results = await searchPropertyKeys('x')
+    expect(results).toEqual([])
+  })
+})
+
+describe('useBlockSlashCommands handleSlashCommand', () => {
+  it('sets todo state for /TODO command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state', {
+      blockId: 'BLOCK_1',
+      state: 'TODO',
+    })
+  })
+
+  it('sets priority for /priority-high command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'priority-high', label: 'PRIORITY 1' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_priority', {
+      blockId: 'BLOCK_1',
+      level: '1',
+    })
+  })
+
+  it('records the run into the slash MRU (#1105)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    expect(getRecentCommands(RECENT_SLASH_PREFIX)).toHaveLength(0)
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    const recents = getRecentCommands(RECENT_SLASH_PREFIX)
+    expect(recents[0]?.id).toBe('todo')
+  })
+
+  it('does not record into the MRU when focusedBlockId is null (#1105)', async () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(getRecentCommands(RECENT_SLASH_PREFIX)).toHaveLength(0)
+  })
+
+  it('opens date picker for /date command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'date', label: 'DATE' })
+    })
+
+    expect(params.setDatePickerMode).toHaveBeenCalledWith('date')
+    expect(params.setDatePickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('opens date picker for /due command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'due', label: 'DUE' })
+    })
+
+    expect(params.setDatePickerMode).toHaveBeenCalledWith('due')
+    expect(params.setDatePickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('opens date picker for /schedule command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'schedule', label: 'SCHEDULED' })
+    })
+
+    expect(params.setDatePickerMode).toHaveBeenCalledWith('schedule')
+    expect(params.setDatePickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('does nothing when focusedBlockId is null', async () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+
+  it('shows error toast on set_todo_state failure', async () => {
+    mockedInvoke.mockRejectedValueOnce(new Error('fail'))
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(vi.mocked(toast.error)).toHaveBeenCalledWith('blockTree.setTaskStateFailed')
+  })
+
+  it('sets effort property for /effort command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'effort-1h', label: 'EFFORT 1h' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'set_property',
+      expect.objectContaining({
+        blockId: 'BLOCK_1',
+        key: 'effort',
+        value: expect.objectContaining({ value_text: '1h' }),
+      }),
+    )
+  })
+
+  it('sets repeat property for /repeat command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'repeat-daily', label: 'REPEAT DAILY' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'set_property',
+      expect.objectContaining({
+        blockId: 'BLOCK_1',
+        key: 'repeat',
+        value: expect.objectContaining({ value_text: 'daily' }),
+      }),
+    )
+  })
+
+  it('removes repeat for repeat-remove command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'repeat-remove', label: 'REPEAT REMOVE' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+      blockId: 'BLOCK_1',
+      key: 'repeat',
+    })
+  })
+
+  it('opens repeat-until date picker', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'repeat-until', label: 'REPEAT UNTIL' })
+    })
+
+    expect(params.setDatePickerMode).toHaveBeenCalledWith('repeat-until')
+    expect(params.setDatePickerOpen).toHaveBeenCalledWith(true)
+  })
+
+  it('sets repeat limit for repeat-limit-5 command', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'repeat-limit-5', label: 'REPEAT LIMIT 5' })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith(
+      'set_property',
+      expect.objectContaining({
+        blockId: 'BLOCK_1',
+        key: 'repeat-count',
+        value: expect.objectContaining({ value_num: 5 }),
+      }),
+    )
+  })
+
+  it('removes repeat limit for repeat-limit-remove', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({
+        id: 'repeat-limit-remove',
+        label: 'REPEAT LIMIT REMOVE',
+      })
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_property', {
+      blockId: 'BLOCK_1',
+      key: 'repeat-count',
+    })
+  })
+
+  // HandleAttach wraps `input.click()` in try/catch so that platforms
+  // where the synthetic click is rejected (lost user gesture, blocked
+  // programmatic file dialog, etc.) surface a toast + logger.warn instead of
+  // letting the exception bubble out as an unhandled rejection.
+  it('surfaces toast + logger.warn when input.click() throws', async () => {
+    const originalClick = HTMLInputElement.prototype.click
+    const clickMock = vi.fn(() => {
+      throw new Error('mock click')
+    })
+    Object.defineProperty(HTMLInputElement.prototype, 'click', {
+      value: clickMock,
+      configurable: true,
+      writable: true,
+    })
+
+    try {
+      const params = makeDefaultParams()
+      const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+      await act(async () => {
+        await result.current.handleSlashCommand({ id: 'attach', label: 'ATTACH' })
+      })
+
+      expect(clickMock).toHaveBeenCalled()
+      expect(vi.mocked(toast.error)).toHaveBeenCalledWith('attachments.openFileDialogFailed')
+      expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+        'useBlockSlashCommands',
+        'input.click failed',
+        undefined,
+        expect.any(Error),
+      )
+    } finally {
+      Object.defineProperty(HTMLInputElement.prototype, 'click', {
+        value: originalClick,
+        configurable: true,
+        writable: true,
+      })
+    }
+  })
+})
+
+describe('useBlockSlashCommands handleCheckboxSyntax', () => {
+  it('sets TODO state optimistically', () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    act(() => {
+      result.current.handleCheckboxSyntax('TODO')
+    })
+
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    expect(block?.todo_state).toBe('TODO')
+  })
+
+  it('sets DONE state optimistically', () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    act(() => {
+      result.current.handleCheckboxSyntax('DONE')
+    })
+
+    const block = pageStore.getState().blocks.find((b) => b.id === 'BLOCK_1')
+    expect(block?.todo_state).toBe('DONE')
+  })
+
+  it('does nothing when focusedBlockId is null', () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    act(() => {
+      result.current.handleCheckboxSyntax('TODO')
+    })
+
+    expect(mockedInvoke).not.toHaveBeenCalled()
+  })
+})
+
+describe('useBlockSlashCommands handleTemplateSelect', () => {
+  it('closes template picker on select', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleTemplateSelect('TEMPLATE_1')
+    })
+
+    expect(result.current.templatePickerOpen).toBe(false)
+  })
+
+  it('does nothing when focusedBlockId is null', async () => {
+    const params = makeDefaultParams({ focusedBlockId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleTemplateSelect('TEMPLATE_1')
+    })
+
+    expect(params.load).not.toHaveBeenCalled()
+  })
+})
+
+describe('useBlockSlashCommands undo notifications', () => {
+  const onNewActionSpy = vi.fn()
+
+  beforeEach(() => {
+    onNewActionSpy.mockClear()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+  })
+
+  it('calls onNewAction after successful todo state set', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
+  })
+
+  it('does not call onNewAction when rootParentId is null', async () => {
+    const params = makeDefaultParams({ rootParentId: null })
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+
+    expect(onNewActionSpy).not.toHaveBeenCalled()
+  })
+
+  // Regression: pre-fix, applyContentEdit (used by heading /
+  // callout / numbered-list / divider slash commands) reached `pageStore`
+  // directly without firing notifyUndo, so the redo stack stayed
+  // uncleared and Cmd+Shift+Z after a heading slash command would
+  // resurrect the wrong content. Each of these slash commands routes
+  // through the same applyContentEdit helper; one assertion per command
+  // family pins the contract. Divider is intentionally NOT tested
+  // separately — it also routes through applyContentEdit with identical
+  // redo-stack semantics, but its handler replaces the entire content
+  // with '---' rather than editing it, so the contract proven by the 3
+  // tests below applies transitively to divider.
+  it('heading slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'h1', label: 'Heading 1' })
+    })
+
+    // #2468 — editBlock-backed commands forward the edit's op_refs.
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
+  })
+
+  it('callout slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'callout-info', label: 'Info callout' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
+  })
+
+  it('numbered-list slash command calls onNewAction (clears redo stack)', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockSlashCommands(params), { wrapper })
+
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'numbered-list', label: 'Numbered list' })
+    })
+
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1', [{ device_id: 'dev1', seq: 3 }])
+  })
+})
+
+describe('useBlockSlashCommands handleSlashCommand stability (#)', () => {
+  it('keeps handleSlashCommand identity stable when rootParentId/t/rovingEditor change', () => {
+    // rootParentId, t, rovingEditor are all accessed via refs inside the callback
+    // (not listed in deps). Changing these props must NOT rebuild the callback.
+    const params1 = makeDefaultParams({ rootParentId: 'PAGE_1' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const firstRef = result.current.handleSlashCommand
+
+    // Change rootParentId (via ref)
+    const params2 = makeDefaultParams({ rootParentId: 'PAGE_2' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+
+    // Change t (via ref)
+    const params3 = makeDefaultParams({
+      rootParentId: 'PAGE_2',
+      t: vi.fn((k: string) => k) as unknown as TFunction,
+    })
+    rerender({ params: params3 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+
+    // Change rovingEditor (via ref)
+    const params4 = makeDefaultParams({
+      rootParentId: 'PAGE_2',
+      rovingEditor: {
+        editor: null,
+        mount: vi.fn() as unknown as (blockId: string, markdown: string) => void,
+      },
+    })
+    rerender({ params: params4 })
+    expect(result.current.handleSlashCommand).toBe(firstRef)
+  })
+
+  it('rebuilds handleSlashCommand only when focusedBlockId changes (the real dep)', () => {
+    const params1 = makeDefaultParams({ focusedBlockId: 'BLOCK_A' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const firstRef = result.current.handleSlashCommand
+
+    const params2 = makeDefaultParams({ focusedBlockId: 'BLOCK_B' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).not.toBe(firstRef)
+  })
+
+  it('reads the latest rootParentId via ref even though it is not in deps', async () => {
+    // onNewAction is called with the latest rootParentId, proving the ref
+    // captures the current value without rebuilding the callback.
+    const onNewActionSpy = vi.fn()
+    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
+
+    const params1 = makeDefaultParams({ rootParentId: 'PAGE_INITIAL' })
+    const { result, rerender } = renderHook(
+      ({ params }: { params: ReturnType<typeof makeDefaultParams> }) =>
+        useBlockSlashCommands(params),
+      { wrapper, initialProps: { params: params1 } },
+    )
+    const callbackRef = result.current.handleSlashCommand
+
+    // Update rootParentId — callback identity should be stable.
+    const params2 = makeDefaultParams({ rootParentId: 'PAGE_UPDATED' })
+    rerender({ params: params2 })
+    expect(result.current.handleSlashCommand).toBe(callbackRef)
+
+    // Invoking the callback should use the LATEST rootParentId (via ref).
+    await act(async () => {
+      await result.current.handleSlashCommand({ id: 'todo', label: 'TODO' })
+    })
+    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_UPDATED')
+  })
+})
+
+// D-4 — dispatcher regression test. Asserts that every PickerItem id
+// produced by `SLASH_COMMANDS` (plus the dynamic `table:N:M` and the `h1..h6`
+// heading family) resolves to exactly one handler in the merged dispatch
+// table — no missing kinds, no exact-key collisions across sub-hooks, no
+// prefix double-routing. Pins the cross-sub-hook contract that the four
+// category hooks together cover the full command catalog.
+describe('useBlockSlashCommands dispatcher coverage (# D-4)', () => {
+  function getMergedTables() {
+    const { result } = renderHook(
+      () => {
+        const template = useSlashCommandTemplate({
+          focusedBlockId: 'BLOCK_1',
+          rootParentId: 'PAGE_1',
+          blocks: [],
+          load: async () => {},
+          t: ((k: string) => k) as unknown as TFunction,
+        })
+        const date = useSlashCommandDate()
+        const property = useSlashCommandProperty()
+        const structural = useSlashCommandStructural()
+        const marks = useSlashCommandMarks()
+        return mergeSlashHandlerTables(template.tables, date, property, structural, marks)
+      },
+      { wrapper },
+    )
+    return result.current
+  }
+
+  it('every SLASH_COMMANDS id resolves to a handler', () => {
+    const tables = getMergedTables()
+    // `effort` and `repeat` are intentional menu-expand markers in
+    // `SLASH_COMMANDS` — picking them surfaces the sub-options
+    // (`effort-15m`, `repeat-daily`, …) via `searchSlashCommands`. The
+    // bare ids carry no direct handler, mirroring the pre-D-4 dispatch
+    // table. Excluded from the coverage assertion below.
+    const MENU_EXPAND_IDS = new Set(['effort', 'repeat'])
+    for (const cmd of SLASH_COMMANDS) {
+      if (MENU_EXPAND_IDS.has(cmd.id)) continue
+      const exactHit = tables.exact[cmd.id]
+      const prefixHit = tables.prefix.find(([p]) => cmd.id.startsWith(p))
+      expect(Boolean(exactHit) || Boolean(prefixHit), `no handler for /${cmd.id}`).toBe(true)
+    }
+  })
+
+  it('h1..h6 are all registered as exact handlers', () => {
+    const tables = getMergedTables()
+    for (let n = 1; n <= 6; n++) {
+      expect(tables.exact[`h${n}`], `missing h${n}`).toBeDefined()
+    }
+  })
+
+  it('dynamic table:N:M id matches the table prefix', () => {
+    const tables = getMergedTables()
+    const hit = tables.prefix.find(([p]) => 'table:3:4'.startsWith(p))
+    expect(hit?.[0]).toBe('table:')
+  })
+
+  it('exact handlers are disjoint across sub-hooks (no double-registered kind)', () => {
+    // Re-merging the same tables would throw via mergeSlashHandlerTables's
+    // duplicate-key guard, but we also assert it directly so the test
+    // narrates the contract.
+    const seen = new Set<string>()
+    const { result } = renderHook(
+      () => ({
+        template: useSlashCommandTemplate({
+          focusedBlockId: 'BLOCK_1',
+          rootParentId: 'PAGE_1',
+          blocks: [],
+          load: async () => {},
+          t: ((k: string) => k) as unknown as TFunction,
+        }).tables,
+        date: useSlashCommandDate(),
+        property: useSlashCommandProperty(),
+        structural: useSlashCommandStructural(),
+        marks: useSlashCommandMarks(),
+      }),
+      { wrapper },
+    )
+    for (const tbl of [
+      result.current.template,
+      result.current.date,
+      result.current.property,
+      result.current.structural,
+      result.current.marks,
+    ]) {
+      for (const key of Object.keys(tbl.exact)) {
+        expect(seen.has(key), `duplicate exact handler for /${key}`).toBe(false)
+        seen.add(key)
+      }
+    }
+  })
+
+  it('mergeSlashHandlerTables throws on duplicate exact keys', () => {
+    expect(() =>
+      mergeSlashHandlerTables(
+        { exact: { todo: () => undefined }, prefix: [] },
+        { exact: { todo: () => undefined }, prefix: [] },
+      ),
+    ).toThrow(/duplicate exact handler/)
+  })
+
+  it('prefix order is preserved in the merge (specificity wins)', () => {
+    // `repeat-limit-` must be matched before the broader `repeat-` prefix.
+    const tables = getMergedTables()
+    const repeatLimitIdx = tables.prefix.findIndex(([p]) => p === 'repeat-limit-')
+    const repeatIdx = tables.prefix.findIndex(([p]) => p === 'repeat-')
+    expect(repeatLimitIdx).toBeGreaterThanOrEqual(0)
+    expect(repeatIdx).toBeGreaterThanOrEqual(0)
+    expect(repeatLimitIdx).toBeLessThan(repeatIdx)
+  })
+})

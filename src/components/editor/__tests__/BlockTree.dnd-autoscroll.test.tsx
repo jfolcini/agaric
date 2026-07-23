@@ -70,7 +70,7 @@ const stableDnDReturn = {
   handleDragCancel: vi.fn(),
 }
 
-vi.mock('@/hooks/useBlockDnD', () => ({
+vi.mock('@/components/block-tree/use-block-dnd', () => ({
   useBlockDnD: (params: { collapsedVisible: FlatBlock[] }) => ({
     ...stableDnDReturn,
     activeId: mockDnDActiveId,

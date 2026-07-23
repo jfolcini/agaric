@@ -8,7 +8,7 @@
  * split (`add-filter/vocab.ts`).
  */
 
-import type { BlockActions } from '@/hooks/useBlockActions'
+import type { BlockActions } from '@/components/block-tree/use-block-actions'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
 
 export interface BlockContextMenuProps {

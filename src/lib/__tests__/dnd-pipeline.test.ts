@@ -20,7 +20,7 @@ import { act, renderHook } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { useBlockZoom } from '@/hooks/useBlockZoom'
+import { useBlockZoom } from '@/components/block-tree/use-block-zoom'
 import { computeDropIndex, type FlatBlock, getProjection, SENTINEL_ID } from '@/lib/tree-utils'
 
 const INDENT = 24

@@ -113,7 +113,7 @@ All five route through **SuggestionList**, registered as TipTap extensions:
 
 ### Slash commands
 
-Composed from category sub-hooks under `src/hooks/useBlockSlashCommands/` plus a merge step. To add a command: drop it in the matching sub-hook, add the i18n key, and wire any new handler.
+Composed from category sub-hooks under `src/components/block-tree/use-block-slash-commands/` plus a merge step. To add a command: drop it in the matching sub-hook, add the i18n key, and wire any new handler.
 
 ### Drag-and-drop
 

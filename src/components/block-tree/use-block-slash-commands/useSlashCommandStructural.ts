@@ -1,0 +1,164 @@
+/**
+ * Structural slash commands — anything that changes the block's content
+ * structure: headings, callouts, code/quote blocks, lists, dividers,
+ * tables, link/tag/query inserts.
+ *
+ * Heading commands (`h1`..`h6`) match a regex outside the prefix table —
+ * we expose them here as a single prefix entry whose handler parses the
+ * level off `item.id`. This keeps the dispatcher walk uniform across all
+ * sub-hooks.
+ */
+
+import { useMemo } from 'react'
+
+import {
+  applyContentEdit,
+  readCurrentContent,
+} from '@/components/block-tree/use-block-slash-commands/helpers'
+import type {
+  SlashCommandContext,
+  SlashHandlerTables,
+} from '@/components/block-tree/use-block-slash-commands/types'
+import type { PickerItem } from '@/editor/SuggestionList'
+import { toggleCodeBlockSafely } from '@/editor/toggle-code-block-safely'
+import { serializeBlockSubtree } from '@/lib/block-clipboard'
+import { convertBlockContent, turnIdToBlockType } from '@/lib/block-type-convert'
+import { logger } from '@/lib/logger'
+import { notify } from '@/lib/notify'
+
+async function handleHeading(ctx: SlashCommandContext, level: number): Promise<void> {
+  const stripped = readCurrentContent(ctx).replace(/^#{1,6}\s/, '')
+  const newContent = `${'#'.repeat(level)} ${stripped}`
+  await applyContentEdit(ctx, newContent, 'blockTree.setHeadingFailed')
+}
+
+async function handleCallout(ctx: SlashCommandContext, calloutType: string): Promise<void> {
+  const newContent = `> [!${calloutType.toUpperCase()}] ${readCurrentContent(ctx)}`
+  await applyContentEdit(ctx, newContent, 'slash.calloutFailed')
+}
+
+async function handleNumberedList(ctx: SlashCommandContext): Promise<void> {
+  const newContent = `1. ${readCurrentContent(ctx)}`
+  await applyContentEdit(ctx, newContent, 'slash.numberedListFailed')
+}
+
+async function handleBulletList(ctx: SlashCommandContext): Promise<void> {
+  const newContent = `- ${readCurrentContent(ctx)}`
+  await applyContentEdit(ctx, newContent, 'slash.bulletListFailed')
+}
+
+/**
+ * #264 — `/turn <type>` converts the current block to the target block type,
+ * reusing the shared `convertBlockContent` so the conversion logic is not
+ * duplicated across the slash menu and the context-menu "Turn into" group.
+ */
+async function handleTurnInto(ctx: SlashCommandContext, item: PickerItem): Promise<void> {
+  const type = turnIdToBlockType(item.id)
+  if (!type) return
+  const newContent = convertBlockContent(readCurrentContent(ctx), type)
+  await applyContentEdit(ctx, newContent, 'slash.turnIntoFailed')
+}
+
+async function handleDivider(ctx: SlashCommandContext): Promise<void> {
+  await applyContentEdit(ctx, '---', 'slash.dividerFailed')
+}
+
+/**
+ * #976 (item 13) — `/duplicate` clones the current block + its subtree and
+ * inserts the copy right after the original at the same depth. Reuses the exact
+ * `serializeBlockSubtree` → `pasteBlocks` path the context-menu "Duplicate" row
+ * (`BlockTree.handleDuplicate`) and the `duplicateBlock` keyboard binding fire —
+ * no separate clone op.
+ */
+async function handleDuplicate(ctx: SlashCommandContext): Promise<void> {
+  const state = ctx.pageStore.getState()
+  if (!state.blocksById.has(ctx.blockId)) return
+  const markdown = serializeBlockSubtree(state.blocks, [ctx.blockId])
+  if (markdown.length === 0) return
+  try {
+    await state.pasteBlocks(ctx.blockId, markdown)
+  } catch (err) {
+    logger.error('useSlashCommandStructural', 'Failed to duplicate block', {
+      blockId: ctx.blockId,
+      error: err,
+    })
+    notify.error(ctx.t('blockTree.duplicateFailed'))
+  }
+}
+
+function handleTable(ctx: SlashCommandContext, id: string, withHeaderRow = true): void {
+  let rows = 3
+  let cols = 3
+  // Accept dimensions from either `table:N:M` or `table-no-header:N:M`.
+  const dimMatch = id.match(/^table(?:-no-header)?:(\d+):(\d+)$/)
+  if (dimMatch) {
+    rows = Number.parseInt(dimMatch[1] as string, 10)
+    cols = Number.parseInt(dimMatch[2] as string, 10)
+  }
+  ctx.rovingEditor.editor?.chain().focus().insertTable({ rows, cols, withHeaderRow }).run()
+}
+
+export function useSlashCommandStructural(): SlashHandlerTables {
+  return useMemo<SlashHandlerTables>(() => {
+    // h1..h6 — six exact entries beat carrying a regex through the dispatch
+    // table. Keeps `SlashHandlerTables` as a plain `Record + prefix list`
+    // shape with no special cases.
+    const headingExact: Record<string, (ctx: SlashCommandContext) => Promise<void>> = {}
+    for (let level = 1; level <= 6; level++) {
+      headingExact[`h${level}`] = (ctx) => handleHeading(ctx, level)
+    }
+
+    return {
+      exact: {
+        ...headingExact,
+        link: (ctx) => {
+          ctx.rovingEditor.editor?.chain().focus().insertContent('[[').run()
+        },
+        'block-ref': (ctx) => {
+          // #213 PR 4 — insert the `((` trigger to open the BlockRefPicker
+          // (mirrors the `link` handler's `[[`).
+          ctx.rovingEditor.editor?.chain().focus().insertContent('((').run()
+        },
+        tag: (ctx) => {
+          ctx.rovingEditor.editor?.chain().focus().insertContent('@').run()
+        },
+        code: (ctx) => {
+          const editor = ctx.rovingEditor.editor
+          if (editor) toggleCodeBlockSafely(editor)
+        },
+        quote: (ctx) => {
+          ctx.rovingEditor.editor?.chain().focus().toggleBlockquote().run()
+        },
+        // #215 — open the visual builder pre-populated instead of dumping raw
+        // `{{query …}}` syntax; the builder inserts the generated expression.
+        query: (ctx) => ctx.openQueryBuilder(),
+        // #286 — open the browse-grid emoji picker; on select it inserts the
+        // chosen native emoji at the caret (same active-editor insertContent
+        // path the command palette uses for `[[Page]]` links).
+        emoji: (ctx) => ctx.openEmojiPicker(),
+        callout: (ctx) => handleCallout(ctx, 'info'),
+        // #264 — the bare `/turn` parent is a label that surfaces the
+        // `turn-*` conversion options inline in the menu; selecting it
+        // directly is a no-op (the user picks a concrete target type).
+        turn: () => {},
+        'numbered-list': (ctx) => handleNumberedList(ctx),
+        'bullet-list': (ctx) => handleBulletList(ctx),
+        // #976 (item 13) — duplicate the current block + its subtree.
+        duplicate: (ctx) => handleDuplicate(ctx),
+        divider: (ctx) => handleDivider(ctx),
+        table: (ctx) => handleTable(ctx, 'table'),
+        // #215 — header-row opt-out.
+        'table-no-header': (ctx) => handleTable(ctx, 'table-no-header', false),
+      },
+      prefix: [
+        // Order matters: dynamic-dimension `table:NxM` is matched before
+        // the generic `callout-` prefix.
+        ['table:', (ctx, item) => handleTable(ctx, item.id)],
+        // #264 — `turn-*` block-type conversions. Disjoint from the other
+        // prefixes; grouped here with the structural commands.
+        ['turn-', (ctx, item) => handleTurnInto(ctx, item)],
+        ['callout-', (ctx, item) => handleCallout(ctx, item.id.replace('callout-', ''))],
+      ],
+    }
+  }, [])
+}

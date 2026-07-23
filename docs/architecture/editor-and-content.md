@@ -72,7 +72,7 @@ Edge cases the contract acknowledges:
 Two hooks with similar names; the split matters:
 
 - `src/editor/use-block-keyboard.ts` — attaches a capture-phase DOM listener on `editor.view.dom.parentElement`. It pre-empts ProseMirror for keys that must fire before the editor (Enter to split, Backspace at start to merge, indent/dedent).
-- `src/hooks/useBlockActionOrchestration.ts` — the high-level action handlers (`handleEnterSave`, `handleDeleteBlock`, …). Re-entrancy refs (`enterSaveInProgress`, `deleteInProgress`) guard against double-fire from rapid keystrokes.
+- `src/components/block-tree/use-block-action-orchestration.ts` — the high-level action handlers (`handleEnterSave`, `handleDeleteBlock`, …). Re-entrancy refs (`enterSaveInProgress`, `deleteInProgress`) guard against double-fire from rapid keystrokes.
 
 Suggestion-popup passthrough: when a picker is visible, `Enter / Tab / Escape / Backspace` go to the picker, not the block handler. The block handler checks `isSuggestionPopupVisible()` before processing.
 
@@ -132,7 +132,7 @@ Note the phrase "keeping the React tree mounted": the IntersectionObserver patte
 
 The backend has a precise, bench-validated envelope (`docs/architecture/operations.md` § Memory footprint & scaling envelope; `interactive_slo.rs` gates CI at 100K blocks/space) and a hard per-page load cap (`PAGE_SUBTREE_MAX_BLOCKS = 10_000` in `commands/pages/listing.rs`, surfaced to the user via `blockTree.truncatedNotice`). Until #2467, the frontend had no counterpart: every block `load_page_subtree` returned was mounted as a React component, so a page anywhere near the backend's 10K cap meant 10K mounted fibers — the "full-tree mounting" cliff the frontend architecture review flagged.
 
-**What exists today (this slice):** `useBlockMountLimit` (`src/hooks/useBlockMountLimit.ts`) caps how many of the collapse-filtered rows actually mount, applied in `BlockTree.tsx` immediately after `useBlockCollapse` and before zoom/DnD/keyboard-nav — everything downstream of that point only ever sees the capped set, so the mount cap composes with collapse instead of conflicting with it.
+**What exists today (this slice):** `useBlockMountLimit` (`src/components/block-tree/use-block-mount-limit.ts`) caps how many of the collapse-filtered rows actually mount, applied in `BlockTree.tsx` immediately after `useBlockCollapse` and before zoom/DnD/keyboard-nav — everything downstream of that point only ever sees the capped set, so the mount cap composes with collapse instead of conflicting with it.
 
 - **`INITIAL_MOUNT_LIMIT = 500`** rows mount on first render of a page.
 - **`MOUNT_LIMIT_STEP = 500`** more rows mount per click on the boundary row (`BlockListRenderer`'s `block-tree-mount-boundary`), which reports how many rows remain hidden (`blockTree.mountBoundary`, i18n-pluralised).

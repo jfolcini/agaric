@@ -20,7 +20,7 @@ import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-import type { BreadcrumbItem } from '@/hooks/useBlockZoom'
+import type { BreadcrumbItem } from '@/components/block-tree/use-block-zoom'
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({

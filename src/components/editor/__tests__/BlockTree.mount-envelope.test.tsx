@@ -19,7 +19,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
-import { INITIAL_MOUNT_LIMIT, MOUNT_LIMIT_STEP } from '@/hooks/useBlockMountLimit'
+import {
+  INITIAL_MOUNT_LIMIT,
+  MOUNT_LIMIT_STEP,
+} from '@/components/block-tree/use-block-mount-limit'
 import { t } from '@/lib/i18n'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'

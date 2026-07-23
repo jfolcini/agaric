@@ -29,8 +29,11 @@
 
 import type { ReactElement, ReactNode } from 'react'
 
-import { type BlockActions, BlockActionsProvider } from '@/hooks/useBlockActions'
-import { type BlockResolvers, BlockResolversProvider } from '@/hooks/useBlockResolvers'
+import { type BlockActions, BlockActionsProvider } from '@/components/block-tree/use-block-actions'
+import {
+  type BlockResolvers,
+  BlockResolversProvider,
+} from '@/components/block-tree/use-block-resolvers'
 
 interface TestBlockActionsOverrideProps {
   /** Action bag published via `BlockActionsProvider`. Defaults to `{}`. */
