@@ -833,12 +833,26 @@ async fn restore_ancestor_divergence_is_pinned() {
 /// column AFTER the replay loop: pages self-reference (`page_id = id WHERE
 /// block_type = 'page'`) and content blocks inherit the nearest page ancestor
 /// via a fixed-point UPDATE loop over `parent_id` (see the tail of
-/// `recover_blocks_from_op_log`). The kernel arm stamps the same ownership
-/// inline (`stamp_owner`, standing in for the deferred `SetBlockPageId`
-/// fan-out). For this corpus BOTH resolve every block to `S_PAGE` — including
-/// the MOVED block B, whose page ownership recovery must re-derive through the
-/// restructured chain B→A→PARENT→PAGE. This is the derived-state equality half
-/// of the #2894 contract: assert equality where equality is the spec.
+/// `recover_blocks_from_op_log`).
+///
+/// WHAT THE KERNEL ARM ACTUALLY CARRIES (not a hidden tautology, but read
+/// carefully): `apply_op_tx` stamps `page_id` ONLY for `block_type = 'page'`
+/// blocks (`project_create_block_to_sql`, #1324); for CONTENT blocks it leaves
+/// `page_id` NULL, and the value is filled post-commit by the deferred
+/// `SetBlockPageId` MATERIALIZER task — which is NOT an `apply_op_tx` op and so
+/// does not run in this in-tx harness. This fixture therefore stands that
+/// fan-out in via `stamp_owner` (a direct-SQL UPDATE). So for content blocks the
+/// kernel-arm `page_id` is fixture-declared ownership (== what the materializer
+/// would converge to), NOT an `apply_op_tx` computation. The recovery-arm
+/// `page_id`, by contrast, is 100% recovery-computed: `recover_blocks_from_op_log`
+/// writes `page_id = NULL` for every create then re-derives it in the fixed-point
+/// loop. This assertion is thus non-vacuous FOR RECOVERY — it pins recovery's
+/// loop against the correct converged ownership (`S_PAGE`) — but it is a
+/// recovery-vs-converged-ownership pin, NOT recovery-vs-kernel-projection. For
+/// this corpus every block resolves to `S_PAGE`, including the MOVED block B,
+/// whose page ownership recovery must re-derive through the restructured chain
+/// B→A→PARENT→PAGE. This is the derived-state equality half of the #2894
+/// contract: assert equality where equality is the spec.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn structural_page_id_converges_with_kernel() {
     let kernel_dir = TempDir::new().expect("tempdir");
@@ -852,7 +866,10 @@ async fn structural_page_id_converges_with_kernel() {
         let recovery_page = page_id_of(&recovery_pool, id).await;
         assert_eq!(
             kernel_page, recovery_page,
-            "recovery (#3) and kernel (#1) must agree on page_id for {id}; \
+            "recovery (#3) must reconstruct the page ownership the kernel arm \
+             carries for {id} (fixture-declared via stamp_owner == what the \
+             deferred SetBlockPageId materializer converges to; apply_op_tx \
+             itself leaves content page_id NULL); \
              kernel={kernel_page:?} recovery={recovery_page:?}"
         );
         assert_eq!(
