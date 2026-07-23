@@ -251,11 +251,12 @@ const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]>
   ['move_block', 'move-cross-page-retains-property'],
   ['set_todo_state', 'agenda-reserved-columns'],
 
-  // ── Not yet covered — uncomment one line each as its fixture lands ──
-  // ['purge_block', 'subtree-with-satellites'],        // TODO(#3079): enable when fixture lands (purge cascades satellite rows)
-  // ['create_block', 'tag-space-scope'],               // TODO(#3079): enable when fixture lands (@-tag creation is space-scoped)
-  // ['set_property', 'reserved-key-routes-to-column'], // TODO(#3081): enable when fixture lands (reserved key → native column)
-  // ['delete_property', 'reserved-key-clears-column'], // TODO(#3081): enable when fixture lands (delete reserved key clears column)
+  ['purge_block', 'subtree-with-satellites'],
+  ['set_property', 'reserved-key-routes-to-column'],
+  ['delete_property', 'reserved-key-clears-column'],
+
+  // ── Not yet covered ──
+  // ['create_block', 'tag-space-scope'],               // TODO(#3081): do NOT uncomment — #3081/#3092 ships no conformance fixture (the harness's `assign_all_to_test_space` masks the space-less orphan and the snapshot omits `space_id`, so create→space-scope can't be pinned via a fixture). Coverage lives in the Rust integration test + the mock round-trip; REMOVE this tuple when #3081 lands.
 ]
 
 // ---------------------------------------------------------------------------

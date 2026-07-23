@@ -61,6 +61,7 @@
       "command": "delete_property"
     }
   ],
+  "scenarios": ["reserved-key-clears-column"],
   "seed": {
     "blocks": [
       {
