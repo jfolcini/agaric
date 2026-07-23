@@ -472,6 +472,56 @@ impl LoroEngineRegistry {
         self.dirty.lock().clear();
     }
 
+    /// Evict a SINGLE space's engine and dirty flag (#2910).
+    ///
+    /// Called by the `PurgeBlock` apply path when the purged block is itself a
+    /// registered space. That space and its whole subtree are being physically
+    /// removed and its per-space `loro_doc_state` snapshot row is deleted in the
+    /// same purge transaction (see
+    /// [`purge_block_sql_cascade`](crate::apply::loro_apply::purge_block_sql_cascade)),
+    /// so the live in-memory engine must be dropped too — otherwise the
+    /// periodic / exit-time [`save_all_engines`] would re-persist the dead
+    /// space's CRDT state straight back into the just-deleted row (a per-space
+    /// instance of the #779 resurrection), and every subsequent boot's
+    /// [`rehydrate_registry`](crate::loro::snapshot::rehydrate_registry) would
+    /// rebuild it from that resurrected row forever.
+    ///
+    /// Mirrors [`clear`](Self::clear) but for one key:
+    /// * removes the map entry — an in-flight engine op holding the `Arc` guard
+    ///   completes against the now-detached engine, whose state then drops (see
+    ///   "Detached engines" in the module docs); a later
+    ///   [`for_space`](Self::for_space) only ever lazy-creates a FRESH engine,
+    ///   never re-attaches this one;
+    /// * bumps the clear-generation (ONLY when an entry was actually removed, so
+    ///   a purge of a never-hydrated space does not needlessly abort a save
+    ///   pass) so a [`save_all_engines`] pass that already collected this
+    ///   space's handle re-checks the generation and ABORTS before its write,
+    ///   never resurrecting the deleted `loro_doc_state` row;
+    /// * drops the map guard BEFORE taking the dirty lock (never nested — module
+    ///   lock discipline), then clears the space's dirty flag so a
+    ///   pre-collected stale handle is not re-persisted on a later tick either.
+    ///
+    /// #2205 — needs only the outer MAP lock; it never acquires an engine lock,
+    /// so it can neither deadlock with nor block on an in-flight engine
+    /// operation on this (or any other) space.
+    ///
+    /// [`save_all_engines`]: crate::loro::snapshot::save_all_engines
+    pub fn evict_space(&self, space_id: &SpaceId) {
+        {
+            let mut map = self.inner.lock();
+            if map.remove(space_id).is_some() {
+                // Bump WHILE holding the map lock so any saver that collected
+                // handles before this eviction observes the new value on its
+                // next per-write check (see the `generation` field docs).
+                self.generation.fetch_add(1, Ordering::AcqRel);
+            }
+            // Map guard drops HERE — before the distinct dirty lock below.
+        }
+        // Always drop a possibly-set dirty flag (cheap, independent lock;
+        // no-op when the space had none).
+        self.dirty.lock().remove(space_id);
+    }
+
     /// Snapshot every registered engine via `LoroDoc::export` and
     /// return the resulting `(space_id, Result<bytes, AppError>)`
     /// pairs.  Per-engine errors are returned in the inner `Result` so
