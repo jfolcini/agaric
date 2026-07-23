@@ -40,6 +40,11 @@ function makeProps(overrides: Partial<PageBrowserHeaderProps> = {}): PageBrowser
     onSortChange: vi.fn(),
     density: 'regular',
     onDensityChange: vi.fn(),
+    savedViews: [],
+    activeSavedView: null,
+    onApplySavedView: vi.fn(),
+    onDeleteSavedView: vi.fn(),
+    onSaveCurrentView: vi.fn(),
     ...overrides,
   }
 }
