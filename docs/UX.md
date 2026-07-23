@@ -19,7 +19,7 @@ Source layout:
 | `src/components/`              | Domain components.                                                                                              |
 | `src/components/<Feature>/`    | Per-feature sub-component directories (e.g. `FormattingToolbar/`, `properties/PropertyRowEditor/`, `SpaceManageDialog/`).  |
 | `src/editor/`                  | TipTap extensions, nodes, marks, plugins.                                                                       |
-| `src/hooks/`                   | Reusable hooks. Slash-command logic lives under `src/hooks/useBlockSlashCommands/`.                             |
+| `src/hooks/`                   | Reusable hooks. Slash-command logic lives under `src/components/block-tree/use-block-slash-commands/`.                             |
 | `src/stores/`                  | Zustand stores, one per concern. Per-page stores use the factory + context pattern.                             |
 | `src/lib/i18n/`                | One file per namespace; export `t` via `src/lib/i18n/index.ts`.                                                 |
 | `src/lib/keyboard-config/`     | Shortcut catalog (`catalog.ts`), matcher (`match.ts`), storage (`storage.ts`), TipTap binding (`tiptap.ts`).    |

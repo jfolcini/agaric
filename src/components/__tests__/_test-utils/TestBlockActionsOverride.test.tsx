@@ -21,8 +21,12 @@ import { render, screen } from '@testing-library/react'
 import { describe, expect, it, vi } from 'vitest'
 
 import { TestBlockActionsOverride } from '@/components/__tests__/_test-utils/TestBlockActionsOverride'
-import { type BlockActions, BlockActionsProvider, useBlockActions } from '@/hooks/useBlockActions'
-import { type BlockResolvers, useBlockResolvers } from '@/hooks/useBlockResolvers'
+import {
+  type BlockActions,
+  BlockActionsProvider,
+  useBlockActions,
+} from '@/components/block-tree/use-block-actions'
+import { type BlockResolvers, useBlockResolvers } from '@/components/block-tree/use-block-resolvers'
 
 function ActionsProbe(): React.ReactElement {
   const actions = useBlockActions()
