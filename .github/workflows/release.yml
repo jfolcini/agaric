@@ -1573,9 +1573,18 @@ jobs:
           gh release download "$TAG" --repo "$REPO" --dir "$tmp" --pattern 'latest.json'
           got="$(jq -r .version "$tmp/latest.json")"
           [ "$got" = "$version" ] || { echo "::error::latest.json.version=$got != tag $version"; exit 1; }
-          jq -e '.platforms
-                 | (keys|sort) == ["darwin-aarch64","darwin-x86_64","linux-x86_64","windows-x86_64"]
-                   and (to_entries|all(.value.signature != "" and .value.url != ""))' \
+          # #2970 grew the manifest from the 4 bare `{os}-{arch}` keys to 9
+          # (installer-specific `-appimage/-deb/-rpm/-nsis/-msi` keys + the two
+          # bare fallbacks). Assert every key the generator emits is PRESENT
+          # (subset check, not exact-set equality) so adding a future key never
+          # re-reds this gate, while a *missing* key — the real regression — is
+          # still caught. `$want - (keys)` is the set of required-but-absent keys.
+          jq -e --argjson want '["darwin-aarch64","darwin-x86_64","linux-x86_64",
+                                 "linux-x86_64-appimage","linux-x86_64-deb","linux-x86_64-rpm",
+                                 "windows-x86_64","windows-x86_64-msi","windows-x86_64-nsis"]' \
+            '.platforms as $p
+             | (($want - ($p|keys)) == [])
+               and ($p|to_entries|all(.value.signature != "" and .value.url != ""))' \
             "$tmp/latest.json" >/dev/null \
             || { echo "::error::latest.json platforms incomplete"; exit 1; }
           # Guard the exact regression #2148 introduced: every updater payload
