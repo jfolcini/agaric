@@ -145,19 +145,36 @@ export function SelectionBubbleMenu({
 
   const state = useEditorState({
     editor,
-    selector: (ctx) => ({
-      bold: ctx.editor.isActive('bold'),
-      italic: ctx.editor.isActive('italic'),
-      code: ctx.editor.isActive('code'),
-      strike: ctx.editor.isActive('strike'),
-      // #2995 — strike is excluded from the mark set inside inline `code` /
-      // `codeBlock`; `can()` reports false there so the button greys out
-      // instead of rendering as a no-op toggle.
-      canStrike: ctx.editor.can().toggleStrike(),
-      underline: ctx.editor.isActive('underline'),
-      highlight: ctx.editor.isActive('highlight'),
-      link: ctx.editor.isActive('link'),
-    }),
+    // #3056 — `ctx.editor` can be momentarily null during mount/teardown even
+    // though the `editor` prop is typed non-null. Guard before touching
+    // `.isActive()`/`.can()` and fall back to inert defaults.
+    selector: (ctx) => {
+      if (!ctx.editor) {
+        return {
+          bold: false,
+          italic: false,
+          code: false,
+          strike: false,
+          canStrike: false,
+          underline: false,
+          highlight: false,
+          link: false,
+        }
+      }
+      return {
+        bold: ctx.editor.isActive('bold'),
+        italic: ctx.editor.isActive('italic'),
+        code: ctx.editor.isActive('code'),
+        strike: ctx.editor.isActive('strike'),
+        // #2995 — strike is excluded from the mark set inside inline `code` /
+        // `codeBlock`; `can()` reports false there so the button greys out
+        // instead of rendering as a no-op toggle.
+        canStrike: ctx.editor.can().toggleStrike(),
+        underline: ctx.editor.isActive('underline'),
+        highlight: ctx.editor.isActive('highlight'),
+        link: ctx.editor.isActive('link'),
+      }
+    },
   })
 
   // Listen for Ctrl+K custom event dispatched by the ExternalLink extension.

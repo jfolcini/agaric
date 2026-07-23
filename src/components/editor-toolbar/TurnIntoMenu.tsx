@@ -58,7 +58,21 @@ export function TurnIntoMenu({ editor, onClose }: TurnIntoMenuProps): React.Reac
   const { t } = useTranslation()
   const state = useEditorState({
     editor,
+    // #3056 — `ctx.editor` can be momentarily null during mount/teardown even
+    // though the `editor` prop is typed non-null. Guard before touching
+    // `.isActive()`/`.getAttributes()` and fall back to inert defaults.
     selector: (ctx) => {
+      if (!ctx.editor) {
+        return {
+          headingLevel: 0,
+          blockquote: false,
+          codeBlock: false,
+          bulletList: false,
+          orderedList: false,
+          calloutType: null,
+          codeLanguage: '',
+        }
+      }
       const blockquote = ctx.editor.isActive('blockquote')
       let headingLevel = 0
       for (let lvl = 1; lvl <= 6; lvl++) {

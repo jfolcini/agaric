@@ -132,18 +132,35 @@ export function FormattingToolbar({
 
   const state = useEditorState({
     editor,
-    selector: (ctx) => ({
-      codeBlock: ctx.editor.isActive('codeBlock'),
-      codeBlockLanguage: ctx.editor.isActive('codeBlock')
-        ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
-        : '',
-      blockquote: ctx.editor.isActive('blockquote'),
-      headingLevel: getHeadingLevel(ctx.editor),
-      // #215 — drives the contextual table-ops trigger's presence.
-      isInsideTable: ctx.editor.isActive('table'),
-      canUndo: ctx.editor.can().undo(),
-      canRedo: ctx.editor.can().redo(),
-    }),
+    // #3056 — `ctx.editor` can be momentarily null during mount/teardown (the
+    // editor instance is torn down while this toolbar is still mounted), even
+    // though the `editor` prop is typed non-null. Guard before touching
+    // `.isActive()`/`.can()` and fall back to inert defaults.
+    selector: (ctx) => {
+      if (!ctx.editor) {
+        return {
+          codeBlock: false,
+          codeBlockLanguage: '',
+          blockquote: false,
+          headingLevel: 0,
+          isInsideTable: false,
+          canUndo: false,
+          canRedo: false,
+        }
+      }
+      return {
+        codeBlock: ctx.editor.isActive('codeBlock'),
+        codeBlockLanguage: ctx.editor.isActive('codeBlock')
+          ? ((ctx.editor.getAttributes('codeBlock')['language'] as string) ?? '')
+          : '',
+        blockquote: ctx.editor.isActive('blockquote'),
+        headingLevel: getHeadingLevel(ctx.editor),
+        // #215 — drives the contextual table-ops trigger's presence.
+        isInsideTable: ctx.editor.isActive('table'),
+        canUndo: ctx.editor.can().undo(),
+        canRedo: ctx.editor.can().redo(),
+      }
+    },
   })
 
   const groups = useMemo(
