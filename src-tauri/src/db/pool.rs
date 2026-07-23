@@ -3,7 +3,8 @@ use sqlx::sqlite::SqlitePoolOptions;
 use std::path::Path;
 
 use super::recovery::{
-    ensure_blocks_table_exists, recover_derived_state_from_op_log, reproject_blocks_from_engine,
+    engine_reproject_pending, ensure_blocks_table_exists, recover_derived_state_from_op_log,
+    reproject_blocks_from_engine,
 };
 // The pure pool primitives (`DbPools`, `base_connect_options`, the acquire/begin
 // helpers, the pragma consts, `now_ms` / `next_delete_ms`) moved into
@@ -216,7 +217,12 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
     // engine snapshots (`loro_doc_state` — the complete convergent state), on top
     // of the op-log passes (which also restored engine-independent `attachments`).
     // Gated on the same this-boot block-recovery signal.
-    if blocks_recovered {
+    // #2920: also re-attempt when a PRIOR boot's engine reprojection skipped
+    // some spaces/blocks and armed the retry marker. The `blocks_recovered` gate
+    // is this-boot-only (the `blocks` table is present again on the next boot),
+    // so without the marker check a partial engine recovery would be silently,
+    // permanently lost — remote-authored content invisible in SQL forever.
+    if blocks_recovered || engine_reproject_pending(&write_pool).await? {
         reproject_blocks_from_engine(&write_pool).await?;
     }
 
@@ -316,7 +322,9 @@ pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppEr
     recover_derived_state_from_op_log(&pool, blocks_recovered).await?;
 
     // #2504: engine-first rebuild from the Loro snapshots — see `init_pools`.
-    if blocks_recovered {
+    // #2920: see `init_pools` — re-attempt when a prior boot armed the retry
+    // marker, not only when this boot rebuilt the `blocks` table.
+    if blocks_recovered || engine_reproject_pending(&pool).await? {
         reproject_blocks_from_engine(&pool).await?;
     }
 
