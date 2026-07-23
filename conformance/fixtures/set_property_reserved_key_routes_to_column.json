@@ -1,0 +1,77 @@
+{
+  "description": "#3079 — set_property with a reserved column-backed key (todo_state) writes the block's dedicated column, NOT a block_properties row. After the op the block's todo_state column is set and block_properties is empty.",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": "DONE"
+      }
+    ],
+    "op_log_digest": {
+      "count": 1,
+      "ops": [
+        {
+          "op_type": "set_todo_state"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "set_property_reserved_key_routes_to_column",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "key": "todo_state",
+        "value": {
+          "value_text": "DONE"
+        }
+      },
+      "command": "set_property"
+    }
+  ],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "card",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
