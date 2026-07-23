@@ -28,7 +28,7 @@ import path from 'node:path'
 
 const ROOT = path.resolve(import.meta.dirname, '..')
 const BINDINGS = path.join(ROOT, 'src/lib/bindings.ts')
-const HANDLERS = path.join(ROOT, 'src/lib/tauri-mock/handlers.ts')
+const HANDLERS_DOMAIN_DIR = path.join(ROOT, 'src/lib/tauri-mock/handlers')
 
 // ─── Known parity gaps ──────────────────────────────────────────────
 // IPC commands intentionally NOT mocked. Each is a backend feature
@@ -51,7 +51,6 @@ const KNOWN_UNMOCKED = new Set([
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')
-const handlersSrc = fs.readFileSync(HANDLERS, 'utf8')
 
 // ─── 1. Parse bindings.ts → set of expected IPC command names ───────
 //
@@ -70,33 +69,51 @@ if (expected.size === 0) {
   process.exit(2)
 }
 
-// ─── 2. Parse handlers.ts → set of mocked command names ─────────────
+// ─── 2. Parse the per-domain handler modules → set of mocked command names ──
 //
-// Locate the `const HANDLERS_TYPED = { … } satisfies TypedHandlers` literal
-// first, then pick out top-level keys. This avoids false positives from object
-// literals INSIDE a handler body (e.g. the `block_type:` key inside
-// the row object that `create_block` returns). Top-level keys are
-// indented at exactly 2 spaces in this file's style.
+// (#2931) `HANDLERS_TYPED` in `handlers.ts` used to be one inline object
+// literal; it is now composed by spreading per-domain slices imported from
+// `src/lib/tauri-mock/handlers/*.ts` (`blocks.ts`, `pages.ts`, …), each of
+// the form `export const xHandlers = { … } satisfies Pick<TypedHandlers, …>`.
+// `handlers.ts` itself no longer contains any command keys — only the
+// `...xHandlers` spreads — so this script scans every domain module instead
+// (everything in the `handlers/` dir except the non-command `shared.ts`
+// helper/state module) and unions their top-level keys. This avoids false
+// positives from object literals INSIDE a handler body (e.g. the
+// `block_type:` key inside the row object that `create_block` returns) —
+// top-level keys are indented at exactly 2 spaces in this file's style.
 //
-// (#2241) The literal was renamed from `export const HANDLERS` to
-// `const HANDLERS_TYPED = … satisfies TypedHandlers`; the trailing `satisfies`
-// now gives compile-time type linkage to `bindings.ts` (excess / missing /
-// wrong-shape → tsc error), which this name-only script complements by also
-// guarding the KNOWN_UNMOCKED allowlist and generated-code parse drift.
-const handlersBlockMatch = handlersSrc.match(
-  /const HANDLERS_TYPED\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+TypedHandlers/,
-)
-if (!handlersBlockMatch) {
-  console.error(`ERROR: could not locate HANDLERS object literal in ${HANDLERS}`)
+// (#2241) Each slice's trailing `satisfies Pick<TypedHandlers, …>` (and the
+// barrel's `satisfies TypedHandlers` on the merged map) gives compile-time
+// type linkage to `bindings.ts` (excess / missing / wrong-shape → tsc
+// error), which this name-only script complements by also guarding the
+// KNOWN_UNMOCKED allowlist and generated-code parse drift.
+const domainFiles = fs
+  .readdirSync(HANDLERS_DOMAIN_DIR)
+  .filter((f) => f.endsWith('.ts') && f !== 'shared.ts')
+if (domainFiles.length === 0) {
+  console.error(`ERROR: found 0 domain handler modules in ${HANDLERS_DOMAIN_DIR}`)
   process.exit(2)
 }
 const mocked = new Set()
-for (const m of handlersBlockMatch[1].matchAll(/^ {2}([a-z][a-z0-9_]*):\s/gm)) {
-  mocked.add(m[1])
+for (const file of domainFiles) {
+  const src = fs.readFileSync(path.join(HANDLERS_DOMAIN_DIR, file), 'utf8')
+  const blockMatch = src.match(
+    /export const \w+Handlers\s*=\s*\{([\s\S]*?)\n\}\s*satisfies\s+Pick<\s*\n\s*TypedHandlers/,
+  )
+  if (!blockMatch) {
+    console.error(
+      `ERROR: could not locate a "…Handlers = { … } satisfies Pick<TypedHandlers" literal in ${file}`,
+    )
+    process.exit(2)
+  }
+  for (const m of blockMatch[1].matchAll(/^ {2}([a-z][a-z0-9_]*):\s/gm)) {
+    mocked.add(m[1])
+  }
 }
 if (mocked.size === 0) {
   console.error(
-    `ERROR: parsed 0 handler keys from ${HANDLERS} — top-level indent assumption broken?`,
+    `ERROR: parsed 0 handler keys from ${HANDLERS_DOMAIN_DIR}/*.ts — top-level indent assumption broken?`,
   )
   process.exit(2)
 }
@@ -114,7 +131,7 @@ if (missingNew.length > 0) {
   for (const cmd of missingNew) console.error(`  - ${cmd}`)
   console.error('')
   console.error(
-    'Add a handler in src/lib/tauri-mock/handlers.ts for each, or extend the mock seed in seed.ts.',
+    'Add a handler in the appropriate src/lib/tauri-mock/handlers/*.ts domain module for each, or extend the mock seed in seed.ts.',
   )
   console.error(
     'Without these, in-browser e2e flows hit `[tauri-mock] Unhandled command` and silently get `null`.',
