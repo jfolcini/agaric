@@ -44,20 +44,33 @@ each hit requires an ACKNOWLEDGEMENT — EITHER:
 
 Otherwise the guard fails, naming the table and both escape hatches.
 
-CI parity — the baseline (`src-tauri/migrations-mock-ack-baseline.txt`)
-----------------------------------------------------------------------
+The baseline & two invocation modes (`src-tauri/migrations-mock-ack-baseline.txt`)
+---------------------------------------------------------------------------------
 CI runs `prek run --all-files`, which passes EVERY file — so every
 migration ever written looks "changed". Without a floor, the guard would
 demand acknowledgements for ancient migrations. The baseline is the fix:
 a checked-in list of already-grandfathered migration basenames. Anything
 in the baseline is exempt; only NEW migration files (not yet baselined)
-must satisfy (a)/(b). Because the checked-in tree has every migration
-baselined, `--all-files`, pre-commit, and pre-push all exit 0 identically,
-with ZERO git dependence. The teeth are in the pre-commit diff invocation,
-where the changed-set is a real diff: a new migration touching a modeled
-table with neither the mock updated nor an annotation is blocked before
-it can land. After satisfying the guard, grandfather the new migration so
-future runs stay quiet:
+must be acknowledged. Because the checked-in tree has every migration
+baselined, `--all-files`, pre-commit, and pre-push all exit 0 on a clean
+tree, with ZERO git dependence.
+
+Acknowledgement differs by mode, because `--all-files` also passes EVERY
+mock file — which would make acknowledgement (a) "a modeling mock file
+changed alongside" trivially true and the CI back-stop vacuous:
+
+  * DIFF-SCOPED (pre-commit / pre-push, a real changed-set): a NEW
+    migration touching a modeled table is acknowledged by (a) a modeling
+    mock file in the same change, OR (b) a `-- mock-unaffected:` line.
+  * AGGREGATE (CI `--all-files`, detected via >=2 baselined migrations in
+    one invocation — impossible in a real diff since migrations are
+    immutable): the mock-file signal is discarded; only (b) the annotation
+    or baseline membership (an explicit `--update-baseline`) exempts. This
+    is the back-stop that catches a migration committed with `--no-verify`
+    (it skipped the diff-scoped pre-commit run but CI still runs all-files).
+
+After satisfying the guard, grandfather the new migration so future runs
+stay quiet:
 
     python3 scripts/check-migration-mock-contract.py --update-baseline
 
@@ -219,6 +232,22 @@ def has_mock_unaffected(sql_text: str) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def is_aggregate_mode(migrations: list[tuple[str, str]], baseline: set[str]) -> bool:
+    """True when the invocation is CI's `prek run --all-files`, not a real diff.
+
+    In all-files mode prek passes the ENTIRE corpus — every migration AND every
+    mock file. That makes acknowledgement (a) "a modeling mock file changed
+    alongside" trivially (and meaninglessly) true, so a `--no-verify`'d NEW
+    migration would sail through the CI back-stop. We detect the mode instead:
+    migrations are immutable (the migrations-immutable guard), so a genuine
+    commit/push adds at most one NEW (non-baselined) migration and touches ZERO
+    already-baselined ones. Seeing >=2 baselined migrations in one invocation
+    therefore means the whole corpus was passed — aggregate mode. In that mode
+    the mock-file-presence signal is discarded (see `evaluate`).
+    """
+    return sum(1 for bn, _ in migrations if bn in baseline) >= 2
+
+
 def evaluate(
     migrations: list[tuple[str, str]],
     changed_mock: set[str],
@@ -229,8 +258,18 @@ def evaluate(
     `migrations`  : (basename, sql_text) for each changed migration.
     `changed_mock`: repo-root-relative posix paths of changed mock files.
     `baseline`    : grandfathered migration basenames (exempt).
+
+    Two modes (see `is_aggregate_mode`):
+    * diff-scoped (commit/push): ack = a modeling mock file changed alongside
+      the migration, OR a `-- mock-unaffected:` annotation.
+    * aggregate (CI `--all-files`): every mock file is present regardless, so
+      mock-file presence is NOT a valid ack — only the `-- mock-unaffected:`
+      annotation or baseline membership (an explicit `--update-baseline` act)
+      exempts a migration. This is the real back-stop for a `--no-verify`'d
+      migration that skipped the diff-scoped pre-commit run.
     """
     violations: list[tuple[str, str]] = []
+    aggregate = is_aggregate_mode(migrations, baseline)
     for basename, sql_text in migrations:
         if basename in baseline:
             continue  # grandfathered
@@ -240,7 +279,11 @@ def evaluate(
         if has_mock_unaffected(sql_text):
             continue  # escape hatch (b): author asserts mock unaffected
         for table in sorted(touched):
-            acked = any(f in changed_mock for f in _contract_files(table))
+            # In aggregate mode the mock-file-changed signal is worthless (all
+            # mock files are always passed), so it never acknowledges.
+            acked = not aggregate and any(
+                f in changed_mock for f in _contract_files(table)
+            )
             if not acked:
                 violations.append((basename, table))
     return violations
@@ -383,6 +426,49 @@ def run_self_test() -> int:
             set(),
             False,
         ),
+        # 8. AGGREGATE / CI --all-files: the whole corpus is passed (>=2
+        #    baselined migrations) together with EVERY mock file. The
+        #    mock-file-changed signal must be discarded, so a NEW migration
+        #    touching a modeled table with no annotation still -> FAIL. This is
+        #    the back-stop a `--no-verify`'d migration hits in CI.
+        (
+            "aggregate+all-mock+no-annotation",
+            [
+                ("0001_a.sql", "CREATE TABLE blocks (id TEXT) STRICT;"),
+                ("0002_b.sql", "ALTER TABLE block_tags ADD COLUMN q TEXT;"),
+                new_mig,
+            ],
+            {blocks_mock, MOCK_PREFIX + "seed.ts", MOCK_PREFIX + "handlers/tags.ts"},
+            {"0001_a.sql", "0002_b.sql"},
+            False,
+        ),
+        # 9. Same aggregate invocation but the NEW migration carries the
+        #    annotation -> PASS (the only valid all-files acknowledgement).
+        (
+            "aggregate+all-mock+annotation",
+            [
+                ("0001_a.sql", "CREATE TABLE blocks (id TEXT) STRICT;"),
+                ("0002_b.sql", "ALTER TABLE block_tags ADD COLUMN q TEXT;"),
+                (
+                    "9999_touch_blocks.sql",
+                    "-- mock-unaffected: derived-cache-only\n"
+                    "ALTER TABLE blocks ADD COLUMN zzz TEXT;",
+                ),
+            ],
+            {blocks_mock, MOCK_PREFIX + "seed.ts"},
+            {"0001_a.sql", "0002_b.sql"},
+            True,
+        ),
+        # 10. Boundary: diff-scoped semantics are unchanged when a single
+        #     baselined migration is also present (1 < 2, so NOT aggregate) —
+        #     the mock-file-changed ack still counts -> PASS.
+        (
+            "diff-scoped+one-baselined+mock-changed",
+            [("0001_a.sql", "CREATE TABLE blocks (id TEXT) STRICT;"), new_mig],
+            {blocks_mock},
+            {"0001_a.sql"},
+            True,
+        ),
     ]
 
     for label, migs, mock, base, expect_pass in cases:
@@ -439,6 +525,24 @@ HINT = (
     "--update-baseline"
 )
 
+# Aggregate (CI `--all-files`) mode: prek passes EVERY mock file, so "a mock
+# file changed" is meaningless here — it is not accepted as an acknowledgement.
+# This branch is the back-stop for a migration that skipped the diff-scoped
+# pre-commit run (e.g. `git commit --no-verify`).
+HINT_AGGREGATE = (
+    "    -> #3084 (CI --all-files back-stop): this NEW migration changes a\n"
+    "       table the browser/e2e Tauri mock (src/lib/tauri-mock/) models and\n"
+    "       is not yet grandfathered. In all-files mode the mock-file-changed\n"
+    "       signal does NOT count (every mock file is always passed), so\n"
+    "       resolve by EITHER:\n"
+    "         (a) add a `-- mock-unaffected: <reason>` line to the migration\n"
+    "             if it genuinely does not affect anything the mock models, OR\n"
+    "         (b) update the mock in the same PR, then grandfather the\n"
+    "             migration (an explicit, reviewable act):\n"
+    "               python3 scripts/check-migration-mock-contract.py "
+    "--update-baseline"
+)
+
 
 def _rel(arg: str) -> str | None:
     """Resolve an argv path to a repo-root-relative posix path, or None."""
@@ -473,9 +577,12 @@ def main(argv: list[str]) -> int:
 
     violations = evaluate(migrations, changed_mock, baseline)
     if violations:
+        aggregate = is_aggregate_mode(migrations, baseline)
+        mode_label = "CI --all-files" if aggregate else "diff"
         print(
-            "Migration → mock schema-contract guard (#3084) — new "
-            "migration(s) touch a mock-modeled table without acknowledgement:\n",
+            f"Migration → mock schema-contract guard (#3084, {mode_label} mode) "
+            "— new migration(s) touch a mock-modeled table without "
+            "acknowledgement:\n",
             file=sys.stderr,
         )
         for basename, table in violations:
@@ -486,7 +593,7 @@ def main(argv: list[str]) -> int:
                 file=sys.stderr,
             )
         print("", file=sys.stderr)
-        print(HINT, file=sys.stderr)
+        print(HINT_AGGREGATE if aggregate else HINT, file=sys.stderr)
         return 1
     return 0
 
