@@ -1387,7 +1387,10 @@ jobs:
   # section. End users (and downstream packagers / security-conscious tinkerers)
   # get an in-line invocation showing exactly how to verify SLSA provenance on
   # what they just downloaded; the same content also lands on the workflow
-  # run's step-summary page for the maintainer's at-a-glance check.
+  # run's step-summary page for the maintainer's at-a-glance check. This job
+  # sets the FINAL body but leaves the release a draft — the `publish-release`
+  # job below (added #3076) is now the terminal step that flips it to published,
+  # so the release is no longer published by hand.
   # ---------------------------------------------------------------------------
   # #808 — fan-in: stitch the four per-platform updater signatures (uploaded
   # as `.sig` draft-release assets by the build-and-release matrix) into the
@@ -1697,3 +1700,56 @@ jobs:
             echo
             printf '%s\n' "$recipe"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # #3076 — publish the draft automatically. REMOVES THE MANUAL PUBLISH GATE
+  # (user decision 2026-07-23): previously the whole release was left as a
+  # DRAFT for the maintainer to publish by hand. Because the updater endpoint
+  # `releases/latest/download/latest.json` only resolves once a release is
+  # PUBLISHED (a draft is never "latest"), that hand-publish step opened a
+  # silent-404 window on EVERY platform's in-app update check between build
+  # completion and the human clicking "Publish". Flipping the draft to
+  # published here — only after every terminal job succeeded — closes that
+  # window so updates go live the moment the build finishes.
+  #
+  # `needs` all the terminal jobs so this runs ONLY on a fully-successful
+  # release; the `if` re-asserts each one succeeded (matching the guard the
+  # other post-build jobs use) so a `!cancelled()` re-run never publishes a
+  # release whose bundles/manifest didn't actually build.
+  publish-release:
+    needs:
+      [
+        build-and-release,
+        android-build-and-release,
+        generate-vex,
+        generate-latest-json,
+        finalize-release-notes,
+      ]
+    # Every terminal job named DIRECTLY (not just transitively via
+    # finalize-release-notes) so this release-critical publish gate is
+    # self-contained: a broken/partial release can never flip to published
+    # even if finalize's own guard is later loosened. A skipped dependency
+    # has result 'skipped' (not 'success'), so `== 'success'` catches it;
+    # `!cancelled()` only lets the job evaluate its guard, it does not relax it.
+    if: ${{ !cancelled() && needs.build-and-release.result == 'success' && needs.android-build-and-release.result == 'success' && needs.generate-vex.result == 'success' && needs.generate-latest-json.result == 'success' && needs.finalize-release-notes.result == 'success' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write # gh release edit --draft=false publishes the release
+    # Single gh-API edit — trivial. 5-min budget.
+    timeout-minutes: 5
+    steps:
+      - name: Publish the release (flip draft → published, mark latest)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # `--draft=false` publishes; `--latest` marks it the repo's Latest
+          # release so `releases/latest/download/latest.json` resolves for the
+          # updater. This job runs no `actions/checkout` (it only edits the
+          # release already attached to the tag), so pass `--repo` explicitly —
+          # bare `gh` would have no `.git/config` to auto-detect the repo from,
+          # matching the stateless generate-latest-json / finalize jobs.
+          gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+          echo "Published release ${TAG} (draft → published, marked latest)."

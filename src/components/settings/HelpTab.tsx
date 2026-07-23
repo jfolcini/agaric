@@ -9,53 +9,66 @@
  * graph — that was the source of the INEFFECTIVE_DYNAMIC_IMPORT
  * warning that defeated App.tsx's `React.lazy` for the dialog.
  *
- * The Updates card is self-contained — it reads the last-check
- * timestamp from `localStorage` (key managed by `useUpdateCheck`) and
- * calls `checkForUpdatesNow()` when the user clicks the manual button.
- * Mobile builds replace the button with a hint pointing at the Play
- * Store / App Store distribution path, since the Tauri updater plugin
- * is desktop-only.
+ * The Updates card reads the persisted last-check outcome reactively via
+ * `useUpdateStatus()` (owned by `useUpdateCheck`) so it always shows state —
+ * "Up to date", "Update available", "Last check failed", or "Checking…" —
+ * plus a relative "last checked" time, and calls `checkForUpdatesNow()` when
+ * the user clicks the manual button (which also re-surfaces the install toast
+ * when an update exists). Mobile builds replace the button with a hint
+ * pointing at the Play Store / App Store distribution path, since the Tauri
+ * updater plugin is desktop-only.
  */
 
+import type { TFunction } from 'i18next'
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { checkForUpdatesNow, LAST_UPDATE_CHECK_STORAGE_KEY } from '@/hooks/useUpdateCheck'
+import { checkForUpdatesNow, useUpdateStatus } from '@/hooks/useUpdateCheck'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { GESTURE_ENTRIES } from '@/lib/gesture-coachmark'
 import { isMobilePlatform } from '@/lib/platform'
-import { PREFERENCES, readPreference } from '@/lib/preferences'
+import type { UpdateStatusValue } from '@/lib/preferences'
 
 interface HelpTabProps {
   onReportBugClick: () => void
 }
 
-function readLastCheckIso(): string | null {
-  return typeof localStorage === 'undefined' ? null : readPreference(PREFERENCES.lastUpdateCheck)
+/**
+ * Human-readable status line for the Updates card, derived from the persisted
+ * `UpdateStatusValue`. Uses `t()` for every branch (no hardcoded English) so
+ * the card reflects whichever outcome the boot / manual check last recorded.
+ */
+function updateStatusLabel(status: UpdateStatusValue, checking: boolean, t: TFunction): string {
+  if (checking || status.status === 'checking') return t('help.updateCheckingLabel')
+  switch (status.status) {
+    case 'up-to-date': {
+      return status.currentVersion != null
+        ? t('help.updateUpToDateLabel', { version: status.currentVersion })
+        : t('help.updateUpToDateLabelNoVersion')
+    }
+    case 'available': {
+      return t('help.updateAvailableStatus', { version: status.availableVersion ?? '' })
+    }
+    case 'error': {
+      return t('help.updateCheckFailedLabel', {
+        error: status.error ?? t('help.updateInstallFailedToast'),
+      })
+    }
+    default: {
+      // 'idle' — nothing has been checked yet this install.
+      return t('help.updateLastCheckedNever')
+    }
+  }
 }
 
 export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement {
   const { t } = useTranslation()
   const [checking, setChecking] = useState(false)
-  const [lastCheckedIso, setLastCheckedIso] = useState<string | null>(() => readLastCheckIso())
+  const updateStatus = useUpdateStatus()
   const mobile = isMobilePlatform()
-
-  // Re-read the timestamp on storage events so a manual check (which
-  // writes from inside `useUpdateCheck`) refreshes the displayed label
-  // immediately, even though `localStorage.setItem` doesn't fire a
-  // storage event in the same tab — we set the state ourselves on
-  // success, and the listener covers the cross-tab case.
-  useEffect(() => {
-    function onStorage(e: StorageEvent) {
-      if (e.key !== LAST_UPDATE_CHECK_STORAGE_KEY) return
-      setLastCheckedIso(readLastCheckIso())
-    }
-    window.addEventListener('storage', onStorage)
-    return () => window.removeEventListener('storage', onStorage)
-  }, [])
 
   const handleCheckNow = useCallback(async () => {
     setChecking(true)
@@ -63,14 +76,17 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
       await checkForUpdatesNow()
     } finally {
       setChecking(false)
-      setLastCheckedIso(readLastCheckIso())
     }
   }, [])
 
+  const busy = checking || updateStatus.status === 'checking'
+  const statusLabel = updateStatusLabel(updateStatus, busy, t)
+  const isError = updateStatus.status === 'error' && !busy
+  const lastCheckedAt = updateStatus.lastCheckedAt
   const lastCheckedLabel =
-    lastCheckedIso != null
-      ? t('help.updateLastCheckedLabel', { ago: formatRelativeTime(lastCheckedIso, t) })
-      : t('help.updateLastCheckedNever')
+    lastCheckedAt != null
+      ? t('help.updateLastCheckedLabel', { ago: formatRelativeTime(lastCheckedAt, t) })
+      : null
 
   return (
     <div className="space-y-6">
@@ -102,12 +118,24 @@ export function HelpTab({ onReportBugClick }: HelpTabProps): React.ReactElement 
               <Button
                 variant="outline"
                 onClick={handleCheckNow}
-                disabled={checking}
+                disabled={busy}
                 aria-label={t('help.updateCheckNowButton')}
               >
-                {checking ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
+                {busy ? t('help.updateCheckingLabel') : t('help.updateCheckNowButton')}
               </Button>
-              <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+              {/* Persistent status — `<output>` is an implicit polite live
+                  region (role="status"), so a boot check completing (or
+                  failing) while Settings is open is announced, not silent. */}
+              <output
+                className={
+                  isError ? 'block text-sm text-destructive' : 'block text-sm text-muted-foreground'
+                }
+              >
+                {statusLabel}
+              </output>
+              {lastCheckedLabel != null && (
+                <p className="text-xs text-muted-foreground">{lastCheckedLabel}</p>
+              )}
             </>
           )}
         </CardContent>

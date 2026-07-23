@@ -869,6 +869,83 @@ const LAST_UPDATE_CHECK_PREFERENCE: PreferenceDefinition<string | null> = {
 }
 
 /**
+ * Discrete state of the most recent app-update check, surfaced persistently on
+ * the Settings → Help "Updates" card (#3076). `useUpdateCheck` owns the
+ * transitions; the card only reads them.
+ *
+ * - `'idle'` — no check has run yet this install (the default).
+ * - `'checking'` — a check round-trip is in flight (transient; never persisted).
+ * - `'up-to-date'` — the last check succeeded and found no newer release.
+ * - `'available'` — the last check found a newer release (`availableVersion`).
+ * - `'error'` — the last check FAILED; `error` carries the message instead of
+ *   swallowing it (the whole point of the persisted status — a silent boot
+ *   failure now leaves a visible trace).
+ */
+export type UpdateCheckStatus = 'idle' | 'checking' | 'up-to-date' | 'available' | 'error'
+
+/**
+ * The persisted, user-visible outcome of the last update check (#3076). Only
+ * `status` is guaranteed; the rest are best-effort context populated when
+ * known. Stored as a JSON envelope under `agaric:update-status`.
+ */
+export interface UpdateStatusValue {
+  status: UpdateCheckStatus
+  /** Currently-running app version (from `getVersion()` / the updater result), when known. */
+  currentVersion?: string | undefined
+  /** The newer version offered by the updater — set only when `status === 'available'`. */
+  availableVersion?: string | undefined
+  /** Failure message captured on `status === 'error'` (never swallowed). */
+  error?: string | undefined
+  /** ISO timestamp of the last COMPLETED check attempt (success or failure). */
+  lastCheckedAt?: string | undefined
+}
+
+/** Neutral pre-first-check status. */
+export const DEFAULT_UPDATE_STATUS: UpdateStatusValue = { status: 'idle' }
+
+const UPDATE_CHECK_STATUSES: ReadonlyArray<UpdateCheckStatus> = [
+  'idle',
+  'checking',
+  'up-to-date',
+  'available',
+  'error',
+]
+
+/**
+ * `agaric:update-status` — the last update-check outcome shown on the Help
+ * card (`src/hooks/useUpdateCheck.ts`, #3076). Distinct from
+ * `lastUpdateCheck` (a bare success-only ISO timestamp that drives the 24 h
+ * debounce): this JSON envelope captures the full display state, INCLUDING
+ * failures, so the card never silently shows nothing. A malformed/unknown
+ * payload resets to `DEFAULT_UPDATE_STATUS`.
+ */
+const UPDATE_STATUS_PREFERENCE: PreferenceDefinition<UpdateStatusValue> = {
+  key: 'agaric:update-status',
+  scope: 'device',
+  version: 1,
+  defaultValue: DEFAULT_UPDATE_STATUS,
+  parse: (raw) => {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return { ...DEFAULT_UPDATE_STATUS }
+    const p = parsed as Record<string, unknown>
+    const status = p['status']
+    if (
+      typeof status !== 'string' ||
+      !(UPDATE_CHECK_STATUSES as readonly string[]).includes(status)
+    ) {
+      return { ...DEFAULT_UPDATE_STATUS }
+    }
+    const result: UpdateStatusValue = { status: status as UpdateCheckStatus }
+    if (typeof p['currentVersion'] === 'string') result.currentVersion = p['currentVersion']
+    if (typeof p['availableVersion'] === 'string') result.availableVersion = p['availableVersion']
+    if (typeof p['error'] === 'string') result.error = p['error']
+    if (typeof p['lastCheckedAt'] === 'string') result.lastCheckedAt = p['lastCheckedAt']
+    return result
+  },
+  serialize: (value) => JSON.stringify(value),
+}
+
+/**
  * `agaric-settings-active-tab` — Settings panel's active tab
  * (`src/lib/url-state.ts`). Validated against `SettingsTab` by
  * `SettingsView` (this module deliberately stays feature-agnostic). Empty
@@ -1022,6 +1099,7 @@ export const PREFERENCES = {
   fontSize: FONT_SIZE_PREFERENCE,
   deadlineWarningDays: DEADLINE_WARNING_DAYS_PREFERENCE,
   lastUpdateCheck: LAST_UPDATE_CHECK_PREFERENCE,
+  updateStatus: UPDATE_STATUS_PREFERENCE,
   settingsActiveTab: SETTINGS_ACTIVE_TAB_PREFERENCE,
   blockCollapseLegacy: BLOCK_COLLAPSE_LEGACY_PREFERENCE,
   pathHistory: PATH_HISTORY_PREFERENCE,
