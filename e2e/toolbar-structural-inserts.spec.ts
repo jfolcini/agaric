@@ -77,8 +77,12 @@ test.describe('Structural transforms via Turn into (#253, #1960)', () => {
     await page.keyboard.press('Control+a')
     await editor.pressSequentially('heads up')
 
+    // #3001 — Turn into → Callout is a single-step disclosure: opening it
+    // expands the variant picker in place; pick a variant (info) to convert the
+    // block to a callout in one interaction.
     await openTurnInto(page)
-    await page.getByRole('menuitemradio', { name: 'Callout' }).click()
+    await page.getByRole('menuitem', { name: 'Callout', exact: true }).click()
+    await page.getByTestId('callout-type-info').click()
 
     const quote = editor.locator('blockquote')
     await expect(quote).toBeVisible()
