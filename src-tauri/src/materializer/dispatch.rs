@@ -102,8 +102,9 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
-/// #2037 pt2: the lifecycle rebuild set for a CONTENT block delete /
-/// restore / purge — [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildPagesCache`.
+/// #2037 pt2 / #2934: the lifecycle rebuild set for a CONTENT block delete /
+/// restore / purge — [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildPagesCache`
+/// (#2037 pt2) and minus `RebuildTagInheritanceCache` (#2934).
 ///
 /// `RebuildPagesCache` (`cache::rebuild_pages_cache`) only rebuilds
 /// the page *rows* `(page_id, title)` from `block_type = 'page'` blocks and
@@ -130,12 +131,33 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// Dropping it would leave `usage_count` stale until an unrelated page/tag
 /// op or an `add_tag`/`remove_tag` healed it, breaking eventual consistency.
 ///
+/// `RebuildTagInheritanceCache` is DROPPED for DELETE / PURGE (#2934 — the
+/// extension of the #2669 class to lifecycle ops), but NOT for RESTORE. A local
+/// `delete_block` / `purge_block` already maintains `block_tag_inherited`
+/// SYNCHRONOUSLY, in the command transaction, scoped to exactly the affected
+/// subtree: `tag_inheritance::remove_subtree_inherited` on delete and the
+/// `block_cleanup::purge_subtree_tables` cascade on purge. Each reproduces the
+/// whole-vault `rebuild_all` BYTE-FOR-BYTE for the op's scope — a deleted/purged
+/// subtree removes exactly the inherited rows of blocks that can no longer
+/// inherit (no surviving block inherits from within a removed subtree, so no
+/// re-attribution is owed). So the vault-wide DELETE + recursive-CTE recompute
+/// (under the `BEGIN IMMEDIATE` writer lock, on every delete/purge) was pure
+/// O(vault) waste. Proven equivalent by
+/// `{delete,purge}_content_subtree_inheritance_matches_full_rebuild_2934` in
+/// `command_integration_tests::conformance`.
+///
+/// RESTORE is DELIBERATELY EXCLUDED from this narrowing — its scoped
+/// `tag_inheritance::recompute_subtree_inheritance` does NOT reproduce the full
+/// rebuild byte-for-byte (a restored block that both directly tags T and
+/// inherits T from a live ancestor above the cohort loses its inherited row via
+/// the step-3 self-tag exclusion), so a content restore uses the separate
+/// [`CONTENT_RESTORE_REBUILD_TASKS`] which RETAINS the rebuild. See that
+/// constant's doc and
+/// `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`.
+///
 /// Everything else in the full set is RETAINED, because a content block's
 /// lifecycle DOES affect it:
 ///   * `RebuildTagsCache` — see the `usage_count` note above.
-///   * `RebuildTagInheritanceCache` — the inheritance recursive CTE filters
-///     `deleted_at IS NULL`, so soft-deleting / restoring a content block
-///     changes which tags its descendants inherit.
 ///   * `RebuildAgendaCache` / `RebuildProjectedAgendaCache` — a content
 ///     block can carry `due`/`scheduled`/`repeat` and appear in either
 ///     agenda projection.
@@ -154,13 +176,59 @@ pub(super) const FULL_CACHE_REBUILD_TASKS: [MaterializeTask; 9] = [
 /// `"tag"` / an unknown / absent hint the full set is kept — correctness
 /// over the perf win when the scope is uncertain (a page block's delete DOES
 /// change `pages_cache`).
-const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 8] = [
+const CONTENT_LIFECYCLE_REBUILD_TASKS: [MaterializeTask; 7] = [
     MaterializeTask::RebuildTagsCache,
     // #2042: see the doc comment above — a content block's lifecycle changes
     // its owning page's counts, now recomputed on the background queue. Placed
     // right after `RebuildTagsCache` so this set stays exactly FULL minus
-    // `RebuildPagesCache` with order preserved (the
-    // `content_lifecycle_set_is_full_minus_pages_cache` invariant).
+    // `RebuildPagesCache` and `RebuildTagInheritanceCache` with order preserved
+    // (the `content_lifecycle_set_is_full_minus_pages_cache_and_tag_inheritance`
+    // invariant).
+    MaterializeTask::RebuildPagesCacheCounts,
+    MaterializeTask::RebuildAgendaCache,
+    MaterializeTask::RebuildProjectedAgendaCache,
+    // #2934: `RebuildTagInheritanceCache` is DROPPED here — a DELETE / PURGE
+    // command tx already maintains `block_tag_inherited` incrementally, scoped
+    // to the affected subtree, provably equal to the full rebuild
+    // (`remove_subtree_inherited` / the purge cascade). RESTORE is NOT in this
+    // set: its scoped `recompute_subtree_inheritance` diverges from the full
+    // rebuild (step-3 exclusion drops the inherited row of a restored block that
+    // is itself a direct tagger), so a content restore uses
+    // [`CONTENT_RESTORE_REBUILD_TASKS`] which RETAINS the rebuild.
+    MaterializeTask::RebuildPageIds,
+    MaterializeTask::RebuildBlockTagRefsCache,
+    MaterializeTask::RebuildPageLinkCache,
+];
+
+/// #2934: the lifecycle rebuild set for a CONTENT block RESTORE —
+/// [`FULL_CACHE_REBUILD_TASKS`] minus `RebuildPagesCache` (#2037 pt2), but
+/// RETAINING `RebuildTagInheritanceCache`.
+///
+/// Unlike delete/purge (whose scoped in-tx inheritance maintenance is
+/// byte-identical to the full rebuild — see [`CONTENT_LIFECYCLE_REBUILD_TASKS`]),
+/// a restore's scoped `tag_inheritance::recompute_subtree_inheritance` (rooted
+/// at the topmost live ancestor of the restored cohort) DIVERGES from
+/// `rebuild_all`: its step 3
+/// (`agaric-store/src/tag_inheritance/incremental.rs`,
+/// `WHERE st.id NOT IN (SELECT block_id FROM block_tags WHERE tag_id = …)`)
+/// refuses to write an inherited row for a subtree block that DIRECTLY holds
+/// that tag, whereas `rebuild_all` / `propagate_tag_to_descendants` emit it. A
+/// restore recomputes at the top of the reconnected cohort, so a tag on a live
+/// ancestor ABOVE the cohort hits that exclusion for any restored block that is
+/// itself a direct tagger of the same tag — dropping its `(block, tag, ancestor)`
+/// row. This is the same class as the pinned
+/// `add_tag_nested_diverges_from_rebuild_provenance_only_2669`
+/// (`agaric-store` `tag_inheritance::tests`): when the scoped update is not
+/// byte-identical to the rebuild, the policy is to KEEP the full rebuild. So a
+/// content restore uses this set; the whole-vault rebuild heals the divergence.
+/// Proven by `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`
+/// in `command_integration_tests::conformance`.
+///
+/// Equals [`CONTENT_LIFECYCLE_REBUILD_TASKS`] with `RebuildTagInheritanceCache`
+/// re-inserted at its `FULL_CACHE_REBUILD_TASKS` position (pinned by
+/// `content_restore_set_is_full_minus_pages_cache`).
+const CONTENT_RESTORE_REBUILD_TASKS: [MaterializeTask; 8] = [
+    MaterializeTask::RebuildTagsCache,
     MaterializeTask::RebuildPagesCacheCounts,
     MaterializeTask::RebuildAgendaCache,
     MaterializeTask::RebuildProjectedAgendaCache,
@@ -246,18 +314,33 @@ const INBOUND_SYNC_CACHE_REBUILD_TASKS: [MaterializeTask; 7] = [
     MaterializeTask::RebuildPageLinkCache,
 ];
 
-/// #2037 pt2: pick the lifecycle (delete / restore / purge) rebuild set
-/// for a block of the given `block_type_hint`.
+/// #2037 pt2 / #2934: pick the lifecycle (delete / restore / purge) rebuild set
+/// for a block of the given `block_type_hint` and lifecycle `op_type`.
 ///
-/// A hint of exactly `Some("content")` narrows to
-/// [`CONTENT_LIFECYCLE_REBUILD_TASKS`] (drops the page-row `RebuildPagesCache`
-/// rebuild only; `RebuildTagsCache` is kept for its content-aggregated
-/// `usage_count`). Every other hint — `Some("page")`, `Some("tag")`,
-/// `Some(<unknown>)`, or `None` — falls back to the full
-/// [`FULL_CACHE_REBUILD_TASKS`], the correctness-preserving default.
-fn lifecycle_rebuild_tasks(block_type_hint: Option<&str>) -> &'static [MaterializeTask] {
+/// A hint of exactly `Some("content")` narrows the page-row `RebuildPagesCache`
+/// away (#2037 pt2; `RebuildTagsCache` is kept for its content-aggregated
+/// `usage_count`) and, additionally:
+///   * DELETE / PURGE → [`CONTENT_LIFECYCLE_REBUILD_TASKS`], which ALSO drops
+///     the whole-vault `RebuildTagInheritanceCache` (#2934 — the command tx
+///     maintains `block_tag_inherited` incrementally, byte-identical to the
+///     full rebuild).
+///   * RESTORE → [`CONTENT_RESTORE_REBUILD_TASKS`], which RETAINS
+///     `RebuildTagInheritanceCache` (#2934 — restore's scoped
+///     `recompute_subtree_inheritance` diverges from the full rebuild for a
+///     restored direct-tagger, so the rebuild heals it).
+///
+/// Every other hint — `Some("page")`, `Some("tag")`, `Some(<unknown>)`, or
+/// `None` — falls back to the full [`FULL_CACHE_REBUILD_TASKS`], the
+/// correctness-preserving default (which carries the inheritance rebuild).
+fn lifecycle_rebuild_tasks(
+    op_type: &OpType,
+    block_type_hint: Option<&str>,
+) -> &'static [MaterializeTask] {
     match block_type_hint {
-        Some("content") => &CONTENT_LIFECYCLE_REBUILD_TASKS,
+        Some("content") => match op_type {
+            OpType::RestoreBlock => &CONTENT_RESTORE_REBUILD_TASKS,
+            _ => &CONTENT_LIFECYCLE_REBUILD_TASKS,
+        },
         _ => &FULL_CACHE_REBUILD_TASKS,
     }
 }
@@ -724,13 +807,16 @@ impl Materializer {
     /// of fanning out the argument-less global rebuild set inline. Mirrors
     /// [`Self::arm_inbound_rebuild_debounce`].
     ///
-    /// `needs_full` is OR-accumulated across the coalesced burst: a proven
-    /// CONTENT-block op can narrow to `CONTENT_LIFECYCLE_REBUILD_TASKS`, but
-    /// if ANY op in the burst needs the full set (page / tag / unknown /
-    /// absent hint) the single fire escalates to `FULL_CACHE_REBUILD_TASKS`
-    /// — the union is always correctness-safe. The lock is held only for the
-    /// field writes — never across an `.await`.
-    fn arm_lifecycle_rebuild_debounce(&self, needs_full: bool) {
+    /// `needs_full` / `needs_inheritance` are OR-accumulated across the
+    /// coalesced burst: a proven CONTENT-block op can narrow to
+    /// `CONTENT_LIFECYCLE_REBUILD_TASKS`, but if ANY op in the burst needs the
+    /// full set (page / tag / unknown / absent hint) the single fire escalates
+    /// to `FULL_CACHE_REBUILD_TASKS` — the union is always correctness-safe.
+    /// #2934: `needs_inheritance` separately escalates a content burst that
+    /// contains a restore to `CONTENT_RESTORE_REBUILD_TASKS` (which re-adds the
+    /// vault-wide `RebuildTagInheritanceCache` the pure delete/purge set drops).
+    /// The lock is held only for the field writes — never across an `.await`.
+    fn arm_lifecycle_rebuild_debounce(&self, needs_full: bool, needs_inheritance: bool) {
         let now = Instant::now();
         {
             let mut st = self
@@ -741,6 +827,7 @@ impl Materializer {
             st.last_request = Some(now);
             st.seq = st.seq.wrapping_add(1);
             st.needs_full |= needs_full;
+            st.needs_inheritance |= needs_inheritance;
             if !st.armed {
                 st.armed = true;
                 st.first_request = Some(now);
@@ -749,17 +836,24 @@ impl Materializer {
         self.lifecycle_rebuild_debounce.notify.notify_one();
     }
 
-    /// #2935: enqueue the local-lifecycle global cache-rebuild set — the
-    /// exact argument-less set (`lifecycle_rebuild_tasks`) the pre-debounce
-    /// inline `enqueue_background_tasks` path used, `FULL` vs `CONTENT`
-    /// selected by the burst's accumulated `needs_full`. Runs from a spawned
-    /// loop / a flush with no caller to propagate to, so an enqueue error
-    /// (only reachable as a `Channel` closed at shutdown) is warned rather
-    /// than returned; every task is argument-less and idempotent, so a missed
-    /// fire self-heals on the next lifecycle op or inbound sync.
-    fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool) {
+    /// #2935 / #2934: enqueue the local-lifecycle global cache-rebuild set the
+    /// pre-debounce inline `enqueue_background_tasks` path used, with the set
+    /// selected by the burst's accumulated flags:
+    ///   * `needs_full` → `FULL_CACHE_REBUILD_TASKS` (page/tag/unknown/absent);
+    ///   * else `needs_inheritance` → `CONTENT_RESTORE_REBUILD_TASKS` (a content
+    ///     burst containing a restore — #2934 keeps the tag-inheritance rebuild);
+    ///   * else `CONTENT_LIFECYCLE_REBUILD_TASKS` (a pure content delete/purge
+    ///     burst — #2934 drops it).
+    ///
+    /// Runs from a spawned loop / a flush with no caller to propagate to, so an
+    /// enqueue error (only reachable as a `Channel` closed at shutdown) is warned
+    /// rather than returned; every task is argument-less and idempotent, so a
+    /// missed fire self-heals on the next lifecycle op or inbound sync.
+    fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool, needs_inheritance: bool) {
         let tasks: &[MaterializeTask] = if needs_full {
             &FULL_CACHE_REBUILD_TASKS
+        } else if needs_inheritance {
+            &CONTENT_RESTORE_REBUILD_TASKS
         } else {
             &CONTENT_LIFECYCLE_REBUILD_TASKS
         };
@@ -775,18 +869,18 @@ impl Materializer {
 
     /// #2935: fan-out fired once per settled burst by
     /// [`Self::lifecycle_rebuild_debounce_loop`]. Reads the accumulated
-    /// `needs_full` (the loop disarms + resets it afterwards) and enqueues
-    /// the matching set.
+    /// `needs_full` / `needs_inheritance` (the loop disarms + resets them
+    /// afterwards) and enqueues the matching set.
     fn fire_lifecycle_rebuild_fanout(&self) {
-        let needs_full = {
+        let (needs_full, needs_inheritance) = {
             let st = self
                 .lifecycle_rebuild_debounce
                 .state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            st.needs_full
+            (st.needs_full, st.needs_inheritance)
         };
-        self.enqueue_lifecycle_rebuild_set(needs_full);
+        self.enqueue_lifecycle_rebuild_set(needs_full, needs_inheritance);
     }
 
     /// #2935: synchronously fire any pending LOCAL-lifecycle rebuild fan-out
@@ -800,7 +894,7 @@ impl Materializer {
     /// [`Self::flush_background`], which awaits the drain barrier immediately
     /// after.
     pub(super) fn fire_pending_lifecycle_rebuild(&self) {
-        let (was_armed, needs_full) = {
+        let (was_armed, needs_full, needs_inheritance) = {
             let mut st = self
                 .lifecycle_rebuild_debounce
                 .state
@@ -808,14 +902,16 @@ impl Materializer {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let was_armed = st.armed;
             let needs_full = st.needs_full;
+            let needs_inheritance = st.needs_inheritance;
             st.armed = false;
             st.first_request = None;
             st.last_request = None;
             st.needs_full = false;
-            (was_armed, needs_full)
+            st.needs_inheritance = false;
+            (was_armed, needs_full, needs_inheritance)
         };
         if was_armed {
-            self.enqueue_lifecycle_rebuild_set(needs_full);
+            self.enqueue_lifecycle_rebuild_set(needs_full, needs_inheritance);
         }
     }
 
@@ -938,11 +1034,12 @@ impl Materializer {
                     st.armed = false;
                     st.first_request = None;
                     st.last_request = None;
-                    // #2935: reset the local-lifecycle FULL-vs-CONTENT
-                    // accumulator on disarm (always `false` / unused for the
+                    // #2935 / #2934: reset the local-lifecycle set-selection
+                    // accumulators on disarm (always `false` / unused for the
                     // inbound instance, whose fire set is fixed). A newer arm
-                    // (seq changed) keeps its own accumulated value.
+                    // (seq changed) keeps its own accumulated values.
                     st.needs_full = false;
+                    st.needs_inheritance = false;
                 } else {
                     st.first_request = st.last_request;
                 }
@@ -1033,15 +1130,16 @@ impl Materializer {
         block_type_hint: Option<&str>,
         move_same_page: Option<bool>,
     ) -> Result<(), AppError> {
+        let parsed_op = OpType::from_str(&record.op_type);
         let is_local_lifecycle = matches!(
-            OpType::from_str(&record.op_type),
+            parsed_op,
             Ok(OpType::DeleteBlock | OpType::RestoreBlock | OpType::PurgeBlock)
         );
         let mut arm_lifecycle = false;
         for task in invalidations_for_op(record, block_type_hint, move_same_page)? {
             if is_local_lifecycle && is_global_lifecycle_rebuild(&task) {
                 // Defer the global rebuild to the trailing debounce; every
-                // member of the set is armed by a single flag below.
+                // member of the set is armed by the flags below.
                 arm_lifecycle = true;
                 continue;
             }
@@ -1049,8 +1147,14 @@ impl Materializer {
         }
         if arm_lifecycle {
             // Mirror `lifecycle_rebuild_tasks`: only a proven CONTENT block
-            // narrows to the smaller set; every other hint keeps the full set.
-            self.arm_lifecycle_rebuild_debounce(block_type_hint != Some("content"));
+            // narrows away from the full set; every other hint keeps it.
+            let needs_full = block_type_hint != Some("content");
+            // #2934: the vault-wide `RebuildTagInheritanceCache` is dropped for a
+            // content delete/purge (scoped update is byte-identical) but RETAINED
+            // for a content restore (scoped `recompute_subtree_inheritance`
+            // diverges) and for the full set (which already carries it).
+            let needs_inheritance = needs_full || matches!(parsed_op, Ok(OpType::RestoreBlock));
+            self.arm_lifecycle_rebuild_debounce(needs_full, needs_inheritance);
         }
         if record.op_type == "edit_block" {
             self.maybe_enqueue_fts_optimize()?;
@@ -1298,7 +1402,11 @@ fn invalidations_for_op(
             // content-block tag refs — #2172). `Some("page")`/`Some("tag")`/
             // `None` keep the full set.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
+            tasks.extend(
+                lifecycle_rebuild_tasks(&OpType::DeleteBlock, block_type_hint)
+                    .iter()
+                    .cloned(),
+            );
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::RemoveFtsBlock {
                     block_id: Arc::from(block_id),
@@ -1309,7 +1417,11 @@ fn invalidations_for_op(
             // Cached sidecar — no JSON re-parse.
             // #2037 pt2: same content-block narrowing as `DeleteBlock`.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
+            tasks.extend(
+                lifecycle_rebuild_tasks(&OpType::RestoreBlock, block_type_hint)
+                    .iter()
+                    .cloned(),
+            );
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::UpdateFtsBlock {
                     block_id: Arc::from(block_id),
@@ -1320,7 +1432,11 @@ fn invalidations_for_op(
             // Cached sidecar — no JSON re-parse.
             // #2037 pt2: same content-block narrowing as `DeleteBlock`.
             let block_id = record.block_id.as_deref().unwrap_or_default();
-            tasks.extend(lifecycle_rebuild_tasks(block_type_hint).iter().cloned());
+            tasks.extend(
+                lifecycle_rebuild_tasks(&OpType::PurgeBlock, block_type_hint)
+                    .iter()
+                    .cloned(),
+            );
             if !block_id.is_empty() {
                 tasks.push(MaterializeTask::RemoveFtsBlock {
                     block_id: Arc::from(block_id),
@@ -1973,14 +2089,21 @@ mod tests {
             .map(task_label)
             .collect()
     }
+    fn content_restore_rebuild_labels() -> Vec<String> {
+        CONTENT_RESTORE_REBUILD_TASKS
+            .iter()
+            .map(task_label)
+            .collect()
+    }
 
-    /// #2037 pt2: a CONTENT-block delete drops the page-row
-    /// `RebuildPagesCache` rebuild but RETAINS `RebuildTagsCache` (its
-    /// `usage_count` counts content-block tag refs — #2172 review fix) and
-    /// `RebuildTagInheritanceCache` (the inheritance CTE filters
-    /// `deleted_at IS NULL`, so a content soft-delete DOES change descendant
-    /// inheritance) and every other lifecycle rebuild. The exact set is
-    /// pinned so a future edit cannot silently re-add or drop a task.
+    /// #2037 pt2 / #2934: a CONTENT-block delete drops the page-row
+    /// `RebuildPagesCache` rebuild (#2037 pt2) and the whole-vault
+    /// `RebuildTagInheritanceCache` (#2934 — the delete command tx already
+    /// maintains `block_tag_inherited` incrementally, proven equivalent to the
+    /// full rebuild), but RETAINS `RebuildTagsCache` (its `usage_count` counts
+    /// content-block tag refs — #2172 review fix) and every other lifecycle
+    /// rebuild. The exact set is pinned so a future edit cannot silently re-add
+    /// or drop a task.
     #[test]
     fn invalidations_for_op_delete_content_block_skips_pages_cache() {
         let r = make_record("delete_block", r#"{"block_id":"D1"}"#, Some("D1"));
@@ -2005,10 +2128,13 @@ mod tests {
             "content delete MUST retain RebuildTagsCache (usage_count); got {:?}",
             labels(&tasks),
         );
-        // ...and the tag-inheritance rebuild MUST be retained.
+        // #2934 regression sentinel: the whole-vault inheritance rebuild must
+        // NOT appear — the delete command tx maintains `block_tag_inherited`
+        // incrementally (proven by
+        // `delete_content_subtree_inheritance_matches_full_rebuild_2934`).
         assert!(
-            contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
-            "content delete MUST retain RebuildTagInheritanceCache; got {:?}",
+            !contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "content delete must NOT enqueue the vault-wide RebuildTagInheritanceCache (#2934); got {:?}",
             labels(&tasks),
         );
     }
@@ -2020,15 +2146,23 @@ mod tests {
     fn invalidations_for_op_restore_content_block_skips_pages_cache() {
         let r = make_record("restore_block", r#"{"block_id":"R1"}"#, Some("R1"));
         let tasks = invalidations_for_op(&r, Some("content"), None).unwrap();
-        let mut want = content_rebuild_labels();
+        // #2934: a content RESTORE uses CONTENT_RESTORE_REBUILD_TASKS — the
+        // page-row rebuild is dropped but the tag-inheritance rebuild is KEPT.
+        let mut want = content_restore_rebuild_labels();
         want.push("UpdateFtsBlock(R1)".into());
         assert_eq!(labels(&tasks), want);
         assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
         assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
-        assert!(contains_kind(
-            &tasks,
-            &MaterializeTask::RebuildTagInheritanceCache
-        ));
+        // #2934 regression sentinel: RESTORE MUST retain the vault-wide
+        // inheritance rebuild — its scoped `recompute_subtree_inheritance`
+        // diverges from the full rebuild for a restored direct-tagger (proven by
+        // `restore_content_subtree_inheritance_diverges_needs_rebuild_2934`).
+        // This is the exact difference from the delete/purge arms.
+        assert!(
+            contains_kind(&tasks, &MaterializeTask::RebuildTagInheritanceCache),
+            "content restore MUST retain RebuildTagInheritanceCache (#2934); got {:?}",
+            labels(&tasks),
+        );
     }
 
     #[test]
@@ -2040,7 +2174,11 @@ mod tests {
         assert_eq!(labels(&tasks), want);
         assert!(!contains_kind(&tasks, &MaterializeTask::RebuildPagesCache));
         assert!(contains_kind(&tasks, &MaterializeTask::RebuildTagsCache));
-        assert!(contains_kind(
+        // #2934: the purge cascade removes the subtree's inherited rows in-tx
+        // (proven by
+        // `purge_content_subtree_inheritance_matches_full_rebuild_2934`), so the
+        // vault-wide rebuild is dropped.
+        assert!(!contains_kind(
             &tasks,
             &MaterializeTask::RebuildTagInheritanceCache
         ));
@@ -2091,27 +2229,76 @@ mod tests {
         assert_eq!(labels(&tasks_unknown), want);
     }
 
-    /// #2037 pt2 / #2172: lock the narrowed set's exact membership — it is
-    /// the full set MINUS exactly `RebuildPagesCache` (the page-row rebuild),
-    /// nothing else added or removed. `RebuildTagsCache` is RETAINED because
-    /// its `usage_count` aggregates content-block tag refs (#2172 review).
+    /// #2037 pt2 / #2172 / #2934: lock the narrowed set's exact membership — it
+    /// is the full set MINUS exactly `RebuildPagesCache` (#2037 pt2 — the
+    /// page-row rebuild) and `RebuildTagInheritanceCache` (#2934 — maintained
+    /// in-tx by the lifecycle command), nothing else added or removed.
+    /// `RebuildTagsCache` is RETAINED because its `usage_count` aggregates
+    /// content-block tag refs (#2172 review).
     #[test]
-    fn content_lifecycle_set_is_full_minus_pages_cache() {
+    fn content_lifecycle_set_is_full_minus_pages_cache_and_tag_inheritance() {
         let full: Vec<String> = full_rebuild_labels();
         let narrowed: Vec<String> = content_rebuild_labels();
+        let expected: Vec<String> = full
+            .iter()
+            .filter(|l| {
+                l.as_str() != "RebuildPagesCache" && l.as_str() != "RebuildTagInheritanceCache"
+            })
+            .cloned()
+            .collect();
+        assert_eq!(
+            narrowed, expected,
+            "CONTENT_LIFECYCLE_REBUILD_TASKS must be FULL minus exactly the \
+             page-row RebuildPagesCache (#2037 pt2) and the vault-wide \
+             RebuildTagInheritanceCache (#2934), preserving order",
+        );
+        assert!(
+            narrowed.iter().any(|l| l == "RebuildTagsCache"),
+            "RebuildTagsCache MUST be retained (usage_count aggregates content refs)",
+        );
+        // #2934 regression sentinel: the vault-wide inheritance rebuild is gone.
+        assert!(
+            !narrowed.iter().any(|l| l == "RebuildTagInheritanceCache"),
+            "RebuildTagInheritanceCache must NOT be in the content lifecycle set (#2934)",
+        );
+    }
+
+    /// #2934: lock the content RESTORE set's exact membership — it is the full
+    /// set MINUS exactly `RebuildPagesCache` (#2037 pt2), RETAINING
+    /// `RebuildTagInheritanceCache` (restore's scoped recompute diverges from
+    /// the full rebuild, so the vault-wide rebuild heals it). It differs from
+    /// `CONTENT_LIFECYCLE_REBUILD_TASKS` (delete/purge) by exactly that one
+    /// task.
+    #[test]
+    fn content_restore_set_is_full_minus_pages_cache() {
+        let full: Vec<String> = full_rebuild_labels();
+        let restore: Vec<String> = content_restore_rebuild_labels();
         let expected: Vec<String> = full
             .iter()
             .filter(|l| l.as_str() != "RebuildPagesCache")
             .cloned()
             .collect();
         assert_eq!(
-            narrowed, expected,
-            "CONTENT_LIFECYCLE_REBUILD_TASKS must be FULL minus only the \
-             page-row RebuildPagesCache rebuild, preserving order",
+            restore, expected,
+            "CONTENT_RESTORE_REBUILD_TASKS must be FULL minus exactly the \
+             page-row RebuildPagesCache (#2037 pt2), preserving order",
         );
+        // #2934 regression sentinel: RESTORE keeps the inheritance rebuild.
         assert!(
-            narrowed.iter().any(|l| l == "RebuildTagsCache"),
-            "RebuildTagsCache MUST be retained (usage_count aggregates content refs)",
+            restore.iter().any(|l| l == "RebuildTagInheritanceCache"),
+            "RebuildTagInheritanceCache MUST be in the content restore set (#2934)",
+        );
+        // ...and the restore set is exactly the delete/purge set PLUS the
+        // inheritance rebuild — the one deliberate difference.
+        let delete_purge: Vec<String> = content_rebuild_labels();
+        let restore_minus_inheritance: Vec<String> = restore
+            .iter()
+            .filter(|l| l.as_str() != "RebuildTagInheritanceCache")
+            .cloned()
+            .collect();
+        assert_eq!(
+            restore_minus_inheritance, delete_purge,
+            "CONTENT_RESTORE must equal CONTENT_LIFECYCLE plus only RebuildTagInheritanceCache",
         );
     }
 
