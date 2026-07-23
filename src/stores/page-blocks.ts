@@ -83,6 +83,42 @@ export function storeOwnsBlock(
   return blockId != null && store.getState().blocksById.has(blockId)
 }
 
+/**
+ * #713 / #2903 — STRUCTURAL enforcement of the ownership gate above.
+ *
+ * Registers a `document` listener whose handler runs ONLY when `store` owns
+ * `blockId` (per {@link storeOwnsBlock}). A non-owning tree's handler is never
+ * invoked, so it can neither perform side effects nor `preventDefault()` — the
+ * exact #713 contract, now impossible to forget rather than hand-applied at
+ * each call site. Returns a cleanup function that removes the exact listener
+ * (feed it straight back from a `useEffect` so add/remove timing — and thus
+ * leak-safety across the many BlockTrees a journal week/month mounts — is
+ * preserved).
+ *
+ * The gate id is the block the caller wants ownership of (the focused block for
+ * the focus-scoped chords, or the selection anchor for the range/toggle chords),
+ * captured when the listener is registered — identical to reading it from the
+ * closed-over render value inside a raw handler. Because `storeOwnsBlock` is a
+ * `blockId is string` type guard, the owned id is handed to `handler` already
+ * narrowed to `string`, so handlers can use it without re-checking for null.
+ */
+export function addOwnedBlockListener<K extends keyof DocumentEventMap>(
+  store: StoreApi<PageBlockState>,
+  blockId: string | null,
+  type: K,
+  handler: (event: DocumentEventMap[K], ownedBlockId: string) => void,
+  options?: boolean | AddEventListenerOptions,
+): () => void {
+  const listener = (event: DocumentEventMap[K]): void => {
+    // The #713 gate. Non-owning tree (incl. a null blockId) → return before the
+    // handler runs: no side effects, no preventDefault.
+    if (!storeOwnsBlock(store, blockId)) return
+    handler(event, blockId)
+  }
+  document.addEventListener(type, listener, options)
+  return () => document.removeEventListener(type, listener, options)
+}
+
 // ── Store factory ────────────────────────────────────────────────────────
 
 export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
