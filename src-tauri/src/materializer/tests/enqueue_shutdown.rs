@@ -107,12 +107,16 @@ async fn enqueue_full_cache_rebuild_under_backpressure_increments_bg_dropped() {
     );
 
     // Drive a synthetic delete_block fan-out via the same dispatch entry
-    // point a real op uses.  The fan-out covers all 7 tasks in
-    // `FULL_CACHE_REBUILD_TASKS` plus a `RemoveFtsBlock` for the
-    // non-empty block_id — every one should be shed and counted because
-    // the queue is saturated.
+    // point a real op uses. #2935: the argument-less global rebuild set
+    // (`FULL_CACHE_REBUILD_TASKS`, 9 tasks) is now armed on a trailing
+    // debounce instead of enqueued inline, so `dispatch_background` itself
+    // only sheds the inline per-block `RemoveFtsBlock`; fire the pending
+    // debounced fan-out synchronously so the global set also hits the
+    // saturated queue. Every one of the 9 globals + 1 `RemoveFtsBlock`
+    // should be shed and counted.
     let record = fake_op_record("delete_block", r#"{"block_id":"BLK-DEL"}"#);
     let _ = mat.dispatch_background(&record);
+    mat.fire_pending_lifecycle_rebuild();
 
     let after = mat.metrics().bg_dropped.load(AtomicOrdering::Relaxed);
     assert!(

@@ -1,6 +1,8 @@
 //! Dispatch methods for routing ops to the appropriate materializer queues.
 
-use super::coordinator::{INBOUND_REBUILD_DEBOUNCE, INBOUND_REBUILD_MAX_WAIT, Materializer};
+use super::coordinator::{
+    INBOUND_REBUILD_DEBOUNCE, INBOUND_REBUILD_MAX_WAIT, InboundRebuildDebounce, Materializer,
+};
 use super::{CreateBlockHint, MaterializeTask, TagOpHint};
 use crate::error::AppError;
 use crate::op::OpType;
@@ -258,6 +260,24 @@ fn lifecycle_rebuild_tasks(block_type_hint: Option<&str>) -> &'static [Materiali
         Some("content") => &CONTENT_LIFECYCLE_REBUILD_TASKS,
         _ => &FULL_CACHE_REBUILD_TASKS,
     }
+}
+
+/// #2935: `true` for the argument-less GLOBAL full-vault rebuild tasks that a
+/// local lifecycle (`delete` / `restore` / `purge`) arm fans out — every
+/// member of [`FULL_CACHE_REBUILD_TASKS`] (`CONTENT_LIFECYCLE_REBUILD_TASKS`
+/// is a subset). These are the idempotent O(vault) recomputes routed through
+/// the trailing debounce in [`Materializer::enqueue_background_tasks`]. The
+/// per-block TARGETED tasks a lifecycle arm also emits (`RemoveFtsBlock` /
+/// `UpdateFtsBlock`, which carry a `block_id`) are NOT members, so they stay
+/// enqueued inline.
+///
+/// Matched by [`std::mem::discriminant`] because `MaterializeTask` is not
+/// `PartialEq`; every global rebuild variant is unit-like, so the
+/// discriminant identifies it exactly.
+fn is_global_lifecycle_rebuild(task: &MaterializeTask) -> bool {
+    FULL_CACHE_REBUILD_TASKS
+        .iter()
+        .any(|global| std::mem::discriminant(global) == std::mem::discriminant(task))
 }
 
 /// #2037: property keys that drive `agenda_cache` irrespective of value type.
@@ -700,6 +720,105 @@ impl Materializer {
         }
     }
 
+    /// #2935: arm the LOCAL-lifecycle cache-rebuild trailing debounce instead
+    /// of fanning out the argument-less global rebuild set inline. Mirrors
+    /// [`Self::arm_inbound_rebuild_debounce`].
+    ///
+    /// `needs_full` is OR-accumulated across the coalesced burst: a proven
+    /// CONTENT-block op can narrow to `CONTENT_LIFECYCLE_REBUILD_TASKS`, but
+    /// if ANY op in the burst needs the full set (page / tag / unknown /
+    /// absent hint) the single fire escalates to `FULL_CACHE_REBUILD_TASKS`
+    /// — the union is always correctness-safe. The lock is held only for the
+    /// field writes — never across an `.await`.
+    fn arm_lifecycle_rebuild_debounce(&self, needs_full: bool) {
+        let now = Instant::now();
+        {
+            let mut st = self
+                .lifecycle_rebuild_debounce
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            st.last_request = Some(now);
+            st.seq = st.seq.wrapping_add(1);
+            st.needs_full |= needs_full;
+            if !st.armed {
+                st.armed = true;
+                st.first_request = Some(now);
+            }
+        }
+        self.lifecycle_rebuild_debounce.notify.notify_one();
+    }
+
+    /// #2935: enqueue the local-lifecycle global cache-rebuild set — the
+    /// exact argument-less set (`lifecycle_rebuild_tasks`) the pre-debounce
+    /// inline `enqueue_background_tasks` path used, `FULL` vs `CONTENT`
+    /// selected by the burst's accumulated `needs_full`. Runs from a spawned
+    /// loop / a flush with no caller to propagate to, so an enqueue error
+    /// (only reachable as a `Channel` closed at shutdown) is warned rather
+    /// than returned; every task is argument-less and idempotent, so a missed
+    /// fire self-heals on the next lifecycle op or inbound sync.
+    fn enqueue_lifecycle_rebuild_set(&self, needs_full: bool) {
+        let tasks: &[MaterializeTask] = if needs_full {
+            &FULL_CACHE_REBUILD_TASKS
+        } else {
+            &CONTENT_LIFECYCLE_REBUILD_TASKS
+        };
+        for task in tasks {
+            if let Err(e) = self.try_enqueue_background(task.clone()) {
+                tracing::warn!(
+                    error = %e,
+                    "failed to enqueue local-lifecycle cache rebuild (debounce fire)"
+                );
+            }
+        }
+    }
+
+    /// #2935: fan-out fired once per settled burst by
+    /// [`Self::lifecycle_rebuild_debounce_loop`]. Reads the accumulated
+    /// `needs_full` (the loop disarms + resets it afterwards) and enqueues
+    /// the matching set.
+    fn fire_lifecycle_rebuild_fanout(&self) {
+        let needs_full = {
+            let st = self
+                .lifecycle_rebuild_debounce
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            st.needs_full
+        };
+        self.enqueue_lifecycle_rebuild_set(needs_full);
+    }
+
+    /// #2935: synchronously fire any pending LOCAL-lifecycle rebuild fan-out
+    /// and disarm, so a preceding `delete` / `restore` / `purge` is fully
+    /// materialized by the time an explicit [`Self::flush_background`] drain
+    /// returns — preserving the inline pre-#2935 semantics that
+    /// cache-assertion call sites (and the existing lifecycle cache /
+    /// fan-out-count tests) rely on. Disarms + captures `needs_full` under the
+    /// lock first, then enqueues; a no-op when nothing is armed. A redundant
+    /// later loop-fire is harmless (idempotent + batch-deduped). Called from
+    /// [`Self::flush_background`], which awaits the drain barrier immediately
+    /// after.
+    pub(super) fn fire_pending_lifecycle_rebuild(&self) {
+        let (was_armed, needs_full) = {
+            let mut st = self
+                .lifecycle_rebuild_debounce
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let was_armed = st.armed;
+            let needs_full = st.needs_full;
+            st.armed = false;
+            st.first_request = None;
+            st.last_request = None;
+            st.needs_full = false;
+            (was_armed, needs_full)
+        };
+        if was_armed {
+            self.enqueue_lifecycle_rebuild_set(needs_full);
+        }
+    }
+
     /// #2291: trailing-debounce driver for the inbound-sync cache-rebuild
     /// fan-out. Spawned once from [`Self::build`]; runs until
     /// [`Self::shutdown_flag`] is set.
@@ -737,6 +856,37 @@ impl Materializer {
     /// full rebuild rather than paying retry-queue persistence.
     pub(super) async fn inbound_rebuild_debounce_loop(mat: Materializer) {
         let debounce = Arc::clone(&mat.inbound_rebuild_debounce);
+        Self::rebuild_debounce_loop(mat, debounce, Materializer::fire_inbound_rebuild_fanout).await;
+    }
+
+    /// #2935: trailing-debounce driver for the LOCAL lifecycle
+    /// (`delete` / `restore` / `purge`) global cache-rebuild fan-out. Thin
+    /// wrapper over [`Self::rebuild_debounce_loop`] bound to the
+    /// `lifecycle_rebuild_debounce` instance and its FULL-vs-CONTENT fire.
+    /// Spawned once from [`Self::build`]. The shutdown / process-death
+    /// tradeoff documented on [`Self::inbound_rebuild_debounce_loop`] applies
+    /// verbatim; a lifecycle rebuild still pending in the window on process
+    /// death re-converges on the next lifecycle op or inbound sync.
+    pub(super) async fn lifecycle_rebuild_debounce_loop(mat: Materializer) {
+        let debounce = Arc::clone(&mat.lifecycle_rebuild_debounce);
+        Self::rebuild_debounce_loop(mat, debounce, Materializer::fire_lifecycle_rebuild_fanout)
+            .await;
+    }
+
+    /// #2291 / #2935: shared trailing-debounce driver over one
+    /// [`InboundRebuildDebounce`] instance. `fire` is the instance-specific
+    /// fan-out (which fixed rebuild set to enqueue); the trailing-window /
+    /// max-wait timing, the exact-`seq` ABA disarm guard, and the
+    /// park-on-idle behaviour are identical for both instances, so they live
+    /// here once. Each iteration snapshots the armed instants under the state
+    /// `std::sync::Mutex` (dropped BEFORE any `.await`), then either parks on
+    /// `notify` when idle, fires + disarms when the deadline has passed, or
+    /// sleeps until the deadline racing a fresh arm.
+    async fn rebuild_debounce_loop(
+        mat: Materializer,
+        debounce: Arc<InboundRebuildDebounce>,
+        fire: fn(&Materializer),
+    ) {
         loop {
             if mat.shutdown_flag.load(Ordering::Acquire) {
                 break;
@@ -770,7 +920,7 @@ impl Materializer {
                 first + INBOUND_REBUILD_MAX_WAIT,
             );
             if Instant::now() >= fire_at {
-                mat.fire_inbound_rebuild_fanout();
+                fire(&mat);
                 #[cfg(test)]
                 debounce.fanout_fires.fetch_add(1, Ordering::Relaxed);
                 // Disarm — but only if no newer arm landed between our
@@ -788,6 +938,11 @@ impl Materializer {
                     st.armed = false;
                     st.first_request = None;
                     st.last_request = None;
+                    // #2935: reset the local-lifecycle FULL-vs-CONTENT
+                    // accumulator on disarm (always `false` / unused for the
+                    // inbound instance, whose fire set is fixed). A newer arm
+                    // (seq changed) keeps its own accumulated value.
+                    st.needs_full = false;
                 } else {
                     st.first_request = st.last_request;
                 }
@@ -860,14 +1015,42 @@ impl Materializer {
     /// kind X invalidates cache Y" without driving the full materializer.
     /// This dispatcher is a thin loop over that vec plus the
     /// metric-conditional FTS-optimize enqueue for `edit_block`.
+    ///
+    /// #2935: a LOCAL `delete` / `restore` / `purge` fans out the
+    /// argument-less global full-vault rebuild set
+    /// (`lifecycle_rebuild_tasks`); a burst of such ops landing across
+    /// separate background-queue drains re-ran the WHOLE set once per op (the
+    /// batch dedup only collapses duplicates within a single drain). Those
+    /// global rebuilds are instead routed through a trailing debounce
+    /// (mirroring the inbound #2291 path) so a burst collapses to a single
+    /// fire, while the per-block TARGETED FTS task (`RemoveFtsBlock` /
+    /// `UpdateFtsBlock`) the same arm emits stays enqueued INLINE — it is
+    /// per-block, not an idempotent O(vault) recompute, and must land
+    /// immediately.
     fn enqueue_background_tasks(
         &self,
         record: &OpRecord,
         block_type_hint: Option<&str>,
         move_same_page: Option<bool>,
     ) -> Result<(), AppError> {
+        let is_local_lifecycle = matches!(
+            OpType::from_str(&record.op_type),
+            Ok(OpType::DeleteBlock | OpType::RestoreBlock | OpType::PurgeBlock)
+        );
+        let mut arm_lifecycle = false;
         for task in invalidations_for_op(record, block_type_hint, move_same_page)? {
+            if is_local_lifecycle && is_global_lifecycle_rebuild(&task) {
+                // Defer the global rebuild to the trailing debounce; every
+                // member of the set is armed by a single flag below.
+                arm_lifecycle = true;
+                continue;
+            }
             self.try_enqueue_background(task)?;
+        }
+        if arm_lifecycle {
+            // Mirror `lifecycle_rebuild_tasks`: only a proven CONTENT block
+            // narrows to the smaller set; every other hint keeps the full set.
+            self.arm_lifecycle_rebuild_debounce(block_type_hint != Some("content"));
         }
         if record.op_type == "edit_block" {
             self.maybe_enqueue_fts_optimize()?;

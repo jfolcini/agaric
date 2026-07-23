@@ -57,17 +57,26 @@ pub(super) const INBOUND_REBUILD_DEBOUNCE: Duration = Duration::from_millis(300)
 /// [`INBOUND_REBUILD_DEBOUNCE`] for why the latency is imperceptible).
 pub(super) const INBOUND_REBUILD_MAX_WAIT: Duration = Duration::from_secs(2);
 
-/// #2291: shared trailing-debounce state that coalesces the inbound-sync
-/// cache-rebuild fan-out (the 8 argument-less global full-vault rebuilds in
-/// `INBOUND_SYNC_CACHE_REBUILD_TASKS`).
+/// #2291 / #2935: shared trailing-debounce state that coalesces an
+/// argument-less global full-vault cache-rebuild fan-out into a single fire
+/// per burst. TWO instances of this type exist on the [`Materializer`]:
+///   - `inbound_rebuild_debounce` (#2291) — the inbound-sync fan-out (the 8
+///     tasks in `INBOUND_SYNC_CACHE_REBUILD_TASKS`);
+///   - `lifecycle_rebuild_debounce` (#2935) — the LOCAL delete / restore /
+///     purge fan-out (`FULL_CACHE_REBUILD_TASKS`, narrowed to
+///     `CONTENT_LIFECYCLE_REBUILD_TASKS` for a proven content block via the
+///     `needs_full` accumulator).
 ///
-/// Each inbound import drain ARMS this instead of fanning out inline
-/// ([`Materializer::arm_inbound_rebuild_debounce`]); the single driver task
-/// [`Materializer::inbound_rebuild_debounce_loop`] waits out the quiet
-/// period (capped by max-wait) and fires the fan-out exactly once per burst.
-/// Correctness rests on every one of those 8 tasks being idempotent and
-/// reading current SQL state (a full rebuild), so one fire after a burst
-/// settles covers every coalesced import.
+/// Each drain / op ARMS the relevant instance instead of fanning out inline
+/// ([`Materializer::arm_inbound_rebuild_debounce`] /
+/// [`Materializer::arm_lifecycle_rebuild_debounce`]); one driver task per
+/// instance ([`Materializer::inbound_rebuild_debounce_loop`] /
+/// [`Materializer::lifecycle_rebuild_debounce_loop`], both over the shared
+/// [`Materializer::rebuild_debounce_loop`]) waits out the quiet period
+/// (capped by max-wait) and fires the fan-out exactly once per burst.
+/// Correctness rests on every fired task being idempotent and reading current
+/// SQL state (a full rebuild), so one fire after a burst settles covers every
+/// coalesced op.
 #[derive(Default)]
 pub(super) struct InboundRebuildDebounce {
     /// `std::sync::Mutex` (never held across an `.await` — the loop
@@ -102,6 +111,15 @@ pub(super) struct DebounceState {
     /// clock with no `advance` between fire and arm), which would otherwise
     /// wrongly disarm and drop the second arm's pending fire.
     pub(super) seq: u64,
+    /// #2935: LOCAL-lifecycle debounce only — which rebuild set the settled
+    /// burst should fire. OR-accumulated across the burst by
+    /// [`super::Materializer::arm_lifecycle_rebuild_debounce`]: a proven
+    /// CONTENT-block op can narrow to `CONTENT_LIFECYCLE_REBUILD_TASKS`, but
+    /// if ANY op in the burst needs the full set (page / tag / unknown /
+    /// absent hint) the single fire escalates to `FULL_CACHE_REBUILD_TASKS`
+    /// — the union is always correctness-safe. Reset to `false` on disarm.
+    /// The inbound-sync debounce never touches this (its fire set is fixed).
+    pub(super) needs_full: bool,
 }
 
 /// Outcome of a NON-BLOCKING background enqueue
@@ -184,6 +202,17 @@ pub struct Materializer {
     /// 8 global rebuilds exactly once per burst. See
     /// [`InboundRebuildDebounce`].
     pub(super) inbound_rebuild_debounce: Arc<InboundRebuildDebounce>,
+    /// #2935: shared trailing-debounce state coalescing the LOCAL
+    /// delete / restore / purge global cache-rebuild fan-out. Armed by
+    /// [`Self::arm_lifecycle_rebuild_debounce`] on each lifecycle op instead
+    /// of enqueuing the argument-less global rebuild set inline; the single
+    /// driver task [`Self::lifecycle_rebuild_debounce_loop`] (spawned in
+    /// [`Self::build`]) waits out the quiet period and fires the set exactly
+    /// once per burst (`FULL_CACHE_REBUILD_TASKS`, or the narrowed
+    /// `CONTENT_LIFECYCLE_REBUILD_TASKS` when the burst was all content
+    /// blocks). Per-block targeted FTS tasks stay enqueued inline. See
+    /// [`InboundRebuildDebounce`].
+    pub(super) lifecycle_rebuild_debounce: Arc<InboundRebuildDebounce>,
     /// Tracks every tokio task spawned via [`Self::spawn_task`] so
     /// [`Self::shutdown`] can call `abort_all()` on them. Without this,
     /// long-running futures (e.g. an FTS rebuild taking many seconds)
@@ -371,6 +400,10 @@ impl Materializer {
         // cache-rebuild fan-out; the driver task is spawned after `Self` is
         // built (it needs a `Materializer` clone for the enqueue path).
         let inbound_rebuild_debounce = Arc::new(InboundRebuildDebounce::default());
+        // #2935: shared trailing-debounce state for the LOCAL lifecycle
+        // (delete / restore / purge) global cache-rebuild fan-out; its driver
+        // task is spawned alongside the inbound one after `Self` is built.
+        let lifecycle_rebuild_debounce = Arc::new(InboundRebuildDebounce::default());
         // JoinSet must exist before the `spawn_task` calls
         // below so every task we spawn is registered for abort-on-shutdown.
         let tasks: Arc<Mutex<JoinSet<()>>> = Arc::new(Mutex::new(JoinSet::new()));
@@ -461,6 +494,7 @@ impl Materializer {
             app_data_dir,
             loro,
             inbound_rebuild_debounce,
+            lifecycle_rebuild_debounce,
             tasks,
         };
         // #2291: spawn the trailing-debounce driver for the inbound-sync
@@ -476,6 +510,11 @@ impl Materializer {
         // `shutdown()`'s `abort_all()` — consistent with the existing
         // abort-on-shutdown contract, not a new requirement.
         Self::spawn_task(&mat.tasks, Self::inbound_rebuild_debounce_loop(mat.clone()));
+        // #2935: driver for the LOCAL lifecycle global cache-rebuild debounce.
+        Self::spawn_task(
+            &mat.tasks,
+            Self::lifecycle_rebuild_debounce_loop(mat.clone()),
+        );
         mat
     }
 
@@ -1049,6 +1088,16 @@ impl Materializer {
     }
 
     pub async fn flush_background(&self) -> Result<(), AppError> {
+        // #2935: fire any pending debounced LOCAL-lifecycle global rebuild
+        // fan-out NOW, before the drain barrier, so an explicit background
+        // drain (directly or via `flush`) fully materializes a preceding
+        // delete / restore / purge — preserving the inline pre-#2935 semantics
+        // that cache-assertion call sites (and the existing lifecycle cache /
+        // fan-out-count tests) rely on. A no-op when nothing is armed; a
+        // redundant later loop-fire is harmless (idempotent + batch-deduped).
+        // The inbound-sync debounce is deliberately NOT fired here; its call
+        // sites use the dedicated `flush_inbound_rebuild_debounce` test helper.
+        self.fire_pending_lifecycle_rebuild();
         let notify = Arc::new(tokio::sync::Notify::new());
         self.enqueue_background(MaterializeTask::Barrier(Arc::clone(&notify)))
             .await?;
