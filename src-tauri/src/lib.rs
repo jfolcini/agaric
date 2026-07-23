@@ -1964,14 +1964,23 @@ fn format_panic_report(payload: &str, location: &str, backtrace: &str) -> String
 /// Best-effort and non-fatal: it ignores the dialog result and returns. It is a
 /// no-op under `cfg(test)` and on headless hosts (CI / `AGARIC_HEADLESS`, or —
 /// on Linux — no `DISPLAY`/`WAYLAND_DISPLAY`) so unit tests and CI never block
-/// on an un-dismissable window with no display to render it.
+/// on an un-dismissable window with no display to render it. On Android/iOS
+/// (#3072) `rfd` has no backend, so mobile logs the error and relies on the
+/// platform to surface the crash instead of opening a native dialog.
 fn show_fatal_error_dialog(title: &str, body: &str) {
     // Never pop a real window from the test binary.
     #[cfg(test)]
     {
         let _ = (title, body);
     }
-    #[cfg(not(test))]
+    // Mobile: `rfd` 0.17 has no Android/iOS backend (#3072). The platform (crash
+    // reporter / system UI) surfaces a boot-fatal exit, so we only log here.
+    #[cfg(all(not(test), any(target_os = "android", target_os = "ios")))]
+    {
+        tracing::error!(dialog_title = %title, "fatal error (mobile: platform surfaces it, no native dialog)");
+        let _ = (title, body);
+    }
+    #[cfg(all(not(test), not(any(target_os = "android", target_os = "ios"))))]
     {
         // On Linux a GTK dialog needs a display server; treat its absence as
         // headless so we don't hang/fail trying to open one. Other platforms
