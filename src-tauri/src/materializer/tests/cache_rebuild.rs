@@ -692,3 +692,99 @@ async fn inbound_block_tag_refs_purge_only_matches_global_2667() {
         "#2667: purge-only path (cascade, no task) must match a full rebuild",
     );
 }
+
+/// #2935 test helper: read the test-only fire counter on the LOCAL-lifecycle
+/// rebuild debounce (bumped once per fan-out by the debounce loop).
+fn lifecycle_debounce_fires(mat: &Materializer) -> u64 {
+    mat.lifecycle_rebuild_debounce
+        .fanout_fires
+        .load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// #2935: a burst of local `delete_block` ops — each landing on its own
+/// background-queue drain — must collapse the argument-less global full-vault
+/// rebuild set to EXACTLY ONE debounced fire (not one per op), while every
+/// op's per-block TARGETED `RemoveFtsBlock` still runs INLINE.
+///
+/// Coalescing is observed via the test-only `fanout_fires` counter on the
+/// lifecycle debounce; the targeted-inline guarantee via the `fts_blocks`
+/// table — the global rebuild set never touches FTS (see
+/// `FULL_CACHE_REBUILD_TASKS`), so any FTS row removed here must come from the
+/// inline per-block `RemoveFtsBlock`, not the debounced fan-out.
+///
+/// Non-tautological: with the debounce removed (the global set enqueued
+/// inline per op, as before #2935), the debounce loop is never armed, so
+/// `fanout_fires` stays 0 and the post-window `== 1` collapse assertion fails.
+///
+/// Real time (multi-thread runtime) is used deliberately: `tokio::time::pause`
+/// is unavailable here, and the wide margin between the 300ms trailing window
+/// and the 2s max-wait cap makes a burst of a few fast local ops
+/// deterministically coalesce to a single fire.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_lifecycle_rebuild_debounce_coalesces_delete_burst() {
+    const N: usize = 5;
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Seed N content blocks, each with a direct `fts_blocks` row, so each
+    // op's inline `RemoveFtsBlock` has an observable row to remove.
+    for i in 0..N {
+        let id = format!("LC_DEL_{i}");
+        insert_block_direct(&pool, &id, "content", "burst body").await;
+        sqlx::query("INSERT INTO fts_blocks(block_id, stripped) VALUES(?, ?)")
+            .bind(&id)
+            .bind("burst body")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+
+    // Burst: N deletes, each its own `dispatch_op` (its own bg drain point),
+    // fired back-to-back so they land well inside the 300ms trailing window.
+    for i in 0..N {
+        let id = format!("LC_DEL_{i}");
+        soft_delete_block_direct(&pool, &id).await;
+        let del = make_op_record(
+            &pool,
+            OpPayload::DeleteBlock(DeleteBlockPayload {
+                block_id: BlockId::test_id(&id),
+            }),
+        )
+        .await;
+        mat.dispatch_op(&del).await.unwrap();
+        settle().await;
+    }
+
+    // The global fan-out must NOT have fired yet: the burst finishes far
+    // inside the trailing window, and every successive delete resets it.
+    assert_eq!(
+        lifecycle_debounce_fires(&mat),
+        0,
+        "the global rebuild fan-out must not fire mid-burst (each delete resets the trailing window)"
+    );
+
+    // Wait out the trailing window from the last delete: the whole burst
+    // collapses to exactly ONE global fan-out (well under the 2s max-wait, so
+    // never two).
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    settle().await;
+    assert_eq!(
+        lifecycle_debounce_fires(&mat),
+        1,
+        "a burst of {N} deletes within the debounce window must collapse to exactly ONE global rebuild fan-out"
+    );
+
+    // Drain everything, then confirm each op's TARGETED per-block FTS removal
+    // ran INLINE — the global set never touches `fts_blocks`, so every row
+    // gone is proof the inline `RemoveFtsBlock` fired once per deleted block.
+    mat.flush_background().await.unwrap();
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM fts_blocks WHERE block_id LIKE 'LC_DEL_%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        remaining, 0,
+        "every deleted block's inline RemoveFtsBlock must have removed its fts_blocks row"
+    );
+}

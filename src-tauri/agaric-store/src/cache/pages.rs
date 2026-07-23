@@ -209,11 +209,28 @@ async fn rebuild_pages_cache_impl(pool: &SqlitePool) -> Result<u64, AppError> {
 
 /// #417: full-table recompute of `pages_cache.{inbound_link_count,
 /// child_block_count}` in its own write transaction. Background entry
-/// point for the dedicated `MaterializeTask::RebuildPagesCacheCounts`,
-/// enqueued ONLY on the snapshot/sync RESET path (after
-/// `RebuildPagesCache` re-inserts the page rows). Mirrors
-/// [`rebuild_pages_cache`]'s `begin_immediate_logged` + `rebuild_with_timing`
-/// shape but runs the count-only [`recompute_all_pages_cache_counts`].
+/// point for the dedicated `MaterializeTask::RebuildPagesCacheCounts`.
+///
+/// Enqueue sites (as of #2042; the dispatch matrix in
+/// `src-tauri/src/materializer/dispatch.rs` is the single source of truth):
+/// this task is a member of all three global-rebuild sets there, so it runs
+/// on
+///   - every local `delete` / `restore` / `purge` lifecycle op
+///     (`FULL_CACHE_REBUILD_TASKS` / `CONTENT_LIFECYCLE_REBUILD_TASKS`),
+///     now coalesced per burst by the #2935 local-lifecycle trailing
+///     debounce rather than fired inline per op;
+///   - the #2291 debounced inbound-sync fan-out
+///     (`INBOUND_SYNC_CACHE_REBUILD_TASKS`); and
+///   - the snapshot / sync RESET path (after `RebuildPagesCache` re-inserts
+///     the page rows).
+///
+/// #2042 made it the background replacement for the former synchronous
+/// foreground count recompute, which is why it now runs per lifecycle op and
+/// not only on RESET.
+///
+/// Mirrors [`rebuild_pages_cache`]'s `begin_immediate_logged` +
+/// `rebuild_with_timing` shape but runs the count-only
+/// [`recompute_all_pages_cache_counts`].
 pub async fn rebuild_pages_cache_counts(pool: &SqlitePool) -> Result<(), AppError> {
     super::rebuild_with_timing("pages_counts", || rebuild_pages_cache_counts_impl(pool)).await
 }
