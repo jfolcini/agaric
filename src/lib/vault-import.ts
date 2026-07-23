@@ -217,39 +217,72 @@ export function mdFilesToUnits(files: File[], vaultIndex: VaultIndex | null): Im
 }
 
 /**
+ * Build a note's `vaultFiles` payload from its decoded attachments, converting
+ * each `Uint8Array` to the `number[]` the IPC wire shape needs (#2899). Kept
+ * as its own step (rather than inline in the `*ToUnits` producers below) so it
+ * can be called LAZILY from `load()` — the expensive part (one `number[]` per
+ * attachment byte, plus JSON-serialization on the IPC boundary) then happens
+ * only for the note currently being imported, not for every note up front.
+ */
+function attachmentsToVaultFiles(
+  attachments: readonly { path: string; bytes: Uint8Array }[],
+): VaultFile[] | null {
+  return attachments.length > 0
+    ? attachments.map((a) => ({ path: a.path, bytes: Array.from(a.bytes) }))
+    : null
+}
+
+/**
  * Evernote producer: one {@link ImportUnit} per parsed note. The composed
  * markdown is produced eagerly (so `bytes` reflects its length, matching the
  * pre-refactor `unit.content.length` byte accounting), and any decoded
  * `<en-media>` attachments ship as `vaultFiles` through the SAME plumbing the
  * folder import uses (#2513). Note filenames use the Evernote title sanitizer.
+ *
+ * #2899 — the `Uint8Array` → `number[]` conversion happens inside `load()`,
+ * NOT here, so a large `.enex` doesn't materialize every note's attachment
+ * bytes as `number[]` up front (peak memory stays O(one note's attachments),
+ * not O(all notes')). The parsed `note.attachments` (already-decoded
+ * `Uint8Array`s from `parseEnex`) are captured by the closure and converted
+ * only when this unit's `load()` runs, right before its `invoke`.
  */
 export function enexNotesToUnits(notes: EnexNote[]): ImportUnit[] {
   return notes.map((note) => {
     const name = `${sanitizeNoteTitleToFilename(note.title)}.md`
     const content = enexNoteToMarkdown(note)
-    const vaultFiles: VaultFile[] | null =
-      note.attachments.length > 0
-        ? note.attachments.map((a) => ({ path: a.path, bytes: Array.from(a.bytes) }))
-        : null
-    return { name, bytes: content.length, load: async () => ({ content, path: name, vaultFiles }) }
+    return {
+      name,
+      bytes: content.length,
+      load: async () => ({
+        content,
+        path: name,
+        vaultFiles: attachmentsToVaultFiles(note.attachments),
+      }),
+    }
   })
 }
 
 /**
  * Joplin producer: one {@link ImportUnit} per parsed note. Mirrors
  * {@link enexNotesToUnits} — content composed eagerly, resources shipped as
- * `vaultFiles`. Note that the filename uses the SAME Evernote-title sanitizer
- * (`sanitizeNoteTitleToFilename` from `@/lib/enex-import`) the pre-refactor
- * `.jex` handler used, preserving exact filename behaviour.
+ * `vaultFiles`, and (#2899) the `number[]` conversion deferred into `load()`
+ * for the same peak-memory reason. Note that the filename uses the SAME
+ * Evernote-title sanitizer (`sanitizeNoteTitleToFilename` from
+ * `@/lib/enex-import`) the pre-refactor `.jex` handler used, preserving exact
+ * filename behaviour.
  */
 export function jexNotesToUnits(notes: JexNote[]): ImportUnit[] {
   return notes.map((note) => {
     const name = `${sanitizeNoteTitleToFilename(note.title)}.md`
     const content = jexNoteToMarkdown(note)
-    const vaultFiles: VaultFile[] | null =
-      note.attachments.length > 0
-        ? note.attachments.map((a) => ({ path: a.path, bytes: Array.from(a.bytes) }))
-        : null
-    return { name, bytes: content.length, load: async () => ({ content, path: name, vaultFiles }) }
+    return {
+      name,
+      bytes: content.length,
+      load: async () => ({
+        content,
+        path: name,
+        vaultFiles: attachmentsToVaultFiles(note.attachments),
+      }),
+    }
   })
 }
