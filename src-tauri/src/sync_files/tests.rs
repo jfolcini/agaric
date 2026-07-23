@@ -185,6 +185,82 @@ fn write_file_overwrites_existing() {
     );
 }
 
+/// List `*.tmp-*` sibling entries in `dir` — the orphan shape a crashed
+/// atomic write (`write_attachment_file`) would leave behind. Used to
+/// assert the temp file never survives, on either the success or the
+/// error path.
+fn tmp_siblings(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.contains(".tmp-"))
+        })
+        .collect()
+}
+
+/// #2918 — a successful write must not leave the `<final>.tmp-<ulid>`
+/// staging file behind: the atomic rename consumes it. Against the OLD
+/// `std::fs::write` implementation this test is vacuous (no temp file was
+/// ever created), so it only has teeth against the NEW atomic-rename
+/// implementation regressing to "write temp, forget to rename/clean up".
+#[test]
+fn write_file_leaves_no_tmp_sibling_on_success() {
+    let dir = TempDir::new().unwrap();
+    write_attachment_file(dir.path(), "attachments/clean.png", b"payload").unwrap();
+
+    let att_dir = dir.path().join("attachments");
+    assert!(
+        att_dir.join("clean.png").exists(),
+        "final file should exist"
+    );
+    assert_eq!(
+        tmp_siblings(&att_dir),
+        Vec::<std::path::PathBuf>::new(),
+        "no *.tmp-* orphan should remain after a successful atomic write"
+    );
+}
+
+/// #2918 — when the final rename step fails, the temp file written just
+/// before it must be cleaned up rather than orphaned, and the error must
+/// still surface to the caller. We induce the rename failure by making
+/// `full_path` an existing (empty) directory: `write_all` + `sync_all` on
+/// the sibling temp file succeed, but `fs::rename(temp, full_path)` fails
+/// with `EISDIR` because the destination is a directory, not a file.
+///
+/// Against the OLD `std::fs::write(&full_path, data)` implementation this
+/// exact scenario also errors (you cannot `write` over a directory), but it
+/// never created a temp file in the first place — the orphan-free assertion
+/// here is meaningless there. This test's value is specific to the NEW
+/// write-then-rename implementation: it proves the temp file created before
+/// the failing rename does not leak.
+#[test]
+fn write_file_cleans_up_temp_on_rename_failure() {
+    let dir = TempDir::new().unwrap();
+    let att_dir = dir.path().join("attachments");
+    // Final path is an existing empty directory, not a file — rename(2)
+    // onto it fails with EISDIR (oldpath is a regular file).
+    std::fs::create_dir_all(att_dir.join("blocked.png")).unwrap();
+
+    let result = write_attachment_file(dir.path(), "attachments/blocked.png", b"payload");
+    assert!(
+        result.is_err(),
+        "write should fail when the destination is an existing directory"
+    );
+    assert!(
+        att_dir.join("blocked.png").is_dir(),
+        "the blocking directory should be untouched"
+    );
+    assert_eq!(
+        tmp_siblings(&att_dir),
+        Vec::<std::path::PathBuf>::new(),
+        "no *.tmp-* orphan should remain after a failed write"
+    );
+}
+
 // ── blake3 hash verification ─────────────────────────────────────────
 
 #[test]
