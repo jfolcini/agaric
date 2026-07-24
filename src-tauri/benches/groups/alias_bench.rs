@@ -6,7 +6,7 @@
 //!   2. `get_page_aliases_inner`     — read aliases for a single page
 //!   3. `resolve_page_by_alias_inner` — look up a page by one alias
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::commands::{
     get_page_aliases_inner, resolve_page_by_alias_inner, set_page_aliases_inner,
@@ -227,5 +227,3 @@ criterion_group!(
     bench_get_page_aliases,
     bench_resolve_page_by_alias,
 );
-
-criterion_main!(alias_benches);

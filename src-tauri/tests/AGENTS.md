@@ -35,7 +35,7 @@ cargo insta review        # interactive accept/reject
 
 cargo test -p agaric -- specta_tests --ignored   # regenerate src/lib/bindings.ts
 
-cargo bench --bench hash_bench   # local only
+cargo bench --bench core_bench -- hash   # local only (hash_bench is a mod of core_bench, #2879)
 ```
 
 ### Nextest configuration (`.config/nextest.toml`)

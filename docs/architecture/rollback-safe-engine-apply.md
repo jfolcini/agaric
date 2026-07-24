@@ -88,10 +88,11 @@ ceiling.
 
 ## Measurements
 
-Bench: `src-tauri/benches/engine_checkpoint_bench.rs`. Run the full table with
-`ENGINE_CHECKPOINT_FULL=1 cargo bench --bench engine_checkpoint_bench`
+Bench: `src-tauri/benches/groups/engine_checkpoint_bench.rs` (a `mod` of the
+consolidated `engine_bench` binary, #2879). Run the full table with
+`ENGINE_CHECKPOINT_FULL=1 cargo bench --bench engine_bench -- engine_checkpoint`
 (release profile; the 10K/100K scales are gated so the CI `--test` smoke gate
-stays cheap). Figures below are **µs per op**, release profile on the session's
+stays cheap; the trailing filter scopes the run to just the checkpoint groups). Figures below are **µs per op**, release profile on the session's
 CI-equivalent runner (single sample run — read them as orders of magnitude, not
 sub-µs-precise, and re-run for a hardware-specific number). The 100K column is
 extrapolated from the measured `O(n)` trend (`fork` grows ~linearly, so 100K ≈

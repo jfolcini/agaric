@@ -8,7 +8,7 @@
 //!   2. `delete_attachment` — delete an attachment (re-insert between iterations)
 //!   3. `list_attachments`  — list attachments for a target block
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::commands::{add_attachment_inner, delete_attachment_inner, list_attachments_inner};
 use agaric_lib::db::init_pool;
@@ -286,5 +286,3 @@ criterion_group!(
     bench_delete_attachment,
     bench_list_attachments,
 );
-
-criterion_main!(attachment_benches);

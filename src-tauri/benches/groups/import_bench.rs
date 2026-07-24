@@ -5,7 +5,7 @@
 //!   1. `parse_logseq_markdown` — pure parsing, no DB
 //!   2. `import_markdown_inner`  — full pipeline: parse + create page + insert blocks
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_engine::import::parse_logseq_markdown;
 use agaric_lib::commands::{create_space_inner, import_markdown_inner};
@@ -171,4 +171,3 @@ fn bench_import_markdown_inner(c: &mut Criterion) {
 
 criterion_group!(parse_benches, bench_parse_logseq_markdown);
 criterion_group!(import_benches, bench_import_markdown_inner);
-criterion_main!(parse_benches, import_benches);

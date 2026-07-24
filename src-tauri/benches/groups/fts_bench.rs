@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::db::init_pool;
 use agaric_store::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
@@ -172,4 +172,3 @@ criterion_group!(
     bench_update_fts_for_block,
     bench_fts_optimize,
 );
-criterion_main!(benches);

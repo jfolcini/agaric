@@ -7,7 +7,7 @@
 
 use std::hint::black_box;
 
-use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::create_block_inner;
@@ -423,9 +423,3 @@ criterion_group!(
     bench_apply_snapshot_vault_scale
 );
 criterion_group!(snapshot_codec_benches, bench_codec);
-criterion_main!(
-    snapshot_create_benches,
-    snapshot_apply_benches,
-    snapshot_apply_vault_scale_benches,
-    snapshot_codec_benches
-);

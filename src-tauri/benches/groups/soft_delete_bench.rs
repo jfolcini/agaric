@@ -1,7 +1,7 @@
 // Bench helpers cast small loop indices between usize/i64 freely.
 #![allow(clippy::cast_possible_wrap)]
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_lib::commands::purge_block_inner;
 use agaric_lib::db::init_pool;
@@ -189,4 +189,3 @@ criterion_group!(
     bench_purge_block,
     bench_restore_block
 );
-criterion_main!(benches);

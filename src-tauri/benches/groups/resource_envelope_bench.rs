@@ -33,7 +33,7 @@
 //! (0086) backed by a `spaces` registry row (0089); a handful of property rows
 //! per block using a free-form (non-reserved) key (0088 CHECK).
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group};
 
 use agaric_lib::db::init_pool;
 
@@ -259,4 +259,3 @@ fn bench_resource_envelope(c: &mut Criterion) {
 // ===========================================================================
 
 criterion_group!(resource_envelope_benches, bench_resource_envelope);
-criterion_main!(resource_envelope_benches);

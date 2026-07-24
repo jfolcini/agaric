@@ -3,7 +3,7 @@
 //!   - `list_property_keys`   — distinct property key listing
 //!   - `query_backlinks_filtered_inner` — Tauri command wrapper
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_lib::commands::{count_backlinks_batch_inner, list_unlinked_references_inner};
 use agaric_lib::db::init_pool;
@@ -815,15 +815,3 @@ criterion_group!(batch_benches, bench_count_backlinks_batch,);
 criterion_group!(unlinked_benches, bench_list_unlinked_references,);
 
 criterion_group!(property_sort_scale_benches, bench_property_sort_scale,);
-
-criterion_main!(
-    eval_query_benches,
-    filter_benches,
-    sort_benches,
-    pagination_benches,
-    property_keys_benches,
-    scale_benches,
-    batch_benches,
-    unlinked_benches,
-    property_sort_scale_benches,
-);
