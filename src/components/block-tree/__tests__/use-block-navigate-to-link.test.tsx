@@ -208,6 +208,7 @@ describe('useBlockNavigateToLink', () => {
         rovingEditor: {
           editor: null,
           mount,
+          updateListMarker: vi.fn(),
           unmount: vi.fn(() => null),
           activeBlockId: null,
           getMarkdown: () => null,

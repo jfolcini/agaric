@@ -47,6 +47,11 @@ import { EmojiPicker, emojiPickerPluginKey } from '@/editor/extensions/emoji-pic
 import { ExternalLink } from '@/editor/extensions/external-link'
 import { HtmlPaste } from '@/editor/extensions/html-paste'
 import { Image } from '@/editor/extensions/image'
+import {
+  ListMarkerDecoration,
+  setListMarkerMeta,
+  type ListMarkerState,
+} from '@/editor/extensions/list-marker-decoration'
 import { MathBlock, MathInline } from '@/editor/extensions/math'
 import { MermaidCodeBlockView } from '@/editor/extensions/MermaidCodeBlockView'
 import { PropertyPicker, propertyPickerPluginKey } from '@/editor/extensions/property-picker'
@@ -300,6 +305,14 @@ export interface RovingEditorHandle {
    */
   mount: (blockId: string, markdown: string, opts?: MountOptions) => void
   /**
+   * #3000 — set the focused block's list marker (bullet / computed ordinal, or
+   * `none`). No-op when the editor is unmounted. Called by the focused
+   * `EditableBlock` on mount and whenever its listStyle/ordinal changes, so the
+   * in-editor marker matches the read-only `StaticBlock` marker. The marker is
+   * a decoration outside the document, so it never affects serialized content.
+   */
+  updateListMarker: (style: ListMarkerState['style'], ordinal: number | undefined) => void
+  /**
    * Unmount the editor. Serializes PM doc → markdown. Returns the new
    * markdown string if content changed, or null if unchanged.
    */
@@ -454,6 +467,9 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // provides the `- ` / `* ` input rules (TipTap's BulletList default).
       BulletList,
       ListItem,
+      // #3000 — paints the focused block's list marker (bullet / computed
+      // ordinal) as a widget decoration, fed via `updateListMarker`.
+      ListMarkerDecoration,
       HorizontalRule,
       Table.configure({ resizable: false }),
       TableRow,
@@ -687,9 +703,27 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       // `DeleteBlockOpts.cursorPlacement` contract was documented + passed
       // but silently dropped by this bare `focus()`).
       editor.commands.focus(opts?.cursorPlacement ?? null)
+      // #3000 — reset the list marker to `none` so the freshly-mounted block
+      // does not inherit the previous block's marker. The focused
+      // `EditableBlock` immediately re-sets the correct marker via its effect
+      // (→ `updateListMarker`) after this mount completes.
+      const markerTr = setListMarkerMeta(editor.state.tr, { style: 'none', ordinal: undefined })
+      markerTr.setMeta('addToHistory', false)
+      editor.view.dispatch(markerTr)
       editor.on('update', handleEditorUpdate)
     },
     [editor, handleEditorUpdate],
+  )
+
+  // #3000 — push the focused block's list marker into the decoration plugin.
+  const updateListMarker = useCallback(
+    (style: ListMarkerState['style'], ordinal: number | undefined) => {
+      if (!editor) return
+      const tr = setListMarkerMeta(editor.state.tr, { style, ordinal })
+      tr.setMeta('addToHistory', false)
+      editor.view.dispatch(tr)
+    },
+    [editor],
   )
 
   const unmount = useCallback((): string | null => {
@@ -821,6 +855,7 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     () => ({
       editor,
       mount,
+      updateListMarker,
       unmount,
       get activeBlockId() {
         return activeBlockIdRef.current
@@ -833,6 +868,15 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
       setOnUpdate,
       markCommitted,
     }),
-    [editor, mount, unmount, getMarkdown, splitAtCaret, setOnUpdate, markCommitted],
+    [
+      editor,
+      mount,
+      updateListMarker,
+      unmount,
+      getMarkdown,
+      splitAtCaret,
+      setOnUpdate,
+      markCommitted,
+    ],
   )
 }

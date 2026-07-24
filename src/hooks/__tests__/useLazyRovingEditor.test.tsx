@@ -38,6 +38,7 @@ function makeLiveHandle(overrides: Partial<RovingEditorHandle> = {}): RovingEdit
   return {
     editor: {} as RovingEditorHandle['editor'], // non-null → "live"
     mount: vi.fn(),
+    updateListMarker: vi.fn(),
     unmount: vi.fn(() => null),
     activeBlockId: null,
     getMarkdown: vi.fn(() => null),

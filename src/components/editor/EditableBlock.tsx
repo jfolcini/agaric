@@ -11,6 +11,7 @@ import React, { useCallback, useContext, useEffect, useRef, useState } from 'rea
 import { useTranslation } from 'react-i18next'
 
 import { EditorSurfaceContext } from '@/components/editor/editor-surface-context'
+import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { shouldSplitOnBlur } from '@/editor/content-delta'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
@@ -355,6 +356,24 @@ function EditableBlockInner({
       re.mount(blockId, contentRef.current)
     }
   }, [isFocused, blockId, rootParentId])
+
+  // #3000 — while this block is focused, keep the in-editor list marker in sync
+  // with its listStyle + computed ordinal (from ListMarkerContext), so the
+  // marker matches the read-only StaticBlock across focus and updates live when
+  // the ordinal changes (e.g. a sibling is inserted above). Declared AFTER the
+  // auto-mount effect so, on the commit that focuses this block, mount()'s
+  // marker reset runs first and this re-sets the correct marker. The push is a
+  // no-op decoration change — it never enters the serialized content.
+  const listMarker = useListMarker(blockId)
+  useEffect(() => {
+    const re = rovingEditorRef.current
+    if (isFocused && re.editor && re.activeBlockId === blockId) {
+      re.updateListMarker(listMarker.style, listMarker.ordinal)
+    }
+    // `rovingEditor.editor` is a dep so this re-fires when the lazily-loaded
+    // editor goes live (stub → live handle), pushing the marker into the
+    // now-real editor after its buffered mount replays.
+  }, [isFocused, blockId, listMarker.style, listMarker.ordinal, rovingEditor.editor])
 
   const handleFocus = useCallback(
     (id: string) => {
