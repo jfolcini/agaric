@@ -20,10 +20,15 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { DragStateContext, DragStateStore } from '@/components/editor/drag-state-store'
+import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
+import type { ListMarkerValue } from '@/components/editor/ListMarkerContext'
 import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
+import { useListStyles } from '@/hooks/useListStyles'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
+import { computeListOrdinals } from '@/lib/list-ordinals'
+import type { ListStyle } from '@/lib/list-style'
 import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import { SENTINEL_ID } from '@/lib/tree-utils'
 import { cn } from '@/lib/utils'
@@ -107,6 +112,19 @@ export function BlockListRenderer({
   // invalidation. Deriving here (inside the provider) collapses them to one
   // fetch. Outside a provider (isolated unit renders) the hook returns `{}`.
   const blockProperties = useExtraBlockProperties(visibleItems)
+
+  // #3000 — project each block's `listStyle` from the same page-wide property
+  // batch (absent ⇒ 'none') and compute the ordered-list ordinals from
+  // consecutive same-depth siblings. Both are derived here (once) and published
+  // via `ListMarkerProvider` so `StaticBlock` and the roving editor's marker
+  // decoration read their own block's marker by id — no prop-drilling through
+  // the memoized row-wrapper chain. Ordinals are display-only, never stored.
+  const listStyles = useListStyles(visibleItems)
+  const listMarkerValue = useMemo<ListMarkerValue>(() => {
+    const styleOf = (id: string): ListStyle => listStyles.get(id) ?? 'none'
+    const ordinals = computeListOrdinals(visibleItems, styleOf)
+    return { styleOf, ordinalOf: (id) => ordinals.get(id) }
+  }, [visibleItems, listStyles])
 
   // #1267 — publish the per-move DnD state to a ref-backed external store with
   // per-id subscription instead of threading `projected`/`overId`/`dropAfter`
@@ -225,71 +243,73 @@ export function BlockListRenderer({
   )
 
   return (
-    <DragStateContext.Provider value={dragStore}>
-      <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
-        {blocks.length === 0 && !loading ? (
-          rootParentId ? (
-            <EmptyState message={t('blockTree.emptyPage')} />
+    <ListMarkerProvider value={listMarkerValue}>
+      <DragStateContext.Provider value={dragStore}>
+        <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
+          {blocks.length === 0 && !loading ? (
+            rootParentId ? (
+              <EmptyState message={t('blockTree.emptyPage')} />
+            ) : (
+              <EmptyState
+                icon={FileText}
+                message={t('blockTree.noBlocks')}
+                description={t('blockTree.emptyPageHint')}
+              />
+            )
           ) : (
-            <EmptyState
-              icon={FileText}
-              message={t('blockTree.noBlocks')}
-              description={t('blockTree.emptyPageHint')}
-            />
-          )
-        ) : (
-          <div className="relative">
-            {/* B4 (#290): faint indent-boundary guides during a drag so the
+            <div className="relative">
+              {/* B4 (#290): faint indent-boundary guides during a drag so the
               20px DEAD_ZONE_PX reads as deliberate snap-to-grid and the indent
               width is legible. Behind the rows (z-0) and pointer-events-none. */}
-            {activeId !== null && (
-              <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
-            )}
-            <ul
-              // #992 — vertical rhythm comes from the single-source-of-truth
-              // `--block-row-gap` CSS var (defined in index.css alongside
-              // `--indent-width`): 4px desktop, 6px touch (one scale step up).
-              // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
-              // every BlockTree mount (page + journal day/week/month) shares it.
-              className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
-              data-testid="block-tree"
-              aria-label={t('blockTree.treeLabel')}
-              onPointerDown={onContainerPointerDown}
-            >
-              {visibleItems.map((block) => {
-                const aria = siblingAriaProps.get(block.id)
-                return (
-                  <SortableBlockWrapper
-                    key={block.id}
-                    block={block}
-                    focusedBlockId={focusedBlockId}
-                    isSelected={selectedSet.has(block.id)}
-                    viewport={viewport}
-                    rovingEditor={rovingEditor}
-                    hasChildren={hasChildrenSet.has(block.id)}
-                    isCollapsed={collapsedIds.has(block.id)}
-                    isAnimating={animatingBlockIds.has(block.id)}
-                    siblingSetsize={aria?.setsize}
-                    siblingPosinset={aria?.posinset}
-                    properties={blockProperties[block.id]}
-                  />
-                )
-              })}
-              {/* #2467 — mount-envelope boundary. Rows beyond the mount limit
+              {activeId !== null && (
+                <DragIndentGuides levels={maxDepth + 1} activeDepth={projected?.depth ?? null} />
+              )}
+              <ul
+                // #992 — vertical rhythm comes from the single-source-of-truth
+                // `--block-row-gap` CSS var (defined in index.css alongside
+                // `--indent-width`): 4px desktop, 6px touch (one scale step up).
+                // Replaces the divergent `space-y-0.5` / `space-y-1.5` literals so
+                // every BlockTree mount (page + journal day/week/month) shares it.
+                className="block-tree relative z-10 list-none m-0 p-0 space-y-[var(--block-row-gap)]"
+                data-testid="block-tree"
+                aria-label={t('blockTree.treeLabel')}
+                onPointerDown={onContainerPointerDown}
+              >
+                {visibleItems.map((block) => {
+                  const aria = siblingAriaProps.get(block.id)
+                  return (
+                    <SortableBlockWrapper
+                      key={block.id}
+                      block={block}
+                      focusedBlockId={focusedBlockId}
+                      isSelected={selectedSet.has(block.id)}
+                      viewport={viewport}
+                      rovingEditor={rovingEditor}
+                      hasChildren={hasChildrenSet.has(block.id)}
+                      isCollapsed={collapsedIds.has(block.id)}
+                      isAnimating={animatingBlockIds.has(block.id)}
+                      siblingSetsize={aria?.setsize}
+                      siblingPosinset={aria?.posinset}
+                      properties={blockProperties[block.id]}
+                    />
+                  )
+                })}
+                {/* #2467 — mount-envelope boundary. Rows beyond the mount limit
                 are not mounted at all (not placeholders); this affordance lets
                 the user reveal (mount) the next batch on demand. */}
-              {!loading && hiddenMountCount > 0 && (
-                <MountBoundaryRow hiddenCount={hiddenMountCount} onExpand={onExpandMount} />
-              )}
-              {/* Sentinel droppable zone for dropping after last block */}
-              {!loading && visibleItems.length > 0 && (
-                <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
-              )}
-            </ul>
-          </div>
-        )}
-      </SortableContext>
-    </DragStateContext.Provider>
+                {!loading && hiddenMountCount > 0 && (
+                  <MountBoundaryRow hiddenCount={hiddenMountCount} onExpand={onExpandMount} />
+                )}
+                {/* Sentinel droppable zone for dropping after last block */}
+                {!loading && visibleItems.length > 0 && (
+                  <SentinelDropZone activeId={activeId} overId={overId} projected={projected} />
+                )}
+              </ul>
+            </div>
+          )}
+        </SortableContext>
+      </DragStateContext.Provider>
+    </ListMarkerProvider>
   )
 }
 

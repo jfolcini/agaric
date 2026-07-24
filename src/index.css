@@ -1185,6 +1185,18 @@
   @apply my-2 border-t border-border;
 }
 
+/* #3000 — the block-level list marker (bullet / computed ordinal) drawn as a
+   leading, same-line inline decoration in the CONTENT column. Used by the
+   read-only `StaticBlock` (the <span class="list-marker">) and mirrored by the
+   roving editor's marker-decoration widget so focus does not shift the glyph.
+   `tabular-nums` keeps ordered numbers width-stable as they grow; the min-width
+   reserves a consistent column so text left-edges align across a list. */
+.list-marker {
+  @apply mr-1.5 inline-block text-muted-foreground select-none;
+  min-width: 1.25em;
+  font-variant-numeric: tabular-nums;
+}
+
 /* Inline code inside the editor — visible background so the user
    knows they're typing inside a code span, not plain text. */
 .ProseMirror code {
