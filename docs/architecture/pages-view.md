@@ -5,16 +5,14 @@ The shape of the Pages browser — the list view that fronts every page in the a
 
 ## Overview
 
-The Pages view is the canonical "show me every page in this space" surface. It feeds the in-app navigator (starred + namespace tree + flat tail) and is the host surface for three coordinated workplans:
+The Pages view is the canonical "show me every page in this space" surface. It feeds the in-app navigator (starred + namespace tree + flat tail).
 
-| Plan | Scope | Status |
-|------|-------|--------|
-| **Density rows + sort modes + metadata IPC** | Density rows + 7 sort modes + per-page metadata IPC (`list_pages_with_metadata`) | Phase 1 (backend) + Phase 2 (frontend hooks) shipped. Phase 3 (orchestrator wiring + `DensityRow`) shipping now. |
-| **Materialised counts** | Materialise `inbound_link_count` + `child_block_count` into `pages_cache`; extract a `SortKeyset` descriptor | Shipped — closes the 20k-page scaling cliff (335 ms → 34 ms). See "Materialised counts" below. |
-| **Multi-select + bulk ops + saved views** | Multi-select + bulk ops + saved views (filter+sort+density snapshots in localStorage) | Pending (#81) — consumes the density-row primitive and the metadata columns this plan adds. |
-| **Compound filters** | Compound filters (`tag:` / `path:` / `has-property:` / `last-edited:` / Pages-only `orphan:` / `stub:` / `has-no-inbound-links:`) sharing the parser with Search | Phase 1 (`FilterPrimitive` extraction) shipped; builds on the cursor + metadata columns. |
+Four strands of work compose here, and all of them hang off one seam — the `list_pages_with_metadata` IPC, which returns the shared metadata columns once so no consumer has to re-query for them:
 
-The three follow-up plans intentionally compose: the saved view is a `{filterSet, sort, density}` triple, where the compound-filter work owns `filterSet`, the sort/density work owns `sort` + `density`, and the saved-views work owns the storage shape (#81). **The metadata IPC introduced here is the seam that lets all three plans avoid re-querying for shared columns.**
+- **Density rows + sort modes + the metadata IPC** — the base surface (below).
+- **Materialised counts** — `inbound_link_count` / `child_block_count` moved into `pages_cache`, which removed the 20k-page scaling cliff on `most-linked` / `most-content`.
+- **Compound filters** — `FilterPrimitive` shared with Search and the other filter surfaces. See [`filters.md`](filters.md).
+- **Multi-select + bulk ops + saved views** (#81) — a saved view is a `{filterSet, sort, density}` triple persisted under `agaric:pages:savedViews:v1` (`src/hooks/useSavedPagesViews.ts`); the compound-filter work owns `filterSet`, the sort/density work owns the other two.
 
 ## Data flow
 
@@ -23,7 +21,7 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
 ```text
 ┌──────────────────────────┐
 │ list_pages_with_metadata │  Tauri IPC — paginated keyset over `blocks WHERE block_type='page'`,
-│   (pages.rs:1626)        │  joined to 4 metadata aggregates. Cursor carries sort-key value
+│  (pages/metadata.rs)     │  joined to the metadata aggregates. Cursor carries sort-key value
 └────────────┬─────────────┘  + sort-mode discriminator. Returns PageResponse<PageWithMetadataRow>.
              │
              ▼
@@ -63,11 +61,11 @@ Every Pages-view list render walks the same five stages. The IPC is the only asy
 Two side hooks orbit this pipeline without altering its shape:
 
 - **`usePageBrowserDensity`** owns the row chrome and the virtualizer's `estimateSize`. Density never affects which rows render — only how each row paints.
-- **Alias resolver** (`PageBrowser.tsx:262-284`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → augments `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter); it is independent of the list query and unchanged by this plan.
+- **Alias resolver** (`src/hooks/usePageBrowserFilters.ts`) is a parallel single-row IPC for "user typed an alias in the filter box" (`resolvePageByAlias` → sets `aliasMatchId` so the matching page surfaces even when its visible title doesn't match the filter). Independent of the list query.
 
 ## Sort modes
 
-Seven options. Three carried forward from the legacy three-mode list; four added by the sort-modes work:
+Seven options — three evaluated in JS over the loaded page, four pushed into the IPC:
 
 | Sort option | Comparator type | Wire value | Cursor key | Notes |
 |-------------|-----------------|------------|------------|-------|
@@ -75,7 +73,7 @@ Seven options. Three carried forward from the legacy three-mode list; four added
 | `recent` | Frontend-only (`getRecentPages()` MRU lookup) | `default` | n/a — local visit history layered on top | Per-device localStorage history; never goes over the wire. |
 | `created` | Frontend-only (ULID DESC) | `default` | `id` | Treats the ULID timestamp prefix as creation order. |
 | `recently-modified` | Wire — backend `last_modified_at` DESC | `recently-modified` | `last_modified_at` (in `Cursor.deleted_at` slot) + `id` tiebreaker | NULL `last_modified_at` is COALESCE'd to `'0001-01-01'` so the keyset works uniformly across NULL + non-NULL rows. |
-| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column. ~34 ms at 20k pages. |
+| `most-linked` | Wire — `pages_cache.inbound_link_count` DESC | `most-linked` | `inbound_link_count` (in `Cursor.seq` slot) + `id` tiebreaker | Served by the materialised column. |
 | `most-content` | Wire — `pages_cache.child_block_count` DESC | `most-content` | `child_block_count` (in `Cursor.seq` slot) + `id` tiebreaker | Same materialised path as `most-linked`. |
 | `default` | Wire — backend `id ASC` | `default` | `id` | Power-user / debug; also the wire shape the three frontend-only sorts reuse. |
 
@@ -91,11 +89,13 @@ Sort comparators must not allocate per-comparison. The `sortPages` callback in `
 
 Three modes, persisted to localStorage. Default `regular` to match the existing row height and avoid a virtualizer re-measure storm on first upgrade.
 
-| Density | Row height | Badge set | Re-measure on toggle? |
-|---------|------------|-----------|------------------------|
-| `compact` | 32 px | Title + relative time only. Inbound-link / child-count / property flags collapse into the title tooltip. | Yes |
-| `regular` | 44 px | Title + `↗ inbound_link_count` + `⊟ child_block_count` + relative time + first matched `has-*` flag chip (if any). | Yes |
-| `expanded` | 68 px | Title on line 1; full metadata row on line 2; all `has-*` flag chips render (not just the first). | Yes |
+Every toggle re-measures the virtualizer.
+
+| Density | Row height | Badge set |
+|---------|------------|-----------|
+| `compact` | 32 px | Title + relative time only. Inbound-link / child-count / property flags collapse into the title tooltip. |
+| `regular` | 44 px | Title + `↗ inbound_link_count` + `⊟ child_block_count` + relative time + first matched `has-*` flag chip (if any). |
+| `expanded` | 68 px | Title on line 1; full metadata row on line 2; all `has-*` flag chips render (not just the first). |
 
 Contract — load-bearing for tests and for downstream consumers:
 
@@ -123,13 +123,13 @@ A cursor whose `position` slot does not match the requested sort is rejected by 
 
 ## Metadata aggregation
 
-`PageWithMetadataRow` extends `BlockRow` with four columns. Each is derived by a correlated subquery in `list_pages_with_metadata_inner`'s SELECT — there is no materialised view today.
+`PageWithMetadataRow` extends `BlockRow` with four columns, projected by `list_pages_with_metadata_inner`'s SELECT. The two count columns are read from `pages_cache` (see "Materialised counts"); the other two are computed inline.
 
 | Column | Definition | Index |
 |--------|------------|-------|
 | `last_modified_at` | `MAX(op_log.created_at)` for the page itself (not subtree-aware in v1 — the recursive-CTE variant is deferred (open question)). | `idx_op_log_block_id` (migration 0030) |
-| `inbound_link_count` | `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`). | `idx_block_links_target` (migration 0001) |
-| `child_block_count` | `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. | `idx_blocks_page_id` |
+| `inbound_link_count` | Canonical definition: `COUNT(DISTINCT block_links.source_id)` where the target is the page or any of its descendants (walked via `blocks.page_id`). Served from `pages_cache`. | `idx_block_links_target` (migration 0001) |
+| `child_block_count` | Canonical definition: `COUNT(*)` non-deleted descendants where `page_id = page.id AND id != page.id`. Served from `pages_cache`. | `idx_blocks_page_id` |
 | `flags: PagePropertyFlags` | Typed struct with `has_tags` / `has_todo` / `has_scheduled` / `has_due` — each an `EXISTS` subquery that short-circuits on first match. Replaces the original bitmask shape (Round 1 review). | `idx_block_tags_block_id`, `idx_blocks_page_id` |
 
 ### Materialised counts
@@ -146,7 +146,6 @@ Materialised columns turn the `most-linked` first-page query from a per-page cor
 
 ## Open extension points
 
-- **Multi-select + bulk ops + saved views** (#81, pending). Consumes `<DensityRow>` (extends it with a select checkbox), reads the metadata columns to drive bulk operations, and snapshots the `{filterSet, sort, density}` triple to `agaric:pages:savedViews:v1` in localStorage. Backend graduation of saved views is out of scope; the per-device storage shape is the long-term contract.
-- **Compound filters**. Extends `ListPagesWithMetadataFilter` with a `Vec<FilterPrimitive>` field, shared with `SearchFilter` via the `FilterPrimitive` enum + per-surface `Projection` trait. The Pages-only `orphan:` / `stub:` / `has-no-inbound-links:` primitives ride the same metadata columns this plan introduces; the materialised counts shipped in the materialised-counts work are the prerequisite for those facets at scale.
+- **Backend graduation of saved views** — deferred. Saved views ship today as a per-device `localStorage` shape (`agaric:pages:savedViews:v1`); that shape is the long-term contract, and syncing them is a separate decision.
 - **MCP exposure of `list_pages_with_metadata`** — deferred. Today's MCP `list_pages` serves the simpler shape; the richer surface lands only if a tool-side need emerges in the saved-views or compound-filter work.
 - **Subtree-aware `last_modified_at`** — deferred (open question). The recursive-CTE variant is a single SELECT change once benchmark evidence justifies it.

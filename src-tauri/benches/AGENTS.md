@@ -6,16 +6,22 @@ Criterion benches under `src-tauri/benches/`. They measure perf AND, for
 
 ## CI runs every bench: a `--test` smoke gate + the `interactive_slo` perf gate
 
-`scheduled-deep-checks.yml`'s `bench-compile` lane does, in order:
+`scheduled-deep-checks.yml` (weekly + manual dispatch, not a per-PR gate) carries
+two bench lanes:
 
-1. `cargo bench --no-run` — compiles every bench (catches compile bit-rot).
-2. **#978 seed/fixture smoke gate** — runs EVERY bench once with `--test`
-   (criterion's single-shot, no-measurement mode). A bench whose hand-seeded
-   raw-SQL fixture has drifted from the live schema **panics here and fails the
-   job** instead of rotting silently. This validates SEEDS/FIXTURES, not perf.
-3. `cargo bench --bench interactive_slo` — the WARM perf gate (the only bench
-   with a timing budget; `interactive_slo` is excluded from the cold `--test`
-   smoke loop so its `assert_under_budget` isn't tripped by cold timings).
+- **`bench-smoke`** — sharded across several runners. Each shard compiles only
+  its slice (`cargo bench --no-run --bench …`), then **smoke-runs that slice once
+  with `--test`** (criterion's single-shot, no-measurement mode). A bench whose
+  hand-seeded raw-SQL fixture has drifted from the live schema **panics here and
+  fails the job** instead of rotting silently. This validates SEEDS/FIXTURES, not
+  perf. (#639/#978; sharded in #2122 after the old single-runner `bench-compile`
+  job blew the 90 min cap mid-smoke.)
+- **`bench-slo`** — runs `interactive_slo` (the WARM perf gate — the only bench
+  with a timing budget) plus the `#[ignore]`d 20k-row perf gates. Split out of
+  the smoke shards so a smoke timeout can never skip the SLO gate.
+  `interactive_slo` is excluded from the cold `--test` smoke loop so its
+  `assert_under_budget` isn't tripped by cold timings. A `workflow_dispatch`
+  input (`slo_include_problem`) also measures the problem-tier probes.
 
 **History:** before #978 only `interactive_slo` actually RAN; every other bench
 was compile-only, so it could be false-green — it compiled but panicked the
@@ -135,7 +141,7 @@ under `rtk`.
 
 ## Layout: themed binaries + `groups/` mods (#2879)
 
-The 30 former single-`criterion_main!` bench crates were consolidated into a
+The former single-`criterion_main!` bench crates were consolidated into a
 handful of **themed bench binaries** (`engine_bench`, `query_bench`,
 `agenda_bench`, `io_bench`, `core_bench`) to cut Rust build/link time — each
 `[[bench]]` used to be a separate crate linking `agaric_lib` + criterion, and

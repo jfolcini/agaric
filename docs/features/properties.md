@@ -22,7 +22,7 @@ These ship out of the box and back specific features:
 
 | Key | Type | Used by |
 | --- | --- | --- |
-| `todo_state` | Select (TODO / DOING / DONE) | Editor task cycle; Agenda filter |
+| `todo_state` | Select (TODO / DOING / CANCELLED / DONE — that order is the cycle) | Editor task cycle; Agenda filter |
 | `priority` | Select (1 / 2 / 3) | Editor priority cycle; Agenda filter; visual chip |
 | `due_date` | Date | Agenda Due panel; date-property colour |
 | `scheduled_date` | Date | Agenda Due panel; date-property colour |
@@ -75,11 +75,11 @@ The parsing rules match the Logseq/Markdown importer, so inline entry and file i
 
 - The whole line (after trimming) must be `key:: value`. A `::`-plus-space appearing mid-sentence, or `::` without a following space (`std::vector`), never matches.
 - Keys are 1–64 characters of letters, digits, `-`, `_` — the same alphabet the backend enforces.
-- The value is stored per the key's **definition type**: text and select keys store the text (select values must be one of the defined options); number keys parse the value as a number; date keys require the `YYYY-MM-DD` shape; boolean keys accept exactly `true` or `false`. A value that doesn't fit the key's type leaves the line as literal text. Ref-typed keys cannot be set inline (use the drawer's page picker). An unknown key is created as a text property.
+- The value is stored per the key's **definition type**: text and select keys store the text (select values must be one of the defined options); number keys parse the value as a number; date keys require the `YYYY-MM-DD` shape; boolean keys accept exactly `true` or `false`. A value that doesn't fit the key's type leaves the line as literal text. Ref-typed keys cannot be set inline (use the drawer's page picker). A key with no definition is written as text — no definition is created for it, so it won't appear in Settings → Properties until you declare it.
 - If the key already has a value on the block, the inline write **updates** it (same upsert as the drawer).
 - A line is stripped **only after its property write succeeds.** If the write is rejected (invalid select option, unparseable number, backend error), the line stays as literal text — nothing you typed is lost — and a single "Failed to set property" toast appears.
 - **Empty values are not committed.** `key::` (with the trailing space but no value) followed by blur writes nothing and the text stays literal (the backend rejects empty property values).
-- Reserved, exporter-managed keys (`space`, `template`, `created_at`, the `repeat-*` family, …) are never parsed inline; those lines stay literal.
+- Reserved, exporter-managed keys are never parsed inline; those lines stay literal. The list is `space`, `is_space`, `template`, `created_at`, `completed_at`, and the repeat family (`repeat`, `repeat-until`, `repeat-count`, `repeat-seq`, `repeat-origin`).
 - Lines inside fenced code blocks are never treated as property lines.
 
 Multiple property lines in one block (soft line breaks via Shift+Enter) are supported — each is committed and stripped independently. Pasted multi-paragraph content is split into separate blocks before saving and is not property-parsed; the importer handles property lines in imported files.

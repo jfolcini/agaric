@@ -38,10 +38,10 @@ A few specifics for that environment:
 
 ### Hook toolchain
 
-Every hook in `prek.toml` is `language = "system"`, so prek installs **none** of its own tools — each hook shells out to a binary that must already be on PATH, or your first `git commit` aborts. `scripts/setup-hooks.sh` (run by `npm run setup` / `just install-hooks`) installs that toolchain, mirroring CI's install set in `.github/workflows/_validate.yml` so the local gate matches CI:
+Nearly every hook in `prek.toml` is `language = "system"` — it shells out to a binary that must already be on PATH, or your first `git commit` aborts. `scripts/setup-hooks.sh` (run by `npm run setup` / `just install-hooks`) installs that toolchain, mirroring CI's install set in `.github/workflows/_validate.yml` so the local gate matches CI:
 
 - **Cargo tools** (via `cargo-binstall` when present — prebuilt, fast — else `cargo install --locked`): `prek`, `cargo-deny`, `cargo-machete`, `cargo-audit`, `sqruff`, `typos-cli`, `zizmor`, `taplo-cli`, `cargo-nextest`, `just`, `lychee`, and `sqlx-cli` (with `--no-default-features --features rustls,sqlite`).
-- **Platform package manager** (`brew` on macOS, `apt`/`dnf`/`pacman` on Linux): `shellcheck`, `gitleaks`, `actionlint`.
+- **Platform package manager** (`brew` on macOS, `apt`/`dnf`/`pacman` on Linux): `shellcheck`, plus `go` and `python3` — prek *builds* three hooks from pinned upstream repos rather than calling a host binary (`gitleaks` and `actionlint` via its Go backend, `conventional-pre-commit` via its Python backend).
 - **npm devDependencies** (already installed by `npm ci`): `oxlint`, `oxfmt`, `knip`, `markdownlint-cli2`.
 
 The script is best-effort and idempotent: tools already on PATH are skipped, and anything it can't auto-install on your platform prints a manual hint instead of failing (a partial toolchain still builds and runs the app — you just can't commit until the gap is filled). It finishes with `prek install` to wire the git hooks. Re-run it any time to fill gaps.
@@ -50,16 +50,18 @@ The script is best-effort and idempotent: tools already on PATH are skipped, and
 
 ### Linux
 
-Install what CI installs (`.github/workflows/_validate.yml` is authoritative):
+Install what CI installs (the apt lists in `.github/workflows/ci.yml` and `release.yml` are authoritative — `libappindicator3-dev` and `patchelf` are needed only for AppImage bundling):
 
 ```bash
 sudo apt install -y \
   libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev \
-  librsvg2-dev libappindicator3-dev patchelf \
-  build-essential curl wget file
+  librsvg2-dev libssl-dev pkg-config \
+  libappindicator3-dev patchelf
 ```
 
-Plus Rust (`rustup default stable`) and Node 24 LTS (see `.nvmrc`). The canonical quickstart used throughout this repo — `scripts/setup.sh`, the `justfile`, and CI (`_validate.yml` / `release.yml`) — invokes `cargo tauri dev` / `cargo tauri build`. That dispatches to a `cargo-tauri` binary, which `npm ci` does **not** provide, so install it with `cargo install tauri-cli --locked` (exactly what CI does). Keep it in step with the pinned `@tauri-apps/cli` devDependency (see `package.json` for the current pin) so the Rust and JS CLIs stay on the same Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)). The `npm ci`-installed `@tauri-apps/cli` also exposes an equivalent `npx tauri …` if you prefer to avoid the extra cargo install.
+Plus Node 24 (see `.nvmrc`) and the Rust toolchain pinned in [`rust-toolchain.toml`](../rust-toolchain.toml) — `rustup` picks the pin up automatically inside the repo; that same version is the MSRV recorded as `rust-version` in `src-tauri/Cargo.toml`.
+
+The canonical quickstart used throughout this repo — `scripts/setup.sh`, the `justfile`, and CI — invokes `cargo tauri dev` / `cargo tauri build`. That dispatches to a `cargo-tauri` binary, which `npm ci` does **not** provide, so install it with `cargo install tauri-cli --locked` (what `ci.yml` does for its bundle build). Keep it in step with the pinned `@tauri-apps/cli` devDependency (see `package.json` for the current pin) so the Rust and JS CLIs stay on the same Tauri stack ([AGENTS.md § coupled dependency stacks](../AGENTS.md)). The `npm ci`-installed `@tauri-apps/cli` also exposes an equivalent `npx tauri …` if you prefer to avoid the extra cargo install.
 
 ### Windows
 
@@ -80,49 +82,13 @@ Set `ANDROID_HOME` / `ANDROID_NDK_HOME` per Tauri's [Android setup](https://v2.t
 
 ### Developer tools (prek hook host-binaries)
 
-The [`prek`](https://github.com/j178/prek) hooks shell out to host-installed binaries. Nothing installs them automatically, so a fresh contributor who runs the hooks otherwise hits hook-by-hook `command not found`. Install them up front:
-
-```sh
-# Cargo-installable tools (cross-platform)
-cargo install --locked prek          # the hook runner itself
-cargo install --locked cargo-nextest # backend test runner
-cargo install lychee                 # markdown link checker
-cargo install --locked typos-cli     # spell checker
-cargo install --locked zizmor        # GitHub Actions auditor
-cargo install --locked taplo-cli     # TOML lint + format
-cargo install sqruff                 # SQLite migration linter
-cargo install cargo-deny             # advisories + licenses + bans
-cargo install cargo-machete          # unused-dependency detector
-
-# System package (no cargo crate)
-sudo apt install shellcheck          # shell-script linter (or `brew install shellcheck`)
-```
-
-`prek.toml` is the source of truth — each hook's exact `entry` and any install hint live there, so re-check it if a command above ever drifts. `mold` (see [Speed up Rust builds](#speed-up-rust-builds-linux)) is an optional Linux linker, not a hook binary.
+The [`prek`](https://github.com/j178/prek) hooks shell out to host-installed binaries, so a fresh contributor who runs them without the toolchain hits hook-by-hook `command not found`. `bash scripts/setup-hooks.sh` installs the whole set — see [Hook toolchain](#hook-toolchain) above for what it covers and how to fill gaps by hand. `prek.toml` is the source of truth: each hook's exact `entry` and any install hint live there.
 
 These local hooks are **optional**: if you cannot install them, open your PR anyway — CI runs the same gate via `.github/workflows/_validate.yml` (see [`CONTRIBUTING.md`](../CONTRIBUTING.md#bootstrap)).
 
 ### Optional: code-review navigation graph
 
-`.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when it is available). It is launched on demand via [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner:
-
-```jsonc
-// .mcp.json
-"code-review-graph": { "command": "uvx", "args": ["code-review-graph", "serve"] }
-```
-
-To enable it, install `uv` (which provides `uvx`), then let `uvx` fetch the `code-review-graph` package from PyPI on first run:
-
-```sh
-# Install uv (provides the `uvx` runner) — see https://docs.astral.sh/uv/getting-started/installation/
-curl -LsSf https://astral.sh/uv/install.sh | sh   # macOS/Linux
-# or: brew install uv  /  pipx install uv
-
-# Verify uvx can resolve and launch the server (downloads the package on first run):
-uvx code-review-graph --help
-```
-
-This is **entirely optional** — it is a navigation aid for contributors using an MCP-capable client, not a build or test prerequisite. If `uvx`/the package is not installed, the MCP server simply does not start and nothing else is affected.
+`.mcp.json` wires an optional MCP server, **code-review-graph**, that exposes a symbol/dependency graph for fast, structural code navigation (used in place of ad-hoc `grep`/file-reads when available). It is launched on demand by [`uv`](https://docs.astral.sh/uv/)'s `uvx` runner, which fetches the package from PyPI on first run — so enabling it means installing `uv` and nothing else. It is a navigation aid for MCP-capable clients, not a build or test prerequisite; if `uvx` is absent the server simply does not start.
 
 ## Development
 
@@ -168,7 +134,7 @@ The link step is the long pole of incremental Rust compiles on this codebase, no
 
 2. **`split-debuginfo = "unpacked"`** (committed in `[profile.dev]`, `src-tauri/Cargo.toml`). Leaves DWARF beside the object files instead of packing it into the linked artifact, so the linker copies far fewer bytes — complementary to the fast linker. First-party debuggability and runtime are unchanged; the dev profile never ships.
 
-Measured effect (this project): with **mold**, an incremental `cargo check` after touching a single Rust file dropped from ~20 s to ~7-10 s (~60%; 2026-05-16, 200K LOC / 228 files). With **lld** (the fallback) plus `unpacked` split-debuginfo, a steady-state incremental **relink** of the main crate measured ~21 s → ~18 s (~14%; touch `src-tauri/src/lib.rs`, `cargo build`). That relink is dominated by recompiling the ~246K-LOC `agaric_lib` crate, so the linker is only part of it — the front-end half is tracked separately (crate decomposition). Incremental `cargo check` is unchanged by the linker, as expected (check doesn't link).
+Measured on this project (2026-05-16): with **mold**, an incremental `cargo check` after touching a single Rust file dropped from ~20 s to ~7-10 s. With **lld** (the fallback) plus `unpacked` split-debuginfo, a steady-state incremental **relink** of the app crate went ~21 s → ~18 s — smaller, because that relink is dominated by recompiling the app crate itself rather than by linking. Incremental `cargo check` is unaffected by the linker choice, as expected (check doesn't link).
 
 The active `.cargo/config.toml` is gitignored, so it never leaks into the tree — only the `.example` is tracked, and `setup.sh` never overwrites an existing file (a manual override wins). An unconditional `[target.…] rustflags` would break a fresh clone that hasn't installed the linker, which is why it's generated rather than committed. **Linux-only**: `setup.sh` only wires the Linux host triple, so macOS/Windows and Android cross-builds are untouched. Safe to delete any time.
 
@@ -184,7 +150,7 @@ cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
 - **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
 - **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
-- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at 100K blocks. Per-command budgets live in the bench itself. The scheduled `bench-compile` lane also **smoke-runs every bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf). To reproduce locally before pushing, build once (`cd src-tauri && cargo bench --no-run`) then run each prebuilt `target/release/deps/<bench>-<hash> --test`; the exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
+- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at a 100K-block fixture. Per-command budgets live in the bench itself. The scheduled `bench-smoke` lane (sharded, in `scheduled-deep-checks.yml`) also **smoke-runs every bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf). To reproduce locally before pushing, build once (`cd src-tauri && cargo bench --no-run`) then run each prebuilt `target/release/deps/<bench>-<hash> --test`; the exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
 
 ### Mutation testing (nightly)
 
@@ -193,9 +159,9 @@ npm run mutation                     # every module (~5-6 min locally)
 npm run mutation -- tokenize filters-model   # only named modules
 ```
 
-`#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing, scoped to a handful of pure/deterministic frontend libs (`src/lib/search-query/{tokenize,classify,serialize,to-search-filter,glob-validate,validation-codes}.ts`, `src/lib/agenda-sort.ts`, `src/lib/filters/model.ts`, `src/lib/date-utils.ts`, `src/lib/tree-utils.ts`) — never components or Tauri IPC. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behavior from the original.
+`#886` — [StrykerJS](https://stryker-mutator.io/) mutation testing, scoped to a handful of pure/deterministic frontend libs (see `stryker.modules.mjs` for the exact list) — never components or Tauri IPC. It mutates each source line (flip a `&&` to `||`, drop a branch, swap a string literal, …) and checks whether the test suite actually notices; a "survived" mutant is a gap in assertion *strength*, not line coverage — coverage can be high while the tests never distinguish the mutated behaviour from the original.
 
-Requires Node 24 (`nvm use`; `@stryker-mutator/core` 9.x won't run under the repo's default Node 22). Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — see `stryker.modules.mjs` for the mapping and `stryker.config.mjs` / `stryker.vitest.config.mjs` for why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in 271+ unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
+Each module runs in its own Stryker invocation, scoped to run ONLY that module's own test file(s) — `stryker.modules.mjs` holds the mapping, and `stryker.config.mjs` / `stryker.vitest.config.mjs` explain why (vitest's default "related" test-selection resolves through barrel re-exports like `search-query/index.ts` and drags in a large set of unrelated component tests otherwise). Reports land in `reports/mutation/<module>/mutation.html` (gitignored).
 
 This is a **nightly-only, non-gating** lane (`mutants-frontend` job in `.github/workflows/scheduled-deep-checks.yml`) — surviving mutants are triage signal for occasional audits, not a merge gate. See issue #886 for the full evaluation and rationale.
 
@@ -271,9 +237,7 @@ scripts/release.sh <new-version>          # e.g. scripts/release.sh 0.2.1
 1. **Preflight** — refuses unless the tree is clean, `HEAD` is on `main`, local `main` is in sync with `origin/main`, the required tools are present, and the tag doesn't already exist (locally or on origin).
 2. **Local build check** — runs `scripts/verify-release-build.sh` (full `cargo tauri build` + bundle-path probes for your OS) so release-only failures surface before a CI run is spent. Skip with `--skip-verify-build`.
 3. **Bump + tag + push** — runs `scripts/bump-version.sh` to bump all 5 manifests in lockstep (`package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`, `src-tauri/tauri.conf.json`), GPG-sign the commit + annotated tag, and push `main` + the tag.
-4. The pushed tag triggers `.github/workflows/release.yml`, which builds every platform and **drafts** the GitHub Release.
-
-Then **review the draft on the [Releases page](https://github.com/jfolcini/agaric/releases) and click Publish** — the workflow drafts, it never auto-publishes.
+4. The pushed tag triggers `.github/workflows/release.yml`, which builds every platform, attaches the artifacts to a **draft** GitHub Release, and — only if every terminal job succeeded — publishes it in a final `publish-release` job. A partial or failed release stays a draft for you to inspect on the [Releases page](https://github.com/jfolcini/agaric/releases).
 
 Useful flags (see `scripts/release.sh --help`):
 
@@ -287,10 +251,11 @@ Useful flags (see `scripts/release.sh --help`):
 
 1. **`verify-version`** — fail-fast if the tag's version doesn't match the manifests (it's the first job; the bump already happened locally).
 2. **`validate`** — same gate as CI (`prek run --all-files`).
-3. **Build matrix** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles.
-4. **Android** — APK if release-signing secrets are present.
-5. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document.
-6. **Draft GitHub Release** — created with auto-generated notes; never auto-published.
+3. **`build-and-release`** — Linux + Windows + macOS (x86_64 + aarch64) desktop bundles, uploaded to a draft Release created up front. Per-platform steps also `cargo tauri signer sign` the updater payloads, in isolated steps whose env holds only the signing secret.
+4. **`android-build-and-release`** — APK if release-signing secrets are present.
+5. **Provenance + SBOMs** — each artifact gets a Sigstore bundle (`*.sigstore.json` — signature) and an in-toto SLSA statement (`*.intoto.jsonl` — provenance, what OpenSSF Scorecard's Signed-Releases provenance probe matches), plus SPDX + CycloneDX SBOMs and a signed OpenVEX document (`generate-vex`).
+6. **`generate-latest-json`** — re-verifies every updater `.sig` with `minisign` against the pubkey pinned in `tauri.conf.json` (#2971), then stitches the `latest.json` the in-app updater fetches.
+7. **`publish-release`** — flips the draft to published and marks it Latest, gated on *every* terminal job above reporting success.
 
 ### If a release tag fails at `verify-version`
 
@@ -351,7 +316,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 
 ## Signing posture
 
-- **Updater signing**: not currently active. `bundle.createUpdaterArtifacts` is unset in `tauri.conf.json`, so no updater artifacts (or minisign signatures) are produced, and the `TAURI_SIGNING_PRIVATE_KEY` CI secret is deliberately NOT exposed to the build step ([#815](https://github.com/jfolcini/agaric/issues/815)); enabling updater artifacts + a minimal signing step is tracked in [#808](https://github.com/jfolcini/agaric/issues/808). The key-rotation procedure (cadence, revocation, user notification) still applies once enabled: see [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
+- **Updater signing**: active. `bundle.createUpdaterArtifacts` stays unset in `tauri.conf.json`; instead `release.yml` signs each platform's updater payload with `cargo tauri signer sign` in a dedicated step whose env holds only the `TAURI_SIGNING_PRIVATE_KEY` secret, then re-verifies every `.sig` with `minisign` against the `plugins.updater.pubkey` pinned in `tauri.conf.json` before stitching `latest.json` (#2971) — so a rotated-but-unsynced key reddens the release instead of silently breaking auto-update on installed clients. Key-rotation procedure (cadence, revocation, user notification): [`../SECURITY.md`](../SECURITY.md#updater-signing-key-rotation) § "Updater signing-key rotation".
 - **Desktop code signing**: not enabled. macOS bundles trip Gatekeeper's first-launch warning (right-click → *Open*); Windows bundles trip SmartScreen (*More info* → *Run anyway*). User-facing install steps live in the [README § Install](../README.md#install).
 - **Linux** `.deb` / `.AppImage`: intentionally not signed.
 
@@ -361,7 +326,7 @@ There is **no Play Store upload step** in the release pipeline. The `android-bui
 just gen-sqlx
 ```
 
-Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the `.sqlx/` cache changes alongside the Rust changes; CI fails on stale cache (`sqlx-prepare-check` prek hook). `just gen-sqlx` runs the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` — the `--workspace` (to *cargo*, after the `--`) is required so leaf crates nothing depends on (e.g. the bin-only `agaric-diagnostics`) get their queries captured; a bare `cargo sqlx prepare` silently drops them and reddens the CI `lint` job's offline `clippy --workspace`.
+Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regenerated `.sqlx/` caches alongside the Rust changes; a stale cache is caught by pre-push Phase E and by CI's `sqlx-offline-check` lanes (root plus each member crate that holds query macros). `just gen-sqlx` regenerates all of them: first the workspace-wide `cargo sqlx prepare --workspace -- --workspace --tests` at the root (the second `--workspace`, passed to *cargo* after the `--`, is what captures leaf crates nothing depends on — a bare `cargo sqlx prepare` silently drops them and reddens CI's offline `clippy --workspace`), then one crate-local pass per member crate against a throwaway migrated DB.
 
 ## TypeScript bindings (specta)
 

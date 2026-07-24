@@ -14,22 +14,9 @@ The chip set is split into two groups, mirroring the popover:
 - **Filters** (shared with Search): Tag, Page path, Has property, the Last-edited buckets, and Priority. A `tag:` chip applied here returns the same pages whose blocks the Search surface returns for the same tag — the two surfaces share one filter engine and never drift.
 - **Pages** (grooming facets that only make sense at page granularity): Orphan, Stub, and No inbound links.
 
-### The chip row (and how to opt out)
+The chip row is always present — it rides the same `list_pages_with_metadata` code path as the list itself. It lives in `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
 
-The compound-filter chip row is **on by default**. It rides the same `list_pages_with_metadata` code path as density rows, so a single localStorage flag gates both:
-
-- **Flag key:** `pageBrowser.densityV1`
-- **Default:** on. A missing key — or any value other than the bare string `'false'` — means the chip row is shown (the value is *not* JSON-wrapped). Only the exact string `'false'` opts out.
-
-To opt out, set the flag from the devtools console:
-
-```js
-localStorage.setItem('pageBrowser.densityV1', 'false')
-```
-
-then reload. The flag is read once when the Pages view mounts (it is not reactive), so a reload is required after changing it. To turn the chip row back on, `localStorage.removeItem('pageBrowser.densityV1')` (or set it to anything other than `'false'`) and reload. The flag-read lives in `src/components/PageBrowser.tsx`; the chip row itself is `src/components/PageBrowser/PageBrowserFilterRow.tsx`, fed by the Add-filter popover in `src/components/PageBrowser/AddFilterPopover.tsx`.
-
-With the chip row opted out, the Pages view behaves exactly as it always has: the name-substring box filters the loaded list and there is no chip row.
+Row chrome is a separate, orthogonal preference: **density** (`compact` / `regular` / `expanded`, default `regular`) persists per device via `src/lib/preferences.ts` and is read through `src/hooks/usePageBrowserDensity.ts`. It changes how much metadata each row shows; it does not affect filtering.
 
 ## Filter facets
 
@@ -47,12 +34,12 @@ These describe a page's connectivity or emptiness — concepts that only exist a
 
 Two notes on the link counting, so the results aren't surprising:
 
-- **"Inbound" means page *or any descendant*.** The inbound count counts block-reference and `[[page]]` edges that target the page block **or any non-deleted block under it**. So a page is *not* "No inbound links" if some deep content block inside it is referenced from elsewhere, even when the page title itself has no backlinks. This is deliberate: it matches the inbound-link count rendered on each density row and the "Most linked" sort, so clicking **No inbound links** after seeing "0 inbound" on a row always agrees with the surfaced number.
+- **"Inbound" means page *or any descendant*.** The inbound count counts block-reference and `[[page]]` edges that target the page block **or any non-deleted block under it**. So a page is *not* "No inbound links" if some deep content block inside it is referenced from elsewhere, even when the page title itself has no backlinks. This is deliberate: it matches the inbound-link count rendered on each row and the "Most linked" sort, so clicking **No inbound links** after seeing "0 inbound" on a row always agrees with the surfaced number.
 - **Orphan is a strict superset of No inbound links.** Every Orphan page also has no inbound links. Applying both chips at once is redundant but not an error — the backend evaluates the redundancy away. The chips both render; the result is identical to Orphan alone.
 
 ### Last-edited buckets
 
-The Last-edited facet adds one of four recency buckets. The buckets are **rolling** windows measured back from now (not calendar-aligned weeks/months), driven by each page's most recent edit. The exact window behind each bucket is defined with the filter primitives in `src-tauri/agaric-store/src/filters/primitive.rs`:
+The Last-edited facet adds one of four recency buckets. The buckets are **rolling** windows measured back from now (not calendar-aligned weeks/months), driven by each page's most recent edit. Each is a preset over the backend's single `LastEdited` primitive; the day counts behind the four presets live in `src/components/PageBrowser/add-filter/vocab.ts`:
 
 | Chip label | What it matches |
 |---|---|

@@ -94,7 +94,7 @@ The tables below use one row per (asset × STRIDE category) combination that the
 | Notes content | **Information disclosure** — backups, sync exports, or `bug_report` payloads expose plaintext notes outside the app. | Med | Med | The `bug_report` IPC (`src-tauri/src/commands/bug_report.rs`) applies a **deny-by-default per-field-value redactor** — anything not matching a safe-token allowlist becomes `[REDACTED]`. Backups are an explicit user action and surface their location prominently. The rolling log file (`agaric.log`) lives inside the app data dir under the same FS-permission boundary as `notes.db`; in-process logging is *not* redacted (`src/lib/logger.ts` is a thin console wrapper), so a frontend `log::info!` that includes user content would persist that content to the log file — relevant only to attackers with local FS access (already out-of-scope, see [`SECURITY.md`](../../SECURITY.md#out-of-scope)). Disk-at-rest encryption is delegated to the OS (FileVault / BitLocker / LUKS / FBE). | Mitigated |
 | Notes content | **Denial of service** — a corrupted database wedges the application; the user cannot open the app to back up their content. | Low | Med | Migrations refuse to run against an unrecognised schema rather than mutating it; the WAL gives a partial recovery surface. The `bug_report` workflow can extract the raw `notes.db` regardless of FE state. | Mitigated |
 | Notes content | **Elevation of privilege** — a frontend caller reads database rows that the application logic intended to gate (e.g. a soft-deleted block, a different space's blocks). | Low | Med | Frontend space-scoped queries thread `space_id` at the SQL layer; soft-delete filtering is enforced in the query, not in the renderer; sqlx compile-time checks the query shape against the schema. **Note:** on the MCP surface, `space_id` is not an isolation boundary of either kind — the read-only tool surface is deliberately vault-wide (an agent reads across all spaces by ULID / enumeration regardless of any `space_id` it writes under), and the read-write surface's `space_id` check is only a self-declared consistency check against the target block's actual space (catches a stale/mismatched ULID, not an adversarial agent that supplies the block's real space). See [features/agent-access.md](../features/agent-access.md#space-scoping-reads-are-vault-wide-writes-are-space-scoped). This is intentional for reads (agents are whole-vault readers); no per-space isolation (read or write) exists today. | Mitigated (accidental cross-space writes); no isolation against an adversarial/injected agent |
-| Sync peer trust state | **Tampering** — a forced edit to the `peer_records` table changes the pinned cert hash and silently re-pairs with a different device. | Low | Med | Same FS-permission boundary as notes content; a writer with that access has already won. The TOFU model intentionally records the *first* hash and refuses subsequent ones (`src-tauri/agaric-sync/src/sync_daemon/server.rs`), so the failure mode is a hard rejection rather than a silent re-pair. | Accepted |
+| Sync peer trust state | **Tampering** — a forced edit to the `peer_refs` table changes the pinned cert hash and silently re-pairs with a different device. | Low | Med | Same FS-permission boundary as notes content; a writer with that access has already won. The TOFU model intentionally records the *first* hash and refuses subsequent ones (`src-tauri/agaric-sync/src/sync_daemon/server.rs`), so the failure mode is a hard rejection rather than a silent re-pair. | Accepted |
 
 ### B3 — Sync daemon ↔ LAN peer
 
@@ -118,7 +118,7 @@ The updater is the only outbound network call the application makes that is **no
 | Asset | Threat (STRIDE) | Likelihood | Impact | Mitigation | Status |
 | --- | --- | --- | --- | --- | --- |
 | Release artefacts | **Spoofing** — DNS poisoning or a mis-configured update server redirects the in-app updater to a malicious endpoint. | Low | High | The updater endpoint is hard-coded to `https://github.com/jfolcini/agaric/releases/latest/download/latest.json` in [`src-tauri/tauri.conf.json`](../../src-tauri/tauri.conf.json); HTTPS gives certificate authentication on the wire. Crucially, the **payload** carries its own minisign signature checked against the embedded `plugins.updater.pubkey` — even a successful endpoint hijack does not bypass the in-app signature check unless the attacker also holds the signing private key. | Mitigated |
-| Release artefacts | **Tampering** — a malicious release asset is uploaded to the GitHub release, or an upstream Actions runner injects a malicious binary into the build. | Low | High | Every release asset is signed by the `TAURI_SIGNING_PRIVATE_KEY` (signature verified at install time via minisign), and every asset is attested via SLSA build provenance to Sigstore and the GitHub attestations API (`actions/attest-build-provenance@v3`). Source workflows are SHA-pinned (no floating `@v3`), and `_validate.yml` runs the full prek gate on every release tag. | Mitigated |
+| Release artefacts | **Tampering** — a malicious release asset is uploaded to the GitHub release, or an upstream Actions runner injects a malicious binary into the build. | Low | High | Every release asset is signed by the `TAURI_SIGNING_PRIVATE_KEY` (signature verified at install time via minisign), and every asset is attested via SLSA build provenance to Sigstore and the GitHub attestations API (`actions/attest-build-provenance`). Third-party actions are SHA-pinned rather than floating on a tag, and `_validate.yml` runs the full prek gate on every release tag. | Mitigated |
 | Release artefacts | **Repudiation** — a release was published; the maintainer denies authorship. | Low | Low | SLSA provenance binds the artefact to the GHA workflow run that produced it (publicly logged); release tags are signed via the `required_signatures` repository ruleset. | Mitigated |
 | Release artefacts | **Information disclosure** — the updater discloses the user's installed version to the release endpoint via the request fingerprint. | Med | Low | Release manifest fetches are anonymous GETs against a public CDN; the information leak is bounded to the user's install of a public binary, which is not treated as sensitive. | Accepted |
 | Updater signing keys | **Spoofing** — an attacker who holds the leaked `TAURI_SIGNING_PRIVATE_KEY` signs a malicious update; the in-app signature check passes. | Low | High | Documented rotation procedure with annual cadence and immediate rotation on suspected compromise (see [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation)). Revocation is implicit and bidirectional: a rotated bundle will not validate against the old in-app pubkey, and the new in-app pubkey will not accept an old-key payload. The Sigstore-keyless alternative is deferred pending upstream Tauri support. | Accepted |
@@ -142,7 +142,7 @@ The boundaries above are the *control* surfaces. The list below is the *attack* 
 
 **IPC commands.**
 
-- The full handler tree is enumerated by `agaric_commands!` in `src-tauri/src/lib.rs` and lives under `src-tauri/src/commands/*.rs` (`agenda.rs`, `attachments.rs`, `bug_report.rs`, `compaction.rs`, `drafts.rs`, `history.rs`, `journal.rs`, `link_metadata.rs`, `logging.rs`, `mcp.rs`, `pages.rs`, `properties.rs`, `queries.rs`, `spaces.rs`, `sync_cmds.rs`, `tags.rs`, plus the block-scoped tree under `commands/blocks/`). Every handler routes its error path through `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`), enforced by the `tauri-command-sanitize` prek hook. Capability gating is in [`src-tauri/capabilities/default.json`](../../src-tauri/capabilities/default.json).
+- The full handler tree is enumerated by `agaric_commands!` in `src-tauri/src/lib.rs` — the canonical list, since the per-file breakdown under `src-tauri/src/commands/` drifts — and every handler routes its error path through `sanitize_internal_error` (`src-tauri/src/commands/mod.rs`), enforced by the `tauri-command-sanitize` prek hook. Capability gating is in [`src-tauri/capabilities/default.json`](../../src-tauri/capabilities/default.json).
 
 **External services touched.**
 
@@ -194,7 +194,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 - B1 STRIDE row: enumerates Spoofing/Tampering/Repudiation/Info-disclosure/DoS/Elevation per-row mitigations for the IPC surface.
 - `src-tauri/capabilities/default.json` is the canonical capability allowlist.
 - `lint`-stage CI job runs `cargo clippy -- -D warnings` against the IPC handler module (`src-tauri/src/commands/`); any new handler that bypasses the typed `tauri::command!` macro fails the build.
-- The `tauri command sanitize` prek hook (`prek.toml` line 386, `scripts/check-tauri-command-sanitize.mjs`) blocks new IPC handlers that don't run through the `AppError`/sanitiser path.
+- The `tauri-command-sanitize` prek hook ([`prek.toml`](../../prek.toml), `scripts/check-tauri-command-sanitize.mjs`) blocks new IPC handlers that don't run through the `AppError`/sanitiser path.
 
 ### Claim 3 — Release artifacts are signed and attested
 
@@ -203,7 +203,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 **Evidence.**
 
 - B4 STRIDE row: covers updater signing, updater pull-vs-push trust, leaked-key rotation.
-- `.github/workflows/release.yml` job `Attest build provenance` runs `actions/attest-build-provenance` for AppImage, .deb, .rpm, .dmg, .msi, .apk, SBOM, and OpenVEX outputs.
+- `.github/workflows/release.yml` runs `actions/attest-build-provenance` in per-platform `Attest …` steps covering the AppImage, .deb, .rpm, .dmg, .msi, .apk, SBOM, and OpenVEX outputs.
 - Release notes (every release since 0.1.38) include the per-asset `gh attestation verify` recipe; consumers can replay it without trusting the workflow.
 - Tauri updater public key pinned in `src-tauri/tauri.conf.json`; private key lives in `secrets.TAURI_SIGNING_PRIVATE_KEY` with documented rotation in [`SECURITY.md`](../../SECURITY.md#updater-signing-key-rotation).
 
@@ -213,7 +213,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 **Evidence.**
 
-- [`SECURITY.md`](../../SECURITY.md#disclosure-policy) — the private-disclosure path, fallback email, response timeline.
+- [`SECURITY.md`](../../SECURITY.md#how-to-report) — the private-disclosure path and fallback email; the response timeline is in [§ What to expect](../../SECURITY.md#what-to-expect).
 - The disclosure path is wired to the project's GitHub Security Advisories tab; reports there reach the maintainer's notification settings.
 - The OpenSSF Best Practices form's [`vulnerability_report_process`](https://www.bestpractices.dev/en/criteria/0#0.vulnerability_report_process) criterion is Met (verified 2026-05-17) and points at the same document.
 
@@ -224,7 +224,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 **Evidence.**
 
 - [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
-- `cargo-deny` runs on every PR (`validate / cargo-tests` job); `cargo audit` runs in the same job as warn-only.
+- `cargo-deny` runs on every PR via the prek hook suite in `_validate.yml`'s `lint` job; `cargo audit` runs in the same job.
 - `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale and an upstream tracking link.
 - The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
 

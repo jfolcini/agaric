@@ -10,7 +10,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 - **Cycle the active space** — on a collapsed sidebar, click the **SpaceAccentBadge** (the coloured circle replacing the logo) to cycle to the next space.
 - **Create a new space** — open *Manage Spaces…* (last item in the SpaceSwitcher dropdown) → use the create form. Pick a name and an accent colour.
 - **Rename a space** — inline edit in the *Manage Spaces…* dialog.
-- **Change a space's accent colour** — pick from seven swatches (emerald, blue, violet, amber, rose, slate, orange) in *Manage Spaces…*. The colour shows up in the sidebar header, the 3 px top stripe, the badge in collapsed mode, and the OS window title.
+- **Change a space's accent colour** — pick a swatch (emerald, blue, violet, amber, rose, slate) in *Manage Spaces…*. The colour shows up in the sidebar header, the top stripe, the badge in collapsed mode, and the OS window title.
 - **Set a per-space journal template** — paste markdown into the *Journal template* textarea inside *Manage Spaces…*. New daily pages in that space are pre-populated with the template's child blocks.
 - **Delete a space** — only available when the space contains no live pages (and never for the last remaining space). Confirmation required. To delete a non-empty space: first use *Move to space* on each page (or batch-move from the Pages view), then return to *Manage Spaces…* and delete.
 - **Move a page between spaces** — open the page's **PageHeaderMenu** (kebab) → *Move to space* → pick the destination. The editor navigates back (the moved page is no longer valid in the origin space); the active space does **not** switch to follow the page. Stale references left behind in the origin space — an old tab still holding the page, or its *Recently visited* entry — heal lazily: following one shows a soft *"This page was moved to another space"* notice, drops the stale entry, and lands you back on a valid view instead of raising an error.
@@ -20,7 +20,7 @@ A **space** is a user-defined context that groups pages — typical setups are *
 - **Sidebar header**: the active space's name (replaces the static "Agaric" branding).
 - **SpaceAccentBadge** (collapsed sidebar): coloured circle with the space's first letter on its accent fill.
 - **3 px top stripe** in the space's accent colour across the top of the window.
-- **OS window title**: `<SpaceName> · Agaric`.
+- **OS window title**: `<Page or View> · <SpaceName> · Agaric`.
 - **Onboarding banner** in *Manage Spaces…* while you still have only the seeded Personal / Work spaces.
 - **Hotkey hints** (e.g. `Ctrl+1` / `⌘1`) on the first nine rows of the SpaceSwitcher dropdown.
 
@@ -50,7 +50,7 @@ A `[[link]]` whose target lives in a different space **does not navigate** — i
 
 Fresh installs come with two spaces: **Personal** and **Work**. Both are seeded on first boot. The onboarding banner in *Manage Spaces…* nudges you to either rename them or create more, then dismisses on first edit.
 
-If you opened Agaric before spaces existed, your existing pages migrated automatically: pages created up to a fixed date land in **Personal**; everything later lands in **Work**. The migration is one-shot, idempotent, and time-gated so subsequent boots don't move new pages around.
+If you opened Agaric before spaces existed, your existing pages migrated automatically: pages created before a fixed cut-off moved to **Work**, and everything from the cut-off onwards stayed in **Personal**. The migration is one-shot, idempotent, and time-gated so subsequent boots don't move new pages around.
 
 ## Per-space integrations
 

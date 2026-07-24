@@ -63,8 +63,11 @@ Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-connection) in
 | `LORO_INLINE_MAX_BYTES` | 2,400,000 bytes | Threshold above which a `LoroSync` payload's `bytes` leave the inline JSON envelope and ride chunked binary frames instead (`LoroSyncChunked`, #611). Sized so the worst-case JSON inflation of an inline payload (a `Vec<u8>` serialises as a number array, up to 4 chars/byte) stays under `MAX_MSG_SIZE`. |
 | `OP_LOG_BATCH_INLINE_MAX_BYTES` | 2,400,000 bytes (= `LORO_INLINE_MAX_BYTES`) | Threshold above which an `OpLogBatch`'s serialized `records` leave the inline JSON envelope and ride chunked binary frames instead (`OpLogBatchChunked`, #2593). |
 | `MAX_OP_LOG_BATCH_PAYLOAD_SIZE` | 256 MB | Upper bound on `OpLogBatchChunked.size_bytes` accepted before any binary frame is read — defence-in-depth against a runaway/malicious header, mirroring `MAX_LORO_SYNC_PAYLOAD_SIZE`. |
+| `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | Same bound for `LoroSyncChunked.size_bytes`. |
+| `MAX_SNAPSHOT_SIZE` | 256 MB | Cap the initiator applies to `SnapshotOffer.size_bytes` (defined in `sync_daemon/snapshot_transfer.rs`). |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget on both session loops. |
-| `SyncConnection::RECV_TIMEOUT` | (see `connection.rs`) | Overall idle receive guard, kept strictly larger than `HANDSHAKE_TIMEOUT`. |
+| `SyncConnection::RECV_TIMEOUT` | 180 s | Overall idle receive guard, kept strictly larger than `HANDSHAKE_TIMEOUT` (pinned by `recv_timeout_exceeds_handshake_timeout`). |
+| `LORO_SYNC_PROTOCOL_VERSION` | 1 | Envelope version on `LoroSyncMessage` (`loro_sync_types.rs`); distinct from Loro's own payload format version. |
 
 ## Message types
 
@@ -77,8 +80,17 @@ All variants below are arms of the `SyncMessage` enum in
 ```text
 HeadExchange { heads: Vec<DeviceHead>,
                loro_vvs: Vec<SpaceVersionVector>,   // #[serde(default)]
-               engine_format_version: u32 }          // #[serde(default)]
+               engine_format_version: u32,           // #[serde(default)]
+               op_log_replication: bool,             // #[serde(default)] capability
+               wire_compression: bool,               // #[serde(default)] capability
+               op_log_batch_chunked: bool,           // #[serde(default)] capability
+               pairing_proof: Option<String> }       // #[serde(default)]
 ```
+
+Every field after `heads` is `#[serde(default)]`, so a peer predating any of
+them deserializes the zero value and degrades to the older behaviour. The three
+`bool`s are **additive capability advertisements** — see the variants they gate
+below.
 
 The first message of every session, sent by the **initiator only**, exactly
 once. The responder does **not** reply with its own `HeadExchange` — it
@@ -176,10 +188,11 @@ dangerous divergence isn't heads-vs-VVs in flight between two devices —
 both frontiers on a healthy device already agree, because both are
 derived from the same locally-applied ops. It's **op_log vs. engine on
 one device**: the `sql_only` fallback path
-(`SqlOnlyFallbackReason::SpaceUnresolved`,
-`src-tauri/src/materializer/handlers/sql_only_fallback.rs:75`) writes an
+(`SqlOnlyFallbackReason`,
+`src-tauri/agaric-engine/src/apply/sql_only_fallback.rs`) writes an
 op's SQL projection without routing it through the per-space `LoroEngine`
-when the op's space hasn't resolved yet. A device that has taken this
+when the op's space hasn't resolved or the block is absent from that
+space's engine tree. A device that has taken this
 path has an op_log `seq` (and thus an advertised `heads` entry) ahead of
 what its own Loro engine — and therefore its own `loro_vvs` — can
 produce. That device cannot satisfy a peer's incremental-update request
@@ -229,7 +242,9 @@ Update   { protocol_version: u8, space_id: SpaceId,
 ### `SyncMessage::LoroSyncChunked`
 
 ```text
-LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool }
+LoroSyncChunked { header: LoroSyncChunkedHeader, is_last: bool,
+                  compressed: bool }   // #[serde(default)], zstd when the
+                                       // peer advertised wire_compression
 
 LoroSyncChunkedHeader (serde tag "kind", snake_case):
   Snapshot { protocol_version: u8, space_id: SpaceId, size_bytes: u64 }
@@ -397,13 +412,14 @@ per-session orchestrator (which explicitly errors if they reach
 `handle_message`):
 
 ```text
-SnapshotOffer { size_bytes: u64 }   // responder → initiator
-SnapshotAccept                       // initiator → responder
-SnapshotReject                       // initiator → responder
+SnapshotOffer { size_bytes: u64, blob_blake3: String }  // responder → initiator
+SnapshotAccept                                          // initiator → responder
+SnapshotReject                                          // initiator → responder
 ```
 
-`size_bytes` is the length of the compressed snapshot blob; the initiator
-caps it at `MAX_SNAPSHOT_SIZE` (256 MB).
+`size_bytes` is the length of the compressed snapshot blob and `blob_blake3`
+its digest, checked after the transfer; the initiator caps `size_bytes` at
+`MAX_SNAPSHOT_SIZE` (256 MB) before reading any frame.
 
 ### Attachment sub-flow variants
 
@@ -411,8 +427,9 @@ Driven by `src-tauri/agaric-sync/src/sync_files.rs`, also outside the per-sessio
 orchestrator:
 
 ```text
-FileRequest { attachment_ids: Vec<String> }
-FileOffer   { attachment_id: String, size_bytes: u64, blake3_hash: String }
+FileRequest  { attachment_ids: Vec<String> }
+FileOffer    { attachment_id: String, size_bytes: u64, blake3_hash: String,
+               content_hash: Option<String> }   // #[serde(default)]
 FileReceived { attachment_id: String }
 FileTransferComplete
 ```
@@ -823,7 +840,11 @@ Mechanics:
   The receiver cross-checks `size_bytes` against its own attachments DB row
   and rejects (without ACK) on disagreement, and verifies the running
   `blake3` hash as it streams chunks to a `<final>.tmp-<random>` file before
-  the atomic rename.
+  the atomic rename. The optional `content_hash` (#1993) mirrors
+  `blake3_hash` so a future receiver can reason about content-addressing
+  independently of the transfer hash; the actual skip-transfer decision is
+  taken receiver-side in `find_missing_attachments` — a file whose hash
+  already has a local blob is never requested, so it is never offered.
 - Binary data uses the same `BINARY_FRAME_CHUNK_SIZE` (5 MB) frame unit as
   the snapshot transfer; a zero-length file is sent as a single empty frame
   so the receiver's frame accounting terminates.

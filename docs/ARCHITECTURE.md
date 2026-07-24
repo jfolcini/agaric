@@ -23,6 +23,7 @@ How the system is built. Companion to:
 | Filters (compound grooming + agenda filter model) | [`architecture/filters.md`](architecture/filters.md) |
 | CRDT convergence + snapshots + crash recovery | [`architecture/crdt-and-recovery.md`](architecture/crdt-and-recovery.md) |
 | ↳ Converging the `sql_only` apply fallback with the projection helpers | [`architecture/sql-only-convergence.md`](architecture/sql-only-convergence.md) |
+| ↳ Rollback-safe engine apply | [`architecture/rollback-safe-engine-apply.md`](architecture/rollback-safe-engine-apply.md) |
 | Sync transport + protocol + Android constraints | [`architecture/sync-and-network.md`](architecture/sync-and-network.md) |
 | ↳ Sync protocol specification (message framing, handshake) | [`architecture/sync-protocol-spec.md`](architecture/sync-protocol-spec.md) |
 | Integrations (MCP / agent access) | [`architecture/integrations.md`](architecture/integrations.md) |
@@ -38,7 +39,7 @@ How the system is built. Companion to:
 
 1. **Local-first.** SQLite on disk; no cloud, no accounts.
 2. **Event-sourced.** Every state change is an append-only op log entry. Materialized views are derivable; the op log is the truth.
-3. **CRDT convergence.** Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI. One honest boundary: character-level merge applies to edits *committed as ops*. In-progress typing is frontend-local until blur (principle 4), so two devices editing the **same block simultaneously** converge at block granularity (#2459) — the later blur's content wins for the overlap, with the superseded version preserved in `op_log` for history/undo. See `architecture/editor-and-content.md` § FE / BE authority boundary.
+3. **CRDT convergence.** The Loro engine fans out every op into per-space CRDT state. Concurrent edits converge automatically; no merge dialog, no conflict UI. One honest boundary: character-level merge applies to edits *committed as ops*, and in-progress typing stays frontend-local until it commits (principle 4). See [`architecture/editor-and-content.md`](architecture/editor-and-content.md) § FE / BE authority boundary.
 4. **Single roving editor.** Exactly one block hosts a TipTap editor at a time; everything else renders static.
 5. **Type-safe IPC.** Every Tauri command flows through specta-generated TypeScript. The `agaric_commands!` macro is the single source of truth — handler and bindings cannot drift.
 6. **Per-space partitioning.** The native, indexed `blocks.space_id` column (migration 0086, #533) is the sole source of truth for space membership — with a `spaces` registry FK (0089), and `space` forbidden as a `block_properties` key (0088 `key_not_reserved` CHECK). An `is_space = 'true'` property still marks a space's own page. Lists, search, agenda, backlinks, history, journals all scope to the active space via the `b.space_id = ?N` filter.
@@ -54,9 +55,20 @@ How the system is built. Companion to:
 
 ## What lives where
 
-- **Schema / migrations**: `src-tauri/migrations/*.sql` (auto-run; `sqlx` compile-time validated; offline cache in `.sqlx/`).
-- **Backend code**: `src-tauri/src/` (commands, materializer, sync, Loro engine, recurrence, FTS, snapshot, MCP).
+The Rust side is a Cargo workspace rooted at `src-tauri/`. Its members (see `[workspace]` in `src-tauri/Cargo.toml`):
+
+| Crate | Owns |
+| --- | --- |
+| `.` — the app crate `agaric` (lib target `agaric_lib`) | Tauri commands, materializer, MCP server, deep links, spaces, recovery, the `agaric-mcp` sidecar binary |
+| `agaric-core` | Leaf primitives with no DB dependency — ULIDs, time, errors, text/tag normalisation, diffing |
+| `agaric-store` | SQLite access — op log, caches, FTS, filters, queries, pagination, snapshots |
+| `agaric-engine` | Loro CRDT engine, op apply, merge, drafts, import, recurrence |
+| `agaric-sync` | Peer discovery, pairing, TLS, WebSocket transport, sync protocol + daemon |
+| `agaric-observability` | Tracing / OTLP / metrics plumbing |
+| `diagnostics` | Read-only DB inspection binaries, kept out of the app crate so `tauri-bundler` doesn't scan them |
+
+- **Schema / migrations**: `src-tauri/migrations/*.sql` (auto-run; `sqlx` compile-time validated; offline caches in `.sqlx/`, one per crate that holds query macros).
 - **Frontend code**: `src/` (components, editor, hooks, stores, lib).
-- **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift).
-- **Tests**: `src-tauri/src/` (Rust unit + integration, colocated as `#[cfg(test)] mod tests`, `*/tests.rs`, and `integration_tests.rs` / `command_integration_tests/` — see `src-tauri/tests/AGENTS.md` for the layering), `src/**/__tests__/` (frontend), `e2e/` (Playwright).
+- **Bindings**: `src/lib/bindings.ts` (specta-generated; checked in; CI fails on drift). Frontend call sites are mid-migration (#2927) from the hand-written wrappers in `src/lib/tauri/` onto the generated bindings; `src/lib/tauri.ts` is now just a barrel re-exporting that directory.
+- **Tests**: Rust unit + integration tests are colocated under `src-tauri/` as `#[cfg(test)] mod tests`, `*/tests.rs`, `integration_tests.rs`, and `command_integration_tests/` — see [`src-tauri/tests/AGENTS.md`](../src-tauri/tests/AGENTS.md) for the layering. Frontend tests live in `src/**/__tests__/`, e2e specs in `e2e/`.
 - **Backlog**: tracked on the GitHub issue tracker.

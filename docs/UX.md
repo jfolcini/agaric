@@ -43,7 +43,7 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 - **`100dvh`, not `100vh`.** Mobile chrome makes `100vh` taller than the visible area.
 - **Safe-area insets** matter on mobile (`env(safe-area-inset-bottom)` etc.) — use them for any bottom-pinned element.
 - **DnD sensors split by pointer type.** Desktop = distance threshold (start drag immediately on a few pixels of movement). Touch = delay threshold (250 ms hold) — otherwise every scroll gesture would start a drag.
-- **Long-press** for mobile context menus is owned by `useBlockTouchLongPress`. The delay + move-tolerance constants are there.
+- **Long-press** for mobile context menus is owned by `useBlockTouchLongPress` (`src/components/block-tree/use-block-touch-long-press.ts`). The delay + move-tolerance constants are there.
 - **`onPointerDown`, never `onMouse*`.** Mouse events don't fire on touch. Toolbar/popover handlers must also `e.preventDefault()` so focus stays in the editor.
 - **Mobile sidebar** = persistent 48 px icon rail + Sheet overlay. Distinct from desktop's `SidebarRail` (resize handle). Sheet auto-closes on nav-item tap.
 
@@ -94,17 +94,17 @@ Before you create a new component, look in `src/components/ui/` (shadcn-style pr
 
 The cross-feature primitives most worth knowing (not exhaustive — see `src/components/ui/` for the full set):
 
-- **Badge** — `tone="priority" | "status" | "default"`. The single source for status / priority colouring.
+- **Badge** (`src/components/ui/`) — `tone="priority" | "status" | "default"`. The single source for status / priority colouring.
 - **IconButton** (`src/components/ui/`) — mandates `tooltip` + `ariaLabel`. Use instead of `<Button size="icon">` + bare Lucide icon.
 - **SearchInput** (`src/components/ui/`) — input with built-in clear button.
-- **SearchablePopover** (`src/components/`) — keyboard-navigable picker; backs page / tag pickers.
 - **MenuPopoverContent** (`src/components/ui/`) — canonical popover content for menu-style popovers. Prefer this over plain `PopoverContent` for menu surfaces.
 - **FilterPill** (`src/components/ui/`) — removable chip used in filter rows.
-- **AlertSection** / **AlertListRow** (`src/components/`) — overdue / upcoming sections + their list rows.
-- **ListViewState** (`src/components/`) — wraps list + empty + loading + error states.
-- **FeatureErrorBoundary** (`src/components/`) — wrap each view inside the dispatcher so a crashed view doesn't take down the shell.
-- **FeaturePageHeader** (`src/components/`) — title bar for non-editor views.
 - **ChevronToggle** (`src/components/ui/`) — animated chevron; for expand/collapse triggers.
+- **AlertListRow** (`src/components/ui/`) / **AlertSection** (`src/components/agenda/`) — overdue / upcoming sections and their list rows.
+- **FeaturePageHeader** (`src/components/ui/`) — title bar for non-editor views.
+- **ListViewState** (`src/components/common/`) — wraps list + empty + loading + error states.
+- **FeatureErrorBoundary** (`src/components/common/`) — wrap each view inside the dispatcher so a crashed view doesn't take down the shell.
+- **TagValuePicker** (`src/components/properties/`) / **InlinePicker** (`src/components/editor-toolbar/`) — keyboard-navigable value pickers.
 
 ## Conventional patterns
 

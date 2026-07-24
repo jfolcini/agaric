@@ -3,19 +3,21 @@
 
 ## Import (Settings → Data)
 
-- **Markdown** files. Import is per file: each `.md` file becomes a page. Picking a folder imports every `.md` file inside it independently — each file's relative path is used to build a namespaced page title, so the folder structure is reflected in page titles. There is no vault-aware handling (no special treatment of Logseq `journals/`, `pages/`, or `assets/` folders, and no cross-file resolution beyond `[[Page Name]]` links).
+Settings → Data offers separate buttons for `.md` files, a folder, an **Obsidian vault**, **Evernote** (`.enex`), **Joplin** (`.jex`), and a bibliography file.
+
+- **Markdown** files. Import is per file: each `.md` file becomes a page. Picking a folder imports every `.md` file inside it independently — each file's relative path builds a namespaced page title, so the folder structure is reflected in page titles.
 - **What import resolves:**
   - `[[Page Name]]` wiki-links — resolved within the active space; a target page is created if it doesn't already exist.
+  - `#tag` and `#[[Multi Word Tag]]` hashtags — resolved to an existing tag or created, then rewritten to canonical tag references, the same as typing them in the editor.
   - Properties — inline `key:: value` lines and YAML front-matter `key: value` scalars.
-- **Not yet implemented (kept as literal text):**
-  - `#tag` hashtags are **not** parsed into tags or tag associations on import — a `#tag` is stored verbatim as block content. (Export writes `#tagname`, but import does not reverse-resolve it back into a tag.)
-  - Attachments are **not** scanned or brought in on import.
+  - **Attachments**, but only on a *folder* import: the referenced files are matched against the picked folder's other files (by relative path first, then by filename) and brought in, with the links rewritten. A single-file `.md` pick has no siblings to match against, so its attachment references stay as-is.
+- There's no vault-layout awareness beyond that — Logseq's `journals/` / `pages/` folders get no special treatment, and tool-specific syntax is not interpreted.
 - Imports land in the **active space**. To import into a specific space, switch first.
 - Pre-existing pages with the same title are kept (the importer doesn't clobber).
 
 The Import button shows a per-block progress count while a file imports, then a count-only summary (page title, blocks created, properties set, and a `N warning(s)` count). It does not show per-file detail or which file produced a given warning.
 
-### Bibliography import (BibTeX / CSL-JSON, #1454)
+### Bibliography import (BibTeX / CSL-JSON)
 
 *Import Bibliography* in Settings → Data accepts `.bib` (BibTeX) and `.json` (CSL-JSON) files. Each entry becomes a **reference page** in the active space:
 
@@ -23,7 +25,7 @@ The Import button shows a per-block progress count while a file imports, then a 
 - **Typed properties** per entry: `citation-key`, `authors` ("; "-joined), `year` (number), `doi`, `url`, `journal`, `abstract`, `reference-type`. Definitions are created idempotently; a pre-existing user declaration of the same key wins and values coerce to it.
 - **Re-import is idempotent:** entries whose `citation-key` (or, as a fallback, non-empty `doi`) already exists in the space are skipped and counted.
 - **BibTeX is a documented subset** (`src-tauri/agaric-engine/src/bibliography.rs`): brace-bodied entries with `{…}` / `"…"` / bare-integer values; `@comment` / `@preamble` / `@string` are skipped with a warning (no macro expansion, no `#` concatenation); LaTeX decoding covers only the common escapes, dashes, and pure-ASCII accent forms — anything else stays literal with a per-entry warning. Unbalanced braces or an unterminated quote fail the import with the entry's line number.
-- Authors/journals as linkable `ref` pages is a possible follow-up (issue #1454 tier b covers the live citation picker).
+- Authors and journals land as text, not linkable `ref` pages; a live citation picker is a possible follow-up.
 
 ## Export
 
@@ -33,19 +35,21 @@ In the **PageHeaderMenu** kebab → *Export as Markdown* (or `Ctrl+Shift+E`).
 
 - Emits the page's content as Markdown.
 - A YAML front-matter block carries the page's properties (todo state, dates, tags, custom properties).
-- Inline `[[links]]` and `#tags` are written as their textual equivalents. `[[links]]` round-trip back into page references on import; `#tags` are written as text but are **not** re-imported as tags (they stay as literal text — see Import above).
+- Inline `[[links]]` and `#tags` are written as their textual equivalents, and both round-trip: re-importing the file resolves them back into page references and tags.
 
-### Export-all-as-ZIP (Settings → Data)
+### Export-as-ZIP (Settings → Data)
 
-- One Markdown file per page in the active space, with the namespace hierarchy mirrored as folders.
+Two buttons: **Export All** (the active space) and **Export all spaces** (the whole vault, one top-level folder per space, with same-named spaces disambiguated).
+
+- One Markdown file per page, with the namespace hierarchy mirrored as folders.
 - Each file carries the same YAML front-matter as per-page export.
-- Inline attachments are bundled into the ZIP alongside their pages.
-- Includes a small `agaric-export.json` manifest with the export timestamp, source space name, and file count.
+- Attachments — inline images and block-scoped files alike — are written into an `assets/` folder and the Markdown links are rewritten to relative paths, so they resolve in other tools.
+- If any page or attachment couldn't be exported, the ZIP gains an `export-report.txt` listing exactly what was skipped, and the toast says so rather than reporting a clean success.
 
 ## Pitfalls to know
 
 - **Imports don't merge by ULID.** Two devices that each import the same Markdown set end up with two parallel pages. Sync converges them via CRDT, but the page titles will collide. Plan imports on one device, then sync.
 - **Malformed YAML front-matter lines are skipped, not fatal.** A front-matter line that isn't a valid `key: value` scalar is ignored; the page and the rest of its front-matter still import. The skipped lines are surfaced (not silently swallowed) in the summary's warning count as `N frontmatter line(s) [...] ignored`, so there's no need to re-run the import. Array/collection front-matter syntax is likewise parsed-and-ignored with a warning.
-- **Export is per-space.** To get everything, switch space and export-all for each one.
-- **No Notion / Obsidian importers ship today.** Markdown export from those tools usually works as input here, but tool-specific syntax (Notion callouts, Obsidian dataview queries) is treated as plain text.
+- **Import is per-space; export doesn't have to be.** Imports always land in the active space, but *Export all spaces* covers the whole vault in one ZIP — no need to switch spaces and export repeatedly.
+- **No Notion importer ships today.** Its Markdown export usually works as plain folder input, but Notion-specific syntax (callouts, databases) is treated as plain text.
 - **Export does not include device-local state** (drafts, recent-pages, sidebar width, keyboard customisations).

@@ -1,52 +1,57 @@
 # Playwright e2e patterns
 
-> E2E tests against the Vite dev server (not the Tauri runtime). Root [`src/__tests__/AGENTS.md`](../src/__tests__/AGENTS.md) covers cross-cutting conventions. This file covers what's specific to `e2e/*.spec.ts`.
+> E2E against a browser-served build of the app with the JS tauri mock — not the Tauri runtime. Root [`src/__tests__/AGENTS.md`](../src/__tests__/AGENTS.md) covers cross-cutting conventions. This file covers what's specific to `e2e/*.spec.ts`. Specs that need the *real* Rust backend live in `e2e-tauri/` (WebdriverIO + tauri-driver, see [`wdio.conf.ts`](../wdio.conf.ts)).
 
 ## Configuration
 
-The authoritative values live in [`playwright.config.ts`](../playwright.config.ts) — read it rather than trusting numbers copied here (the repo's no-counts rule: counts drift).
+The authoritative values live in [`playwright.config.ts`](../playwright.config.ts) — read it rather than trusting numbers copied here. The shape:
 
-- **Test dir:** `e2e/` (the `.spec.ts` files in this folder).
-- **Browser:** Chromium only.
-- **Base URL:** `http://localhost:5173`.
-- **Dev server:** auto-started via `npm run dev`; reused if already running (not in CI — `reuseExistingServer: !CI`).
-- **Retries:** retried both in CI and locally (`retries`); the local pre-push umbrella is the real gate, so mirroring CI's retry keeps a one-off overlay-timing hiccup from rejecting a green tree.
-- **Workers:** capped per shard (`workers`); CI shards the playwright job, so effective CI parallelism is `shards × workers`. Local has no sharding, so the cap keeps the single shared Vite dev server responsive.
+- **Test dir:** `e2e/`. **Browser:** Chromium only. **Base URL:** `http://localhost:5173`.
+- **Web server:** `npm run build:e2e && npm run preview:e2e` — a *static production build* served by `vite preview`, not `vite dev`. `VITE_E2E=1` is what keeps the tauri mock in the bundle (`src/main.tsx` gates the mock import on it); a plain prod build tree-shakes the mock out. Moving off the HMR dev server was the #1458 fix for CI shard cascades.
+- **Retries:** enabled locally as well as in CI (CI is lower — it amplified cascades). The local pre-push umbrella is the real gate, so mirroring a retry keeps a one-off overlay-timing hiccup from rejecting a green tree.
+- **Workers:** capped per shard. CI shards the playwright job, so effective CI parallelism is `shards × workers`; locally there is no sharding, and the cap keeps the single shared preview server responsive.
+- **Timeouts:** a per-test ceiling, a CI-only `globalTimeout` set *below* the CI job cap so the reporter still uploads before the runner kills the job, and `expect.timeout` sized to absorb overlay-mount jitter (no per-assertion overrides needed). Navigation and action bounds are set too — against a static build a `goto` resolves in well under a second, so a long bound only ever fires on a genuinely wedged server.
 - **Tracing:** on first retry.
-- **Global expect timeout:** set in `playwright.config.ts`'s `expect.timeout` (absorbs overlay-mount jitter under load; no per-assertion overrides needed).
+
+### ⚠️ Kill any stale server on :5173 first
+
+`reuseExistingServer` is on locally, so Playwright will happily attach to **whatever** is already listening on :5173 instead of building your code. A leftover `npm run dev` from another worktree, or a `vite preview` of an older build, means the whole run tests the wrong bundle — producing false failures (or, worse, false greens) that look like spec flake. Kill the port before running e2e locally.
 
 ## Mock backend
 
-E2E runs against the Vite dev server, not the Tauri runtime. `src/lib/tauri-mock.ts` auto-activates when `window.__TAURI_INTERNALS__` is absent and provides an in-memory store with seed data. State resets on page reload — tests use `page.reload()` to verify isolation.
-
-Coverage includes `list_page_links` (scans seed data for `[[ULID]]` links), `import_markdown` (heading parsing + block splitting), template seed data with variable blocks. Exports `SEED_IDS` for deterministic references and `resetMock()` for cleanup.
+`src/lib/tauri-mock/` provides an in-memory backend that activates when `window.__TAURI_INTERNALS__` is absent (`src/lib/tauri-mock.ts` is a thin re-export shim kept for older import paths). It seeds a small fixed set of pages and blocks, exports `SEED_IDS` for deterministic references and `resetMock()` for cleanup, and resets on page reload — so `page.reload()` is how specs verify persistence and isolation.
 
 ## The mock is a contract, not a convenience
 
-`src/lib/tauri-mock/` is a hand-maintained **second implementation** of the Rust backend. It silently drifts (create_block page_id, purge_block cascade, reserved-key property routing, the tag-space bug all shipped past a mock that looked fine), so treat it as a contract that must be proven equivalent to the real backend — not a rendering shim.
+`src/lib/tauri-mock/` is a hand-maintained **second implementation** of the Rust backend. It silently drifts (create_block page_id, purge_block cascade, reserved-key property routing, and the tag-space bug all shipped past a mock that looked fine), so treat it as a contract that must be proven equivalent to the real backend — not a rendering shim.
 
-- **Every state-mutating handler must be pinned by a conformance fixture.** The #763 harness (`conformance/fixtures/*.json`) replays op sequences against a backend-authored `expected`, asserted by BOTH `src-tauri/src/command_integration_tests/conformance.rs` (real backend) and `src/lib/tauri-mock/__tests__/conformance.test.ts` (mock). [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083) is the ratchet: a new mutating command fails the suite unless it gains a fixture or a justified allowlist waiver.
+- **Every state-mutating handler must be pinned by a conformance fixture.** The #763 harness (`conformance/fixtures/*.json`) replays op sequences against a backend-authored `expected`, asserted from BOTH sides: `src-tauri/src/command_integration_tests/conformance.rs` (real backend) and `src/lib/tauri-mock/__tests__/conformance.test.ts` (mock). [`conformance-coverage.test.ts`](../src/lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083) is the ratchet: a new mutating command fails the suite unless it gains a fixture or a `NO_FIXTURE_ALLOWLIST` waiver with a written reason. An `allowlist stays honest` self-check fails on stale, read-only, or now-covered waivers, so the escape hatch can't rot.
 - **Conformance workflow.** Add a fixture to `conformance/fixtures/` (seed + ops + optional `scenarios` string tags). NEVER hand-write `expected` — the backend authors it: `CONFORMANCE_UPDATE=1 cargo nextest run -E 'test(conformance_fixtures_match_backend)'` (from `src-tauri/`) writes the backend-derived snapshot back into the JSON. Then run `npx vitest run src/lib/tauri-mock` — a red `conformance.test.ts` means the mock diverges; fix `handlers.ts` (never change the backend to match the mock; a subtle, unsafe-to-mirror divergence is left as a `// DRIFT(#763)` skip + issue).
-- **Critical round-trips deserve a real-backend smoke.** The Playwright specs here run against the **mock**, so they cannot catch a mock↔backend divergence on their own — that is the conformance harness's job. A browser-driven **real-Tauri** smoke harness (tauri-driver + WebdriverIO) is scoped but **not yet shipped** (#155, see `docs/session-log/session-949-155-e2e-tauri-harness-scope.md`); real FTS / query / cursor round-trips are covered today at the command-inner boundary in `src-tauri/src/commands/tests/`. Do not assume a Playwright green proves backend parity.
+- **A Playwright green does not prove backend parity.** These specs run against the **mock**, so they cannot catch a mock↔backend divergence on their own — that is the conformance harness's job. Real round-trips over live Tauri IPC are covered by the `e2e-tauri/*.e2e.ts` WebdriverIO harness (#155, driven by `.github/workflows/e2e-tauri-weekly.yml`) and at the command-inner boundary in `src-tauri/src/commands/tests/`.
 - **The tag-space failure.** The mock modeled a **retired** schema (`block_properties(key='space')`); a UI test asserted `setProperty` was called and passed, while the tag vanished in the real backend. A conformance fixture that re-queries the settled tag state is what catches this class.
 
 ## Patterns
 
+Specs import `test` / `expect` and the shared helpers from `./helpers`, not from `@playwright/test` directly:
+
 ```ts
+import { expect, focusBlock, openPage, test, waitForBoot } from './helpers'
+
 test.beforeEach(async ({ page }) => {
-  await page.goto('/')
-  await expect(page.locator('header').getByText('Journal')).toBeVisible()
+  await waitForBoot(page)   // goto('/') + wait for the shell to be interactive
 })
 
-test('creates a block via the input form', async ({ page }) => {
-  const input = page.getByPlaceholder('Write something...')
-  await input.fill('Hello, world!')
-  await input.press('Enter')
+test('edits a block', async ({ page }) => {
+  await openPage(page, 'Getting Started')
+  const editor = await focusBlock(page, 0)
+  await editor.fill('Hello, world!')
   await expect(page.getByText('Hello, world!')).toBeVisible()
 })
 ```
 
-No page objects — tests are flat and direct. Use `data-testid` selectors (not CSS classes) for stable targeting.
+No page objects — tests are flat and direct, with shared behavior factored into `e2e/helpers.ts`. Target with `data-testid` / `data-slot` selectors, not CSS classes. `installIpcRecorder` / `getInvokeCalls` / `clearInvokeCalls` are available when a spec needs to assert on the IPC traffic a UI action produced.
+
+Specs whose tests share global state (op-log, pairing mock, kebab popover chains) annotate the suite with `test.describe.configure({ mode: 'serial' })` — `fullyParallel` is on otherwise.
 
 ## Portal-scoped helpers — critical for stable e2e
 
@@ -77,20 +82,24 @@ Verify the exact set + names against `e2e/helpers.ts` before relying on this lis
 Ctrl+Z behaves differently depending on focus, so two helpers are required:
 
 - **`blurEditors(page)`** — press Escape to leave `contentEditable` focus. Without this, Ctrl+Z triggers ProseMirror's in-editor undo instead of the page-level `useUndoShortcuts` handler.
-- **`reopenPage(page)`** — navigate away and back to force a `BlockTree` re-fetch from the mock backend, confirming the undo actually persisted (not just visual).
-- Wait for `"Undone"` / `"Redone"` toast text to confirm the action fired before asserting on block count.
+- **`reopenPage(page, title)`** — navigate away and back to force a `BlockTree` re-fetch from the mock backend, confirming the undo actually persisted rather than just repainted.
+- Wait for the `"Undone"` / `"Redone"` toast text to confirm the action fired before asserting on block count.
 
-## Console error check
+## Console errors are asserted automatically
+
+The `test` fixture exported from `./helpers` registers a console + `pageerror` watcher in a global `beforeEach` and asserts it in a global `afterEach`, filtering known-benign noise through one shared pattern list. **Any unexpected console error fails the spec** — you do not write a "no console errors" test, and you must not hand-roll a `page.on('console', …)` listener.
+
+A spec that *deliberately* provokes an error clears the buffer instead of suppressing the check:
 
 ```ts
-test('no console errors on load', async ({ page }) => {
-  const errors: string[] = []
-  page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()) })
-  await page.goto('/')
-  const realErrors = errors.filter(e => !e.includes('favicon'))
-  expect(realErrors).toEqual([])
-})
+import { clearConsoleErrors, getConsoleErrors, test } from './helpers'
+
+// …trigger the expected failure…
+expect(getConsoleErrors(page).some((e) => e.includes('…'))).toBe(true)
+clearConsoleErrors(page)   // otherwise the global afterEach fails the test
 ```
+
+If a genuinely benign error is unavoidable across specs, add it to the ignore-pattern list in `e2e/helpers.ts` rather than clearing it per test. `error-scenarios.spec.ts` is the reference.
 
 ## Header label selection — don't use the generic `header > getByText` pattern
 

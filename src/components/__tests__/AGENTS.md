@@ -1,6 +1,6 @@
 # Component test patterns
 
-> Frontend component testing. Root [`src/__tests__/AGENTS.md`](../../__tests__/AGENTS.md) covers the test-layer table, run commands, and cross-cutting conventions. This file covers what's specific to `*.test.tsx` files in `src/components/__tests__/`.
+> Frontend component testing. Root [`src/__tests__/AGENTS.md`](../../__tests__/AGENTS.md) covers the test-layer table, run commands, shared setup, and cross-cutting conventions. This file covers what's specific to `*.test.tsx` files in `src/components/__tests__/`.
 
 ## File structure
 
@@ -11,10 +11,11 @@ import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { axe } from 'vitest-axe'
+
+import { axe } from '@/__tests__/helpers/axe'
+import { emptyPage } from '@/__tests__/fixtures'
 
 const mockedInvoke = vi.mocked(invoke)
-const emptyPage = { items: [], next_cursor: null, has_more: false }
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -24,7 +25,7 @@ beforeEach(() => {
 })
 ```
 
-Imports are explicit — no Vitest globals.
+Imports are explicit — no Vitest globals. Prefer the shared `axe` wrapper in [`src/__tests__/helpers/axe.ts`](../../__tests__/helpers/axe.ts) over a bare `vitest-axe` import; it disables the `aria-hidden-focus` rule that Radix focus-guard sentinels trip under happy-dom. Import `axe` from `vitest-axe` directly only when you *want* that rule.
 
 ## Querying
 
@@ -89,29 +90,23 @@ await waitFor(() => {
 })
 ```
 
-Reference sites: `useGraphSimulation.test.ts` (act around worker dispatch), `AttachmentList.test.tsx` (act around `advanceTimersByTime`), `BacklinkFilterBuilder.test.tsx` (waitFor on Radix popover label).
+Reference sites: `useGraphSimulation.test.ts` (act around worker dispatch), `SearchPanel.test.tsx` (act around `advanceTimersByTime`), `BacklinkFilterBuilder.test.tsx` (waitFor on a Radix popover label).
 
-## Raising `waitFor` / per-test timeouts
+## Timeouts
 
-Default `waitFor` is 1s; default per-test is 5s. Two patterns genuinely need more:
+The defaults are already generous and are set in config, not per test — read them there rather than assuming RTL/Vitest stock values:
 
-- **axe cold-load**. First `axe(container)` per worker loads the rule set and can exceed 1s under contention. `waitFor(async () => { expect(await axe(container)).toHaveNoViolations() }, { timeout: 5000 })`.
-- **Radix popover post-selection state chains**. `onPointerDown → setTimeout → setState → re-render` under load can exceed 1s. `waitFor(..., { timeout: 3000 })` plus per-test timeout where needed:
+- `waitFor` / `findBy*` — `asyncUtilTimeout` in [`src/test-setup.ts`](../../test-setup.ts), raised so a CPU-heavy `axe()` audit survives pre-push contention (vitest runs concurrently with `cargo nextest`).
+- Per-test and per-hook — `testTimeout` / `hookTimeout` in [`vitest.config.ts`](../../../vitest.config.ts).
 
-```tsx
-it('example', async () => {
-  // …multiple async steps including waitFor(..., { timeout: 3000 })…
-}, 10000) // per-test timeout
-```
-
-Don't raise these to paper over regressions — only for load-sensitive scheduling.
+Because of that, an explicit `waitFor(..., { timeout: n })` or trailing `it(..., n)` **lowers** the ceiling as often as it raises it. Add one only when it genuinely helps a load-sensitive path (axe cold-load per worker; Radix popover `onPointerDown → setTimeout → setState → re-render` chains), and never to paper over a regression.
 
 ## Helper factories
 
-Shared factories at `src/__tests__/fixtures/index.ts`:
+Shared factories at `src/__tests__/fixtures/index.ts` (`makeBlock`, `makePage`, `makeDailyPage`, `makeHistoryEntry`, `emptyPage`):
 
 ```ts
-import { makeBlock, makePage, makeDailyPage, emptyPage } from '../fixtures'
+import { makeBlock, makePage, emptyPage } from '@/__tests__/fixtures'
 makeBlock({ id: 'BLK_1', content: 'hello' })  // Partial<T> override
 ```
 
@@ -132,11 +127,13 @@ it('has no a11y violations', async () => {
 
 `src/test-setup.ts` extends matchers with `vitest-axe/matchers`. Components with multiple visual states (focused vs unfocused) get separate audits per state.
 
+Related: `src/test-setup.ts` fails any test that renders a Radix Dialog/Sheet/AlertDialog surface without an accessible description (#1505).
+
 ## Mocking
 
 ### Tauri IPC
 
-`src/test-setup.ts` globally mocks `@tauri-apps/api/core`. Override per test:
+`src/test-setup.ts` globally mocks `@tauri-apps/api/core`. That is the lowest layer, so the same mock intercepts calls routed through the `@/lib/tauri/*` wrappers and calls made directly against the generated `@/lib/bindings` commands — assert on the `invoke` command name and argument shape either way. Override per test:
 
 ```ts
 mockedInvoke.mockResolvedValueOnce(payload)
@@ -162,8 +159,7 @@ vi.mock('@tiptap/react', () => ({
 The DOM environment gives the scroll container zero height, so the real
 `useVirtualizer` lays out zero rows and the list renders empty. Use the shared
 factory in [`src/__tests__/mocks/react-virtual.ts`](../../__tests__/mocks/react-virtual.ts)
-instead of re-pasting the mock (it was previously copy-pasted across the
-virtualized-list test files — #762):
+instead of re-pasting the mock (#762):
 
 ```ts
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
@@ -190,7 +186,7 @@ implementations in `src/__tests__/mocks/` (`sonner.ts`, `ui-select.tsx`), so a
 test that just needs them not to crash does nothing. To assert on toast calls,
 import `toast` from `sonner` directly and `vi.mocked(...)` it; a per-file
 `vi.mock('sonner', …)` / `vi.mock('@/components/ui/select', …)` still overrides
-the shared mock for that file when custom capture is needed:
+the shared mock when custom capture is needed:
 
 ```ts
 const mockedToastError = vi.mocked(toast.error)
@@ -211,45 +207,46 @@ Before committing a new test file, verify:
 - Async expectations use `findBy*` / `waitFor`, never bare `setTimeout`.
 - React 19 timing handled where external sources update state (see § React 19 test timing).
 - `vi.mocked(invoke)` for Tauri; `mockResolvedValueOnce` / `mockRejectedValueOnce` per call.
-- Per-page stores created fresh in `beforeEach`; provider wrapper used when component reads them.
+- Per-page stores created fresh in `beforeEach`; provider wrapper used when the component reads them.
 - `userEvent` for user-initiated actions; `fireEvent` only for `blur` / debounce-bypass.
 - `within()` scoping when the same role/text appears twice.
-- Portal-scoped helpers (see [`e2e/AGENTS.md`](../../../e2e/AGENTS.md)) for Radix overlay tests.
 
 ## Assert durable, re-queried effect — never call-shape (anti-drift)
 
-When a component interaction **mutates backend state**, `expect(invoke).toHaveBeenCalledWith('set_property', …)` is not enough — it proves the component *asked* for the change, not that the change *persisted correctly*. The tauri mock (`src/lib/tauri-mock/`) is a hand-maintained second implementation that drifts from the real Rust backend, so a call-shape-only assertion passes against a mock that does the wrong thing. Assert the observable, re-queried result instead: re-render / re-fetch and assert the block, chip, or field the user would see. The tag-space bug shipped this way — a test asserted `setProperty` was called with `key: 'space'`, never re-queried, and the tag silently vanished in production (the mock modeled the retired `block_properties(key='space')` schema). Behavioral mock↔backend parity is enforced by the #763 conformance harness and ratcheted by [`conformance-coverage.test.ts`](../../lib/tauri-mock/__tests__/conformance-coverage.test.ts) (#3083); see root [`AGENTS.md` § Testing invariants (anti-drift)](../../../AGENTS.md#testing-invariants-anti-drift).
+When a component interaction **mutates backend state**, `expect(invoke).toHaveBeenCalledWith('set_property', …)` is not enough — it proves the component *asked* for the change, not that the change *persisted correctly*, and the tauri mock is a hand-maintained second implementation that drifts from the real backend. Assert the observable, re-queried result instead: re-render / re-fetch and assert the block, chip, or field the user would see. The tag-space bug shipped exactly this way.
+
+Full rule, cautionary example, and the conformance harness that enforces mock↔backend parity: root [`AGENTS.md` § Testing invariants (anti-drift)](../../../AGENTS.md#testing-invariants-anti-drift) and [`e2e/AGENTS.md` § The mock is a contract](../../../e2e/AGENTS.md#the-mock-is-a-contract-not-a-convenience).
 
 ## Test-asserted production patterns
 
 These are caught by tests but the rules are about how the **production code** must be written. Each one came from a real bug.
 
-1. **Capture state before async gaps.** A handler that reads editor state or store state must read it BEFORE any `await`. After the await, the user may have typed more, selection may have moved, another handler may have fired. Pattern: `const pos = editor.state.selection.from; const blockId = store.getState().focusedBlockId; await createBlock(...)`.
-2. **Re-entrancy in async handlers.** Fast double-click / double-Enter can invoke an async handler twice before the first completes. Guard with a ref: `if (inProgress.current) return; inProgress.current = true; try { ... } finally { inProgress.current = false }`. Tests verify rapid double-invocation doesn't produce duplicates.
-3. **Optimistic edits need rollback.** `edit()` must capture `previousContent` before the update; on backend failure, roll back and show a toast. Tests must cover the rejection path.
-4. **Re-entrancy guard refs must be hook/component level.** `useRef` at the top, not inside a non-hook function — declaring inside a regular function recreates the ref on every call. See `useBlockActionOrchestration`.
+1. **Capture state before async gaps.** A handler that reads editor or store state must read it BEFORE any `await` — after the await the user may have typed more, selection may have moved, another handler may have fired. `const pos = editor.state.selection.from; const blockId = store.getState().focusedBlockId; await createBlock(...)`.
+2. **Re-entrancy in async handlers.** Fast double-click / double-Enter can invoke an async handler twice before the first completes. Guard with a ref: `if (inProgress.current) return; inProgress.current = true; try { … } finally { inProgress.current = false }`. Tests verify rapid double-invocation doesn't produce duplicates.
+3. **Re-entrancy guard refs must be hook/component level.** `useRef` at the top, not inside a non-hook function — declaring it inside a regular function recreates the ref on every call.
+4. **Optimistic edits need rollback.** `edit()` must capture `previousContent` before the update; on backend failure, roll back and show a toast. Tests must cover the rejection path.
 5. **`flushSync()` ordering in editor blur.** When `handleBlur` calls `edit()` then `splitBlock()`, the store update must complete before React unmounts the editor. Wrap both calls in `flushSync()`.
-6. **`onPointerDown` vs `onClick` for timing-sensitive buttons.** Buttons that must fire before a focus/blur cycle (e.g. delete in a hover gutter) use `onPointerDown` with `onClick` fallback for keyboard. Pure `onClick` can leave the button unreachable as focus moves.
+6. **`onPointerDown` vs `onClick` for timing-sensitive buttons.** Buttons that must fire before a focus/blur cycle (e.g. delete in a hover gutter) use `onPointerDown` with an `onClick` fallback for keyboard. Pure `onClick` can leave the button unreachable as focus moves.
 7. **Capture-phase keydown on `parentElement`.** Handlers that must fire BEFORE ProseMirror (e.g. Enter for block splitting) attach to `parentElement` with `capture: true` + `stopPropagation()`. Direct listeners on the editor element race with ProseMirror.
-8. **Keyboard handlers must yield to popups.** Capture-phase listeners (Enter / Tab / Escape / Backspace) must check whether a suggestion popup is visible before intercepting. Otherwise they steal keystrokes.
-9. **`shouldSplitOnBlur()` not naive newline check.** `handleBlur` must NOT use `content.includes('\n')` — code blocks contain newlines that aren't split boundaries.
-10. **EDITOR_PORTAL_SELECTORS must include all overlays.** New overlays inside the editor area (menus, pickers, date pickers) must be added to `EDITOR_PORTAL_SELECTORS` in `src/hooks/useEditorBlur.ts`. Otherwise clicking the overlay fires `handleBlur` prematurely.
-11. **Radix Dialog vs AlertDialog for user input.** Use `Dialog` for modals with text inputs; `AlertDialog` traps focus in a way that makes `autoFocus` on inputs unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only).
-12. **Guard `Array.isArray()` on IPC responses.** Some Tauri commands may return non-array values on unexpected backend types; guard before `.map()`.
-13. **Early-persist in `useEditorBlur` must check `shouldSplitOnBlur()`.** The early-persist path falls through to the normal blur logic; if content has newlines, both `edit()` and `splitBlock()` run → duplicate ops.
-14. **Hook dep arrays must include all read variables.** Use `oxlint-disable-next-line react-hooks/exhaustive-deps` with justification only when intentionally omitting.
+8. **Keyboard handlers must yield to popups.** Capture-phase listeners (Enter / Tab / Escape / Backspace) must check whether a suggestion popup is visible before intercepting, or they steal keystrokes.
+9. **`shouldSplitOnBlur()` not a naive newline check.** `handleBlur` must NOT use `content.includes('\n')` — code blocks contain newlines that aren't split boundaries.
+10. **Early-persist in `useEditorBlur` must check `shouldSplitOnBlur()`.** The early-persist path falls through to the normal blur logic; if content has newlines, both `edit()` and `splitBlock()` run → duplicate ops.
+11. **New editor-area overlays must carry `data-editor-portal`.** Menus, pickers, and toolbars that mount inside the editor area opt out of blur-on-focus-loss by tagging their outermost portal element with `data-editor-portal=""` (matched by `EDITOR_PORTAL_SELECTOR` in `src/hooks/useEditorBlur.ts`). Untagged overlays fire `handleBlur` prematurely when clicked.
+12. **Radix Dialog vs AlertDialog for user input.** Use `Dialog` for modals with text inputs; `AlertDialog` traps focus in a way that makes `autoFocus` on inputs unreliable. `ConfirmDialog` uses `AlertDialog` (confirm/cancel only).
+13. **Guard `Array.isArray()` on IPC responses.** Some Tauri commands may return non-array values on unexpected backend types; guard before `.map()`.
+14. **Hook dep arrays must include all read variables.** Use `oxlint-disable-next-line react-hooks/exhaustive-deps` with a justification only when intentionally omitting.
 15. **Map/object merge order for cache updates.** Spread fresh data LAST: `new Map([...staleCache, ...freshData])`. Stale-last silently overwrites fresh with stale.
-16. **Stores initial state `loading: true` for fetch-on-mount.** Starting `loading: false` causes a brief empty/ready render before fetch begins, triggering child components to act on empty data.
-17. **Prefer individual Zustand selectors.** `useBlockStore(s => s.focusedBlockId)` not `const { focusedBlockId } = useBlockStore()`. Destructuring subscribes to the entire store; matters for per-block components rendered N times.
-18. **Draft autosave race.** `saveDraft()` and `discardDraft()` can race on editor blur. Version counter: capture version before the async call; if it incremented, silently drop.
-19. **Null vs undefined in Tauri args.** Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`. Wrappers in `src/lib/tauri.ts` handle this with `?? null`.
+16. **Stores start `loading: true` for fetch-on-mount.** Starting `loading: false` causes a brief empty/ready render before the fetch begins, triggering child components to act on empty data.
+17. **Prefer individual Zustand selectors.** `useBlockStore(s => s.focusedBlockId)`, not `const { focusedBlockId } = useBlockStore()`. Destructuring subscribes to the entire store; it matters for per-block components rendered N times.
+18. **Draft autosave race.** `saveDraft()` and `discardDraft()` can race on editor blur. Version counter: capture the version before the async call; if it incremented, silently drop.
+19. **`null` vs `undefined` in Tauri args.** Tauri 2 requires `null` for Rust `Option<T>`, not `undefined`. The per-domain wrappers under `src/lib/tauri/` normalize this with `?? null` before calling the generated bindings.
 
 ## Common test pitfalls
 
-1. **Store leaks.** Zustand stores are module-level singletons. Forgetting `setState` reset in `beforeEach` causes test-order-dependent failures.
-2. **TipTap in jsdom.** TipTap doesn't render in jsdom. Mock `@tiptap/react`.
+1. **Store leaks.** Zustand stores are module-level singletons. Forgetting a `setState` reset in `beforeEach` causes test-order-dependent failures.
+2. **TipTap doesn't render in the test DOM.** Mock `@tiptap/react`.
 3. **Sidebar query scoping.** Nav labels appear in both sidebar and header. Use `within()`.
-4. **Debounce in tests.** SearchPanel has a 300ms debounce. Either submit the form directly to bypass, or `vi.useFakeTimers() + vi.advanceTimersByTime(300)`.
+4. **Debounce in tests.** SearchPanel debounces 300ms. Either submit the form directly to bypass it, or `vi.useFakeTimers()` + `vi.advanceTimersByTime(300)` inside `act()`.
 5. **`mockResolvedValue` vs `mockResolvedValueOnce`.** Components calling `invoke` multiple times need chained `Once` in call order. Use plain `mockResolvedValue` only when all calls return the same value.
 6. **`afterEach` for fake timers.** `vi.useFakeTimers()` REQUIRES `vi.useRealTimers()` in `afterEach`, else subsequent tests break.
 7. **Component extraction requires regression verification.** When extracting hooks/components from a large file, each extracted piece needs its own test file. Maintain backward-compatible re-exports from the original.

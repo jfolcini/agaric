@@ -71,7 +71,7 @@ cross-surface; the Pages-only and Search-only groups are surface specialties.
 
 The enum and its serde-exposed sub-types derive `Serialize` / `Deserialize` /
 `specta::Type` with **internal tagging** (`#[serde(tag = "type")]`), so the
-TypeScript binding in [`src/lib/tauri.ts`](../../src/lib/tauri.ts) is a discriminated
+generated TypeScript binding in [`src/lib/bindings.ts`](../../src/lib/bindings.ts) is a discriminated
 union of the shape `{ type: "Orphan" } | { type: "Tag"; tag: string } | …`.
 Newtype variants are declared as single-field struct variants
 (`Tag { tag: String }`, not `Tag(String)`) because serde's internal tagging
@@ -249,9 +249,10 @@ hybrid stage lands non-breaking — **none of this is implemented today**:
   full-text `bm25` rank (or `None` for purely structural queries); a future
   vector pass could fill the same channel.
 - `SortSource` is a tagged enum with only `Column` and `Relevance` built. Its
-  doc reserves `Aggregate` (group-by) and `VectorScore` (vector similarity)
-  variants, intentionally **not** added because there is no aggregate or vector
-  channel to sort on yet.
+  doc reserves `Aggregate` and `VectorScore` (vector similarity) variants,
+  intentionally **not** added. Grouped queries run through the separate
+  `run_grouped` path rather than a `SortSource::Aggregate`, and there is no
+  vector channel to sort on yet.
 - A future hybrid retrieval stage — a `vec0` (sqlite-vec) nearest-neighbour pass
   fused with the existing `bm25` channel via Reciprocal-Rank Fusion (RRF) — would
   slot in alongside the FTS5 `MATCH`, feeding a `VectorScore` sort source and the
@@ -259,19 +260,14 @@ hybrid stage lands non-breaking — **none of this is implemented today**:
 
 ## In progress / planned
 
-Honest status of the advanced-query surface as merged:
+Shipped: the cross-surface compiler (#1320), the boolean `FilterExpr` tree with
+its depth guard, the `run_advanced_query` engine (structural filtering, full-text
+∩ structural with `bm25` relevance, keyset pagination, `GROUP BY` grouping +
+aggregation), the recursive nested And/Or/Not builder UI
+([`src/components/AdvancedQuery/FilterGroup.tsx`](../../src/components/AdvancedQuery/FilterGroup.tsx)),
+and saved views
+([`src/components/AdvancedQuery/SavedViews.tsx`](../../src/components/AdvancedQuery/SavedViews.tsx)).
 
-- **Merged:** the cross-surface compiler (#1320), the boolean `FilterExpr` tree
-  with its depth guard, the `run_advanced_query` engine with structural filtering,
-  full-text ∩ structural with `bm25` relevance, keyset pagination, and a flat
-  conjunction builder UI
-  ([`src/components/AdvancedQuery/AdvancedQueryView.tsx`](../../src/components/AdvancedQuery/AdvancedQueryView.tsx),
-  restricted to the shared engine-supported keys).
-- **In progress / planned:** `GROUP BY` grouping and aggregation (the
-  `Aggregate` sort source + `group_by` request fields are reserved, not built);
-  saved views; the nested And/Or/Not builder UI; and dedicated chip editors for
-  the `state` / `block-type` / date metadata leaves on the advanced-query pane
-  (the engine supports those leaves; only the *flat shared-key* builder is
-  exposed in v1). Search-surface composition of the Search-only specialties
-  (`regex` / `case-sensitive` / `whole-word` / `snippet`) remains on its own FTS
-  path; only the structural subset routes through `SearchProjection` today.
+Still on its own path: the Search-only specialties (`regex` / `case-sensitive` /
+`whole-word` / `snippet`) run through FTS directly; only the structural subset
+routes through `SearchProjection`.

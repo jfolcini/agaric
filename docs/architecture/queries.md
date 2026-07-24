@@ -15,22 +15,25 @@ Search responses include the matching block plus its parent path (via batched `b
 
 ## Tag queries
 
-Boolean expressions over tags. `TagExpr` (Rust enum) supports `And / Or / Not / Tag(ulid)`:
+Boolean expressions over tags. `TagExpr` (`src-tauri/agaric-store/src/tag_query/mod.rs`) is an n-ary tree with two leaf kinds — an exact tag and a namespace prefix:
 
 ```rust
-enum TagExpr {
-    Tag(BlockId),
-    And(Box<TagExpr>, Box<TagExpr>),
-    Or(Box<TagExpr>, Box<TagExpr>),
+pub enum TagExpr {
+    Tag(String),
+    Prefix(String),
+    And(Vec<TagExpr>),
+    Or(Vec<TagExpr>),
     Not(Box<TagExpr>),
 }
 ```
 
-**Evaluation strategy:** the whole boolean tree compiles to a **single id-set subquery** — `And → INTERSECT`, `Or → UNION`, `Not → b.id NOT IN (<inner>)` against the non-deleted universe — pushed down as `b.id IN (<subquery>)`, so SQLite applies the cursor / `LIMIT` keyset directly instead of materialising the full matching id-set into Rust (#1622). `include_inherited` is resolved by joining against `block_tag_inherited` (the materialised cache); soft-deleted blocks are excluded. Pathologically deep trees (depth > `MAX_PUSHDOWN_DEPTH`, never produced by the real `commands::tags` caller) fall back to the legacy materialise-then-`json_each(?)` set path, which stays byte-identical. The `NOT`-into-SQL pushdown that was once deferred here is therefore live; `eval_tag_query_pushdown_matches_oracle_for_complex_expressions` pins the pushdown against the set-based oracle.
+It is serde-tagged (`{ "type": ..., "value": ... }`) and specta-exported. A tree deserialised at the IPC boundary must pass `TagExpr::validate_depth` before resolution.
+
+**Evaluation strategy:** the whole boolean tree compiles to a **single id-set subquery** — `And → INTERSECT`, `Or → UNION`, `Not → b.id NOT IN (<inner>)` against the non-deleted universe — pushed down as `b.id IN (<subquery>)`, so SQLite applies the cursor / `LIMIT` keyset directly instead of materialising the full matching id-set into Rust (#1622). `include_inherited` is resolved by joining against `block_tag_inherited` (the materialised cache); soft-deleted blocks are excluded. Pathologically deep trees (depth > `MAX_PUSHDOWN_DEPTH`, never produced by the real `commands::tags` caller) fall back to the legacy materialise-then-`json_each(?)` set path, which stays byte-identical. `eval_tag_query_pushdown_matches_oracle_for_complex_expressions` pins the pushdown against that set-based oracle.
 
 ## Property queries
 
-`query_by_property(key, value, op)` filters by typed property column. The op enum (`CompareOp`) supports `Eq / NotEq / Lt / Lte / Gt / Gte / Contains`. Numeric / date comparisons use `value_num` / `value_date`; text comparisons use `value_text` / `value_text_in` (LIKE prefix / exact).
+`query_by_property(key, value, op)` filters by typed property column. The op enum (`CompareOp`, `src-tauri/agaric-store/src/backlink/types.rs`) is `Eq / Neq / Lt / Gt / Lte / Gte / Contains / StartsWith`. Numeric / date comparisons use `value_num` / `value_date`; text comparisons use `value_text` / `value_text_in` (LIKE prefix / exact).
 
 Property keys reserved for built-ins (`todo_state`, `due_date`, etc.) are denormalised to dedicated columns on `blocks`. Query for these is direct column comparison; non-built-in keys go through `block_properties`.
 

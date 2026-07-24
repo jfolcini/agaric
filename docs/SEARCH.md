@@ -52,13 +52,15 @@ The toolbar exposes the same toggle row as the across-pages search view so the t
 
 Matches do NOT span block boundaries — each ProseMirror text node is searched independently. A query like `end of paragraph 1 start of paragraph 2` will not match across the boundary, same as VSCode's editor.
 
-### Regex caps
+### Regex caps (in-page)
 
-Because JavaScript's `RegExp` is backtracking-based, an adversarial pattern could otherwise hang the page. The toolbar applies three caps to bound the worst case:
+Because JavaScript's `RegExp` is backtracking-based, an adversarial pattern could otherwise hang the page. The matcher (`src/lib/in-page-find/matcher.ts`) bounds the worst case with several caps; the exact values are `const`s there, so read them from the code rather than from a number here:
 
-1. **Pattern length** — patterns longer than 1 KB reject with an inline error.
-2. **Text-node length** — text nodes longer than 10 KB are skipped in regex mode. The toolbar surfaces a "{n} long passages skipped" notice once per walk.
-3. **Cooperative chunking** — the matcher walks the DOM in 50-node batches via `requestIdleCallback`, yielding between chunks. Typing again before the walk completes aborts the in-flight pass.
+1. **Pattern length** — over-long patterns reject with an inline error.
+2. **Text-node length** — over-long text nodes are skipped in regex mode. The toolbar surfaces a "{n} long passages skipped" notice once per walk.
+3. **Per-`exec` scan window** — each match attempt only looks at a bounded slice of a node, so no single `exec` can backtrack unboundedly (#2030).
+4. **Aggregate time budget** — a walk that exceeds it stops early and reports `timedOut` rather than freezing the page.
+5. **Cooperative chunking** — the matcher walks the DOM in small batches via `requestIdleCallback`, yielding between chunks. Typing again before the walk completes aborts the in-flight pass.
 
 For long pages, anchor your regex (`^foo`, `bar$`, or `\bword\b`) to keep matches fast.
 
@@ -66,16 +68,15 @@ For long pages, anchor your regex (`^foo`, `bar$`, or `\bword\b`) to keep matche
 
 The yellow highlight that paints over matches is rendered via the **CSS Custom Highlight Registry** (`CSS.highlights` + `Highlight` + `Range`). It's the modern, DOM-mutation-free way to paint over text. The matcher, counter, and `F3` / `Shift+F3` navigation work on every supported platform; only the visual highlight depends on the Custom Highlight API.
 
-| Platform | Min Agaric version | WebView | Highlight visible? |
-|---|---|---|---|
-| Windows 10 1803+ | yes | WebView2 (auto-updates) | yes |
-| macOS 11 Big Sur | yes | Safari 14–16.6 | **no** |
-| macOS 12 Monterey | yes | Safari 15 (or 17.4 on macOS 12.3+ via update) | maybe |
-| macOS 13 Ventura | yes | Safari 17.4+ available | yes |
-| macOS 14 Sonoma+ | yes | Safari 17.4+ shipped | yes |
-| Ubuntu 22.04 / Debian 12 | yes | webkit2gtk 2.40 | **no** |
-| Ubuntu 24.04 / Fedora 39+ | yes | webkit2gtk 2.46+ | yes |
-| Android (Chrome WebView) | yes | Chrome 105+ on 2020+ devices | yes |
+| Platform | WebView | Highlight visible? |
+|---|---|---|
+| Windows 10 1803+ | WebView2 (auto-updates) | yes |
+| macOS 11 Big Sur | Safari 14–16.6 | **no** |
+| macOS 12 Monterey | Safari 15 (or 17.4 on macOS 12.3+ via update) | maybe |
+| macOS 13 Ventura+ | Safari 17.4+ | yes |
+| Ubuntu 22.04 / Debian 12 | webkit2gtk 2.40 | **no** |
+| Ubuntu 24.04 / Fedora 39+ | webkit2gtk 2.46+ | yes |
+| Android | Chrome WebView 105+ | yes |
 
 Users on the **no**-highlight rows still get a fully functional in-page find: the counter updates, `F3` cycles matches, the editor scrolls to each match. The yellow background just doesn't paint. Updating the OS or distribution to a recent version (or installing a current Safari) restores the highlight.
 
@@ -133,13 +134,13 @@ There is no escape syntax for a literal `"` *inside* a quoted value. The `+ Filt
 
 ### Autocomplete
 
-Typing a recognised filter prefix (`state:`, `priority:`, `due:`, `scheduled:`, `tag:#`, `prop:`, `path:`, `not-path:`) in the search input opens a small popover anchored next to the caret. The popover lists value suggestions filtered by the partial value typed after the prefix. Focus stays in the input throughout — the popover is a passive guide, never a focus trap; typing, deleting, and caret movement all keep working as normal.
+Typing a recognised filter prefix — `state:`, `priority:`, `due:`, `scheduled:`, `tag:#`, `prop:`, `path:` and their `not-` counterparts — in the search input opens a small popover anchored next to the caret. The popover lists value suggestions filtered by the partial value typed after the prefix. Focus stays in the input throughout — the popover is a passive guide, never a focus trap; typing, deleting, and caret movement all keep working as normal.
 
 Filter-prefix autocomplete works in **regex mode** too: the prefixes are real structural filters there, and only the free-text remainder is the regex. The popover stays closed only when the caret sits in that free-text/regex portion.
 
 | Prefix | Source | Notes |
 |---|---|---|
-| `state:` / `not-state:` | Static: `TODO`, `DOING`, `DONE`, `WAITING`, `CANCELLED`, `none` | Same vocabulary the parser accepts. |
+| `state:` / `not-state:` | Static: `TODO`, `DOING`, `DONE`, `CANCELLED`, `none` | Same vocabulary the parser accepts. |
 | `priority:` / `not-priority:` | The active priority levels (`DEFAULT_PRIORITY_LEVELS` = `1`, `2`, `3`; user-configurable via the `priority` property definition), plus `none` | Same vocabulary the parser accepts. |
 | `due:` / `scheduled:` | Static bucket list: `today`, `yesterday`, `overdue`, `this-week`, `this-month`, `next-week`, `older`, `none` | Bucket keywords only — explicit ISO dates and comparison operators aren't suggested. |
 | `tag:#` / `#` | `listTagsByPrefix` IPC (150 ms debounce) | Returns up to 20 tags matching the typed prefix. |
@@ -205,7 +206,7 @@ Page-name globs use SQLite's native `GLOB` syntax against `pages_cache.title`:
 - `[abc]` / `[a-z]` — character class.
 - `{a,b,c}` — top-level brace expansion (no nesting; max 64 expanded patterns per token).
 
-Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `*Journal*` for a substring match. Globs are **case-insensitive** by default — the SQL clause uses `LOWER(pages_cache.title) GLOB LOWER(?)`.
+Bare tokens without metacharacters (e.g. `path:Journal`) wrap automatically to `*Journal*` for a substring match. Globs are **case-insensitive** by default: the SQL clause matches `LOWER(title)` against a pattern that was already lowercased Rust-side with `to_ascii_lowercase()` — deliberately ASCII-only, for symmetry with SQLite's own `LOWER`.
 
 ### Worked examples
 
@@ -261,7 +262,7 @@ The find-across-pages view uses the Rust [`regex`] crate. Key differences from J
 - **Inline flags** `(?i)` / `(?m)` / `(?s)` / `(?x)` work as expected. The case-sensitive toggle injects `(?i)` (disabled) or `(?-i)` (enabled) at the start of the composed pattern.
 - **Unicode classes** like `\p{Han}` work; precompile UCD tables ship with the binary.
 
-### Regex caps
+### Regex caps (backend)
 
 To bound worst-case compile time and matched-output size, the backend applies a
 set of caps: a pattern-length limit (over-long patterns reject up front with
@@ -279,7 +280,9 @@ Regex compile errors surface inline next to the input with a red border; the fro
 
 ### Regex mode and structural filters
 
-In regex mode, structural filters **still apply**. The filter tokens (`tag:`, `path:`, `not-path:`, `state:`, `not-state:`, `priority:`, `not-priority:`, `due:`, `scheduled:`, `prop:`, `not-prop:`) are parsed out of the query and applied as structural SQL filters on the pre-filter scan; only the remaining free text is treated as the regex pattern, matched against block content. So `tag:#urgent ^TODO` with the `.*` toggle on runs the regex `^TODO` only over blocks tagged `#urgent`. What the FTS5 boolean operators (`AND` / `OR` / `NOT`) and the trigram length floor lose in regex mode is the *full-text* path — the structural narrowing survives.
+In regex mode, structural filters **still apply**. Every filter token in the vocabulary above is parsed out of the query and applied as a structural SQL filter on the pre-filter scan; only the remaining free text is treated as the regex pattern, matched against block content. So `tag:#urgent ^TODO` with the `.*` toggle on runs the regex `^TODO` only over blocks tagged `#urgent` — the filter is not part of the pattern, and you can type it anywhere in the query.
+
+What regex mode gives up is the *full-text* path: the FTS5 candidate set is unused, so the scan returns the most-recent blocks within those structural filters (up to a fixed candidate cap) and applies the regex to each. FTS5 boolean operators (`AND` / `OR` / `NOT`) become literal text there, and the trigram length floor no longer applies. Structural filters are therefore the most effective way to keep a regex query fast.
 
 ### Regex matches raw content, not the stripped FTS text
 
@@ -288,19 +291,6 @@ The regex runs against the **raw block content** — the same text you typed, be
 - **Tag/page references by name.** A regex on a tag or page *name* will not match a block that only references it via the underlying reference token (FTS resolves the reference to its name; the raw content keeps the token). Use the `tag:` filter for reference-aware tag matching.
 - **Raw markup is matchable by regex only.** Link syntax and formatting markers that full-text search strips out are still present in the raw content, so a regex can match them.
 - **Unicode normalisation.** Content pasted in a decomposed Unicode form (NFD — common from macOS) may not match a regex written in the composed form (NFC), even though full-text search (which normalises to NFC) would match it.
-
-### Regex-mode trade-off
-
-In regex mode the FTS5 candidate set is unused; the SQL scan returns the most-recent blocks (within the structural filters above) and the regex is applied to each, up to a fixed candidate cap. **Recommend a literal seed term (≥3 chars) for tight queries** — the structural filters above are the most effective way to keep the candidate set small.
-
-### Regex differences between surfaces
-
-See [Regex differences between surfaces](#regex-differences-between-surfaces) above for the in-page find vs find-across-pages comparison. The summary:
-
-- **In-page find** uses JavaScript `RegExp` (lookaround + backreferences supported, backtracking).
-- **Find across pages** uses the Rust `regex` crate (linear-time, no lookaround / backreferences).
-
-For portable patterns, stick to the intersection: literal text, anchors (`^`, `$`), character classes, quantifiers, alternation, ASCII-only `\b`.
 
 ## Boolean operators
 
@@ -321,11 +311,10 @@ Boolean operators **don't work inside regex mode** — there the free-text remai
 - **Clear history.** The dropdown's footer wipes the per-space MRU list. Other spaces stay untouched.
 - **Toggle state persists, history is per-space.** A `tag:` reference is space-specific, so cross-space recall would silently no-match. Toggle preferences are global because their effect (case / whole-word / regex semantics) is space-agnostic.
 - **Filter syntax is sanitiser-friendly.** `tag:#name` survives a literal-mode round-trip; recalling a `tag:` query from history rebuilds the chip row exactly.
-- **Filters compose with regex at the query level, not inside the pattern.** In regex mode the filter tokens are still parsed out and applied as structural SQL filters; only the *remaining free text* becomes the regex pattern. So `tag:#urgent ^TODO` with the `.*` toggle on applies the `tag:#urgent` filter and runs the regex `^TODO` over those blocks — the filter is **not** part of the regex. Type the filters anywhere in the query and keep the regex to the free-text remainder.
 
 ## Mobile
 
-Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. The mobile search Sheet collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon only mounts when `useIsMobile()` is true (viewport `< 768 px`); desktop keeps its keybindings.
+Desktop drives three search surfaces with three keybindings: `Ctrl+F` opens in-page find, `Cmd/Ctrl+K` opens the palette, `Ctrl+Shift+F` opens the find-in-files view. Touch devices can't reach any of those on their own. The mobile search Sheet collapses all three into a single Sheet behind one icon (`<SearchSheetTrigger />`, magnifying-glass, top-right of the header). The icon mounts when `useShouldShowMobileChrome()` is true — a phone viewport, or a tablet with no hardware keyboard (see [Known limitations](#known-limitations)); desktop keeps its keybindings.
 
 The Sheet has two segments rendered as a Radix `ToggleGroup`:
 

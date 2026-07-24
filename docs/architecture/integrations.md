@@ -19,8 +19,10 @@ The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents 
 
 Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
 
-- **Read-only** (10 tools): list pages, get page, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces (`list_spaces` — returns `{ id, name, is_default }` for every space; the discovery surface for the `space_id` that `search` / `journal_for_date` / every RW tool require).
-- **Read-write**: append block, update block content, set property, add tag, create page, delete block.
+- **Read-only**: list pages, get page, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
+- **Read-write**: append block, update block content, set property, add tag, create page, delete block — plus `list_spaces`, which both surfaces expose.
+
+`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` that `search` / `journal_for_date` / every RW tool require. The authoritative tool set is the `TOOL_*` dispatch in `src-tauri/src/mcp/tools_ro.rs` / `tools_rw.rs`.
 
 Splitting by R/W lets users disable writes while keeping reads on.
 

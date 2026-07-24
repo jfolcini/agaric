@@ -1,14 +1,16 @@
 # Rollback-safe engine apply (#2604)
 
-Status: **design + measurement** (this doc), implementation is follow-up work.
+Status: **shipped** on both apply paths — see [Status](#status) at the end. This
+document is the decision record: the invariant, the mechanisms considered, the
+measurements that ruled two of them out, and the wiring of the one chosen.
 
 ## The invariant at stake
 
 In the command write path, `op_log` and the SQL `blocks` projection commit
 **atomically** in one `BEGIN IMMEDIATE` transaction. The in-memory per-space
-Loro engine, however, is mutated **outside** that transaction: the materializer
+Loro engine, however, is mutated **outside** that transaction: the
 `apply_*_via_loro` handlers
-(`src-tauri/src/materializer/handlers/loro_apply.rs`) take the per-space engine
+(`src-tauri/agaric-engine/src/apply/loro_apply.rs`) take the per-space engine
 guard, apply the op, read back a `BlockSnapshot`, drop the guard, then project
 that snapshot to SQL. The SQL COMMIT happens **afterwards**, in the caller
 (`apply_op` → `tx.commit()`, or the LOCAL command path →
@@ -52,8 +54,8 @@ Fork the per-space doc, apply the op to the fork, read back from the fork,
 export the promotable delta; on COMMIT import the delta into the canonical doc,
 on abort drop the fork. This is option (b) from the issue.
 
-`fork_staging` (this PR, `src-tauri/agaric-engine/src/loro/engine/staging.rs`) is the building
-block. Two problems surface immediately:
+`fork_staging` (`src-tauri/agaric-engine/src/loro/engine/staging.rs`) is the
+building block. Two problems surface immediately:
 
 - **Cost.** `LoroDoc::fork` is documented **O(n) in time and space**. A fork per
   write op is therefore linear in the per-space doc size — the exact thing the
@@ -89,42 +91,41 @@ ceiling.
 ## Measurements
 
 Bench: `src-tauri/benches/groups/engine_checkpoint_bench.rs` (a `mod` of the
-consolidated `engine_bench` binary, #2879). Run the full table with
-`ENGINE_CHECKPOINT_FULL=1 cargo bench --bench engine_bench -- engine_checkpoint`
-(release profile; the 10K/100K scales are gated so the CI `--test` smoke gate
-stays cheap; the trailing filter scopes the run to just the checkpoint groups). Figures below are **µs per op**, release profile on the session's
-CI-equivalent runner (single sample run — read them as orders of magnitude, not
-sub-µs-precise, and re-run for a hardware-specific number). The 100K column is
-extrapolated from the measured `O(n)` trend (`fork` grows ~linearly, so 100K ≈
-10× the 10K figure); re-run with `ENGINE_CHECKPOINT_FULL=1` for the measured
-value:
+consolidated `engine_bench` binary, #2879). It is the source of truth for the
+figures; re-run it for hardware-specific numbers rather than trusting any
+transcribed table:
 
-| measurement | 100 | 1K | 10K | 100K (extrapolated) |
-|---|---|---|---|---|
-| `fork_only` (O(n) fork tax) | 914 | 7 833 | 150 736 | ≈ 1 500 000 |
-| `stage_op` (fork + apply + export delta) | 1 073 | 8 358 | 157 019 | ≈ 1 570 000 |
-| `promote_import` (fork + import 1-op delta) | 1 064 | 8 265 | 158 726 | ≈ 1 590 000 |
-| `snapshot_export` (per-op restore point) | 229 | 2 475 | 55 794 | ≈ 560 000 |
+```sh
+ENGINE_CHECKPOINT_FULL=1 cargo bench --bench engine_bench -- engine_checkpoint
+```
 
-`stage_op` is the added **pre-commit** latency on the interactive path;
-`promote_import − fork_only` isolates the post-commit promote (`import`) cost —
-a 1-op delta import is a few ms even at 10K, i.e. **the fork dominates entirely**.
+(Release profile. The 10K/100K scales are gated behind `ENGINE_CHECKPOINT_FULL`
+so the CI `--test` smoke gate stays cheap; the trailing filter scopes the run to
+the checkpoint groups.) It measures four per-op costs: `fork_only` (the fork tax
+alone), `stage_op` (fork + apply + export delta — the added pre-commit latency),
+`promote_import` (fork + import of a 1-op delta), and `snapshot_export`
+(mechanism C's per-op restore point).
 
 ### Reading against the SLO
 
 The product SLO is interactive commands ≤ 200 ms p95 @ 100K
 (`docs/architecture/operations.md` § Product SLO). A write command already
-spends its budget on the `BEGIN IMMEDIATE` acquire, the op-log append, the SQL
-projection, and the derived-cache maintenance; the engine-checkpoint overhead is
-**added on top** and must stay a small fraction of the per-command budget.
+spends that budget on the `BEGIN IMMEDIATE` acquire, the op-log append, the SQL
+projection, and derived-cache maintenance; a checkpoint mechanism's cost is
+**added on top**.
 
-The numbers are decisive. `fork_only` grows linearly with doc size (≈8.5× from
-100→1K, ≈19× from 1K→10K — consistent with the documented `O(n)`): it is
-**~150 ms per op at just 10K blocks** and **~1.5 s per op at 100K** — on its own,
-~7× the entire 200 ms whole-command budget. `stage_op` tracks `fork_only` (the
-apply + delta-export are a rounding error next to the fork). Per-op
-`snapshot_export` (mechanism C) is ~3× cheaper than a fork but still **~56 ms @
-10K / ~560 ms @ 100K** — also far past budget.
+The measured result was decisive and is the reason the design landed where it
+did:
+
+- `fork_only` grows **linearly with doc size**, consistent with Loro's
+  documented `O(n)` — it already costs roughly the *entire* per-command budget
+  several times over at 10K blocks, and an order of magnitude more at 100K.
+- `stage_op` tracks `fork_only` almost exactly: the apply and the delta export
+  are a rounding error next to the fork.
+- `promote_import − fork_only` isolates the post-commit promote; importing a
+  1-op delta is cheap even at 10K. **The fork dominates entirely.**
+- `snapshot_export` (mechanism C) is a few times cheaper than a fork but still
+  far past budget, and grows the same way.
 
 **Verdict:** full-fork staging (A) and per-op snapshot (C) are categorically
 infeasible on the interactive path — both are `O(doc-size)` per op, and the
@@ -189,7 +190,7 @@ The primitives wire into the tx lifecycle via a per-tx **revert log** on
 
 ### Status
 
-- **REMOTE / single-op path (`apply_op`) — DONE (this PR).** This is the path
+- **REMOTE / single-op path (`apply_op`) — DONE.** This is the path
   #2603 pins and the one that does NOT self-heal at runtime (only a
   `reproject_blocks_from_engine` recovery pass reconciled it before). `apply_op`
   now arms a `RevertScope` around the apply+commit; a rolled-back tx rewinds the
