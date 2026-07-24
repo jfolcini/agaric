@@ -19,6 +19,8 @@
  * present — otherwise the refetch is skipped entirely.
  */
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import { logger } from '@/lib/logger'
 import {
@@ -27,7 +29,6 @@ import {
   registerPropertyChangeTarget,
 } from '@/lib/property-change-dispatch'
 import { queryClient } from '@/lib/query-client'
-import { listPropertyKeys } from '@/lib/tauri'
 
 export { EVENT_PROPERTY_CHANGED }
 
@@ -53,7 +54,7 @@ export function propertyKeysQueryKey(
  */
 export const propertyKeysQueryFn = async (): Promise<string[]> => {
   try {
-    return await listPropertyKeys()
+    return unwrap(await commands.listPropertyKeys())
   } catch (e) {
     logger.warn('property-keys-cache', 'failed to load property data', undefined, e)
     return []

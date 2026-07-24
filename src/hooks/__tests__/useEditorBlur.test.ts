@@ -26,22 +26,27 @@ import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri
 // commit flow's getPropertyDef/setProperty IPCs); the plain useEditorBlur
 // unit tests never reach IPC.
 // The integration tests drive the real `useDraftAutosave`, which now calls
-// `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings` and
-// unwraps the `Result` envelope. The same spies back both the (still-wrapped)
-// `@/lib/tauri` surface and the `commands.*` surface so the `vi.mocked(...)`
-// assertions keep working, and they resolve the `{ status: 'ok', data }` shape.
-const { mockSaveDraft, mockFlushDraft, mockDeleteDraft } = vi.hoisted(() => ({
-  mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-  mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-  mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
-}))
+// `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings`, and the
+// #2675 tests drive the real `commitInlineProperties`, which now calls
+// `commands.{getPropertyDef,setProperty}` — both unwrap the `Result` envelope.
+// The same spies back both the (still-wrapped) `@/lib/tauri` surface and the
+// `commands.*` surface so the `vi.mocked(...)` assertions keep working, and
+// they resolve the `{ status: 'ok', data }` shape.
+const { mockSaveDraft, mockFlushDraft, mockDeleteDraft, mockGetPropertyDef, mockSetProperty } =
+  vi.hoisted(() => ({
+    mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+    mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+    mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+    mockGetPropertyDef: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+    mockSetProperty: vi.fn(() => Promise.resolve({ status: 'ok', data: { op_refs: [] } })),
+  }))
 
 vi.mock('@/lib/tauri', () => ({
   saveDraft: mockSaveDraft,
   flushDraft: mockFlushDraft,
   deleteDraft: mockDeleteDraft,
-  getPropertyDef: vi.fn(() => Promise.resolve(null)),
-  setProperty: vi.fn(() => Promise.resolve({ op_refs: [] })),
+  getPropertyDef: mockGetPropertyDef,
+  setProperty: mockSetProperty,
 }))
 
 vi.mock('@/lib/bindings', async () => {
@@ -53,6 +58,8 @@ vi.mock('@/lib/bindings', async () => {
       saveDraft: mockSaveDraft,
       flushDraft: mockFlushDraft,
       deleteDraft: mockDeleteDraft,
+      getPropertyDef: mockGetPropertyDef,
+      setProperty: mockSetProperty,
     },
   }
 })
@@ -1438,8 +1445,11 @@ describe('useEditorBlur', () => {
     beforeEach(() => {
       // Re-arm the IPC mocks after the file-level clearAllMocks (which only
       // clears call records) so each test starts from the success defaults.
-      vi.mocked(getPropertyDef).mockResolvedValue(null)
-      vi.mocked(setProperty).mockResolvedValue({ op_refs: [] } as never)
+      vi.mocked(getPropertyDef).mockResolvedValue({ status: 'ok', data: null } as never)
+      vi.mocked(setProperty).mockResolvedValue({
+        status: 'ok',
+        data: { op_refs: [] },
+      } as never)
     })
 
     it('commits the property via setProperty and edits with the line STRIPPED', async () => {
@@ -1467,11 +1477,15 @@ describe('useEditorBlur', () => {
       })
       await flushMicrotasks()
 
-      // The typed value reached the typed property API (text def → valueText).
-      expect(vi.mocked(setProperty)).toHaveBeenCalledExactlyOnceWith({
-        blockId: 'B1',
-        key: 'context',
-        valueText: 'home',
+      // The typed value reached the typed property API (text def → value_text).
+      // `commands.setProperty` is positional `(blockId, key, values)` and
+      // requires every value field explicitly, so the unused ones are `null`.
+      expect(vi.mocked(setProperty)).toHaveBeenCalledExactlyOnceWith('B1', 'context', {
+        value_text: 'home',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
       // The committed content has the succeeded property line stripped.
       expect(mockEdit).toHaveBeenCalledExactlyOnceWith('B1', '')

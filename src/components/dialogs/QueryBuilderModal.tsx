@@ -28,11 +28,12 @@ import {
 } from '@/components/ui/select'
 import { SheetBody } from '@/components/ui/sheet'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { encodeInlineQueryPayload, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { logger } from '@/lib/logger'
 import { parseQueryExpression } from '@/lib/query-utils'
-import type { FilterPrimitive } from '@/lib/tauri'
-import { listPropertyDefs } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import {
   addGroupToTree,
@@ -156,7 +157,9 @@ export function QueryBuilderModal({
   useEffect(() => {
     if (!open) return
     let cancelled = false
-    listPropertyDefs()
+    commands
+      .listPropertyDefs(null, null)
+      .then(unwrap)
       .then(({ items: defs }) => {
         if (!cancelled) setKnownPropertyKeys(defs.map((d) => d.key))
       })

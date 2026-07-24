@@ -5,11 +5,29 @@
  * duplicated type-based dispatch and validation when saving properties.
  */
 
+import { unwrap } from '@/lib/app-error'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { getTodayString } from '@/lib/date-utils'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
-import { deleteProperty, getProperties, setProperty } from '@/lib/tauri'
 
-type SetPropertyParams = Parameters<typeof setProperty>[0]
+/** Ergonomic single-value-field param shape produced by
+ *  {@link buildPropertyParams} and reshaped at the call site into
+ *  `commands.setProperty`'s positional `(blockId, key, values)` form.
+ *
+ *  Structural copy of the `@/lib/tauri` `setProperty` param type (that wrapper
+ *  still exists for not-yet-migrated callers, so the two must stay in sync
+ *  while both are live) — kept local so this module stays free of
+ *  `@/lib/tauri` imports, mirroring the same pattern already used by
+ *  `InlineSetPropertyParams` in `inline-property-parse.ts`. */
+interface SetPropertyParams {
+  blockId: string
+  key: string
+  valueText?: string | null | undefined
+  valueNum?: number | null | undefined
+  valueDate?: string | null | undefined
+  valueRef?: string | null | undefined
+  valueBool?: boolean | null | undefined
+}
 
 export type BuildResult =
   | { ok: true; params: SetPropertyParams }
@@ -139,8 +157,16 @@ export async function handleSaveProperty(
 ): Promise<boolean> {
   const result = buildPropertyParams(blockId, key, value, valueType)
   if (!result.ok) return false
-  await setProperty(result.params)
-  const updated = await getProperties(blockId)
+  unwrap(
+    await commands.setProperty(result.params.blockId, result.params.key, {
+      value_text: result.params.valueText ?? null,
+      value_num: result.params.valueNum ?? null,
+      value_date: result.params.valueDate ?? null,
+      value_ref: result.params.valueRef ?? null,
+      value_bool: result.params.valueBool ?? null,
+    }),
+  )
+  const updated = unwrap(await commands.getProperties(blockId))
   onRefresh(updated)
   return true
 }
@@ -153,6 +179,6 @@ export async function handleDeleteProperty(
   key: string,
   onRefresh: () => void,
 ): Promise<void> {
-  await deleteProperty(blockId, key)
+  unwrap(await commands.deleteProperty(blockId, key))
   onRefresh()
 }

@@ -37,9 +37,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { deleteProperty, setProperty } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceJournalTemplateEditor'
 
@@ -94,13 +95,17 @@ export function SpaceJournalTemplateEditor({
     const previous = committedJournalTemplate
     try {
       if (trimmed === '') {
-        await deleteProperty(spaceId, 'journal_template')
+        unwrap(await commands.deleteProperty(spaceId, 'journal_template'))
       } else {
-        await setProperty({
-          blockId: spaceId,
-          key: 'journal_template',
-          valueText: trimmed,
-        })
+        unwrap(
+          await commands.setProperty(spaceId, 'journal_template', {
+            value_text: trimmed,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }),
+        )
       }
       setCommittedJournalTemplate(trimmed)
       setJournalTemplate(trimmed)
