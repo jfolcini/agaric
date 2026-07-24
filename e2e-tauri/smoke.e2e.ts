@@ -19,7 +19,7 @@
 // `browser`, `$`, and `expect` are provided as globals by @wdio/globals at
 // runtime (typed via @wdio/globals/types in tsconfig.wdio.json).
 
-import { dismissWelcomeModalIfPresent } from './helpers'
+import { dismissWelcomeModalIfPresent, openJournalBlockEditor, typeMarkerVerified } from './helpers'
 
 describe('Agaric real-backend smoke (#155)', () => {
   it('boots the app, renders the Journal, and round-trips a block through the live backend', async () => {
@@ -48,22 +48,21 @@ describe('Agaric real-backend smoke (#155)', () => {
     const journalNav = await sidebar.$('.//button[.//span[normalize-space(.)="Journal"]]')
     await journalNav.waitForDisplayed({ timeout: 30_000 })
 
-    // 3. Add a block via the Journal daily view's "Add block" action. The
-    //    button's accessible name is the "agenda.day.addBlock" label ("Add
-    //    block"); `*=` matches its visible text so an icon prefix can't break it.
-    const addBlock = await $('button*=Add block')
-    await addBlock.waitForClickable({ timeout: 30_000 })
-    await addBlock.click()
+    // 3. Add a block via the Journal daily view's first-block CTA. On a vault
+    //    that already has today's page this is the "Add block" action
+    //    (agenda.day.addBlock); on a VIRGIN vault (no page yet) it is the
+    //    empty-state "Add your first block" CTA (journal.addFirstBlock) — both
+    //    call the same handler and end with a mounted, focused roving editor.
+    //    `openJournalBlockEditor` matches either and leaves the editor focused.
+    await openJournalBlockEditor()
 
-    // 4. The roving TipTap editor mounts as a contenteditable inside
-    //    `[data-testid="block-editor"]` (aria-label "Block editor"). Focus it and
-    //    type a unique marker so the assertion can't collide with seeded content
-    //    or a previous run.
-    const marker = `wdio real backend smoke ${Date.now()}`
-    const editor = await $('[data-testid="block-editor"] [contenteditable="true"]')
-    await editor.waitForDisplayed({ timeout: 30_000 })
-    await editor.click()
-    await browser.keys(marker.split(''))
+    // 4. Type a unique marker into the focused roving TipTap editor, verifying
+    //    read-back so a dropped keystroke (the live WebKit editor drops
+    //    characters under a janky first render) doesn't commit corrupt text and
+    //    fail the marker assertion. Hyphenate so a dropped space can't merge
+    //    words — the marker is still unique via the timestamp.
+    const marker = `wdio-real-backend-smoke-${Date.now()}`
+    await typeMarkerVerified(marker)
 
     // 5. Commit the block (Enter flushes and moves the roving editor to a fresh
     //    sibling), then Escape out of that new editor.

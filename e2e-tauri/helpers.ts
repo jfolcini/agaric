@@ -146,27 +146,112 @@ export function blockStaticByMarker(marker: string) {
 }
 
 /**
- * Create a block in the Journal daily view carrying a unique marker, and wait
- * for it to commit and render as a StaticBlock. Reuses the exact interaction
- * smoke.e2e.ts proved: the "Add block" action mounts the roving TipTap editor
- * (`block-editor` contenteditable); typing + Enter flushes the create op
- * through the live backend and moves the roving editor to a fresh sibling;
- * Escape blurs out of that new editor. The final `waitForDisplayed` proves the
- * real backend accepted the op and the frontend reprojected it.
+ * Open the Journal daily view's block editor and return the focused
+ * contenteditable, tolerating BOTH first-block CTAs.
  *
- * Assumes the Journal view is active (call `navigateTo('Journal')` first if a
- * prior step moved away).
+ * On a vault that ALREADY has a journal page for the day, DaySection renders the
+ * `AddBlockButton` ("Add block" — `action.addBlock`, DaySection.tsx:509-512). On
+ * a VIRGIN vault where today's page does not exist yet, `entry.pageId` is null
+ * and DaySection instead renders the empty-state CTA labelled "Add your first
+ * block" (`journal.addFirstBlock`, DaySection.tsx:470-501). Both buttons call
+ * the SAME `onAddBlock(dateStr)` -> `handleAddBlock` handler
+ * (useJournalBlockCreation.ts), which creates the page if needed and seeds +
+ * focuses a first block (template path or BlockTree's `autoCreateFirstBlock`),
+ * so BOTH paths end with a mounted, focused roving editor. A `button*=Add block`
+ * selector matches only the first label ("Add your first block" does not contain
+ * the substring "Add block"), which is why the virgin-vault first session
+ * (#3078 / session-949) timed out. The XPath union below matches either CTA.
  */
-export async function addBlockWithMarker(marker: string): Promise<void> {
-  const addBlock = $('button*=Add block')
+export async function openJournalBlockEditor(): Promise<void> {
+  const addBlock = $(
+    './/button[contains(normalize-space(.), "Add block") or ' +
+      'contains(normalize-space(.), "Add your first block")]',
+  )
   await addBlock.waitForClickable({ timeout: ACTION_TIMEOUT })
   await addBlock.click()
 
   const editor = $('[data-testid="block-editor"] [contenteditable="true"]')
   await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
   await editor.click()
-  // Type char-by-char (browser.keys array) so no IME/paste path is involved.
-  await browser.keys(marker.split(''))
+}
+
+/**
+ * Type `text` into the focused block editor and VERIFY it landed intact,
+ * retrying up to `MAX_TYPE_ATTEMPTS` times.
+ *
+ * `browser.keys(text.split(''))` streams one key event per character into the
+ * live WebKit/TipTap editor. Under a janky first render (e.g. right after a
+ * boot that full-replays the op-log, or while boot-time FTS/tag-ref rebuilds are
+ * still firing) individual keystrokes are dropped — the real-backend lane
+ * observed e.g. "wdio-journal-crossview" landing as "wdio-journal-crosview" and
+ * "wdio real backend smoke …" losing its spaces. The block still committed and
+ * rendered as a StaticBlock, but with mangled text, so a `*=${marker}` substring
+ * assertion could never match. This read-back-and-retype loop makes the typed
+ * text an asserted invariant rather than a best-effort stream: after typing we
+ * compare the editor's text to `text`, and on mismatch select-all + delete and
+ * retype. It throws (with both strings) rather than committing corrupt text.
+ *
+ * The roving editor must already be open and focused (call
+ * `openJournalBlockEditor` first). The editor element is re-resolved on every
+ * attempt so a mid-type ProseMirror re-render can't leave us holding a stale
+ * handle. Does NOT commit — the caller presses Enter/Escape after this resolves.
+ */
+export async function typeMarkerVerified(text: string): Promise<void> {
+  const MAX_TYPE_ATTEMPTS = 3
+  const editorSelector = '[data-testid="block-editor"] [contenteditable="true"]'
+  let lastSeen = ''
+  for (let attempt = 1; attempt <= MAX_TYPE_ATTEMPTS; attempt++) {
+    const editor = $(editorSelector)
+    await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
+    await editor.click()
+    await browser.keys(text.split(''))
+    // Poll briefly: ProseMirror applies the transaction and re-renders text
+    // asynchronously, so read back under a short waitUntil rather than once.
+    let matched = false
+    try {
+      await browser.waitUntil(
+        async () => {
+          lastSeen = (await $(editorSelector).getText()).trim()
+          return lastSeen === text
+        },
+        { timeout: 3_000, interval: 200 },
+      )
+      matched = true
+    } catch {
+      matched = false
+    }
+    if (matched) return
+    if (attempt < MAX_TYPE_ATTEMPTS) {
+      // Clear the mangled attempt: select-all + delete, then retype.
+      await $(editorSelector).click()
+      await browser.keys(['Control', 'a'])
+      await browser.keys(['Delete'])
+    }
+  }
+  throw new Error(
+    `block editor text never matched the marker after ${MAX_TYPE_ATTEMPTS} attempts — ` +
+      `keystrokes were dropped by the live WebKit editor. ` +
+      `expected=${JSON.stringify(text)} lastSeen=${JSON.stringify(lastSeen)}`,
+  )
+}
+
+/**
+ * Create a block in the Journal daily view carrying a unique marker, and wait
+ * for it to commit and render as a StaticBlock. Mounts the roving TipTap editor
+ * via the first-block CTA (either "Add block" or the virgin-vault "Add your
+ * first block" — see `openJournalBlockEditor`), types the marker with
+ * read-back verification (`typeMarkerVerified` — retries dropped keystrokes),
+ * then Enter flushes the create op through the live backend and moves the roving
+ * editor to a fresh sibling; Escape blurs out of that new editor. The final
+ * `waitForDisplayed` proves the real backend accepted the op and the frontend
+ * reprojected it.
+ *
+ * Assumes the Journal view is active (call `navigateTo('Journal')` first if a
+ * prior step moved away).
+ */
+export async function addBlockWithMarker(marker: string): Promise<void> {
+  await openJournalBlockEditor()
+  await typeMarkerVerified(marker)
   await browser.keys(['Enter'])
   await browser.keys(['Escape'])
 

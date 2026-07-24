@@ -3611,3 +3611,153 @@ async fn healthy_boot_is_not_degraded() {
     );
     assert!(status.replay_errors.is_empty());
 }
+
+/// Regression guard for the alternating real-backend WDIO lane investigation.
+///
+/// Every WDIO session after the first boots with the apply cursor ahead of the
+/// Loro snapshot watermark: the harness kills the app (`tauriDriver.kill()`)
+/// instead of letting Tauri's clean-exit handler persist a snapshot, and the
+/// periodic snapshot interval (`SNAPSHOT_INTERVAL_SECS`, 5 min) never elapses in
+/// a few-second session, so `loro_doc_state` stays empty while
+/// `materializer_apply_cursor` is non-zero. `heal_orphaned_apply_cursor` then
+/// rewinds the cursor to 0 and `replay_unmaterialized_ops` rebuilds every engine
+/// from the full op-log. This pins the invariant the lane's failures were WRONGLY
+/// blamed on: after that rewind→full-replay boot, a NEW block created through the
+/// real local-op path MUST land in the `blocks` projection (the surface the
+/// Journal view reads via `parent_id`) with its content intact. (The actual WDIO
+/// failures were dropped keystrokes mangling the marker text client-side, not a
+/// backend render gap — this test exists so a real backend regression here can't
+/// hide behind that harness flake in future.)
+#[tokio::test]
+async fn rewind_boot_then_create_lands_in_projection_with_intact_content() {
+    let (pool, _dir) = test_pool().await;
+    let dev = "wdio-rewind-device";
+
+    // Phase 1: build a vault through the real local-op path — a page block with
+    // one pre-existing child — exactly as an earlier session leaves the shared
+    // vault before the next boot.
+    let page = BlockId::test_id("PAGEROOT0000000000000000000");
+    let existing = BlockId::test_id("BLOCK1000000000000000000000");
+    {
+        let mat = Materializer::new(pool.clone());
+        for (id, parent, block_type, content, position) in [
+            (page.clone(), None, "page", "page", 0i64),
+            (
+                existing.clone(),
+                Some(page.clone()),
+                "content",
+                "wdio-existing-block",
+                0i64,
+            ),
+        ] {
+            let record = append_local_op(
+                &pool,
+                dev,
+                OpPayload::CreateBlock(CreateBlockPayload {
+                    block_id: id,
+                    block_type: block_type.into(),
+                    parent_id: parent,
+                    position: Some(position),
+                    index: None,
+                    content: content.into(),
+                }),
+            )
+            .await
+            .expect("append create op");
+            mat.dispatch_op(&record).await.expect("dispatch create op");
+        }
+        mat.flush().await.expect("flush initial vault build");
+        mat.shutdown();
+    }
+
+    // Confirm the WDIO boot precondition: cursor advanced, but no snapshot was
+    // persisted (the cursor-ahead-of-snapshot state that forces the rewind).
+    let cursor: i64 = sqlx::query_scalar::<_, i64>(
+        "SELECT materialized_through_seq FROM materializer_apply_cursor WHERE id = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let snapshot_count: i64 = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM loro_doc_state")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        cursor > 0,
+        "the live session must have advanced the apply cursor; got {cursor}"
+    );
+    assert_eq!(
+        snapshot_count, 0,
+        "no snapshot persisted — this is the cursor-ahead-of-snapshot precondition"
+    );
+
+    // Phase 2: boot into the rewind path. `heal_orphaned_apply_cursor` rewinds
+    // the cursor to 0 and the replay walk re-applies the whole op-log. We own the
+    // materializer here (rather than the `recover_at_boot_test` wrapper, which
+    // shuts its own down) so we can drive a post-boot create through it.
+    super::boot::reset_recovery_guard();
+    let mat = Materializer::new(pool.clone());
+    let registry = crate::loro::registry::LoroEngineRegistry::new();
+    let report = recover_at_boot(&pool, dev, &mat, &registry)
+        .await
+        .expect("recover_at_boot");
+    assert!(
+        report.ops_replayed >= 2,
+        "the rewind→full-replay must re-apply the whole op-log; ops_replayed={}",
+        report.ops_replayed
+    );
+
+    // Phase 3: create a NEW block AFTER the rewind-rebuild boot.
+    let created = BlockId::test_id("BLOCK2000000000000000000000");
+    let record = append_local_op(
+        &pool,
+        dev,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: created.clone(),
+            block_type: "content".into(),
+            parent_id: Some(page.clone()),
+            position: Some(1),
+            index: None,
+            content: "wdio-new-after-rewind".into(),
+        }),
+    )
+    .await
+    .expect("append post-boot create op");
+    mat.dispatch_op(&record)
+        .await
+        .expect("dispatch post-boot create op");
+    mat.flush().await.expect("flush post-boot create");
+    mat.shutdown();
+
+    // Assert the projection the Journal view reads: both the pre-existing block
+    // and the post-rewind block are present under the page, and the new block's
+    // content is intact (the backend never mangles text — only the WDIO
+    // keystroke stream did).
+    let children: Vec<(String, Option<String>)> = sqlx::query_as::<_, (String, Option<String>)>(
+        "SELECT id, content FROM blocks \
+         WHERE parent_id = ? AND deleted_at IS NULL \
+         ORDER BY position, id",
+    )
+    .bind(page.as_str())
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    let ids: Vec<&str> = children.iter().map(|(id, _)| id.as_str()).collect();
+    assert!(
+        ids.contains(&existing.as_str()),
+        "the pre-existing block must survive the rewind-rebuild boot; children={ids:?}"
+    );
+    assert!(
+        ids.contains(&created.as_str()),
+        "the block created after the rewind-rebuild boot must land in the projection; children={ids:?}"
+    );
+    let created_content = children
+        .iter()
+        .find(|(id, _)| id == created.as_str())
+        .and_then(|(_, content)| content.clone());
+    assert_eq!(
+        created_content.as_deref(),
+        Some("wdio-new-after-rewind"),
+        "the post-rewind block's content must be intact"
+    );
+}
