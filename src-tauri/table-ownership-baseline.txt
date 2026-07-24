@@ -9,8 +9,7 @@
 1 app agenda_cache
 1 app block_links
 1 app block_tag_inherited
-33 app blocks
-2 app op_log
+26 app blocks
 1 app pages_cache
 1 app projected_agenda_cache
 1 app tags_cache
@@ -23,7 +22,7 @@
 4 engine pages_cache
 2 engine projected_agenda_cache
 2 engine tags_cache
-12 store blocks
+10 store blocks
 1 sync block_links
 2 sync blocks
 2 sync op_log
