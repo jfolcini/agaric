@@ -4,6 +4,31 @@ use std::collections::HashSet;
 use agaric_core::error::AppError;
 
 // ---------------------------------------------------------------------------
+// truncate_block_links (#2895 slice 4)
+// ---------------------------------------------------------------------------
+
+/// Wholesale-wipe the `block_links` table (RESET path, #2895 slice 4).
+///
+/// Runs a single `DELETE FROM block_links` on the caller's
+/// connection/transaction. Extracted from `agaric-sync`'s snapshot RESET so
+/// the raw write to the store-owned `block_links` derived cache lives beside
+/// the rest of its owner-crate maintenance ([`reindex_block_links_conn`])
+/// rather than open-coded cross-crate.
+///
+/// Opens NO transaction and commits nothing — the caller controls the
+/// transaction boundary (the RESET wipes `block_links` inside the same
+/// `defer_foreign_keys = ON` tx that swaps the core tables).
+///
+/// # Errors
+/// Returns [`AppError`] if the DELETE fails.
+pub async fn truncate_block_links(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    sqlx::query!("DELETE FROM block_links")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // reindex_block_links (p1-t21)
 // ---------------------------------------------------------------------------
 

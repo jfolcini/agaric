@@ -33,8 +33,3 @@
 # soft-delete, descendant cache) and cannot call up into engine. These 10
 # store writers are sanctioned owner-adjacent carve-outs, not migratable debt.
 10 store blocks  # owner-adjacent: physical primitives (split contract)
-
-# --- sync crate: migrating slice 4 (route remote-apply writes through engine) ---
-1 sync block_links  # migrating: slice 4 (sync)
-2 sync blocks  # migrating: slice 4 (sync)
-2 sync op_log  # migrating: slice 4 (sync)
