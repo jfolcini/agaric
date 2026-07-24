@@ -16,10 +16,17 @@
 #   3. Bump all 5 version manifests in lockstep, commit (GPG-signed), tag
 #      (GPG-signed), and push main + the tag (scripts/bump-version.sh).
 #   4. The pushed tag triggers .github/workflows/release.yml, which builds
-#      every platform and DRAFTS the GitHub Release.
+#      every platform, drafts the GitHub Release, and then PUBLISHES it.
 #
-# Then: review the draft on the Releases page and click Publish. The release
-# workflow drafts — it never auto-publishes.
+# THE TAG PUSH IN STEP 3 IS THE POINT OF NO RETURN. release.yml's
+# `publish-release` job runs `gh release edit --draft=false --latest` as soon
+# as every terminal job succeeds. There is no approval gate and no environment
+# protection — nobody clicks Publish. Publishing also makes the updater's
+# latest.json live, so the build reaches installed clients on their next
+# update check.
+#
+# To abort, you must cancel the workflow run before `publish-release` starts;
+# once it has run, the only remedy is a follow-up release.
 #
 # Why the bump is local and there is no CI "release" button: pushing the bump
 # commit to `main` requires bypassing the branch ruleset. The in-workflow
@@ -198,5 +205,7 @@ scripts/bump-version.sh "$NEW_VERSION" --commit --tag --push
 echo
 echo "✓ Released $NEW_VERSION. The Release workflow is now building every platform:"
 echo "    https://github.com/jfolcini/agaric/actions/workflows/release.yml"
-echo "  When it finishes, review the DRAFT and click Publish:"
+echo "  It PUBLISHES automatically when every job succeeds — there is no"
+echo "  approval gate, and publishing makes the updater's latest.json live."
+echo "  To stop it, cancel the run before the publish-release job starts:"
 echo "    https://github.com/jfolcini/agaric/releases"
