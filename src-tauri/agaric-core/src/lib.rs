@@ -6,6 +6,7 @@
 //! crate re-exports them (`pub use agaric_core::error;` …) to keep every
 //! existing `crate::error::…` path resolving unchanged.
 
+pub mod attachment_filename;
 pub mod date_filter;
 pub mod date_validation;
 pub mod error;

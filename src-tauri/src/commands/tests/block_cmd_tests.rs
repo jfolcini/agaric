@@ -4163,6 +4163,114 @@ async fn add_attachment_rejects_traversal_filename() {
     mat.shutdown();
 }
 
+/// #3029 (SECURITY, defense-in-depth for #2989): the sync/replay APPLY path
+/// writes a PEER-supplied filename with no origination guard. Driving
+/// `apply_add_attachment_tx` / `apply_rename_attachment_tx` directly with a
+/// hostile `../../evil.sh` (as a compromised peer's synced op would) must
+/// store a SANITIZED name — never a traversal-shaped one — and must NOT error
+/// (a reject would wedge the apply pipeline). Pre-fix these binds were raw, so
+/// this fails against pre-fix code (non-tautology).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_attachment_sanitizes_peer_traversal_filename_3029() {
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddAttachmentPayload, RenameAttachmentPayload};
+
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "hello".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    // A legitimate attachment to later rename via the apply path.
+    let app_data_dir = _dir.path();
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    std::fs::write(app_data_dir.join("attachments/blob.png"), vec![0u8; 16]).unwrap();
+    let att = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        app_data_dir,
+        block.id.clone(),
+        "photo.png".into(),
+        "image/png".into(),
+        16,
+        "attachments/blob.png".into(),
+        None,
+    )
+    .await
+    .unwrap();
+    settle(&mat).await;
+
+    let mut conn = pool.acquire().await.unwrap();
+
+    // (1) APPLY of a peer `add_attachment` carrying a POSIX-traversal filename.
+    let hostile_add = AddAttachmentPayload {
+        attachment_id: BlockId::from_trusted("01ARZ3NDEKTSV4RRFFQ69G5FAV"),
+        block_id: block.id.clone(),
+        mime_type: "text/plain".into(),
+        filename: "../../evil.sh".into(),
+        size_bytes: 4,
+        fs_path: "attachments/01ARZ3NDEKTSV4RRFFQ69G5FAV".into(),
+    };
+    agaric_engine::apply::attachments::apply_add_attachment_tx(
+        &mut conn,
+        hostile_add,
+        1_600_000_000_000,
+    )
+    .await
+    .expect("apply add must NOT error on a hostile filename (sanitize, not reject)");
+
+    let added: String = sqlx::query_scalar("SELECT filename FROM attachments WHERE id = ?")
+        .bind("01ARZ3NDEKTSV4RRFFQ69G5FAV")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !added.contains('/') && !added.contains('\\'),
+        "stored add filename {added:?} must not contain a path separator"
+    );
+    assert_ne!(
+        added, "../../evil.sh",
+        "traversal filename must be sanitized"
+    );
+
+    // (2) APPLY of a peer `rename_attachment` carrying a Windows-traversal name.
+    let hostile_rename = RenameAttachmentPayload {
+        attachment_id: att.id.clone(),
+        old_filename: "photo.png".into(),
+        new_filename: "..\\..\\evil.sh".into(),
+    };
+    agaric_engine::apply::attachments::apply_rename_attachment_tx(&mut conn, hostile_rename)
+        .await
+        .expect("apply rename must NOT error on a hostile filename (sanitize, not reject)");
+
+    let renamed: String = sqlx::query_scalar("SELECT filename FROM attachments WHERE id = ?")
+        .bind(att.id.as_str())
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(
+        !renamed.contains('/') && !renamed.contains('\\'),
+        "stored rename filename {renamed:?} must not contain a path separator"
+    );
+    assert_ne!(
+        renamed, "..\\..\\evil.sh",
+        "traversal rename filename must be sanitized"
+    );
+
+    drop(conn);
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn delete_attachment_removes_row() {
     let (pool, _dir) = test_pool().await;

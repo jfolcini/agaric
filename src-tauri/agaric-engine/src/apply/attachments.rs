@@ -5,6 +5,7 @@
 //! reconciliation task and stays app-side.
 
 use super::*;
+use agaric_core::attachment_filename::sanitize_attachment_filename;
 
 /// Per-variant body for [`OpType::AddAttachment`].
 pub async fn apply_add_attachment_tx(
@@ -14,13 +15,27 @@ pub async fn apply_add_attachment_tx(
 ) -> Result<(), AppError> {
     let attachment_id_str = p.attachment_id.as_str();
     let block_id_str = p.block_id.as_str();
+    // #3029 (SECURITY): `p.filename` is a PEER-supplied display name arriving
+    // via a synced op — the origination guard (#2989) only vets this device's
+    // own commands. Sanitize before it reaches the `attachments.filename` row
+    // so a hostile `../../evil.sh` can never land a traversal-shaped name.
+    // Sanitize (never reject) here: a reject would wedge the apply pipeline.
+    let filename = sanitize_attachment_filename(&p.filename);
+    if filename != p.filename {
+        tracing::warn!(
+            attachment_id = attachment_id_str,
+            original = %p.filename,
+            sanitized = %filename,
+            "sanitized traversal-unsafe peer attachment filename on apply (add_attachment)"
+        );
+    }
     sqlx::query!(
         "INSERT OR IGNORE INTO attachments \
              (id, block_id, filename, fs_path, mime_type, size_bytes, created_at) \
          VALUES (?, ?, ?, ?, ?, ?, ?)",
         attachment_id_str,
         block_id_str,
-        p.filename,
+        filename,
         p.fs_path,
         p.mime_type,
         p.size_bytes,
@@ -49,9 +64,20 @@ pub async fn apply_rename_attachment_tx(
     p: RenameAttachmentPayload,
 ) -> Result<(), AppError> {
     let attachment_id_str = p.attachment_id.as_str();
+    // #3029 (SECURITY): sanitize the peer-supplied new filename before store
+    // — same hostile-peer surface as `apply_add_attachment_tx` above.
+    let new_filename = sanitize_attachment_filename(&p.new_filename);
+    if new_filename != p.new_filename {
+        tracing::warn!(
+            attachment_id = attachment_id_str,
+            original = %p.new_filename,
+            sanitized = %new_filename,
+            "sanitized traversal-unsafe peer attachment filename on apply (rename_attachment)"
+        );
+    }
     sqlx::query!(
         "UPDATE attachments SET filename = ? WHERE id = ?",
-        p.new_filename,
+        new_filename,
         attachment_id_str
     )
     .execute(&mut *conn)
