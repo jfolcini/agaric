@@ -547,6 +547,39 @@ pass_filenames = false
 files = "^scripts/check-tauri-import-baseline\\.mjs$"
 stages = ["pre-commit"]
 
+# check-set-property-args (#3127): `commands.setProperty`'s third arg
+# (`SetPropertyArgs`) has five value fields that are ALL optional in the
+# generated bindings, but the backend contract requires all five present
+# (exactly one non-null) — omitting a key silently drops whatever was
+# previously stored, which is not the same as passing it as `null`. This
+# guard walks src/ for `commands.setProperty(...)` call sites and FAILS
+# if an object-literal third argument is missing any of the five keys.
+# Non-literal third arguments (variable/spread/call) can't be statically
+# verified and are skipped, not failed. pass_filenames=false — the
+# script does its own scoped walk of src/.
+[[repos.hooks]]
+id = "check-set-property-args"
+name = "setProperty args have all five value keys"
+entry = "node scripts/check-set-property-args.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/.*\\.(ts|tsx)$"
+stages = ["pre-commit"]
+
+# Self-test the setProperty-args guard's own exit behavior (missing key
+# FAILS with the right key named, complete literal / non-literal /
+# internal-spread / commented-out / test-file all PASS or are skipped as
+# documented) whenever the guard script itself changes, so a regression
+# that defangs it can't land.
+[[repos.hooks]]
+id = "check-set-property-args-selftest"
+name = "setProperty args guard self-test"
+entry = "node scripts/check-set-property-args.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-set-property-args\\.mjs$"
+stages = ["pre-commit"]
+
 # no-raw-local-storage (#2466): app code must declare a device/space/page-
 # local preference in the typed registry (`src/lib/preferences.ts`,
 # PREFERENCES) and read/write it via `readPreference`/`writePreference`/
