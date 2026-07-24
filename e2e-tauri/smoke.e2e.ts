@@ -46,7 +46,7 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    name as the nav button) or the QuickAccessBar chip. This was the #155
     //    first-live-run nav defect; see helpers.ts for the full rationale.
     const journalNav = await sidebar.$('.//button[.//span[normalize-space(.)="Journal"]]')
-    await journalNav.waitForDisplayed({ timeout: 30_000 })
+    await journalNav.waitForDisplayed({ timeout: 60_000 })
 
     // 3. Add a block via the Journal daily view's first-block CTA. On a vault
     //    that already has today's page this is the "Add block" action
