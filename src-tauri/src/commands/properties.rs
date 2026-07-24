@@ -18,6 +18,23 @@ use agaric_store::pagination::ActiveBlockRow;
 use super::sanitize_internal_error;
 use super::*;
 
+/// Built-in fallback vocabulary for the `todo_state` reserved key —
+/// must mirror the live `property_definitions.options` seeded by
+/// migrations 0014/0029/0031 (`["TODO","DOING","DONE","CANCELLED"]`).
+/// Declared once here (rather than re-typed as a literal at each
+/// `validate_reserved_property_value` call site) so a future seed
+/// change only needs one edit; `todo_state_and_priority_fallback_defaults_match_seeded_options`
+/// (in `commands::tests::property_cmd_tests`) asserts this constant
+/// stays in sync with the actual seeded options as a drift guard
+/// (#3124 — the fallback previously omitted CANCELLED).
+pub(crate) const TODO_STATE_FALLBACK_DEFAULTS: &[&str] = &["TODO", "DOING", "DONE", "CANCELLED"];
+
+/// Built-in fallback vocabulary for the `priority` reserved key —
+/// must mirror the live `property_definitions.options` seeded by
+/// migration 0014 (`["1","2","3"]`, never changed since). See
+/// [`TODO_STATE_FALLBACK_DEFAULTS`] for why this is a named constant.
+pub(crate) const PRIORITY_FALLBACK_DEFAULTS: &[&str] = &["1", "2", "3"];
+
 /// Defensive fallback validation for reserved property
 /// keys (`todo_state`, `priority`) when the corresponding row in
 /// `property_definitions` has been deleted.
@@ -35,9 +52,11 @@ use super::*;
 /// and avoiding a parameterised lookup here means no cache
 /// regeneration is required).
 ///
-/// `defaults` is the ordered list of allowed values; the error
-/// message echoes them verbatim so the frontend toast lines up with
-/// the user's mental model of "TODO/DOING/DONE" or "1/2/3".
+/// `defaults` is the ordered list of allowed values (pass
+/// [`TODO_STATE_FALLBACK_DEFAULTS`] / [`PRIORITY_FALLBACK_DEFAULTS`]);
+/// the error message echoes them verbatim so the frontend toast lines
+/// up with the user's mental model of "TODO/DOING/DONE/CANCELLED" or
+/// "1/2/3".
 fn validate_reserved_property_value(
     def_row_present: bool,
     key: &str,
@@ -235,7 +254,7 @@ pub async fn set_todo_state_inner(
             def_row.is_some(),
             "todo_state",
             s,
-            &["TODO", "DOING", "DONE"],
+            TODO_STATE_FALLBACK_DEFAULTS,
         )?;
     }
 
@@ -385,8 +404,8 @@ pub async fn set_todo_state_inner(
 /// nothing semantics as the single-row path (H-4 / invariant #2).
 ///
 /// `state` validation matches `set_todo_state_inner` (1-50 chars,
-/// fallback to seeded `["TODO","DOING","DONE"]` defaults when the
-/// `property_definitions` row is missing).
+/// fallback to seeded `["TODO","DOING","DONE","CANCELLED"]` defaults
+/// when the `property_definitions` row is missing).
 ///
 /// **Tolerance for missing rows**: in contrast with the single-row
 /// `set_todo_state_inner` (which returns `NotFound` for a missing or
@@ -486,7 +505,7 @@ pub async fn set_todo_state_batch_inner(
             def_row.is_some(),
             "todo_state",
             s,
-            &["TODO", "DOING", "DONE"],
+            TODO_STATE_FALLBACK_DEFAULTS,
         )?;
     }
 
@@ -648,13 +667,13 @@ pub async fn set_property_batch_inner(
                 sqlx::query!("SELECT options FROM property_definitions WHERE key = 'todo_state'")
                     .fetch_optional(&mut **tx)
                     .await?;
-            (row.is_some(), &["TODO", "DOING", "DONE"])
+            (row.is_some(), TODO_STATE_FALLBACK_DEFAULTS)
         } else {
             let row =
                 sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
                     .fetch_optional(&mut **tx)
                     .await?;
-            (row.is_some(), &["1", "2", "3"])
+            (row.is_some(), PRIORITY_FALLBACK_DEFAULTS)
         };
         validate_reserved_property_value(def_exists, &key, v, defaults)?;
     }
@@ -763,7 +782,12 @@ pub async fn set_priority_inner(
             sqlx::query!("SELECT options FROM property_definitions WHERE key = 'priority'")
                 .fetch_optional(&mut **tx)
                 .await?;
-        validate_reserved_property_value(def_row.is_some(), "priority", l, &["1", "2", "3"])?;
+        validate_reserved_property_value(
+            def_row.is_some(),
+            "priority",
+            l,
+            PRIORITY_FALLBACK_DEFAULTS,
+        )?;
     }
 
     let (block, op_record) = set_property_in_tx(

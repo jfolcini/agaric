@@ -5207,7 +5207,9 @@ async fn m20_set_priority_fallback_when_definition_deleted() {
 async fn bug20_todo_state_fallback_when_definition_deleted() {
     // Fallback path: if the todo_state property_definition row is deleted,
     // set_todo_state_inner must still enforce the built-in defaults
-    // ["TODO","DOING","DONE"].
+    // ["TODO","DOING","DONE","CANCELLED"] (see also
+    // issue3124_todo_state_fallback_accepts_cancelled for the CANCELLED-
+    // specific regression).
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -5258,6 +5260,110 @@ async fn bug20_todo_state_fallback_when_definition_deleted() {
     );
 
     mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn issue3124_todo_state_fallback_accepts_cancelled() {
+    // Regression for #3124: the `todo_state` fallback allowlist inside
+    // `validate_reserved_property_value` omitted "CANCELLED" even though
+    // migrations 0029/0031 seed the live `property_definitions.options`
+    // as `["TODO","DOING","DONE","CANCELLED"]`. With the definition row
+    // deleted (fallback path active), CANCELLED must be accepted exactly
+    // like the other three seeded states, and a genuinely invalid value
+    // must still be rejected.
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    // Directly remove the row; bypass delete_property_def_inner which
+    // refuses to delete built-in keys.
+    sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "issue3124 fallback".into(),
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Happy path (the bug): CANCELLED is part of the seeded vocabulary and
+    // must be accepted by the fallback just like TODO/DOING/DONE.
+    set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("CANCELLED".into()),
+    )
+    .await
+    .unwrap();
+
+    // Error path: a value never in the seeded vocabulary is still rejected.
+    let result = set_todo_state_inner(
+        &pool,
+        DEV,
+        &mat,
+        block.id.as_str().into(),
+        Some("BOGUS".into()),
+    )
+    .await;
+
+    assert!(
+        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg.contains("BOGUS") && msg.contains("CANCELLED")),
+        "without definition row, todo_state fallback must reject genuinely invalid values while still advertising CANCELLED in the error, got: {result:?}"
+    );
+
+    mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn todo_state_and_priority_fallback_defaults_match_seeded_options() {
+    // Drift guard for #3124: `TODO_STATE_FALLBACK_DEFAULTS` /
+    // `PRIORITY_FALLBACK_DEFAULTS` in properties.rs are hand-maintained
+    // duplicates of the `property_definitions.options` JSON seeded by the
+    // migrations. This test spins up a freshly migrated DB (the same
+    // `test_pool()` every other test uses — no extra machinery) and
+    // asserts the fallback constants are exactly the live seeded set for
+    // both reserved-key vocabularies, so a future migration that changes
+    // the seeded options without updating the Rust constant fails loudly
+    // here instead of silently reintroducing an asymmetric-rejection bug.
+    use std::collections::HashSet;
+
+    use crate::commands::properties::{PRIORITY_FALLBACK_DEFAULTS, TODO_STATE_FALLBACK_DEFAULTS};
+
+    let (pool, _dir) = test_pool().await;
+
+    for (key, fallback_defaults) in [
+        ("todo_state", TODO_STATE_FALLBACK_DEFAULTS),
+        ("priority", PRIORITY_FALLBACK_DEFAULTS),
+    ] {
+        let options_json: String =
+            sqlx::query_scalar("SELECT options FROM property_definitions WHERE key = ?")
+                .bind(key)
+                .fetch_one(&pool)
+                .await
+                .unwrap_or_else(|e| panic!("seeded '{key}' property_definitions row missing: {e}"));
+
+        let seeded: Vec<String> = serde_json::from_str(&options_json)
+            .unwrap_or_else(|e| panic!("'{key}' options is not a JSON string array: {e}"));
+
+        let seeded_set: HashSet<&str> = seeded.iter().map(String::as_str).collect();
+        let fallback_set: HashSet<&str> = fallback_defaults.iter().copied().collect();
+
+        assert_eq!(
+            fallback_set, seeded_set,
+            "'{key}' fallback defaults {fallback_defaults:?} have drifted from the live \
+             seeded options {seeded:?} — update the fallback constant in properties.rs"
+        );
+    }
 }
 
 // ======================================================================
@@ -6102,7 +6208,8 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
 
     // ── ATOMIC ABORT ──────────────────────────────────────────────────
     // Delete the seeded `todo_state` definition so the in-tx fallback
-    // validation rejects. CANCELLED is not in the seeded defaults.
+    // validation rejects. BOGUS is not in the seeded defaults (unlike
+    // CANCELLED, which #3124 fixed the fallback to accept).
     sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
         .execute(&pool)
         .await
@@ -6121,7 +6228,7 @@ async fn set_todo_state_batch_atomic_rollback_on_inner_failure() {
         DEV,
         &mat,
         vec![b1.id.clone(), b2.id.clone()],
-        Some("CANCELLED".into()),
+        Some("BOGUS".into()),
     )
     .await;
     assert!(
@@ -6468,7 +6575,8 @@ async fn set_property_batch_atomic_rollback_on_inner_failure() {
 
     // ── ATOMIC ABORT ──────────────────────────────────────────────────
     // Delete the seeded `todo_state` definition so the in-tx fallback
-    // validation rejects. CANCELLED is not in the seeded defaults.
+    // validation rejects. BOGUS is not in the seeded defaults (unlike
+    // CANCELLED, which #3124 fixed the fallback to accept).
     sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
         .execute(&pool)
         .await
@@ -6488,7 +6596,7 @@ async fn set_property_batch_atomic_rollback_on_inner_failure() {
         &mat,
         vec![b1.id.clone(), b2.id.clone()],
         "todo_state".into(),
-        Some("CANCELLED".into()),
+        Some("BOGUS".into()),
     )
     .await;
     assert!(
@@ -6794,7 +6902,8 @@ async fn set_property_batch_rejects_invalid_reserved_value() {
     settle(&mat).await;
 
     // Delete the seeded definition so the in-tx fallback validation
-    // enforces the built-in ["TODO","DOING","DONE"] set; "BOGUS" is absent.
+    // enforces the built-in ["TODO","DOING","DONE","CANCELLED"] set;
+    // "BOGUS" is absent.
     sqlx::query("DELETE FROM property_definitions WHERE key = 'todo_state'")
         .execute(&pool)
         .await
