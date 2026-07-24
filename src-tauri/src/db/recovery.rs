@@ -1,3 +1,4 @@
+use agaric_core::attachment_filename::sanitize_attachment_filename;
 use sqlx::{Row, SqlitePool};
 
 use super::now_ms;
@@ -1623,7 +1624,21 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
                     let block_id = payload["block_id"].as_str().unwrap_or("");
                     let mime_type = payload["mime_type"].as_str().unwrap_or("");
-                    let filename = payload["filename"].as_str().unwrap_or("");
+                    // #3029 (SECURITY): the filename comes from a peer's op —
+                    // sanitize before it lands in `attachments.filename` so a
+                    // hostile `../../evil.sh` can never be replayed into a
+                    // traversal-shaped name. Sanitize (never reject): a reject
+                    // here would wedge the entire recovery replay on one op.
+                    let raw_filename = payload["filename"].as_str().unwrap_or("");
+                    let filename = sanitize_attachment_filename(raw_filename);
+                    if filename != raw_filename {
+                        tracing::warn!(
+                            attachment_id,
+                            original = raw_filename,
+                            sanitized = %filename,
+                            "sanitized traversal-unsafe peer attachment filename on recovery replay (add_attachment)"
+                        );
+                    }
                     let size_bytes = payload["size_bytes"].as_i64().unwrap_or(0);
                     let fs_path = payload["fs_path"].as_str().unwrap_or("");
                     let created_at: i64 = row.try_get("created_at")?;
@@ -1669,9 +1684,22 @@ pub(crate) async fn recover_derived_state_from_op_log(
                 // the add_attachment arm above skipped it).
                 "rename_attachment" => {
                     let attachment_id = payload["attachment_id"].as_str().unwrap_or("");
-                    let new_filename = payload["new_filename"].as_str().unwrap_or("");
+                    let raw_new_filename = payload["new_filename"].as_str().unwrap_or("");
 
-                    if !new_filename.is_empty() {
+                    // Preserve the existing empty-skip (an empty rename is a
+                    // no-op), but #3029: sanitize any non-empty peer filename
+                    // before store so a hostile rename can't replay a
+                    // traversal-shaped name onto the attachment.
+                    if !raw_new_filename.is_empty() {
+                        let new_filename = sanitize_attachment_filename(raw_new_filename);
+                        if new_filename != raw_new_filename {
+                            tracing::warn!(
+                                attachment_id,
+                                original = raw_new_filename,
+                                sanitized = %new_filename,
+                                "sanitized traversal-unsafe peer attachment filename on recovery replay (rename_attachment)"
+                            );
+                        }
                         sqlx::query("UPDATE attachments SET filename = ? WHERE id = ?")
                             .bind(new_filename)
                             .bind(attachment_id)

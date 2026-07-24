@@ -2173,6 +2173,78 @@ async fn init_pool_recovery_replays_rename_attachment_651() {
     );
 }
 
+/// #3029 (SECURITY, defense-in-depth for #2989): the derived-state recovery
+/// REPLAY path binds a PEER-supplied filename straight into
+/// `attachments.filename`. A malicious peer's `add_attachment` /
+/// `rename_attachment` carrying a traversal-shaped name (`../../evil.sh`) must
+/// be SANITIZED on store — never a separator/`..`-bearing name — and the
+/// replay must COMPLETE (a reject would wedge the whole recovery on one op, a
+/// DoS blocking a legitimate restore). Pre-fix the replay binds were raw
+/// (rename only checked non-empty), so this fails against pre-fix code.
+#[tokio::test]
+async fn init_pool_recovery_sanitizes_peer_traversal_filename_3029() {
+    let dir = TempDir::new().unwrap();
+    let db_path = dir.path().join("test.db");
+    let pool = init_pool(&db_path).await.unwrap();
+
+    const TS: i64 = 1_600_000_000_000;
+    insert_op(
+        &pool,
+        1,
+        "create_block",
+        r#"{"block_id":"BLK3029","block_type":"content","content":"b","parent_id":null,"position":1}"#,
+        TS,
+    )
+    .await;
+    // Hostile peer add: POSIX-traversal display filename.
+    insert_op(
+        &pool,
+        2,
+        "add_attachment",
+        r#"{"attachment_id":"ATT3029","block_id":"BLK3029","mime_type":"text/plain","filename":"../../evil.sh","size_bytes":4,"fs_path":"/tmp/evil.sh"}"#,
+        TS + 100,
+    )
+    .await;
+    // Hostile peer rename onto the same attachment.
+    insert_op(
+        &pool,
+        3,
+        "rename_attachment",
+        r#"{"attachment_id":"ATT3029","old_filename":"../../evil.sh","new_filename":"../secret/evil.sh"}"#,
+        TS + 200,
+    )
+    .await;
+
+    // Trigger the corruption-recovery replay: drop `blocks`, then re-init (the
+    // op-log pass rebuilds blocks + replays the attachment ops).
+    sqlx::query("DROP TABLE blocks")
+        .execute(&pool)
+        .await
+        .unwrap();
+    drop(pool);
+    // The whole point: recovery must NOT error on the hostile ops.
+    let pool = init_pool(&db_path).await.unwrap();
+
+    let filename: String =
+        sqlx::query_scalar("SELECT filename FROM attachments WHERE id = 'ATT3029'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert!(
+        !filename.contains('/') && !filename.contains('\\'),
+        "replayed filename {filename:?} must not contain a path separator"
+    );
+    assert!(
+        !filename.chars().all(|c| c == '.'),
+        "replayed filename {filename:?} must not be all-dots"
+    );
+    // Last-writer-wins: the rename op wins, sanitized (separators → '_').
+    assert_eq!(
+        filename, ".._secret_evil.sh",
+        "peer traversal rename must be replayed as a sanitized single component"
+    );
+}
+
 /// #616 regression: the derived-state replay needs a POSITIVE corruption
 /// signal — empty `block_properties` + `block_tags` alone are a
 /// legitimate steady state post-0088 (reserved-key-only vaults), and the

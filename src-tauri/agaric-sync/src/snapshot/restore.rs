@@ -593,10 +593,26 @@ pub async fn apply_snapshot<R: std::io::Read>(
             // them (defense in depth — we want the invariant "no bad rows
             // in attachments" to hold).
             crate::sync_files::check_attachment_fs_path_shape(&a.fs_path)?;
+            // #3029 (SECURITY): the display `filename` is peer-supplied too —
+            // a hostile snapshot is the same trust boundary as the op-apply /
+            // recovery-replay paths. Sanitize (never reject: a reject here
+            // would abort the entire legitimate restore on one bad row — a
+            // DoS) so a traversal-shaped `../../evil.sh` can never land in
+            // `attachments.filename` and reach the export/ZIP fs-join.
+            let filename =
+                agaric_core::attachment_filename::sanitize_attachment_filename(&a.filename);
+            if filename != a.filename {
+                tracing::warn!(
+                    attachment_id = a.id.as_str(),
+                    original = %a.filename,
+                    sanitized = %filename,
+                    "sanitized traversal-unsafe peer attachment filename on snapshot restore"
+                );
+            }
             q.bind(&a.id)
                 .bind(&a.block_id)
                 .bind(&a.mime_type)
-                .bind(&a.filename)
+                .bind(filename)
                 .bind(a.size_bytes)
                 .bind(&a.fs_path)
                 .bind(a.created_at)
