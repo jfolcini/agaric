@@ -71,6 +71,15 @@ vi.mock('@/editor/markdown-serializer', async (importOriginal) => {
   return { ...mod, parse: vi.fn(mod.parse) }
 })
 
+// #2927 phase 4 — the real (unmocked) `ImageResizeToolbar` rendered inside
+// `AttachmentRenderer`/`StaticBlockAttachments` now calls `commands.setProperty`
+// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper. Share
+// one spy across both surfaces so `mockedSetProperty` sees every call
+// regardless of which surface the caller uses.
+const { mockSharedSetProperty } = vi.hoisted(() => ({
+  mockSharedSetProperty: vi.fn().mockResolvedValue({}),
+}))
+
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/tauri')>()
   return {
@@ -79,11 +88,23 @@ vi.mock('@/lib/tauri', async (importOriginal) => {
     // `getBatchProperties([blockId])` call; default mock returns no rows so
     // tests that don't seed properties fall through to the defaults.
     getBatchProperties: vi.fn(() => Promise.resolve({})),
-    setProperty: vi.fn(() => Promise.resolve({})),
+    setProperty: (...args: unknown[]) => mockSharedSetProperty(...args),
     // Image attachments are rendered from raw bytes read
     // over IPC and wrapped in a blob URL. Default mock returns a tiny
     // PNG-ish byte array so the image render path resolves.
     readAttachment: vi.fn(() => Promise.resolve(new Uint8Array([137, 80, 78, 71]))),
+  }
+})
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) =>
+        mockSharedSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
@@ -149,9 +170,11 @@ const mockedParse = vi.mocked(parse)
 const { invoke } = await import('@tauri-apps/api/core')
 const mockedInvoke = vi.mocked(invoke)
 
-const { getBatchProperties, setProperty, readAttachment } = await import('@/lib/tauri')
+const { getBatchProperties, readAttachment } = await import('@/lib/tauri')
 const mockedGetBatchProperties = vi.mocked(getBatchProperties)
-const mockedSetProperty = vi.mocked(setProperty)
+// Shared across the `@/lib/tauri` and `@/lib/bindings` surfaces (see the
+// `vi.hoisted` block above) — `mockSharedSetProperty` is the real vi.fn().
+const mockedSetProperty = mockSharedSetProperty
 const mockedReadAttachment = vi.mocked(readAttachment)
 
 // Valid 26-char ULID-format test IDs (parser requires [0-9A-Z]{26}).
@@ -1202,10 +1225,13 @@ describe('StaticBlock', () => {
       fireEvent.click(btn)
 
       // setProperty should have been called with image_width = '25'
-      expect(mockedSetProperty).toHaveBeenCalledWith({
-        blockId: 'B1',
-        key: 'image_width',
-        valueText: '25',
+      // (via `ImageResizeToolbar`'s `commands.setProperty` call, #2927 phase 4)
+      expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_width', {
+        value_text: '25',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
     })
 

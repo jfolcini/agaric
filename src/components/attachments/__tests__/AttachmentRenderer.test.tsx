@@ -9,20 +9,42 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 // Rendering now reads raw bytes over IPC and wraps them in a
 // blob URL. Mock the wrapper so each test controls the returned bytes.
+//
+// #2927 phase 4 — `ImageResizeToolbar` (rendered inside this component) now
+// calls `commands.setProperty` from `@/lib/bindings` directly instead of the
+// `@/lib/tauri` wrapper, while `AttachmentRenderer` itself still calls the
+// `@/lib/tauri` `setProperty` wrapper for width-drag and caption persistence
+// (out of phase-4 scope). Both surfaces share one spy: the `@/lib/tauri` path
+// resolves its plain return value directly, the `@/lib/bindings` path wraps
+// it in the `{status:'ok', data}` envelope that `unwrap` expects.
+const mockSetProperty = vi.fn().mockResolvedValue({})
+
 vi.mock('@/lib/tauri', async (importOriginal) => {
   const mod = await importOriginal<typeof import('@/lib/tauri')>()
   return {
     ...mod,
     readAttachment: vi.fn(),
-    setProperty: vi.fn(() => Promise.resolve({})),
+    setProperty: (...args: unknown[]) => mockSetProperty(...args),
+  }
+})
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) =>
+        mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
 import { AttachmentRenderer } from '@/components/attachments/AttachmentRenderer'
-import { readAttachment, setProperty } from '@/lib/tauri'
+import { readAttachment } from '@/lib/tauri'
 
 const mockedReadAttachment = vi.mocked(readAttachment)
-const mockedSetProperty = vi.mocked(setProperty)
+const mockedSetProperty = mockSetProperty
 
 function makeAttachment(
   overrides: Partial<{
@@ -989,10 +1011,13 @@ describe('AttachmentRenderer', () => {
 
     await userEvent.click(screen.getByTestId('image-align-left'))
     expect(onImageAlignmentChange).toHaveBeenCalledWith('left')
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: 'image_alignment',
-      valueText: 'left',
+    // `ImageResizeToolbar` calls `commands.setProperty` positionally (#2927 phase 4).
+    expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_alignment', {
+      value_text: 'left',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
 
     // Parent state flows back down → the row reflects the new alignment.

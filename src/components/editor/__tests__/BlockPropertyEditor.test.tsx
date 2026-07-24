@@ -3,10 +3,19 @@ import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
-const mockSetProperty = vi.fn().mockResolvedValue({})
-vi.mock('@/lib/tauri', () => ({
-  setProperty: (...args: unknown[]) => mockSetProperty(...args),
-}))
+// #2927 phase 4 — `BlockPropertyEditor` now calls `commands.setProperty`
+// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
+const mockSetProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) => mockSetProperty(...args),
+    },
+  }
+})
 
 const mockToastError = vi.fn()
 vi.mock('sonner', () => ({
@@ -99,10 +108,12 @@ describe('BlockPropertyEditor', () => {
     fireEvent.blur(input)
 
     await waitFor(() => {
-      expect(mockSetProperty).toHaveBeenCalledWith({
-        blockId: 'BLOCK_1',
-        key: 'effort',
-        valueText: '4h',
+      expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effort', {
+        value_text: '4h',
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
     })
     await waitFor(() => {
@@ -422,10 +433,12 @@ describe('BlockPropertyEditor', () => {
       await user.click(screen.getByText('closed'))
 
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith({
-          blockId: 'BLOCK_1',
-          key: 'status',
-          valueText: 'closed',
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'status', {
+          value_text: 'closed',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
         })
       })
       expect(setEditingProp).toHaveBeenCalledWith(null)
@@ -538,10 +551,12 @@ describe('BlockPropertyEditor', () => {
       // Move to 'closed' then commit.
       await user.keyboard('{ArrowDown}{Enter}')
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith({
-          blockId: 'BLOCK_1',
-          key: 'status',
-          valueText: 'closed',
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'status', {
+          value_text: 'closed',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
         })
       })
       expect(setEditingProp).toHaveBeenCalledWith(null)
@@ -734,10 +749,12 @@ describe('BlockPropertyEditor', () => {
       await user.click(screen.getByText('Page Beta'))
 
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith({
-          blockId: 'BLOCK_1',
-          key: 'ref',
-          valueRef: 'P2',
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'ref', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: 'P2',
+          value_bool: null,
         })
       })
       expect(setEditingProp).toHaveBeenCalledWith(null)
@@ -770,17 +787,21 @@ describe('BlockPropertyEditor', () => {
       fireEvent.blur(input)
 
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith({
-          blockId: 'BLOCK_1',
-          key: 'time',
-          valueText: '2h',
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'time', {
+          value_text: '2h',
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
         })
       })
       await waitFor(() => {
-        expect(mockSetProperty).toHaveBeenCalledWith({
-          blockId: 'BLOCK_1',
-          key: 'effort',
-          valueText: null,
+        expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_1', 'effort', {
+          value_text: null,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
         })
       })
       expect(setEditingKey).toHaveBeenCalledWith(null)

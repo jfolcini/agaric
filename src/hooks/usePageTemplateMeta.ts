@@ -17,9 +17,10 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { deleteProperty, getProperties, setProperty } from '@/lib/tauri'
 
 export interface UsePageTemplateMetaReturn {
   isTemplate: boolean
@@ -59,7 +60,9 @@ export function usePageTemplateMeta(
 
   useEffect(() => {
     if (!pageId) return
-    getProperties(pageId)
+    commands
+      .getProperties(pageId)
+      .then(unwrap)
       .then((props) => {
         setIsTemplate(props.some((p) => p.key === 'template' && p.value_text === 'true'))
         setIsJournalTemplate(
@@ -98,11 +101,19 @@ export function usePageTemplateMeta(
       async () => {
         try {
           if (currentState) {
-            await deleteProperty(pageId, key)
+            unwrap(await commands.deleteProperty(pageId, key))
             setState(false)
             notify.success(t(removedKey))
           } else {
-            await setProperty({ blockId: pageId, key, valueText: 'true' })
+            unwrap(
+              await commands.setProperty(pageId, key, {
+                value_text: 'true',
+                value_num: null,
+                value_date: null,
+                value_ref: null,
+                value_bool: null,
+              }),
+            )
             setState(true)
             notify.success(t(savedKey))
           }

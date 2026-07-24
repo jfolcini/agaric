@@ -31,6 +31,8 @@ import { IconButton } from '@/components/ui/icon-button'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useGraphSimulation } from '@/hooks/useGraphSimulation'
 import { useGraphStructureEvents } from '@/hooks/useGraphStructureEvents'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { applyGraphFilters, type GraphFilter } from '@/lib/graph-filters'
 import {
   computeLocalGraph,
@@ -40,7 +42,6 @@ import {
 import { getShortcutKeys } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { listTagsByPrefix } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
@@ -212,7 +213,9 @@ export function GraphView(): React.ReactElement {
 
   // Fetch available tags on mount
   useEffect(() => {
-    listTagsByPrefix({ prefix: '' })
+    commands
+      .listTagsByPrefix('', null)
+      .then(unwrap)
       .then((result) => setTags(result ?? []))
       .catch((err) => {
         logger.error('GraphView', 'Failed to load tags', undefined, err)

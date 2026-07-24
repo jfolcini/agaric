@@ -15,12 +15,13 @@ import { Button } from '@/components/ui/button'
 import { ChevronToggle } from '@/components/ui/chevron-toggle'
 import { useQueryExecution } from '@/hooks/useQueryExecution'
 import { useQuerySorting } from '@/hooks/useQuerySorting'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { countFilterLeaves, decodeInlineQueryPayload } from '@/lib/inline-query-spec'
 import { buildCustomPropsMap, deriveCustomColumns } from '@/lib/query-result-columns'
 import { OPERATOR_SYMBOLS, parseQueryExpression } from '@/lib/query-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { BlockRow } from '@/lib/tauri'
-import { getBatchProperties } from '@/lib/tauri'
 import { usePageBlockStoreOptional } from '@/stores/page-blocks'
 
 /** Known block property keys that can become table columns. */
@@ -175,7 +176,9 @@ export function QueryResult({
       return
     }
     let cancelled = false
-    void getBatchProperties(results.map((b) => b.id))
+    void commands
+      .getBatchProperties(results.map((b) => b.id))
+      .then(unwrap)
       .then((batch) => {
         if (!cancelled) setCustomProps(buildCustomPropsMap(batch))
       })

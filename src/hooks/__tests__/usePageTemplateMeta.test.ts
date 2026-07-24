@@ -16,11 +16,29 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  deleteProperty: vi.fn(),
-  getProperties: vi.fn(),
-  setProperty: vi.fn(),
+// #2927 phase 4 — `usePageTemplateMeta` now calls `commands.getProperties` /
+// `commands.deleteProperty` / `commands.setProperty` from `@/lib/bindings`
+// directly instead of the `@/lib/tauri` wrapper. The same spies back both
+// surfaces so the `vi.mocked(...)` assertions keep working; they resolve
+// the `{ status: 'ok', data }` envelope that `unwrap` expects.
+const { mockGetProperties, mockDeleteProperty, mockSetProperty } = vi.hoisted(() => ({
+  mockGetProperties: vi.fn(),
+  mockDeleteProperty: vi.fn(),
+  mockSetProperty: vi.fn(),
 }))
+
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getProperties: mockGetProperties,
+      deleteProperty: mockDeleteProperty,
+      setProperty: mockSetProperty,
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -43,11 +61,10 @@ vi.mock('sonner', () => ({
 }))
 
 import { usePageTemplateMeta } from '@/hooks/usePageTemplateMeta'
-import { deleteProperty, getProperties, setProperty } from '@/lib/tauri'
 
-const mockedGet = vi.mocked(getProperties)
-const mockedDelete = vi.mocked(deleteProperty)
-const mockedSet = vi.mocked(setProperty)
+const mockedGet = mockGetProperties
+const mockedDelete = mockDeleteProperty
+const mockedSet = mockSetProperty
 const t = (key: string) => key
 
 interface Prop {
@@ -56,21 +73,23 @@ interface Prop {
   value_ref?: string | null
 }
 
-const makeProps = (entries: Prop[]) =>
-  // The real `Property` row has more fields, but the hook only reads
-  // `key`, `value_text`, and `value_ref`, so the partial shape is safe.
-  entries as unknown as Awaited<ReturnType<typeof getProperties>>
+// The real `PropertyRow` has more fields, but the hook only reads `key`,
+// `value_text`, and `value_ref`, so the partial shape is safe.
+const makeProps = (entries: Prop[]) => ({ status: 'ok' as const, data: entries })
 
-// The hook ignores `setProperty`'s `BlockRow` return value; we mock it
-// as a partial-shape cast to keep the assertion focused on call args.
-const fakeBlockRow = {} as Awaited<ReturnType<typeof setProperty>>
+// The hook ignores `setProperty`'s `BlockRow` return value; an empty object
+// is enough to keep the assertion focused on call args.
+const fakeSetPropertyResult = { status: 'ok' as const, data: {} }
 
 beforeEach(() => {
   vi.clearAllMocks()
   mockedGet.mockResolvedValue(makeProps([]))
   // #2468 — deleteProperty now resolves WithOps<DeletePropertyResponse>.
-  mockedDelete.mockResolvedValue({ block_id: 'PAGE_1', key: 'template', op_refs: [] })
-  mockedSet.mockResolvedValue(fakeBlockRow)
+  mockedDelete.mockResolvedValue({
+    status: 'ok',
+    data: { block_id: 'PAGE_1', key: 'template', op_refs: [] },
+  })
+  mockedSet.mockResolvedValue(fakeSetPropertyResult)
 })
 
 describe('usePageTemplateMeta — initial load', () => {
@@ -145,10 +164,12 @@ describe('usePageTemplateMeta — toggle handlers', () => {
       await result.current.handleToggleTemplate()
     })
 
-    expect(mockedSet).toHaveBeenCalledWith({
-      blockId: 'page-1',
-      key: 'template',
-      valueText: 'true',
+    expect(mockedSet).toHaveBeenCalledWith('page-1', 'template', {
+      value_text: 'true',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
     expect(mockedDelete).not.toHaveBeenCalled()
     expect(result.current.isTemplate).toBe(true)
@@ -167,10 +188,12 @@ describe('usePageTemplateMeta — toggle handlers', () => {
       await result.current.handleToggleJournalTemplate()
     })
 
-    expect(mockedSet).toHaveBeenCalledWith({
-      blockId: 'page-1',
-      key: 'journal-template',
-      valueText: 'true',
+    expect(mockedSet).toHaveBeenCalledWith('page-1', 'journal-template', {
+      value_text: 'true',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
     expect(result.current.isJournalTemplate).toBe(true)
   })

@@ -22,16 +22,22 @@ import { getPropertyDef, listPropertyKeys, listPropertyValues, listTagsByPrefix 
 
 // The propKey source resolves through `propertyKeysQueryFn`
 // (`@/lib/property-keys-cache`), which now calls `commands.listPropertyKeys`
-// from `@/lib/bindings` and unwraps the `Result` envelope. The same spy backs
-// both the (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface
-// so the `vi.mocked(...)` assertions keep working; it resolves the
+// from `@/lib/bindings` and unwraps the `Result` envelope. Likewise the
+// propValue source resolves through `propertyValuesQueryFn`
+// (`@/lib/property-values-cache`, #2927 phase 4), which now calls
+// `commands.listPropertyValues` directly. The same spies back both the
+// (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface so the
+// `vi.mocked(...)` assertions keep working; they resolve the
 // `{ status: 'ok', data }` shape.
-const { mockListPropertyKeys } = vi.hoisted(() => ({ mockListPropertyKeys: vi.fn() }))
+const { mockListPropertyKeys, mockListPropertyValues } = vi.hoisted(() => ({
+  mockListPropertyKeys: vi.fn(),
+  mockListPropertyValues: vi.fn(),
+}))
 
 vi.mock('@/lib/tauri', () => ({
   listTagsByPrefix: vi.fn(),
   listPropertyKeys: mockListPropertyKeys,
-  listPropertyValues: vi.fn(),
+  listPropertyValues: mockListPropertyValues,
   getPropertyDef: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
@@ -40,7 +46,11 @@ vi.mock('@/lib/bindings', async () => {
   const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
   return {
     ...actual,
-    commands: { ...actual.commands, listPropertyKeys: mockListPropertyKeys },
+    commands: {
+      ...actual.commands,
+      listPropertyKeys: mockListPropertyKeys,
+      listPropertyValues: mockListPropertyValues,
+    },
   }
 })
 
@@ -90,7 +100,7 @@ beforeEach(() => {
   mockedGetPathHistory.mockReturnValue([])
   mockedListTagsByPrefix.mockResolvedValue([])
   mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
-  mockedListPropertyValues.mockResolvedValue([])
+  mockedListPropertyValues.mockResolvedValue({ status: 'ok', data: [] } as never)
   mockedGetPropertyDef.mockResolvedValue(null)
 })
 
@@ -306,7 +316,10 @@ describe('useAutocompleteSources', () => {
   })
 
   it('propValue anchor: surfaces fetched usage-ranked values for the key (#1425)', async () => {
-    mockedListPropertyValues.mockResolvedValue(['done', 'todo', 'blocked'])
+    mockedListPropertyValues.mockResolvedValue({
+      status: 'ok',
+      data: ['done', 'todo', 'blocked'],
+    } as never)
     const anchor: AutocompleteAnchor = {
       active: 'propValue',
       key: 'status',
@@ -325,7 +338,10 @@ describe('useAutocompleteSources', () => {
   })
 
   it('propValue anchor: filters fetched values by the typed prefix', async () => {
-    mockedListPropertyValues.mockResolvedValue(['done', 'todo', 'doing'])
+    mockedListPropertyValues.mockResolvedValue({
+      status: 'ok',
+      data: ['done', 'todo', 'doing'],
+    } as never)
     const { result, rerender } = renderHook(
       ({ a }: { a: AutocompleteAnchor }) => useAutocompleteSources({ anchor: a, spaceId: 'S1' }),
       {
@@ -346,7 +362,10 @@ describe('useAutocompleteSources', () => {
     // Definition options lead; usage values follow; the overlapping `done`
     // is de-duplicated to the select-option position.
     mockedGetPropertyDef.mockResolvedValue(propDef('status', 'select', ['todo', 'doing', 'done']))
-    mockedListPropertyValues.mockResolvedValue(['done', 'archived'])
+    mockedListPropertyValues.mockResolvedValue({
+      status: 'ok',
+      data: ['done', 'archived'],
+    } as never)
     const anchor: AutocompleteAnchor = {
       active: 'propValue',
       key: 'status',
@@ -367,7 +386,10 @@ describe('useAutocompleteSources', () => {
 
   it('propValue anchor: non-select definition does not seed options', async () => {
     mockedGetPropertyDef.mockResolvedValue(propDef('owner', 'text'))
-    mockedListPropertyValues.mockResolvedValue(['alice', 'bob'])
+    mockedListPropertyValues.mockResolvedValue({
+      status: 'ok',
+      data: ['alice', 'bob'],
+    } as never)
     const anchor: AutocompleteAnchor = {
       active: 'propValue',
       key: 'owner',

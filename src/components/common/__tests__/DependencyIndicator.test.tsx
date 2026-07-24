@@ -26,6 +26,22 @@ vi.mock('@/lib/tauri', () => ({
   batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
 }))
 
+// #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) now
+// calls `commands.getBatchProperties` from `@/lib/bindings` directly. Route
+// the same spy through the bindings surface, wrapped in the envelope shape
+// `unwrap` expects.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBatchProperties: (...args: unknown[]) =>
+        mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
+
 vi.mock('lucide-react', () => ({
   Link2: (props: Record<string, unknown>) => <svg data-testid="icon-link2" {...props} />,
 }))

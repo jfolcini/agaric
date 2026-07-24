@@ -16,12 +16,13 @@ import { createPortal } from 'react-dom'
 import { useTranslation } from 'react-i18next'
 
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { applySafePosition } from '@/lib/floating-position'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { BlockRow } from '@/lib/tauri'
-import { setProperty } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 export interface BlockPropertyEditorProps {
@@ -104,7 +105,15 @@ export function BlockPropertyEditor({
     async (opt: string): Promise<void> => {
       if (!editingProp) return
       try {
-        await setProperty({ blockId, key: editingProp.key, valueText: opt })
+        unwrap(
+          await commands.setProperty(blockId, editingProp.key, {
+            value_text: opt,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }),
+        )
       } catch (err) {
         reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
           blockId,
@@ -427,11 +436,15 @@ export function BlockPropertyEditor({
                   )}
                   onClick={async () => {
                     try {
-                      await setProperty({
-                        blockId,
-                        key: editingProp.key,
-                        valueRef: page.id,
-                      })
+                      unwrap(
+                        await commands.setProperty(blockId, editingProp.key, {
+                          value_text: null,
+                          value_num: null,
+                          value_date: null,
+                          value_ref: page.id,
+                          value_bool: null,
+                        }),
+                      )
                     } catch (err) {
                       reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
                         blockId,
@@ -461,11 +474,15 @@ export function BlockPropertyEditor({
             const newValue = e.target.value.trim()
             if (newValue !== editingProp.value) {
               try {
-                await setProperty({
-                  blockId,
-                  key: editingProp.key,
-                  valueText: newValue || null,
-                })
+                unwrap(
+                  await commands.setProperty(blockId, editingProp.key, {
+                    value_text: newValue || null,
+                    value_num: null,
+                    value_date: null,
+                    value_ref: null,
+                    value_bool: null,
+                  }),
+                )
               } catch (err) {
                 reportIpcError('BlockPropertyEditor', 'property.saveFailed', err, t, {
                   blockId,
@@ -503,16 +520,24 @@ export function BlockPropertyEditor({
           const newKey = e.target.value.trim()
           if (newKey && newKey !== editingKey.oldKey) {
             try {
-              await setProperty({
-                blockId,
-                key: newKey,
-                valueText: editingKey.value,
-              })
-              await setProperty({
-                blockId,
-                key: editingKey.oldKey,
-                valueText: null,
-              })
+              unwrap(
+                await commands.setProperty(blockId, newKey, {
+                  value_text: editingKey.value,
+                  value_num: null,
+                  value_date: null,
+                  value_ref: null,
+                  value_bool: null,
+                }),
+              )
+              unwrap(
+                await commands.setProperty(blockId, editingKey.oldKey, {
+                  value_text: null,
+                  value_num: null,
+                  value_date: null,
+                  value_ref: null,
+                  value_bool: null,
+                }),
+              )
             } catch (err) {
               reportIpcError('BlockPropertyEditor', 'property.renameFailed', err, t, {
                 blockId,

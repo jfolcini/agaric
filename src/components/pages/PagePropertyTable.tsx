@@ -16,12 +16,13 @@ import { AddPropertyPopover } from '@/components/properties/AddPropertyPopover'
 import { PropertyRowEditor } from '@/components/properties/PropertyRowEditor'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { usePropertySave } from '@/hooks/usePropertySave'
+import { unwrap } from '@/lib/app-error'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { buildInitParams, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
-import { createPropertyDef, getProperties, listPropertyDefs, setProperty } from '@/lib/tauri'
 
 // Properties designed for task blocks (content blocks with todo_state).
 // Filtered out of the "add property" popover for pages.
@@ -62,31 +63,32 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
     // leak into this page's table (drafts are transient, never persisted).
     // Mirrors `BlockPropertyDrawer`'s per-blockId draft reset (#2656).
     setDraftKeys((prev) => (prev.size > 0 ? new Set() : prev))
-    Promise.allSettled([getProperties(pageId), listPropertyDefs()]).then(
-      ([propsResult, defsResult]) => {
-        if (propsResult.status === 'fulfilled') {
-          const props = propsResult.value
-          setProperties(Array.isArray(props) ? props : [])
-        } else {
-          reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', propsResult.reason, t, {
-            pageId,
-            fetch: 'getProperties',
-          })
-          setProperties([])
-        }
-        if (defsResult.status === 'fulfilled') {
-          const defsPage = defsResult.value
-          setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
-        } else {
-          reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', defsResult.reason, t, {
-            pageId,
-            fetch: 'listPropertyDefs',
-          })
-          setDefinitions([])
-        }
-        setLoading(false)
-      },
-    )
+    Promise.allSettled([
+      commands.getProperties(pageId).then(unwrap),
+      commands.listPropertyDefs(null, null).then(unwrap),
+    ]).then(([propsResult, defsResult]) => {
+      if (propsResult.status === 'fulfilled') {
+        const props = propsResult.value
+        setProperties(Array.isArray(props) ? props : [])
+      } else {
+        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', propsResult.reason, t, {
+          pageId,
+          fetch: 'getProperties',
+        })
+        setProperties([])
+      }
+      if (defsResult.status === 'fulfilled') {
+        const defsPage = defsResult.value
+        setDefinitions(Array.isArray(defsPage?.items) ? defsPage.items : [])
+      } else {
+        reportIpcError('PagePropertyTable', 'pageProperty.loadFailed', defsResult.reason, t, {
+          pageId,
+          fetch: 'listPropertyDefs',
+        })
+        setDefinitions([])
+      }
+      setLoading(false)
+    })
   }, [pageId, t])
 
   // Auto-expand and open add-popover when forceExpanded transitions to true
@@ -197,8 +199,16 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
       try {
         const params = buildInitParams(pageId, def)
         if (!params) return
-        await setProperty(params)
-        const updated = await getProperties(pageId)
+        unwrap(
+          await commands.setProperty(params.blockId, params.key, {
+            value_text: params.valueText ?? null,
+            value_num: params.valueNum ?? null,
+            value_date: params.valueDate ?? null,
+            value_ref: params.valueRef ?? null,
+            value_bool: params.valueBool ?? null,
+          }),
+        )
+        const updated = unwrap(await commands.getProperties(pageId))
         setProperties(updated)
       } catch (err) {
         logger.warn('PagePropertyTable', 'add property failed', { pageId }, err)
@@ -211,7 +221,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
   const handleCreateDef = useCallback(
     async (key: string, valueType: string) => {
       try {
-        const newDef = await createPropertyDef({ key, valueType })
+        const newDef = unwrap(await commands.createPropertyDef(key, valueType, null))
         setDefinitions((prev) => [...prev, newDef])
         // #2804 — same rationale as `handleAddFromDef`: a brand-new
         // text/select def has no valid empty initializer, so add a draft
@@ -222,8 +232,16 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
         }
         const params = buildInitParams(pageId, newDef)
         if (params) {
-          await setProperty(params)
-          const updated = await getProperties(pageId)
+          unwrap(
+            await commands.setProperty(params.blockId, params.key, {
+              value_text: params.valueText ?? null,
+              value_num: params.valueNum ?? null,
+              value_date: params.valueDate ?? null,
+              value_ref: params.valueRef ?? null,
+              value_bool: params.valueBool ?? null,
+            }),
+          )
+          const updated = unwrap(await commands.getProperties(pageId))
           setProperties(updated)
         }
       } catch (err: unknown) {
@@ -287,7 +305,7 @@ export function PagePropertyTable({ pageId, forceExpanded }: PagePropertyTablePr
                     )
                   }}
                   onRefSaved={async () => {
-                    const updated = await getProperties(pageId)
+                    const updated = unwrap(await commands.getProperties(pageId))
                     setProperties(updated)
                   }}
                 />
