@@ -28,6 +28,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { unwrap } from '@/lib/app-error'
+import type { PropertyDefinition } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -35,13 +38,6 @@ import { setPriorityLevels } from '@/lib/priority-levels'
 import { LOCKED_PROPERTY_OPTIONS, NON_DELETABLE_PROPERTIES } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PropertyDefinition } from '@/lib/tauri'
-import {
-  createPropertyDef,
-  deletePropertyDef,
-  listPropertyDefs,
-  updatePropertyDefOptions,
-} from '@/lib/tauri'
 
 const VALUE_TYPES = ['text', 'number', 'date', 'select', 'ref'] as const
 
@@ -83,7 +79,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
       // single-page-by-design — it surfaces the seeded vocabulary
       // (~19 built-ins plus user-authored entries), which fits well
       // under one page; we destructure `.items` and ignore the cursor.
-      const { items: defs } = await listPropertyDefs()
+      const { items: defs } = unwrap(await commands.listPropertyDefs(null, null))
       setDefinitions(defs)
     } catch (error) {
       // Replace bespoke `String(error)` toast with the unified
@@ -103,7 +99,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
     if (!key) return
     setIsCreating(true)
     try {
-      const def = await createPropertyDef({ key, valueType: newType })
+      const def = unwrap(await commands.createPropertyDef(key, newType, null))
       setDefinitions((prev) => [...prev, def])
       setNewKey('')
       setNewType('text')
@@ -118,7 +114,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const handleDelete = useCallback(
     async (key: string) => {
       try {
-        await deletePropertyDef(key)
+        unwrap(await commands.deletePropertyDef(key))
         setDefinitions((prev) => prev.filter((d) => d.key !== key))
         setDeleteTarget(null)
         notify.success(t('propertiesView.deleted'))
@@ -139,7 +135,7 @@ export function PropertyDefinitionsList(): React.ReactElement {
   const handleSaveOptions = useCallback(
     async (key: string) => {
       try {
-        const updated = await updatePropertyDefOptions(key, editOptionsValue)
+        const updated = unwrap(await commands.updatePropertyDefOptions(key, editOptionsValue))
         setDefinitions((prev) => prev.map((d) => (d.key === key ? updated : d)))
         setEditingOptionsKey(null)
         // Sync the active priority level cache when the user

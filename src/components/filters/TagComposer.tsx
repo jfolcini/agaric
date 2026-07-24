@@ -23,6 +23,8 @@ import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SearchInput } from '@/components/ui/search-input'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import {
   type TagBuilderGroup,
   type TagBuilderLeaf,
@@ -36,7 +38,6 @@ import {
   setGroupOp,
   toggleNegated,
 } from '@/lib/tagExpr'
-import { listTagsByPrefix } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 export interface TagComposerCallbacks {
@@ -204,7 +205,7 @@ function AddTagPopover({
       return
     }
     try {
-      const tags = await listTagsByPrefix({ prefix: trimmed })
+      const tags = unwrap(await commands.listTagsByPrefix(trimmed, null))
       setMatches(
         tags.map((tg) => ({ tag_id: tg.tag_id, name: tg.name, usage_count: tg.usage_count })),
       )

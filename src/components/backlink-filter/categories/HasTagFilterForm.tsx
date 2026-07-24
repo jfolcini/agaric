@@ -23,9 +23,10 @@ import { MenuPopoverContent } from '@/components/ui/menu-popover-content'
 import { Popover, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
-import { listTagsByPrefix } from '@/lib/tauri'
 
 export interface HasTagFilterFormProps {
   tags: Array<{ id: string; name: string }>
@@ -44,7 +45,9 @@ export function HasTagFilterForm({ tags, ref }: HasTagFilterFormProps): React.Re
 
   const debouncedTagSearch = useDebouncedCallback((query: string) => {
     setTagSearchLoading(true)
-    listTagsByPrefix({ prefix: query, limit: PAGINATION_LIMIT })
+    commands
+      .listTagsByPrefix(query, PAGINATION_LIMIT)
+      .then(unwrap)
       .then((rows) => {
         setTagSearchResults(rows.map((r) => ({ id: r.tag_id, name: r.name })))
       })

@@ -20,13 +20,29 @@ import { getPathHistory } from '@/lib/path-history'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
 import { getPropertyDef, listPropertyKeys, listPropertyValues, listTagsByPrefix } from '@/lib/tauri'
 
+// The propKey source resolves through `propertyKeysQueryFn`
+// (`@/lib/property-keys-cache`), which now calls `commands.listPropertyKeys`
+// from `@/lib/bindings` and unwraps the `Result` envelope. The same spy backs
+// both the (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface
+// so the `vi.mocked(...)` assertions keep working; it resolves the
+// `{ status: 'ok', data }` shape.
+const { mockListPropertyKeys } = vi.hoisted(() => ({ mockListPropertyKeys: vi.fn() }))
+
 vi.mock('@/lib/tauri', () => ({
   listTagsByPrefix: vi.fn(),
-  listPropertyKeys: vi.fn(),
+  listPropertyKeys: mockListPropertyKeys,
   listPropertyValues: vi.fn(),
   getPropertyDef: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
+
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: { ...actual.commands, listPropertyKeys: mockListPropertyKeys },
+  }
+})
 
 vi.mock('@/lib/path-history', () => ({
   getPathHistory: vi.fn(() => [] as string[]),
@@ -73,7 +89,7 @@ beforeEach(() => {
   __resetPriorityLevelsForTests()
   mockedGetPathHistory.mockReturnValue([])
   mockedListTagsByPrefix.mockResolvedValue([])
-  mockedListPropertyKeys.mockResolvedValue([])
+  mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   mockedListPropertyValues.mockResolvedValue([])
   mockedGetPropertyDef.mockResolvedValue(null)
 })
@@ -246,7 +262,10 @@ describe('useAutocompleteSources', () => {
   })
 
   it('propKey anchor: IPC called once across re-renders within the same session', async () => {
-    mockedListPropertyKeys.mockResolvedValue(['status', 'owner', 'estimate'])
+    mockedListPropertyKeys.mockResolvedValue({
+      status: 'ok',
+      data: ['status', 'owner', 'estimate'],
+    } as never)
     const { rerender, result } = renderHook(
       ({ a }: { a: AutocompleteAnchor }) => useAutocompleteSources({ anchor: a, spaceId: 'S1' }),
       { initialProps: { a: { active: 'propKey', query: '', anchor: 0 } as AutocompleteAnchor } },

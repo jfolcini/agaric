@@ -20,9 +20,10 @@ import { Check } from 'lucide-react'
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setProperty } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceAccentPicker'
@@ -73,11 +74,15 @@ export function SpaceAccentPicker({
       const previous = accent
       setAccent(token)
       try {
-        await setProperty({
-          blockId: spaceId,
-          key: 'accent_color',
-          valueText: token,
-        })
+        unwrap(
+          await commands.setProperty(spaceId, 'accent_color', {
+            value_text: token,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }),
+        )
       } catch (err) {
         logger.error(LOG_MODULE, 'accent color update failed', { spaceId }, err)
         notify.error(t('space.accentFailed'))

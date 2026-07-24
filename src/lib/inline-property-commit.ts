@@ -40,6 +40,9 @@
  * draft lifecycle.
  */
 
+import { unwrap } from '@/lib/app-error'
+import type { OpRef } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import {
   buildInlinePropertySetParams,
@@ -48,8 +51,6 @@ import {
 } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { OpRef } from '@/lib/tauri'
-import { getPropertyDef, setProperty } from '@/lib/tauri'
 import { useUndoStore } from '@/stores/undo'
 
 /** Per-block flush sequence tokens — see the module docstring. */
@@ -106,13 +107,21 @@ export async function commitInlineProperties(opts: {
   let anyFailed = false
   for (const prop of inlineProps) {
     try {
-      const def = await getPropertyDef(prop.key)
+      const def = unwrap(await commands.getPropertyDef(prop.key))
       const params = buildInlinePropertySetParams(blockId, prop.key, prop.value, def)
       if (params === null) {
         anyFailed = true
         continue
       }
-      const resp = await setProperty(params)
+      const resp = unwrap(
+        await commands.setProperty(params.blockId, params.key, {
+          value_text: params.valueText ?? null,
+          value_num: params.valueNum ?? null,
+          value_date: params.valueDate ?? null,
+          value_ref: null,
+          value_bool: params.valueBool ?? null,
+        }),
+      )
       if (resp?.op_refs) opRefs.push(...resp.op_refs)
       strippedLines.add(prop.lineIndex)
     } catch (err: unknown) {

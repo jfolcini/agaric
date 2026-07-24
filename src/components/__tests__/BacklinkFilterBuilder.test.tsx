@@ -38,9 +38,26 @@ import { listTagsByPrefix } from '@/lib/tauri'
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
 // (see src/__tests__/mocks/ui-select.tsx).
 
-vi.mock('@/lib/tauri', () => ({
-  listTagsByPrefix: vi.fn().mockResolvedValue([]),
+// `HasTagFilterForm` now calls `commands.listTagsByPrefix` from
+// `@/lib/bindings` (positional `(prefix, limit)`) and unwraps the `Result`
+// envelope. The same spy backs both the (still-wrapped) `@/lib/tauri` surface
+// and the `commands.*` surface so the `vi.mocked(...)` assertions keep
+// working; it resolves the `{ status: 'ok', data }` shape.
+const { mockListTagsByPrefix } = vi.hoisted(() => ({
+  mockListTagsByPrefix: vi.fn().mockResolvedValue({ status: 'ok', data: [] }),
 }))
+
+vi.mock('@/lib/tauri', () => ({
+  listTagsByPrefix: mockListTagsByPrefix,
+}))
+
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: { ...actual.commands, listTagsByPrefix: mockListTagsByPrefix },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
@@ -1288,9 +1305,10 @@ describe('BacklinkFilterBuilder', () => {
 
     it('calls listTagsByPrefix on search query change', async () => {
       const user = userEvent.setup()
-      vi.mocked(listTagsByPrefix).mockResolvedValue([
-        { tag_id: '01TAG_PROJ', name: 'Project', usage_count: 5, updated_at: '' },
-      ])
+      vi.mocked(listTagsByPrefix).mockResolvedValue({
+        status: 'ok',
+        data: [{ tag_id: '01TAG_PROJ', name: 'Project', usage_count: 5, updated_at: '' }],
+      } as never)
       renderBuilder({ tags: tagsData })
 
       await user.click(screen.getByRole('button', { name: /Add filter/i }))
@@ -1305,7 +1323,8 @@ describe('BacklinkFilterBuilder', () => {
 
       // Wait for the debounced IPC call
       await waitFor(() => {
-        expect(listTagsByPrefix).toHaveBeenCalledWith({ prefix: 'proj', limit: 50 })
+        // `commands.listTagsByPrefix` is positional: (prefix, limit).
+        expect(listTagsByPrefix).toHaveBeenCalledWith('proj', 50)
       })
     })
 
@@ -1321,9 +1340,15 @@ describe('BacklinkFilterBuilder', () => {
     //      path can satisfy the old popover-unmount waitFor without
     //      `handleSelect` having fired, hiding the missed click.
     function preseedTagSearchMock(): void {
-      vi.mocked(listTagsByPrefix).mockResolvedValue(
-        tagsData.map((t) => ({ tag_id: t.id, name: t.name, usage_count: 0, updated_at: '' })),
-      )
+      vi.mocked(listTagsByPrefix).mockResolvedValue({
+        status: 'ok',
+        data: tagsData.map((t) => ({
+          tag_id: t.id,
+          name: t.name,
+          usage_count: 0,
+          updated_at: '',
+        })),
+      } as never)
     }
 
     it('selects a tag from popover and sets tagValue', async () => {

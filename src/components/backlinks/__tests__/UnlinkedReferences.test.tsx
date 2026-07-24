@@ -23,11 +23,19 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
+// `usePropertyKeysCache` resolves through `propertyKeysQueryFn`
+// (`@/lib/property-keys-cache`), which now calls `commands.listPropertyKeys`
+// from `@/lib/bindings` and unwraps the `Result` envelope. The same spy backs
+// both the (still-wrapped) `@/lib/tauri` surface and the `commands.*` surface
+// so the `vi.mocked(...)` assertions keep working; it resolves the
+// `{ status: 'ok', data }` shape.
+const { mockListPropertyKeys } = vi.hoisted(() => ({ mockListPropertyKeys: vi.fn() }))
+
 vi.mock('@/lib/tauri', () => ({
   listUnlinkedReferences: vi.fn(),
   editBlock: vi.fn(),
   listTagsByPrefix: vi.fn(),
-  listPropertyKeys: vi.fn(),
+  listPropertyKeys: mockListPropertyKeys,
   // `handleLinkIt` now reads aliases via `getPageAliases` so
   // alias-only mentions can be rewritten. Default mock returns no
   // aliases so the legacy title-only test paths stay unaffected;
@@ -35,6 +43,14 @@ vi.mock('@/lib/tauri', () => ({
   getPageAliases: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
+
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: { ...actual.commands, listPropertyKeys: mockListPropertyKeys },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -188,7 +204,7 @@ beforeEach(() => {
     op_refs: [],
   })
   mockedListTagsByPrefix.mockResolvedValue([])
-  mockedListPropertyKeys.mockResolvedValue([])
+  mockedListPropertyKeys.mockResolvedValue({ status: 'ok', data: [] } as never)
   // Legacy tests don't care about aliases — default to none.
   mockedGetPageAliases.mockResolvedValue([])
 })
