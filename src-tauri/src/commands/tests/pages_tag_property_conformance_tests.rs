@@ -28,7 +28,7 @@ use crate::commands::pages::{
 use crate::commands::tests::common::{
     TEST_SPACE_ID, assign_to_space, ensure_test_space, insert_block, test_pool,
 };
-use crate::filters::primitive::FilterPrimitive;
+use agaric_store::filters::primitive::FilterPrimitive;
 
 // serde ignores unknown top-level keys (`$comment*`) by default, so we do NOT
 // use `deny_unknown_fields`.

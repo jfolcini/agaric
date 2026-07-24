@@ -4,9 +4,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use crate::db::MAX_SQL_PARAMS;
-use crate::draft::{delete_draft, get_all_drafts};
-use crate::error::AppError;
 use crate::materializer::Materializer;
+use agaric_core::error::AppError;
+use agaric_engine::draft::{delete_draft, get_all_drafts};
 
 use super::RecoveryReport;
 use super::draft_recovery::recover_single_draft;
@@ -81,7 +81,7 @@ pub async fn recover_at_boot(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &Materializer,
-    registry: &crate::loro::registry::LoroEngineRegistry,
+    registry: &agaric_engine::loro::registry::LoroEngineRegistry,
 ) -> Result<RecoveryReport, AppError> {
     // Enforce the once-per-process contract. `compare_exchange`
     // atomically flips `false -> true` on the first call; subsequent

@@ -15,7 +15,7 @@
 //! (the trait is local to this crate, so the impl on the foreign
 //! `tauri::ipc::Channel` type is legal).
 
-pub use agaric_engine::import::*;
+use agaric_engine::import::ImportProgressUpdate;
 
 /// Sink for [`ImportProgressUpdate`] events, decoupling the import command
 /// from Tauri so tests can capture the emitted stream without an

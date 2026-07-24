@@ -30,7 +30,7 @@
 
 use sqlx::SqliteConnection;
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Run the full satellite-table purge chain for a subtree of `blocks`.
 ///
@@ -148,10 +148,7 @@ async fn query_strings(
 }
 
 // #2621 (THE INVERSION): `rederive_page_and_space_ids` is pure `blocks`-table
-// SQL (recursive descendant CTEs with the depth-100 cap), so it moved DOWN into
+// SQL (recursive descendant CTEs with the depth-100 cap), so it lives in
 // `agaric-store` beside the other block-descendant CTE helpers
-// (`agaric_store::block_descendants`). This re-export shim keeps every existing
-// `crate::commands::block_cleanup::rederive_page_and_space_ids` call site
-// (`move_ops.rs`, `crud.rs` restore, the two `history.rs` reverse arms, the
-// materializer projections) compiling unchanged.
-pub use agaric_store::block_descendants::rederive_page_and_space_ids;
+// (`agaric_store::block_descendants`); call sites reference it there directly
+// (#2897).

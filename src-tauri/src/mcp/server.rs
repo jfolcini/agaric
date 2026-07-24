@@ -19,7 +19,7 @@
 use tokio::io::{AsyncRead, AsyncWrite};
 
 use super::{ConnectionCounterGuard, McpLifecycle, McpSurface, SocketKind};
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 // Re-export the registry types so external callers (tests, mod.rs's
 // `spawn_mcp_ro_task` default path) that still refer to

@@ -16,7 +16,7 @@ use crate::commands::tests::common::{
     TEST_SPACE_B_ID, TEST_SPACE_ID, assign_to_space, ensure_test_space, ensure_test_space_b,
     insert_block, test_pool,
 };
-use crate::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
+use agaric_store::filters::{FilterPrimitive, LastEditedSpec, PropertyPredicate, PropertyValue};
 
 // ── Fixture builders ──────────────────────────────────────────────────────
 
@@ -751,7 +751,7 @@ async fn cursor_from_different_sort_mode_returns_requires_refresh() {
     .expect_err("cursor sort-mode mismatch must reject");
     assert_eq!(
         err.validation_code(),
-        Some(crate::error::ValidationCode::RequiresRefresh),
+        Some(agaric_core::error::ValidationCode::RequiresRefresh),
         "validation must carry the RequiresRefresh code; got: {err:?}"
     );
 
@@ -789,7 +789,7 @@ async fn legacy_cursor_without_discriminator_returns_requires_refresh() {
     .expect_err("legacy cursor without discriminator must reject");
     assert_eq!(
         err.validation_code(),
-        Some(crate::error::ValidationCode::RequiresRefresh),
+        Some(agaric_core::error::ValidationCode::RequiresRefresh),
         "validation must carry the RequiresRefresh code; got: {err:?}"
     );
 }
@@ -1800,7 +1800,7 @@ async fn filter_search_only_primitive_rejected_via_allowed_keys_gate() {
     .expect_err("Search-only primitive must be rejected on the Pages surface");
     assert_eq!(
         err.validation_code(),
-        Some(crate::error::ValidationCode::InvalidFilter),
+        Some(agaric_core::error::ValidationCode::InvalidFilter),
         "rejection must carry the InvalidFilter code; got: {err:?}"
     );
 }
@@ -2349,7 +2349,7 @@ async fn all_search_only_primitives_rejected_on_pages_surface() {
         FilterPrimitive::CaseSensitive { enabled: true },
         FilterPrimitive::WholeWord { enabled: true },
         FilterPrimitive::Snippet {
-            spec: crate::filters::primitive::SnippetSpec {
+            spec: agaric_store::filters::primitive::SnippetSpec {
                 max_tokens: 5,
                 left_marker: "<".to_string(),
                 right_marker: ">".to_string(),
@@ -2372,12 +2372,12 @@ async fn all_search_only_primitives_rejected_on_pages_surface() {
         );
         let err = result.unwrap_err();
         assert!(
-            matches!(err, crate::error::AppError::Validation { .. }),
+            matches!(err, agaric_core::error::AppError::Validation { .. }),
             "`{label}` rejection must be AppError::Validation; got: {err:?}"
         );
         assert_eq!(
             err.validation_code(),
-            Some(crate::error::ValidationCode::InvalidFilter),
+            Some(agaric_core::error::ValidationCode::InvalidFilter),
             "`{label}` rejection must carry the InvalidFilter code; got: {err:?}"
         );
     }
@@ -2624,12 +2624,12 @@ async fn last_edited_range_rejects_malformed_and_empty_dates() {
     .await
     .expect_err("malformed range date must be rejected");
     assert!(
-        matches!(bad, crate::error::AppError::Validation { .. }),
+        matches!(bad, agaric_core::error::AppError::Validation { .. }),
         "malformed date must be AppError::Validation; got: {bad:?}"
     );
     assert_eq!(
         bad.validation_code(),
-        Some(crate::error::ValidationCode::InvalidDateFilter),
+        Some(agaric_core::error::ValidationCode::InvalidDateFilter),
         "rejection must carry the InvalidDateFilter code; got: {bad:?}"
     );
 
@@ -2652,7 +2652,7 @@ async fn last_edited_range_rejects_malformed_and_empty_dates() {
     .expect_err("empty range start must be rejected");
     assert_eq!(
         empty.validation_code(),
-        Some(crate::error::ValidationCode::InvalidDateFilter),
+        Some(agaric_core::error::ValidationCode::InvalidDateFilter),
         "empty start must carry the InvalidDateFilter code; got: {empty:?}"
     );
 }
@@ -2972,7 +2972,7 @@ async fn every_sort_mode_cursor_round_trips_and_rejects_cross_mode() {
                     ));
             assert_eq!(
                 err.validation_code(),
-                Some(crate::error::ValidationCode::RequiresRefresh),
+                Some(agaric_core::error::ValidationCode::RequiresRefresh),
                 "{sort:?}→{other:?} mismatch must carry the RequiresRefresh code; got: {err:?}"
             );
         }
@@ -3122,7 +3122,7 @@ async fn pages_path_glob_invalid_glob_returns_validation_error() {
     .await
     .expect_err("an unbalanced-bracket glob must be rejected");
     assert!(
-        matches!(bad, crate::error::AppError::Validation { .. }),
+        matches!(bad, agaric_core::error::AppError::Validation { .. }),
         "invalid glob must be AppError::Validation; got: {bad:?}"
     );
 }

@@ -286,7 +286,7 @@ async fn brace_nesting_returns_validation_error() {
     let err = result.unwrap_err();
     assert_eq!(
         err.validation_code(),
-        Some(crate::error::ValidationCode::InvalidGlob),
+        Some(agaric_core::error::ValidationCode::InvalidGlob),
         "got {err:?}"
     );
     assert!(format!("{err}").contains("brace nesting"), "got {err}");
@@ -311,7 +311,7 @@ async fn unbalanced_bracket_returns_validation_error() {
     let err = result.unwrap_err();
     assert_eq!(
         err.validation_code(),
-        Some(crate::error::ValidationCode::InvalidGlob),
+        Some(agaric_core::error::ValidationCode::InvalidGlob),
         "got {err:?}"
     );
     assert!(format!("{err}").contains("unbalanced bracket"), "got {err}");

@@ -1,10 +1,10 @@
 use crate::db::init_pool;
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
     MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
     SetPropertyPayload,
 };
-use crate::ulid::BlockId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -66,7 +66,7 @@ async fn apply_op_tx_create_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
     // The engine path reads the Loro state global; install it for
     // the test.
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     // Phase 3: the parent page must exist in the engine tree.
     seed_page_via_loro(&pool, &state).await;
 
@@ -78,7 +78,7 @@ async fn apply_op_tx_create_block_engine_path() {
         index: None,
         content: "loro-path content".into(),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append op");
 
@@ -104,7 +104,7 @@ async fn apply_op_tx_create_block_engine_path() {
     assert_eq!(row.3, 1);
 
     // Engine actually saw the apply (proves the loro path ran).
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -132,7 +132,7 @@ async fn apply_op_tx_create_block_engine_path() {
 #[tokio::test]
 async fn apply_op_tx_edit_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Seed PAGE_ID into the engine first (#2250: a child create whose parent
     // is absent from the engine now falls back to SQL-only rather than
@@ -152,7 +152,7 @@ async fn apply_op_tx_edit_block_engine_path() {
         index: None,
         content: "before-edit".into(),
     });
-    let create_record = crate::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
+    let create_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin1");
@@ -190,7 +190,7 @@ async fn apply_op_tx_edit_block_engine_path() {
         to_text: "after-edit-content".into(),
         prev_edit: None,
     });
-    let edit_record = crate::op_log::append_local_op(&pool, DEVICE_ID, edit_payload)
+    let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit_payload)
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin2");
@@ -207,7 +207,7 @@ async fn apply_op_tx_edit_block_engine_path() {
     assert_eq!(row.0, "after-edit-content");
 
     // Engine state matches.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -233,7 +233,7 @@ async fn apply_op_tx_edit_block_engine_path() {
 /// `fresh_pool_with_page` SQL-only shortcut does not, so the
 /// engine-path tests seed the page node here. Idempotent in SQL
 /// (`INSERT OR IGNORE` — the row already exists).
-async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::LoroState) {
+async fn seed_page_via_loro(pool: &SqlitePool, state: &agaric_engine::loro::shared::LoroState) {
     let create_page = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
         block_type: "page".into(),
@@ -242,7 +242,7 @@ async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Loro
         index: None,
         content: "page-content".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, create_page)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, create_page)
         .await
         .expect("append create page");
     let mut tx = pool.begin().await.expect("begin");
@@ -252,7 +252,7 @@ async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Loro
     tx.commit().await.expect("commit");
 }
 
-async fn seed_block_via_loro(pool: &SqlitePool, state: &crate::loro::shared::LoroState) {
+async fn seed_block_via_loro(pool: &SqlitePool, state: &agaric_engine::loro::shared::LoroState) {
     seed_page_via_loro(pool, state).await;
     let create_payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
@@ -262,7 +262,7 @@ async fn seed_block_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Lor
         index: None,
         content: "seed".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, create_payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, create_payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin");
@@ -298,7 +298,7 @@ async fn seed_block_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Lor
 #[tokio::test]
 async fn apply_op_tx_set_property_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -311,7 +311,7 @@ async fn apply_op_tx_set_property_engine_path() {
         value_ref: None,
         value_bool: None,
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -331,7 +331,7 @@ async fn apply_op_tx_set_property_engine_path() {
     assert_eq!(prop.0, Some(3.5));
 
     // Engine has the property (proves the loro path ran).
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -360,7 +360,7 @@ async fn apply_op_tx_delete_block_engine_path() {
     const CHILD_2: &str = "01HZ00000000000000000000C2";
 
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -375,7 +375,7 @@ async fn apply_op_tx_delete_block_engine_path() {
             index: None,
             content: "child".into(),
         });
-        let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_child)
+        let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_child)
             .await
             .expect("append child");
         let mut tx = pool.begin().await.expect("begin child");
@@ -388,7 +388,7 @@ async fn apply_op_tx_delete_block_engine_path() {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let record_created_at = record.created_at;
@@ -415,7 +415,7 @@ async fn apply_op_tx_delete_block_engine_path() {
     }
 
     // Engine sees the seed delete (engine fanout is deferred).
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -435,7 +435,7 @@ async fn apply_op_tx_delete_block_engine_path() {
 #[tokio::test]
 async fn apply_op_tx_move_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -446,7 +446,7 @@ async fn apply_op_tx_move_block_engine_path() {
         new_position: 42,
         new_index: None,
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -468,7 +468,7 @@ async fn apply_op_tx_move_block_engine_path() {
     assert_eq!(row.1, 1);
 
     // Engine sees the move.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -499,7 +499,7 @@ async fn apply_op_tx_move_block_engine_path() {
 #[tokio::test]
 async fn apply_op_tx_restore_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -507,7 +507,7 @@ async fn apply_op_tx_restore_block_engine_path() {
     let delete_payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
     });
-    let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
+    let delete_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
         .await
         .expect("append delete");
     let deleted_at_ref = delete_record.created_at;
@@ -530,7 +530,7 @@ async fn apply_op_tx_restore_block_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         deleted_at_ref,
     });
-    let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore_payload)
+    let restore_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, restore_payload)
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin2");
@@ -548,7 +548,7 @@ async fn apply_op_tx_restore_block_engine_path() {
     assert_eq!(post.0, None, "restore must clear deleted_at");
 
     // Engine: seed is no longer marked deleted.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -567,14 +567,14 @@ async fn apply_op_tx_restore_block_engine_path() {
 #[tokio::test]
 async fn apply_op_tx_purge_block_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -592,7 +592,7 @@ async fn apply_op_tx_purge_block_engine_path() {
     assert_eq!(count.0, 0, "purge must remove the row");
 
     // Engine: block is gone.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -625,7 +625,7 @@ async fn apply_op_tx_purge_block_engine_path() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_2868() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -635,7 +635,7 @@ async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_
     let delete_payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
     });
-    let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
+    let delete_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, delete_payload)
         .await
         .expect("append delete");
     let mut tx = pool.begin().await.expect("begin delete");
@@ -648,7 +648,7 @@ async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_
     // still present in the tree, just marked deleted). Without this the
     // post-purge `is_none()` assertion would be vacuous.
     {
-        let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+        let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
         let mut guard = state
             .registry
             .for_space(&space, DEVICE_ID)
@@ -680,7 +680,7 @@ async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_
     let purge_payload = OpPayload::PurgeBlock(PurgeBlockPayload {
         block_id: BlockId::from_trusted(BLOCK_ID),
     });
-    let purge_record = crate::op_log::append_local_op(&pool, DEVICE_ID, purge_payload)
+    let purge_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, purge_payload)
         .await
         .expect("append purge");
     let mut tx = pool.begin().await.expect("begin purge");
@@ -700,7 +700,7 @@ async fn apply_op_tx_remote_purge_of_soft_deleted_block_clears_engine_tombstone_
     // ENGINE (the #2868 fix): the tombstone is CLEARED — the block is fully
     // gone from the per-space Loro engine, not left soft-deleted to
     // resurrect on a snapshot-syncing peer.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -739,7 +739,7 @@ async fn apply_op_tx_add_tag_engine_path() {
     const TAG_ID: &str = "01HZ00000000000000000000T7";
 
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -753,7 +753,7 @@ async fn apply_op_tx_add_tag_engine_path() {
         index: None,
         content: "tag-Y".into(),
     });
-    let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
+    let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
         .await
         .expect("append create tag");
     let mut tx = pool.begin().await.expect("begin tag");
@@ -767,7 +767,7 @@ async fn apply_op_tx_add_tag_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         tag_id: BlockId::from_trusted(TAG_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -787,7 +787,7 @@ async fn apply_op_tx_add_tag_engine_path() {
     assert_eq!(count.0, 1, "block_tags row must be inserted");
 
     // Engine: tag is associated.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -807,7 +807,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
     const TAG_ID: &str = "01HZ00000000000000000000T8";
 
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -820,7 +820,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
         index: None,
         content: "tag-Z".into(),
     });
-    let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
+    let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_tag)
         .await
         .expect("append create tag");
     let mut tx = pool.begin().await.expect("begin tag");
@@ -833,7 +833,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         tag_id: BlockId::from_trusted(TAG_ID),
     });
-    let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, add)
+    let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, add)
         .await
         .expect("append add");
     let mut tx = pool.begin().await.expect("begin add");
@@ -847,7 +847,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         tag_id: BlockId::from_trusted(TAG_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -867,7 +867,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
     assert_eq!(count.0, 0, "block_tags row must be deleted");
 
     // Engine: tag association is gone.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -885,7 +885,7 @@ async fn apply_op_tx_remove_tag_engine_path() {
 #[tokio::test]
 async fn apply_op_tx_delete_property_engine_path() {
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     seed_block_via_loro(&pool, &state).await;
 
@@ -900,7 +900,7 @@ async fn apply_op_tx_delete_property_engine_path() {
         value_ref: None,
         value_bool: None,
     });
-    let rec = crate::op_log::append_local_op(&pool, DEVICE_ID, set)
+    let rec = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, set)
         .await
         .expect("append set");
     let mut tx = pool.begin().await.expect("begin set");
@@ -924,7 +924,7 @@ async fn apply_op_tx_delete_property_engine_path() {
         block_id: BlockId::from_trusted(BLOCK_ID),
         key: "effort".into(),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append");
     let mut tx = pool.begin().await.expect("begin");
@@ -944,7 +944,7 @@ async fn apply_op_tx_delete_property_engine_path() {
     assert_eq!(count.0, 0, "delete property must remove the row");
 
     // Engine: property gone.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -994,7 +994,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     const B2: &str = "01HZ0000000000000000000AN2";
 
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Seed PAGE_ID + the B1 → B2 chain through the engine path.
     seed_page_via_loro(&pool, &state).await;
@@ -1007,7 +1007,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
         index: None,
         content: "intermediate".into(),
     });
-    let rec_b1 = crate::op_log::append_local_op(&pool, DEVICE_ID, create_b1)
+    let rec_b1 = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_b1)
         .await
         .expect("append create b1");
     super::apply_op(&pool, &std::sync::Arc::new(rec_b1), &state)
@@ -1032,7 +1032,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
         index: None,
         content: "grandchild".into(),
     });
-    let rec_b2 = crate::op_log::append_local_op(&pool, DEVICE_ID, create_b2)
+    let rec_b2 = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, create_b2)
         .await
         .expect("append create b2");
     super::apply_op(&pool, &std::sync::Arc::new(rec_b2), &state)
@@ -1051,7 +1051,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     let del_b2 = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(B2),
     });
-    let rec_del_b2 = crate::op_log::append_local_op(&pool, DEVICE_ID, del_b2)
+    let rec_del_b2 = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_b2)
         .await
         .expect("append delete b2");
     super::apply_op(&pool, &std::sync::Arc::new(rec_del_b2), &state)
@@ -1062,7 +1062,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     let del_b1 = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(B1),
     });
-    let rec_del_b1 = crate::op_log::append_local_op(&pool, DEVICE_ID, del_b1)
+    let rec_del_b1 = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_b1)
         .await
         .expect("append delete b1");
     super::apply_op(&pool, &std::sync::Arc::new(rec_del_b1), &state)
@@ -1077,7 +1077,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
             .await
             .expect("fetch b2 deleted_at");
     let b2_ref = b2_deleted_at.expect("b2 must be soft-deleted");
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     {
         let mut guard = state
             .registry
@@ -1099,7 +1099,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
         block_id: BlockId::from_trusted(B2),
         deleted_at_ref: b2_ref,
     });
-    let rec_restore = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+    let rec_restore = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, restore)
         .await
         .expect("append restore");
     super::apply_op(&pool, &std::sync::Arc::new(rec_restore), &state)
@@ -1144,7 +1144,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     // divergence on every reproject.
     {
         let mut tx = pool.begin().await.expect("begin reproject");
-        crate::loro::projection::reproject_block_deleted_at_from_engine(
+        agaric_engine::loro::projection::reproject_block_deleted_at_from_engine(
             &mut tx,
             &BlockId::from_trusted(B1),
             engine_b1_deleted_at.as_deref(),
@@ -1169,7 +1169,7 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
     // #2042: RestoreBlock defers the page-wide count recompute to the background
     // `RebuildPagesCacheCounts` task (no longer synchronous in the apply tx), so
     // drive that recompute here before asserting the settled count.
-    crate::cache::rebuild_pages_cache_counts(&pool)
+    agaric_store::cache::rebuild_pages_cache_counts(&pool)
         .await
         .expect("rebuild pages_cache counts");
     let child_count: i64 =

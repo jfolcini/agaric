@@ -2,14 +2,14 @@
 //!
 //! The pure single-block `soft_delete_block` helper moved to
 //! `agaric_store::soft_delete` in wave S4e (#2621); it is re-exported from the
-//! parent `mod.rs` so `crate::soft_delete::soft_delete_block` still resolves.
+//! parent `mod.rs` so `agaric_store::soft_delete::soft_delete_block` still resolves.
 
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op_log::OpRecord;
 
 /// Cascade soft-delete: sets `deleted_at` on the block and all non-deleted
 /// descendants via recursive CTE.
@@ -31,7 +31,7 @@ use crate::op_log::OpRecord;
 /// bounds the walk against runaway recursion on corrupted parent_id
 /// chains.
 ///
-/// Canonical CTE in `crate::block_descendants::DESCENDANTS_CTE_ACTIVE`.
+/// Canonical CTE in `agaric_store::block_descendants::DESCENDANTS_CTE_ACTIVE`.
 /// This site inlines the SQL because `sqlx::query!` requires a string
 /// literal and cannot accept `concat!()` of a `macro_rules!` expansion.
 ///
@@ -90,7 +90,7 @@ pub async fn cascade_soft_delete(
     // the soft-delete. The cap (invariant #9) is preserved; we only ADD
     // detection + surfacing here. The standard-variant helper is
     // invariant to whether the cascade has run, so this works post-UPDATE.
-    if crate::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
+    if agaric_store::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
         tracing::warn!(
             seed_block_id = %block_id,
             op = "cascade_soft_delete",
@@ -212,7 +212,9 @@ mod tests {
 
         // Baseline: populate `pages_cache` so the soft-delete removal
         // is observable (vs starting from an empty cache).
-        crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+        agaric_store::cache::rebuild_pages_cache(&pool)
+            .await
+            .unwrap();
         let pre_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
                 .bind(page_id)

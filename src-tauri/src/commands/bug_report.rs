@@ -31,8 +31,8 @@ use specta::Type;
 use sqlx::SqlitePool;
 use tauri::Manager;
 
-use crate::error::AppError;
 use crate::log_dir_for_app_data;
+use agaric_core::error::AppError;
 
 // =====================================================================
 // REDACTION POLICY (H-9b)
@@ -111,7 +111,7 @@ const SAFE_TOKEN_PATTERNS: &[&str] = &[
     // Rust path / module / type name with AT LEAST ONE `::` separator.
     // Covers `target` / `module` field values like
     // `agaric::commands::bug_report` and fully-qualified type names like
-    // `crate::error::AppError`. The mandatory `::` blocks bare lowercase
+    // `agaric_core::error::AppError`. The mandatory `::` blocks bare lowercase
     // words (e.g. `alice`) from masquerading as module paths.
     r"^[a-z_][a-z0-9_]*(::[a-zA-Z_][a-zA-Z0-9_]*)+$",
     // file:line[:col] ref. Covers Rust + TS + SQL source paths anchored
@@ -376,7 +376,7 @@ const RECENT_ERRORS_CAP: usize = 20;
 /// so the newest file is the live tail (see [`newest_otel_file`]).
 ///
 /// Kept as a `&str` slice rather than importing the `*_SUBDIR` consts from
-/// `crate::observability::exporter` / `::metrics_exporter` so the bundle's
+/// `agaric_observability::exporter` / `::metrics_exporter` so the bundle's
 /// view of "which dirs to scoop" stays self-contained here — the subdir
 /// names are part of the on-disk layout contract, not a runtime coupling.
 /// When tracing was never enabled these dirs simply do not exist and are
@@ -574,7 +574,7 @@ pub fn collect_bug_report_metadata_inner(
 pub async fn collect_bug_report_metadata(
     app: tauri::AppHandle,
     pool: tauri::State<'_, crate::db::ReadPool>,
-    device_id: tauri::State<'_, crate::device::DeviceId>,
+    device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
 ) -> Result<BugReport, AppError> {
     let data_dir = app
         .path()
@@ -642,8 +642,8 @@ fn read_capped_file(path: &Path) -> std::io::Result<String> {
 /// (`subdir`), or `None` when the dir is absent, empty, unreadable, or holds
 /// no regular files.
 ///
-/// The OTel sinks ([`crate::observability::exporter`] /
-/// [`crate::observability::metrics_exporter`]) use a daily-rotated
+/// The OTel sinks ([`agaric_observability::exporter`] /
+/// [`agaric_observability::metrics_exporter`]) use a daily-rotated
 /// [`tracing_appender::rolling`] appender exactly like `agaric.log`: the live
 /// file carries the bare prefix (`agaric-traces.log`) while rolled-over days
 /// gain a `.YYYY-MM-DD` suffix. Newest mtime therefore selects the live tail —
@@ -897,12 +897,12 @@ fn apply_allow_list(line: &str, redactor: &Redactor) -> String {
 /// safety. Returns the input unchanged when its byte length is at or
 /// below the cap — no allocation in the common case.
 ///
-/// Delegates to [`crate::text_utils::truncate_at_char_boundary`].
+/// Delegates to [`agaric_core::text_utils::truncate_at_char_boundary`].
 /// The marker wording (`…[truncated N chars]`) is owned here and must
 /// stay byte-for-byte identical — the bundled bug-report fixtures and
 /// the `redact_line_preserves_utf8_on_truncation` test assert on it.
 fn cap_line_length(out: String) -> String {
-    crate::text_utils::truncate_at_char_boundary(out, MAX_LINE_BYTES, |extra| {
+    agaric_core::text_utils::truncate_at_char_boundary(out, MAX_LINE_BYTES, |extra| {
         format!("…[truncated {extra} chars]")
     })
 }
@@ -1245,7 +1245,7 @@ async fn fetch_redaction_extras(pool: &SqlitePool) -> Vec<String> {
 pub async fn read_logs_for_report(
     app: tauri::AppHandle,
     pool: tauri::State<'_, crate::db::ReadPool>,
-    device_id: tauri::State<'_, crate::device::DeviceId>,
+    device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     redact: bool,
 ) -> Result<Vec<LogFileEntry>, AppError> {
     let data_dir = app
@@ -2545,7 +2545,7 @@ mod tests {
         assert!(is_safe_token("AppError::Database"));
         // Rust path
         assert!(is_safe_token("agaric::commands::bug_report"));
-        assert!(is_safe_token("crate::error::AppError"));
+        assert!(is_safe_token("agaric_core::error::AppError"));
         // file:line:col
         assert!(is_safe_token("src-tauri/src/lib.rs:42:7"));
         assert!(is_safe_token("src/components/Foo.tsx:10"));

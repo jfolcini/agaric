@@ -1,8 +1,8 @@
 //! Reverse functions for tag ops (add, remove).
 
-use crate::error::AppError;
-use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload};
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op::{AddTagPayload, OpPayload, RemoveTagPayload};
+use agaric_store::op_log::OpRecord;
 
 pub fn reverse_add_tag(record: &OpRecord) -> Result<OpPayload, AppError> {
     let payload: AddTagPayload = serde_json::from_str(&record.payload)?;

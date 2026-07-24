@@ -7,9 +7,9 @@
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use agaric_engine::import::parse_logseq_markdown;
 use agaric_lib::commands::{create_space_inner, import_markdown_inner};
 use agaric_lib::db::init_pool;
-use agaric_lib::import::parse_logseq_markdown;
 use agaric_lib::materializer::Materializer;
 
 use sqlx::SqlitePool;

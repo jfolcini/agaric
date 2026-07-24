@@ -190,20 +190,23 @@ async fn legacy_page_link_oracle(pool: &SqlitePool) -> Vec<(String, String, i64)
 /// `(source_id, target_id, ref_count)` tuples for order-insensitive
 /// comparison against [`legacy_page_link_oracle`].
 async fn read_page_links_sorted(pool: &SqlitePool) -> Vec<(String, String, i64)> {
-    let mut rows: Vec<(String, String, i64)> =
-        crate::commands::list_page_links_inner(pool, &crate::space::SpaceScope::Global, None)
-            .await
-            .unwrap()
-            .edges
-            .into_iter()
-            .map(|l| {
-                (
-                    l.source_id.as_str().to_owned(),
-                    l.target_id.as_str().to_owned(),
-                    l.ref_count,
-                )
-            })
-            .collect();
+    let mut rows: Vec<(String, String, i64)> = crate::commands::list_page_links_inner(
+        pool,
+        &agaric_store::space::SpaceScope::Global,
+        None,
+    )
+    .await
+    .unwrap()
+    .edges
+    .into_iter()
+    .map(|l| {
+        (
+            l.source_id.as_str().to_owned(),
+            l.target_id.as_str().to_owned(),
+            l.ref_count,
+        )
+    })
+    .collect();
     rows.sort();
     rows
 }
@@ -368,11 +371,14 @@ async fn page_link_cache_read_path_matches_legacy_query() {
     // #2298: the read path orders by `edge_count DESC` (strongest edges
     // first, count-then-cap); re-sort to the legacy `(source, target)`
     // order for the positional zip below.
-    let mut new_rows =
-        crate::commands::list_page_links_inner(&pool, &crate::space::SpaceScope::Global, None)
-            .await
-            .unwrap()
-            .edges;
+    let mut new_rows = crate::commands::list_page_links_inner(
+        &pool,
+        &agaric_store::space::SpaceScope::Global,
+        None,
+    )
+    .await
+    .unwrap()
+    .edges;
     new_rows.sort();
 
     let legacy_rows: Vec<(String, String, i64)> = sqlx::query_as(

@@ -82,13 +82,13 @@ use super::begin_immediate_logged;
 ///   transparent).
 enum PendingDispatch {
     /// Plain op dispatch — invokes [`Materializer::dispatch_background_or_warn`].
-    Background(Arc<crate::op_log::OpRecord>),
+    Background(Arc<agaric_store::op_log::OpRecord>),
     /// Edit-op dispatch with a `block_type` hint — invokes
     /// [`Materializer::dispatch_edit_background`] and warns on error.
     /// The materializer uses the hint to pick a narrower cache-rebuild
     /// fan-out for content vs. tag vs. page edits.
     EditBackground {
-        record: Arc<crate::op_log::OpRecord>,
+        record: Arc<agaric_store::op_log::OpRecord>,
         block_type: String,
     },
     /// Lifecycle-op (`delete_block` / `restore_block` / `purge_block`)
@@ -99,7 +99,7 @@ enum PendingDispatch {
     /// restored / purged block is CONTENT (their caches are scoped to
     /// page/tag blocks and a content block's lifecycle cannot change them).
     LifecycleBackground {
-        record: Arc<crate::op_log::OpRecord>,
+        record: Arc<agaric_store::op_log::OpRecord>,
         block_type: String,
     },
     /// #2700: `move_block` dispatch with a proven `same_page` hint — invokes
@@ -113,7 +113,7 @@ enum PendingDispatch {
     /// replay / sync use the plain [`PendingDispatch::Background`] path (hint
     /// absent → full conservative set).
     MoveBackground {
-        record: Arc<crate::op_log::OpRecord>,
+        record: Arc<agaric_store::op_log::OpRecord>,
         same_page: bool,
     },
 }
@@ -164,8 +164,8 @@ pub struct CommandTx {
     /// aborts. `None` for non-engine txs (attachments, drafts, PRAGMA, …), whose
     /// commit/rollback/drop paths then skip the rollback logic entirely.
     ///
-    /// [`RevertLog`]: crate::loro::revert::RevertLog
-    revert: Option<Arc<crate::loro::shared::LoroState>>,
+    /// [`RevertLog`]: agaric_engine::loro::revert::RevertLog
+    revert: Option<Arc<agaric_engine::loro::shared::LoroState>>,
 }
 
 impl CommandTx {
@@ -194,7 +194,7 @@ impl CommandTx {
     /// `apply_op_projected(.., advance_cursor=false)` or a direct
     /// `for_space_recording`.
     ///
-    /// Arms `state`'s [`RevertLog`](crate::loro::revert::RevertLog) so the
+    /// Arms `state`'s [`RevertLog`](agaric_engine::loro::revert::RevertLog) so the
     /// mutation handlers capture each touched space's pre-op checkpoint, and
     /// stashes the `Arc<LoroState>` so the finalizers
     /// ([`commit_and_dispatch`](Self::commit_and_dispatch) /
@@ -202,7 +202,7 @@ impl CommandTx {
     /// [`rollback`](Self::rollback)) and the abort/panic `Drop` can detach and
     /// rewind. Arming happens under the `BEGIN IMMEDIATE` write lock this tx
     /// already holds, so it observes an un-armed log (single-in-flight).
-    pub fn arm_engine_rollback(&mut self, state: &Arc<crate::loro::shared::LoroState>) {
+    pub fn arm_engine_rollback(&mut self, state: &Arc<agaric_engine::loro::shared::LoroState>) {
         state.revert.arm();
         self.revert = Some(Arc::clone(state));
     }
@@ -223,7 +223,7 @@ impl CommandTx {
     /// either a fresh `OpRecord` by value (Rust's blanket
     /// `impl<T> From<T> for Arc<T>` does the wrap) or an existing
     /// `Arc<OpRecord>` they need to share with a post-commit borrow.
-    pub fn enqueue_background(&mut self, record: impl Into<Arc<crate::op_log::OpRecord>>) {
+    pub fn enqueue_background(&mut self, record: impl Into<Arc<agaric_store::op_log::OpRecord>>) {
         self.pending
             .push(PendingDispatch::Background(record.into()));
     }
@@ -246,7 +246,7 @@ impl CommandTx {
     /// record is owned or already shared.
     pub fn enqueue_edit_background(
         &mut self,
-        record: impl Into<Arc<crate::op_log::OpRecord>>,
+        record: impl Into<Arc<agaric_store::op_log::OpRecord>>,
         block_type: impl Into<String>,
     ) {
         self.pending.push(PendingDispatch::EditBackground {
@@ -270,7 +270,7 @@ impl CommandTx {
     /// [`Self::enqueue_background`].
     pub fn enqueue_lifecycle_background(
         &mut self,
-        record: impl Into<Arc<crate::op_log::OpRecord>>,
+        record: impl Into<Arc<agaric_store::op_log::OpRecord>>,
         block_type: impl Into<String>,
     ) {
         self.pending.push(PendingDispatch::LifecycleBackground {
@@ -293,7 +293,7 @@ impl CommandTx {
     /// `Into<Arc<…>>` shape as [`Self::enqueue_background`].
     pub fn enqueue_move_background(
         &mut self,
-        record: impl Into<Arc<crate::op_log::OpRecord>>,
+        record: impl Into<Arc<agaric_store::op_log::OpRecord>>,
         same_page: bool,
     ) {
         self.pending.push(PendingDispatch::MoveBackground {
@@ -565,7 +565,7 @@ mod tests {
     //! NOT trip on is covered end-to-end by the `command_tx_*` tests in
     //! `db::tests`.
     use super::*;
-    use crate::op_log::OpRecord;
+    use agaric_store::op_log::OpRecord;
     use sqlx::sqlite::SqlitePoolOptions;
 
     fn fake_op_record() -> OpRecord {

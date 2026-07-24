@@ -4,12 +4,12 @@
 //! uses to ship its interaction spans to the backend's local trace sink. The
 //! command is pure-additive, zero-egress (writes a local file only), and a
 //! silent no-op when observability is disabled — see
-//! [`crate::observability::FrontendSpanIngestor`].
+//! [`agaric_observability::FrontendSpanIngestor`].
 
 use tracing::instrument;
 
-use crate::error::AppError;
-use crate::observability::{FrontendSpan, FrontendSpanIngestor};
+use agaric_core::error::AppError;
+use agaric_observability::{FrontendSpan, FrontendSpanIngestor};
 
 /// Ingest a batch of frontend-produced spans into the local trace sink.
 ///
@@ -37,7 +37,7 @@ pub async fn ingest_otel_spans(
 ///
 /// One call toggles the whole app between full-tracing and sampling: the
 /// backend's runtime sampler reads the new ratio on the next root span (see
-/// [`crate::observability::set_sampling_ratio`]), and the frontend tracer sets
+/// [`agaric_observability::set_sampling_ratio`]), and the frontend tracer sets
 /// the same ratio locally — so "sample 10%" or "trace everything" is a single
 /// app-wide switch. `ratio` is clamped to `[0.0, 1.0]`; `1.0` = full tracing,
 /// `0.0` = drop new roots.
@@ -49,6 +49,6 @@ pub async fn ingest_otel_spans(
 #[instrument]
 #[specta::specta]
 pub fn set_trace_sampling(ratio: f64) -> Result<(), AppError> {
-    crate::observability::set_sampling_ratio(ratio);
+    agaric_observability::set_sampling_ratio(ratio);
     Ok(())
 }

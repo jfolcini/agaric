@@ -5,12 +5,12 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-use agaric_lib::backlink::{
-    BacklinkFilter, BacklinkSort, CompareOp, SortDir, eval_backlink_query, list_property_keys,
-};
 use agaric_lib::commands::{count_backlinks_batch_inner, list_unlinked_references_inner};
 use agaric_lib::db::init_pool;
-use agaric_lib::pagination::PageRequest;
+use agaric_store::backlink::{
+    BacklinkFilter, BacklinkSort, CompareOp, SortDir, eval_backlink_query, list_property_keys,
+};
+use agaric_store::pagination::PageRequest;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;
@@ -653,8 +653,8 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                         .clone()
                         .into_iter()
                         .map(Into::into)
-                        .collect::<Vec<agaric_lib::ulid::PageId>>(),
-                    &agaric_lib::space::SpaceScope::Global,
+                        .collect::<Vec<agaric_core::ulid::PageId>>(),
+                    &agaric_store::space::SpaceScope::Global,
                 )
             });
         });
@@ -725,8 +725,8 @@ fn bench_list_unlinked_references(c: &mut Criterion) {
             // Phase 2 / `list_unlinked_references_inner`
             // takes `&SpaceScope`. The bench query is content-addressed by
             // page id with no space-scope filter, so use `Global`.
-            let scope = agaric_lib::space::SpaceScope::Global;
-            let target = agaric_lib::ulid::PageId::from("UNLINK_TARGET_0000000000");
+            let scope = agaric_store::space::SpaceScope::Global;
+            let target = agaric_core::ulid::PageId::from("UNLINK_TARGET_0000000000");
             b.to_async(&rt).iter(|| {
                 list_unlinked_references_inner(&pool, &target, None, None, None, Some(50), &scope)
             });

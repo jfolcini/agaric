@@ -44,7 +44,7 @@
 //! ## How the two arms stay byte-aligned on op ordering / timestamps
 //!
 //! The kernel arm is built FIRST — every op is appended via
-//! [`crate::op_log::append_local_op`] (which assigns `seq` + `created_at`) and
+//! [`agaric_store::op_log::append_local_op`] (which assigns `seq` + `created_at`) and
 //! applied through `apply_op_tx`. The recovery arm then CLONES that arm's
 //! `op_log` verbatim (same `payload` / `created_at` / `seq` / `device_id`) into
 //! a fresh pool before replaying it. That matters for the delete/restore pin:
@@ -66,11 +66,11 @@
 
 use super::recover_blocks_from_op_log;
 use crate::db::init_pool;
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
-use crate::ulid::BlockId;
 use sqlx::{Row, SqlitePool};
 use tempfile::TempDir;
 
@@ -125,14 +125,14 @@ async fn seed_space(pool: &SqlitePool) {
 /// engine) — so its descendants' creates/moves genuinely take the engine path
 /// rather than cascading into the parent-absent fallback.
 fn seed_block_into_engine(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     space_id: &str,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
     position: i64,
 ) {
-    let space = crate::space::SpaceId::from_trusted(space_id);
+    let space = agaric_store::space::SpaceId::from_trusted(space_id);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -147,7 +147,7 @@ fn seed_block_into_engine(
 /// Drive a CreateBlock op through the real `apply_op_tx` kernel pipeline.
 async fn create_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -161,7 +161,7 @@ async fn create_via_kernel(
         index: None,
         content: content.into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
@@ -285,10 +285,10 @@ async fn is_deleted(pool: &SqlitePool, id: &str) -> Option<bool> {
 /// Read a block back OUT of the per-space engine (proves the kernel/engine path
 /// #1 actually ran, not the sql_only shim — #891).
 fn engine_read(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
-) -> Option<crate::loro::engine::BlockSnapshot> {
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+) -> Option<agaric_engine::loro::engine::BlockSnapshot> {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -311,7 +311,7 @@ fn engine_read(
 /// Drive an `EditBlock` op through the kernel; returns nothing.
 async fn edit_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     to_text: &str,
 ) {
@@ -320,7 +320,7 @@ async fn edit_via_kernel(
         to_text: to_text.into(),
         prev_edit: None,
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin edit");
@@ -333,7 +333,7 @@ async fn edit_via_kernel(
 /// Drive a `MoveBlock` op (reparent to `new_parent` at 0-based `new_index`).
 async fn move_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     new_parent: Option<&str>,
     new_index: i64,
@@ -344,7 +344,7 @@ async fn move_via_kernel(
         new_position: new_index + 1,
         new_index: Some(new_index),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
@@ -358,13 +358,13 @@ async fn move_via_kernel(
 /// later `RestoreBlock`'s `deleted_at_ref` must carry — see the Part 2 doc).
 async fn delete_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
 ) -> i64 {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(id),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append delete");
     let created_at = record.created_at;
@@ -379,7 +379,7 @@ async fn delete_via_kernel(
 /// Drive a `RestoreBlock` op with the originating delete's cohort token.
 async fn restore_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     deleted_at_ref: i64,
 ) {
@@ -387,7 +387,7 @@ async fn restore_via_kernel(
         block_id: BlockId::from_trusted(id),
         deleted_at_ref,
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin restore");
@@ -398,11 +398,15 @@ async fn restore_via_kernel(
 }
 
 /// Drive a `PurgeBlock` op (hard-delete the soft-deleted subtree).
-async fn purge_via_kernel(pool: &SqlitePool, state: &crate::loro::shared::LoroState, id: &str) {
+async fn purge_via_kernel(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    id: &str,
+) {
     let payload = OpPayload::PurgeBlock(PurgeBlockPayload {
         block_id: BlockId::from_trusted(id),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append purge");
     let mut tx = pool.begin().await.expect("begin purge");
@@ -416,7 +420,7 @@ async fn purge_via_kernel(pool: &SqlitePool, state: &crate::loro::shared::LoroSt
 /// expected to IGNORE — see `interleaved_property_op_is_inert_to_block_parity`).
 async fn set_property_via_kernel(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     key: &str,
     value_text: &str,
@@ -430,7 +434,7 @@ async fn set_property_via_kernel(
         value_ref: None,
         value_bool: None,
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append set_property");
     let mut tx = pool.begin().await.expect("begin set_property");
@@ -487,13 +491,15 @@ const S_B: &str = "01HZ0000000000000000STCB01";
 ///   3. create A, B (children PARENT)
 ///   4. edit A                     — content UPDATE
 ///   5. move B under A             — reparent (the parent_id differential)
-async fn run_structural_kernel_arm(dir: &TempDir) -> (SqlitePool, crate::loro::shared::LoroState) {
+async fn run_structural_kernel_arm(
+    dir: &TempDir,
+) -> (SqlitePool, agaric_engine::loro::shared::LoroState) {
     let pool = init_pool(&dir.path().join("kernel_arm.db"))
         .await
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // (1) Page create — legitimately falls back to sql_only (no space yet), so
     // seed it into the engine to give the descendant creates a resolvable
@@ -544,7 +550,7 @@ async fn run_structural_kernel_arm(dir: &TempDir) -> (SqlitePool, crate::loro::s
         to_text: "structural-a-edited".into(),
         prev_edit: None,
     });
-    let edit_record = crate::op_log::append_local_op(&pool, DEVICE_ID, edit)
+    let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit)
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin edit");
@@ -560,7 +566,7 @@ async fn run_structural_kernel_arm(dir: &TempDir) -> (SqlitePool, crate::loro::s
         new_position: 1,
         new_index: Some(0),
     });
-    let mv_record = crate::op_log::append_local_op(&pool, DEVICE_ID, mv)
+    let mv_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
@@ -679,7 +685,7 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_kernel(&pool, &state, D_PAGE, "page", None, "divergence-page").await;
     stamp_owner(&pool, D_PAGE, None, D_PAGE).await;
@@ -714,7 +720,7 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
     let del_child = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(D_CHILD),
     });
-    let del_child_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_child)
+    let del_child_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_child)
         .await
         .expect("append delete child");
     let mut tx = pool.begin().await.expect("begin delete child");
@@ -727,7 +733,7 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
     let del_parent = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(D_PARENT),
     });
-    let del_parent_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_parent)
+    let del_parent_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_parent)
         .await
         .expect("append delete parent");
     let mut tx = pool.begin().await.expect("begin delete parent");
@@ -745,7 +751,7 @@ async fn run_divergence_kernel_arm(dir: &TempDir) -> SqlitePool {
         block_id: BlockId::from_trusted(D_CHILD),
         deleted_at_ref: del_child_record.created_at,
     });
-    let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+    let restore_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, restore)
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin restore");
@@ -969,12 +975,12 @@ const W_Y: &str = "01HZ0000000000000000W4CY01";
 ///   5. move X under Y    — reparent (index 0).
 async fn run_delete_restore_edit_move_arm(
     dir: &TempDir,
-) -> (SqlitePool, crate::loro::shared::LoroState) {
+) -> (SqlitePool, agaric_engine::loro::shared::LoroState) {
     let pool = init_pool(&dir.path().join("kernel_arm.db"))
         .await
         .expect("init_pool");
     seed_space(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_kernel(&pool, &state, W_PAGE, "page", None, "w-page").await;
     stamp_owner(&pool, W_PAGE, None, W_PAGE).await;
@@ -1067,7 +1073,7 @@ async fn run_purge_mid_lineage_arm(dir: &TempDir) -> SqlitePool {
         .await
         .expect("init_pool");
     seed_space(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_kernel(&pool, &state, PG_PAGE, "page", None, "pg-page").await;
     stamp_owner(&pool, PG_PAGE, None, PG_PAGE).await;
@@ -1139,12 +1145,12 @@ const R_C: &str = "01HZ0000000000000000R4CC01";
 ///   5. move C under the restored ancestor A.
 async fn run_reparent_under_restored_ancestor_arm(
     dir: &TempDir,
-) -> (SqlitePool, crate::loro::shared::LoroState) {
+) -> (SqlitePool, agaric_engine::loro::shared::LoroState) {
     let pool = init_pool(&dir.path().join("kernel_arm.db"))
         .await
         .expect("init_pool");
     seed_space(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_kernel(&pool, &state, R_PAGE, "page", None, "r-page").await;
     stamp_owner(&pool, R_PAGE, None, R_PAGE).await;
@@ -1242,7 +1248,7 @@ async fn run_property_interleave_arm(dir: &TempDir) -> SqlitePool {
         .await
         .expect("init_pool");
     seed_space(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_kernel(&pool, &state, SP_PAGE, "page", None, "sp-page").await;
     stamp_owner(&pool, SP_PAGE, None, SP_PAGE).await;

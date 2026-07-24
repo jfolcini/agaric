@@ -8,18 +8,18 @@ use tracing::instrument;
 
 use tauri::State;
 
-use crate::backlink::{
-    self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
-};
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::fts;
 use crate::materializer::Materializer;
 use crate::materializer::StatusInfo;
-use crate::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
-use crate::space::SpaceScope;
-use crate::sync_scheduler::SyncScheduler;
-use crate::ulid::{BlockId, PageId};
+use agaric_core::error::AppError;
+use agaric_core::ulid::{BlockId, PageId};
+use agaric_store::backlink::{
+    self, BacklinkFilter, BacklinkQueryResponse, BacklinkSort, GroupedBacklinkResponse,
+};
+use agaric_store::fts;
+use agaric_store::pagination::{self, ActiveBlockRow, BlockRow, Cursor, PageRequest, PageResponse};
+use agaric_store::space::SpaceScope;
+use agaric_sync::sync_scheduler::SyncScheduler;
 
 use super::*;
 
@@ -125,13 +125,15 @@ pub async fn get_status_inner(
 // #642: the shared search row / filter types (`SearchBlockRow`,
 // `SearchFilter`, `MatchOffset`, `NamedDateRange`, `SearchPropertyFilter`
 // and the `DateFilter` / `DateOp` types `SearchFilter` embeds) moved to the
-// neutral `crate::domain::search_types` layer so `crate::fts` (which
+// neutral `agaric_store::search_types` layer so `agaric_store::fts` (which
 // consumes them for SQL composition) can depend *down* on `domain` instead
 // of *up* on `commands`, breaking the `commands ⇄ fts` cycle. They are
 // re-exported here verbatim so every command-internal caller and the
 // `tauri-specta` binding collection keep using the `commands::queries`
 // path unchanged.
-pub use crate::domain::search_types::{
+// kept (#2897): removing this shim would churn the tauri-specta binding paths
+// (the `#[tauri::command]` signatures in this module reference these types).
+pub use agaric_store::search_types::{
     DateFilter, DateOp, MatchOffset, NamedDateRange, SearchBlockRow, SearchFilter,
     SearchPropertyFilter,
 };
@@ -499,7 +501,7 @@ pub async fn list_unlinked_references_inner(
 /// counted source blocks to those whose owning page carries
 /// `space = ?space_id`. Mirrors the `(?N IS NULL OR b.page_id IN (...))`
 /// clause used by every sibling backlink query (see
-/// `crate::backlink::query::eval_backlink_query`). Without this clause
+/// `agaric_store::backlink::query::eval_backlink_query`). Without this clause
 /// a page in space A could surface a non-zero badge count whose source
 /// blocks live in space B — backlinks the user can't actually see.
 /// [`SpaceScope::Global`] preserves the pre-spaces unscoped count.
@@ -507,7 +509,7 @@ pub async fn list_unlinked_references_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `page_ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - Database errors propagated from sqlx.
 #[instrument(skip(pool, page_ids), err)]
 pub async fn count_backlinks_batch_inner(
@@ -524,7 +526,7 @@ pub async fn count_backlinks_batch_inner(
     let ids_json = serde_json::to_string(&id_strings)?;
     // `?2` carries the active space id (or NULL for
     // [`SpaceScope::Global`]). The shape mirrors
-    // `crate::backlink::query::eval_backlink_query`:
+    // `agaric_store::backlink::query::eval_backlink_query`:
     //   `(?N IS NULL OR b.space_id = ?N)`
     // (#533, migration 0086 — `space_id` is a first-class column)
     // — applied to the SOURCE block (`b`) so a backlink whose source
@@ -696,8 +698,8 @@ pub struct PartitionedSearchResponse {
 ///
 /// `cancel` is an optional cancellation token threaded into
 /// the FTS path. The Tauri command wrapper stores a
-/// [`crate::cancellation::CancellationGuard`] in the
-/// [`crate::cancellation::CancellationRegistry`] extension state and
+/// [`agaric_store::cancellation::CancellationGuard`] in the
+/// [`agaric_store::cancellation::CancellationRegistry`] extension state and
 /// spawns this inner via `tokio::spawn`, so the guard outlives the
 /// wrapper future. When the wrapper future drops (or `cancel_search`
 /// fires it externally), the guard's `Drop` signals the spawned task,
@@ -714,7 +716,7 @@ pub async fn search_blocks_partitioned_inner(
     page_limit: u32,
     block_limit: u32,
     filter: SearchFilter,
-    cancel: Option<crate::cancellation::CancellationToken>,
+    cancel: Option<agaric_store::cancellation::CancellationToken>,
 ) -> Result<PartitionedSearchResponse, AppError> {
     // NEW-3 — the empty-query decision now lives in
     // `fts::search_with_toggles_partitioned`: a blank query with at
@@ -802,7 +804,7 @@ pub async fn search_blocks_partitioned_inner(
 #[specta::specta]
 pub async fn search_blocks_partitioned(
     pool: State<'_, ReadPool>,
-    registry: State<'_, crate::cancellation::CancellationRegistry>,
+    registry: State<'_, agaric_store::cancellation::CancellationRegistry>,
     query: String,
     page_limit: u32,
     block_limit: u32,
@@ -819,12 +821,12 @@ pub async fn search_blocks_partitioned(
     // which signals the spawned task via its token and the task
     // bails with [`AppError::Cancelled`] at the next row-batch
     // boundary.
-    let registry: crate::cancellation::CancellationRegistry = (*registry).clone();
+    let registry: agaric_store::cancellation::CancellationRegistry = (*registry).clone();
     let request_id = ulid::Ulid::r#gen().to_string();
-    let guard = std::sync::Arc::new(crate::cancellation::CancellationGuard::new());
+    let guard = std::sync::Arc::new(agaric_store::cancellation::CancellationGuard::new());
     let token = guard.token();
     registry.insert(request_id.clone(), std::sync::Arc::clone(&guard));
-    let _defer = crate::cancellation::CancelOnDrop::new(registry, request_id);
+    let _defer = agaric_store::cancellation::CancelOnDrop::new(registry, request_id);
 
     let pool_clone = pool.0.clone();
     // Spawn the inner search so its lifetime is independent of the
@@ -1372,7 +1374,7 @@ pub async fn filtered_blocks_query_inner(
             next_param += 1;
             // LIKE-escape the user-supplied prefix and append `%` —
             // mirrors `tag_query::resolve_tag_prefix_leaves`.
-            let escaped = format!("{}%", crate::sql_utils::escape_like(prefix));
+            let escaped = format!("{}%", agaric_core::sql_utils::escape_like(prefix));
             tag_binds.push(escaped);
             let mut union_arms = vec![
                 format!(

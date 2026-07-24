@@ -644,8 +644,8 @@ fn bench_batch_resolve(c: &mut Criterion) {
                         // takes `&SpaceScope` (was `Option<String>`).
                         // Wrap the bench fixture's space ULID in
                         // `SpaceScope::Active`.
-                        let scope = agaric_lib::space::SpaceScope::Active(
-                            agaric_lib::space::SpaceId::from_trusted(BENCH_SPACE_ID),
+                        let scope = agaric_store::space::SpaceScope::Active(
+                            agaric_store::space::SpaceId::from_trusted(BENCH_SPACE_ID),
                         );
                         batch_resolve_inner(
                             &pool,
@@ -731,7 +731,7 @@ fn bench_batch_properties(c: &mut Criterion) {
             |b, _| {
                 b.to_async(&rt).iter(|| {
                     let pool = pool.clone();
-                    let ids: Vec<agaric_lib::ulid::BlockId> =
+                    let ids: Vec<agaric_core::ulid::BlockId> =
                         subset.clone().into_iter().map(Into::into).collect();
                     async move { get_batch_properties_inner(&pool, ids).await.unwrap() }
                 });

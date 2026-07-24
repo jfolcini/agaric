@@ -7,22 +7,22 @@
 //! disk, which breaks a `../`-relative path).
 #![allow(unused_imports)]
 
-pub use agaric_sync::sync_daemon::snapshot_transfer::*;
+use agaric_sync::sync_daemon::snapshot_transfer::*;
 
 pub use std::collections::BTreeMap;
 pub use std::sync::Arc;
 pub use std::sync::atomic::AtomicBool;
 pub use tokio::io::AsyncWriteExt;
 
-pub use crate::snapshot::{SCHEMA_VERSION, apply_snapshot, get_latest_snapshot_with_frontier};
-pub use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
-pub use crate::sync_events::{SyncEvent, SyncEventSink};
-pub use crate::sync_net::SyncConnection;
-pub use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
-pub use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
-pub use crate::sync_protocol::{DeviceHead, SyncMessage};
-pub use agaric_core::error::AppError;
-pub use agaric_store::peer_refs;
+use agaric_core::error::AppError;
+use agaric_store::peer_refs;
+use agaric_sync::snapshot::{SCHEMA_VERSION, apply_snapshot, get_latest_snapshot_with_frontier};
+use agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE;
+use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
+use agaric_sync::sync_net::SyncConnection;
+use agaric_sync::sync_protocol::loro_sync::{self, ApplyOutcome};
+use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
+use agaric_sync::sync_protocol::{DeviceHead, SyncMessage};
 
 #[path = "snapshot_transfer_tests.rs"]
 mod snapshot_transfer_tests;

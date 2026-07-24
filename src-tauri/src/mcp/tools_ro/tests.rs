@@ -3,8 +3,8 @@ use crate::commands::tests::common::TEST_SPACE_ID;
 use crate::commands::{create_block_inner, create_space_inner};
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::mcp::actor::Actor;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::task_locals::Actor;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -1184,7 +1184,7 @@ async fn list_backlinks_missing_block_id_validation() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_backlinks_global_scope_parity() {
     use crate::commands::list_backlinks_grouped_inner;
-    use crate::space::SpaceScope;
+    use agaric_store::space::SpaceScope;
 
     let (tools, mat, _dir) = mk_tools().await;
     let target = create_block_inner(
@@ -2923,7 +2923,7 @@ async fn snapshot_journal_for_date_response_shape() {
 /// `mcp::server::tests::handle_tools_call_multi_op_tool_*`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_pages_does_not_populate_last_append() {
-    use crate::task_locals::{LAST_APPEND, take_appends};
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
     use std::cell::RefCell;
 
     let (tools, _mat, _dir) = mk_tools().await;

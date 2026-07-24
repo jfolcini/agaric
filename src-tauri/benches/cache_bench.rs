@@ -1,10 +1,10 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
-use agaric_lib::cache::{
+use agaric_lib::db::init_pool;
+use agaric_store::cache::{
     rebuild_agenda_cache, rebuild_page_ids, rebuild_pages_cache, rebuild_tags_cache,
     reindex_block_links,
 };
-use agaric_lib::db::init_pool;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

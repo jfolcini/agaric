@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::op_log;
+use agaric_store::op_log;
 use std::collections::HashSet;
 
 // ======================================================================
@@ -165,7 +165,7 @@ async fn restore_block_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf.page_id
             .as_ref()
-            .map(super::super::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: leaf inherits page_a as its initial page_id"
     );

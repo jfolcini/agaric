@@ -30,7 +30,7 @@ use crate::commands::pages::{
 use crate::commands::tests::common::{
     TEST_SPACE_ID, assign_to_space, ensure_test_space, insert_block, test_pool,
 };
-use crate::filters::primitive::FilterPrimitive;
+use agaric_store::filters::primitive::FilterPrimitive;
 
 /// Sentinel OUTBOUND-link target page. Seeded once (a `page` block) but NEVER
 /// assigned to the test space, so it cannot appear in the result set or

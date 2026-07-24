@@ -12,7 +12,7 @@ use super::*;
 pub(crate) async fn handle_foreground_task(
     pool: &SqlitePool,
     task: &MaterializeTask,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) -> Result<(), AppError> {
     match task {
         MaterializeTask::ApplyOp(record) => {

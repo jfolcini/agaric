@@ -50,12 +50,12 @@
 //! (<https://github.com/jfolcini/agaric/issues/1079>) is gone.
 
 use super::common::*;
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload,
     MoveBlockPayload, OpPayload, PurgeBlockPayload, RemoveTagPayload, RestoreBlockPayload,
     SetPropertyPayload,
 };
-use crate::ulid::BlockId;
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -128,7 +128,7 @@ async fn insert_seed_block(pool: &SqlitePool, b: &Value) {
 /// relabel). The fixture seed arrays are page-first (parents precede children),
 /// so a single forward pass satisfies the engine's parent-before-child
 /// requirement.
-fn seed_block_into_engine(state: &crate::loro::shared::LoroState, b: &Value) {
+fn seed_block_into_engine(state: &agaric_engine::loro::shared::LoroState, b: &Value) {
     let label = b["id"].as_str().expect("seed block id");
     let id = seed_label_to_id(label);
     let block_type = b["block_type"].as_str().expect("seed block_type");
@@ -295,7 +295,7 @@ async fn apply_op(pool: &SqlitePool, mat: &Materializer, op: &Value) {
         other => panic!("conformance op '{other}' is not wired in the Rust runner"),
     };
 
-    let record = crate::op_log::append_local_op(pool, DEV, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEV, payload)
         .await
         .expect("append_local_op");
     // `dispatch_op` runs the foreground ApplyOp (engine apply + reproject),
@@ -527,7 +527,7 @@ async fn run_fixture(path: &PathBuf) {
     // Seed properties (non-reserved keys only — reserved ones are column-backed).
     if let Some(props) = seed["properties"].as_array() {
         for p in props {
-            let block_id: crate::ulid::ActiveBlockId =
+            let block_id: agaric_core::ulid::ActiveBlockId =
                 seed_label_to_id(p["block_id"].as_str().expect("seed prop block_id"))
                     .as_str()
                     .into();
@@ -1102,9 +1102,10 @@ async fn local_and_sync_apply_project_identical_rows_2250() {
     for blk in &seed {
         seed_block_into_engine(state_s, blk);
     }
-    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
-        .await
-        .expect("append sync op");
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+            .await
+            .expect("append sync op");
     mat_s
         .enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
             std::sync::Arc::new(record_s),
@@ -1275,9 +1276,10 @@ async fn local_edit_block_link_parity_local_matches_remote_2344() {
     seed_pages_cache_row(&pool_s, &s1).await;
 
     let fb_s = crate::materializer::sql_only_fallback_count();
-    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
-        .await
-        .expect("append sync edit op");
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+            .await
+            .expect("append sync edit op");
     // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
     // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
     mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
@@ -1521,9 +1523,10 @@ async fn local_move_block_parity_local_matches_remote_2344() {
     seed_pool(&pool_s, &mat_s, &seed, &s1, &s2, &l, &link_text).await;
 
     let fb_s = crate::materializer::sql_only_fallback_count();
-    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::MoveBlock(move_payload))
-        .await
-        .expect("append sync move op");
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::MoveBlock(move_payload))
+            .await
+            .expect("append sync move op");
     mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
     settle(&mat_s).await;
     assert_eq!(
@@ -1773,9 +1776,10 @@ async fn local_edit_page_link_cache_converges_local_matches_remote_2397() {
     seed_pages_cache_row(&pool_s, &s2).await;
 
     let fb_s = crate::materializer::sql_only_fallback_count();
-    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
-        .await
-        .expect("append sync edit op");
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::EditBlock(edit_payload))
+            .await
+            .expect("append sync edit op");
     mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
     settle(&mat_s).await;
     assert_eq!(
@@ -1837,8 +1841,10 @@ async fn remote_apply_op_create_stamps_page_id_and_inbound_in_tx_2344() {
     // Give the seeded pages their own `page_id` (self) and a `pages_cache` row so
     // the in-tx inbound recompute has a target row to UPDATE and the link token
     // resolves to a page.
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
 
     // A fresh content block under SRC whose content links `[[TGT]]`.
     let new_id = BlockId::from(seed_label_to_id("NEW").as_str());
@@ -1850,7 +1856,7 @@ async fn remote_apply_op_create_stamps_page_id_and_inbound_in_tx_2344() {
         index: Some(0),
         content: format!("see [[{tgt}]]"),
     };
-    let record = crate::op_log::append_local_op(&pool, DEV, OpPayload::CreateBlock(payload))
+    let record = agaric_store::op_log::append_local_op(&pool, DEV, OpPayload::CreateBlock(payload))
         .await
         .expect("append remote create op");
     mat.enqueue_foreground(crate::materializer::MaterializeTask::ApplyOp(
@@ -2188,7 +2194,7 @@ async fn local_edit_block_is_engine_fresh_1257() {
 /// matches, AND the apply cursor stays put while op_log advances.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_set_property_is_engine_fresh_1257() {
-    use crate::loro::engine::PropertyValue;
+    use agaric_engine::loro::engine::PropertyValue;
 
     let target = seed_label_to_id("BA");
 
@@ -2927,7 +2933,7 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
 
     // The emitted RestoreBlock op must carry P's OWN cohort timestamp (the
     // exact cohort a peer's replay would restore — never G's).
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
     let restore_ops: Vec<_> = ops
@@ -3960,8 +3966,10 @@ async fn local_create_block_link_parity_local_matches_remote_2344() {
     // inbound recompute has a target row to UPDATE and the link token resolves
     // to a page.
     async fn prime(pool: &SqlitePool) {
-        crate::cache::rebuild_page_ids(pool).await.unwrap();
-        crate::cache::rebuild_pages_cache(pool).await.unwrap();
+        agaric_store::cache::rebuild_page_ids(pool).await.unwrap();
+        agaric_store::cache::rebuild_pages_cache(pool)
+            .await
+            .unwrap();
     }
 
     // ── LOCAL command path (create_block_inner → apply_op_projected(false)) ──
@@ -4035,9 +4043,10 @@ async fn local_create_block_link_parity_local_matches_remote_2344() {
     prime(&pool_s).await;
 
     let fb_s = crate::materializer::sql_only_fallback_count();
-    let record_s = crate::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
-        .await
-        .expect("append sync create op");
+    let record_s =
+        agaric_store::op_log::append_local_op(&pool_s, DEV, OpPayload::CreateBlock(payload))
+            .await
+            .expect("append sync create op");
     // `dispatch_op` runs the foreground ApplyOp (apply_op → apply_op_projected,
     // advance_cursor=true) + enqueues the background fan-out; `settle` drains it.
     mat_s.dispatch_op(&record_s).await.expect("dispatch_op");
@@ -4146,7 +4155,7 @@ async fn deleted_at_2934(pool: &SqlitePool, id: &str) -> Option<i64> {
 #[allow(clippy::type_complexity)]
 async fn seed_inheritance_fixture_2934(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) -> (String, String, String, String, String, String, String) {
     let tree = [
         json!({"id": "S1", "block_type": "page",    "content": "Home", "parent_id": null, "position": 1}),
@@ -4185,7 +4194,9 @@ async fn seed_inheritance_fixture_2934(
             .unwrap();
     }
     // Populate the initial inherited cache the way a live vault would have it.
-    crate::tag_inheritance::rebuild_all(pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(pool)
+        .await
+        .unwrap();
 
     (
         seed_label_to_id("S1"),
@@ -4237,7 +4248,9 @@ async fn delete_content_subtree_inheritance_matches_full_rebuild_2934() {
     let settled = read_inherited_2934(&pool).await;
 
     // Full rebuild over the post-delete live tree = the ground truth.
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
     let rebuilt = read_inherited_2934(&pool).await;
 
     assert_eq!(
@@ -4315,7 +4328,9 @@ async fn restore_content_subtree_inheritance_diverges_needs_rebuild_2934() {
             .await
             .unwrap();
     }
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
 
     delete_block_inner(&pool, DEV, &mat, BlockId::from(bb.as_str()))
         .await
@@ -4334,7 +4349,9 @@ async fn restore_content_subtree_inheritance_diverges_needs_rebuild_2934() {
     settle(&mat).await;
     let settled = read_inherited_2934(&pool).await;
 
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
     let rebuilt = read_inherited_2934(&pool).await;
 
     // Ground truth: the rebuild emits CC's inherited-from-AA row despite CC
@@ -4401,7 +4418,9 @@ async fn purge_content_subtree_inheritance_matches_full_rebuild_2934() {
     settle(&mat).await;
     let settled = read_inherited_2934(&pool).await;
 
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
     let rebuilt = read_inherited_2934(&pool).await;
 
     assert_eq!(

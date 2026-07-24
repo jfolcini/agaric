@@ -1,13 +1,13 @@
 //! Tauri-backed sync event sinks (#2621 agaric-sync split).
 //!
 //! The pure `SyncEvent` / `SyncProgressUpdate` types and the `SyncEventSink`
-//! trait live in [`crate::sync_events`]; this app-side module holds the two
+//! trait live in [`agaric_sync::sync_events`]; this app-side module holds the two
 //! concrete sinks that depend on Tauri — `TauriEventSink` (real `app.emit`
 //! events + `MdnsStatusState` backfill) and `ChannelEventSink` (the
 //! `tauri::ipc::Channel` streaming path). Keeping them out of `sync_events`
 //! leaves that module free of any Tauri dependency.
 
-use crate::sync_events::{
+use agaric_sync::sync_events::{
     EVENT_SYNC_COMPLETE, EVENT_SYNC_ERROR, EVENT_SYNC_MDNS_DISABLED, EVENT_SYNC_PROGRESS,
     MdnsStatus, MdnsStatusState, SyncEvent, SyncEventSink, SyncProgressUpdate,
 };
@@ -211,7 +211,9 @@ mod tests {
     // semantics now and will be updated in lockstep with that change.
 
     use super::ChannelEventSink;
-    use crate::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate};
+    use agaric_sync::sync_events::{
+        RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
+    };
     use std::sync::Arc;
 
     /// Build a `Channel<SyncProgressUpdate>` whose payloads land in a

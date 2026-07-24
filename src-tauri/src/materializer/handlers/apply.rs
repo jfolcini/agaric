@@ -34,7 +34,7 @@ impl OpApplyTimer {
 
 impl Drop for OpApplyTimer {
     fn drop(&mut self) {
-        crate::observability::record_op_apply_duration(
+        agaric_observability::record_op_apply_duration(
             self.started.elapsed().as_secs_f64() * 1000.0,
         );
     }
@@ -46,7 +46,7 @@ impl Drop for OpApplyTimer {
 pub(super) async fn apply_op(
     pool: &SqlitePool,
     record: &Arc<OpRecord>,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) -> Result<(), AppError> {
     // #2896: live / remote single-op apply reprojects inline. Only the
     // boot-replay path reaches `apply_op_with_mode` with
@@ -87,7 +87,7 @@ pub(super) async fn apply_op_with_mode(
     // rewound to that checkpoint so it never stays ahead of the rolled-back SQL
     // (the REMOTE-path divergence #2603 pins, which — unlike the LOCAL path —
     // does not self-heal via boot replay).
-    let revert = crate::loro::revert::RevertScope::arm(state);
+    let revert = agaric_engine::loro::revert::RevertScope::arm(state);
     // #2325/#2250: the single-op REMOTE path and the LOCAL command path now
     // share ONE projection function, [`apply_op_projected`]. The only
     // variation is the `advance_cursor` flag: `true` here (the REMOTE /
@@ -196,7 +196,7 @@ pub(crate) async fn dispatch_restore_descendants(
     pool: &SqlitePool,
     root_record: &OpRecord,
     cohort: &[String],
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) {
     // #2226: thin wrapper over the shared restore fan-out; the downward cohort
     // and upward ancestor variants differ only in the op-id infix + log wording
@@ -229,7 +229,7 @@ pub(crate) async fn dispatch_restore_ancestors(
     pool: &SqlitePool,
     root_record: &OpRecord,
     ancestors: &[String],
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) {
     // #2226: thin wrapper over the shared restore fan-out (see
     // [`dispatch_restore_descendants`]); only the op-id infix (`#ancestor/`)
@@ -300,10 +300,10 @@ async fn fan_out_restore(
     root_record: &OpRecord,
     ids: &[String],
     kind: FanoutKind,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) {
-    use crate::op::{OpPayload, RestoreBlockPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{OpPayload, RestoreBlockPayload};
 
     if ids.is_empty() {
         return;
@@ -334,7 +334,7 @@ async fn fan_out_restore(
     // per-space tree and is alive again post-commit, so `resolve_block_space`
     // succeeds). Keeps fanout O(N) on the engine call, not on SQL queries.
     let root_block = BlockId::from_trusted(root_payload.block_id.as_str());
-    let space_id = match crate::space::resolve_block_space(pool, &root_block).await {
+    let space_id = match agaric_store::space::resolve_block_space(pool, &root_block).await {
         Ok(Some(s)) => s,
         Ok(None) => {
             // #2031: SQL restore committed but the root block has no resolvable
@@ -378,7 +378,7 @@ async fn fan_out_restore(
             kind.op_id_infix(),
             id,
         );
-        crate::merge::engine_apply(
+        agaric_engine::merge::engine_apply(
             &op_id,
             &payload,
             &root_record.device_id,
@@ -422,11 +422,11 @@ async fn fan_out_restore(
 pub(crate) async fn dispatch_delete_descendants(
     root_record: &OpRecord,
     cohort: &[String],
-    space_id: Option<&crate::space::SpaceId>,
-    state: &crate::loro::shared::LoroState,
+    space_id: Option<&agaric_store::space::SpaceId>,
+    state: &agaric_engine::loro::shared::LoroState,
 ) {
-    use crate::op::OpPayload;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::OpPayload;
 
     if cohort.is_empty() {
         return;
@@ -460,7 +460,7 @@ pub(crate) async fn dispatch_delete_descendants(
             "{}/{}#cohort/{}",
             root_record.device_id, root_record.seq, cohort_id,
         );
-        crate::merge::engine_apply(
+        agaric_engine::merge::engine_apply(
             &op_id,
             &payload,
             &root_record.device_id,

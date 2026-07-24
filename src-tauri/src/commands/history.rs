@@ -6,15 +6,15 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{OpPayload, OpRef, UndoResult};
-use crate::op_log;
-use crate::pagination;
-use crate::pagination::HistoryEntry;
-use crate::pagination::PageResponse;
-use crate::space::SpaceScope;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{OpPayload, OpRef, UndoResult};
+use agaric_store::op_log;
+use agaric_store::pagination;
+use agaric_store::pagination::HistoryEntry;
+use agaric_store::pagination::PageResponse;
+use agaric_store::space::SpaceScope;
 
 use super::*;
 
@@ -36,7 +36,7 @@ const MAX_REVERT_OPS: usize = 1000;
 /// Reads the canonical sibling order — `(position ASC, id ASC)`, the same tuple
 /// the read side and engine projection use — over the non-tombstoned children of
 /// `parent_id`, then delegates to
-/// [`crate::loro::projection::reproject_dense_positions`] (a single set-based
+/// [`agaric_engine::loro::projection::reproject_dense_positions`] (a single set-based
 /// `UPDATE … FROM json_each`). This is the SQL-only analogue of the engine
 /// reprojection the foreground apply path runs: the reverse-apply path
 /// ([`apply_reverse_in_tx`]) never enters `apply_op_tx`, so its MoveBlock arm
@@ -62,7 +62,7 @@ async fn reproject_live_sibling_group(
     .await?;
     // `reproject_dense_positions` takes `&mut SqliteConnection`; `&mut Transaction`
     // deref-coerces to it, so pass `tx` directly (clippy::explicit_auto_deref).
-    crate::loro::projection::reproject_dense_positions(tx, &ordered).await
+    agaric_engine::loro::projection::reproject_dense_positions(tx, &ordered).await
 }
 
 /// Preflight a reverse [`OpPayload::MoveBlock`] against the CURRENT tree
@@ -85,7 +85,7 @@ async fn reproject_live_sibling_group(
 /// `reverse::is_skippable_non_reversible`).
 async fn reverse_move_preflight(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    p: &crate::op::MoveBlockPayload,
+    p: &agaric_store::op::MoveBlockPayload,
 ) -> Result<(), AppError> {
     // A move back to top level (`new_parent_id = None`) has no target parent
     // to validate and can never form a cycle.
@@ -117,7 +117,9 @@ async fn reverse_move_preflight(
     // Cycle probe — the SAME shared helper the forward command path
     // (`move_ops.rs`) and the materializer SQL-only fallback (`sql_only.rs`)
     // use, so the three SQL-side `parent_id` writers cannot drift.
-    if crate::block_descendants::move_would_cycle(&mut **tx, p.block_id.as_str(), pid).await? {
+    if agaric_store::block_descendants::move_would_cycle(&mut **tx, p.block_id.as_str(), pid)
+        .await?
+    {
         tracing::warn!(
             block_id = %p.block_id,
             prior_parent = %pid,
@@ -187,9 +189,9 @@ async fn reverse_move_preflight(
 /// self-exclusion below is unconditional.
 async fn reverse_move_block(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
-    p: &crate::op::MoveBlockPayload,
+    p: &agaric_store::op::MoveBlockPayload,
     extra_exclude: &std::collections::HashSet<&str>,
 ) -> Result<(), AppError> {
     let new_parent_id_str = p.new_parent_id.as_ref().map(BlockId::as_str);
@@ -268,7 +270,7 @@ async fn reverse_move_block(
         .clamp(0, group_len);
     let slot = usize::try_from(slot).unwrap_or(target_group.len());
     target_group.insert(slot, move_block_id_str.to_owned());
-    crate::loro::projection::reproject_dense_positions(tx, &target_group).await?;
+    agaric_engine::loro::projection::reproject_dense_positions(tx, &target_group).await?;
 
     // Source group — it lost a member on a cross-parent undo and must
     // re-densify (order unchanged, so the `(position, id)` sort is exact
@@ -283,7 +285,7 @@ async fn reverse_move_block(
     // update, callers reading right after commit see a stale `page_id` /
     // `space_id` (#533) for the moved subtree until the async `RebuildPageIds`
     // materializer task lands.
-    crate::commands::block_cleanup::rederive_page_and_space_ids(tx, move_block_id_str).await?;
+    agaric_store::block_descendants::rederive_page_and_space_ids(tx, move_block_id_str).await?;
 
     // Drive the SAME reverse move into the shared per-space engine so its
     // fractional sibling order converges with the SQL settle above. The
@@ -296,7 +298,7 @@ async fn reverse_move_block(
     // forward path's engine-unavailable handling (`apply_move_block_via_loro`):
     // an unresolved space or a block/parent missing from the engine falls back
     // to the SQL-only result with a breadcrumb — boot replay reconciles.
-    let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+    let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
     if let Some(space_id) = space_id {
         // #2604 — record a rollback checkpoint (the reverse-move is the only
         // engine mutation on the undo/redo path, which bypasses
@@ -374,11 +376,11 @@ fn reverse_op_timestamp(reverse_payload: &OpPayload) -> i64 {
 /// `tx.arm_engine_rollback`); it must NOT `.await` — the `EngineGuard` is
 /// `!Send` and cannot cross an await point.
 fn drive_reverse_engine(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
-    space_id: Option<crate::space::SpaceId>,
+    space_id: Option<agaric_store::space::SpaceId>,
     op_label: &str,
-    apply: impl FnOnce(&mut crate::loro::engine::LoroEngine) -> Result<(), AppError>,
+    apply: impl FnOnce(&mut agaric_engine::loro::engine::LoroEngine) -> Result<(), AppError>,
 ) -> Result<(), AppError> {
     let Some(space_id) = space_id else {
         tracing::warn!(
@@ -443,7 +445,7 @@ fn drive_reverse_engine(
 /// ZERO rows and silently no-op.
 pub async fn apply_reverse_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     reverse_payload: &OpPayload,
     op_created_at: i64,
@@ -474,7 +476,7 @@ pub async fn apply_reverse_in_tx(
             // `descendants_cte_active!()` filters `deleted_at IS NULL`
             // so already-deleted descendants aren't re-swept; `depth
             // < 100` bounds the walk. Shared CTE lives in
-            // `crate::block_descendants`.
+            // `agaric_store::block_descendants`.
             //
             // Page_id is invariant under re-delete; the
             // descendants keep their existing `page_id` and on next
@@ -493,17 +495,17 @@ pub async fn apply_reverse_in_tx(
             // depth-100 cap tombstones the WHOLE subtree instead of leaving
             // a live tail stranded under tombstoned ancestors.
             let now = op_created_at;
-            let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+            let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
                 tx,
                 p.block_id.as_str(),
-                crate::block_descendants::DescendantWalkFilter::Active,
+                agaric_store::block_descendants::DescendantWalkFilter::Active,
             )
             .await?;
             // #2655: resolve the space from the seed BEFORE the cascade tombstones
             // it — `resolve_block_space` filters `deleted_at IS NULL`, so a
             // post-delete resolve returns None. Mirrors the forward delete path
             // (`apply_delete_block_via_loro`), which likewise resolves first.
-            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
             // Borrowed serialization (`to_string(&cohort)`) so `cohort` stays
             // alive for the engine fan-out below; `serde_json::Error` converts to
             // `AppError::Json`.
@@ -547,10 +549,10 @@ pub async fn apply_reverse_in_tx(
             // `project_restore_block_to_sql` / `collect_restore_cohort` —
             // so undo/revert restores the WHOLE cohort of a merged tree
             // deeper than the depth-100 cap.
-            let cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+            let cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
                 tx,
                 p.block_id.as_str(),
-                crate::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
+                agaric_store::block_descendants::DescendantWalkFilter::Cohort(p.deleted_at_ref),
             )
             .await?;
             // #2655: borrowed serialization keeps `cohort` alive for the engine
@@ -583,9 +585,11 @@ pub async fn apply_reverse_in_tx(
             // — the engine fan-out below re-clears `deleted_at` on every restored
             // ancestor so the CRDT converges with the SQL UPDATE (mirrors the
             // forward path's `dispatch_restore_ancestors`, #2017).
-            let restored_chain =
-                crate::block_descendants::restore_deleted_ancestor_chain(tx, p.block_id.as_str())
-                    .await?;
+            let restored_chain = agaric_store::block_descendants::restore_deleted_ancestor_chain(
+                tx,
+                p.block_id.as_str(),
+            )
+            .await?;
             let restored_ancestor_top = restored_chain.topmost.clone();
 
             // Idempotency guard: the reverse of a delete may target a block
@@ -610,7 +614,7 @@ pub async fn apply_reverse_in_tx(
                 // #664 this arm open-coded the chain and had drifted to skip
                 // the `space_id` step; routing through the shared helper makes
                 // the complete behaviour structurally impossible to drift.
-                crate::commands::block_cleanup::rederive_page_and_space_ids(
+                agaric_store::block_descendants::rederive_page_and_space_ids(
                     tx,
                     p.block_id.as_str(),
                 )
@@ -621,7 +625,7 @@ pub async fn apply_reverse_in_tx(
                 // reconnected subtree — not just `block_id`'s — is refreshed,
                 // mirroring `restore_block_inner`'s `inheritance_root`.
                 if let Some(ref top) = restored_ancestor_top {
-                    crate::commands::block_cleanup::rederive_page_and_space_ids(tx, top).await?;
+                    agaric_store::block_descendants::rederive_page_and_space_ids(tx, top).await?;
                 }
 
                 // #2655: converge the per-space engine with the SQL restore. The
@@ -634,7 +638,8 @@ pub async fn apply_reverse_in_tx(
                 // set; restoring the ancestor chain mirrors the forward path's
                 // `dispatch_restore_ancestors` (#2017) so a later reproject does
                 // not re-delete the reconnected ancestors in SQL.
-                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+                let space_id =
+                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
                 drive_reverse_engine(state, device_id, space_id, "restore_block", |engine| {
                     for id in cohort.iter().chain(restored_chain.chain.iter()) {
                         engine.apply_restore_block(id)?;
@@ -666,7 +671,7 @@ pub async fn apply_reverse_in_tx(
             // and the block is live (the UPDATE matched a row), so it resolves a
             // space. The present-guard mirrors the forward path's block-absent
             // fallback.
-            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
             drive_reverse_engine(state, device_id, space_id, "edit_block", |engine| {
                 if engine.read_block(block_id_str)?.is_some() {
                     engine.apply_edit_via_diff_splice(block_id_str, &p.to_text)?;
@@ -700,7 +705,7 @@ pub async fn apply_reverse_in_tx(
             // #2655: mirror the tag association into the per-space engine's
             // `block_tags` map (idempotent, per-key LWW), matching the forward
             // `apply_add_tag_via_loro`, so the exported CRDT carries the tag.
-            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
             drive_reverse_engine(state, device_id, space_id, "add_tag", |engine| {
                 if engine.read_block(block_id_str)?.is_some() {
                     engine.apply_add_tag(block_id_str, tag_id_str)?;
@@ -722,7 +727,7 @@ pub async fn apply_reverse_in_tx(
             // #2655: mirror the tag removal into the per-space engine (idempotent
             // — no-ops when the tag is absent), matching the forward
             // `apply_remove_tag_via_loro`.
-            let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            let space_id = agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
             drive_reverse_engine(state, device_id, space_id, "remove_tag", |engine| {
                 if engine.read_block(block_id_str)?.is_some() {
                     engine.apply_remove_tag(block_id_str, tag_id_str)?;
@@ -742,7 +747,7 @@ pub async fn apply_reverse_in_tx(
             // value_date / value_ref extraction) and stays idempotent on
             // every branch (UPDATE / INSERT OR REPLACE), preserving the
             // batch-undo idempotency policy documented above.
-            crate::loro::projection::project_set_property_to_sql(tx, p).await?;
+            agaric_engine::loro::projection::project_set_property_to_sql(tx, p).await?;
 
             // #2655: mirror the property write into the per-space engine's
             // property map, matching the forward `apply_set_property_via_loro`.
@@ -756,11 +761,12 @@ pub async fn apply_reverse_in_tx(
             // forward path, so they are driven here too. `PropertyValue::from(p)`
             // recovers the native typed value by the same precedence the forward
             // path uses.
-            if p.key != crate::op::SPACE_PROPERTY_KEY {
-                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
+                let space_id =
+                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
                 drive_reverse_engine(state, device_id, space_id, "set_property", |engine| {
                     if engine.read_block(p.block_id.as_str())?.is_some() {
-                        let value = crate::loro::engine::PropertyValue::from(p);
+                        let value = agaric_engine::loro::engine::PropertyValue::from(p);
                         engine.apply_set_property_typed(p.block_id.as_str(), &p.key, &value)?;
                     }
                     Ok(())
@@ -772,7 +778,7 @@ pub async fn apply_reverse_in_tx(
             // NULL their `blocks` column, `space` NULLs `space_id` for the
             // owning-page group, generic keys DELETE the `block_properties`
             // row. All branches are idempotent (0-row UPDATE/DELETE no-ops).
-            crate::loro::projection::project_delete_property_to_sql(
+            agaric_engine::loro::projection::project_delete_property_to_sql(
                 tx,
                 p.block_id.as_str(),
                 &p.key,
@@ -784,8 +790,9 @@ pub async fn apply_reverse_in_tx(
             // `apply_delete_property_via_loro`. The `space` key is EXCLUDED for
             // the same reason as the SetProperty arm above (column-backed; never
             // in the engine property map).
-            if p.key != crate::op::SPACE_PROPERTY_KEY {
-                let space_id = crate::space::resolve_block_space(&mut **tx, &p.block_id).await?;
+            if p.key != agaric_store::op::SPACE_PROPERTY_KEY {
+                let space_id =
+                    agaric_store::space::resolve_block_space(&mut **tx, &p.block_id).await?;
                 drive_reverse_engine(state, device_id, space_id, "delete_property", |engine| {
                     if engine.read_block(p.block_id.as_str())?.is_some() {
                         engine.apply_delete_property(p.block_id.as_str(), &p.key)?;
@@ -971,7 +978,7 @@ pub async fn revert_ops_inner(
 async fn revert_ops_in_tx(
     tx: &mut CommandTx,
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     ops: Vec<OpRef>,
     skip_non_reversible: bool,
@@ -1349,10 +1356,10 @@ pub async fn restore_page_to_op_inner(
         // IMMEDIATE transaction as the membership SELECT (#1551 atomicity).
         // The batched walker keeps invariant #9 per batch
         // (depth<100: DESCENDANT_DEPTH_CAP, see block_descendants).
-        let subtree_ids = crate::block_descendants::collect_subtree_ids_unbounded(
+        let subtree_ids = agaric_store::block_descendants::collect_subtree_ids_unbounded(
             &mut tx,
             &page_id,
-            crate::block_descendants::DescendantWalkFilter::All,
+            agaric_store::block_descendants::DescendantWalkFilter::All,
         )
         .await?;
         // sqlx requires `String` (NOT `Vec<String>`) for `json_each(?)`
@@ -2440,7 +2447,7 @@ pub async fn compute_edit_diff_inner(
     pool: &SqlitePool,
     device_id: String,
     seq: i64,
-) -> Result<Option<Vec<crate::word_diff::DiffSpan>>, AppError> {
+) -> Result<Option<Vec<agaric_core::word_diff::DiffSpan>>, AppError> {
     let row = sqlx::query!(
         "SELECT op_type, payload, created_at FROM op_log \
          WHERE device_id = ?1 AND seq = ?2",
@@ -2467,11 +2474,12 @@ pub async fn compute_edit_diff_inner(
     // generic "an internal error occurred" string before it reaches the
     // frontend, dropping the row identifiers.  `InvalidOperation` is in the
     // pass-through set, so this message survives sanitisation intact.
-    let payload: crate::op::EditBlockPayload = serde_json::from_str(&row.payload).map_err(|e| {
-        AppError::InvalidOperation(format!(
-            "op ({device_id}, {seq}) payload not parseable as EditBlockPayload: {e}"
-        ))
-    })?;
+    let payload: agaric_store::op::EditBlockPayload =
+        serde_json::from_str(&row.payload).map_err(|e| {
+            AppError::InvalidOperation(format!(
+                "op ({device_id}, {seq}) payload not parseable as EditBlockPayload: {e}"
+            ))
+        })?;
     // #382: pass the op's own `device_id` so `find_prior_text` tie-breaks
     // strictly before this op on the canonical `(created_at, seq,
     // device_id)` order — this op is identified by `(device_id, seq)`.
@@ -2485,7 +2493,7 @@ pub async fn compute_edit_diff_inner(
     .await?;
 
     let old_text = prior.unwrap_or_default();
-    Ok(Some(crate::word_diff::compute_word_diff(
+    Ok(Some(agaric_core::word_diff::compute_word_diff(
         &old_text,
         &payload.to_text,
     )))
@@ -2499,7 +2507,7 @@ pub async fn compute_edit_diff(
     pool: State<'_, ReadPool>,
     device_id: String,
     seq: i64,
-) -> Result<Option<Vec<crate::word_diff::DiffSpan>>, AppError> {
+) -> Result<Option<Vec<agaric_core::word_diff::DiffSpan>>, AppError> {
     compute_edit_diff_inner(&pool.0, device_id, seq)
         .await
         .map_err(sanitize_internal_error)
@@ -2532,7 +2540,7 @@ pub async fn compute_block_vs_current_diff_inner(
     block_id: BlockId,
     historical_created_at: i64,
     historical_seq: i64,
-) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
+) -> Result<Vec<agaric_core::word_diff::DiffSpan>, AppError> {
     // AGENTS.md invariant #8: ULIDs are stored uppercase; `BlockId`
     // already holds the canonical uppercase form on construction, so the
     // indexed column comparison hits the on-disk row directly.
@@ -2613,14 +2621,14 @@ pub async fn compute_block_vs_current_diff_inner(
     // surface row identity through `sanitize_internal_error`'s pass-through
     // set when the on-disk payload is corrupt.
     let historical = if row.op_type == "edit_block" {
-        let p: crate::op::EditBlockPayload = serde_json::from_str(&row.payload).map_err(|e| {
+        let p: agaric_store::op::EditBlockPayload = serde_json::from_str(&row.payload).map_err(|e| {
             AppError::InvalidOperation(format!(
                 "op for '{block_id_upper}' at seq <= {historical_seq} payload not parseable as EditBlockPayload: {e}"
             ))
         })?;
         p.to_text
     } else {
-        let p: crate::op::CreateBlockPayload =
+        let p: agaric_store::op::CreateBlockPayload =
             serde_json::from_str(&row.payload).map_err(|e| {
                 AppError::InvalidOperation(format!(
                     "op for '{block_id_upper}' at seq <= {historical_seq} payload not parseable as CreateBlockPayload: {e}"
@@ -2629,7 +2637,10 @@ pub async fn compute_block_vs_current_diff_inner(
         p.content
     };
 
-    Ok(crate::word_diff::compute_word_diff(&historical, &current))
+    Ok(agaric_core::word_diff::compute_word_diff(
+        &historical,
+        &current,
+    ))
 }
 
 /// Tauri command: compute word-level diff between a block's historical
@@ -2649,7 +2660,7 @@ pub async fn compute_block_vs_current_diff(
     block_id: BlockId,
     historical_created_at: i64,
     historical_seq: i64,
-) -> Result<Vec<crate::word_diff::DiffSpan>, AppError> {
+) -> Result<Vec<agaric_core::word_diff::DiffSpan>, AppError> {
     compute_block_vs_current_diff_inner(&pool.0, block_id, historical_created_at, historical_seq)
         .await
         .map_err(sanitize_internal_error)
@@ -2667,9 +2678,9 @@ mod tests {
     use crate::commands::{create_block_inner, edit_block_inner};
     use crate::db::init_pool;
     use crate::materializer::Materializer;
-    use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::op_log::append_local_op_at;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
+    use agaric_store::op_log::append_local_op_at;
     use std::path::PathBuf;
     use tempfile::TempDir;
 
@@ -2825,7 +2836,7 @@ mod tests {
     }
 
     /// Happy path: a real create + edit chain produces a `Some(diff)` with
-    /// at least one [`crate::word_diff::DiffSpan`], confirming
+    /// at least one [`agaric_core::word_diff::DiffSpan`], confirming
     /// `find_prior_text` was consulted and `compute_word_diff` was driven.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn compute_edit_diff_inner_returns_diff_for_valid_edit() {
@@ -2881,7 +2892,7 @@ mod tests {
     /// ops are enumerated and the group spans them.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn find_undo_group_includes_delete_attachment_ops() {
-        use crate::op::{AddAttachmentPayload, DeleteAttachmentPayload, EditBlockPayload};
+        use agaric_store::op::{AddAttachmentPayload, DeleteAttachmentPayload, EditBlockPayload};
 
         let (pool, _dir) = test_pool().await;
 
@@ -3033,7 +3044,7 @@ mod tests {
     /// to 3.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn find_undo_group_excludes_reverse_ops_1517() {
-        use crate::op::EditBlockPayload;
+        use agaric_store::op::EditBlockPayload;
 
         let (pool, _dir) = test_pool().await;
 

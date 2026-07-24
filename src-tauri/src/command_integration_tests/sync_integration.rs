@@ -1,6 +1,6 @@
 use super::common::*;
-use crate::peer_refs;
-use crate::sync_scheduler::SyncScheduler;
+use agaric_store::peer_refs;
+use agaric_sync::sync_scheduler::SyncScheduler;
 use std::sync::Mutex;
 
 // ======================================================================
@@ -194,7 +194,7 @@ async fn pairing_lifecycle_arms_pending_window_with_proof() {
             .await
             .unwrap()
             .as_deref(),
-        Some(crate::pairing::pairing_proof(&passphrase).as_str()),
+        Some(agaric_sync::pairing::pairing_proof(&passphrase).as_str()),
         "the pending marker carries the passphrase proof for the responder gate (#855)"
     );
 

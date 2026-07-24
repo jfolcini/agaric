@@ -12,11 +12,11 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::error::ValidationCode;
-use crate::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
-use crate::pagination::{Cursor, PageRequest, PageResponse};
-use crate::ulid::{BlockId, PageId};
+use agaric_core::error::AppError;
+use agaric_core::error::ValidationCode;
+use agaric_core::ulid::{BlockId, PageId};
+use agaric_store::filters::{FilterPrimitive, PagesProjection, Projection, WhereClause};
+use agaric_store::pagination::{Cursor, PageRequest, PageResponse};
 
 use super::super::*;
 
@@ -594,7 +594,7 @@ fn compile_pages_filters(
     // (zero results); reject it loudly with the `InvalidDateFilter` code.
     for prim in filters {
         if let FilterPrimitive::LastEdited {
-            spec: crate::filters::LastEditedSpec::Range { start, end },
+            spec: agaric_store::filters::LastEditedSpec::Range { start, end },
         } = prim
         {
             validate_last_edited_date("range start", start)?;
@@ -632,7 +632,8 @@ fn compile_pages_filters(
         // single-sourced through that method so the two surfaces stay in
         // lockstep on everything but the `b.id` vs `b.page_id` alias.
         let wc = if let FilterPrimitive::PathGlob { pattern, exclude } = prim {
-            let prepared = crate::fts::glob_filter::prepare_globs(std::slice::from_ref(pattern))?;
+            let prepared =
+                agaric_store::fts::glob_filter::prepare_globs(std::slice::from_ref(pattern))?;
             if prepared.is_empty() {
                 // Whitespace-only / fully-stripped pattern → no rows to
                 // constrain; emit NO clause for this primitive (skip).
@@ -644,7 +645,7 @@ fn compile_pages_filters(
             // EVERY per-pattern set, i.e. match NONE).
             let joiner = if *exclude { " AND " } else { " OR " };
             let mut frag = String::new();
-            let mut frag_binds: Vec<crate::filters::primitive::Bind> = Vec::new();
+            let mut frag_binds: Vec<agaric_store::filters::primitive::Bind> = Vec::new();
             frag.push('(');
             for (i, pat) in prepared.iter().enumerate() {
                 if i > 0 {
@@ -653,7 +654,7 @@ fn compile_pages_filters(
                 let inner = proj.compile_path_glob(
                     pat,
                     *exclude,
-                    crate::filters::primitive::DEFAULT_ROW_ALIAS,
+                    agaric_store::filters::primitive::DEFAULT_ROW_ALIAS,
                 );
                 frag.push_str(&inner.sql);
                 frag_binds.extend(inner.binds);
@@ -685,14 +686,14 @@ fn compile_pages_filters(
         // `?` placeholders are numbered `?{next_pos}` in a single arithmetic
         // pass and a `?`/bind-count drift is a release-active hard error,
         // replacing the former char-by-char scan.
-        let fragment = crate::filters::SqlFragment::from_where_clause(wc);
+        let fragment = agaric_store::filters::SqlFragment::from_where_clause(wc);
         let sql = fragment.render(&mut next_pos);
         clauses.push(format!("({sql})"));
         for b in fragment.into_binds() {
             binds.push(match b {
-                crate::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
-                crate::filters::primitive::Bind::Int(i) => SqlBind::I64(i),
-                crate::filters::primitive::Bind::Real(f) => SqlBind::F64(f),
+                agaric_store::filters::primitive::Bind::Text(s) => SqlBind::OwnedStr(s),
+                agaric_store::filters::primitive::Bind::Int(i) => SqlBind::I64(i),
+                agaric_store::filters::primitive::Bind::Real(f) => SqlBind::F64(f),
             });
         }
     }

@@ -3,7 +3,8 @@
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-use agaric_lib::{db::init_pool, pagination::*};
+use agaric_lib::db::init_pool;
+use agaric_store::pagination::*;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
 

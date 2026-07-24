@@ -1,6 +1,6 @@
 use super::super::*;
 use super::common::*;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
 
 // ======================================================================
 // list_blocks with agenda_source filter
@@ -444,19 +444,19 @@ async fn count_agenda_batch_empty_dates_returns_empty() {
 }
 
 /// #2542 — `count_agenda_batch_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
 /// rejects with Validation before the runaway `json_each(?1)` membership
 /// scan (checked before per-date format validation, so the cap dominates).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("2025-06-{i:02}"))
         .collect();
     let big = count_agenda_batch_inner(&pool, oversize, &SpaceScope::Global).await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -580,18 +580,18 @@ async fn count_agenda_batch_by_source_empty_dates_returns_empty() {
 }
 
 /// #2542 — `count_agenda_batch_by_source_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `dates` list
 /// rejects with Validation (checked before per-date format validation).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_agenda_batch_by_source_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("2025-06-{i:02}"))
         .collect();
     let big = count_agenda_batch_by_source_inner(&pool, oversize, &SpaceScope::Global).await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -1903,8 +1903,8 @@ async fn projected_agenda_on_the_fly_page_and_cursor_stable_when_over_page_size(
     // Walk the cursor, accumulating every entry across pages. Each page is
     // capped at 5; the restructured cap/cursor logic must hand back the same
     // ordered slice the old code produced.
-    let mut collected: Vec<crate::pagination::ActiveProjectedAgendaEntry> = Vec::new();
-    let mut cursor: Option<crate::pagination::Cursor> = None;
+    let mut collected: Vec<agaric_store::pagination::ActiveProjectedAgendaEntry> = Vec::new();
+    let mut cursor: Option<agaric_store::pagination::Cursor> = None;
     let mut pages = 0;
     loop {
         let page = list_projected_agenda_on_the_fly(
@@ -1941,7 +1941,7 @@ async fn projected_agenda_on_the_fly_page_and_cursor_stable_when_over_page_size(
             break;
         }
         let next = next.expect("has_more implies a next_cursor");
-        cursor = Some(crate::pagination::Cursor::decode(&next).unwrap());
+        cursor = Some(agaric_store::pagination::Cursor::decode(&next).unwrap());
         assert!(pages < 20, "pagination must terminate");
     }
 
@@ -3591,7 +3591,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     //    `_with_today` variant mirrors `list_projected_agenda_inner_with_today`
     // .
     let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
-    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
 
@@ -3606,7 +3606,7 @@ async fn projected_agenda_cached_equals_on_the_fly() {
     //    parity is then a comparison on the shared
     //    `recurrence::project_block_dates` helper.
     let range_start = pinned_today;
-    let range_end = pinned_today + chrono::Duration::days(crate::cache::HORIZON_DAYS);
+    let range_end = pinned_today + chrono::Duration::days(agaric_store::cache::HORIZON_DAYS);
     let range_end_str = range_end.format("%Y-%m-%d").to_string();
     let mut cached_results = Vec::new();
     let mut cursor: Option<String> = None;
@@ -3742,7 +3742,7 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
 
     // Rebuild with a pinned today: cache holds exactly HORIZON_OCCURRENCES
     // rows and advertises horizon = pinned_today + HORIZON_DAYS.
-    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
 
@@ -3787,7 +3787,7 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
         .unwrap();
     assert_eq!(
         cache_rows,
-        i64::try_from(crate::cache::HORIZON_OCCURRENCES).unwrap(),
+        i64::try_from(agaric_store::cache::HORIZON_OCCURRENCES).unwrap(),
         "cache must hold exactly the capped occurrence count"
     );
     assert!(
@@ -3969,7 +3969,7 @@ async fn projected_agenda_prefilter_is_superset_2069() {
     //    the prefilter's superset output against the explicit expected set
     //    below (cache-vs-on-the-fly parity WITHIN the horizon is covered by
     //    `projected_agenda_cached_equals_on_the_fly`).
-    crate::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
         .await
         .unwrap();
     let mut cached_results = Vec::new();
@@ -4037,7 +4037,7 @@ async fn projected_agenda_prefilter_is_superset_2069() {
     };
 
     let to_pairs =
-        |items: &[crate::pagination::ActiveProjectedAgendaEntry]| -> Vec<(String, String)> {
+        |items: &[agaric_store::pagination::ActiveProjectedAgendaEntry]| -> Vec<(String, String)> {
             items
                 .iter()
                 .map(|e| (e.block.id.as_str().to_string(), e.projected_date.clone()))
@@ -4504,7 +4504,7 @@ async fn list_projected_agenda_fallback_respects_cursor() {
 
     // Second page: decode the cursor and pass it back in. Its first
     // entry must be `full_items[3]` (i.e. entry #N+1 where N = page_limit).
-    let decoded_cursor = crate::pagination::Cursor::decode(cursor_token).unwrap();
+    let decoded_cursor = agaric_store::pagination::Cursor::decode(cursor_token).unwrap();
     let page2 = list_projected_agenda_on_the_fly(
         &pool,
         range_start,

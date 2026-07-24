@@ -3,7 +3,7 @@
 //! (`apply_move_block_via_loro`, via the real foreground `apply_op_tx`
 //! pipeline with the Loro engine installed) AND the sql_only fallback arm
 //! (`apply_move_block_sql_only`, called directly — exactly the fn the routing
-//! dispatches to when `crate::loro::shared::get()` is `None`), then asserts the
+//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then asserts the
 //! resulting `blocks.parent_id` is IDENTICAL between the two arms.
 //!
 //! The fixture seeds TWO parents (P1, P2) each with multiple children, so a
@@ -61,8 +61,8 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -86,7 +86,7 @@ const MOVE_INDEX: i64 = 2;
 /// space and route through `apply_move_block_via_loro`).
 async fn create_via_loro(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -100,7 +100,7 @@ async fn create_via_loro(
         index: None,
         content: "seed".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
@@ -116,14 +116,14 @@ async fn create_via_loro(
 /// cannot engine-apply through a create op (no space at create time) so its
 /// descendants' creates/moves take the engine path.
 fn seed_block_into_engine(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     space_id: &str,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
     position: i64,
 ) {
-    let space = crate::space::SpaceId::from_trusted(space_id);
+    let space = agaric_store::space::SpaceId::from_trusted(space_id);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -180,7 +180,7 @@ async fn run_engine_arm() -> (Option<String>, i64) {
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
@@ -224,10 +224,10 @@ async fn run_engine_arm() -> (Option<String>, i64) {
     let mv = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: BlockId::from_trusted(C1A_ID),
         new_parent_id: Some(BlockId::from_trusted(P2_ID)),
-        new_position: crate::pagination::index_to_provisional_position(MOVE_INDEX),
+        new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
         new_index: Some(MOVE_INDEX),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, mv)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
@@ -268,7 +268,7 @@ async fn run_fallback_arm() -> (Option<String>, i64) {
         MoveBlockPayload {
             block_id: BlockId::from_trusted(C1A_ID),
             new_parent_id: Some(BlockId::from_trusted(P2_ID)),
-            new_position: crate::pagination::index_to_provisional_position(MOVE_INDEX),
+            new_position: agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
             new_index: Some(MOVE_INDEX),
         },
     )
@@ -358,7 +358,7 @@ async fn move_sql_only_fallback_converges_with_engine_arm() {
     // pin the FORMULA, not to claim cross-arm equality — see the module doc.)
     assert_eq!(
         fb_pos,
-        crate::pagination::index_to_provisional_position(MOVE_INDEX),
+        agaric_store::pagination::index_to_provisional_position(MOVE_INDEX),
         "fallback arm must write the provisional rank (index + 1); got {fb_pos}"
     );
 }
@@ -378,7 +378,7 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
         .expect("init_pool");
     seed_space(&pool).await;
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
@@ -421,10 +421,10 @@ async fn run_engine_cycle_arm() -> (Option<String>, Option<String>) {
     let mv = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: BlockId::from_trusted(P1_ID),
         new_parent_id: Some(BlockId::from_trusted(C1A_ID)),
-        new_position: crate::pagination::index_to_provisional_position(0),
+        new_position: agaric_store::pagination::index_to_provisional_position(0),
         new_index: Some(0),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, mv)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, mv)
         .await
         .expect("append cycle move");
     let mut tx = pool.begin().await.expect("begin cycle move");
@@ -489,7 +489,7 @@ async fn run_fallback_cycle_arm() -> (Option<String>, Option<String>) {
         MoveBlockPayload {
             block_id: BlockId::from_trusted(P1_ID),
             new_parent_id: Some(BlockId::from_trusted(C1A_ID)),
-            new_position: crate::pagination::index_to_provisional_position(0),
+            new_position: agaric_store::pagination::index_to_provisional_position(0),
             new_index: Some(0),
         },
     )
@@ -574,21 +574,21 @@ async fn move_cycle_rejected_consistently_across_arms() {
     let mut conn = pool.acquire().await.expect("acquire");
     // Cycle (P1 under its descendant C1A) → true.
     assert!(
-        crate::block_descendants::move_would_cycle(&mut *conn, P1_ID, C1A_ID)
+        agaric_store::block_descendants::move_would_cycle(&mut *conn, P1_ID, C1A_ID)
             .await
             .expect("probe"),
         "shared move_would_cycle must flag P1→under-C1A as a cycle (the command path errs on it)"
     );
     // Self-parent → true.
     assert!(
-        crate::block_descendants::move_would_cycle(&mut *conn, P1_ID, P1_ID)
+        agaric_store::block_descendants::move_would_cycle(&mut *conn, P1_ID, P1_ID)
             .await
             .expect("probe self"),
         "shared move_would_cycle must flag a self-parent move as a cycle"
     );
     // Non-cycle (C1A under nothing-related, e.g. C1A → page) → false.
     assert!(
-        !crate::block_descendants::move_would_cycle(&mut *conn, C1A_ID, P1_ID)
+        !agaric_store::block_descendants::move_would_cycle(&mut *conn, C1A_ID, P1_ID)
             .await
             .expect("probe non-cycle"),
         "shared move_would_cycle must NOT flag a legitimate move (C1A already under P1)"
@@ -693,7 +693,7 @@ async fn cache_counts(pool: &SqlitePool, page_id: &str) -> (i64, i64) {
 /// exactly the in-tx maintenance under test.
 async fn move_via_apply_op_tx(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     new_parent: Option<&str>,
     new_index: i64,
@@ -701,10 +701,10 @@ async fn move_via_apply_op_tx(
     let mv = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: BlockId::from_trusted(block_id),
         new_parent_id: new_parent.map(BlockId::from_trusted),
-        new_position: crate::pagination::index_to_provisional_position(new_index),
+        new_position: agaric_store::pagination::index_to_provisional_position(new_index),
         new_index: Some(new_index),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, mv)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, mv)
         .await
         .expect("append move");
     let mut tx = pool.begin().await.expect("begin move");
@@ -717,16 +717,16 @@ async fn move_via_apply_op_tx(
 /// The canonical background convergence (the eventual "settle"): vault-wide
 /// `page_id` / `space_id` rebuilds + full `pages_cache` count recompute.
 async fn settle_rebuilds(pool: &SqlitePool) {
-    crate::cache::rebuild_page_ids(pool)
+    agaric_store::cache::rebuild_page_ids(pool)
         .await
         .expect("rebuild_page_ids");
-    crate::cache::rebuild_space_ids(pool)
+    agaric_store::cache::rebuild_space_ids(pool)
         .await
         .expect("rebuild_space_ids");
-    crate::cache::rebuild_pages_cache(pool)
+    agaric_store::cache::rebuild_pages_cache(pool)
         .await
         .expect("rebuild_pages_cache");
-    crate::cache::rebuild_pages_cache_counts(pool)
+    agaric_store::cache::rebuild_pages_cache_counts(pool)
         .await
         .expect("rebuild_pages_cache_counts");
 }
@@ -749,7 +749,7 @@ async fn remote_apply_op_move_rederives_space_id_and_counts_in_tx_2344() {
         .await
         .expect("init_pool");
     seed_spaces_registry(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Space A: page PA -> content M -> content MC. Space B: page PB.
     insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
@@ -836,7 +836,7 @@ async fn remote_apply_op_move_to_top_level_refreshes_outbound_target_inbound_234
         .await
         .expect("init_pool");
     seed_spaces_registry(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Page PA owns content MC; separate page PT is MC's link target.
     insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;
@@ -898,7 +898,7 @@ async fn remote_apply_op_move_same_parent_reorder_skips_maintenance_2344() {
         .await
         .expect("init_pool");
     seed_spaces_registry(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Page PA with two content children A, B (same parent).
     insert_block_row(&pool, PA, "page", None, 0, Some(PA), Some(SPACE_A)).await;

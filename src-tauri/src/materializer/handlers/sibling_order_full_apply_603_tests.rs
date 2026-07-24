@@ -1,8 +1,8 @@
 use crate::db::init_pool;
-use crate::loro::shared::LoroState;
-use crate::op::OpPayload;
-use crate::space::SpaceId;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_engine::loro::shared::LoroState;
+use agaric_store::op::OpPayload;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -69,9 +69,13 @@ async fn seed_page(pool: &SqlitePool, state: &LoroState) {
 /// Append `payload` to op_log and drive it through the FULL
 /// `apply_op` path — in-tx engine apply, cursor advance, commit,
 /// post-commit fanout — exactly like the production consumer.
-async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payload: OpPayload) {
+async fn apply(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    payload: OpPayload,
+) {
     let record = std::sync::Arc::new(
-        crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
             .await
             .expect("append op_log"),
     );
@@ -81,7 +85,7 @@ async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payloa
 }
 
 fn new_scheme_create(block_id: &str, index: i64) -> OpPayload {
-    OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+    OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
         block_id: BlockId::from_trusted(block_id),
         block_type: "content".into(),
         parent_id: Some(BlockId::from_trusted(PAGE_ID)),
@@ -137,7 +141,7 @@ async fn sql_children(pool: &SqlitePool) -> Vec<String> {
 #[tokio::test]
 async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
     let (pool, _dir) = fresh_pool().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     seed_page(&pool, &state).await;
 
     // A appended at slot 0.
@@ -187,7 +191,7 @@ async fn full_apply_op_keeps_engine_and_sql_sibling_order_in_lockstep() {
     apply(
         &pool,
         &state,
-        OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_C),
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99,

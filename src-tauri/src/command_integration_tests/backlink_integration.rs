@@ -1,6 +1,6 @@
 use super::common::*;
-use crate::backlink::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
-use crate::space::SpaceScope;
+use agaric_store::backlink::{BacklinkFilter, BacklinkSort, CompareOp, SortDir};
+use agaric_store::space::SpaceScope;
 use std::collections::HashSet;
 
 // ======================================================================

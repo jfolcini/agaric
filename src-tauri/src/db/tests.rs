@@ -40,7 +40,7 @@ async fn block_properties_rejects_reserved_key_534() {
     // Each column-backed key must be rejected by the guard. #589:
     // iterate the single source of truth so a key added to the constant
     // without a matching CHECK migration fails this test.
-    for key in crate::op::COLUMN_BACKED_PROPERTY_KEYS {
+    for key in agaric_store::op::COLUMN_BACKED_PROPERTY_KEYS {
         let res = sqlx::query(
             "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, ?, ?)",
         )
@@ -105,7 +105,7 @@ async fn reserved_key_set_matches_db_check_constraint_589() {
         .split(',')
         .map(|s| s.trim().trim_matches('\'').to_owned())
         .collect();
-    let const_keys: BTreeSet<String> = crate::op::COLUMN_BACKED_PROPERTY_KEYS
+    let const_keys: BTreeSet<String> = agaric_store::op::COLUMN_BACKED_PROPERTY_KEYS
         .iter()
         .map(|s| (*s).to_owned())
         .collect();
@@ -126,14 +126,14 @@ async fn reserved_key_set_matches_db_check_constraint_589() {
 /// so a constant addition without a mapping arm fails here.
 #[test]
 fn reserved_key_blocks_column_covers_column_backed_set_589() {
-    for key in crate::op::COLUMN_BACKED_PROPERTY_KEYS {
+    for key in agaric_store::op::COLUMN_BACKED_PROPERTY_KEYS {
         let col = reserved_key_blocks_column(key);
         assert!(
             col.is_some(),
             "column-backed key '{key}' must have a blocks-column mapping in \
                  reserved_key_blocks_column"
         );
-        let expected = if key == crate::op::SPACE_PROPERTY_KEY {
+        let expected = if key == agaric_store::op::SPACE_PROPERTY_KEY {
             "space_id"
         } else {
             key
@@ -921,7 +921,7 @@ async fn begin_immediate_logged_emits_warn_on_slow_acquire() {
 // CommandTx newtype tests
 // ======================================================================
 
-use crate::op_log::OpRecord;
+use agaric_store::op_log::OpRecord;
 
 /// Build a non-roundtrippable but structurally-valid `OpRecord` for
 /// tests that only care about whether dispatch *fires* (the

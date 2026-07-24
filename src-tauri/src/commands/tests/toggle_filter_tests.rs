@@ -26,9 +26,9 @@ use super::common::{
     TEST_SPACE_ID, assign_all_to_test_space, ensure_test_space, insert_block, test_pool,
 };
 use crate::commands::{MatchOffset, SearchFilter, search_blocks_inner};
-use crate::error::AppError;
-use crate::fts::rebuild_fts_index;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_core::error::AppError;
+use agaric_store::fts::rebuild_fts_index;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 /// Helper: build a default `SearchFilter` scoped to the test space, with
 /// the toggle flags applied per `case_sensitive` / `whole_word` /
@@ -288,7 +288,7 @@ async fn regex_compile_error_surfaces_typed_validation() {
     match err {
         AppError::Validation { code, .. } => assert_eq!(
             code,
-            Some(crate::error::ValidationCode::InvalidRegex),
+            Some(agaric_core::error::ValidationCode::InvalidRegex),
             "expected InvalidRegex code"
         ),
         other => panic!("expected Validation, got {other:?}"),

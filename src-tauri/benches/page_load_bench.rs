@@ -19,9 +19,9 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{get_blocks_inner, load_page_subtree_inner};
 use agaric_lib::db::init_pool;
-use agaric_lib::ulid::BlockId;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

@@ -1165,7 +1165,7 @@ async fn partitioned_all_filters_populated_executes_cleanly() {
         excluded_priority_filter: vec!["C".to_string()],
         // #1320-C — exercise the `last-edited:` projection splice in the
         // partitioned builder alongside every other filter clause.
-        last_edited: Some(crate::filters::primitive::LastEditedSpec::Rolling { days: 7 }),
+        last_edited: Some(agaric_store::filters::primitive::LastEditedSpec::Rolling { days: 7 }),
     };
 
     // The corpus deliberately does NOT match all of these predicates —

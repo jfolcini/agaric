@@ -39,12 +39,12 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use agaric_lib::cache::{
-    rebuild_agenda_cache, rebuild_page_link_cache, rebuild_pages_cache, rebuild_tags_cache,
-};
+use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{list_all_pages_in_space_inner, load_page_subtree_inner};
 use agaric_lib::db::init_pool;
-use agaric_lib::ulid::BlockId;
+use agaric_store::cache::{
+    rebuild_agenda_cache, rebuild_page_link_cache, rebuild_pages_cache, rebuild_tags_cache,
+};
 
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};

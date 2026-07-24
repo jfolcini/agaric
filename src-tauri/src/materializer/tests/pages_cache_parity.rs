@@ -13,8 +13,8 @@
 // To the cached columns. Drift here is the cliff is closing.
 
 use super::*;
-use crate::loro::shared::LoroState;
 use crate::materializer::handlers::{handle_background_task, handle_foreground_task};
+use agaric_engine::loro::shared::LoroState;
 
 /// Recompute `(inbound_link_count, child_block_count)` for `page_id`
 /// from FIRST PRINCIPLES — deliberately NOT a copy of the recompute

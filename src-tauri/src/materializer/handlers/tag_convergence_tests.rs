@@ -3,7 +3,7 @@
 //! (`apply_*_via_loro`, via the real foreground `apply_op_tx` pipeline
 //! with the Loro engine installed) AND the sql_only fallback arm
 //! (`apply_*_sql_only`, called directly — exactly the fn the routing
-//! dispatches to when `crate::loro::shared::get()` is `None`), then
+//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then
 //! asserts the resulting `block_tags` + `block_tag_inherited` rows are
 //! byte-for-byte IDENTICAL between the two arms after each settle.
 //!
@@ -29,8 +29,8 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::op::{AddTagPayload, CreateBlockPayload, OpPayload, RemoveTagPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{AddTagPayload, CreateBlockPayload, OpPayload, RemoveTagPayload};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -133,7 +133,7 @@ async fn seed_blocks_sql(pool: &SqlitePool) {
 /// RemoveTag to resolve a space and route through `apply_*_via_loro`).
 async fn create_via_loro(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -147,7 +147,7 @@ async fn create_via_loro(
         index: None,
         content: "seed".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
@@ -193,7 +193,7 @@ async fn run_engine_arm() -> (
         .await
         .expect("register space");
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     // Seed the whole hierarchy through the engine so every block resolves
     // to SPACE_ID and the AddTag / RemoveTag ops take the via_loro arm.
     create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
@@ -223,7 +223,7 @@ async fn run_engine_arm() -> (
         block_id: BlockId::from_trusted(PARENT_ID),
         tag_id: BlockId::from_trusted(TAG_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, add)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, add)
         .await
         .expect("append add");
     let mut tx = pool.begin().await.expect("begin add");
@@ -240,7 +240,7 @@ async fn run_engine_arm() -> (
         block_id: BlockId::from_trusted(PARENT_ID),
         tag_id: BlockId::from_trusted(TAG_ID),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, remove)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, remove)
         .await
         .expect("append remove");
     let mut tx = pool.begin().await.expect("begin remove");

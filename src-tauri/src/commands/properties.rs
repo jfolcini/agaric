@@ -7,13 +7,13 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::backlink;
 use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::pagination;
-use crate::pagination::ActiveBlockRow;
-use crate::ulid::{ActiveBlockId, BlockId};
+use agaric_core::error::AppError;
+use agaric_core::ulid::{ActiveBlockId, BlockId};
+use agaric_store::backlink;
+use agaric_store::pagination;
+use agaric_store::pagination::ActiveBlockRow;
 
 use super::sanitize_internal_error;
 use super::*;
@@ -63,7 +63,7 @@ fn emit_property_changed_event(
     block_id: String,
     changed_keys: Vec<String>,
 ) {
-    use crate::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
+    use agaric_sync::sync_events::{EVENT_PROPERTY_CHANGED, PropertyChangedEvent};
     use tauri::Emitter;
     if let Err(e) = app.emit(
         EVENT_PROPERTY_CHANGED,
@@ -885,7 +885,9 @@ pub async fn delete_property_inner(
     // routes them to the matching `blocks` column. So the guard is the
     // built-in set MINUS the reserved column keys — i.e. exactly the
     // lifecycle keys.
-    if crate::op::is_builtin_property_key(&key) && !crate::op::is_reserved_property_key(&key) {
+    if agaric_store::op::is_builtin_property_key(&key)
+        && !agaric_store::op::is_reserved_property_key(&key)
+    {
         return Err(AppError::validation(format!(
             "cannot delete system-managed property '{key}'"
         )));
@@ -1011,7 +1013,7 @@ pub async fn create_property_def_inner(
         )));
     }
 
-    let now = crate::now_rfc3339();
+    let now = agaric_core::time::now_rfc3339();
     sqlx::query(
         "INSERT OR IGNORE INTO property_definitions (key, value_type, options, created_at) VALUES (?, ?, ?, ?)",
     )
@@ -1254,7 +1256,7 @@ pub async fn update_property_def_options_inner(
 /// message.
 #[instrument(skip(pool), err)]
 pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result<(), AppError> {
-    if crate::op::is_builtin_property_key(&key) {
+    if agaric_store::op::is_builtin_property_key(&key) {
         return Err(AppError::validation(
             "cannot delete builtin property definition".into(),
         ));
@@ -1306,7 +1308,7 @@ pub async fn delete_property_def_inner(pool: &SqlitePool, key: String) -> Result
 ///
 /// # Errors
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, block_ids), err)]
 pub async fn get_batch_properties_inner(
     pool: &SqlitePool,

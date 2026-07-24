@@ -1,6 +1,6 @@
 //! mDNS lifecycle is not unit-tested here. The discovery event lifecycle
 //! (ServiceResolved/ServiceRemoved → peer add/evict, stale-peer eviction,
-//! IPv6/IPv4 ordering) is covered by `crate::sync_daemon::discovery`'s
+//! IPv6/IPv4 ordering) is covered by `agaric_sync::sync_daemon::discovery`'s
 //! `process_discovery_event` and its tests in `sync_daemon/tests.rs`
 //! (`stale_mdns_peers_evicted` and the T-41 eviction edge cases). The
 //! crate-level `sync_integration_tests.rs` that previously held the diffy-era
@@ -9,7 +9,7 @@
 
 use super::tls::{AllowAnyCert, PinningCertVerifier};
 use super::*;
-use crate::sync_protocol::{DeviceHead, SyncMessage};
+use agaric_sync::sync_protocol::{DeviceHead, SyncMessage};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -60,7 +60,7 @@ fn generate_cert_subject_alt_names_include_loopback_and_mdns() {
     use x509_parser::prelude::*;
 
     let cert = generate_self_signed_cert("test-device-san").unwrap();
-    let der = crate::sync_net::pem_to_der(&cert.cert_pem).unwrap();
+    let der = agaric_sync::sync_net::pem_to_der(&cert.cert_pem).unwrap();
     let (_, parsed) = X509Certificate::from_der(&der).unwrap();
 
     let mut dns_names: Vec<String> = Vec::new();
@@ -118,7 +118,7 @@ fn sync_message_roundtrip_head_exchange() {
             hash: "abc123".into(),
         }],
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -516,7 +516,7 @@ async fn tls_roundtrip_json_exchange() {
             hash: "abc123".into(),
         }],
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -657,7 +657,7 @@ async fn responder_sessions_capped_by_semaphore() {
     install_crypto_provider();
     let cert = generate_self_signed_cert("cap-test").unwrap();
 
-    let cap = crate::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
+    let cap = agaric_sync::sync_constants::MAX_CONCURRENT_RESPONDER_SESSIONS;
 
     // Shared session bookkeeping: `active` is the current number of in-flight
     // responder sessions, `peak` the high-water mark, `release` unblocks every
@@ -1384,7 +1384,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 hash: "head_hash_alice".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1418,7 +1418,7 @@ async fn mtls_full_handshake_both_sides_see_peer_identity() {
                 hash: "head_hash_bob".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1956,7 +1956,7 @@ async fn responder_releases_permit_after_tls_handshake_timeout() {
     // `TLS_HANDSHAKE_TIMEOUT` so this passes even if the stalled connection
     // briefly held a slot (it should not, since the cap is large, but the real
     // guarantee under test is that the stalled permit is eventually released).
-    let timeout = crate::sync_constants::TLS_HANDSHAKE_TIMEOUT + Duration::from_secs(5);
+    let timeout = agaric_sync::sync_constants::TLS_HANDSHAKE_TIMEOUT + Duration::from_secs(5);
     let client_cert = generate_self_signed_cert("hs-timeout-client").unwrap();
     let normal = tokio::time::timeout(timeout, connect_to_peer(&addr, None, None, &client_cert))
         .await
@@ -2010,7 +2010,7 @@ async fn connect_to_peer_times_out_on_stalled_tls() {
 
     // Bound the test above `CONNECT_TIMEOUT` so a regression (no timeout) is
     // caught as a test hang rather than a false pass.
-    let bound = crate::sync_constants::CONNECT_TIMEOUT + Duration::from_secs(5);
+    let bound = agaric_sync::sync_constants::CONNECT_TIMEOUT + Duration::from_secs(5);
     let result = tokio::time::timeout(bound, connect_to_peer(&addr, None, None, &client_cert))
         .await
         .expect("connect_to_peer must return (via CONNECT_TIMEOUT), not hang the round");

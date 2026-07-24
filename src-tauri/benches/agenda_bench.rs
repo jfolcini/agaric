@@ -13,7 +13,7 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::space::SpaceScope;
+use agaric_store::space::SpaceScope;
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

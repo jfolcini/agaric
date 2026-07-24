@@ -1,5 +1,5 @@
 use super::*;
-use crate::loro::shared::LoroState;
+use agaric_engine::loro::shared::LoroState;
 
 // ======================================================================
 // B-62: BatchApplyOps atomicity — if last op fails, none persist

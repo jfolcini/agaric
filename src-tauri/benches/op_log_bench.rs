@@ -3,10 +3,10 @@
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use agaric_core::ulid::BlockId;
 use agaric_lib::db::init_pool;
-use agaric_lib::op::*;
-use agaric_lib::op_log::append_local_op;
-use agaric_lib::ulid::BlockId;
+use agaric_store::op::*;
+use agaric_store::op_log::append_local_op;
 
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

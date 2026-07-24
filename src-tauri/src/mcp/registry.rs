@@ -27,8 +27,8 @@ use std::future::Future;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::actor::ActorContext;
-use crate::error::AppError;
+use agaric_core::error::AppError;
+use agaric_store::task_locals::ActorContext;
 
 // ---------------------------------------------------------------------------
 // MCP tool-name constants
@@ -167,7 +167,7 @@ impl ToolRegistry for PlaceholderRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::actor::{Actor, ActorContext};
+    use agaric_store::task_locals::{Actor, ActorContext};
     use serde_json::json;
 
     fn test_ctx() -> ActorContext {

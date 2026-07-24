@@ -36,7 +36,7 @@ use specta::Type;
 use tauri_plugin_notification::NotificationExt;
 
 use crate::commands::sanitize_internal_error;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Payload describing the notification to fire for a due / scheduled task.
 ///

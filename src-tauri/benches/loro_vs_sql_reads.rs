@@ -75,7 +75,7 @@
 use std::time::Instant;
 
 use agaric_lib::db::init_pool;
-use agaric_lib::pagination::{PageRequest, list_children};
+use agaric_store::pagination::{PageRequest, list_children};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

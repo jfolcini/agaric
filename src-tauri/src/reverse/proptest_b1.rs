@@ -37,11 +37,11 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::op::{OpPayload, OpType};
 use crate::proptest_db_harness::{
     AppliedChain, HARNESS_DEVICE, observe_prior_position, observe_prior_property,
     observe_prior_text, op_chain_strategy, seed_chain,
 };
+use agaric_store::op::{OpPayload, OpType};
 use proptest::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -82,7 +82,7 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 async fn assert_inverse_law(
     pool: &SqlitePool,
     chain: &AppliedChain,
-    rec: &crate::op_log::OpRecord,
+    rec: &agaric_store::op_log::OpRecord,
     payload: &OpPayload,
 ) -> Result<(), TestCaseError> {
     let reverse = match compute_reverse(pool, HARNESS_DEVICE, rec.seq).await {
@@ -425,11 +425,11 @@ async fn purge_block_is_rejected_not_mis_reversed() {
 
     // Seed a create + delete so the block exists and is purgeable, then a
     // purge_block op. compute_reverse(purge) must be NonReversible.
-    let bid = crate::ulid::BlockId::new();
-    crate::op_log::append_local_op_at(
+    let bid = agaric_core::ulid::BlockId::new();
+    agaric_store::op_log::append_local_op_at(
         &pool,
         HARNESS_DEVICE,
-        OpPayload::CreateBlock(crate::op::CreateBlockPayload {
+        OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
             block_id: bid.clone(),
             block_type: "content".into(),
             parent_id: None,
@@ -441,10 +441,10 @@ async fn purge_block_is_rejected_not_mis_reversed() {
     )
     .await
     .unwrap();
-    let purge = crate::op_log::append_local_op_at(
+    let purge = agaric_store::op_log::append_local_op_at(
         &pool,
         HARNESS_DEVICE,
-        OpPayload::PurgeBlock(crate::op::PurgeBlockPayload {
+        OpPayload::PurgeBlock(agaric_store::op::PurgeBlockPayload {
             block_id: bid.clone(),
         }),
         1_736_942_460_000,
@@ -489,14 +489,14 @@ async fn purge_block_is_rejected_not_mis_reversed() {
 #[tokio::test]
 async fn regression_reverse_set_property_after_delete_should_be_delete() {
     let (pool, _dir) = test_pool().await;
-    let bid = crate::ulid::BlockId::new();
+    let bid = agaric_core::ulid::BlockId::new();
     let key = "due_date";
 
     // Set(K="A")
-    crate::op_log::append_local_op_at(
+    agaric_store::op_log::append_local_op_at(
         &pool,
         HARNESS_DEVICE,
-        OpPayload::SetProperty(crate::op::SetPropertyPayload {
+        OpPayload::SetProperty(agaric_store::op::SetPropertyPayload {
             block_id: bid.clone(),
             key: key.into(),
             value_text: Some("A".into()),
@@ -510,10 +510,10 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
     .await
     .unwrap();
     // Delete(K)
-    crate::op_log::append_local_op_at(
+    agaric_store::op_log::append_local_op_at(
         &pool,
         HARNESS_DEVICE,
-        OpPayload::DeleteProperty(crate::op::DeletePropertyPayload {
+        OpPayload::DeleteProperty(agaric_store::op::DeletePropertyPayload {
             block_id: bid.clone(),
             key: key.into(),
         }),
@@ -522,10 +522,10 @@ async fn regression_reverse_set_property_after_delete_should_be_delete() {
     .await
     .unwrap();
     // Set(K="a") — the op we reverse.
-    let last_set = crate::op_log::append_local_op_at(
+    let last_set = agaric_store::op_log::append_local_op_at(
         &pool,
         HARNESS_DEVICE,
-        OpPayload::SetProperty(crate::op::SetPropertyPayload {
+        OpPayload::SetProperty(agaric_store::op::SetPropertyPayload {
             block_id: bid.clone(),
             key: key.into(),
             value_text: Some("a".into()),

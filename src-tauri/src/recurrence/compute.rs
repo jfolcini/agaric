@@ -5,7 +5,7 @@ use sqlx::SqlitePool;
 
 use crate::materializer::Materializer;
 #[cfg(test)]
-use crate::pagination::NULL_POSITION_SENTINEL;
+use agaric_store::pagination::NULL_POSITION_SENTINEL;
 
 /// Handle recurrence when a task transitions to DONE.
 ///
@@ -42,7 +42,7 @@ pub(crate) async fn handle_recurrence(
     device_id: &str,
     materializer: &Materializer,
     block_id: &str,
-) -> Result<bool, crate::error::AppError> {
+) -> Result<bool, agaric_core::error::AppError> {
     let state = std::sync::Arc::clone(materializer.loro_state());
     // H-17: open BEGIN IMMEDIATE up front so every property read below
     // and the sibling creation/property writes downstream all run inside
@@ -74,10 +74,10 @@ pub(crate) async fn handle_recurrence(
 /// function only enqueues op records via `tx.enqueue_background(...)`.
 pub(crate) async fn handle_recurrence_in_tx(
     tx: &mut crate::db::CommandTx,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
-) -> Result<bool, crate::error::AppError> {
+) -> Result<bool, agaric_core::error::AppError> {
     // #2621 THE INVERSION: the recurrence-sibling core moved down into
     // `agaric_engine::recurrence`. This shim keeps the `CommandTx` /
     // `Materializer` orchestration app-side: it forwards the open
@@ -121,7 +121,7 @@ mod tests_h17_m77 {
     };
     use crate::db::init_pool;
     use crate::materializer::Materializer;
-    use crate::pagination::BlockRow;
+    use agaric_store::pagination::BlockRow;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -144,8 +144,8 @@ mod tests_h17_m77 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
-                      due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+            r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                      due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
         )
@@ -499,7 +499,7 @@ mod tests_l99_l100 {
     };
     use crate::db::init_pool;
     use crate::materializer::Materializer;
-    use crate::pagination::BlockRow;
+    use agaric_store::pagination::BlockRow;
     use sqlx::SqlitePool;
     use std::path::PathBuf;
     use tempfile::TempDir;
@@ -523,8 +523,8 @@ mod tests_l99_l100 {
     async fn find_todo_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
         sqlx::query_as!(
             BlockRow,
-            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
-                      due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+            r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                      due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
                FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
             original_id
         )

@@ -10,6 +10,8 @@ pub use command_tx::*;
 // unchanged. The local `pool` glob below carries only the app-side remainder
 // (`WriteCtx`, `init_pools`, `init_pool`) — the two export disjoint names, so
 // the globs don't collide.
+// kept (#2897): aggregation seam — app `db` module composes store primitives
+// (`DbPools`/pragmas/`now_ms`) with app-local `command_tx`/`pool`/`recovery`.
 pub use agaric_store::db::*;
 pub use pool::*;
 // #1893: the reserved-key→`blocks`-column mapping (`reserved_key_blocks_column`)

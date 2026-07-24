@@ -64,6 +64,9 @@ if_not_else = "warn"
 # enabled on `agaric` beyond its (empty) default set; the heavy Tauri lib
 # is linked because the diagnostics tools share the app's DB layer.
 agaric = { path = ".." }
+# #2897 — `AppError` lives in the `agaric-core` foundation crate; the app crate
+# no longer re-exports it, so depend on it directly.
+agaric-core = { path = "../agaric-core" }
 
 # Versions copied verbatim from `../Cargo.toml`'s [dependencies] so the
 # diagnostics bins resolve to the exact same crate versions they linked

@@ -23,7 +23,7 @@ async fn get_compaction_status_returns_correct_counts() {
     );
     assert_eq!(
         status.retention_days,
-        crate::snapshot::DEFAULT_RETENTION_DAYS,
+        agaric_sync::snapshot::DEFAULT_RETENTION_DAYS,
         "retention_days should match default"
     );
 

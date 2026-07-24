@@ -13,8 +13,8 @@ pub(crate) use agaric_engine::apply::sql_only::*;
 mod tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::op::CreateBlockPayload;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::CreateBlockPayload;
     use tempfile::TempDir;
 
     const PAGE_ID: &str = "01HZ00000000000000000000P1";

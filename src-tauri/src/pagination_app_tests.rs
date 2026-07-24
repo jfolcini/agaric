@@ -32,8 +32,8 @@
 
 mod tests_p7 {
     use crate::commands::{batch_resolve_inner, get_page_inner};
-    use crate::error::AppError;
-    use crate::space::{SpaceId, SpaceScope};
+    use agaric_core::error::AppError;
+    use agaric_store::space::{SpaceId, SpaceScope};
     use sqlx::SqlitePool;
     use tempfile::TempDir;
 
@@ -485,12 +485,12 @@ mod tests_p7 {
 // source files (`commands/…`, `domain/…`, `recurrence/…`, `backlink/…`) that
 // stay in the app crate, they must live at the app level where both crates'
 // files are reachable via relative paths. The canonical consts are read from
-// `crate::pagination::block_row_columns` (re-exported from the store). Test A
+// `agaric_store::pagination::block_row_columns` (re-exported from the store). Test A
 // (const↔fields parity) and Test D (`b.`-alias parity) stay in the store since
 // they are self-contained.
 
 mod block_row_canonical_conformance {
-    use crate::pagination::block_row_columns::{
+    use agaric_store::pagination::block_row_columns::{
         BLOCK_ROW_CANONICAL_FIELDS, BLOCK_ROW_CANONICAL_SELECT, BLOCK_ROW_RUNTIME_SELECT,
     };
 
@@ -542,7 +542,7 @@ mod block_row_canonical_conformance {
     /// strip the `b.` alias, collapse whitespace, and unify the `BlockId`
     /// type-cast crate path. The same `agaric_core::ulid::BlockId` type is
     /// spelled `agaric_core::ulid::BlockId` at the `agaric-store` sites (which
-    /// import it directly) and `crate::ulid::BlockId` at the `agaric` app sites
+    /// import it directly) and `agaric_core::ulid::BlockId` at the `agaric` app sites
     /// (which reach it via the app crate's `pub use agaric_core::ulid` re-export)
     /// — both must compare equal, so fold the store spelling onto the app one
     /// (#2621, wave S4b).
@@ -866,7 +866,9 @@ mod block_row_canonical_conformance {
 // (canonical-const self-consistency) stays in the store since it needs no walk.
 
 mod position_keyset_drift {
-    use crate::pagination::{POSITION_KEYSET_ORDER_CANONICAL, POSITION_KEYSET_WHERE_CANONICAL};
+    use agaric_store::pagination::{
+        POSITION_KEYSET_ORDER_CANONICAL, POSITION_KEYSET_WHERE_CANONICAL,
+    };
     use regex::Regex;
 
     /// Render a keyset SQL fragment into comparable canonical form by:

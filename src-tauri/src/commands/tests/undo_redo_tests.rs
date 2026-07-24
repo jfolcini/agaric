@@ -1,9 +1,9 @@
 use super::super::*;
 use super::common::*;
-use crate::op::{
+use agaric_store::op::{
     DeletePropertyPayload, EditBlockPayload, OpPayload, OpRef, RemoveTagPayload, SetPropertyPayload,
 };
-use crate::op_log;
+use agaric_store::op_log;
 
 /// #2549 regression-test helper: insert a REPLICATED (audit-only,
 /// `is_replicated = 1`) op from a foreign device — a row ingested for
@@ -22,8 +22,8 @@ async fn append_replicated_op(
     payload.normalize_block_ids();
     let op_type = payload.op_type_str().to_owned();
     let payload_json = op_log::serialize_inner_payload(&payload).unwrap();
-    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
-    let transfer = crate::sync_protocol::types::OpTransfer {
+    let hash = agaric_core::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = agaric_sync::sync_protocol::types::OpTransfer {
         device_id: device_id.to_owned(),
         seq,
         parent_seqs: None,
@@ -33,7 +33,7 @@ async fn append_replicated_op(
         created_at: ts,
         origin: "agent:codex".to_owned(),
     };
-    crate::dag::insert_replicated_op(pool, &transfer)
+    agaric_sync::sync_protocol::insert_replicated_op(pool, &transfer)
         .await
         .expect("replicated audit op must ingest");
 }
@@ -1514,7 +1514,7 @@ async fn restore_page_to_op_verifies_reverse_ops_in_op_log() {
         );
 
         // Recompute the hash and verify it matches
-        let expected_hash = crate::hash::compute_op_hash(
+        let expected_hash = agaric_core::hash::compute_op_hash(
             &curr.device_id,
             curr.seq,
             curr.parent_seqs.as_deref(),
@@ -1581,7 +1581,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             block_id: child.id.clone(),
             mime_type: "image/png".into(),
@@ -1605,7 +1605,7 @@ async fn restore_page_to_op_skips_delete_attachment() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
@@ -1703,7 +1703,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             block_id: child.id.clone(),
             mime_type: "image/png".into(),
@@ -1728,7 +1728,7 @@ async fn restore_page_to_op_finds_delete_attachment_in_page_scope() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
@@ -1951,7 +1951,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             block_id: child.id.clone(),
             mime_type: "image/png".into(),
@@ -1971,7 +1971,7 @@ async fn undo_page_op_finds_delete_attachment_op() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             fs_path: "/tmp/photo.png".into(),
         }),
@@ -2083,7 +2083,7 @@ async fn undo_page_op_restores_renamed_attachment_filename() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             block_id: child.id.clone(),
             mime_type: "image/png".into(),
@@ -2101,7 +2101,7 @@ async fn undo_page_op_restores_renamed_attachment_filename() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {
+        OpPayload::RenameAttachment(agaric_store::op::RenameAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             old_filename: "original.png".into(),
             new_filename: "renamed.png".into(),
@@ -2475,7 +2475,10 @@ async fn revert_move_block_restores_original_position() {
     // Verify it's at P2, provisional rank 8 (new_index 7 + 1).
     let before = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
-        before.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        before
+            .parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(p2.id.as_str()),
         "block should be under P2 after move"
     );
@@ -2512,7 +2515,10 @@ async fn revert_move_block_restores_original_position() {
     // provisional rank 4 the raw reverse UPDATE used to leave behind.
     let after = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
-        after.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        after
+            .parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(p1.id.as_str()),
         "parent should be restored to P1"
     );
@@ -2965,7 +2971,7 @@ async fn revert_add_attachment_hard_deletes_row_c7() {
     op_log::append_local_op_at(
         &pool,
         DEV,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::from_trusted(att_id),
             block_id: block.id.clone(),
             mime_type: "image/png".into(),
@@ -3861,7 +3867,10 @@ async fn undo_page_op_reverses_move_block() {
     // Verify moved
     let moved = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
-        moved.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        moved
+            .parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(parent_b.id.as_str()),
         "block should be under parent_b after move"
     );
@@ -3883,7 +3892,7 @@ async fn undo_page_op_reverses_move_block() {
         restored
             .parent_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(parent_a.id.as_str()),
         "child should be back under parent A"
     );
@@ -4232,7 +4241,7 @@ async fn apply_reverse_remove_tag_on_nonexistent_is_idempotent() {
     });
     let result = apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &payload,
         crate::db::now_ms(),
@@ -4258,7 +4267,7 @@ async fn apply_reverse_delete_property_on_nonexistent_is_idempotent() {
     });
     let result = apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &payload,
         crate::db::now_ms(),
@@ -4281,13 +4290,13 @@ async fn apply_reverse_delete_attachment_on_nonexistent_is_idempotent() {
     let (pool, _dir) = test_pool().await;
     let mut tx = pool.begin().await.unwrap();
 
-    let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+    let payload = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
         attachment_id: BlockId::test_id("ATT_GHOST"),
         fs_path: "/tmp/ghost.bin".into(),
     });
     let result = apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &payload,
         crate::db::now_ms(),
@@ -4360,7 +4369,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     //    set_todo_state with this prior value.
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: block_id.clone(),
@@ -4379,7 +4388,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     // 2. Reverse SetProperty(due_date) — date keys carry value_date.
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: block_id.clone(),
@@ -4400,7 +4409,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     //    silent no-op that left the column populated).
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: block_id.clone(),
@@ -4414,7 +4423,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     // 4. Reverse SetProperty(space) — stamps space_id for the page group.
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &OpPayload::SetProperty(SetPropertyPayload {
             block_id: page_id.clone(),
@@ -4471,7 +4480,7 @@ async fn apply_reverse_routes_column_backed_keys_to_blocks_columns_604() {
     let mut tx = pool.begin().await.unwrap();
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &OpPayload::DeleteProperty(DeletePropertyPayload {
             block_id: page_id.clone(),
@@ -4957,7 +4966,7 @@ async fn apply_reverse_move_block_refreshes_space_id_657() {
     seed_two_space_pages_657(&pool).await;
 
     // Reverse-of-a-move payload: put CHILD657 under the space-B page.
-    let payload = OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+    let payload = OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
         block_id: BlockId::test_id("CHILD657"),
         new_parent_id: Some(BlockId::test_id("PAGE2657")),
         new_position: 1,
@@ -4966,7 +4975,7 @@ async fn apply_reverse_move_block_refreshes_space_id_657() {
     let mut tx = pool.begin().await.unwrap();
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &payload,
         crate::db::now_ms(),
@@ -5011,14 +5020,14 @@ async fn apply_reverse_restore_block_refreshes_space_id_657() {
         .await
         .unwrap();
 
-    let payload = OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
+    let payload = OpPayload::RestoreBlock(agaric_store::op::RestoreBlockPayload {
         block_id: BlockId::test_id("CHILD657"),
         deleted_at_ref: COHORT_TS,
     });
     let mut tx = pool.begin().await.unwrap();
     apply_reverse_in_tx(
         &mut tx,
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
         DEV,
         &payload,
         crate::db::now_ms(),
@@ -5661,7 +5670,7 @@ async fn revert_of_move_rejects_cycle_forming_reverse() {
         &mat,
         "content".into(),
         "A".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -5685,7 +5694,7 @@ async fn revert_of_move_rejects_cycle_forming_reverse() {
         DEV,
         &mat,
         b.id.clone(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         0,
     )
     .await
@@ -5768,7 +5777,7 @@ async fn revert_of_move_rejects_tombstoned_prior_parent() {
         &mat,
         "content".into(),
         "A".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -5779,7 +5788,7 @@ async fn revert_of_move_rejects_tombstoned_prior_parent() {
         &mat,
         "content".into(),
         "C".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -5868,7 +5877,7 @@ async fn revert_of_delete_restores_tombstoned_ancestor_chain_1884() {
         &mat,
         "content".into(),
         "A".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -5962,7 +5971,7 @@ async fn restore_page_to_op_skips_reverse_move_onto_purged_parent() {
         &mat,
         "content".into(),
         "P".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -5973,7 +5982,7 @@ async fn restore_page_to_op_skips_reverse_move_onto_purged_parent() {
         &mat,
         "content".into(),
         "Q".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(4),
     )
     .await
@@ -6088,7 +6097,7 @@ async fn undo_produced_delete_cohorts_are_monotonic_and_match_op_created_at() {
         &mat,
         "content".into(),
         "A".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -6188,7 +6197,7 @@ async fn create_undo_redo_roundtrip_restores_block_live() {
         &mat,
         "content".into(),
         "C".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(3),
     )
     .await
@@ -6241,7 +6250,7 @@ async fn delete_undo_redo_undo_chain_ends_with_block_live() {
     let mat = Materializer::new(pool.clone());
 
     let (page_id, child_ids) = create_page_with_children(&pool, &mat).await;
-    let target = crate::ulid::BlockId::from_trusted(&child_ids[0]);
+    let target = agaric_core::ulid::BlockId::from_trusted(&child_ids[0]);
 
     delete_block_inner(&pool, DEV, &mat, target.clone())
         .await
@@ -6304,7 +6313,7 @@ async fn delete_undo_redo_undo_chain_ends_with_block_live() {
 /// so pre-existing roots are replayed straight into the engine.
 async fn seed_block_into_sql_and_engine(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     block_type: &str,
     content: &str,
@@ -6330,7 +6339,7 @@ async fn seed_block_into_sql_and_engine(
 async fn dispatch_op_via_engine(
     pool: &SqlitePool,
     mat: &Materializer,
-    payload: crate::op::OpPayload,
+    payload: agaric_store::op::OpPayload,
 ) {
     let record = op_log::append_local_op(pool, DEV, payload)
         .await
@@ -6350,7 +6359,7 @@ async fn dispatch_op_via_engine(
 /// Z,X,Y — the undone move of X resurrected.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_move_keeps_engine_order_in_step_with_sql() {
-    use crate::op::{CreateBlockPayload, MoveBlockPayload};
+    use agaric_store::op::{CreateBlockPayload, MoveBlockPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -6485,7 +6494,7 @@ async fn undo_of_move_keeps_engine_order_in_step_with_sql() {
 /// reprojects only [Z,X], leaving Y at its stale rank.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_delete_keeps_engine_in_step_for_next_move() {
-    use crate::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload};
+    use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -6579,7 +6588,7 @@ async fn undo_of_delete_keeps_engine_in_step_for_next_move() {
 /// the slot against [X,Z,Y] and reprojects Z's tombstoned row too.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_create_keeps_engine_in_step_for_next_move() {
-    use crate::op::{CreateBlockPayload, MoveBlockPayload};
+    use agaric_store::op::{CreateBlockPayload, MoveBlockPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());

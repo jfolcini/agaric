@@ -46,7 +46,7 @@ async fn apply_op_arc_record_does_not_leak_strong_count() {
     // for its `DeferredNotification` push (refcount 3 inside the call)
     // and drops both back when the handler returns.
     let task = MaterializeTask::ApplyOp(StdArc::clone(&record));
-    handle_foreground_task(&pool, &task, &crate::loro::shared::LoroState::new())
+    handle_foreground_task(&pool, &task, &agaric_engine::loro::shared::LoroState::new())
         .await
         .unwrap();
     drop(task);
@@ -96,9 +96,13 @@ async fn remove_tag_handler_cleans_inherited() {
     // Propagate tag to descendants manually
     {
         let mut conn = pool.acquire().await.unwrap();
-        crate::tag_inheritance::propagate_tag_to_descendants(&mut conn, "RT_PARENT", "RT_TAG")
-            .await
-            .unwrap();
+        agaric_store::tag_inheritance::propagate_tag_to_descendants(
+            &mut conn,
+            "RT_PARENT",
+            "RT_TAG",
+        )
+        .await
+        .unwrap();
     }
 
     // Verify child inherited the tag
@@ -113,14 +117,14 @@ async fn remove_tag_handler_cleans_inherited() {
     // Remove the tag via handler
     let r = make_op_record(
         &pool,
-        OpPayload::RemoveTag(crate::op::RemoveTagPayload {
+        OpPayload::RemoveTag(agaric_store::op::RemoveTagPayload {
             block_id: BlockId::test_id("RT_PARENT"),
             tag_id: BlockId::test_id("RT_TAG"),
         }),
     )
     .await;
     let task = MaterializeTask::ApplyOp(StdArc::new(r));
-    handle_foreground_task(&pool, &task, &crate::loro::shared::LoroState::new())
+    handle_foreground_task(&pool, &task, &agaric_engine::loro::shared::LoroState::new())
         .await
         .unwrap();
 
@@ -250,7 +254,7 @@ async fn move_block_into_template_page_rebuilds_projected_agenda_cache() {
     .unwrap();
 
     // Build the cache while the block lives on a normal page → it IS present.
-    crate::cache::rebuild_projected_agenda_cache(&pool)
+    agaric_store::cache::rebuild_projected_agenda_cache(&pool)
         .await
         .unwrap();
     let before: i64 = sqlx::query_scalar(

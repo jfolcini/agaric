@@ -1,6 +1,6 @@
 use super::common::*;
-use crate::op_log;
 use crate::soft_delete;
+use agaric_store::op_log;
 use std::collections::HashSet;
 
 // ======================================================================

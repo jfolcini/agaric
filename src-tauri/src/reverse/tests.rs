@@ -1,8 +1,8 @@
 use super::*;
 use crate::db::init_pool;
-use crate::op::*;
-use crate::op_log::append_local_op_at;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::*;
+use agaric_store::op_log::append_local_op_at;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -16,7 +16,11 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-async fn append_op(pool: &SqlitePool, payload: OpPayload, ts: i64) -> crate::op_log::OpRecord {
+async fn append_op(
+    pool: &SqlitePool,
+    payload: OpPayload,
+    ts: i64,
+) -> agaric_store::op_log::OpRecord {
     append_local_op_at(pool, TEST_DEVICE, payload, ts)
         .await
         .unwrap()
@@ -36,14 +40,14 @@ async fn append_replicated_op(
     seq: i64,
     mut payload: OpPayload,
     ts: i64,
-) -> crate::op_log::OpRecord {
+) -> agaric_store::op_log::OpRecord {
     // Mirror the local append path: normalize ULIDs, then serialize the inner
     // payload (no `op_type` tag) exactly as `append_local_op_at` stores it.
     payload.normalize_block_ids();
     let op_type = payload.op_type_str().to_owned();
-    let payload_json = crate::op_log::serialize_inner_payload(&payload).unwrap();
-    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
-    let transfer = crate::sync_protocol::types::OpTransfer {
+    let payload_json = agaric_store::op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = agaric_core::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = agaric_sync::sync_protocol::types::OpTransfer {
         device_id: device_id.to_owned(),
         seq,
         parent_seqs: None,
@@ -53,10 +57,10 @@ async fn append_replicated_op(
         created_at: ts,
         origin: "agent:codex".to_owned(),
     };
-    crate::dag::insert_replicated_op(pool, &transfer)
+    agaric_sync::sync_protocol::insert_replicated_op(pool, &transfer)
         .await
         .expect("replicated audit op must ingest");
-    crate::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq)
+    agaric_store::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq)
         .await
         .expect("replicated op must be readable")
 }
@@ -1191,7 +1195,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
     let (pool, _dir) = test_pool().await;
     append_op(
         &pool,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_001"),
             block_id: BlockId::test_id("BLK_ATT"),
             mime_type: "image/png".into(),
@@ -1204,7 +1208,7 @@ async fn reverse_delete_attachment_returns_add_attachment_with_metadata() {
     .await;
     let del = append_op(
         &pool,
-        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_001"),
             fs_path: "attachments/att_001.bin".into(),
         }),
@@ -1224,7 +1228,7 @@ async fn reverse_delete_attachment_no_add_op_returns_non_reversible() {
     let (pool, _dir) = test_pool().await;
     let del = append_op(
         &pool,
-        OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+        OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_ORPHAN"),
             fs_path: "attachments/orphan.bin".into(),
         }),
@@ -1241,7 +1245,7 @@ async fn reverse_delete_attachment_roundtrip() {
     let (pool, _dir) = test_pool().await;
     let add_rec = append_op(
         &pool,
-        OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+        OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
             attachment_id: BlockId::test_id("ATT_RT"),
             block_id: BlockId::test_id("BLK_RT"),
             mime_type: "application/pdf".into(),
@@ -2144,7 +2148,7 @@ async fn revert_ops_rejects_batch_over_max_revert_ops_c5() {
         .await
         .expect_err("C5: a 1001-op batch must be rejected");
     assert!(
-        matches!(err, crate::error::AppError::Validation { .. }),
+        matches!(err, agaric_core::error::AppError::Validation { .. }),
         "over-cap batch must surface AppError::Validation, got {err:?}"
     );
 }
@@ -2222,7 +2226,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     //   * 4 × set_property — bump priority to "high"
     //   * 4 × add_attachment — net-new attachment per block
     //   * 4 × delete_attachment — soft-delete each just-added attachment
-    let mut op_refs: Vec<crate::op::OpRef> = Vec::new();
+    let mut op_refs: Vec<agaric_store::op::OpRef> = Vec::new();
 
     for bid in &blocks[..4] {
         let rec = append_op(
@@ -2235,7 +2239,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2252,7 +2256,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2272,7 +2276,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2283,7 +2287,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         let att_id = format!("B3_ATT_{i:02}");
         let rec = append_op(
             &pool,
-            OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+            OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
                 attachment_id: BlockId::test_id(&att_id),
                 block_id: BlockId::test_id(bid),
                 mime_type: "image/png".into(),
@@ -2294,7 +2298,7 @@ async fn compute_reverse_batch_matches_per_op_loop() {
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2303,14 +2307,14 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     for att_id in &att_ids {
         let rec = append_op(
             &pool,
-            OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+            OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
                 attachment_id: BlockId::test_id(att_id),
                 fs_path: format!("/tmp/{att_id}.png"),
             }),
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2406,7 +2410,7 @@ async fn compute_reverse_batch_set_delete_set_yields_delete_property() {
     )
     .await;
 
-    let op_refs = vec![crate::op::OpRef {
+    let op_refs = vec![agaric_store::op::OpRef {
         device_id: final_set.device_id.clone(),
         seq: final_set.seq,
     }];
@@ -2475,7 +2479,7 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
     // 400 sequential edits on the SAME block — comfortably over the
     // old ~199-op (5-bind) single-statement ceiling.
     const N_EDITS: usize = 400;
-    let mut op_refs: Vec<crate::op::OpRef> = Vec::with_capacity(N_EDITS);
+    let mut op_refs: Vec<agaric_store::op::OpRef> = Vec::with_capacity(N_EDITS);
     for i in 0..N_EDITS {
         let rec = append_op(
             &pool,
@@ -2487,7 +2491,7 @@ async fn compute_reverse_batch_chunks_large_edit_batch_c5() {
             next_ts(&mut ts),
         )
         .await;
-        op_refs.push(crate::op::OpRef {
+        op_refs.push(agaric_store::op::OpRef {
             device_id: rec.device_id,
             seq: rec.seq,
         });
@@ -2897,7 +2901,7 @@ async fn revert_ops_rejects_replicated_target_2549() {
     .await
     .expect_err("reverting a replicated audit op must be rejected");
     assert!(
-        matches!(err, crate::error::AppError::Validation { .. }),
+        matches!(err, agaric_core::error::AppError::Validation { .. }),
         "reverting a replicated audit op must surface AppError::Validation, got {err:?}"
     );
 }

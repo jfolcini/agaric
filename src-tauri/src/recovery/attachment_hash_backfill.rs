@@ -8,7 +8,7 @@
 //! ## Design
 //!
 //! * **Reuses the sync hashing.** Hashing goes through
-//!   [`crate::sync_files::read_attachment_file_metadata`], which feeds the file
+//!   [`agaric_sync::sync_files::read_attachment_file_metadata`], which feeds the file
 //!   through a fixed-size buffer into a `blake3::Hasher` and finalises
 //!   `.to_hex()` — the exact scheme the file-sync sender uses for its
 //!   `FileOffer`. This is byte-for-byte the same digest as the older buffered
@@ -28,7 +28,7 @@
 use sqlx::SqlitePool;
 use std::path::Path;
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Outcome of a single backfill pass. Returned for logging/telemetry and so
 /// tests can assert how many rows were updated vs. skipped.
@@ -85,25 +85,26 @@ pub async fn backfill_attachment_content_hashes(
         // byte-for-byte — only the memory profile changes (avoids boot-time
         // OOM on mobile with large unhashed attachments). We only need the
         // hash; the returned size is ignored (the UPDATE writes content_hash).
-        let hash = match crate::sync_files::read_attachment_file_metadata(app_data_dir, &c.fs_path)
-            .await
-        {
-            // The file hashed cleanly.
-            Ok((_size, hash)) => hash,
-            // The file is missing / unreadable / fs_path malformed — tolerate
-            // it: leave the row NULL and move on (sync GC reconciles missing
-            // files; the next attach or a future backfill can fill it later).
-            Err(e) => {
-                tracing::warn!(
-                    attachment_id = %c.id,
-                    fs_path = %c.fs_path,
-                    error = %e,
-                    "attachment content_hash backfill: file unreadable — leaving NULL"
-                );
-                report.skipped_missing += 1;
-                continue;
-            }
-        };
+        let hash =
+            match agaric_sync::sync_files::read_attachment_file_metadata(app_data_dir, &c.fs_path)
+                .await
+            {
+                // The file hashed cleanly.
+                Ok((_size, hash)) => hash,
+                // The file is missing / unreadable / fs_path malformed — tolerate
+                // it: leave the row NULL and move on (sync GC reconciles missing
+                // files; the next attach or a future backfill can fill it later).
+                Err(e) => {
+                    tracing::warn!(
+                        attachment_id = %c.id,
+                        fs_path = %c.fs_path,
+                        error = %e,
+                        "attachment content_hash backfill: file unreadable — leaving NULL"
+                    );
+                    report.skipped_missing += 1;
+                    continue;
+                }
+            };
 
         // Persist. Guard the UPDATE with `content_hash IS NULL` too so a
         // concurrent/duplicate run can never clobber an already-set value.
@@ -228,9 +229,9 @@ mod tests {
         // one-shot `blake3::hash` over the same bytes, so the persisted hash is
         // identical regardless of which read path produced it.
         let (_b, buffered_hash) =
-            crate::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
+            agaric_sync::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
         let (_sz, streaming_hash) =
-            crate::sync_files::read_attachment_file_metadata(app_data_dir, fs_path)
+            agaric_sync::sync_files::read_attachment_file_metadata(app_data_dir, fs_path)
                 .await
                 .unwrap();
         assert_eq!(

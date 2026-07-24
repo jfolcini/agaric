@@ -1,11 +1,11 @@
 use super::*;
 use crate::db::init_pool;
-use crate::draft::save_draft;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
-use crate::op_log::{append_local_op, append_local_op_at};
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_engine::draft::save_draft;
+use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
+use agaric_store::op_log::{append_local_op, append_local_op_at};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -32,7 +32,7 @@ async fn recover_at_boot_test(
     // #535: recovery now replays the write-ahead sync inbox into a registry.
     // A fresh empty registry is fine here — these fixtures don't seed the
     // inbox, so the replay step is a no-op.
-    let registry = crate::loro::registry::LoroEngineRegistry::new();
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
     let result = recover_at_boot(pool, device_id, &materializer, &registry).await;
     materializer.shutdown();
     result
@@ -194,7 +194,7 @@ async fn unflushed_draft_gets_recovered_as_synthetic_edit_block() {
     assert_eq!(row, 1);
 
     // The draft row should be deleted
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(drafts.is_empty());
 }
 
@@ -286,7 +286,7 @@ async fn recover_single_draft_returns_err_when_enqueue_fails_1322() {
 
     // Pull the inserted draft as a `Draft` so we can drive
     // `recover_single_draft` directly.
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     let draft = drafts.into_iter().next().expect("one draft");
 
     // Build a materializer and immediately shut it down so the foreground
@@ -386,7 +386,7 @@ async fn failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540() {
 
     // The draft row SURVIVES — the fix's core contract. Before #2540 the boot
     // loop deleted it unconditionally after logging the error, losing the text.
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert_eq!(
         drafts.len(),
         1,
@@ -442,7 +442,7 @@ async fn failed_boot_recovery_keeps_draft_and_recovers_on_next_boot_2540() {
     );
 
     // And the draft row is finally cleaned up now that recovery succeeded.
-    let drafts_after = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts_after = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(
         drafts_after.is_empty(),
         "the draft row is deleted once recovery SUCCEEDS"
@@ -497,7 +497,7 @@ async fn already_flushed_draft_just_gets_deleted() {
     assert_eq!(before, after);
 
     // Draft row should be deleted
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(drafts.is_empty());
 }
 
@@ -600,7 +600,7 @@ async fn backward_clock_step_does_not_resurrect_stale_draft_1256() {
     save_draft(&pool, device_id, block_id, "stale draft content")
         .await
         .unwrap();
-    let draft = crate::draft::get_draft(&pool, block_id)
+    let draft = agaric_engine::draft::get_draft(&pool, block_id)
         .await
         .unwrap()
         .expect("draft exists");
@@ -688,7 +688,7 @@ async fn unflushed_draft_with_no_newer_seq_is_still_recovered_1256() {
     save_draft(&pool, device_id, block_id, "genuinely unflushed content")
         .await
         .unwrap();
-    let draft = crate::draft::get_draft(&pool, block_id)
+    let draft = agaric_engine::draft::get_draft(&pool, block_id)
         .await
         .unwrap()
         .expect("draft exists");
@@ -882,7 +882,7 @@ async fn recovery_with_multiple_unflushed_drafts() {
     assert_eq!(count, 3);
 
     // All drafts should be deleted
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(drafts.is_empty());
 }
 
@@ -926,7 +926,7 @@ async fn recovery_with_mixed_flushed_and_unflushed_drafts() {
     assert_eq!(report.drafts_already_flushed, 1);
 
     // All drafts should be deleted
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(drafts.is_empty());
 }
 
@@ -983,7 +983,7 @@ async fn recover_at_boot_returns_err_on_second_call_without_reset() {
     super::boot::reset_recovery_guard();
 
     let materializer = Materializer::new(pool.clone());
-    let registry = crate::loro::registry::LoroEngineRegistry::new();
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
 
     // First call: succeeds.
     let r1 = recover_at_boot(&pool, device_id, &materializer, &registry).await;
@@ -1321,7 +1321,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
         report.drafts_recovered.is_empty(),
         "draft for soft-deleted block must not be recovered"
     );
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(
         drafts.is_empty(),
         "draft row must be deleted even for soft-deleted blocks"
@@ -1383,7 +1383,7 @@ async fn draft_with_deleted_parent_is_skipped() {
         report.drafts_recovered.is_empty(),
         "draft for block with deleted parent must not be recovered"
     );
-    let drafts = crate::draft::get_all_drafts(&pool).await.unwrap();
+    let drafts = agaric_engine::draft::get_all_drafts(&pool).await.unwrap();
     assert!(
         drafts.is_empty(),
         "draft row must be deleted even when parent is deleted"
@@ -1731,7 +1731,7 @@ async fn find_prev_edit_multi_head_no_local_tiebreak_is_deterministic_m6() {
 async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() {
     use super::refresh_caches_for_recovered_drafts;
     use crate::materializer::Materializer;
-    use crate::pagination::PageRequest;
+    use agaric_store::pagination::PageRequest;
 
     let (pool, _dir) = test_pool().await;
     let device_id = "test-device";
@@ -1741,7 +1741,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     // (simulating a real device where recent ops were indexed before the
     // crash).
     insert_test_block(&pool, block_id, "original pre-crash text").await;
-    crate::fts::update_fts_for_block(&pool, block_id)
+    agaric_store::fts::update_fts_for_block(&pool, block_id)
         .await
         .unwrap();
 
@@ -1753,7 +1753,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
 
     // Sanity: pre-recovery the new marker is not in the index.
     let page = PageRequest::new(None, Some(10)).unwrap();
-    let stale_hits = crate::fts::search_fts(
+    let stale_hits = agaric_store::fts::search_fts(
         &pool,
         "pineapple",
         &page,
@@ -1763,7 +1763,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         &[],
         None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        &agaric_store::fts::metadata_filter::MetadataPredicates::default(),
         None,
     )
     .await
@@ -1785,7 +1785,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
     );
 
     // Confirm the stale window exists before the fix kicks in.
-    let stale_after_recovery = crate::fts::search_fts(
+    let stale_after_recovery = agaric_store::fts::search_fts(
         &pool,
         "pineapple",
         &page,
@@ -1795,7 +1795,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         &[],
         None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        &agaric_store::fts::metadata_filter::MetadataPredicates::default(),
         None,
     )
     .await
@@ -1813,7 +1813,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         .await
         .unwrap();
 
-    let fresh_hits = crate::fts::search_fts(
+    let fresh_hits = agaric_store::fts::search_fts(
         &pool,
         "pineapple",
         &page,
@@ -1823,7 +1823,7 @@ async fn refresh_caches_for_recovered_drafts_updates_fts_for_recovered_blocks() 
         &[],
         &[],
         None,
-        &crate::fts::metadata_filter::MetadataPredicates::default(),
+        &agaric_store::fts::metadata_filter::MetadataPredicates::default(),
         None,
     )
     .await
@@ -2040,7 +2040,7 @@ async fn perf26_local_append_populates_block_id_column() {
 /// block-scoped queries don't accidentally match it.
 #[tokio::test]
 async fn perf26_delete_attachment_stores_null_block_id() {
-    use crate::op::{AddAttachmentPayload, DeleteAttachmentPayload};
+    use agaric_store::op::{AddAttachmentPayload, DeleteAttachmentPayload};
 
     let (pool, _dir) = test_pool().await;
     let bid = BlockId::test_id("BLKPERF26B");
@@ -2210,7 +2210,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
     // that production uses for atomic multi-op sequences.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     for bid in &noise_bids {
-        crate::op_log::append_local_op_in_tx(
+        agaric_store::op_log::append_local_op_in_tx(
             &mut tx,
             device_id,
             OpPayload::CreateBlock(CreateBlockPayload {
@@ -2226,7 +2226,7 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
         .await
         .unwrap();
         for _ in 0..999 {
-            crate::op_log::append_local_op_in_tx(
+            agaric_store::op_log::append_local_op_in_tx(
                 &mut tx,
                 device_id,
                 OpPayload::EditBlock(EditBlockPayload {
@@ -2363,8 +2363,8 @@ async fn recover_at_boot_handles_more_than_999_drafts() {
 //     in the right order.
 
 use crate::materializer::MaterializeTask;
-use crate::op_log::OpRecord;
 use crate::recovery::replay::replay_unmaterialized_ops;
+use agaric_store::op_log::OpRecord;
 use std::sync::Arc as StdArc;
 
 /// Read the cursor's `materialized_through_seq` for assertions.
@@ -2957,7 +2957,7 @@ async fn replay_progress_marker_survives_second_crash_c2b() {
 /// and equal to the user's order — NOT ULID order.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_replay_preserves_new_scheme_sibling_order_603() {
-    use crate::space::SpaceId;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAX";
     const PAGE_ID: &str = "01HZ00000000000000000603PG";
@@ -3050,7 +3050,7 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
         new_scheme_create(BLOCK_A, 0),
         new_scheme_create(BLOCK_B, 0),
         new_scheme_create(BLOCK_C, 1),
-        OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(BLOCK_C),
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99, // junk legacy breadcrumb — routing must use new_index
@@ -3132,7 +3132,7 @@ async fn boot_replay_preserves_new_scheme_sibling_order_603() {
 /// batching yields the right SQL positions across a multi-chunk replay.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
-    use crate::space::SpaceId;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
     const PAGE_ID: &str = "01HZ00000000000000002295PG";
@@ -3231,7 +3231,7 @@ async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
     append_local_op(
         &pool,
         device_id,
-        OpPayload::MoveBlock(crate::op::MoveBlockPayload {
+        OpPayload::MoveBlock(agaric_store::op::MoveBlockPayload {
             block_id: BlockId::from_trusted(child_ids.last().unwrap()),
             new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
             new_position: 99, // junk legacy breadcrumb — routing must use new_index
@@ -3323,7 +3323,7 @@ async fn boot_replay_reprojects_batched_over_chunk_boundary_2295() {
 ///      `replay_errors` (distinguishable from "replay aborted").
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn end_of_replay_reproject_continues_past_poisoned_group_2541() {
-    use crate::space::SpaceId;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAW";
     const PAGE_A: &str = "01HZ00000000000000002541PA";
@@ -3697,7 +3697,7 @@ async fn rewind_boot_then_create_lands_in_projection_with_intact_content() {
     // shuts its own down) so we can drive a post-boot create through it.
     super::boot::reset_recovery_guard();
     let mat = Materializer::new(pool.clone());
-    let registry = crate::loro::registry::LoroEngineRegistry::new();
+    let registry = agaric_engine::loro::registry::LoroEngineRegistry::new();
     let report = recover_at_boot(&pool, dev, &mat, &registry)
         .await
         .expect("recover_at_boot");

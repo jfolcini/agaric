@@ -27,7 +27,7 @@ use specta::Type;
 use sqlx::SqlitePool;
 
 use crate::db::now_ms;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 mod html_parser;
 

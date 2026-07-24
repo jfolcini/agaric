@@ -30,12 +30,12 @@ use serde::{Deserialize, Serialize};
 use specta::Type;
 
 use super::sanitize_internal_error;
-use crate::error::AppError;
 use crate::mcp::activity::{ActivityEntry, McpActivityRing};
 use crate::mcp::{
     self, MCP_RO_ENABLED_MARKER, MCP_RW_ENABLED_MARKER, McpLifecycle, McpRwLifecycle,
     default_mcp_ro_socket_path, default_mcp_rw_socket_path, mcp_ro_enabled, mcp_rw_enabled,
 };
+use agaric_core::error::AppError;
 
 // ---------------------------------------------------------------------------
 // Response type
@@ -402,7 +402,7 @@ pub async fn mcp_set_enabled(
     read_pool: tauri::State<'_, crate::db::ReadPool>,
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
-    device_id: tauri::State<'_, crate::device::DeviceId>,
+    device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {
@@ -569,7 +569,7 @@ pub async fn mcp_rw_set_enabled(
     toggle_gate: tauri::State<'_, McpRwToggleGate>,
     write_pool: tauri::State<'_, crate::db::WritePool>,
     materializer: tauri::State<'_, crate::materializer::Materializer>,
-    device_id: tauri::State<'_, crate::device::DeviceId>,
+    device_id: tauri::State<'_, agaric_sync::device::DeviceId>,
     activity_ring: tauri::State<'_, McpActivityRing>,
     enabled: bool,
 ) -> Result<bool, AppError> {

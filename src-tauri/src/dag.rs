@@ -4,20 +4,20 @@
 //!
 //! The edit-chain / merge primitives over the op_log now live in
 //! [`agaric_engine::dag`]: hash-verified remote-op ingest
-//! ([`insert_remote_op`] + the audit-only [`ingest_replicated_record`]
-//! entry), multi-parent merge-op creation ([`append_merge_op`]), the
-//! recursive-CTE edit-chain walker ([`walk_edit_chain`] / [`WalkOutcome`] /
-//! [`MAX_LCA_STEPS`]), Lowest-Common-Ancestor ([`find_lca`]), [`text_at`],
-//! [`get_block_edit_heads`], [`has_merge_for_heads`], and the read-side
-//! [`parse_parent_seqs_canonical`]. They build only on `agaric-store`
+//! ([`agaric_engine::dag::insert_remote_op`] + the audit-only [`agaric_engine::dag::ingest_replicated_record`]
+//! entry), multi-parent merge-op creation ([`agaric_engine::dag::append_merge_op`]), the
+//! recursive-CTE edit-chain walker ([`agaric_engine::dag::walk_edit_chain`] / [`agaric_engine::dag::WalkOutcome`] /
+//! [`agaric_engine::dag::MAX_LCA_STEPS`]), Lowest-Common-Ancestor ([`agaric_engine::dag::find_lca`]), [`agaric_engine::dag::text_at`],
+//! [`agaric_engine::dag::get_block_edit_heads`], [`agaric_engine::dag::has_merge_for_heads`], and the read-side
+//! [`agaric_engine::dag::parse_parent_seqs_canonical`]. They build only on `agaric-store`
 //! (`op` / `op_log` / `db`) and `agaric-core` (`hash` / `error`).
 //!
 //! This module keeps the two app-coupled pieces the engine cannot own:
 //!
-//! * [`insert_replicated_op`] — the wire-typed shim that decodes a
-//!   [`crate::sync_protocol::types::OpTransfer`] (extracting the
+//! * [`agaric_sync::sync_protocol::insert_replicated_op`] — the wire-typed shim that decodes a
+//!   [`agaric_sync::sync_protocol::types::OpTransfer`] (extracting the
 //!   transfer-carried `origin`, which `OpRecord` does not surface) and calls
-//!   the engine's [`ingest_replicated_record`] core. `sync_protocol` is an
+//!   the engine's [`agaric_engine::dag::ingest_replicated_record`] core. `sync_protocol` is an
 //!   app-level module, so this thin adapter stays here while the verification
 //!   core descends.
 //! * The `#[cfg(test)]` CTE-oracle reference implementations
@@ -28,10 +28,13 @@
 //!   and the tests that pair them against the production CTE path live here,
 //!   calling into the engine's `pub` surface.
 
-pub use agaric_engine::dag::{
+// Engine DAG symbols pulled in only for the `#[cfg(test)]` CTE oracles and the
+// test modules below; production call sites reference `agaric_engine::dag::…`
+// directly (#2897).
+#[cfg(test)]
+use agaric_engine::dag::{
     MAX_LCA_STEPS, WalkOutcome, append_merge_op, find_lca, get_block_edit_heads,
-    has_merge_for_heads, ingest_replicated_record, insert_remote_op, parse_parent_seqs_canonical,
-    text_at, walk_edit_chain,
+    has_merge_for_heads, insert_remote_op, parse_parent_seqs_canonical, text_at, walk_edit_chain,
 };
 
 #[cfg(test)]
@@ -44,16 +47,16 @@ use sqlx::SqlitePool;
 // here) moved to `agaric-sync`; the remaining users are the `#[cfg(test)]` CTE
 // oracles below, so the import is test-gated to avoid an unused-import warning.
 #[cfg(test)]
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// #2481 phase 1 — ingest a replicated op record as append-only, hash-verified
 /// **audit metadata**.
 ///
 /// This is the app-level wire adapter for audit-only op-log replication
-/// (`SyncMessage::OpLogBatch`). It decodes the [`crate::sync_protocol::types::OpTransfer`]
+/// (`SyncMessage::OpLogBatch`). It decodes the [`agaric_sync::sync_protocol::types::OpTransfer`]
 /// — threading the transfer-carried `origin` through explicitly, since
 /// `OpRecord::from` drops it — then delegates to the engine core
-/// [`ingest_replicated_record`], which reuses [`insert_remote_op`]'s exact
+/// [`agaric_engine::dag::ingest_replicated_record`], which reuses [`agaric_engine::dag::insert_remote_op`]'s exact
 /// verification recipe (blake3 hash check, NUL-rejection gate, `SetProperty`
 /// domain validation, idempotent `INSERT OR IGNORE` on `(device_id, seq)`,
 /// divergence probe) under the audit parent-gap policy: an unresolved
@@ -69,9 +72,10 @@ use crate::error::AppError;
 // (`sync_protocol::operations`) — it decodes an `OpTransfer` (now an
 // `agaric-sync` type) and calls the engine core `ingest_replicated_record`, so
 // it sits naturally at the sync layer. Re-exported here so every
-// `crate::dag::insert_replicated_op` call site (incl. `dag/tests.rs`) resolves
+// `agaric_sync::sync_protocol::insert_replicated_op` call site (incl. `dag/tests.rs`) resolves
 // unchanged.
-pub use agaric_sync::sync_protocol::insert_replicated_op;
+#[cfg(test)]
+use agaric_sync::sync_protocol::insert_replicated_op;
 
 // ---------------------------------------------------------------------------
 // `#[cfg(test)]` CTE oracles — reference implementations paired against the
@@ -85,10 +89,13 @@ pub use agaric_sync::sync_protocol::insert_replicated_op;
 /// - `create_block` → returns `None` (root of the edit chain)
 /// - anything else → `AppError::InvalidOperation`
 #[cfg(test)]
-fn extract_prev_edit(record: &crate::op_log::OpRecord) -> Result<Option<(String, i64)>, AppError> {
+fn extract_prev_edit(
+    record: &agaric_store::op_log::OpRecord,
+) -> Result<Option<(String, i64)>, AppError> {
     match record.op_type.as_str() {
         "edit_block" => {
-            let payload: crate::op::EditBlockPayload = serde_json::from_str(&record.payload)?;
+            let payload: agaric_store::op::EditBlockPayload =
+                serde_json::from_str(&record.payload)?;
             Ok(payload.prev_edit)
         }
         "create_block" => Ok(None),
@@ -110,7 +117,9 @@ async fn fetch_prev_edit_oracle(
     has_snapshots: bool,
 ) -> Result<Option<(String, i64)>, AppError> {
     // I-Core-8: wrap to typed read-pool — caller is in write context
-    match crate::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq).await {
+    match agaric_store::op_log::get_op_by_seq(&crate::db::ReadPool(pool.clone()), device_id, seq)
+        .await
+    {
         Ok(record) => extract_prev_edit(&record),
         Err(AppError::NotFound(_)) if has_snapshots => Err(AppError::InvalidOperation(format!(
             "edit chain broken at ({device_id}, {seq}) — likely due to op log compaction; \
@@ -123,8 +132,8 @@ async fn fetch_prev_edit_oracle(
 /// Oracle: the original Rust walk, one `fetch_prev_edit_oracle` per step.
 ///
 /// Retained under `#[cfg(test)]` as the reference implementation that the
-/// production CTE path ([`walk_edit_chain`]) must match. Tests in
-/// `dag/tests.rs::cte_oracle_*` run this alongside [`walk_edit_chain`] on the
+/// production CTE path ([`agaric_engine::dag::walk_edit_chain`]) must match. Tests in
+/// `dag/tests.rs::cte_oracle_*` run this alongside [`agaric_engine::dag::walk_edit_chain`] on the
 /// same fixture and assert identical outputs.
 #[cfg(test)]
 async fn walk_edit_chain_oracle<F>(
@@ -176,7 +185,7 @@ where
 ///
 /// Kept under `#[cfg(test)]` per AGENTS.md "CTE oracle pattern". The
 /// parity test in `dag/tests.rs::cte_oracle_*` runs this alongside
-/// [`find_lca`] on the same fixture and asserts the two return identical
+/// [`agaric_engine::dag::find_lca`] on the same fixture and asserts the two return identical
 /// `(device_id, seq)` results across linear chains, diverging chains,
 /// and genesis-edit scenarios.
 #[cfg(test)]

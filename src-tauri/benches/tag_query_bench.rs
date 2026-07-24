@@ -5,9 +5,9 @@ use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_m
 
 use agaric_lib::commands::{list_tags_by_prefix_inner, list_tags_for_block_inner};
 use agaric_lib::db::init_pool;
-use agaric_lib::pagination::PageRequest;
-use agaric_lib::tag_inheritance::rebuild_all;
-use agaric_lib::tag_query::{TagExpr, eval_tag_query};
+use agaric_store::pagination::PageRequest;
+use agaric_store::tag_inheritance::rebuild_all;
+use agaric_store::tag_query::{TagExpr, eval_tag_query};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;

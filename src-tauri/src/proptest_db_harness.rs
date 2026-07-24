@@ -95,13 +95,13 @@ use proptest::prelude::*;
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
 
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     AddAttachmentPayload, CreateBlockPayload, DeleteAttachmentPayload, DeleteBlockPayload,
     DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload,
     RestoreBlockPayload, SetPropertyPayload,
 };
-use crate::op_log::{OpRecord, append_local_op_at};
-use crate::ulid::BlockId;
+use agaric_store::op_log::{OpRecord, append_local_op_at};
 
 /// Device id used for every seeded op. A single device keeps the
 /// `(device_id, seq)` space simple — the reverse-op lookups key on
@@ -641,7 +641,7 @@ impl ChainModel {
                 }
                 let target = live[live_index % live.len()].clone();
                 let tag = self.pool[tag_pool_index % self.pool.len()].clone();
-                Some(OpPayload::AddTag(crate::op::AddTagPayload {
+                Some(OpPayload::AddTag(agaric_store::op::AddTagPayload {
                     block_id: BlockId::from_trusted(&target),
                     tag_id: tag,
                 }))
@@ -656,7 +656,7 @@ impl ChainModel {
                 }
                 let target = live[live_index % live.len()].clone();
                 let tag = self.pool[tag_pool_index % self.pool.len()].clone();
-                Some(OpPayload::RemoveTag(crate::op::RemoveTagPayload {
+                Some(OpPayload::RemoveTag(agaric_store::op::RemoveTagPayload {
                     block_id: BlockId::from_trusted(&target),
                     tag_id: tag,
                 }))

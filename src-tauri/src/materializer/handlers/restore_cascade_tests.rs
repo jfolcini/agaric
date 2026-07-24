@@ -8,10 +8,10 @@
 // ---------------------------------------------------------------------------
 use super::*;
 use crate::db::init_pool;
-use crate::loro::shared::LoroState;
-use crate::op::OpPayload;
-use crate::space::SpaceId;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_engine::loro::shared::LoroState;
+use agaric_store::op::OpPayload;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -186,12 +186,12 @@ async fn restore_block_dispatches_to_loro_for_each_descendant() {
     // the rest of the apply path sees a real OpRecord.  The seed
     // block is the page; the cascade walks every descendant
     // matching `deleted_at = DELETED_AT`.
-    let payload = OpPayload::RestoreBlock(crate::op::RestoreBlockPayload {
+    let payload = OpPayload::RestoreBlock(agaric_store::op::RestoreBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
         deleted_at_ref: DELETED_AT,
     });
     let record = std::sync::Arc::new(
-        crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
             .expect("append op_log"),
     );
@@ -267,7 +267,7 @@ async fn dispatch_restore_descendants_empty_list_is_noop() {
 /// replay.
 ///
 /// Drives the parse-failure skip path: the engine IS installed (so the
-/// `crate::loro::shared::get()` early-return is not the one taken), and
+/// `agaric_engine::loro::shared::get()` early-return is not the one taken), and
 /// the cohort is non-empty (so the empty-list fast path is not taken),
 /// but the root record's payload is not valid JSON — so the
 /// `serde_json::from_str::<RestoreBlockPayload>` parse fails and the

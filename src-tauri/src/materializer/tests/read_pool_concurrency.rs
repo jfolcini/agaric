@@ -56,7 +56,7 @@ async fn bg_without_read_pool() {
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reserved_key_todo_state() {
-    use crate::op::is_reserved_property_key;
+    use agaric_store::op::is_reserved_property_key;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     sqlx::query("INSERT INTO blocks (id, block_type, content, position) VALUES ('BLK-RES', 'content', 'test', 1)").execute(&pool).await.unwrap();

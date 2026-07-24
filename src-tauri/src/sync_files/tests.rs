@@ -1,6 +1,6 @@
 use super::*;
 use crate::db::init_pool;
-use crate::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
+use agaric_sync::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -463,7 +463,7 @@ fn write_and_read_large_file() {
 #[test]
 fn file_chunk_size_is_under_max_msg_size() {
     // MAX_MSG_SIZE in SyncConnection is 10_000_000 (10 MB).
-    // The shared chunk-size constant lives in `crate::sync_constants`.
+    // The shared chunk-size constant lives in `agaric_sync::sync_constants`.
     const _: () = assert!(
         BINARY_FRAME_CHUNK_SIZE < 10_000_000,
         "BINARY_FRAME_CHUNK_SIZE must be under the 10 MB WebSocket frame limit"
@@ -663,8 +663,12 @@ fn install_crypto_provider() {
 }
 
 /// Set up a TLS server/client pair and return both connections + server handle.
-async fn setup_tls_pair() -> (SyncConnection, SyncConnection, crate::sync_net::SyncServer) {
-    use crate::sync_net::{SyncServer, connect_to_peer, generate_self_signed_cert};
+async fn setup_tls_pair() -> (
+    SyncConnection,
+    SyncConnection,
+    agaric_sync::sync_net::SyncServer,
+) {
+    use agaric_sync::sync_net::{SyncServer, connect_to_peer, generate_self_signed_cert};
 
     install_crypto_provider();
     let server_cert = generate_self_signed_cert("responder").unwrap();
@@ -871,7 +875,7 @@ async fn protocol_initiator_requests_and_receives_files() {
 /// the captured events let us pin "bytes_done grows monotonically."
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protocol_run_file_transfer_emits_per_frame_progress() {
-    use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
+    use agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 
     let initiator_dir = TempDir::new().unwrap();
     let initiator_pool = init_pool(&initiator_dir.path().join("test.db"))
@@ -1855,7 +1859,7 @@ async fn inmem_receive_request_empty_request() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let client_task = tokio::spawn(async move {
         client_conn
@@ -1884,7 +1888,7 @@ async fn inmem_receive_request_transfer_complete_instead() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let client_task = tokio::spawn(async move {
         // Send FileTransferComplete instead of FileRequest
@@ -1929,7 +1933,7 @@ async fn inmem_receive_request_sends_one_file() {
     .await;
     write_attachment_file(dir.path(), "attachments/send1.bin", file_data).unwrap();
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let client_task = tokio::spawn(async move {
         // Send FileRequest requesting one attachment
@@ -2001,7 +2005,7 @@ async fn inmem_request_receive_no_missing() {
     .await;
     write_attachment_file(dir.path(), "attachments/present.bin", file_data).unwrap();
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let server_task = tokio::spawn(async move {
         // Receive empty FileRequest
@@ -2050,7 +2054,7 @@ async fn inmem_request_receive_one_file() {
     .await;
     assert!(!dir.path().join("attachments/recv1.bin").exists());
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let hash_for_offer = expected_hash.clone();
     let server_task = tokio::spawn(async move {
@@ -2150,7 +2154,7 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
         "pre-condition: file must be missing on disk"
     );
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let server_task = tokio::spawn(async move {
         // Receive FileRequest from the receiver.
@@ -2221,7 +2225,7 @@ async fn inmem_responder_bidirectional_no_files() {
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     // Mock the initiator side.
     // Responder does: receive_request_and_send_files then request_and_receive_files
@@ -2323,7 +2327,7 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_responder = cancel.clone();
@@ -2731,7 +2735,7 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     assert_eq!(meta_size, expected_size);
     assert_eq!(meta_hash, expected_hash);
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     // Initiator: request the file, drive the receive side.
     let init_dir = TempDir::new().unwrap();
@@ -2949,7 +2953,7 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     let init_pool = init_pool(&init_dir.path().join("init.db")).await.unwrap();
     insert_test_attachment(&init_pool, "ATT_M51_EMPTY", "attachments/empty.bin", 0).await;
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
@@ -3043,7 +3047,7 @@ async fn wire_helpers_streaming_round_trip_m51() {
         .collect();
     let expected_size = u64::try_from(payload.len()).unwrap();
 
-    let (mut server_conn, mut client_conn) = crate::sync_net::test_connection_pair().await;
+    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
 
     let payload_clone = payload.clone();
     let server_task = tokio::spawn(async move {
@@ -3422,7 +3426,7 @@ async fn file_offer_without_content_hash_still_transfers_1993() {
             .send_binary_streaming(
                 cursor,
                 size_u64,
-                crate::sync_constants::BINARY_FRAME_CHUNK_SIZE,
+                agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE,
             )
             .await
             .unwrap();

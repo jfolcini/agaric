@@ -1,9 +1,9 @@
 use super::*;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::op::{CreateBlockPayload, OpPayload};
-use crate::op_log::{OpRecord, append_local_op_at};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, OpPayload};
+use agaric_store::op_log::{OpRecord, append_local_op_at};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -171,8 +171,8 @@ async fn get_local_heads_plan_uses_index_seeks() {
 // ── check_reset_required — VV-based own-lineage loss (#2502, #602) ───
 
 /// A test space id for the version-vector comparisons below.
-fn crr_space() -> crate::space::SpaceId {
-    crate::space::SpaceId::from_trusted("01HZCRRSPACEXXXXXXXXXXXXXX")
+fn crr_space() -> agaric_store::space::SpaceId {
+    agaric_store::space::SpaceId::from_trusted("01HZCRRSPACEXXXXXXXXXXXXXX")
 }
 
 /// Build a per-space `SpaceVersionVector` whose Loro vv carries `ops`
@@ -182,9 +182,10 @@ fn crr_space() -> crate::space::SpaceId {
 fn crafted_space_vv(
     device_id: &str,
     ops: usize,
-    space: &crate::space::SpaceId,
+    space: &agaric_store::space::SpaceId,
 ) -> SpaceVersionVector {
-    let mut engine = crate::loro::engine::LoroEngine::with_peer_id(device_id).expect("set peer id");
+    let mut engine =
+        agaric_engine::loro::engine::LoroEngine::with_peer_id(device_id).expect("set peer id");
     for i in 0..ops {
         let id = format!("01HZ0000000000000000{i:06}");
         let pos = i64::try_from(i).expect("op index fits i64");
@@ -204,7 +205,7 @@ fn crafted_space_vv(
 #[test]
 fn check_reset_required_ignores_other_peer_ids() {
     let space = crr_space();
-    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
 
     // We hold one op of our own; the peer advertises a vv carrying only a
     // DIFFERENT device's ops (nothing of ours).
@@ -225,7 +226,7 @@ fn check_reset_required_ignores_other_peer_ids() {
 #[test]
 fn check_reset_required_detects_own_lineage_loss() {
     let space = crr_space();
-    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
 
     // We can produce 1 op of our own; the peer claims to have seen 3 of ours.
     let local = vec![crafted_space_vv("local-dev", 1, &space)];
@@ -245,8 +246,8 @@ fn check_reset_required_detects_own_lineage_loss() {
 #[test]
 fn check_reset_required_satisfied_and_no_own_ops_pass() {
     let space = crr_space();
-    let other_space = crate::space::SpaceId::from_trusted("01HZCRRSPACE2XXXXXXXXXXXXX");
-    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let other_space = agaric_store::space::SpaceId::from_trusted("01HZCRRSPACE2XXXXXXXXXXXXX");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
 
     // We hold 2 of our ops; the peer advertises exactly 2 of ours (equal, not
     // greater) plus a second space carrying only a foreign device's ops.
@@ -268,7 +269,7 @@ fn check_reset_required_satisfied_and_no_own_ops_pass() {
 #[test]
 fn check_reset_required_missing_local_space_is_loss() {
     let space = crr_space();
-    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
 
     // We hold NO local vv for the space; the peer claims we authored 2 ops in
     // it — we lost the whole space's own-lineage.
@@ -290,7 +291,7 @@ fn check_reset_required_missing_local_space_is_loss() {
 #[test]
 fn check_reset_required_empty_peer_vvs_never_resets() {
     let space = crr_space();
-    let own = crate::loro::engine::peer_id_from_device_id("local-dev");
+    let own = agaric_engine::loro::engine::peer_id_from_device_id("local-dev");
     let local = vec![crafted_space_vv("local-dev", 3, &space)];
 
     let reset = check_reset_required(own, &local, &[]).unwrap();
@@ -307,11 +308,11 @@ async fn complete_sync_updates_peer_refs() {
     let (pool, _dir) = test_pool().await;
 
     // Create peer first (update_on_sync requires existing peer)
-    crate::peer_refs::upsert_peer_ref(&pool, "peer-A")
+    agaric_store::peer_refs::upsert_peer_ref(&pool, "peer-A")
         .await
         .unwrap();
 
-    let before = crate::peer_refs::get_peer_ref(&pool, "peer-A")
+    let before = agaric_store::peer_refs::get_peer_ref(&pool, "peer-A")
         .await
         .unwrap()
         .unwrap();
@@ -324,7 +325,7 @@ async fn complete_sync_updates_peer_refs() {
         .await
         .unwrap();
 
-    let after = crate::peer_refs::get_peer_ref(&pool, "peer-A")
+    let after = agaric_store::peer_refs::get_peer_ref(&pool, "peer-A")
         .await
         .unwrap()
         .unwrap();
@@ -363,7 +364,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
 
     // Pre-condition: peer does not exist.
     assert!(
-        crate::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+        agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-success")
             .await
             .unwrap()
             .is_none(),
@@ -373,7 +374,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
     // Run the bookkeeping pair inside a single BEGIN IMMEDIATE tx —
     // exactly mirroring the orchestrator's `SyncComplete` arm.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    crate::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-success")
+    agaric_store::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-success")
         .await
         .unwrap();
     complete_sync_in_tx(&mut tx, "peer-tx-success", "hash-rx", "hash-tx")
@@ -382,7 +383,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_commits_both_atomically() {
     tx.commit().await.unwrap();
 
     // Post-condition: both writes visible together.
-    let peer = crate::peer_refs::get_peer_ref(&pool, "peer-tx-success")
+    let peer = agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-success")
         .await
         .unwrap()
         .expect("peer row must exist after committed bookkeeping pair");
@@ -433,7 +434,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure(
     // for a fresh peer), but the UPDATE inside complete_sync_in_tx
     // hits the trigger and aborts.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    crate::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-rollback")
+    agaric_store::peer_refs::upsert_peer_ref_in_tx(&mut tx, "peer-tx-rollback")
         .await
         .unwrap();
     let inner = complete_sync_in_tx(&mut tx, "peer-tx-rollback", "hash-rx", "hash-tx").await;
@@ -456,7 +457,7 @@ async fn upsert_peer_ref_and_complete_sync_share_tx_rolls_back_on_inner_failure(
     // committed independently, this `get` would return `Some(_)` with
     // a NULL `last_hash`, leaving the next session with a stranded
     // Peer-ref row — exactly the regression prevents.
-    let peer = crate::peer_refs::get_peer_ref(&pool, "peer-tx-rollback")
+    let peer = agaric_store::peer_refs::get_peer_ref(&pool, "peer-tx-rollback")
         .await
         .unwrap();
     assert!(
@@ -622,7 +623,7 @@ async fn orchestrator_start_returns_head_exchange() {
             assert!(heads.is_empty(), "empty DB should produce empty heads");
             assert_eq!(
                 engine_format_version,
-                crate::loro::engine::ENGINE_FORMAT_VERSION,
+                agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
                 "start() must advertise the local ENGINE_FORMAT_VERSION (#2130)"
             );
         }
@@ -644,16 +645,17 @@ fn sync_message_serde_roundtrip() {
                 hash: "abc123".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
         },
         SyncMessage::LoroSync {
-            msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
-                protocol_version: crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
-                space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+            msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+                protocol_version:
+                    agaric_sync::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
                 bytes: vec![1, 2, 3],
             },
             is_last: true,
@@ -733,7 +735,7 @@ async fn orchestrator_handles_error_message() {
 /// terminal `Failed` state, and never producing a `LoroSync` payload.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_incompatible_engine_format() {
-    use crate::sync_events::{RecordingEventSink, SyncEvent};
+    use agaric_sync::sync_events::{RecordingEventSink, SyncEvent};
     use std::sync::Arc;
 
     let (pool, _dir) = test_pool().await;
@@ -745,7 +747,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
 
     // A peer one major engine format ahead of us. The responder must reject it
     // up front rather than letting the bytes reach an import.
-    let incompatible = crate::loro::engine::ENGINE_FORMAT_VERSION + 1;
+    let incompatible = agaric_engine::loro::engine::ENGINE_FORMAT_VERSION + 1;
     let result = orch
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![DeviceHead {
@@ -800,7 +802,7 @@ async fn orchestrator_rejects_incompatible_engine_format() {
 /// [`loro_sync_orchestrator_handles_empty_registry_without_panic`].
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_accepts_legacy_and_matching_engine_format() {
-    for version in [0, crate::loro::engine::ENGINE_FORMAT_VERSION] {
+    for version in [0, agaric_engine::loro::engine::ENGINE_FORMAT_VERSION] {
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());
         let mut orch = SyncOrchestrator::new(pool, "local-dev".into(), materializer.clone());
@@ -881,7 +883,9 @@ async fn orchestrator_handles_reset_required() {
 /// holds: error surfaced, session `Failed`, no fake success.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
-    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_sync::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage,
+    };
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
@@ -893,7 +897,7 @@ async fn orchestrator_loro_sync_undecodable_snapshot_fails_session() {
 
     let loro_msg = LoroSyncMessage::Snapshot {
         protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-        space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+        space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
         bytes: vec![1, 2, 3],
     };
     let result = orch
@@ -952,7 +956,7 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
         .await;
 
     let err = match result {
-        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
         other => panic!(
             "SnapshotOffer routed through handle_message must return \
              AppError::InvalidOperation — the daemon layer's \
@@ -979,7 +983,7 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
 /// stray `SnapshotOffer`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
-    use crate::sync_protocol::loro_sync_types::{
+    use agaric_sync::sync_protocol::loro_sync_types::{
         LORO_SYNC_PROTOCOL_VERSION, LoroSyncChunkedHeader,
     };
 
@@ -996,7 +1000,7 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         .handle_message(SyncMessage::LoroSyncChunked {
             header: LoroSyncChunkedHeader::Snapshot {
                 protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-                space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                space_id: agaric_store::space::SpaceId::from_trusted("00000000000000000000000000"),
                 size_bytes: 1024,
             },
             is_last: true,
@@ -1005,7 +1009,7 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         .await;
 
     let err = match result {
-        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
         other => panic!(
             "LoroSyncChunked routed through handle_message must return \
              AppError::InvalidOperation — the wire layer is the only \
@@ -1053,7 +1057,7 @@ async fn orchestrator_rejects_snapshot_accept_and_reject_i_sync_1() {
         };
         let result = orch.handle_message(variant).await;
         let err = match result {
-            Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+            Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
             other => panic!(
                 "{label} routed through handle_message must return \
                  AppError::InvalidOperation — the snapshot_transfer sub-flow \
@@ -1099,7 +1103,7 @@ async fn orchestrator_rejects_messages_in_terminal_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1213,7 +1217,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1222,7 +1226,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         .await;
 
     let err_msg = match result {
-        Err(crate::error::AppError::InvalidOperation(msg)) => msg,
+        Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
         other => panic!(
             "a message arriving in the Failed terminal state must return \
              AppError::InvalidOperation, got: {other:?}"
@@ -1249,7 +1253,7 @@ async fn orchestrator_rejects_messages_in_failed_terminal_state() {
         })
         .await;
     assert!(
-        matches!(result2, Err(crate::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
+        matches!(result2, Err(agaric_core::error::AppError::InvalidOperation(ref m)) if m.contains("terminal state")),
         "SnapshotOffer in the Failed terminal state must also be rejected by the terminal arm, got: {result2:?}"
     );
     assert_eq!(
@@ -1318,7 +1322,7 @@ async fn orchestrator_rejects_head_exchange_in_streaming_state() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1488,7 +1492,7 @@ async fn orchestrator_uses_cert_cn_identity_over_advertised_heads_2481() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1532,7 +1536,7 @@ async fn orchestrator_accepts_matching_peer_device_id() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1585,7 +1589,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
     // The block payload itself is irrelevant — we just need at least
     // one registered space.
     let state = materializer.loro_state();
-    let space = crate::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZBUG27EMPTYPEERIDXXXXXXX");
     {
         let mut g = state
             .registry
@@ -1610,7 +1614,7 @@ async fn orchestrator_rejects_sync_complete_with_empty_peer_id() {
                 hash: "abc".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1753,7 +1757,7 @@ fn serde_roundtrip_sync_message_head_exchange() {
             },
         ],
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -1832,7 +1836,7 @@ fn json_shape_head_exchange_matches_wire_format() {
             hash: "abc".into(),
         }],
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -1924,7 +1928,9 @@ fn loro_sync_chunked_deserializes_without_compressed_field() {
 
 #[test]
 fn json_shape_all_variants_have_type_tag() {
-    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_sync::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage,
+    };
 
     let variants: Vec<(&str, SyncMessage)> = vec![
         (
@@ -1932,7 +1938,7 @@ fn json_shape_all_variants_have_type_tag() {
             SyncMessage::HeadExchange {
                 heads: vec![],
                 loro_vvs: vec![],
-                engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+                engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
                 op_log_replication: false,
                 wire_compression: false,
                 op_log_batch_chunked: false,
@@ -1944,7 +1950,9 @@ fn json_shape_all_variants_have_type_tag() {
             SyncMessage::LoroSync {
                 msg: LoroSyncMessage::Snapshot {
                     protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-                    space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
+                    space_id: agaric_store::space::SpaceId::from_trusted(
+                        "00000000000000000000000000",
+                    ),
                     bytes: Vec::new(),
                 },
                 is_last: true,
@@ -1953,11 +1961,14 @@ fn json_shape_all_variants_have_type_tag() {
         (
             "LoroSyncChunked",
             SyncMessage::LoroSyncChunked {
-                header: crate::sync_protocol::loro_sync_types::LoroSyncChunkedHeader::Snapshot {
-                    protocol_version: LORO_SYNC_PROTOCOL_VERSION,
-                    space_id: crate::space::SpaceId::from_trusted("00000000000000000000000000"),
-                    size_bytes: 0,
-                },
+                header:
+                    agaric_sync::sync_protocol::loro_sync_types::LoroSyncChunkedHeader::Snapshot {
+                        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+                        space_id: agaric_store::space::SpaceId::from_trusted(
+                            "00000000000000000000000000",
+                        ),
+                        size_bytes: 0,
+                    },
                 is_last: true,
                 compressed: false,
             },
@@ -2069,7 +2080,7 @@ fn serde_roundtrip_empty_heads() {
     let msg = SyncMessage::HeadExchange {
         heads: vec![],
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -2115,7 +2126,7 @@ fn serde_roundtrip_many_heads() {
     let msg = SyncMessage::HeadExchange {
         heads: heads.clone(),
         loro_vvs: vec![],
-        engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
         op_log_replication: false,
         wire_compression: false,
         op_log_batch_chunked: false,
@@ -2209,7 +2220,7 @@ async fn orchestrator_errors_on_head_exchange_during_streaming_ops() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2306,7 +2317,7 @@ async fn handle_message_emits_within_sync_msg_span() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2356,7 +2367,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2422,7 +2433,7 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 /// `loro_sync::apply_remote` to a fresh registry B. Engine B's SQL
 /// projection of the block matches A's.
 ///
-/// This test bypasses `crate::loro::shared` (process-global) and calls
+/// This test bypasses `agaric_engine::loro::shared` (process-global) and calls
 /// the lower-level helpers directly so test isolation across this
 /// binary's other Loro-state tests is preserved. The orchestrator path
 /// is covered by
@@ -2431,10 +2442,10 @@ async fn loro_sync_orchestrator_handles_empty_registry_without_panic() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_round_trip_block_visible_on_b() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync;
-    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync;
+    use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
 
     let (pool_b, _dir_b) = test_pool().await;
     let materializer_b = Materializer::new(pool_b.clone());
@@ -2534,8 +2545,10 @@ async fn loro_sync_e2e_round_trip_block_visible_on_b() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync_types::{
+        LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage,
+    };
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
@@ -2606,10 +2619,10 @@ async fn loro_sync_orchestrator_rejects_loro_sync_before_head_exchange() {
 /// B mirrors the same shape per space.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync;
-    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync;
+    use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
 
     let (pool_b, _dir_b) = test_pool().await;
     let materializer_b = Materializer::new(pool_b.clone());
@@ -2796,10 +2809,10 @@ async fn loro_sync_e2e_multi_space_snapshot_initial_sync() {
 /// day-5 E2E doesn't cover (it only does Snapshot).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_update_against_seeded_peer() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync;
-    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync;
+    use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
 
     let (pool_b, _dir_b) = test_pool().await;
     let materializer_b = Materializer::new(pool_b.clone());
@@ -2956,9 +2969,9 @@ async fn loro_sync_e2e_update_against_seeded_peer() {
 /// {X, Y}.  This locks the CRDT-merge invariant at the sync seam.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync;
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -3110,11 +3123,11 @@ async fn loro_sync_e2e_concurrent_disjoint_creates_converge() {
 /// idempotency (re-applying the same purge sync leaves B unchanged).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn loro_sync_e2e_inbound_purge_projects_to_sql_with_local_parity() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::op::PurgeBlockPayload;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync;
-    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::op::PurgeBlockPayload;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync;
+    use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
 
     // ── Identifiers. `page` is the purge seed (subtree root); `c1`/`c2`
     // are its children; `c1` carries a property + a tag (referencing the
@@ -3580,7 +3593,7 @@ async fn replicated_foreign_op_surfaces_in_frontier_advertisement_2481() {
 
     // A foreign device's op is replicated as audit metadata.
     let payload = r#"{"block_id":"FGN1","block_type":"content","parent_id":null,"position":0,"content":"foreign"}"#;
-    let hash = crate::hash::compute_op_hash("device-Z", 7, None, "create_block", payload);
+    let hash = agaric_core::hash::compute_op_hash("device-Z", 7, None, "create_block", payload);
     let transfer = OpTransfer {
         device_id: "device-Z".into(),
         seq: 7,
@@ -3591,7 +3604,7 @@ async fn replicated_foreign_op_surfaces_in_frontier_advertisement_2481() {
         created_at: FIXED_TS,
         origin: "user".into(),
     };
-    crate::dag::insert_replicated_op(&pool, &transfer)
+    agaric_sync::sync_protocol::insert_replicated_op(&pool, &transfer)
         .await
         .unwrap();
 
@@ -3745,7 +3758,7 @@ async fn streamer_appends_op_log_batch_for_capable_peer_2481() {
                 hash: "h".into(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -3798,7 +3811,7 @@ async fn streamer_omits_op_log_batch_for_incapable_peer_2481() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             // Older peer: capability absent.
             op_log_replication: false,
             wire_compression: false,
@@ -3852,7 +3865,7 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
             // Chunked-capable peer → the oversized record streams.
@@ -3868,7 +3881,8 @@ async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
             assert_eq!(records.len(), 1, "the lone oversized record is streamed");
             assert!(is_last, "sole batch carries the terminal is_last");
             assert!(
-                records[0].payload.len() > crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
+                records[0].payload.len()
+                    > agaric_sync::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
                 "the streamed record's payload exceeds the inline bound (chunked on the wire)"
             );
         }
@@ -3902,7 +3916,7 @@ async fn streamer_skips_oversized_op_record_for_chunked_incapable_peer_2593() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             // Op-log replication capable, but NOT chunked-OpLogBatch capable —
             // exactly a shipped #2481 peer.
             op_log_replication: true,
@@ -3942,7 +3956,7 @@ async fn streamer_rejects_inbound_op_log_batch_2481() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: true,
             wire_compression: false,
             op_log_batch_chunked: false,

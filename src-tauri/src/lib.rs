@@ -1,162 +1,41 @@
 #[cfg(target_os = "linux")]
 pub mod appimage_integration;
-// #2621 Sync-D: `apply_host` moved into `agaric-sync` (the sync layer that
-// consumes the trait). Re-exported so every `crate::apply_host::…` path resolves
-// unchanged; the app's `impl ApplyHost for Materializer` stays app-side in
-// `materializer/coordinator.rs`.
-pub use agaric_sync::apply_host;
-// `backlink` moved into `agaric-store` (#2621, wave S4d) as part of the
-// search/query SCC. Re-exported so every `crate::backlink::…` path resolves
-// unchanged. Its insta snapshots moved with it (`agaric-store/src/backlink/
-// snapshots/`, renamed to the `agaric_store__` crate prefix).
-pub use agaric_store::backlink;
-// `bibliography` moved into `agaric-engine` (#2621, wave E0) as the first
-// query-free document-domain leaf. Re-exported so every `crate::bibliography::…`
-// path (commands::pages::bibliography) resolves unchanged. Its inline parser
-// tests moved with it (no app-layer coupling).
-pub use agaric_engine::bibliography;
-// `block_descendants` moved into `agaric-store` (#2621, wave S4a). Re-exported
-// so every `crate::block_descendants::…` path resolves unchanged. Its
-// `#[macro_export]` CTE macros (`descendants_cte_*!`, `ancestors_cte_*!`) land
-// at the store crate root; they are re-exported at this crate's root below so
-// `crate::descendants_cte_*!` / `crate::ancestors_cte_*!` paths keep resolving.
-pub use agaric_store::block_descendants;
-pub use agaric_store::{
-    ancestors_cte_active, ancestors_cte_standard, descendants_cte_active, descendants_cte_cohort,
-    descendants_cte_purge, descendants_cte_standard,
-};
-// `cache` moved into `agaric-store` (#2621, wave S4c). Re-exported so every
-// `crate::cache::…` path resolves unchanged. Three app-command cache tests
-// (which call `crate::commands::{list_projected_agenda_on_the_fly,
-// list_page_links_inner}`) relocated here as `cache_app_tests`.
-pub use agaric_store::cache;
 #[cfg(test)]
 mod cache_app_tests;
-// `cancellation` moved into `agaric-store` (#2621, wave S1). Re-exported so
-// every `crate::cancellation::…` path (fts, commands) resolves unchanged.
-pub use agaric_store::cancellation;
 pub mod commands;
 pub mod dag;
-// #642: neutral domain layer — declared right after `commands` for
-// alphabetical proximity but is a strictly *lower* layer (depends on
-// neither `commands` nor `fts`). Both depend down on it; this breaks the
-// former `commands ⇄ fts` module cycle.
 pub mod db;
 pub mod deeplink;
-pub use agaric_sync::device;
-pub mod domain;
-// `draft` — the block-draft autosave writer — moved into `agaric-engine`
-// (#2621, wave E2) as an independent document-domain leaf (deps on
-// agaric-store/agaric-core only). Re-exported so every `crate::draft::…` path
-// (commands::drafts / recovery::draft_recovery / benches) resolves unchanged.
-pub use agaric_engine::draft;
-// Foundation-crate re-export (#2621): `error` now lives in `agaric-core`.
-// The `pub use` keeps every `crate::error::…` path (142 files) resolving.
-pub use agaric_core::error;
-// `filters` moved into `agaric-store` (#2621, wave S4d) as part of the
-// search/query SCC. Re-exported so every `crate::filters::…` path resolves
-// unchanged.
-pub use agaric_store::filters;
-pub use agaric_sync::foreground;
-// `fts` moved into `agaric-store` (#2621, wave S4d) as part of the search/query
-// SCC. Re-exported so every `crate::fts::…` path resolves unchanged. The
-// partitioned / cursor tests that call app-only command inner functions
-// (`crate::commands::queries::search_blocks_*_inner`) relocated here as
-// `fts_app_tests`.
-pub use agaric_store::fts;
 #[cfg(test)]
 mod fts_app_tests;
-pub use agaric_core::hash; // foundation crate (#2621)
-// `import` — the query-free markdown→spec parser moved into `agaric-engine`
-// (#2621, wave E4-import). This thin app-side shim re-exports the engine module
-// (`pub use agaric_engine::import::*;`) so every `crate::import::…` path resolves
-// unchanged, and additionally hosts the Tauri-integration seam
+// `import` — the query-free markdown→spec parser lives in `agaric-engine`
+// (#2621, wave E4-import); consumers reach it via `agaric_engine::import::…`.
+// This app-side module hosts only the Tauri-integration seam
 // (`ImportProgressSink` + its `tauri::ipc::Channel` impl) which cannot live in
 // the framework-free engine crate.
 pub mod import;
 pub mod lifecycle;
 pub mod link_metadata;
-// `loro` — the CRDT engine (the only materializer path) — moved into
-// `agaric-engine` (#2621, wave E1) as the first query-bearing engine module.
-// Re-exported so every `crate::loro::…` path (materializer / merge / snapshot /
-// commands) resolves unchanged. Its pure-CRDT tests moved with it; the app-layer
-// materializer/merge/run couplings live above this crate and reach loro via
-// this re-export.
-pub use agaric_engine::loro;
 pub mod maintenance;
 pub mod materializer;
 pub mod mcp;
-// `merge` — the query-free CRDT divergence/apply dispatch — moved into
-// `agaric-engine` (#2621, wave E3-merge). Engine-clean (0 sqlx queries, no
-// app-layer coupling); depends only on loro/op/space/ulid. Re-exported so every
-// `crate::merge::…` path resolves unchanged.
-pub use agaric_engine::merge;
-// OpenTelemetry trace observability (#2110, M1a). Backend traces to a LOCAL
-// FILE only — zero network egress, gated OFF by default (AGARIC_OTEL unset).
-// #2878 — the module + its heavy OTel dep tree moved into the
-// `agaric-observability` leaf crate; aliased here so every
-// `crate::observability::…` path resolves unchanged. The app passes its two
-// materializer counter readers in via `observability::MaterializerCounters` at
-// `init` time (the crate depends only on `agaric-core`, never up on the app).
-pub use agaric_observability as observability;
-// `op` moved into `agaric-store` (#2621, wave S2). Re-exported so every
-// `crate::op::…` path (op_log, materializer, commands, …) resolves unchanged.
-pub use agaric_store::op;
-// `op_log` moved into `agaric-store` (#2621, wave S3b-ii). Re-exported so every
-// `crate::op_log::…` path (materializer, commands, dag, reverse, …) resolves
-// unchanged.
-pub use agaric_store::op_log;
 // The op_log tests that couple to app-only modules (`mcp::actor`, `dag`) could
 // not move down into the store with the rest of op_log's tests (#2621, wave
 // S3b-ii); they live here in the app crate instead.
 #[cfg(test)]
 mod op_log_app_tests;
-// `pagination` moved into `agaric-store` (#2621, wave S4b). Re-exported so
-// every `crate::pagination::…` path resolves unchanged. A few phase-7
-// cross-space tests that call app-only command inner functions
-// (`batch_resolve_inner`, `get_page_inner`) relocated here as
-// `pagination_app_tests`.
-pub use agaric_store::pagination;
 #[cfg(test)]
 mod pagination_app_tests;
-// #2621 Sync-D: `pairing` moved into `agaric-sync`. Re-exported so every
-// `crate::pairing::…` path resolves unchanged.
-pub use agaric_sync::pairing;
-// `peer_refs` moved into `agaric-store` (#2621, wave S4a). Re-exported so
-// every `crate::peer_refs::…` path resolves unchanged. The one test that
-// couples to the app-only `pairing` module lives in `peer_refs_app_tests`.
-pub use agaric_store::peer_refs;
 #[cfg(test)]
 mod peer_refs_app_tests;
-// #1280 — the advanced-query engine (composable FilterExpr boolean-tree
-// queries). Moved into `agaric-store` (#2621, wave S4d) as part of the
-// search/query SCC. Re-exported so every `crate::query::…` path resolves
-// unchanged.
-pub use agaric_store::query;
 pub mod recovery;
 pub mod recurrence;
-// Pure recurrence date-math (interval shift + per-block projection), split out
-// of `recurrence` (#2621) and moved into `agaric-store` (wave S4c) so the
-// store-layer projected-agenda cache can reuse it without depending on the
-// app-layer recurrence module. Re-exported so `crate::recurrence_math::…`
-// paths resolve unchanged.
-pub use agaric_store::recurrence_math;
 pub mod reverse;
 // #2621 Sync-D: `snapshot` production moved into `agaric-sync`; `src/snapshot/
 // mod.rs` is now a shim that re-exports it and hosts the app-coupled tests.
 pub mod snapshot;
 pub mod soft_delete;
-// `space` + `space_filter_canonical` moved into `agaric-store` (#2621, wave
-// S4a). Re-exported so `crate::space::…` / `crate::space_filter_canonical::…`
-// paths resolve unchanged. `spaces` (Personal/Work bootstrap) stays app-side.
-pub use agaric_store::space;
-pub use agaric_store::space_filter_canonical;
 pub mod spaces;
-pub use agaric_core::sql_utils; // foundation crate (#2621)
-// #2621 Sync-D: `sync_cert` moved into `agaric-sync`. Re-exported so every
-// `crate::sync_cert::…` path resolves unchanged.
-pub use agaric_sync::sync_cert;
-pub use agaric_sync::sync_constants;
 // #2621 Sync-D: `sync_daemon` production moved into `agaric-sync`; this
 // `pub mod` is now a shim (`src/sync_daemon/mod.rs`) re-exporting it and hosting
 // the app-coupled tests (`tests.rs`, `snapshot_transfer_tests.rs`).
@@ -165,42 +44,13 @@ pub mod sync_daemon;
 // `ChannelEventSink`) live here; `sync_events` (the pure event types +
 // `SyncEventSink` trait) moved into `agaric-sync` and is re-exported below.
 pub mod sync_event_sinks;
-// #2621 Sync-D: `sync_events` (pure types + trait) moved into `agaric-sync`.
-// Re-exported so every `crate::sync_events::…` path resolves unchanged.
-pub use agaric_sync::sync_events;
 // #2621 Sync-D: `sync_files` / `sync_net` / `sync_protocol` production moved
 // into `agaric-sync`; each `pub mod` is now a shim re-exporting it and hosting
 // the app-coupled tests.
 pub mod sync_files;
 pub mod sync_net;
 pub mod sync_protocol;
-// #2621 Sync-D: `sync_scheduler` moved into `agaric-sync`. Re-exported so every
-// `crate::sync_scheduler::…` path resolves unchanged.
-pub use agaric_sync::sync_scheduler;
-// `tag_inheritance` + its companion `tag_inheritance_macros` moved into
-// `agaric-store` (#2621, wave S4a). Re-exported so `crate::tag_inheritance::…`
-// / `crate::tag_inheritance_macros::…` paths resolve unchanged. The
-// `#[macro_export]` `tag_inh_*!` macros land at the store crate root; they are
-// re-exported at this crate's root below so `crate::tag_inh_*!` (and the bare
-// unqualified forms) keep resolving.
-pub use agaric_core::tag_norm;
-pub use agaric_store::tag_inheritance;
-pub use agaric_store::tag_inheritance_macros;
-pub use agaric_store::{
-    tag_inh_ancestors_walk, tag_inh_descendant_tags_full, tag_inh_descendants_active,
-    tag_inh_rebuild_nearest, tag_inh_subtree_active, tag_inh_subtree_unfiltered,
-    tag_inh_tagged_descendants_in_subtree,
-}; // foundation crate (#2621)
-// `tag_query` moved into `agaric-store` (#2621, wave S4b). Re-exported so
-// every `crate::tag_query::…` path resolves unchanged.
-pub use agaric_store::tag_query;
-// `task_locals` moved into `agaric-store` (#2621, wave S3a). Re-exported so
-// every `crate::task_locals::…` path (op_log, mcp::actor, mcp::activity, …)
-// resolves unchanged.
-pub use agaric_core::text_utils;
-pub use agaric_store::task_locals; // foundation crate (#2621)
 pub mod ulid;
-pub use agaric_core::word_diff; // foundation crate (#2621)
 
 /// I-Core-7: Single source of truth for the list of Tauri commands
 /// exposed to the frontend.
@@ -479,14 +329,6 @@ macro_rules! agaric_commands {
     };
 }
 
-/// RFC-3339 wall-clock timestamp helper. Moved down into `agaric-core`
-/// (`agaric_core::time`) so store/engine modules read it *downward* instead
-/// of reaching up into this crate root; re-exported here so every existing
-/// `crate::now_rfc3339()` call site resolves unchanged. See the full
-/// contract (legacy TEXT columns vs. INTEGER epoch-ms) on
-/// [`agaric_core::time::now_rfc3339`].
-pub use agaric_core::time::now_rfc3339;
-
 /// Build the tracing `EnvFilter` directive string for Agaric.
 ///
 /// Preserves every directive the operator provided in `rust_log` (typically
@@ -552,7 +394,7 @@ mod integration_tests;
 #[cfg(test)]
 mod proptest_db_harness;
 // LoroSync end-to-end integration tests live in
-// `sync_protocol::tests` (`loro_sync_e2e_*`).
+// `agaric_sync::sync_protocol::tests` (`loro_sync_e2e_*`).
 
 /// Wrap a boot-time `SELECT COUNT(*)` result so DB errors get a tracing
 /// breadcrumb instead of being silently coerced to `0`. The fall-through
@@ -815,14 +657,14 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // when its sink built, the logs bridge); an empty `Vec` is a no-op on the
     // registry, so when observability is disabled the subscriber chain is
     // byte-identical to before.
-    let obs_config = observability::ObservabilityConfig::from_env();
+    let obs_config = agaric_observability::ObservabilityConfig::from_env();
     // #2878 — wire the materializer's process-global counter readers into the
     // observability crate so its M6 observable counters can surface them without
     // that leaf crate depending up on the materializer.
-    let obs = observability::init(
+    let obs = agaric_observability::init(
         &log_dir,
         &obs_config,
-        observability::MaterializerCounters {
+        agaric_observability::MaterializerCounters {
             sql_only_fallback: materializer::sql_only_fallback_count,
             descendant_fanout_dropped: materializer::descendant_fanout_dropped_count,
         },
@@ -895,7 +737,7 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     // `State` resolves. Built with the SAME enabled flag as the trace pipeline:
     // when observability is off it holds no sink and `ingest` is a no-op, so the
     // command stays a zero-cost local-file write that never leaves the machine.
-    app.manage(observability::build_frontend_ingestor(
+    app.manage(agaric_observability::build_frontend_ingestor(
         &log_dir,
         obs_enabled,
     ));
@@ -911,13 +753,13 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
 fn init_persistence(
     db_path: &std::path::Path,
     app_data_dir: &std::path::Path,
-) -> Result<(db::DbPools, String, sync_net::SyncCert), Box<dyn std::error::Error>> {
+) -> Result<(db::DbPools, String, agaric_sync::sync_net::SyncCert), Box<dyn std::error::Error>> {
     // Initialize separated read/write pools
     let pools = tauri::async_runtime::block_on(db::init_pools(db_path))?;
 
     // Read or generate a persistent device UUID
     let device_id_path = app_data_dir.join("device-id");
-    let device_id = device::get_or_create_device_id(&device_id_path)?;
+    let device_id = agaric_sync::device::get_or_create_device_id(&device_id_path)?;
 
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
@@ -929,7 +771,7 @@ fn init_persistence(
 
     // Read or generate a persistent TLS certificate for sync (#380)
     let cert_path = app_data_dir.join("sync-cert");
-    let sync_cert = sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
+    let sync_cert = agaric_sync::sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
     tracing::info!(cert_hash = %sync_cert.cert_hash, "TLS cert loaded");
 
     Ok((pools, device_id, sync_cert))
@@ -945,11 +787,11 @@ fn build_materializer(
     pools: &db::DbPools,
     app_data_dir: &std::path::Path,
 ) -> (
-    foreground::LifecycleHooks,
+    agaric_sync::foreground::LifecycleHooks,
     materializer::Materializer,
-    std::sync::Arc<loro::shared::LoroState>,
+    std::sync::Arc<agaric_engine::loro::shared::LoroState>,
 ) {
-    use foreground::LifecycleHooks;
+    use agaric_sync::foreground::LifecycleHooks;
     use materializer::Materializer;
 
     // #2249: construct the process-wide Loro engine state FIRST and hand
@@ -960,7 +802,7 @@ fn build_materializer(
     // `shared::init()`-before-recovery comment. The same `Arc` is
     // registered as Tauri managed state later in setup for the
     // `RunEvent::Exit` snapshot save.
-    let loro_state = std::sync::Arc::new(loro::shared::LoroState::new());
+    let loro_state = std::sync::Arc::new(agaric_engine::loro::shared::LoroState::new());
 
     // Create materializer — bg cache rebuilds read from read pool, write to write pool (P-8)
     //
@@ -1038,8 +880,9 @@ fn recover_and_bootstrap(
         // `load_peer_epoch`; a persistent DB read failure here is
         // correctly boot-fatal (the same DB is unusable for recovery
         // and rehydrate immediately below regardless).
-        let peer_epoch =
-            tauri::async_runtime::block_on(crate::loro::peer_epoch::load_peer_epoch(&pools.write))?;
+        let peer_epoch = tauri::async_runtime::block_on(
+            agaric_engine::loro::peer_epoch::load_peer_epoch(&pools.write),
+        )?;
         loro_state.registry.set_peer_epoch(peer_epoch);
         if peer_epoch > 0 {
             tracing::info!(
@@ -1050,7 +893,7 @@ fn recover_and_bootstrap(
         }
     }
     {
-        let n = tauri::async_runtime::block_on(crate::loro::snapshot::rehydrate_registry(
+        let n = tauri::async_runtime::block_on(agaric_engine::loro::snapshot::rehydrate_registry(
             &pools.write,
             &loro_state.registry,
             device_id,
@@ -1347,7 +1190,7 @@ fn spawn_background_tasks(
     pools: &db::DbPools,
     device_id: &str,
     materializer: &materializer::Materializer,
-    lifecycle: &foreground::LifecycleHooks,
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
 ) {
     // Spawn the retry-queue sweeper so any per-block tasks
     // persisted by a previous session (or accumulated during this
@@ -1375,12 +1218,12 @@ fn spawn_background_tasks(
     // shutdown flag, mirroring the retry-queue sweeper above.
     // #703: flag never set; sweeper observes constant `false`.
     let orphan_drafts_shutdown = Arc::new(AtomicBool::new(false));
-    draft::spawn_orphan_drafts_sweeper(
+    agaric_engine::draft::spawn_orphan_drafts_sweeper(
         pools.write.clone(),
-        draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
+        agaric_engine::draft::ORPHAN_DRAFTS_SWEEP_INTERVAL,
         orphan_drafts_shutdown,
         // #2621 (wave E2): `draft` is tauri-free, so the app injects Tauri's
-        // runtime spawner (mirrors `loro::snapshot::spawn_periodic_snapshot`).
+        // runtime spawner (mirrors `agaric_engine::loro::snapshot::spawn_periodic_snapshot`).
         |fut| {
             tauri::async_runtime::spawn(fut);
         },
@@ -1578,10 +1421,10 @@ fn spawn_background_tasks(
     // is via the managed flag, mirroring the sweepers above.
     // #703: flag never set; snapshot task observes constant `false`.
     let snapshot_shutdown = Arc::new(AtomicBool::new(false));
-    crate::loro::snapshot::spawn_periodic_snapshot(
+    agaric_engine::loro::snapshot::spawn_periodic_snapshot(
         pools.write.clone(),
         snapshot_shutdown,
-        crate::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
+        agaric_engine::loro::snapshot::SNAPSHOT_INTERVAL_SECS,
         Arc::clone(materializer.loro_state()),
         // `agaric-engine` stays tauri-free (#2621, wave E1): the app injects the
         // Tauri async runtime as the executor here.
@@ -1603,15 +1446,15 @@ fn register_managed_state<R: tauri::Runtime>(
     app: &tauri::App<R>,
     pools: db::DbPools,
     device_id: String,
-    sync_cert: sync_net::SyncCert,
+    sync_cert: agaric_sync::sync_net::SyncCert,
     materializer: materializer::Materializer,
-    scheduler: Arc<sync_scheduler::SyncScheduler>,
-    lifecycle: &foreground::LifecycleHooks,
+    scheduler: Arc<agaric_sync::sync_scheduler::SyncScheduler>,
+    lifecycle: &agaric_sync::foreground::LifecycleHooks,
 ) -> Arc<AtomicBool> {
+    use agaric_sync::device::DeviceId;
+    use agaric_sync::sync_cert::PersistedCert;
     use db::{ReadPool, WriteCtx, WritePool};
-    use device::DeviceId;
     use lifecycle::AppLifecycle;
-    use sync_cert::PersistedCert;
     use tauri::Manager;
 
     // #1056 — assemble the bundled write-path context BEFORE the originals
@@ -1630,7 +1473,7 @@ fn register_managed_state<R: tauri::Runtime>(
     app.manage(write_ctx);
     // -A — extension-state guard registry for
     // in-flight search IPCs. See `cancellation.rs`.
-    app.manage(cancellation::CancellationRegistry::new());
+    app.manage(agaric_store::cancellation::CancellationRegistry::new());
     app.manage(device_id);
     app.manage(PersistedCert::new(sync_cert));
     app.manage(materializer);
@@ -1656,7 +1499,7 @@ fn register_managed_state<R: tauri::Runtime>(
     // `!is_foreground` would fire while the user is still looking at the
     // window and the periodic sync tick would starve. So on focus-loss
     // we query the window (`is_visible()` / `is_minimized()`) and let
-    // the pure `foreground::derive_app_state` decide the regime. The
+    // the pure `agaric_sync::foreground::derive_app_state` decide the regime. The
     // mobile-only `Suspended` / `Resumed` events are unambiguous OS
     // background/foreground transitions and are mapped directly.
     app.manage(AppLifecycle(lifecycle.clone()));
@@ -1685,12 +1528,14 @@ fn register_managed_state<R: tauri::Runtime>(
                     // uses the unambiguous `Suspended` event below.
                     let visible = window_for_query.is_visible().unwrap_or(true);
                     let minimized = window_for_query.is_minimized().unwrap_or(false);
-                    let state = foreground::derive_app_state(foreground::WindowStateFlags {
-                        focused: *focused,
-                        visible,
-                        minimized,
-                        os_suspended: false,
-                    });
+                    let state = agaric_sync::foreground::derive_app_state(
+                        agaric_sync::foreground::WindowStateFlags {
+                            focused: *focused,
+                            visible,
+                            minimized,
+                            os_suspended: false,
+                        },
+                    );
                     tracing::info!(
                         focused = *focused,
                         visible,
@@ -1723,7 +1568,7 @@ fn register_managed_state<R: tauri::Runtime>(
     cancel_flag
 }
 
-/// Inputs the [`SyncDaemon`](sync_daemon::SyncDaemon) needs, gathered into a
+/// Inputs the [`SyncDaemon`](agaric_sync::sync_daemon::SyncDaemon) needs, gathered into a
 /// struct so [`wire_sync_daemon`] stays under the `too_many_arguments` ceiling.
 ///
 /// Every field is a cheap `Arc`-backed clone taken from the still-live
@@ -1734,16 +1579,16 @@ struct SyncDaemonWiring {
     pool: sqlx::SqlitePool,
     device_id: String,
     materializer: materializer::Materializer,
-    scheduler: Arc<sync_scheduler::SyncScheduler>,
-    cert: sync_net::SyncCert,
-    sink: Arc<dyn sync_events::SyncEventSink>,
+    scheduler: Arc<agaric_sync::sync_scheduler::SyncScheduler>,
+    cert: agaric_sync::sync_net::SyncCert,
+    sink: Arc<dyn agaric_sync::sync_events::SyncEventSink>,
     app_handle: tauri::AppHandle,
-    lifecycle: foreground::LifecycleHooks,
+    lifecycle: agaric_sync::foreground::LifecycleHooks,
     cancel_flag: Arc<AtomicBool>,
 }
 
 /// Boot-phase 13 — install the rustls CryptoProvider and spawn the
-/// [`SyncDaemon`](sync_daemon::SyncDaemon).
+/// [`SyncDaemon`](agaric_sync::sync_daemon::SyncDaemon).
 ///
 /// `start_if_peers_exist` keeps the daemon dormant until a device is
 /// Paired; lifecycle threading short-circuits the resync tick while
@@ -1766,8 +1611,8 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
     // wake notify into the daemon loop so its periodic resync
     // tick short-circuits while the app is backgrounded.
     tauri::async_runtime::spawn(async move {
-        match sync_daemon::SyncDaemon::start_if_peers_exist_with_lifecycle(
-            sync_daemon::SyncDaemonContext {
+        match agaric_sync::sync_daemon::SyncDaemon::start_if_peers_exist_with_lifecycle(
+            agaric_sync::sync_daemon::SyncDaemonContext {
                 pool: w.pool,
                 device_id: w.device_id,
                 // #2621 (agaric-sync inversion): erase the concrete coordinator
@@ -2015,7 +1860,7 @@ fn show_fatal_error_dialog(title: &str, body: &str) {
 }
 
 // #2123: the src-tauri/fuzz crate compiles this lib as a path dependency under
-// `--cfg fuzzing` to reach the byte-level parsers (`snapshot::decode_snapshot`,
+// `--cfg fuzzing` to reach the byte-level parsers (`agaric_sync::snapshot::decode_snapshot`,
 // `deeplink::parse_deep_link`). `run()` is the tauri app entry; its
 // `generate_context!` ACL codegen is both irrelevant to fuzzing pure parsers and
 // fragile under the nightly + sanitizer fuzz build, so exclude the whole GUI
@@ -2303,7 +2148,8 @@ pub fn run() {
                 spawn_background_tasks(&pools, &device_id, &materializer, &lifecycle);
 
                 // Create scheduler wrapped in Arc for sharing with the SyncDaemon
-                let scheduler = std::sync::Arc::new(sync_scheduler::SyncScheduler::new());
+                let scheduler =
+                    std::sync::Arc::new(agaric_sync::sync_scheduler::SyncScheduler::new());
 
                 // #1058: gather the cheap `Arc` clones each downstream consumer
                 // needs BEFORE the originals are moved into managed state by
@@ -2358,9 +2204,9 @@ pub fn run() {
                 // `start_if_peers_exist_with_lifecycle` skips dormant mode).
                 // `get_mdns_status` resolves this state for a frontend that
                 // mounts after that first emission.
-                app.manage(sync_events::MdnsStatusState(std::sync::Mutex::new(
-                    sync_events::MdnsStatus::default(),
-                )));
+                app.manage(agaric_sync::sync_events::MdnsStatusState(
+                    std::sync::Mutex::new(agaric_sync::sync_events::MdnsStatus::default()),
+                ));
 
                 // #2696 — sweep orphaned `snapshot-recv-*.tmp` files left in
                 // `app_data_dir` by a previous process that died mid-receive
@@ -2368,7 +2214,7 @@ pub fn run() {
                 // never ran). Safe to delete unconditionally here because it
                 // runs BEFORE `wire_sync_daemon` below starts accepting inbound
                 // connections, so no snapshot receive can be in flight yet.
-                crate::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
+                agaric_sync::sync_daemon::sweep_orphaned_snapshot_temps(&app_data_dir);
 
                 // Install rustls + spawn the SyncDaemon (#382/#383/#278).
                 let daemon_wiring = SyncDaemonWiring {
@@ -2444,7 +2290,7 @@ pub fn run() {
                 // NAME (an opaque compile-time identifier, never user data).
                 //
                 // #2282 — gate the timing on the process-global IPC-metrics flag
-                // (set in `observability::init` only when the meter is
+                // (set in `agaric_observability::init` only when the meter is
                 // installed). When observability is OFF (the default) this skips
                 // BOTH per-invoke `String` allocations — the command-name clone
                 // here and the `KeyValue` inside `record_ipc_duration` — so the
@@ -2452,7 +2298,7 @@ pub fn run() {
                 // the command name is captured BEFORE dispatch (which consumes
                 // `invoke`). The trace re-parenting below is independent of this
                 // gate and still runs whenever a `traceparent` is present.
-                let ipc_timing = observability::ipc_metrics_enabled().then(|| {
+                let ipc_timing = agaric_observability::ipc_metrics_enabled().then(|| {
                     (
                         invoke.message.command().to_owned(),
                         std::time::Instant::now(),
@@ -2468,18 +2314,18 @@ pub fn run() {
                         specta_invoke_handler(invoke)
                     }
                 };
-                let response = match observability::extract_trace_context(invoke.message.headers())
-                {
-                    Some(parent_cx) => {
-                        let span = tracing::info_span!("ipc.frontend");
-                        let _ = span.set_parent(parent_cx);
-                        let _enter = span.enter();
-                        dispatch(invoke)
-                    }
-                    None => dispatch(invoke),
-                };
+                let response =
+                    match agaric_observability::extract_trace_context(invoke.message.headers()) {
+                        Some(parent_cx) => {
+                            let span = tracing::info_span!("ipc.frontend");
+                            let _ = span.set_parent(parent_cx);
+                            let _enter = span.enter();
+                            dispatch(invoke)
+                        }
+                        None => dispatch(invoke),
+                    };
                 if let Some((cmd, started)) = ipc_timing {
-                    observability::record_ipc_duration(
+                    agaric_observability::record_ipc_duration(
                         started.elapsed().as_secs_f64() * 1000.0,
                         &cmd,
                     );
@@ -2516,12 +2362,12 @@ pub fn run() {
                 use tauri::Manager;
                 if let (Some(state), Some(pool)) = (
                     app_handle
-                        .try_state::<std::sync::Arc<crate::loro::shared::LoroState>>()
+                        .try_state::<std::sync::Arc<agaric_engine::loro::shared::LoroState>>()
                         .map(|s| std::sync::Arc::clone(&s)),
                     app_handle.try_state::<WritePool>(),
                 ) {
                     let saved = tauri::async_runtime::block_on(
-                        crate::loro::snapshot::save_all_engines(&pool.0, &state.registry),
+                        agaric_engine::loro::snapshot::save_all_engines(&pool.0, &state.registry),
                     );
                     tracing::info!(saved, "loro: persisted snapshots on exit");
                 }

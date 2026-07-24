@@ -93,9 +93,9 @@ async fn enqueue_inbound_sync_rebuilds_refreshes_derived_caches() {
     // #421: FTS is now driven from the changed-block set (per-block
     // `UpdateFtsBlock` for a small incremental import). Pass the seeded ids.
     let changed = [
-        crate::ulid::BlockId::test_id("SYNC_TAG_1"),
-        crate::ulid::BlockId::test_id("SYNC_PAGE_1"),
-        crate::ulid::BlockId::test_id("SYNC_NOTE_1"),
+        agaric_core::ulid::BlockId::test_id("SYNC_TAG_1"),
+        agaric_core::ulid::BlockId::test_id("SYNC_PAGE_1"),
+        agaric_core::ulid::BlockId::test_id("SYNC_NOTE_1"),
     ];
     mat.enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
@@ -170,7 +170,7 @@ async fn enqueue_inbound_sync_rebuilds_purge_only_import_still_fans_out() {
 
     insert_block_direct(&pool, "PURGE_TAG_1", "tag", "still-cached").await;
 
-    let purged = [crate::ulid::BlockId::test_id("GONE_BLOCK_1")];
+    let purged = [agaric_core::ulid::BlockId::test_id("GONE_BLOCK_1")];
     mat.enqueue_inbound_sync_rebuilds(&[], &purged)
         .await
         .expect("enqueue inbound sync rebuilds");
@@ -220,7 +220,7 @@ async fn enqueue_inbound_sync_rebuilds_skips_tag_inheritance_but_rebuilds_page_i
         .unwrap();
     insert_block_tag(&pool, "INH_PARENT_1", "INH_TAG_1").await;
 
-    let changed = [crate::ulid::BlockId::test_id("INH_CHILD_1")];
+    let changed = [agaric_core::ulid::BlockId::test_id("INH_CHILD_1")];
     mat.enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
         .expect("enqueue inbound sync rebuilds");
@@ -273,7 +273,7 @@ async fn settle() {
 /// #2291 test helper: arm the debounce via a purge-only inbound import
 /// (`changed` empty → no FTS side-tasks), isolating the global fan-out
 /// signal, then settle so the loop registers/recomputes its deadline.
-async fn arm_debounce(mat: &Materializer, purged: &[crate::ulid::BlockId]) {
+async fn arm_debounce(mat: &Materializer, purged: &[agaric_core::ulid::BlockId]) {
     mat.enqueue_inbound_sync_rebuilds(&[], purged)
         .await
         .expect("arm inbound rebuild debounce");
@@ -293,7 +293,7 @@ async fn inbound_rebuild_debounce_coalesces_burst_to_single_fanout() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     tokio::time::pause();
-    let purged = [crate::ulid::BlockId::test_id("GONE_1")];
+    let purged = [agaric_core::ulid::BlockId::test_id("GONE_1")];
 
     // Arm 5 times, each 50ms apart — all within the 300ms debounce window.
     for _ in 0..5 {
@@ -324,7 +324,7 @@ async fn inbound_rebuild_debounce_trailing_fire() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     tokio::time::pause();
-    let purged = [crate::ulid::BlockId::test_id("GONE_2")];
+    let purged = [agaric_core::ulid::BlockId::test_id("GONE_2")];
 
     arm_debounce(&mat, &purged).await;
     assert_eq!(
@@ -351,7 +351,7 @@ async fn inbound_rebuild_debounce_max_wait_cap_fires_despite_continuous_arming()
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     tokio::time::pause();
-    let purged = [crate::ulid::BlockId::test_id("GONE_3")];
+    let purged = [agaric_core::ulid::BlockId::test_id("GONE_3")];
 
     // Arm every 250ms — under the 300ms DEBOUNCE — so the trailing window
     // is perpetually reset. Arm for ~1s first (< the 2s MAX_WAIT) and
@@ -581,12 +581,12 @@ async fn inbound_block_tag_refs_scoped_equals_global_rebuild_2667() {
 
     // Below threshold → per-block `ReindexBlockTagRefs`, enqueued inline.
     let changed = [
-        crate::ulid::BlockId::test_id(&tag_a),
-        crate::ulid::BlockId::test_id(&tag_b),
-        crate::ulid::BlockId::test_id(&note1),
-        crate::ulid::BlockId::test_id(&note2),
-        crate::ulid::BlockId::test_id(&note_del),
-        crate::ulid::BlockId::test_id(&note3),
+        agaric_core::ulid::BlockId::test_id(&tag_a),
+        agaric_core::ulid::BlockId::test_id(&tag_b),
+        agaric_core::ulid::BlockId::test_id(&note1),
+        agaric_core::ulid::BlockId::test_id(&note2),
+        agaric_core::ulid::BlockId::test_id(&note_del),
+        agaric_core::ulid::BlockId::test_id(&note3),
     ];
     // This 6-block delta is far below the per-block threshold
     // (`SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX` = BACKGROUND_CAPACITY/4 = 256), so
@@ -649,8 +649,8 @@ async fn inbound_block_tag_refs_purge_only_matches_global_2667() {
 
     // Establish the live rows via a normal small delta.
     let changed = [
-        crate::ulid::BlockId::test_id(&tag_a),
-        crate::ulid::BlockId::test_id(&note1),
+        agaric_core::ulid::BlockId::test_id(&tag_a),
+        agaric_core::ulid::BlockId::test_id(&note1),
     ];
     mat.enqueue_inbound_sync_rebuilds(&changed, &[])
         .await
@@ -671,7 +671,7 @@ async fn inbound_block_tag_refs_purge_only_matches_global_2667() {
 
     // Purge-only import: changed empty, purged non-empty. Must enqueue NOTHING
     // for block_tag_refs (cascade already swept the row).
-    let purged = [crate::ulid::BlockId::test_id(&note1)];
+    let purged = [agaric_core::ulid::BlockId::test_id(&note1)];
     mat.enqueue_inbound_sync_rebuilds(&[], &purged)
         .await
         .expect("purge-only inbound rebuild");

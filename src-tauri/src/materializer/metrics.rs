@@ -483,5 +483,5 @@ pub struct StatusInfo {
     /// Sourced from
     /// `sync_protocol::snapshot_fallback_metrics::last`.
     pub snapshot_fallback_last:
-        Option<crate::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
+        Option<agaric_sync::sync_protocol::snapshot_fallback_metrics::SnapshotFallbackLast>,
 }

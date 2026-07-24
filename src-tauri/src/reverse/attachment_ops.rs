@@ -1,14 +1,14 @@
 //! Reverse functions for attachment ops (add, delete, rename).
 
-use crate::error::AppError;
-use crate::op::OpPayload;
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op::OpPayload;
+use agaric_store::op_log::OpRecord;
 use sqlx::SqlitePool;
 
 pub fn reverse_add_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
-    let payload: crate::op::AddAttachmentPayload = serde_json::from_str(&record.payload)?;
+    let payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::DeleteAttachment(
-        crate::op::DeleteAttachmentPayload {
+        agaric_store::op::DeleteAttachmentPayload {
             attachment_id: payload.attachment_id,
             // Carry forward the original `fs_path` so the reverse op can
             // unlink the file the AddAttachment created.
@@ -32,7 +32,7 @@ pub async fn reverse_delete_attachment(
     pool: &SqlitePool,
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
-    let payload: crate::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
+    let payload: agaric_store::op::DeleteAttachmentPayload = serde_json::from_str(&record.payload)?;
     let attachment_id = payload.attachment_id.as_str();
     // (f): this query mirrors the
     // `(created_at < ?ts OR (created_at = ?ts AND seq < ?seq)) ORDER BY
@@ -73,7 +73,8 @@ pub async fn reverse_delete_attachment(
     .await?;
     match original {
         Some(row) => {
-            let add_payload: crate::op::AddAttachmentPayload = serde_json::from_str(&row.payload)?;
+            let add_payload: agaric_store::op::AddAttachmentPayload =
+                serde_json::from_str(&row.payload)?;
             Ok(OpPayload::AddAttachment(add_payload))
         }
         None => Err(AppError::NonReversible {
@@ -84,9 +85,9 @@ pub async fn reverse_delete_attachment(
 
 /// Reverse a `rename_attachment` op by swapping old and new filenames.
 pub fn reverse_rename_attachment(record: &OpRecord) -> Result<OpPayload, AppError> {
-    let payload: crate::op::RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
+    let payload: agaric_store::op::RenameAttachmentPayload = serde_json::from_str(&record.payload)?;
     Ok(OpPayload::RenameAttachment(
-        crate::op::RenameAttachmentPayload {
+        agaric_store::op::RenameAttachmentPayload {
             attachment_id: payload.attachment_id,
             old_filename: payload.new_filename,
             new_filename: payload.old_filename,

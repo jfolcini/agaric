@@ -4,8 +4,8 @@ use crate::commands::{
 };
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::mcp::actor::Actor;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::task_locals::Actor;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -353,7 +353,7 @@ async fn mk_in_space_content_block(
     mat: &Materializer,
     space: &str,
     content: &str,
-) -> crate::pagination::BlockRow {
+) -> agaric_store::pagination::BlockRow {
     let parent = create_block_inner_with_space(
         pool,
         DEV,
@@ -1195,7 +1195,7 @@ async fn delete_block_stamps_origin_agent_in_op_log() {
 /// (or doubles them) is caught here, not in the dispatch layer.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn append_block_populates_last_append_inside_scope() {
-    use crate::task_locals::{LAST_APPEND, take_appends};
+    use agaric_store::task_locals::{LAST_APPEND, take_appends};
     use std::cell::RefCell;
 
     let (tools, mat, pool, space, _dir) = mk_tools().await;
@@ -1701,7 +1701,7 @@ async fn update_block_content_emits_blocks_changed_for_owning_page() {
         &mat,
         "content".into(),
         "before".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(1),
     )
     .await
@@ -1734,7 +1734,7 @@ async fn delete_block_emits_blocks_changed_for_owning_page() {
         &mat,
         "content".into(),
         "doomed".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(1),
     )
     .await
@@ -1792,7 +1792,7 @@ async fn add_tag_emits_blocks_changed_for_owning_page() {
         &mat,
         "content".into(),
         "taggable".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(1),
     )
     .await
@@ -1828,7 +1828,7 @@ async fn set_property_emits_blocks_changed_and_property_changed() {
         &mat,
         "content".into(),
         "task".into(),
-        Some(crate::ulid::BlockId::from_trusted(&page_id)),
+        Some(agaric_core::ulid::BlockId::from_trusted(&page_id)),
         Some(1),
     )
     .await
@@ -1870,7 +1870,7 @@ async fn set_property_emits_blocks_changed_and_property_changed() {
 
     // Serialise the MCP-emitted payload and the local-command payload and
     // assert they are identical JSON — the concrete "payload-equal" evidence.
-    use crate::sync_events::PropertyChangedEvent;
+    use agaric_sync::sync_events::PropertyChangedEvent;
     let mcp_payload = serde_json::to_value(PropertyChangedEvent {
         block_id: recorded_block_id.clone(),
         changed_keys: recorded_keys.clone(),

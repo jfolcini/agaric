@@ -25,7 +25,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Convert a serde-json deserialization error into an
 /// [`AppError::Validation`] with the tool name embedded. Used for every
@@ -73,7 +73,7 @@ pub(crate) fn parse_args<T: serde::de::DeserializeOwned>(
 /// Behaviour:
 ///
 /// - Length-26 ASCII-base32 inputs are uppercased (mirrors
-///   [`crate::ulid::BlockId::from_trusted`]'s `to_ascii_uppercase()`).
+///   [`agaric_core::ulid::BlockId::from_trusted`]'s `to_ascii_uppercase()`).
 /// - Anything else (wrong length, non-base32 charset, empty) passes
 ///   through unchanged so the downstream `*_inner` validation still
 ///   produces the right error message.

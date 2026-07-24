@@ -1,14 +1,14 @@
 //! Tests for `import_bibliography_inner` (#1454 tier a) — BibTeX / CSL-JSON
 //! bibliography import as reference pages with typed properties.
 //!
-//! Pure-parser unit tests live in `crate::bibliography`; these exercise the
+//! Pure-parser unit tests live in `agaric_engine::bibliography`; these exercise the
 //! transactional apply: page creation, typed property stamping, dedup /
 //! idempotence, title collisions, chunking, and space validation.
 
 use super::super::*;
 use super::common::*;
-use crate::error::AppError;
 use crate::materializer::Materializer;
+use agaric_core::error::AppError;
 
 /// One property row read back for assertions (columns mirror
 /// `block_properties`).

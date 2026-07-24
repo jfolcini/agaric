@@ -1,7 +1,7 @@
 use super::super::*;
 use super::common::*;
-use crate::peer_refs;
-use crate::sync_scheduler::SyncScheduler;
+use agaric_store::peer_refs;
+use agaric_sync::sync_scheduler::SyncScheduler;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 // ======================================================================
@@ -84,7 +84,7 @@ async fn sync_delete_peer_ref_removes_existing_peer() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sync_get_device_id_returns_non_empty_string() {
-    let device_id = crate::device::DeviceId::new("test-device-uuid-1234".to_string());
+    let device_id = agaric_sync::device::DeviceId::new("test-device-uuid-1234".to_string());
 
     let result = get_device_id_inner(&device_id);
     assert!(
@@ -155,7 +155,7 @@ fn start_pairing_qr_payload_carries_only_passphrase_m34() {
 
     // Re-derive the exact JSON the QR encodes (the SVG is opaque
     // bytes, but `pairing_qr_payload` is what was rendered).
-    let payload = crate::pairing::pairing_qr_payload(&info.passphrase);
+    let payload = agaric_sync::pairing::pairing_qr_payload(&info.passphrase);
     let parsed: serde_json::Value =
         serde_json::from_str(&payload).expect("QR payload must be valid JSON");
     let object = parsed
@@ -243,7 +243,7 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
             .await
             .unwrap()
             .as_deref(),
-        Some(crate::pairing::pairing_proof(&passphrase).as_str()),
+        Some(agaric_sync::pairing::pairing_proof(&passphrase).as_str()),
         "the pending marker stores the passphrase proof for the responder gate (#855)"
     );
 
@@ -407,7 +407,7 @@ async fn confirm_pairing_inner_invalidates_session_after_max_attempts() {
 
     // Burn through MAX_PASSPHRASE_ATTEMPTS wrong guesses. Each returns the
     // mismatch tag and (until the last) leaves the slot populated for retry.
-    for attempt in 1..crate::pairing::MAX_PASSPHRASE_ATTEMPTS {
+    for attempt in 1..agaric_sync::pairing::MAX_PASSPHRASE_ATTEMPTS {
         let result = confirm_pairing_inner(
             &pool,
             &pairing_state,
@@ -470,7 +470,7 @@ async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
 
     // A couple of genuine typos (strictly fewer than the cap) must not lock
     // the session.
-    for _ in 0..(crate::pairing::MAX_PASSPHRASE_ATTEMPTS - 1) {
+    for _ in 0..(agaric_sync::pairing::MAX_PASSPHRASE_ATTEMPTS - 1) {
         let bad = confirm_pairing_inner(
             &pool,
             &pairing_state,

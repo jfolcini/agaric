@@ -773,10 +773,10 @@ async fn invalid_due_filter_surfaces_typed_error() {
     .await;
     let err = result.unwrap_err();
     match err {
-        crate::error::AppError::Validation { code, .. } => {
+        agaric_core::error::AppError::Validation { code, .. } => {
             assert_eq!(
                 code,
-                Some(crate::error::ValidationCode::InvalidDateFilter),
+                Some(agaric_core::error::ValidationCode::InvalidDateFilter),
                 "expected InvalidDateFilter code"
             );
         }

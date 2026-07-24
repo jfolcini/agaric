@@ -8,9 +8,9 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
-use crate::space::SpaceScope;
+use agaric_core::error::AppError;
+use agaric_store::pagination::{ActiveBlockRow, ActiveProjectedAgendaEntry, Cursor};
+use agaric_store::space::SpaceScope;
 
 use super::*;
 
@@ -27,7 +27,7 @@ use super::*;
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `dates.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_inner(
@@ -51,7 +51,7 @@ pub async fn count_agenda_batch_inner(
     //
     // ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
-    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
+    // [`agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`] — kept
     // inline here because `sqlx::query!` requires a string literal and does
     // not accept `concat!()`. Filters on the first-class `b.space_id`
     // column (#533, migration 0086).
@@ -96,7 +96,7 @@ pub async fn count_agenda_batch_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `dates.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Validation`] — any date fails `YYYY-MM-DD` validation
 #[instrument(skip(pool, dates), err)]
 pub async fn count_agenda_batch_by_source_inner(
@@ -115,7 +115,7 @@ pub async fn count_agenda_batch_by_source_inner(
     let scope_param = scope.as_filter_param();
     // ?2 (space filter) drives the shared space-filter clause.
     // The literal mirrors
-    // [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`] and filters
+    // [`agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`] and filters
     // on the first-class `b.space_id` column (#533, migration 0086). Uses
     // the compile-time-checked `query!` macro — the only difference from
     // `count_agenda_batch_inner` is the extra `ac.source` output column.
@@ -312,7 +312,7 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
         // dynamic-sql: 14-column projected-agenda cache join decoded into a positional tuple (no FromRow struct)
     )> = sqlx::query_as(
         // ?7 (space_id) drives the shared space-filter clause.
-        // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
+        // Mirrors `agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because this
         // query uses dynamic-typed `query_as`. Filters on the first-class
         // `b.space_id` column (#533, migration 0086).
         "SELECT pac.block_id, pac.projected_date, pac.source,
@@ -370,17 +370,17 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
         .into_iter()
         .map(|row| ActiveProjectedAgendaEntry {
             block: ActiveBlockRow {
-                id: crate::ulid::ActiveBlockId::from_trusted_active(&row.3),
+                id: agaric_core::ulid::ActiveBlockId::from_trusted_active(&row.3),
                 block_type: row.4,
                 content: row.5,
-                parent_id: row.6.map(|s| crate::ulid::BlockId::from_trusted(&s)),
+                parent_id: row.6.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
                 position: row.7,
                 deleted_at: row.8,
                 todo_state: row.9,
                 priority: row.10,
                 due_date: row.11,
                 scheduled_date: row.12,
-                page_id: row.13.map(|s| crate::ulid::BlockId::from_trusted(&s)),
+                page_id: row.13.map(|s| agaric_core::ulid::BlockId::from_trusted(&s)),
             },
             projected_date: row.1,
             source: row.2,
@@ -464,7 +464,7 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // never surfaces in agenda / Google Calendar results.  `b.page_id`
     // is the denormalised root-page column (migration 0027).
     // ?1 (space_id) drives the shared space-filter clause.
-    // Mirrors `crate::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
+    // Mirrors `agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL` — kept inline because
     // `sqlx::query_as!` requires a string literal directly. Filters on the
     // first-class `b.space_id` column (#533, migration 0086).
     //
@@ -851,7 +851,7 @@ pub async fn list_undated_tasks_inner(
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<PageResponse<BlockRow>, AppError> {
-    use crate::pagination;
+    use agaric_store::pagination;
     let page_req = pagination::PageRequest::new(cursor, limit)?;
     pagination::list_undated_tasks(pool, &page_req, scope.as_filter_param()).await
 }

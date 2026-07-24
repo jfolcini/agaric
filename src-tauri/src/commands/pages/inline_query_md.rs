@@ -49,7 +49,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use regex::Regex;
 
-use crate::filters::{FilterExpr, FilterPrimitive, PropertyPredicate, PropertyValue};
+use agaric_store::filters::{FilterExpr, FilterPrimitive, PropertyPredicate, PropertyValue};
 
 /// The structured payload of a `v2:` inline query block. Mirrors the TS
 /// `InlineQuerySpec` in `src/lib/inline-query-spec.ts` (`{ filter, table? }`)
@@ -462,17 +462,20 @@ pub(crate) fn rewrite_inline_queries_for_export(
 
 /// The DISTINCT tag NAMES referenced by `v2n:` inline queries across `blocks`,
 /// for the inbound-tag resolve-or-create pre-pass to create + map.
-pub(crate) fn query_tag_names(blocks: &[crate::import::ParsedBlock]) -> Vec<String> {
+pub(crate) fn query_tag_names(blocks: &[agaric_engine::import::ParsedBlock]) -> Vec<String> {
     collect_query_names(blocks, RefKind::Tag)
 }
 
 /// The DISTINCT page NAMES referenced by `v2n:` inline queries across `blocks`,
 /// for the inbound page-link resolve-or-create pre-pass to create + map.
-pub(crate) fn query_page_names(blocks: &[crate::import::ParsedBlock]) -> Vec<String> {
+pub(crate) fn query_page_names(blocks: &[agaric_engine::import::ParsedBlock]) -> Vec<String> {
     collect_query_names(blocks, RefKind::Page)
 }
 
-fn collect_query_names(blocks: &[crate::import::ParsedBlock], want: RefKind) -> Vec<String> {
+fn collect_query_names(
+    blocks: &[agaric_engine::import::ParsedBlock],
+    want: RefKind,
+) -> Vec<String> {
     let mut set: BTreeSet<String> = BTreeSet::new();
     for block in blocks {
         if !block.content.contains("{{query") {

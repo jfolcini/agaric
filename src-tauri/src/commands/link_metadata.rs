@@ -10,8 +10,8 @@ use tokio::sync::watch;
 
 use super::sanitize_internal_error;
 use crate::db::{ReadPool, WritePool};
-use crate::error::AppError;
 use crate::link_metadata::{self, LinkMetadata};
+use agaric_core::error::AppError;
 
 // ---------------------------------------------------------------------------
 // #2200 — fetch_link_metadata single-flight dedup

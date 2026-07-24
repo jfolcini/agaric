@@ -3,13 +3,13 @@
 use sqlx::SqlitePool;
 
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::op::{
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     RestoreBlockPayload,
 };
-use crate::op_log::{OpRecord, get_op_by_seq};
-use crate::ulid::BlockId;
+use agaric_store::op_log::{OpRecord, get_op_by_seq};
 
 // #1543: the reverse of a `create_block` is a SOFT delete (`DeleteBlock`), not a
 // hard purge. This is deliberate and internally consistent with the rest of the
@@ -275,7 +275,7 @@ impl PriorPlacement {
                 block_id,
                 new_parent_id: self.parent,
                 // 1-based breadcrumb mirroring new_index (overflow-safe, shared).
-                new_position: crate::pagination::index_to_provisional_position(idx),
+                new_position: agaric_store::pagination::index_to_provisional_position(idx),
                 new_index: Some(idx),
             },
             None => MoveBlockPayload {
@@ -367,9 +367,9 @@ mod tests_m63 {
     //! lookups remain case-insensitive against AGENTS.md invariant #8.
     use super::*;
     use crate::db::init_pool;
-    use crate::op::{CreateBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload};
-    use crate::op_log::append_local_op_at;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload};
+    use agaric_store::op_log::append_local_op_at;
     use std::path::PathBuf;
     use tempfile::TempDir;
 

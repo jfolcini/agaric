@@ -40,7 +40,7 @@ use std::collections::HashMap;
 use std::path::Path;
 
 use crate::db::now_ms;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Outcome of a single blob-backfill pass, returned for logging/telemetry and
 /// so tests can assert behaviour.

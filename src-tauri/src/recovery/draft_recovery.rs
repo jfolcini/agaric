@@ -1,10 +1,10 @@
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
-use crate::error::AppError;
-use crate::op::{EditBlockPayload, OpPayload};
-use crate::op_log::append_local_op_in_tx;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{EditBlockPayload, OpPayload};
+use agaric_store::op_log::append_local_op_in_tx;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -36,7 +36,7 @@ pub(super) async fn recover_single_draft(
     pool: &SqlitePool,
     device_id: &str,
     materializer: &crate::materializer::Materializer,
-    draft: &crate::draft::Draft,
+    draft: &agaric_engine::draft::Draft,
     existing_block_ids: &HashSet<String>,
 ) -> Result<bool, AppError> {
     // F07 / If the block has been soft-deleted or doesn't exist in
@@ -212,7 +212,7 @@ pub(super) async fn recover_single_draft(
 ///
 /// ## Phase 4 DAG-based resolution (replaces `ORDER BY created_at DESC`)
 ///
-/// Uses [`crate::dag::get_block_edit_heads`] to discover all `edit_block`
+/// Uses [`agaric_engine::dag::get_block_edit_heads`] to discover all `edit_block`
 /// heads across devices, then resolves to a single `(device_id, seq)`:
 ///
 /// - **No edit heads**: falls back to the `create_block` op for the block
@@ -248,7 +248,7 @@ pub async fn find_prev_edit(
     let bid_upper = block_id.to_ascii_uppercase();
 
     // Phase 4: Use DAG-based head resolution instead of created_at ordering.
-    let heads = crate::dag::get_block_edit_heads(pool, &bid_upper).await?;
+    let heads = agaric_engine::dag::get_block_edit_heads(pool, &bid_upper).await?;
 
     match heads.len() {
         0 => {

@@ -1,5 +1,5 @@
 use crate::db::{CommandTx, WriteCtx};
-use crate::op::MoveBlockPayload;
+use agaric_store::op::MoveBlockPayload;
 use tracing::instrument;
 
 use super::super::*;
@@ -130,7 +130,7 @@ async fn validate_move_in_tx(
         // The helper returns the boolean only; the rejection is the command
         // path's own (a user-driven move must surface the error, whereas the
         // sync-replay fallback no-op-warns — see the helper docstring).
-        if crate::block_descendants::move_would_cycle(&mut ***tx, block_id, pid).await? {
+        if agaric_store::block_descendants::move_would_cycle(&mut ***tx, block_id, pid).await? {
             return Err(AppError::validation("cycle detected".into()));
         }
 
@@ -211,7 +211,7 @@ async fn validate_move_in_tx(
 #[instrument(skip(tx, state, device_id), err)]
 async fn move_block_in_tx(
     tx: &mut CommandTx,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: String,
     new_parent_id: Option<String>,
@@ -233,7 +233,7 @@ async fn move_block_in_tx(
     // fractional order shortly after (eventual consistency, as for engine state).
     // #400/#383: overflow-safe 0-based slot → 1-based provisional rank, capped
     // below the reserved keyset tail marker; reprojection sets the dense rank.
-    let provisional_position = crate::pagination::index_to_provisional_position(new_index);
+    let provisional_position = agaric_store::pagination::index_to_provisional_position(new_index);
 
     // 2. Build OpPayload (#400: carries the 0-based `new_index`; `new_position`
     // is a 1-based breadcrumb mirroring it for legacy readers).
@@ -435,7 +435,7 @@ pub async fn move_block(
 /// order (the frontend sorts the selection by current document position first).
 ///
 /// **Validation:** empty list → [`AppError::Validation`]; `block_ids.len()` over
-/// [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) →
+/// [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) →
 /// [`AppError::Validation`].
 ///
 /// Returns one [`MoveResponse`] per moved root, in input order (1:1 with
@@ -545,8 +545,10 @@ pub async fn move_blocks_batch_inner(
             .await?
         }
     };
-    let selected: std::collections::HashSet<&str> =
-        block_ids.iter().map(crate::ulid::BlockId::as_str).collect();
+    let selected: std::collections::HashSet<&str> = block_ids
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
     // Index of each target-group child in the pre-batch ordering. Selected members
     // NOT currently under the target parent (a cross-parent move) are simply absent
     // — they contribute nothing to the anchor arithmetic below, which is correct

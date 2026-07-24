@@ -214,7 +214,7 @@ async fn dispatch_op_add_tag() {
 }
 #[tokio::test]
 async fn dispatch_op_remove_tag() {
-    use crate::op::RemoveTagPayload;
+    use agaric_store::op::RemoveTagPayload;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     insert_block_direct(&pool, "BLK-RT", "content", "rt block").await;

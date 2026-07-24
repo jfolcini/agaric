@@ -24,10 +24,10 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 
 use super::MCP_DISCONNECT_GRACE_PERIOD;
 use super::run_connection;
-use crate::error::AppError;
 use crate::mcp::McpLifecycle;
-use crate::mcp::actor::ActorContext;
 use crate::mcp::registry::{ToolDescription, ToolRegistry};
+use agaric_core::error::AppError;
+use agaric_store::task_locals::ActorContext;
 
 /// Registry whose `call_tool` parks on `sleep(self.sleep)` before
 /// Returning success — drives the grace-period race between

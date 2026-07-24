@@ -154,9 +154,11 @@ async fn rebuild_pages_cache_counts_persists_when_titles_unchanged() {
         .execute(&pool)
         .await
         .unwrap();
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
-    crate::cache::rebuild_pages_cache_counts(&pool)
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_pages_cache_counts(&pool)
         .await
         .unwrap();
     let (_in, children) = read_counts(&pool, p.id.as_str()).await;
@@ -1097,9 +1099,13 @@ async fn build_same_page_scene() -> SamePageScene {
     // exists in `block_links`. Normalising the baseline here lets the tests
     // assert the sharper property: a same-page move PRESERVES a correct cache,
     // rather than merely "an empty cache stays empty".
-    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
-    crate::cache::rebuild_page_link_cache(&pool).await.unwrap();
-    crate::cache::rebuild_projected_agenda_cache(&pool)
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_page_link_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache(&pool)
         .await
         .unwrap();
 
@@ -1118,9 +1124,13 @@ async fn build_same_page_scene() -> SamePageScene {
 /// each cache would produce — i.e. the same-page skip left no stale state.
 async fn assert_no_stale_page_caches(pool: &sqlx::SqlitePool, ctx: &str) {
     let before = dump_page_caches(pool).await;
-    crate::cache::rebuild_pages_cache(pool).await.unwrap();
-    crate::cache::rebuild_page_link_cache(pool).await.unwrap();
-    crate::cache::rebuild_projected_agenda_cache(pool)
+    agaric_store::cache::rebuild_pages_cache(pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_page_link_cache(pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache(pool)
         .await
         .unwrap();
     let after = dump_page_caches(pool).await;
@@ -1293,9 +1303,13 @@ async fn same_page_indent_with_nested_page_stays_consistent_2906() {
     settle(&mat).await;
 
     // Establish a correct, populated baseline for all three caches.
-    crate::cache::rebuild_pages_cache(&pool).await.unwrap();
-    crate::cache::rebuild_page_link_cache(&pool).await.unwrap();
-    crate::cache::rebuild_projected_agenda_cache(&pool)
+    agaric_store::cache::rebuild_pages_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_page_link_cache(&pool)
+        .await
+        .unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache(&pool)
         .await
         .unwrap();
 

@@ -1,14 +1,14 @@
 use super::*;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::op::OpPayload;
-use crate::op_log::append_local_op;
-use crate::snapshot::{
+use agaric_store::op::OpPayload;
+use agaric_store::op_log::append_local_op;
+use agaric_sync::snapshot::{
     BlockSnapshot, SCHEMA_VERSION, SnapshotData, SnapshotTables, create_snapshot, encode_snapshot,
     get_latest_snapshot,
 };
-use crate::sync_events::RecordingEventSink;
-use crate::sync_net::test_connection_pair;
+use agaric_sync::sync_events::RecordingEventSink;
+use agaric_sync::sync_net::test_connection_pair;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -30,8 +30,8 @@ async fn test_pool() -> (SqlitePool, TempDir) {
 /// serialized snapshot contains zero rows (BUG caught during TDD:
 /// snapshot apply succeeded but left an empty database).
 async fn seed_one_block(pool: &SqlitePool, materializer: &Materializer, device_id: &str) {
-    let payload = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
-        block_id: crate::ulid::BlockId::test_id("01HZ00000000000000000BLOCK1"),
+    let payload = OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+        block_id: agaric_core::ulid::BlockId::test_id("01HZ00000000000000000BLOCK1"),
         block_type: "content".into(),
         content: "hello".into(),
         parent_id: None,
@@ -47,8 +47,8 @@ async fn seed_one_block(pool: &SqlitePool, materializer: &Materializer, device_i
 /// tests that only need `create_snapshot` to succeed (which requires
 /// a non-empty op_log) and don't assert on restored block contents.
 async fn seed_one_op(pool: &SqlitePool, device_id: &str) {
-    let payload = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
-        block_id: crate::ulid::BlockId::test_id("01HZ00000000000000000BLOCK1"),
+    let payload = OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+        block_id: agaric_core::ulid::BlockId::test_id("01HZ00000000000000000BLOCK1"),
         block_type: "content".into(),
         content: "hello".into(),
         parent_id: None,
@@ -1499,13 +1499,13 @@ async fn apply_snapshot_accepts_impl_read_m51_l67() {
     let (dst_pool, _dst_dir) = test_pool().await;
     let dst_mat = Materializer::new(dst_pool.clone());
     let cursor = std::io::Cursor::new(encoded.clone());
-    let restored = crate::snapshot::apply_snapshot(&dst_pool, &dst_mat, cursor)
+    let restored = agaric_sync::snapshot::apply_snapshot(&dst_pool, &dst_mat, cursor)
         .await
         .expect("apply_snapshot must accept a Cursor reader");
 
     // The restored frontier matches the original encoded blob's
     // frontier (sanity check — the decoded data is the same).
-    let decoded = crate::snapshot::decode_snapshot(&encoded[..]).unwrap();
+    let decoded = agaric_sync::snapshot::decode_snapshot(&encoded[..]).unwrap();
     assert_eq!(restored.up_to_hash, decoded.up_to_hash);
     assert_eq!(restored.up_to_seqs, decoded.up_to_seqs);
 
@@ -1642,7 +1642,7 @@ fn decode_snapshot_with_zstd_streaming_decoder_does_not_buffer_full_decompressed
         },
     };
 
-    let encoded = crate::snapshot::encode_snapshot(&data).unwrap();
+    let encoded = agaric_sync::snapshot::encode_snapshot(&data).unwrap();
 
     // Sanity-check the test fixture: the decompressed CBOR is at
     // least 3× the compressed size, so the streaming-vs-buffered
@@ -1674,7 +1674,7 @@ fn decode_snapshot_with_zstd_streaming_decoder_does_not_buffer_full_decompressed
     // followed by `ciborium::from_reader(decoder)` which never
     // materialises the full decompressed Vec.
     let cursor = std::io::Cursor::new(encoded);
-    let decoded = crate::snapshot::decode_snapshot(cursor).unwrap();
+    let decoded = agaric_sync::snapshot::decode_snapshot(cursor).unwrap();
     assert_eq!(decoded.tables.blocks.len(), 1000);
     assert_eq!(decoded.up_to_hash, data.up_to_hash);
     assert_eq!(decoded.up_to_seqs, data.up_to_seqs);
@@ -1772,8 +1772,8 @@ fn sweep_missing_dir_is_noop_2696() {
 /// stayed wedged at the stale pre-reset value via the MAX() gate).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_607() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
 
@@ -1798,7 +1798,7 @@ async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_60
     }
     {
         let mut g = registry.for_space(&space, LOCAL_DEV).unwrap();
-        crate::loro::snapshot::save_snapshot(&init_pool, &space, g.engine_mut())
+        agaric_engine::loro::snapshot::save_snapshot(&init_pool, &space, g.engine_mut())
             .await
             .unwrap();
     }
@@ -1895,7 +1895,7 @@ async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_60
             "#607: pre-reset vault must not survive into the post-reset engine"
         );
         let export = engine.export_snapshot().unwrap();
-        let mut probe = crate::loro::engine::LoroEngine::with_peer_id(LOCAL_DEV).unwrap();
+        let mut probe = agaric_engine::loro::engine::LoroEngine::with_peer_id(LOCAL_DEV).unwrap();
         probe.import(&export).unwrap();
         assert!(
             probe.read_block("BLOCK_POST_RESET").unwrap().is_some(),
@@ -1911,8 +1911,8 @@ async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_60
     // Post-reset op_log is empty, so the first local op mints seq 1;
     // the MAX()-gated cursor advance must land exactly there (pre-fix
     // the stale cursor [42] swallowed it and stayed at 42).
-    let payload = OpPayload::CreateBlock(crate::op::CreateBlockPayload {
-        block_id: crate::ulid::BlockId::test_id("01HZ0000000000000000BLOCK2"),
+    let payload = OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+        block_id: agaric_core::ulid::BlockId::test_id("01HZ0000000000000000BLOCK2"),
         block_type: "content".into(),
         content: "post-snapshot op".into(),
         parent_id: None,
@@ -1965,8 +1965,8 @@ async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_60
 /// pull, not a reset).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::space::SpaceId;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_store::space::SpaceId;
 
     const SPACE: &str = "01ARZ3NDEKTSV4RRFFQ69G5FAV";
     let space = SpaceId::from_trusted(SPACE);
@@ -2105,7 +2105,7 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
 /// rather than streaming a zero-space payload.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn loro_snapshot_catchup_empty_registry_offers_nothing_2503() {
-    use crate::loro::registry::LoroEngineRegistry;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
 
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_registry = LoroEngineRegistry::new();

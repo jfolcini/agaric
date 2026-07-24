@@ -23,12 +23,12 @@ use std::future::Future;
 
 use serde_json::Value;
 
-use super::actor::{ACTOR, ActorContext};
-use crate::error::AppError;
+use agaric_core::error::AppError;
+use agaric_store::task_locals::{ACTOR, ActorContext};
 
 /// Wrap an async dispatch closure in `ACTOR.scope(...)` so downstream
 /// command handlers see the per-request actor via the
-/// [`super::actor::ACTOR`] task-local without receiving it as a
+/// [`agaric_store::task_locals::ACTOR`] task-local without receiving it as a
 /// parameter. Used by every `ToolRegistry::call_tool` impl.
 ///
 /// The closure receives an owned `String` produced by the helper,
@@ -65,7 +65,7 @@ pub(crate) fn unknown_tool_error(name: &str) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::mcp::actor::{Actor, current_actor};
+    use agaric_store::task_locals::{Actor, current_actor};
     use serde_json::json;
 
     fn test_ctx() -> ActorContext {

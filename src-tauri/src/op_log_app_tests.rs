@@ -5,19 +5,19 @@
 //! compile down in the store:
 //!
 //!   * three `origin` tests drive the MCP actor scope
-//!     (`crate::mcp::actor::{ACTOR, Actor, ActorContext}`),
-//!   * one `origin` test drives remote-op ingest (`crate::dag::insert_remote_op`),
+//!     (`agaric_store::task_locals::{ACTOR, Actor, ActorContext}`),
+//!   * one `origin` test drives remote-op ingest (`agaric_engine::dag::insert_remote_op`),
 //!   * one immutability test reads the app crate's `src/dag.rs` from disk.
 //!
 //! They are relocated here verbatim (modulo path repointing): the op_log entry
-//! points come from `agaric_store::op_log` (re-exported as `crate::op_log`), the
+//! points come from `agaric_store::op_log` (re-exported as `agaric_store::op_log`), the
 //! pool from `crate::db::init_pool`, and the coupled modules from `crate::mcp` /
 //! `crate::dag`. The store-resident op_log tests keep everything that only needs
 //! the migrated schema.
 
-use crate::op::{CreateBlockPayload, OpPayload};
-use crate::op_log::{append_local_op, append_local_op_at};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, OpPayload};
+use agaric_store::op_log::{append_local_op, append_local_op_at};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -48,11 +48,11 @@ fn make_create_payload(block_id: &str) -> OpPayload {
 
 /// Inside an MCP `ACTOR.scope(Actor::Agent { name })` the append path
 /// must stamp `origin = 'agent:<name>'`, wiring the
-/// `mcp::actor::current_actor` task-local all the way through to the
+/// `agaric_store::task_locals::current_actor` task-local all the way through to the
 /// DB row.
 #[tokio::test]
 async fn append_inside_agent_scope_stamps_origin_agent_prefix() {
-    use crate::mcp::actor::{ACTOR, Actor, ActorContext};
+    use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
     let (pool, _dir) = test_pool().await;
 
     let ctx = ActorContext {
@@ -90,7 +90,7 @@ async fn append_inside_agent_scope_stamps_origin_agent_prefix() {
 /// same thread after an MCP handler returns.
 #[tokio::test]
 async fn origin_falls_back_to_user_after_agent_scope_ends() {
-    use crate::mcp::actor::{ACTOR, Actor, ActorContext};
+    use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
     let (pool, _dir) = test_pool().await;
 
     // First op — inside the agent scope.
@@ -143,7 +143,7 @@ async fn origin_falls_back_to_user_after_agent_scope_ends() {
 /// it was agent- or user-invoked at the origin device.
 #[tokio::test]
 async fn origin_does_not_affect_op_hash() {
-    use crate::mcp::actor::{ACTOR, Actor, ActorContext};
+    use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
 
@@ -205,7 +205,7 @@ async fn origin_does_not_affect_op_hash() {
 /// INSERT list of one path but not the others can't silently ship.
 #[tokio::test]
 async fn remote_op_insert_defaults_origin_to_user() {
-    use crate::dag::insert_remote_op;
+    use agaric_engine::dag::insert_remote_op;
     let (pool, _dir) = test_pool().await;
 
     // Produce a real valid op on device A, then deliver it to device B's
