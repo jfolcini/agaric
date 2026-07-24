@@ -124,6 +124,23 @@ describe('useExtraBlockProperties (provider-projected, #2288)', () => {
     })
   })
 
+  it('filters out listStyle (it renders as the list marker, not a chip) — #3000', async () => {
+    mockedGetBatchProperties.mockResolvedValue({
+      B1: [
+        row({ key: 'listStyle', value_text: 'bullet' }),
+        row({ key: 'effort', value_text: '2h' }),
+      ],
+    })
+
+    const { result } = renderHook(() => useExtraBlockProperties([{ id: 'B1' }]), {
+      wrapper: providerWrapper(['B1']),
+    })
+
+    await waitFor(() => {
+      expect(result.current['B1']).toEqual([{ key: 'effort', value: '2h' }])
+    })
+  })
+
   it('flattens typed value fields (text → date → num) and drops empty values', async () => {
     mockedGetBatchProperties.mockResolvedValue({
       B1: [
