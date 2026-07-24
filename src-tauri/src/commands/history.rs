@@ -220,16 +220,17 @@ async fn reverse_move_block(
 
     // Raw write of the PROVISIONAL `new_position`. This rank is transient: the
     // reprojections below replace it with the settled dense 1-based position.
-    let result = sqlx::query!(
-        "UPDATE blocks SET parent_id = ?, position = ? \
-         WHERE id = ? AND deleted_at IS NULL",
+    // #2895 slice 2: the raw reparent UPDATE now lives behind the
+    // `blocks`-owning engine crate (`reparent_active_block` — byte-identical
+    // `UPDATE ... WHERE id = ? AND deleted_at IS NULL`, same bind order).
+    let rows_affected = agaric_engine::block_ops::reparent_active_block(
+        tx,
+        move_block_id_str,
         new_parent_id_str,
         p.new_position,
-        move_block_id_str,
     )
-    .execute(&mut **tx)
     .await?;
-    if result.rows_affected() == 0 {
+    if rows_affected == 0 {
         return Err(AppError::NotFound(format!(
             "block '{}' not found or soft-deleted during undo",
             p.block_id
@@ -510,15 +511,13 @@ pub async fn apply_reverse_in_tx(
             // alive for the engine fan-out below; `serde_json::Error` converts to
             // `AppError::Json`.
             let cohort_json = serde_json::to_string(&cohort)?;
-            // dynamic-sql: json_each id-list UPDATE over the walked cohort;
-            // single bound JSON parameter, immune to the SQLite variable limit.
-            sqlx::query(
-                "UPDATE blocks SET deleted_at = ?2 \
-                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
+            // #2895 slice 2: the json_each cohort soft-delete UPDATE now lives
+            // behind the `blocks`-owning engine crate (byte-identical SQL).
+            agaric_engine::block_ops::write_cohort_deleted_at_json(
+                tx,
+                &cohort_json,
+                agaric_engine::block_ops::CohortDeletedAt::Stamp(now),
             )
-            .bind(&cohort_json)
-            .bind(now)
-            .execute(&mut **tx)
             .await?;
 
             // #2655: tombstone the SAME cohort in the per-space engine so its
@@ -558,15 +557,13 @@ pub async fn apply_reverse_in_tx(
             // #2655: borrowed serialization keeps `cohort` alive for the engine
             // fan-out at the end of this arm.
             let cohort_json = serde_json::to_string(&cohort)?;
-            // dynamic-sql: json_each id-list UPDATE over the walked cohort;
-            // single bound JSON parameter, immune to the SQLite variable limit.
-            sqlx::query(
-                "UPDATE blocks SET deleted_at = NULL \
-                 WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+            // #2895 slice 2: the json_each cohort restore UPDATE now lives
+            // behind the `blocks`-owning engine crate (byte-identical SQL).
+            agaric_engine::block_ops::write_cohort_deleted_at_json(
+                tx,
+                &cohort_json,
+                agaric_engine::block_ops::CohortDeletedAt::ClearWhereRef(p.deleted_at_ref),
             )
-            .bind(&cohort_json)
-            .bind(p.deleted_at_ref)
-            .execute(&mut **tx)
             .await?;
 
             // #1884: also restore UPWARD, mirroring the two other restore
@@ -650,14 +647,13 @@ pub async fn apply_reverse_in_tx(
         }
         OpPayload::EditBlock(p) => {
             let block_id_str = p.block_id.as_str();
-            let result = sqlx::query!(
-                "UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL",
-                p.to_text,
-                block_id_str,
-            )
-            .execute(&mut **tx)
-            .await?;
-            if result.rows_affected() == 0 {
+            // #2895 slice 2: the raw content UPDATE now lives behind the
+            // `blocks`-owning engine crate (`set_active_block_content` —
+            // byte-identical `UPDATE ... WHERE id = ? AND deleted_at IS NULL`).
+            let rows_affected =
+                agaric_engine::block_ops::set_active_block_content(tx, block_id_str, &p.to_text)
+                    .await?;
+            if rows_affected == 0 {
                 return Err(AppError::NotFound(format!(
                     "block '{}' not found or soft-deleted during undo",
                     p.block_id

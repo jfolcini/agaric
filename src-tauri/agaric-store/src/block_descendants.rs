@@ -1393,17 +1393,18 @@ mod cohort_cascade_drift_guard {
         }
     }
 
-    /// (2b) The multi-root `crud.rs` bulk paths can't reuse the macro body
-    /// (their anchor is `json_each(?1)`, not `id = ?`), so they're the most
-    /// likely to silently drift. Pin their load-bearing recursive-arm
-    /// filters directly against the `crud.rs` source so a change to the cap
-    /// or the cohort filter there is caught.
+    /// (2b) The multi-root bulk paths can't reuse the macro body (their
+    /// anchor is `json_each(?1)`, not `id = ?`), so they're the most
+    /// likely to silently drift. Pin their load-bearing filters directly
+    /// against the owning source so a change to the cap or the cohort
+    /// filter there is caught.
     #[test]
     fn multi_root_crud_cascades_pin_canonical_filters() {
-        // #2621 wave S4a: `crud.rs` (the multi-root bulk cascades) stays in
-        // the app crate; reach it via `../src` from the store.
-        let crud =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../src/commands/blocks/crud.rs");
+        // #2895 slice 2: the cohort UPDATE shapes moved out of the app
+        // crate's `crud.rs` into the `blocks`-owning engine primitive
+        // (`block_ops::write_cohort_deleted_at_json`); pin them there.
+        let crud = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../agaric-engine/src/block_ops.rs");
         let norm = normalize(
             &std::fs::read_to_string(&crud)
                 .unwrap_or_else(|e| panic!("read {} failed: {e}", crud.display())),

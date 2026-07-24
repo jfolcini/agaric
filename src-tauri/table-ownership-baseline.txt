@@ -12,8 +12,12 @@
 # counts but PRESERVES this header, every surviving pair's inline comment and
 # the comment block directly above it (keyed by crate+table), and any footer.
 
-# --- app crate: cross-crate writers migrating behind owner-crate fns ---
-25 app blocks  # migrating: slice 2 (app blocks); recovery carve-out subset remains post-slice-2/3
+# --- app crate: db/recovery.rs boot-time op-log replay/repair (maintainer
+# carve-out 2026-07-24, #2895) — pre-engine, corrupt-DB-tolerant writers that
+# cannot route through the engine projection (era-switched TEXT/INTEGER stamps,
+# intentionally-divergent flat restore cohort #2043, page_id/reserved-column
+# fixpoints). All 12 sites live in src/db/recovery.rs. ---
+12 app blocks  # recovery carve-out: boot-time repair writes (pre-engine, corrupt-DB tolerant)
 
 # --- engine crate: projection-time cache co-writers (legitimate carve-out,
 # two-arm lockstep / sql_only fallback, #891) + op_log ingest (migrating) ---
