@@ -207,11 +207,23 @@ impl Drop for ToolCompletionGuard {
         let additional_op_refs: Vec<agaric_store::op::OpRef> = op_refs.collect();
         // The tool's result value is unavailable here (the future never
         // returned it), so the summary degrades to the bare tool name and the
-        // outcome is recorded as `Ok`: op refs are only recorded once a write
-        // has been applied, and the commit await is the final step before this
-        // drop point, so a recorded op that reached here committed. The entry
-        // still carries the op refs that drive the `blocks:changed` view
-        // refresh — the property this guard exists to preserve.
+        // outcome is recorded as `Ok`.
+        //
+        // #3066 — on this cancel path `Ok` means "reached the commit attempt",
+        // NOT "confirmed durable commit". `record_append` fires inside
+        // `append_local_op_in_tx`, i.e. once the op-log INSERT is staged but
+        // while the transaction is still open, so a drop landing between that
+        // append and commit-completion emits an `Ok` entry for a write that
+        // actually rolled back. Making the entry exact would mean moving
+        // `record_append` after commit-completion across ~800 call sites; the
+        // trade-off is deliberate, because the alternative this guard replaced
+        // (#2954) lost REAL committed entries, which is the worse failure.
+        //
+        // The inaccuracy is cosmetic and bounded: it needs an already-
+        // disconnected client, and `blocks:changed` only triggers a re-read of
+        // true DB state, so no phantom block can reach the UI. The entry still
+        // carries the op refs that drive that refresh — the property this
+        // guard exists to preserve.
         emit_tool_completion(
             &self.activity_ctx,
             ToolCompletionEvent {
