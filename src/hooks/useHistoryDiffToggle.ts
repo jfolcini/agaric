@@ -1,10 +1,11 @@
 import { useCallback, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
-import { computeEditDiff } from '@/lib/tauri'
 
 export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
   expandedKeys: Set<K>
@@ -45,7 +46,7 @@ export function useHistoryDiffToggle<K>(keyFn: (entry: HistoryEntry) => K): {
     if (diffCacheRef.current.has(key)) return
     setLoadingDiffs((prev) => new Set(prev).add(key))
     try {
-      const diff = await computeEditDiff({ deviceId: entry.device_id, seq: entry.seq })
+      const diff = unwrap(await commands.computeEditDiff(entry.device_id, entry.seq))
       if (diff) {
         setDiffCache((prev) => new Map(prev).set(key, diff))
       }

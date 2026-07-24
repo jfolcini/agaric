@@ -40,12 +40,13 @@ import { Spinner } from '@/components/ui/spinner'
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { getPayloadRawContent } from '@/lib/history-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
-import { computeBlockVsCurrentDiff } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 const DIFF_MODE_DEFAULT: BlockHistoryDiffMode = 'comparedToCurrent'
@@ -134,12 +135,10 @@ export function BlockHistoryItem({
     if (comparedDiff != null || comparedLoading || comparedFailed) return
     let cancelled = false
     setComparedLoading(true)
-    computeBlockVsCurrentDiff({
-      blockId,
-      historicalCreatedAt: entry.created_at,
-      historicalSeq: entry.seq,
-    })
-      .then((spans) => {
+    commands
+      .computeBlockVsCurrentDiff(blockId, entry.created_at, entry.seq)
+      .then((res) => {
+        const spans = unwrap(res)
         if (cancelled) return
         setComparedDiff(spans)
       })

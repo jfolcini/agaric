@@ -3,11 +3,18 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useHistoryDiffToggle } from '@/hooks/useHistoryDiffToggle'
-import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
+import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 
-vi.mock('@/lib/tauri', () => ({
-  computeEditDiff: vi.fn(),
+const { mockComputeEditDiff } = vi.hoisted(() => ({ mockComputeEditDiff: vi.fn() }))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    computeEditDiff: (...args: unknown[]) => mockComputeEditDiff(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T>(data: T) => ({ status: 'ok' as const, data })
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -19,9 +26,8 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { logger } from '@/lib/logger'
-import { computeEditDiff } from '@/lib/tauri'
 
-const mockedComputeEditDiff = vi.mocked(computeEditDiff)
+const mockedComputeEditDiff = mockComputeEditDiff
 const mockedToastError = vi.mocked(toast.error)
 const mockedLoggerWarn = vi.mocked(logger.warn)
 
@@ -56,7 +62,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('expands an entry and fetches diff', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
 
@@ -69,14 +75,11 @@ describe('useHistoryDiffToggle', () => {
     expect(result.current.expandedKeys.has(42)).toBe(true)
     expect(result.current.diffCache.get(42)).toEqual(fakeDiff)
     expect(result.current.loadingDiffs.has(42)).toBe(false)
-    expect(mockedComputeEditDiff).toHaveBeenCalledWith({
-      deviceId: 'dev-1',
-      seq: 42,
-    })
+    expect(mockedComputeEditDiff).toHaveBeenCalledWith('dev-1', 42)
   })
 
   it('collapses an already-expanded entry', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
 
@@ -96,7 +99,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('uses cached diff when re-expanding (does not call computeEditDiff again)', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
 
@@ -123,10 +126,10 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('shows loading state during fetch', async () => {
-    let resolveFetch!: (v: DiffSpan[] | null) => void
+    let resolveFetch!: (v: { status: 'ok'; data: DiffSpan[] | null }) => void
     mockedComputeEditDiff.mockImplementation(
       () =>
-        new Promise<DiffSpan[] | null>((r) => {
+        new Promise<{ status: 'ok'; data: DiffSpan[] | null }>((r) => {
           resolveFetch = r
         }),
     )
@@ -147,7 +150,7 @@ describe('useHistoryDiffToggle', () => {
 
     // Resolve the fetch
     await act(async () => {
-      resolveFetch(fakeDiff)
+      resolveFetch(ok(fakeDiff))
       await togglePromise
     })
 
@@ -175,7 +178,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('works with number keys (HistoryPanel pattern)', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
 
@@ -190,7 +193,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('works with string keys (HistoryView pattern)', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     const { result } = renderHook(() =>
       useHistoryDiffToggle<string>((entry) => `${entry.device_id}:${entry.seq}`),
@@ -208,7 +211,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('handles null diff result (does not add to cache)', async () => {
-    mockedComputeEditDiff.mockResolvedValue(null)
+    mockedComputeEditDiff.mockResolvedValue(ok(null))
 
     const { result } = renderHook(() => useHistoryDiffToggle<number>((entry) => entry.seq))
 
@@ -224,7 +227,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('handleToggleDiff identity stable across state changes', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     // Stable keyFn — consumers pass a memoized keyFn so the callback's only
     // Remaining dep is stable. The point of is that expandedKeys /
@@ -252,7 +255,7 @@ describe('useHistoryDiffToggle', () => {
   })
 
   it('#1633: handleToggleDiff identity stable across inline keyFn churn', async () => {
-    mockedComputeEditDiff.mockResolvedValue(fakeDiff)
+    mockedComputeEditDiff.mockResolvedValue(ok(fakeDiff))
 
     // Reproduce the real call sites: a freshly-allocated inline arrow on every
     // render. The hook must not churn handleToggleDiff just because keyFn's

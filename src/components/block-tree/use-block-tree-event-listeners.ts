@@ -37,6 +37,8 @@ import {
 } from '@/components/block-tree/use-block-slash-commands/helpers'
 import type { SlashCommandContext } from '@/components/block-tree/use-block-slash-commands/types'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { type BlockCommandHandler, registerBlockCommandTarget } from '@/lib/block-command-bus'
 import {
   type BlockTypeToken,
@@ -45,7 +47,6 @@ import {
 } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setPriority as setPriorityCmd } from '@/lib/tauri'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -119,7 +120,7 @@ export function useBlockTreeEventListeners(options: UseBlockTreeEventListenersOp
       (blockId) => {
         void (async () => {
           try {
-            await setPriorityCmd(blockId, priority)
+            unwrap(await commands.setPriority(blockId, priority))
             if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
             pageStore.setState((s) => ({
               blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, priority } : b)),

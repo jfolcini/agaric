@@ -19,9 +19,10 @@ import type React from 'react'
 import { useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { importBibliography } from '@/lib/tauri'
 import { importErrorReason, inferBibliographyFormat } from '@/lib/vault-import'
 import { useSpaceStore } from '@/stores/space'
 
@@ -95,7 +96,7 @@ export function useBibliographyImport(
       setImporting(true)
       setBibResult(null)
       try {
-        const result = await importBibliography(content, format, activeSpaceId)
+        const result = unwrap(await commands.importBibliography(content, format, activeSpaceId))
         setBibResult({
           pagesCreated: result.pages_created,
           entriesSkipped: result.entries_skipped,

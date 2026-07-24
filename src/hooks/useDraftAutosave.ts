@@ -2,9 +2,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
-import { isPoolBusy, retryOnPoolBusy } from '@/lib/app-error'
+import { isPoolBusy, retryOnPoolBusy, unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
 
 /** Trailing debounce for the per-keystroke `saveDraft` cadence. */
 const DRAFT_DEBOUNCE_MS = 2000
@@ -134,7 +134,7 @@ export function useDraftAutosave(
     // flush even if an unmount coincides with blur (blockIdRef still set).
     discardedRef.current.add(id)
     if (!saveOutcome) {
-      retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
+      retryOnPoolBusy(() => commands.deleteDraft(id).then(unwrap)).catch((err: unknown) => {
         logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
       })
       return
@@ -161,18 +161,20 @@ export function useDraftAutosave(
             blockId: id,
           })
           if (failedContent) {
-            retryOnPoolBusy(() => saveDraft(id, failedContent)).catch((err: unknown) => {
-              logger.warn(
-                'useDraftAutosave',
-                'draft re-save after failed save failed',
-                { blockId: id },
-                err,
-              )
-            })
+            retryOnPoolBusy(() => commands.saveDraft(id, failedContent).then(unwrap)).catch(
+              (err: unknown) => {
+                logger.warn(
+                  'useDraftAutosave',
+                  'draft re-save after failed save failed',
+                  { blockId: id },
+                  err,
+                )
+              },
+            )
           }
           return
         }
-        retryOnPoolBusy(() => deleteDraft(id)).catch((err: unknown) => {
+        retryOnPoolBusy(() => commands.deleteDraft(id).then(unwrap)).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'deleteDraft failed during discard', { blockId: id }, err)
         })
       })
@@ -246,7 +248,7 @@ export function useDraftAutosave(
         // #1065 — a genuine fresh save for this block clears any prior
         // "discarded" marker so a real edit made after a discard can flush.
         discardedRef.current.delete(id)
-        retryOnPoolBusy(() => saveDraft(id, md), {
+        retryOnPoolBusy(() => commands.saveDraft(id, md).then(unwrap), {
           onRetry: (attempt) => {
             logger.debug('useDraftAutosave', 'retrying saveDraft (pool_busy)', {
               blockId: id,
@@ -354,12 +356,19 @@ export function useDraftAutosave(
       const isUnmountWhileFocused = blockIdRef.current === blockId
       const latest = isUnmountWhileFocused ? readLive() : ''
       const ensureSaved = latest
-        ? retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
-            logger.warn('useDraftAutosave', 'final saveDraft before flush failed', { blockId }, err)
-          })
+        ? retryOnPoolBusy(() => commands.saveDraft(blockId, latest).then(unwrap)).catch(
+            (err: unknown) => {
+              logger.warn(
+                'useDraftAutosave',
+                'final saveDraft before flush failed',
+                { blockId },
+                err,
+              )
+            },
+          )
         : Promise.resolve()
       void ensureSaved.then(() =>
-        retryOnPoolBusy(() => flushDraft(blockId)).catch((err: unknown) => {
+        retryOnPoolBusy(() => commands.flushDraft(blockId).then(unwrap)).catch((err: unknown) => {
           logger.warn('useDraftAutosave', 'flushDraft failed', { blockId }, err)
         }),
       )
@@ -387,9 +396,11 @@ export function useDraftAutosave(
       if (!re || re.activeBlockId !== blockId) return
       const latest = readLive()
       if (!latest) return
-      retryOnPoolBusy(() => saveDraft(blockId, latest)).catch((err: unknown) => {
-        logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
-      })
+      retryOnPoolBusy(() => commands.saveDraft(blockId, latest).then(unwrap)).catch(
+        (err: unknown) => {
+          logger.warn('useDraftAutosave', 'background flush saveDraft failed', { blockId }, err)
+        },
+      )
     }
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') persistLatest()

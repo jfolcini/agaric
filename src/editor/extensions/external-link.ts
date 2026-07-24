@@ -18,10 +18,11 @@
 import Link from '@tiptap/extension-link'
 import { Plugin, PluginKey } from '@tiptap/pm/state'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { tipTapShortcutMap } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { openUrl } from '@/lib/open-url'
-import { fetchLinkMetadata } from '@/lib/tauri'
 import { isAllowedUrl } from '@/lib/url-validation'
 
 /**
@@ -113,9 +114,12 @@ export const ExternalLink = Link.extend({
             view.dispatch(tr)
 
             // Fire-and-forget: prefetch metadata for the pasted URL
-            fetchLinkMetadata(url).catch((err: unknown) => {
-              logger.warn('ExternalLink', 'link metadata prefetch failed', { url }, err)
-            })
+            commands
+              .fetchLinkMetadata(url)
+              .then(unwrap)
+              .catch((err: unknown) => {
+                logger.warn('ExternalLink', 'link metadata prefetch failed', { url }, err)
+              })
 
             return true
           },

@@ -20,9 +20,9 @@
 import { useEffect, useState } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { getMdnsStatus } from '@/lib/tauri'
-import type { MdnsStatus } from '@/lib/tauri'
 
 /** Event name — must mirror `EVENT_SYNC_MDNS_DISABLED` in
  *  `src-tauri/src/sync_events.rs`. */
@@ -85,8 +85,10 @@ export function useMdnsStatus(): UseMdnsStatusResult {
   useEffect(() => {
     if (!enabled) return
     let cancelled = false
-    getMdnsStatus()
-      .then((backfill: MdnsStatus) => {
+    commands
+      .getMdnsStatus()
+      .then((res) => {
+        const backfill = unwrap(res)
         if (cancelled || backfill == null || !backfill.disabled) return
         setStatus({ disabled: true, reason: backfill.reason ?? null })
       })

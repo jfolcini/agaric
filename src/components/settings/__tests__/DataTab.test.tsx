@@ -43,6 +43,25 @@ vi.mock('@/lib/tauri', () => ({
   resolvePageByAlias: (...args: unknown[]) => mockResolvePageByAlias(...args),
 }))
 
+// #2927 — `BibliographySection` migrated off the `@/lib/tauri` wrapper to
+// `commands.importBibliography` from `@/lib/bindings` (unwrapped with the
+// helper from `@/lib/app-error`). Re-use the same spy but wrap its resolved
+// value in the `Result` envelope `commands.*` returns; a rejection still
+// bubbles as an `AppError`.
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      importBibliography: async (...args: unknown[]) => ({
+        status: 'ok',
+        data: await mockImportBibliography(...args),
+      }),
+    },
+  }
+})
+
 // #1927 — mock the tabs store so we can assert post-import navigation
 // without standing up the full multi-store navigation chain.
 const mockNavigateToPage = vi.fn()

@@ -72,6 +72,8 @@ import { useLazyRovingEditor } from '@/hooks/useLazyRovingEditor'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import type { BlockTypeToken } from '@/lib/block-type-convert'
@@ -79,7 +81,6 @@ import { convertBlockContent } from '@/lib/block-type-convert'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { searchPropertyKeys, searchSlashCommands } from '@/lib/slash-commands'
-import { deleteDraft } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { storeOwnsBlock, usePageBlockStore, usePageBlockStoreApi } from '@/stores/page-blocks'
@@ -651,9 +652,12 @@ export function BlockTree({
 
   // ── Draft discard callback for Escape ────────────────────────────────
   const handleDiscardDraft = useCallback((blockId: string) => {
-    deleteDraft(blockId).catch((err: unknown) => {
-      logger.warn('BlockTree', 'Failed to delete draft on discard', { blockId }, err)
-    })
+    commands
+      .deleteDraft(blockId)
+      .then(unwrap)
+      .catch((err: unknown) => {
+        logger.warn('BlockTree', 'Failed to delete draft on discard', { blockId }, err)
+      })
   }, [])
 
   // ── Keyboard handlers hook ─────────────────────────────────────────

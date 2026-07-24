@@ -25,12 +25,23 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useDraftAutosave } from '@/hooks/useDraftAutosave'
-import { deleteDraft, flushDraft, saveDraft } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', () => ({
-  saveDraft: vi.fn(() => Promise.resolve()),
-  flushDraft: vi.fn(() => Promise.resolve()),
-  deleteDraft: vi.fn(() => Promise.resolve()),
+// The hook calls `commands.{saveDraft,flushDraft,deleteDraft}` from
+// `@/lib/bindings` and unwraps the `Result`-shaped response with the helper
+// from `@/lib/app-error`, so the mocks resolve the `{ status: 'ok', data }`
+// envelope (data is `null` — these commands return `void`).
+const { mockSaveDraft, mockFlushDraft, mockDeleteDraft } = vi.hoisted(() => ({
+  mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+}))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    saveDraft: mockSaveDraft,
+    flushDraft: mockFlushDraft,
+    deleteDraft: mockDeleteDraft,
+  },
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -42,9 +53,9 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-const mockedSaveDraft = vi.mocked(saveDraft)
-const mockedFlushDraft = vi.mocked(flushDraft)
-const mockedDeleteDraft = vi.mocked(deleteDraft)
+const mockedSaveDraft = mockSaveDraft
+const mockedFlushDraft = mockFlushDraft
+const mockedDeleteDraft = mockDeleteDraft
 
 /**
  * A controllable roving-editor handle. `state.markdown` is what `getMarkdown()`
@@ -873,7 +884,7 @@ describe('useDraftAutosave', () => {
     it('retries saveDraft when the IPC rejects with kind="pool_busy"', async () => {
       mockedSaveDraft
         .mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
-        .mockResolvedValueOnce(undefined)
+        .mockResolvedValueOnce({ status: 'ok', data: null })
 
       const { ref } = makeEditor({ markdown: 'content' })
       const { result } = renderAutosave(ref)

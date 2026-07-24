@@ -38,12 +38,13 @@ import { useCallback } from 'react'
 
 import { parse } from '@/editor/markdown-serializer'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { processCheckboxSyntax } from '@/lib/block-utils'
 import { bumpFlushSeq, commitInlineProperties, readFlushSeq } from '@/lib/inline-property-commit'
 import { parseInlineProperties } from '@/lib/inline-property-parse'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setTodoState as setTodoStateCmd } from '@/lib/tauri'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -189,7 +190,7 @@ export function useBlockFlush({
           const mySeq = bumpFlushSeq(blockId)
           void (async () => {
             try {
-              const echo = await setTodoStateCmd(blockId, todoState)
+              const echo = unwrap(await commands.setTodoState(blockId, todoState))
               // A newer flush on this block superseded us while the IPC was in
               // flight — bail without applying so we don't clobber it. The
               // newer run owns the block's final content + todo_state.

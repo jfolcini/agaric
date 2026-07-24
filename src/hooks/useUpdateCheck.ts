@@ -47,6 +47,7 @@
 import { relaunch } from '@tauri-apps/plugin-process'
 import { useEffect, useSyncExternalStore } from 'react'
 
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
@@ -60,7 +61,6 @@ import {
   removePreference,
   writePreference,
 } from '@/lib/preferences'
-import { flushAllDrafts } from '@/lib/tauri'
 
 /** localStorage key holding the ISO timestamp of the last successful update check. */
 export const LAST_UPDATE_CHECK_STORAGE_KEY = PREFERENCES.lastUpdateCheck.key
@@ -220,7 +220,7 @@ async function performInstall(update: { downloadAndInstall: () => Promise<void> 
     // user retry than ship a partial save. The rejection bubbles to
     // the outer catch and routes through the same toast-cleanup path
     // as a download failure.
-    await flushAllDrafts()
+    unwrap(await commands.flushAllDrafts())
     await update.downloadAndInstall()
     await relaunch()
   } catch (err) {

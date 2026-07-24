@@ -16,12 +16,14 @@ import {
   BibliographyResultPanel,
   useBibliographyImport,
 } from '@/components/settings/BibliographySection'
-import type { SpaceRow } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 const mockImportBibliography = vi.fn()
-vi.mock('@/lib/tauri', () => ({
-  importBibliography: (...args: unknown[]) => mockImportBibliography(...args),
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    importBibliography: (...args: unknown[]) => mockImportBibliography(...args),
+  },
 }))
 
 // #1935 — the failure is logged at ERROR with a filename-distinct message so

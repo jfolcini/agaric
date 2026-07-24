@@ -13,13 +13,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HistoryRevertDialog } from '@/components/dialogs/HistoryRevertDialog'
 import { announce } from '@/lib/announcer'
+import type { HistoryEntry } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { revertOps } from '@/lib/tauri'
-import type { HistoryEntry } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', () => ({
-  revertOps: vi.fn(),
+const { mockRevert } = vi.hoisted(() => ({ mockRevert: vi.fn() }))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    revertOps: (...args: unknown[]) => mockRevert(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T,>(data: T) => ({ status: 'ok' as const, data })
 
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
@@ -29,7 +35,6 @@ vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
 
-const mockRevert = vi.mocked(revertOps)
 const mockNotify = vi.mocked(notify)
 const mockAnnounce = vi.mocked(announce)
 
@@ -63,7 +68,7 @@ afterEach(() => {
 describe('HistoryRevertDialog', () => {
   it('confirming the revert fires revertOps and announces success', async () => {
     const user = userEvent.setup()
-    mockRevert.mockResolvedValue(undefined as never)
+    mockRevert.mockResolvedValue(ok([]))
     const onSuccess = vi.fn()
     render(
       <HistoryRevertDialog
