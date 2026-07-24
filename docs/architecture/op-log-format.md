@@ -21,7 +21,7 @@ after the `LoroSync` deltas) now inserts **foreign** devices' op records
 here as append-only, hash-verified **audit metadata** — stored with
 `is_replicated = 1` and **never applied to state** (the boot-replay walk,
 materializer, and undo path all filter `is_replicated = 0`). This is the
-production caller the ingest machinery below (`dag::insert_replicated_op`,
+production caller the ingest machinery below (`insert_replicated_op`,
 the **Audit** profile) was built for. So the op log is now
 **globally-replicated for audit/History/attribution but device-local for
 state**. The "Validity rules" section below describes that real path (the
@@ -35,10 +35,12 @@ The canonical source is `src-tauri/agaric-core/src/hash.rs` (`compute_op_hash`,
 `verify_op_record`, `verify_op_hash`), the append path in
 `src-tauri/agaric-store/src/op_log/append.rs` (`append_local_op_in_tx`) and
 `src-tauri/agaric-store/src/op_log/payload.rs` (`serialize_inner_payload`),
-the remote-ingest / merge path in `src-tauri/src/dag.rs`
-(`insert_remote_op`, `append_merge_op`), and the payload types in
-`src-tauri/agaric-store/src/op.rs`. Where any detail here is ambiguous, those functions
-are authoritative.
+the remote-ingest / merge path in `src-tauri/agaric-engine/src/dag.rs`
+(`insert_remote_op`, `ingest_replicated_record`, `append_merge_op`) with its
+wire-typed shim `insert_replicated_op` in
+`src-tauri/agaric-sync/src/sync_protocol/operations.rs`, and the payload types
+in `src-tauri/agaric-store/src/op.rs`. Where any detail here is ambiguous,
+those functions are authoritative.
 
 ## `op_log` table schema
 
@@ -118,7 +120,7 @@ may itself contain a raw `0x00` byte. `compute_op_hash` checks this with a
 the payload; in **release** builds those assertions are compiled out, so the
 function never panics on a raw NUL — it simply hashes the (ambiguous) bytes
 it was given. The graceful runtime rejection lives at the ingest gate: the
-`\0`-rejection check at the top of `dag::insert_remote_op` returns
+`\0`-rejection check at the top of `insert_remote_op` returns
 `AppError::InvalidOperation` *before* the bytes reach `compute_op_hash`, so
 untrusted/remote ops carrying a raw NUL are refused gracefully rather than
 panicking.
@@ -166,7 +168,7 @@ every variant.
 
 ### Golden vector
 
-`hash.rs` pins a known-answer test that an external implementation can use
+`src-tauri/agaric-core/src/hash.rs` pins a known-answer test that an external implementation can use
 to validate its preimage construction end to end:
 
 ```text
@@ -210,20 +212,22 @@ cryptographic commitment over history. This is intentional under the
 single-user threat model (see [threat-model.md](./threat-model.md));
 tamper-resistance comes from the per-row hash check plus the immutability
 triggers and the `(device_id, seq)` primary key, not from re-deriving a
-chain root. See `hash.rs` (the "Positional, not Merkle" doc comment) for
+chain root. See the "Positional, not Merkle" doc comment in `hash.rs` for
 the rationale.
 
 ## Validity rules
 
-These are the checks the remote-op ingest core (`dag::insert_remote_op`)
+These are the checks the remote-op ingest core (`agaric_engine::dag`)
 runs on an op record before landing it (mirrored by `verify_op_record`
 for the hash-only check). There are **two ingest profiles** sharing this
 verification recipe (#2481 phase 1):
 
-- **Strict** (`dag::insert_remote_op`) — the dormant Wave 1B remote-merge
+- **Strict** (`insert_remote_op`) — the dormant Wave 1B remote-merge
   path; unresolved parents are a hard error. No production caller today;
-  exercised only by tests (`dag/tests.rs`, `op_log/tests/origin.rs`).
-- **Audit** (`dag::insert_replicated_op`) — the #2481 audit-only
+  exercised only by tests (`src-tauri/src/dag/tests.rs`,
+  `src-tauri/agaric-store/src/op_log/tests/origin.rs`).
+- **Audit** (`insert_replicated_op`, the wire shim over
+  `dag::ingest_replicated_record`) — the #2481 audit-only
   replication ingest; identical hash / NUL / payload / idempotency checks,
   but the parent-gap relaxation in rule 2 below applies, the row is stamped
   `is_replicated = 1`, and the transfer-carried `origin` attribution is

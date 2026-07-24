@@ -3,13 +3,14 @@
 
 The **Journal** is the default landing view and the only one mounted eagerly. It is your daily writing surface and the home of the agenda. Reach it from the sidebar's calendar icon.
 
-The Journal renders one of four **modes** that all share a single date cursor:
+The Journal renders one of five **modes** that all share a single date cursor:
 
 | Mode | What you see | Picker / hotkey |
 | --- | --- | --- |
 | **Daily** | One day's blocks plus a Due Panel and a Done Panel for that day. | Default. Click the day in the date picker. |
 | **Weekly** | Monday–Sunday sections, each a mini Daily view. | Toggle in the Journal header. |
 | **Monthly** | Calendar grid with coloured dots on days that have content. | Toggle in the Journal header. |
+| **Stream** | One continuous column, today pinned at the top and older days loading in as you scroll down. | Toggle in the Journal header. |
 | **Agenda** | Flat task list across a date range, with filters and grouping. | Toggle in the Journal header. |
 
 Per-space: every space has its own date cursor and mode. Switching spaces restores wherever you left off.
@@ -86,4 +87,4 @@ Repeating tasks are configured via properties (see [properties.md](properties.md
 
 ## Inline tasks in the editor
 
-In the editor (any block can be a task), the **task state cycle** is `Ctrl+Enter`. The cycle moves TODO → DOING → DONE → (clear). Re-cycle on DONE jumps back to TODO (or, on a repeating task, advances the recurrence). Priority is set directly with `Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` (P1 / P2 / P3). Dates open with `Ctrl+Shift+D` (due) and `Ctrl+Shift+S` (scheduled).
+In the editor (any block can be a task), the **task state cycle** is `Ctrl+Enter`. The cycle moves TODO → DOING → DONE → (clear). Re-cycle on DONE jumps back to TODO (or, on a repeating task, advances the recurrence). Priority is set directly with `Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` (P1 / P2 / P3). Due and scheduled dates are set from the block toolbar; `Ctrl+Shift+D` inserts a plain date at the cursor.

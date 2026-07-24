@@ -149,14 +149,14 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 | **DateChipEditor**                        | Agenda date chips                                                      |
 | **PageHeaderMenu**                        | Kebab in PageHeader                                                    |
 | **FormattingToolbar overflow**            | `MoreHorizontal` when toolbar narrows                                  |
-| **SearchablePopover**                     | Page / tag pickers inside Search filters                               |
+| **TagValuePicker** / **InlinePicker**     | Tag- and value-picker popovers inside filter and property surfaces     |
 
 ## Mobile / a11y posture
 
 - **44 px touch floor** via `[@media(pointer:coarse)]` classes (`min-h-11`, etc.). Enforced in `Button` variants and overflow menu rows. Inline indicators (collapse chevron, task marker, priority badge) intentionally use the `max-sm:` viewport breakpoint instead — they compete with content for space and are not touch-primary affordances. Don't unify the two — tests assert both.
 - **Sidebar mobile model**: persistent 48 px icon rail + Sheet overlay (left-edge swipe or hamburger toggle). Sheet auto-closes on nav-item tap.
 - **No Sheet ↔ Popover viewport swaps**. Radix Popover works on touch; Sheet is only for off-canvas navigation.
-- **ARIA, focus, announcer, reduced motion** — see `docs/UX.md` § Accessibility for the canonical rules. Notable here: roving tabindex (exactly one `tabindex=0` per group, arrows move it) is used in `SearchablePopover`, `RecentPagesStrip`, `TabBar`; the block editor's mount/unmount-by-focus is a different pattern, the "roving editor".
+- **ARIA, focus, announcer, reduced motion** — see `docs/UX.md` § Accessibility for the canonical rules. Notable here: roving tabindex (exactly one `tabindex=0` per group, arrows move it) is used in list-like chrome such as `RecentPagesStrip` and `TabBar`; the block editor's mount/unmount-by-focus is a different pattern, the "roving editor".
 
 ## Pitfalls — things easy to get wrong
 
@@ -169,13 +169,10 @@ All modal-style dialogs use `useDialogOrSheet`, which swaps to a bottom Sheet on
 
 ## Improvements suggested
 
-Findings surfaced during the doc audit + codebase pass. Each is a real drift / gap / inconsistency the user can act on independently. Not in this doc as an action item — kept here so the surface map is the canonical place to find "what's wrong with the UI surface".
+Known drift / gaps in the UI surface that nobody has picked up yet. Kept here so the surface map is the canonical place to find "what's wrong with the UI surface".
 
-- **Long-press constants moved out of `SortableBlock`.** Documentation that named `SortableBlock.tsx` as their home has rotted. Already corrected in `docs/UX.md`; verify other doc / comment references still point at `SortableBlock`.
 - **Sidebar resize on mobile is a no-op** but the toggle still appears clickable in some collapsed states. Consider hiding the toggle entirely on mobile, or making the affordance match behaviour.
 - **Toast action signature inconsistency.** Some callsites pass `toast.action`-style options, others wrap `notify()` with `t()`-keyed text. Standardising callsites on `notify.error(msg, { action: { label, onClick } })` and the shipped `notify.retry()` helper (`src/lib/notify.ts`) would tighten the API.
-- **`max-sm:` vs `[@media(pointer:coarse)]` divergence is intentional** but invisible to first-time readers. The current convention (44 px touch floor for primary affordances, viewport-based hiding for inline indicators) is right; documenting the rule in a single place — `docs/UX.md` § Touch & responsive — and linking from comments would prevent future "unifications".
 - **`MenuPopoverContent` adoption is partial.** Some popovers still use plain `PopoverContent` for menu surfaces. A grep + sweep would tighten visual consistency.
 - **Quick-capture hotkey is OS-global.** It's powerful but unannounced inside the app. Consider a one-time tooltip / welcome-modal mention.
 - **JSDoc i18n drift.** Several component JSDoc comments reference English strings that have since moved into `t()` calls. Not user-facing, but agents reading the JSDoc may infer wrong UI text. Low priority.
-- **No CI lint to catch doc-vs-code drift.** Many of the corrections in this doc audit could be caught automatically by a script that greps the docs' `src/...` paths against the filesystem and fails CI on a miss. Optional but high-leverage.

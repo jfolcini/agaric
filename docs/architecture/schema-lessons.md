@@ -3,13 +3,12 @@
 The migration log is append-only. Every column or table we add ships forever,
 even after we delete it: the `ADD` migration stays in the history, and removing
 it requires a second `DROP` migration that itself becomes permanent. Schema
-churn is therefore not free — it leaves a permanent trail of dead migrations,
-back-compat handling, and code that read or wrote the now-defunct fields.
+churn is therefore not free — it leaves a trail of dead migrations, back-compat
+handling, and code that read or wrote the now-defunct fields.
 
-This document records three real cases of churn (columns/tables added and then
-removed) and the forward-looking rule each one teaches. The goal is not
-migration archaeology; it is to avoid repeating the same mistakes the next time
-we are tempted to extend the schema.
+This document records real cases of that churn and the forward-looking rule
+each one teaches. The goal is not migration archaeology; it is to avoid
+repeating the same mistakes the next time we are tempted to extend the schema.
 
 Related reading: [`AGENTS.md`](../../AGENTS.md) and
 [data and events](./data-and-events.md).
@@ -69,8 +68,8 @@ entire lifecycle was build-up and tear-down inside the migration log:
   `0056_pend_09_cutover_default_on.sql`
 - dropped in `0057_pend_09_drop_merge_parity_log.sql`
 
-Seven migrations, start to finish, for a table that was only ever an
-observability scratchpad.
+A create, three amendments, and a drop — a whole permanent migration
+sub-history for a table that was only ever an observability scratchpad.
 
 ### Lesson
 

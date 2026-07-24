@@ -111,24 +111,24 @@ Multi-op commands (bulk delete, bulk tag, etc.) need the activity feed (`src-tau
 
 The dispatcher in `mcp/activity.rs` drains `LAST_APPEND` after the command returns and assembles the activity entry with the first op as the primary `OpRef` + the rest as `additionalOpRefs`. **Do not emit ops outside the tx; the task-local is only populated by `append_local_op_in_tx`.**
 
-## `AppError` and typed-error prefixes
+## `AppError` and typed validation codes
 
-`AppError` serialises as `{ kind: string, message: string }` (manual `Serialize` at `src-tauri/agaric-core/src/error.rs`). The variants are open; the wire shape isn't a tagged union.
+`AppError` serialises as `{ kind, message, code? }` (manual `Serialize` at [`src-tauri/agaric-core/src/error.rs`](../../agaric-core/src/error.rs)). `kind` is the `AppErrorKind` enum; `code` is present only on coded `Validation` errors and is omitted (never `null`) otherwise.
 
-For **typed validation errors** that the frontend needs to discriminate (invalid glob, invalid regex, invalid filter, etc.), encode the sub-kind as a leading `"<Code>: …"` token in the `message`. The wire shape stays `{ kind: "validation", message }` (no `code` field) — the prefix lives inside `message`.
+For **validation errors the frontend must discriminate** (invalid glob, invalid regex, stale cursor, …), the sub-kind is a structured `ValidationCode` field — **#2251 replaced the old `"<Code>: <reason>"` message prefix**. Never hand-format a code into `message`; `message` carries only the human-readable reason.
 
-**#1061 — never hand-spell the prefix.** The sub-kind codes are defined once per language and referenced everywhere else, so a rename can't silently desync the ~triplicated holders (Rust emit / TS re-emit / TS parse):
+```rust
+// emit
+return Err(AppError::validation_coded(ValidationCode::InvalidRegex, reason));
+// read (Rust tests)
+assert_eq!(err.validation_code(), Some(ValidationCode::InvalidGlob));
+```
 
-- Rust source of truth: [`error::validation_code`](../../agaric-core/src/error.rs) — `INVALID_GLOB`, `INVALID_REGEX`, `INVALID_DATE_FILTER` consts + the `prefixed(code, reason)` helper. Emit with:
-  ```rust
-  use crate::error::validation_code::{INVALID_REGEX, prefixed};
-  return Err(AppError::Validation(prefixed(INVALID_REGEX, &reason)));
-  ```
-- TS source of truth: [`src/lib/search-query/validation-codes.ts`](../../../src/lib/search-query/validation-codes.ts) — `ValidationCode` consts + `prefixed` / `prefixToken` / `parseValidationReason`. The re-emitters (`glob-validate.ts`, `register.ts`) build messages via `prefixed(...)`; the parser (`useSearchResults.ts`) reads them via `parseValidationReason(...)`.
+Note the ctor casing: `AppError::Validation` is a **struct** variant, so `AppError::Validation(msg)` does not compile — use `AppError::validation(msg)` (uncoded) or `AppError::validation_coded(code, msg)`.
 
-The two lists are pinned to identical strings by tests on each side (`glob_filter.rs::*_1061`, `validation-codes.test.ts`) — that pair IS the cross-language contract check; keep them in lockstep.
+The Rust `ValidationCode` enum is the single source of truth. Specta projects it into a string-literal union in `bindings.ts`; [`src/lib/search-query/validation-codes.ts`](../../../src/lib/search-query/validation-codes.ts) is a runtime mirror pinned to that union by a `satisfies` clause, so adding or renaming a variant on the Rust side fails TypeScript compilation after bindings regeneration — the cross-language check is by construction, not by paired string tests. Frontend consumers discriminate with `validationCode(err)` from `@/lib/app-error`.
 
-**Adding a new sub-kind:** add the const in BOTH source-of-truth files (identical string), reference it at the emit/parse sites, extend the pinning tests, and document it in [`docs/architecture/search.md`](../../../docs/architecture/search.md) and the relevant plan file. This keeps the wire shape stable while preserving the cross-language enforcement.
+**Adding a sub-kind:** add the variant in Rust, regenerate bindings, add the mirror entry in `validation-codes.ts`, and document it in [`docs/architecture/search.md`](../../../docs/architecture/search.md) if it is search-facing.
 
 ## Cancellation safety inside async commands
 
@@ -197,15 +197,15 @@ The sequence below is the full path from "I wrote some Rust" to "the frontend ca
 
    > **Note:** the test's own assert message suggests `cargo test -p agaric-lib …`, but `agaric-lib` is not a valid package name (the package is `agaric`; `agaric_lib` is only the lib *target*), so `-p agaric-lib` fails. Drop the `-p` flag as shown. Tracked in #569.
 
-5. **Add the typed wrapper** in `src/lib/tauri.ts`. The generated `commands.myCommand(...)` is raw (positional args, `{ status: 'ok' | 'error' }` result). Wrap it with a named export that takes a readable param object and calls `unwrap(await commands.myCommand(...))` so it throws on error like the rest of the frontend expects. Marshal any `spaceId: string | null` through `toSpaceScope(...)`; race against an `AbortSignal` via `withAbort(...)` if the call is cancellable.
+5. **Call it from the frontend via `@/lib/bindings`.** The generated `commands.myCommand(...)` is the IPC surface (positional args, `{ status: 'ok' | 'error' }` result); unwrap it at the call site so it throws like the rest of the frontend expects. **Do not add a new wrapper to `src/lib/tauri.ts` or `src/lib/tauri/`** — that layer is being retired (#2927) and the `tauri-import-baseline` prek hook rejects new `@/lib/tauri` importers. See root [`AGENTS.md` §TypeScript Bindings](../../../AGENTS.md#typescript-bindings-specta).
 
 6. **If the command adds or changes a `query!` / `query_as!` / `query_scalar!` macro**, regenerate the offline `.sqlx` cache (compile-time-checked queries need it; runtime `sqlx::query(...)` strings do not):
 
    ```bash
-   cd src-tauri && cargo sqlx prepare -- --tests
+   just gen-sqlx
    ```
 
-   CI runs `cargo sqlx prepare --check -- --tests` and fails on drift. `cargo sqlx prepare` needs `DATABASE_URL` pointing at a migrated SQLite DB (no `.env` is checked in — see `src-tauri/.env.example` and [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md)). Commit `src/lib/bindings.ts` and any new files under `src-tauri/.sqlx/` in the **same PR** as the Rust change.
+   Use the recipe, not a bare `cargo sqlx prepare` — the workspace has four `.sqlx/` caches that must stay in lockstep, and the bare command silently drops leaf-crate queries (root [`AGENTS.md` invariant #6](../../../AGENTS.md#key-architectural-invariants)). It needs `DATABASE_URL` pointing at a migrated SQLite DB (no `.env` is checked in — see `src-tauri/.env.example` and [`src-tauri/migrations/AGENTS.md`](../../migrations/AGENTS.md)). CI runs `cargo sqlx prepare --check -- --tests` per lane and fails on drift. Commit `src/lib/bindings.ts` and every regenerated `.sqlx/` file in the **same PR** as the Rust change.
 
 ## Cross-references
 

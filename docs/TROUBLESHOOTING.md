@@ -1,8 +1,8 @@
 # Troubleshooting
 
-Seven local-dev failure modes you are likely to hit on this codebase, each with
-the symptom, the cause, and the exact fix. For full setup and build details see
-[`BUILD.md`](./BUILD.md).
+The local-dev failure modes you are most likely to hit on this codebase, each
+with the symptom, the cause, and the exact fix. For full setup and build details
+see [`BUILD.md`](./BUILD.md).
 
 ## Table of contents
 
@@ -26,15 +26,16 @@ error: linking with `cc` failed: exit status: 1
           fuse-ld: cannot find mold
 ```
 
-This appears only after you have copied the optional linker config into place
-(`cp .cargo/config.toml.example .cargo/config.toml`).
+This appears only once an active `.cargo/config.toml` exists — either written
+for you by `scripts/setup.sh` on a Linux host, or copied by hand from
+`.cargo/config.toml.example`.
 
 ### Cause
 
 `.cargo/config.toml` sets `rustflags = ["-C", "link-arg=-fuse-ld=mold"]`, which
 tells the compiler to link with `mold`. If `mold` is not installed, the linker
-invocation cannot find it and the build aborts. The config is shipped only as
-`.cargo/config.toml.example` precisely so a fresh clone never trips this.
+invocation cannot find it and the build aborts. The file is gitignored and only
+the `.example` is tracked, precisely so a fresh clone never trips this.
 
 ### Fix
 
@@ -62,34 +63,33 @@ After adding or changing a `sqlx::query!` / `sqlx::query_scalar!` /
 error: `.sqlx` is missing one or more queries
 ```
 
-The `sqlx-prepare-check` prek hook (and CI) fails for the same reason.
+Pre-push Phase E and CI's `sqlx-offline-check` lanes fail for the same reason.
 
 ### Cause
 
-sqlx verifies queries at compile time against an offline cache under
-`src-tauri/.sqlx/` (one JSON per query). A new or changed query macro has no
-matching cache entry, so the offline check fails. Regenerating the cache needs a
-live `DATABASE_URL`; the `.env` in `src-tauri/` points it at `sqlite:dev.db`.
+sqlx verifies queries at compile time against an offline cache (one JSON per
+query). There is one such cache per crate that holds query macros — the root
+`src-tauri/.sqlx/` plus a crate-local cache in each workspace member. A new or
+changed query macro has no matching cache entry, so the offline check fails.
+Regenerating needs a live `DATABASE_URL`; the `.env` in `src-tauri/` points it
+at `sqlite:dev.db`.
 
 ### Fix
 
-From `src-tauri/` with `.env` present (`DATABASE_URL=sqlite:dev.db`):
+Regenerate every cache in one step:
 
 ```bash
-cd src-tauri && cargo sqlx prepare -- --tests
+just gen-sqlx
 ```
 
-Commit the regenerated `src-tauri/.sqlx/` cache alongside the Rust change.
-
-If `dev.db` does not exist (see [section 5](#5-devdb-does-not-exist)), create it
-with the canonical script first, then prepare against it:
+Commit the regenerated `.sqlx/` directories alongside the Rust change. If
+`dev.db` does not exist (see [section 5](#5-devdb-does-not-exist)), create it
+with the canonical script first:
 
 ```bash
-scripts/setup-dev-db.sh                          # creates src-tauri/dev.db + migrates
-cd src-tauri && cargo sqlx prepare -- --tests    # .env points DATABASE_URL at sqlite:dev.db
+scripts/setup-dev-db.sh   # creates src-tauri/dev.db + runs migrations
+just gen-sqlx
 ```
-
-Then stage `src-tauri/.sqlx/`.
 
 ## 3. Specta bindings out of sync
 
@@ -98,7 +98,7 @@ Then stage `src-tauri/.sqlx/`.
 The `specta_tests::ts_bindings_up_to_date` test fails:
 
 ```text
-TypeScript bindings are stale — regenerate with: cd src-tauri && cargo test -p agaric-lib -- specta_tests --ignored
+TypeScript bindings are stale — regenerate with: cd src-tauri && cargo test -- specta_tests --ignored
 ```
 
 CI fails on the same drift via the `tauri-bindings-parity` prek hook.
@@ -117,11 +117,6 @@ Regenerate the bindings, then commit `src/lib/bindings.ts`:
 ```bash
 cd src-tauri && cargo test -- specta_tests --ignored
 ```
-
-> **Note:** the assertion message printed by the test suggests
-> `cargo test -p agaric-lib …`, but `agaric-lib` is not a valid package name
-> (the package is `agaric`; `agaric_lib` is only the lib *target*). Drop the
-> `-p` flag and run the command from `src-tauri/` as shown above.
 
 ## 4. Materializer test deadlock
 

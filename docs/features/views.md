@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Views
 
-Agaric has a sidebar with a fixed set of nav items (the "views"), plus a **Page Editor** view that's reached by navigation rather than the sidebar. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
+Agaric has a sidebar with a fixed set of nav items (the "views"), plus a **Page Editor** view that's reached by navigation rather than the sidebar. The nav is grouped: *Workspace* (Journal, Pages, Search, Tags, Graph, Templates, Query) and *System* (Status, History, Trash), with Settings in the footer. Every view is space-scoped — switching the active space refreshes what each shows. See [spaces.md](spaces.md) for the partition model.
 
 The **Journal** view (default landing) and the **Agenda** mode inside it have their own file: [journal-and-agenda.md](journal-and-agenda.md).
 
@@ -28,7 +28,7 @@ Browse every page in the active space.
 
 - **Tree view** (default): pages organised by `/`-delimited namespace, e.g. `Projects/Website/Backlog`. Folders show a count badge and a `+` button to create a child page inline.
 - **Flat view**: every page, no hierarchy.
-- **Sort dropdown**: Recent / Alphabetical / Created.
+- **Sort dropdown**: Alphabetical, Recent, Created, Recently modified, Most linked, Most content.
 - **Virtualised list**: scrolls smoothly even with thousands of pages.
 - **Multi-select** pages with `Ctrl/Shift+Click`; **batch delete** with confirmation.
 - **Inline rename**: right-click → Rename, or click the page in the **PageEditor** and rename inline in the title.
@@ -44,6 +44,15 @@ Browse every tag and the blocks that carry them.
 - **Per-tag page**: clicking a tag opens its dedicated page — the title is the tag, and every block referencing it is listed.
 - **Boolean tag queries** in the filter panel — see [tags-and-links.md](tags-and-links.md).
 - **Rename / recolour** a tag from its tag page header.
+
+## Query (advanced query)
+
+A dedicated builder for queries too complex for the search box.
+
+- **Nested boolean tree**: arbitrary AND / OR / NOT groups over filter leaves, composed visually.
+- **Controls bar**: full-text term, sort, group-by, aggregates.
+- **Results pane**: flat with a global aggregate bar, or grouped with per-group headers, counts, and aggregate chips.
+- **Saved views** let you keep a query around.
 
 ## Trash
 
@@ -61,7 +70,7 @@ Soft-deleted pages and blocks. Deletes don't purge immediately — they land her
 Global operation log — every edit Agaric has applied, in reverse chronological order.
 
 - **Op type icons** distinguish creates, edits, deletes, restores, properties, tags.
-- **Filter bar**: filter by op type, plus an "All spaces" scope toggle. (Agent-authored ops carry a per-row badge; there is no user-vs-agent or date-range filter.)
+- **Filter bar**: filter by op type, plus an "All spaces" scope toggle. There is no user-vs-agent or date-range filter; ops that arrived from another device are marked, but agent-authored ops are not distinguished from your own.
 - **Multi-select** + **batch revert** — selecting a set of ops and pressing Enter reverts them all, newest first.
 - **Diff toggle**: word-level diff for edits.
 - **Restore to here**: every entry has a *"Restore to here"* button that reverts every op after that point. Use with care — it's a snapshot rollback.
@@ -93,25 +102,30 @@ A force-directed graph of pages and the links between them.
 
 Materializer + sync metrics. Useful for diagnosing slowness.
 
-- **Materializer queue depth**: how far behind the read-side projection is.
+- **Materializer queue depth**: how far behind the read-side projection is (foreground and background queues).
 - **Op counts**: total ops; ops dispatched.
-- **Sync state**: per-peer last successful sync, last error.
+- **Sync state**: the overall state, last successful sync, and peer count — aggregated, not per peer. For per-peer status and errors, go to Settings → Sync & Devices.
 - Polls the backend periodically.
 
 ## Settings
 
-Tabbed configuration view. Tabs include:
+Tabbed configuration view. The tabs sit in a vertical rail, bucketed into four groups:
 
-- **General** — theme, task state cycle, deadline warning days.
-- **Properties** — list of property definitions; rename, change type, edit select options.
-- **Appearance** — theme (auto / light / dark / Solarized / One Dark Pro), sidebar width, density.
-- **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
-- **Data** — import / export (see [import-export.md](import-export.md)).
-- **Sync & Devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
-- **Agent access** — MCP enable / disable + ActivityFeed + SessionRevertControls (see [agent-access.md](agent-access.md)).
+- **Workspace**
+  - **General** — deadline warning days, Quick Capture hotkey, launch-at-login, debug mode, reset onboarding.
+  - **Appearance** — theme, sidebar width, density.
+  - **Editor** — editor behaviour toggles (e.g. the `:` emoji picker).
+  - **Keyboard** — full shortcut customisation (see [keyboard.md](keyboard.md)).
+  - **Properties** — list of property definitions; rename, change type, edit select options.
+- **Integrations**
+  - **Notifications** — reminder / notification settings.
+  - **Agent access** — MCP enable / disable + ActivityFeed + SessionRevertControls (see [agent-access.md](agent-access.md)).
+- **Data**
+  - **Data** — import / export (see [import-export.md](import-export.md)).
+  - **Sync & Devices** — pair / unpair / rename peers; manual addresses (see [sync.md](sync.md)).
 - **Help** — keyboard shortcut reference, *Report a Bug* button, app version.
 
-Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved).
+Tabs are deep-linkable via `?settings=<tab>` (parsed inside the Settings view itself, no router involved) and via `agaric://settings/<tab>`. The last-used tab persists in `localStorage`.
 
 ## Page Editor
 

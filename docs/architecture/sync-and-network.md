@@ -65,18 +65,15 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 
 ## Snapshot catch-up
 
-When the initiator's frontier is older than the responder's compaction point (the responder has GC'd the relevant op-log entries), the responder sends a full **snapshot** instead of replaying ops:
+When the responder cannot satisfy the initiator's advertised version vectors by delta replay, the session exits the delta loop into `ResetRequired` and hands off to `sync_daemon/snapshot_transfer.rs`.
 
-1. Responder emits `SnapshotOffer { size_bytes }` (`src-tauri/agaric-sync/src/sync_protocol/types.rs`). `up_to_hash` is advanced separately during apply, after the snapshot lands.
-2. Initiator enforces a 256 MB cap; accepts → `SnapshotAccept`; rejects → falls back to "manual re-sync" UX.
-3. Responder streams the snapshot in 5 MB binary frames.
-4. Initiator calls `apply_snapshot()`: wipes core tables + materialised caches in one `BEGIN IMMEDIATE` + `defer_foreign_keys` transaction, restores the snapshot, then advances `peer_refs.last_hash` to `up_to_hash`.
+Since **#2503** the production catch-up is a **Loro-snapshot merge**, not a wipe-and-replace: the responder exports a per-space `LoroDoc` snapshot, the initiator *merges* it into its own engine and reprojects SQL from the merged state. Loro import is monotonic, so it never rolls the receiver back and the initiator's unsynced local content **survives** — the exact inversion of the old CBOR contract.
 
-The snapshot atomicity is the cross-link to [`crdt-and-recovery.md § Snapshots`](crdt-and-recovery.md).
+The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → `apply_snapshot()`, which wipes core tables and re-seeds from the blob) is retained on the **accept-old** receive branch only, for a peer that predates #2503. It is never offered by a current responder. What that destructive branch still costs the receiving device is documented in [`crdt-and-recovery.md § What a catch-up RESET costs the caught-up device`](crdt-and-recovery.md); the wire-level detail is in [`sync-protocol-spec.md § Snapshot-fallback flow`](sync-protocol-spec.md).
 
 ## Daemon
 
-`sync_daemon/` runs a long-lived task with a `tokio::select!` over:
+`src-tauri/agaric-sync/src/sync_daemon/` runs a long-lived task with a `tokio::select!` over:
 
 - **mDNS browse stream** — new peer announcements.
 - **`SyncTrigger` channel** — change-triggered sync (debounced ~3 s).
@@ -95,7 +92,7 @@ If no paired peers exist, the daemon defers mDNS browse + TLS listener entirely.
 
 Two independent schedules, **intentionally not coordinated**:
 
-- **Backend** (`sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → 60 s cap. ±10 % jitter so two devices don't lock-step on resync ticks. Per-peer mutex prevents concurrent connections to the same peer.
+- **Backend** (`src-tauri/agaric-sync/src/sync_scheduler.rs`): per-peer exponential 2 s → 4 s → 8 s → 16 s → 32 s → `MAX_BACKOFF` (60 s) cap, with ±10 % jitter so two devices don't lock-step on resync ticks. A per-peer mutex prevents concurrent connections to the same peer.
 - **Frontend** (`useSyncTrigger.ts`): coarse 60 s → 600 s cadence for the UI's "wake the scheduler" hint. Backend is authoritative; mid-backoff `startSync()` from the FE resolves as a quick no-op.
 
 The dual layer is deliberate: backend handles failure recovery; frontend handles "the user clicked Sync".

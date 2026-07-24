@@ -8,14 +8,14 @@ Adjacent rejections that already have homes:
 - **No CRDT for in-editor cursors / operational-transform live merge.** Editor architecture rule, lives in [`editor-and-content.md § FE/BE authority boundary`](editor-and-content.md).
 - **No conflict-merge model**. The Loro CRDT engine is now the sole convergence path. See [`crdt-and-recovery.md § CRDT convergence`](crdt-and-recovery.md).
 - **No tag-to-tag inheritance.** Data-model rule, lives in [`data-and-events.md § Tags & inheritance`](data-and-events.md).
-- **No fractional `TEXT` indexing.** Tree-shape rule, same file.
+- **No fractional index in the SQL `position` column.** Tree-shape rule, same file. (A fractional index does exist *inside* the Loro engine, where it is the merge truth.)
 - **No SQLCipher** (encryption at rest delegated to OS). Security rule, lives in [`tooling.md § Security § Storage`](tooling.md).
 
 ## Frameworks & shells
 
 - **Electron** — bundle size and memory footprint. Tauri 2 + native webview produces a fraction of the package and a fraction of the RAM at runtime.
 - **TanStack Router** — store-driven navigation works better here. There's no URL we care about preserving; deep links are handled at the Rust layer and dispatched into Zustand.
-- **TanStack Query for Tauri IPC** — over-engineered for the call shape. Specta-generated typed wrappers + per-feature Zustand stores cover refetch / invalidation. Adding TanStack Query would mean another cache to invalidate on every materializer event.
+- **TanStack Query over the *write* path** — still rejected, and now a load-bearing guardrail. Layering a query cache over `op_log` → materializer → Loro would create a second cache competing with the materializer's own invalidation. Zustand stores stay the only cache on that path. (The original blanket rejection was **reversed for reads** in #2596: TanStack Query now backs the read-only derived/aggregate/search surfaces — pages browser, backlinks, history, autocomplete — through the module-level client in `src/lib/query-client.ts`, invalidated by materializer events rather than by the clock.)
 
 ## Editor & content
 
@@ -61,4 +61,4 @@ Adjacent rejections that already have homes:
 
 ## Process & ops
 
-- **ESLint + Prettier** — Biome is one tool, faster, fewer config files.
+- **ESLint + Prettier** — rejected for a single fast toolchain with fewer config files. That role was filled by Biome first and by the oxc tools (`oxlint` + `oxfmt`) since #88; ESLint/Prettier stay rejected either way.

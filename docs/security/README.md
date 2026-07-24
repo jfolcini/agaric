@@ -3,7 +3,7 @@
 This directory holds the structured security reviews that the
 OpenSSF Best Practices Silver-tier [`security_review`](https://www.bestpractices.dev/en/criteria/2#2.security_review)
 criterion asks for. They are distinct from the **continuous-coverage
-tooling** (`cargo-deny`, `cargo audit`, `clippy`, `biome`, `gitleaks`,
+tooling** (`cargo-deny`, `cargo audit`, `clippy`, `oxlint`, `gitleaks`,
 `zizmor`, OpenSSF Scorecard, CodeQL) — those run on every PR and
 score the project's posture; a review here looks at the same surface
 but with a maintainer's brain attached.
@@ -19,10 +19,9 @@ The 12-month window is the Silver criterion's hard limit. The
 minor-cut trigger is the practical one — a minor bump usually means
 enough churn that the diff-sweep is non-trivial.
 
-A `prek.toml` hook can be added to warn when the latest
-`review-YYYY-MM-DD.md`'s `mtime` is past the 12-month line; that
-hook is filed under "consider when cadence drifts in practice" and
-not pre-emptively added (a deliberate 'consider when cadence drifts' choice).
+A `prek.toml` hook warning when the latest `review-YYYY-MM-DD.md` is past
+the 12-month line is deliberately *not* pre-emptively added — add it only if
+the cadence actually drifts.
 
 ## Scope of each review
 
@@ -65,4 +64,5 @@ is just an ordering key.
 - [`../architecture/ci-and-tooling.md`](../architecture/ci-and-tooling.md) —
   the continuous-coverage tooling each review draws evidence from.
 - [`../../SECURITY.md`](../../SECURITY.md) — the disclosure path.
-- The broader Silver roadmap is tracked separately; §5b is this directory.
+- [`review-2026-05-20.md`](review-2026-05-20.md) — the reviews filed so far
+  (one file per review, newest last).

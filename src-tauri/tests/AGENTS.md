@@ -1,6 +1,6 @@
 # Rust backend test patterns
 
-> See also: root [`AGENTS.md`](../../AGENTS.md) for the 9 architectural invariants tests must respect. Backend-tree-specific rules live in [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md), [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md), and [`../migrations/AGENTS.md`](../migrations/AGENTS.md).
+> See also: root [`AGENTS.md`](../../AGENTS.md) for the architectural invariants tests must respect. Backend-tree-specific rules live in [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md), [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md), and [`../migrations/AGENTS.md`](../migrations/AGENTS.md).
 
 ## Test layers
 
@@ -8,7 +8,7 @@
 |---|---|---|
 | Unit | `src/<module>.rs` → `#[cfg(test)] mod tests` (or `src/<module>/tests.rs`) | Single-module logic |
 | Integration | `src/integration_tests.rs`, `src/command_integration_tests/` (incl. `sync_integration.rs`) | Cross-module pipelines + command API contracts + sync peer-ref/protocol commands |
-| Sync (network) | `src/sync_net/tests.rs`, `src/sync_daemon/tests.rs`, `src/sync_daemon/snapshot_transfer.rs` | TLS/cert + wire protocol, mDNS discovery lifecycle + peer-sync flows, snapshot transfer round-trips |
+| Sync (network) | `src/sync_net/tests.rs`, `src/sync_daemon/tests.rs`, `src/sync_daemon/snapshot_transfer_tests.rs` (+ `_host.rs`) | TLS/cert + wire protocol, mDNS discovery lifecycle + peer-sync flows, snapshot transfer round-trips |
 | Bench | `benches/*.rs` (`harness = false`) | Criterion microbenchmarks; manual only, never CI |
 
 Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
@@ -38,7 +38,7 @@ cargo test -p agaric -- specta_tests --ignored   # regenerate src/lib/bindings.t
 cargo bench --bench core_bench -- hash   # local only (hash_bench is a mod of core_bench, #2879)
 ```
 
-### Nextest configuration (`.config/nextest.toml`)
+### Nextest configuration (`src-tauri/.config/nextest.toml`)
 
 - `fail-fast = false` — always runs everything even if some fail.
 - `retries = 1` (default), `retries = 2` (CI profile).
@@ -128,13 +128,13 @@ Integration test surfaces, all `#[cfg(test)] mod` includes in `lib.rs` (they com
 
 - **`src/integration_tests.rs`** — pipeline tests spanning 3+ modules. Op chains + hash, crash recovery, cascade delete/purge, pagination, position handling, materializer dispatch, edit sequences. Use `create_content()` shorthand + `settle_bg_tasks()` between materializer-triggering ops.
 - **`src/command_integration_tests/`** (`block`/`page`/`tag`/`property`/`backlink`/`lifecycle`/`sync`/`trash`/`undo` integration modules + `common.rs` + `mod.rs`) — every `*_inner` command's API contract. Happy path + error variants + edge cases (empty / unicode / large / concurrent) + op-log verification. The sync surface here is `sync_integration.rs` (peer-ref commands: `list_peer_refs` / `update_peer_name` / `delete_peer_ref`, scheduler wiring).
-- **Network sync** lives outside the `command_integration_tests/` tree: `src/sync_net/tests.rs` (TLS/cert generation, wire-message serialisation, mDNS service type), `src/sync_daemon/tests.rs` (mDNS discovery lifecycle — `process_discovery_event`, stale-peer eviction — plus `try_sync_with_peer_*` / `inmem_handle_incoming_sync_*` peer flows and backoff/conflict handling), and `src/sync_daemon/snapshot_transfer.rs` (snapshot transfer round-trips). The crate-level `src/sync_integration_tests.rs` (diffy-era E2E) was **deleted** when the Loro-native sync layer landed; a full TLS+WS socket round-trip remains deferred (#602). Do not cite `sync_integration_tests.rs` as a live layer.
+- **Network sync** lives outside the `command_integration_tests/` tree: `src/sync_net/tests.rs` (TLS/cert generation, wire-message serialisation, mDNS service type), `src/sync_daemon/tests.rs` (mDNS discovery lifecycle — `process_discovery_event`, stale-peer eviction — plus `try_sync_with_peer_*` / `inmem_handle_incoming_sync_*` peer flows and backoff/conflict handling), and `src/sync_daemon/snapshot_transfer_tests.rs` (snapshot transfer round-trips). The crate-level `src/sync_integration_tests.rs` (diffy-era E2E) was **deleted** when the Loro-native sync layer landed; a full TLS+WS socket round-trip remains deferred (#602). Do not cite `sync_integration_tests.rs` as a live layer.
 
 **Reverse-op tests (`reverse.rs`):** test the reverse of each op type. Non-reversible ops (`purge_block`, `delete_attachment`) must return `AppError::NonReversible`, not panic. Prior-state lookups use the op log exclusively (not the materialised `blocks` table), so tests verify op-log walking even when the materializer lags. Reverse ops are **appended** to the op log — never assert existing ops were mutated. Use `append_local_op_at` with `FIXED_TS` for deterministic timestamps.
 
 ## Snapshot testing (insta)
 
-Snapshots live alongside the code: `src/snapshots/`, `src/backlink/snapshots/`, `src/commands/tests/snapshots/`, `agaric-store/src/pagination/snapshots/`, `src/mcp/snapshots/`. Naming: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules and `agaric_store__<module>__tests__<test_name>.snap` for modules that have moved into `agaric-store` (#2621). New snapshot-testing modules get a sibling `snapshots/` directory.
+Snapshots live alongside the code — e.g. `src/commands/tests/snapshots/`, `src/mcp/tools_ro/snapshots/` and `tools_rw/snapshots/`, `agaric-store/src/snapshots/`, `agaric-store/src/backlink/snapshots/`, `agaric-store/src/pagination/snapshots/`, `agaric-store/src/op_log/tests/snapshots/`. Naming: `agaric_lib__<module>__tests__<test_name>.snap` for app-crate modules and `agaric_store__<module>__tests__<test_name>.snap` for modules that have moved into `agaric-store` (#2621). New snapshot-testing modules get a sibling `snapshots/` directory.
 
 ### Redaction patterns
 
@@ -207,13 +207,13 @@ Before committing:
 - Error paths covered: nonexistent ID → `NotFound`, deleted → `NotFound`, invalid input → `Validation`.
 - Snapshot tests redact `.id` / `.created_at` / `.hash` / `.next_cursor`.
 - Helpers module-local (don't share across modules).
-- Recursive-CTE tests verify the `is_conflict = 0` + `depth < 100` invariants from root AGENTS.md §9.
+- Recursive-CTE tests verify the `is_conflict = 0` + `depth < 100` invariants from root AGENTS.md invariant #9.
 - Op-log assertions check the appended record (no mutation — append-only).
 - `assert_eq!` for exact counts.
 - ULID fixtures uppercase (Crockford base32 → blake3 determinism).
 - Position values 1-based, not 0.
 - Benchmarks declared `harness = false`, never CI.
-- SQL changes: `cargo sqlx prepare -- --tests` and the `.sqlx/` updates committed.
+- SQL changes: `just gen-sqlx` run and every regenerated `.sqlx/` file committed.
 
 ## Quality standards
 
@@ -235,7 +235,7 @@ Before committing:
 2. **Missing `settle()`** — materializer's background tx contends with the next write. After delete / edit / restore / purge / create page / create tag, settle before continuing.
 3. **Wrong tokio flavor** — Materializer tests deadlock on default single-threaded.
 4. **Snapshot without redaction** — ULIDs / timestamps / hashes break the snap on every run.
-5. **`cargo sqlx prepare` skipped** — compile-time `query!` macros need offline cache regeneration after SQL changes.
+5. **`just gen-sqlx` skipped** — compile-time `query!` macros need offline cache regeneration after SQL changes, across all four `.sqlx/` lanes.
 6. **Specta drift** — Rust types in Tauri commands changed without `cargo test -- specta_tests --ignored`.
 7. **Timestamp `assert_ne!` without sleep** — consecutive ms-precision timestamps can collide.
 8. **Recursive CTE missing `is_conflict = 0`** — conflict copies leak in as phantom rows (root AGENTS.md invariant #9).
@@ -245,8 +245,8 @@ Before committing:
 
 ## Cross-references
 
-- Root [`AGENTS.md`](../../AGENTS.md) — 9 architectural invariants.
-- [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md) — command patterns (`_inner`, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `AppError` prefixes) tests should verify.
+- Root [`AGENTS.md`](../../AGENTS.md) — the architectural invariants.
+- [`../src/commands/AGENTS.md`](../src/commands/AGENTS.md) — command patterns (`_inner`, `CommandTx`, `MAX_BATCH_BLOCK_IDS`, `LAST_APPEND`, `ValidationCode`) tests should verify.
 - [`../src/mcp/AGENTS.md`](../src/mcp/AGENTS.md) — MCP rules.
 - [`../migrations/AGENTS.md`](../migrations/AGENTS.md) — migration rules.
 - [`../../src/__tests__/AGENTS.md`](../../src/__tests__/AGENTS.md) — frontend tests (separate world).

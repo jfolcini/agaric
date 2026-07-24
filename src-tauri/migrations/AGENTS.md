@@ -22,7 +22,7 @@ CREATE TABLE blocks (
 ) STRICT;
 ```
 
-SQLite's silent type coercion (e.g. inserting `"42"` into an `INTEGER` column accepted as `42`) is a known correctness footgun. `STRICT` mode (3.37+) catches it at insert time. Existing tables shipped without `STRICT` are not retrofitted — adding `STRICT` to a CREATE retroactively would change semantics. The `migrations-strict-required` prek hook enforces this on new CREATEs.
+SQLite's silent type coercion (e.g. inserting `"42"` into an `INTEGER` column accepted as `42`) is a known correctness footgun. `STRICT` mode (3.37+) catches it at insert time. Existing tables shipped without `STRICT` are not retrofitted — adding `STRICT` to a CREATE retroactively would change semantics. The `migrations-strict-tables` prek hook enforces this on new CREATEs.
 
 **FTS5 carve-out**: `CREATE VIRTUAL TABLE … USING fts5(…)` does NOT accept `STRICT`. FTS5 tables are excluded from the hook automatically; do not try to add `STRICT` to them.
 
@@ -60,7 +60,7 @@ CREATE TABLE example (
 
 - **Column suffix:** `_ms` — makes the encoding visible at every read site without consulting the schema.
 - **CHECK predicate:** `>= 0` — rejects pre-epoch nonsense at insert time, matching the same defence-in-depth posture as the per-column `CHECK` constraints elsewhere in the schema (0062 `exactly_one_value`, 0073 `page_id_self_for_pages`).
-- **Writer helper:** `crate::db::now_ms()` (`src-tauri/src/db.rs`) is the single source of truth for the current value. No call site should open-code `chrono::Utc::now().timestamp_millis()`.
+- **Writer helper:** `crate::db::now_ms()` (defined in `src-tauri/agaric-store/src/db/mod.rs`, re-exported through the app crate's `db` module) is the single source of truth for the current value. No call site should open-code `chrono::Utc::now().timestamp_millis()`.
 
 Rationale: range scans on staleness windows are direct integer comparisons (`WHERE updated_at_ms <= ?`), with no `strftime` parsing and no `Z` vs `+00:00` lex-collation hazard. SQLite INTEGER columns sort and range-scan natively without relying on every writer producing the same `YYYY-MM-DDTHH:MM:SS.sssZ` shape that the legacy TEXT encoding required.
 
@@ -116,7 +116,7 @@ When a table rebuild is needed (e.g. to add a `FOREIGN KEY … ON DELETE CASCADE
 
 ### `DROP TABLE` fires `ON DELETE CASCADE` immediately — preserve authoritative children (#606)
 
-Under `foreign_keys = ON` (every connection, including the migration transaction), the rebuild's `DROP TABLE <parent>` step **immediately cascade-deletes every row** of every child table holding an `ON DELETE CASCADE` FK into it. The cascade is part of the DROP itself, **not** a deferred FK validation, so the per-migration transaction does not protect children — only the *parent's* rows survive (via the `_new_` bulk copy). This is verified mechanically by the `*_376` and `*_606` harness tests in `src-tauri/src/db.rs` (seed-then-migrate).
+Under `foreign_keys = ON` (every connection, including the migration transaction), the rebuild's `DROP TABLE <parent>` step **immediately cascade-deletes every row** of every child table holding an `ON DELETE CASCADE` FK into it. The cascade is part of the DROP itself, **not** a deferred FK validation, so the per-migration transaction does not protect children — only the *parent's* rows survive (via the `_new_` bulk copy). This is verified mechanically by the `*_376` and `*_606` harness tests in `src-tauri/src/db/tests.rs` (seed-then-migrate).
 
 Two more empirically-pinned DROP facts (SQLite 3.50; see `agents_md_table_rebuild_recipe_preserves_satellites_606`):
 
@@ -150,7 +150,7 @@ DROP TABLE _keep_page_aliases;
 DROP TABLE _keep_block_drafts;
 ```
 
-For `blocks`, the authoritative children were exactly `page_aliases` and `block_drafts` through migration 0088; **as of 0089 the preserve set also includes `spaces`** — wiping `spaces` is doubly destructive because `blocks.space_id … ON DELETE SET NULL` then silently clears every space membership. 0089 sidesteps this by keeping `spaces` EMPTY until after the rename (snapshot to `_spaces_backfill` first, populate last); copy that choreography in any future rebuild, and re-check the full list against the FK graph when writing one. Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for the satellite table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db.rs`) seeds the satellites immediately before every post-0085 rebuild and asserts the rows reach head.
+For `blocks`, the authoritative children were exactly `page_aliases` and `block_drafts` through migration 0088; **as of 0089 the preserve set also includes `spaces`** — wiping `spaces` is doubly destructive because `blocks.space_id … ON DELETE SET NULL` then silently clears every space membership. 0089 sidesteps this by keeping `spaces` EMPTY until after the rename (snapshot to `_spaces_backfill` first, populate last); copy that choreography in any future rebuild, and re-check the full list against the FK graph when writing one. Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for the satellite table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db/tests.rs`) seeds the satellites immediately before every post-0085 rebuild and asserts the rows reach head.
 
 `PRAGMA defer_foreign_keys = ON` (first statement of the migration) defers FK *violation checks* to COMMIT — useful for circular FKs like `spaces(id) ↔ blocks.space_id` (0089) — but does **not** defer cascade/SET NULL actions.
 
@@ -171,10 +171,10 @@ Migration-time `ALTER TABLE … DROP COLUMN` is supported in SQLite 3.35+ but is
 ## Verifying a migration
 
 ```bash
-cd src-tauri && cargo sqlx prepare -- --tests
+just gen-sqlx
 ```
 
-Re-generates the offline `.sqlx/` cache. Run after any migration that adds a new query macro site. CI will fail if you forget.
+Regenerates all four offline `.sqlx/` caches. Run after any migration that adds a new query-macro site; use the recipe rather than a bare `cargo sqlx prepare`, which silently drops leaf-crate queries. CI will fail if you forget.
 
 ```bash
 cd src-tauri && cargo nextest run -E 'test(/_(376|606|708)$/)'

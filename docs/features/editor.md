@@ -21,13 +21,13 @@ Type, paste, or use the toolbar:
 | Strikethrough | `Ctrl+Shift+S` |
 | Highlight | `Ctrl+Shift+H` |
 | Underline | `Ctrl+U` (stored as `<u>…</u>`) |
-| Heading levels | Toolbar → Heading popover, or slash menu (`/h1` … `/h6`) |
+| Heading levels | `Ctrl+Alt+1` … `Ctrl+Alt+6`, toolbar → Heading popover, or slash menu (`/h1` … `/h6`) |
 | Blockquote | Toolbar, or slash menu (`/quote`) |
 | Code block | Toolbar (with language picker), or slash menu (`/code`) |
 | Divider | Slash menu (`/divider`) |
 | Callout | Slash menu (`/callout`); types: tip / note / info / warning / error |
 | Ordered / unordered list | Toolbar, or markdown shortcut (`1.`, `-`) |
-| Table | Slash menu (`/table 4x6` for 4 columns × 6 rows) |
+| Table | Slash menu (`/table 4x6` for 4 rows × 6 columns) |
 
 Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_italic_`, `~~strike~~`, `==highlight==`, `1.`, `-`, `>`).
 
@@ -42,27 +42,28 @@ Markdown shortcuts trigger as you type (`#`, `##`, ``` ` ```, `**bold**`, `_ital
 
 ## Block operations
 
+[keyboard.md](keyboard.md) is the source of truth for bindings; this table is the editor's action inventory.
+
 | Action | Trigger |
 | --- | --- |
 | Split block | `Enter` |
 | Soft line break inside a block | `Shift+Enter` |
 | Merge into previous | `Backspace` at start of block |
-| Indent | `Ctrl+Shift+→` |
-| Dedent | `Ctrl+Shift+←` |
-| Move block up | `Ctrl+Shift+↑` |
-| Move block down | `Ctrl+Shift+↓` |
+| Indent / dedent | `Tab` / `Shift+Tab`, or `Ctrl+Shift+→` / `Ctrl+Shift+←` |
+| Move block up / down | `Ctrl+Shift+↑` / `Ctrl+Shift+↓` |
 | Collapse / expand children | `Ctrl+.` (or click the chevron) |
 | Open Property Drawer | `Ctrl+Shift+P` |
 | Set priority directly | `Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` (P1 / P2 / P3) |
-| Open Date Picker | `Ctrl+Shift+D` (due) / `Ctrl+Shift+S` (scheduled) |
+| Insert a date at the cursor | `Ctrl+Shift+D` |
+| Set a due / scheduled date | Toolbar (no default keyboard binding) |
 | Cycle task state | `Ctrl+Enter` |
 | Multi-select adjacent blocks | `Shift+Click`, `Ctrl+Click`, `Ctrl+A` (within page) |
 | Delete block | Toolbar → *Delete*, or `Ctrl+Backspace` on an empty block |
 | Drag to reorder | Drag the gutter handle |
 | Swipe-to-delete (touch) | Swipe left on a block |
-| Zoom into a block | Toolbar → Zoom, or click the block-zoom breadcrumb |
+| Zoom into a block | `Alt+.`, toolbar → Zoom, or click the block-zoom breadcrumb (`Escape` zooms out) |
 
-`Tab` and `Shift+Tab` are intentionally **not** bound to indent / dedent — they remain browser focus navigation so the app stays keyboard-accessible.
+`Tab` / `Shift+Tab` indent and dedent by default. If you'd rather keep them as plain focus navigation, turn off *Tab indents blocks* in Settings → Editor; either way they're suppressed while a picker popup is open.
 
 ## Drag and drop
 
@@ -85,7 +86,7 @@ Edits to the focused block save locally on every interaction — both on blur an
 
 ## Code blocks
 
-Code blocks support a curated set of languages (matching common usage: JavaScript / TypeScript / Python / Rust / Go / Ruby / SQL / Bash / JSON / YAML / Markdown / HTML / CSS / and a handful more). Pick the language from the toolbar's code-block popover. The block shows its language name in the corner.
+Code blocks support a curated set of grammars rather than the full highlight.js bundle — the exact list lives in `src/lib/lowlight-curated.ts`. Pick the language from the toolbar's code-block popover; the block shows its language name in the corner.
 
 Syntax highlighting is local. Fenced markdown imports respect the language hint.
 

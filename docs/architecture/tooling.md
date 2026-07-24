@@ -14,7 +14,9 @@ Because both consumers come from the same token tree, the handler and the bindin
 
 Bindings are generated into `src/lib/bindings.ts` by the `regenerate_ts_bindings` ignored test (`cargo test -- specta_tests --ignored`). The generated file is checked in. A Rust test gate (`ts_bindings_up_to_date`) runs in CI; the generated content is whitespace-and-header-normalised before compare, so cosmetic diffs don't fail the gate.
 
-`src/lib/tauri.ts` wraps every `invoke()` call in a typed function. The wrapper layer handles Tauri 2's explicit-null-vs-undefined contract (Tauri rejects `undefined` over the wire; the wrapper coerces). Frontend always calls the typed wrappers, never `invoke()` directly.
+The frontend never calls `invoke()` directly (enforced by the `no-raw-invoke` prek hook). It calls either the generated `commands.*` surface or the hand-written wrapper modules under `src/lib/tauri/`, which handle Tauri 2's explicit-null-vs-undefined contract (Tauri rejects `undefined` over the wire; the wrapper coerces).
+
+The wrapper layer is being retired in favour of direct `bindings.ts` use (#2927). The `tauri-import-baseline` prek hook ratchets it: the allowlist of files importing `@/lib/tauri` (`scripts/tauri-import-baseline.json`) may only shrink. New code should call `commands.*` and unwrap with `unwrap` from `@/lib/app-error`. See [`frontend.md § Tauri command wrappers`](frontend.md).
 
 ## Compile-time SQL
 
@@ -42,6 +44,8 @@ Notable hooks that enforce architectural contracts:
 - **`tauri-command-sanitize`** — see Security § Error sanitization below.
 - **`tauri-bindings-parity`** — fails on bindings drift.
 - **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler that the wrapper layer expects.
+- **`no-raw-invoke`** — no bare `invoke()` in app code.
+- **`tauri-import-baseline`** — ratchets the `@/lib/tauri` → `bindings.ts` migration (#2927); the importer allowlist may only shrink.
 - **`migrations-immutable`** — refuses changes to already-shipped migrations.
 - **`migrations-strict-tables`** — every new schema migration must use `STRICT` mode.
 - **`ipc-error-path-coverage`** — every Tauri command's error paths must be exercised by tests.
@@ -75,7 +79,7 @@ Enforced by the `tauri-command-sanitize` prek hook: every new `#[tauri::command]
 
 ### Code-level
 
-- `#![deny(unsafe_code)]` at the workspace level — no unsafe code in Agaric's Rust.
+- `unsafe_code = "deny"` in every crate's `[lints.rust]`. The only escape hatch is a per-file `#![allow(unsafe_code)]`, and each one must be listed in `src-tauri/unsafe-allowlist.txt` (audited by the `unsafe-allowlist` prek hook). See [`ci-and-tooling.md`](ci-and-tooling.md) § JNI / Android unsafe_code reconciliation.
 - `gitleaks` pre-commit hook + GitHub secret scanning.
 - `cargo deny` + `npm audit` pre-push.
 - `zizmor` pre-commit on GitHub Actions workflows (template-injection / artipacked / excessive-permissions baseline; unpinned-uses and cache-poisoning are deferred policy calls).
