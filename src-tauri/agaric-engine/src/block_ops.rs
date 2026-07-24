@@ -923,6 +923,55 @@ pub async fn delete_blocks_in_subtree(
     Ok(q.execute(conn).await?.rows_affected())
 }
 
+/// Wholesale-wipe the `blocks` table (RESET path, #2895 slice 4).
+///
+/// Runs a single `DELETE FROM blocks` on the caller's connection/transaction.
+/// Extracted from `agaric-sync`'s snapshot RESET so the raw write to `blocks`
+/// (owned by `agaric-engine`, the authoritative Loro→SQLite projection writer)
+/// lives in the owner crate rather than open-coded cross-crate.
+///
+/// `blocks` is the parent of nearly every FK in the schema, so the RESET wipes
+/// it LAST; FK ordering is moot there because the caller sets
+/// `PRAGMA defer_foreign_keys = ON` for the whole tx. Opens NO transaction —
+/// the caller controls the transaction boundary.
+///
+/// # Errors
+/// Returns [`AppError`] if the DELETE fails.
+pub async fn truncate_all_blocks(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    sqlx::query!("DELETE FROM blocks")
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// NULL out `blocks.space_id` values that point at a block absent from the
+/// `spaces` registry (RESET-path FK repair, #2895 slice 4).
+///
+/// Reproduces the snapshot-RESET repair (#708) verbatim: a snapshot from an
+/// older build — or one carrying a historically mis-stamped membership (the
+/// #612 class) — can hold `blocks.space_id` values pointing at a block with no
+/// `is_space` flag; under the 0089 FK (`space_id REFERENCES spaces(id)`,
+/// checked at COMMIT under `defer_foreign_keys = ON`) those rows would abort
+/// the whole restore. NULLing them lets the every-boot `pages_without_space`
+/// backfill reassign the affected pages to Personal.
+///
+/// Runs the byte-identical predicate on the caller's connection/transaction and
+/// returns the number of rows affected so the caller can log/warn. Opens NO
+/// transaction.
+///
+/// # Errors
+/// Returns [`AppError`] if the UPDATE fails.
+pub async fn null_orphan_space_ids(conn: &mut sqlx::SqliteConnection) -> Result<u64, AppError> {
+    let res = sqlx::query!(
+        "UPDATE blocks SET space_id = NULL \
+         WHERE space_id IS NOT NULL \
+           AND space_id NOT IN (SELECT id FROM spaces)"
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(res.rows_affected())
+}
+
 // ===========================================================================
 // Tests — `validate_property_value` matrix
 // ===========================================================================

@@ -526,30 +526,16 @@ pub async fn compact_op_log(
     // read (which would have seq > up_to_seqs[device]) are never deleted,
     // even if their created_at happens to be before the cutoff.
     //
-    // H-13: enable the op_log mutation bypass for the duration of this tx.
-    // The BEFORE DELETE trigger on op_log (migration 0036) would otherwise
-    // ABORT every per-device DELETE below. The bypass is cleared via
-    // `disable_op_log_mutation_bypass` before commit so it never escapes
-    // this transaction.
-    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
-
+    // H-13: the BEFORE DELETE trigger on op_log (migration 0036) would ABORT
+    // every per-device DELETE below without the mutation-bypass sentinel.
+    // #2895 slice 4: `op_log::prune` ENCAPSULATES the enable → delete →
+    // disable bracket per call, so this loop can't forget it — each DELETE
+    // runs with the sentinel present and the bypass is DISABLED again on
+    // return (never escaping this tx / leaking to sibling connections).
     let mut deleted_count: u64 = 0;
     for (dev_id, max_seq) in &data.up_to_seqs {
-        let res = sqlx::query!(
-            "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",
-            cutoff_ms,
-            dev_id,
-            max_seq,
-        )
-        .execute(&mut *tx)
-        .await?;
-        deleted_count += res.rows_affected();
+        deleted_count += agaric_store::op_log::prune(&mut tx, cutoff_ms, dev_id, *max_seq).await?;
     }
-
-    // H-13: clear the bypass before any subsequent statements run inside
-    // this tx, and crucially before COMMIT — leaving it set would leak the
-    // sentinel row to every other connection in the pool.
-    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
 
     // Cleanup old snapshots — kept in the same tx as the op_log purge so
     // the two derived-state deletes commit together. If this tx fails the

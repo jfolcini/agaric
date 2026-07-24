@@ -179,9 +179,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
 
     // Wipe core tables (children before parents purely for reviewability —
     // `defer_foreign_keys = ON` would let any order succeed).
-    sqlx::query!("DELETE FROM block_links")
-        .execute(&mut *tx)
-        .await?;
+    // #2895 slice 4: the raw `DELETE FROM block_links` moved behind the
+    // block_links-owner (agaric-store) wipe helper.
+    agaric_store::cache::truncate_block_links(&mut tx).await?;
     sqlx::query!("DELETE FROM block_properties")
         .execute(&mut *tx)
         .await?;
@@ -217,11 +217,13 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // wholesale op_log wipe" in the system (the AGENTS.md invariant says
     // "except compaction" but the snapshot-driven RESET is an equivalently
     // intentional mutation). The wording may need tightening in the future;
-    // for now we extend the same bypass mechanism
-    // here so sync RESET continues to function.
-    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx).await?;
-    sqlx::query!("DELETE FROM op_log").execute(&mut *tx).await?;
-    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx).await?;
+    // for now we reuse the same bypass mechanism so sync RESET continues to
+    // function.
+    // #2895 slice 4: `op_log::truncate` ENCAPSULATES the enable → delete →
+    // disable bypass bracket internally so this caller can't forget it — a
+    // bare `DELETE FROM op_log` would abort on the trigger, and a leaked
+    // sentinel would grant every other connection a global bypass.
+    agaric_store::op_log::truncate(&mut tx).await?;
 
     // #607 / #779: wipe the Loro sidecar state in the SAME tx as the core
     // swap (see the function docs). `loro_doc_state` would otherwise
@@ -309,7 +311,9 @@ pub async fn apply_snapshot<R: std::io::Read>(
         .execute(&mut *tx)
         .await?;
     // blocks last (parent of all FK references)
-    sqlx::query!("DELETE FROM blocks").execute(&mut *tx).await?;
+    // #2895 slice 4: the raw `DELETE FROM blocks` moved behind the
+    // blocks-owner (agaric-engine) wipe helper.
+    agaric_engine::block_ops::truncate_all_blocks(&mut tx).await?;
 
     // (a): batch-INSERT each table via the `batch_insert_snapshot_rows!`
     // macro. The macro hides the placeholder string, the chunk-size derivation
@@ -530,16 +534,13 @@ pub async fn apply_snapshot<R: std::io::Read>(
     // F02 `defer_foreign_keys` above) those rows would abort the whole
     // restore. NULL them instead — the every-boot `pages_without_space`
     // Backfill reassigns the affected pages to Personal.
-    let repaired = sqlx::query!(
-        "UPDATE blocks SET space_id = NULL \
-         WHERE space_id IS NOT NULL \
-           AND space_id NOT IN (SELECT id FROM spaces)"
-    )
-    .execute(&mut *tx)
-    .await?;
-    if repaired.rows_affected() > 0 {
+    // #2895 slice 4: the raw `UPDATE blocks SET space_id = NULL …` predicate
+    // moved behind the blocks-owner (agaric-engine) repair helper; it returns
+    // the rows-affected count so this warn line is preserved verbatim.
+    let repaired_rows = agaric_engine::block_ops::null_orphan_space_ids(&mut tx).await?;
+    if repaired_rows > 0 {
         tracing::warn!(
-            rows = repaired.rows_affected(),
+            rows = repaired_rows,
             "apply_snapshot: NULLed space_id values pointing at unregistered \
              spaces (#708); the boot backfill will reassign them"
         );

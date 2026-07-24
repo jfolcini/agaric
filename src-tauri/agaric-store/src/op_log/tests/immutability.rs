@@ -153,6 +153,125 @@ async fn compaction_path_with_bypass_succeeds() {
     assert_eq!(sentinel, 0, "bypass sentinel must be cleared after commit");
 }
 
+/// #2895 slice 4: `op_log::truncate` must ENCAPSULATE the H-13 bypass
+/// bracket so a caller that never touches `enable_/disable_op_log_mutation_bypass`
+/// can still wholesale-wipe `op_log` — and the bypass must be DISABLED again
+/// afterwards (no sentinel committed, no leak to sibling connections).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn truncate_encapsulates_bypass_and_leaves_it_disabled() {
+    let (pool, _dir) = test_pool().await;
+
+    // Two devices' worth of ops so the wipe has something to remove.
+    append_local_op_at(
+        &pool,
+        TEST_DEVICE,
+        make_create_payload("BLK-TRUNC-A"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+    append_local_op_at(
+        &pool,
+        "other-device",
+        make_create_payload("BLK-TRUNC-B"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // Bare truncate: NO manual enable/disable dance. It must succeed even
+    // though the BEFORE DELETE trigger blocks bare deletes.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    super::truncate(&mut tx).await.expect(
+        "op_log::truncate must succeed on a triggered DB by encapsulating the bypass bracket",
+    );
+    tx.commit().await.unwrap();
+
+    // The wipe took effect.
+    let count: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0, "truncate must have emptied op_log");
+
+    // The bypass is DISABLED again: sentinel cleared…
+    let sentinel: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sentinel, 0,
+        "truncate must leave the bypass sentinel cleared (DISABLED)"
+    );
+
+    // …and a fresh append succeeds while a bare DELETE still ABORTS, proving
+    // the encapsulated bypass did not escape truncate's scope.
+    append_local_op_at(
+        &pool,
+        TEST_DEVICE,
+        make_create_payload("BLK-TRUNC-C"),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+    let bare_delete = sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
+        .bind(TEST_DEVICE)
+        .execute(&pool)
+        .await;
+    let err =
+        bare_delete.expect_err("bare DELETE must still ABORT after truncate (no bypass leak)");
+    assert!(
+        format!("{err:?}").contains("op_log is append-only"),
+        "post-truncate bare DELETE must abort with the H-13 trigger message"
+    );
+}
+
+/// #2895 slice 4: `op_log::prune` (compaction) must likewise self-bracket the
+/// H-13 bypass per call — a per-device prune loop succeeds without any manual
+/// enable/disable, deletes only rows at-or-below the frontier, and leaves the
+/// bypass DISABLED.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn prune_encapsulates_bypass_and_respects_seq_bound() {
+    let (pool, _dir) = test_pool().await;
+
+    // Three ops for TEST_DEVICE at seqs 1, 2, 3 (all at FIXED_TS).
+    for tag in ["BLK-PRUNE-1", "BLK-PRUNE-2", "BLK-PRUNE-3"] {
+        append_local_op_at(&pool, TEST_DEVICE, make_create_payload(tag), FIXED_TS)
+            .await
+            .unwrap();
+    }
+
+    // Prune with cutoff just after FIXED_TS and frontier seq = 2: rows at
+    // seq 1 and 2 go, seq 3 stays. No manual bypass anywhere.
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let deleted = super::prune(&mut tx, FIXED_TS + 1, TEST_DEVICE, 2)
+        .await
+        .expect("op_log::prune must succeed by encapsulating the bypass bracket");
+    tx.commit().await.unwrap();
+    assert_eq!(
+        deleted, 2,
+        "prune must delete exactly the two ops at seq <= 2"
+    );
+
+    let remaining: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM op_log")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        remaining, 1,
+        "the seq-3 op must survive the frontier-bounded prune"
+    );
+
+    let sentinel: i64 = sqlx::query_scalar!("SELECT COUNT(*) FROM _op_log_mutation_allowed")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        sentinel, 0,
+        "prune must leave the bypass sentinel cleared (DISABLED)"
+    );
+}
+
 /// Verify that enabling the bypass on connection A does not leak the
 /// sentinel to a sibling connection B: while A holds an open tx with
 /// the sentinel inserted (uncommitted), B must (a) not see the
