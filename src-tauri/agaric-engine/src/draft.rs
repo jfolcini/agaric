@@ -303,6 +303,11 @@ pub async fn flush_draft(
     content: &str,
     prev_edit: Option<(String, i64)>,
 ) -> Result<OpRecord, AppError> {
+    // Test-/bench-only wrapper (see doc comment): no production caller — the
+    // command path is `commands::drafts::flush_draft_inner`, an app-layer
+    // CommandTx — so it opens its own BEGIN IMMEDIATE and commits directly with
+    // no op_log dispatch to couple.
+    // allow-raw-tx: test-/bench-only flush wrapper, no production caller (#3110)
     let mut tx = begin_immediate_logged(pool, "flush_draft").await?;
     let record = flush_draft_in_tx(&mut tx, device_id, block_id, content, prev_edit).await?;
     tx.commit().await?;
