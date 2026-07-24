@@ -11,9 +11,18 @@ audited allowlist or per-site escape hatch.
 Invocation: prek passes the set of changed files as argv (see prek.toml,
 hook id `check-raw-tx`). Run manually over the whole tree with:
 
-    python3 scripts/check-raw-tx.py $(git ls-files 'src-tauri/src/*.rs')
+    python3 scripts/check-raw-tx.py $(git ls-files 'src-tauri/**/*.rs')
 
-Rules (per .rs file under src-tauri/src/):
+Since #2621 the write-tx primitive (`begin_immediate_logged`) and its ~44
+legitimate callers moved out of the app crate into the `agaric-store`,
+`agaric-engine` and `agaric-sync` subcrates (cache rebuilds, FTS/tag-
+inheritance indexes, snapshot/sync system paths, materializer->apply
+projection). The scan therefore covers all four crate roots (#3110), so the
+#653/#110 protection is no longer blind to those subcrate tx sites. The
+`diagnostics` crate is also scanned so a FUTURE non-bin raw write there is
+caught; today it holds only standalone `src/bin/**` audit tools (skipped).
+
+Rules (per .rs file under any of the four crate roots):
   * Any call to `begin_with(...)` (regardless of argument — a const-
     hoisted `"BEGIN IMMEDIATE"` must not evade the guard, #818) or
     `begin_immediate_logged(` is a raw write-tx site, EXCEPT:
@@ -73,42 +82,56 @@ ISSUE_HINT = (
 # Files where a raw write-tx is architecturally legitimate (from the #110
 # audit). Globs are matched against the path relative to the repo root,
 # using fnmatch semantics where `**` is normalised to span path segments.
+#
+# Ported to the four crate roots in #3110 (the #2621 subcrate split moved
+# most of these sites out of `src-tauri/src/`). Each entry below was checked
+# against the file(s) it actually covers; globs whose code no longer exists
+# were dropped rather than blindly rewritten (the old `src/db.rs` file — now a
+# `db/` directory; `src/gcal_push/**` — the gcal integration was removed).
 ALLOWLIST_GLOBS = [
-    # The begin_immediate_logged / CommandTx primitive itself
-    # (db.rs was split into the db/ directory in #644).
-    "src-tauri/src/db.rs",
+    # --- App crate (src-tauri/src) — sites that did NOT migrate ------------
+    # The CommandTx wrapper's own `begin_immediate_logged` call lives here
+    # (the primitive itself is now defined in agaric-store, see below).
     "src-tauri/src/db/**",
-    # The materializer was split into materializer/handlers/ in #644.
+    # The materializer task handlers — dispatching here would self-recurse.
     "src-tauri/src/materializer/handlers/**",
-    # Cache rebuilds — pure consumers of op_log, never producers.
-    "src-tauri/src/cache/**",
-    # FTS index — derived data, no op_log.
-    "src-tauri/src/fts/index.rs",
-    # Tag-inheritance rebuild — derived cache (verified: no op_log writes).
-    "src-tauri/src/tag_inheritance/rebuild.rs",
-    # The materializer itself — dispatching here would self-recurse.
-    # (handlers.rs was split into the handlers/ directory in #644.)
-    "src-tauri/src/materializer/handlers/**",
-    # System-level snapshot / compaction — must not dispatch edit tasks.
-    "src-tauri/src/snapshot/create.rs",
-    "src-tauri/src/snapshot/restore.rs",
     # Startup recovery, before any user edit.
     "src-tauri/src/recovery/draft_recovery.rs",
+    # --- agaric-store — the write-tx primitive + derived-cache writers ------
+    # `begin_immediate_logged` is DEFINED here now (#2621); the primitive and
+    # its internal `begin_with("BEGIN IMMEDIATE")` live under db/.
+    "src-tauri/agaric-store/src/db/**",
+    # Cache rebuilds — pure consumers of op_log, never producers.
+    "src-tauri/agaric-store/src/cache/**",
+    # FTS index — derived data, no op_log.
+    "src-tauri/agaric-store/src/fts/index.rs",
+    # Tag-inheritance rebuild — derived cache (verified: no op_log writes).
+    "src-tauri/agaric-store/src/tag_inheritance/rebuild.rs",
+    # --- agaric-engine — the Loro->SQLite projection (materializer->apply) --
+    # Pure derived-projection cache writes; dispatching here would self-recurse
+    # (the migrated successor of src/materializer/handlers/**). Only
+    # apply/pages_cache.rs currently opens a raw tx, but the whole projection
+    # dir is architecturally raw-tx-legitimate. (draft.rs is NOT allowlisted —
+    # its one site carries a per-line marker; see below.)
+    "src-tauri/agaric-engine/src/apply/**",
+    # --- agaric-sync — system-level snapshot / transport / remote-apply -----
+    # System-level snapshot / compaction — must not dispatch edit tasks.
+    "src-tauri/agaric-sync/src/snapshot/create.rs",
+    "src-tauri/agaric-sync/src/snapshot/restore.rs",
     # Transport layer.
-    "src-tauri/src/sync_daemon/snapshot_transfer.rs",
+    "src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs",
     # apply_remote — remote ops; dispatching would double-fire.
-    "src-tauri/src/sync_protocol/loro_sync.rs",
+    "src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs",
     # Post-session bookkeeping.
-    "src-tauri/src/sync_protocol/session_state_machine.rs",
-    # External-integration internals, no op_log.
-    "src-tauri/src/gcal_push/connector.rs",
-    "src-tauri/src/gcal_push/lease.rs",
-    # NOTE (#224 resolved): op_log.rs `append_local_op[_at]` and
+    "src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs",
+    # NOTE (#224 resolved): op_log/append.rs `append_local_op[_at]` and
     # dag.rs `append_merge_op` are test/bench-only convenience wrappers that
     # open their own tx — production appends via the `*_in_tx` variants on an
     # outer CommandTx. They carry per-line `// allow-raw-tx:` markers (no file
     # allowlist needed); their other raw sites live in `#[cfg(test)]` modules,
-    # which this hook already skips.
+    # which this hook already skips. `agaric-engine/src/draft.rs` `flush_draft`
+    # (a test/bench-only immediate-tx wrapper, no production caller) likewise
+    # carries a per-line marker rather than a file allowlist (#3110).
 ]
 
 # Whole-file test modules. Files named `tests.rs`, anything under a
@@ -119,6 +142,36 @@ TEST_FILE_GLOBS = [
     "**/tests.rs",
     "**/tests/**",
     "**/*_tests.rs",
+]
+
+# Crate roots scanned by this guard (#3110). A changed .rs file is policed
+# only if it lives under one of these prefixes; everything else (build
+# scripts, benches, fuzz, gen) is out of scope.
+#
+# SYNC REMINDER: check-table-ownership.py and check-dynamic-sql.py keep the
+# SAME crate-root + bin-exclusion set. The guards are deliberately DECOUPLED
+# (each matches different tokens — this one matches Rust CODE, table-ownership
+# matches SQL string contents), so the lists are hand-kept in sync rather than
+# imported. If you add or move a crate root, update the siblings too.
+#
+# The `diagnostics` crate is included so a FUTURE non-bin raw write there is
+# caught; today it holds only standalone `src/bin/**` audit tools whose
+# throwaway-fixture writes are excluded (BIN_FILE_GLOBS below). The prek
+# `files` trigger regex lists only the four true crate roots (diagnostics has
+# no triggering files today) — see prek.toml, hook id `check-raw-tx`.
+CRATE_ROOTS = [
+    "src-tauri/agaric-store/src/",
+    "src-tauri/agaric-engine/src/",
+    "src-tauri/agaric-sync/src/",
+    "src-tauri/diagnostics/src/",
+    "src-tauri/src/",
+]
+
+# Standalone bins (e.g. diagnostics audit tools) legitimately open raw txs on
+# throwaway fixture DBs and are not production edit paths. Mirrors the
+# `**/src/bin/**` entry in check-table-ownership's EXTRA_TEST_FILE_GLOBS.
+BIN_FILE_GLOBS = [
+    "**/src/bin/**",
 ]
 
 # Whole-file scan over comment-stripped text (#818): `\s*` tolerates a
@@ -262,6 +315,16 @@ def is_allowlisted_file(rel_path: str) -> bool:
 
 def is_test_file(rel_path: str) -> bool:
     return any(_glob_match(rel_path, g) for g in TEST_FILE_GLOBS)
+
+
+def is_bin_file(rel_path: str) -> bool:
+    """Standalone bins (diagnostics audit tools) — fixture-only raw txs."""
+    return any(_glob_match(rel_path, g) for g in BIN_FILE_GLOBS)
+
+
+def under_crate_root(rel_path: str) -> bool:
+    """True if `rel_path` lives under one of the scanned crate roots (#3110)."""
+    return any(rel_path.startswith(root) for root in CRATE_ROOTS)
 
 
 def cfg_test_line_set(lines: list[str]) -> set[int]:
@@ -411,7 +474,7 @@ def check_file(path: Path, repo_root: Path) -> list[str]:
 
     if is_allowlisted_file(rel_path):
         return []
-    if is_test_file(rel_path):
+    if is_test_file(rel_path) or is_bin_file(rel_path):
         return []
 
     try:
@@ -505,6 +568,8 @@ _SELFTEST_CASES: list[tuple[str, str, bool]] = [
 
 def run_self_test() -> int:
     failures = 0
+
+    # --- #653 deferred-tx scan logic (fixture, expect #653 flag) ----------
     for name, body, expect_flag in _SELFTEST_CASES:
         # A neutral non-allowlisted, non-test production path so only the
         # scan logic (not the file-level skips) decides the outcome.
@@ -516,10 +581,92 @@ def run_self_test() -> int:
         if not ok:
             failures += 1
             print(f"         expected flag={expect_flag}, got {violations}")
+
+    # --- Subcrate scanning: files under every crate root are policed (#3110)
+    # and only those; out-of-scope roots (benches/fuzz/gen) are skipped.
+    # (rel-path, expect_under_root)
+    crate_root_cases: list[tuple[str, bool]] = [
+        ("src-tauri/src/commands/blocks/crud.rs", True),
+        ("src-tauri/agaric-store/src/cache/agenda.rs", True),
+        ("src-tauri/agaric-engine/src/draft.rs", True),
+        ("src-tauri/agaric-sync/src/snapshot/create.rs", True),
+        ("src-tauri/diagnostics/src/lib.rs", True),
+        # Out of scope — not a policed crate root.
+        ("src-tauri/benches/interactive_slo.rs", False),
+        ("src-tauri/fuzz/fuzz_targets/apply.rs", False),
+        ("scripts/whatever.rs", False),
+    ]
+    for rel, expect in crate_root_cases:
+        got = under_crate_root(rel)
+        if got != expect:
+            failures += 1
+            print(f"  [FAIL] under_crate_root({rel!r}) expected {expect}, "
+                  f"got {got}")
+
+    # --- Exclusions: diagnostics bins skipped; ordinary subcrate files not.
+    # (rel-path, expect_excluded_from_scan)
+    exclusion_cases: list[tuple[str, bool]] = [
+        ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),
+        ("src-tauri/agaric-store/src/op_log/tests/append.rs", True),  # tests/**
+        ("src-tauri/agaric-store/src/cache/tests.rs", True),          # tests.rs
+        # Ordinary production subcrate files must STAY in scope.
+        ("src-tauri/agaric-store/src/cache/agenda.rs", False),
+        ("src-tauri/agaric-engine/src/apply/pages_cache.rs", False),
+    ]
+    for rel, expect in exclusion_cases:
+        got = is_test_file(rel) or is_bin_file(rel)
+        if got != expect:
+            failures += 1
+            print(f"  [FAIL] exclusion({rel!r}) expected {expect}, got {got}")
+
+    # --- Allowlist port: each ported glob still matches a real subcrate file,
+    # and dropped/removed paths (gcal, the old app cache/fts/sync homes) do
+    # NOT match. (rel-path, expect_allowlisted)
+    allowlist_cases: list[tuple[str, bool]] = [
+        # Ported to their new crate homes — MUST match.
+        ("src-tauri/agaric-store/src/db/mod.rs", True),
+        ("src-tauri/agaric-store/src/cache/agenda.rs", True),
+        ("src-tauri/agaric-store/src/fts/index.rs", True),
+        ("src-tauri/agaric-store/src/tag_inheritance/rebuild.rs", True),
+        ("src-tauri/agaric-engine/src/apply/pages_cache.rs", True),
+        ("src-tauri/agaric-sync/src/snapshot/create.rs", True),
+        ("src-tauri/agaric-sync/src/snapshot/restore.rs", True),
+        ("src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs", True),
+        ("src-tauri/agaric-sync/src/sync_protocol/loro_sync.rs", True),
+        ("src-tauri/agaric-sync/src/sync_protocol/session_state_machine.rs",
+         True),
+        # App-crate sites that did NOT migrate — MUST still match.
+        ("src-tauri/src/db/command_tx.rs", True),
+        ("src-tauri/src/materializer/handlers/apply.rs", True),
+        ("src-tauri/src/recovery/draft_recovery.rs", True),
+        # Dropped globs must NOT match: gcal was removed; cache/fts/snapshot/
+        # sync production code left the app crate; and draft.rs is marker-only.
+        ("src-tauri/src/gcal_push/connector.rs", False),
+        ("src-tauri/src/cache/pages.rs", False),
+        ("src-tauri/src/fts/index.rs", False),
+        ("src-tauri/src/snapshot/create.rs", False),
+        ("src-tauri/agaric-engine/src/draft.rs", False),
+    ]
+    for rel, expect in allowlist_cases:
+        got = is_allowlisted_file(rel)
+        if got != expect:
+            failures += 1
+            print(f"  [FAIL] is_allowlisted_file({rel!r}) expected {expect}, "
+                  f"got {got}")
+
+    total = (
+        len(_SELFTEST_CASES)
+        + len(crate_root_cases)
+        + len(exclusion_cases)
+        + len(allowlist_cases)
+    )
     if failures:
         print(f"\n{failures} self-test case(s) FAILED", file=sys.stderr)
         return 1
-    print("\nAll #653 deferred-tx guard self-tests passed.")
+    print(
+        f"\nAll {total} raw-tx guard self-tests passed "
+        f"(#653 scan + #3110 subcrate scanning / exclusions / allowlist port)."
+    )
     return 0
 
 
@@ -538,8 +685,10 @@ def main(argv: list[str]) -> int:
             rel = str(p.resolve().relative_to(repo_root))
         except ValueError:
             rel = str(p)
-        # Only police production source under src-tauri/src/.
-        if not rel.startswith("src-tauri/src/"):
+        # Police production source across all four crate roots (#3110). The
+        # diagnostics crate is in scope too; its src/bin audit tools are
+        # skipped inside check_file (BIN_FILE_GLOBS).
+        if not under_crate_root(rel):
             continue
         if not p.is_file():
             continue

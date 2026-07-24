@@ -821,7 +821,11 @@ id = "check-raw-tx"
 name = "raw write-tx guard (#110 CommandTx convention)"
 entry = "python3 scripts/check-raw-tx.py"
 language = "system"
-files = '^src-tauri/src/.*\.rs$'
+# Four crate roots (#3110): the #2621 split moved the write-tx primitive and
+# its callers into agaric-store/agaric-engine/agaric-sync. Mirrors the sibling
+# check-table-ownership trigger regex. (diagnostics has no triggering files
+# today; its src/bin audit tools are skipped inside the script.)
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
 # #653: the raw-tx guard now also flags a bare `pool.begin()` (DEFERRED)
