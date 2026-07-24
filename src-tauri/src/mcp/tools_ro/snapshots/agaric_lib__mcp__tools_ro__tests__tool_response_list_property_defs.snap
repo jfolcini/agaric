@@ -34,6 +34,10 @@ items:
     options: "[\"true\"]"
     value_type: select
   - created_at: "[TIMESTAMP]"
+    key: listStyle
+    options: "[\"bullet\",\"ordered\"]"
+    value_type: select
+  - created_at: "[TIMESTAMP]"
     key: location
     options: ~
     value_type: text
