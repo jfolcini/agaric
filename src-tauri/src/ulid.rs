@@ -2,16 +2,16 @@
 //!
 //! The newtypes (`BlockId`, `ActiveBlockId`, `PageId`, `UlidInline`, and the
 //! `AttachmentId` / `SnapshotId` aliases) live in `agaric-core` (#2621) and are
-//! re-exported here, so every `crate::ulid::BlockId` path resolves unchanged.
+//! re-exported here, so every `agaric_core::ulid::BlockId` path resolves unchanged.
 //! What stays in the app/store layer is the checked `BlockId → ActiveBlockId`
 //! gate below: `verify_active` / `verify_active_in_tx` run a `sqlx::query!`
 //! against the `blocks` table — schema owned by this crate, not a core concern
 //! — so they cannot move down into the foundation crate.
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 use sqlx::SqlitePool;
 
-pub use agaric_core::ulid::*;
+use agaric_core::ulid::{ActiveBlockId, BlockId};
 
 /// Verify that a [`BlockId`] refers to an active block — i.e., a row
 /// exists in `blocks` with deleted_at IS NULL`.

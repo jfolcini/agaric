@@ -25,8 +25,8 @@
 #![allow(clippy::cast_possible_wrap)]
 
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload, OpPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, MoveBlockPayload, OpPayload};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 use tempfile::TempDir;
@@ -90,7 +90,7 @@ async fn seed_space_and_page(pool: &SqlitePool) {
 
 /// Push the page into the per-space engine tree (single-op create) so later
 /// child creates resolve the space and take the engine arm.
-async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::LoroState) {
+async fn seed_page_via_loro(pool: &SqlitePool, state: &agaric_engine::loro::shared::LoroState) {
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
         block_type: "page".into(),
@@ -99,7 +99,7 @@ async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Loro
         index: None,
         content: "page-content".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append page create");
     let mut tx = pool.begin().await.expect("begin");
@@ -111,7 +111,7 @@ async fn seed_page_via_loro(pool: &SqlitePool, state: &crate::loro::shared::Loro
 
 /// Build an N-child CreateBlock batch (all children of PAGE_ID, appended to the
 /// op_log so `handle_foreground_task` can apply them) and return the records.
-async fn build_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::op_log::OpRecord> {
+async fn build_child_batch(pool: &SqlitePool, n: usize) -> Vec<agaric_store::op_log::OpRecord> {
     let mut records = Vec::with_capacity(n);
     for i in 0..n {
         let payload = OpPayload::CreateBlock(CreateBlockPayload {
@@ -124,7 +124,7 @@ async fn build_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::op_log::Op
             index: Some(i as i64),
             content: format!("child-{i}"),
         });
-        let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
             .await
             .expect("append child create");
         records.push(record);
@@ -138,7 +138,7 @@ async fn build_one_create(
     pool: &SqlitePool,
     block_id: &str,
     index: i64,
-) -> crate::op_log::OpRecord {
+) -> agaric_store::op_log::OpRecord {
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(block_id),
         block_type: "content".into(),
@@ -147,7 +147,7 @@ async fn build_one_create(
         index: Some(index),
         content: format!("child-{block_id}"),
     });
-    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append child create")
 }
@@ -216,7 +216,7 @@ async fn stamp_child_page_and_space(pool: &SqlitePool, block_id: &str) {
 /// engine. Used to establish pre-existing siblings before a mixed-op batch.
 async fn seed_committed_child(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     index: i64,
 ) {
@@ -236,7 +236,7 @@ async fn seed_committed_child(
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
     const N: usize = 12;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_chunk.db"))
@@ -249,7 +249,7 @@ async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
 
     // Reset the spies immediately before the measured chunk so only the chunk's
     // deferred flush is counted.
-    crate::loro::projection::reproject_call_spy::reset();
+    agaric_engine::loro::projection::reproject_call_spy::reset();
     super::recompute_call_spy::reset();
 
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
@@ -260,7 +260,7 @@ async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
     // (c) observable: ONE reproject (single touched parent group) + ONE count
     // recompute for the whole N-block chunk, not N of each.
     assert_eq!(
-        crate::loro::projection::reproject_call_spy::count(),
+        agaric_engine::loro::projection::reproject_call_spy::count(),
         1,
         "chunk must reproject the single touched parent group ONCE, not once per block"
     );
@@ -294,7 +294,10 @@ async fn batch_import_defers_reproject_and_counts_to_end_of_chunk() {
 /// wrong-order deferral bug would still coincidentally yield 1..=N. With
 /// prepends, only the FINAL engine order (last-writer-wins, complete list)
 /// gives the correct ranks — an early/incomplete snapshot would mis-rank.
-async fn build_prepended_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::op_log::OpRecord> {
+async fn build_prepended_child_batch(
+    pool: &SqlitePool,
+    n: usize,
+) -> Vec<agaric_store::op_log::OpRecord> {
     let mut records = Vec::with_capacity(n);
     for i in 0..n {
         let payload = OpPayload::CreateBlock(CreateBlockPayload {
@@ -307,7 +310,7 @@ async fn build_prepended_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::
             index: Some(0),
             content: format!("child-{i}"),
         });
-        let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+        let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
             .await
             .expect("append prepended child create");
         records.push(record);
@@ -325,7 +328,7 @@ async fn build_prepended_child_batch(pool: &SqlitePool, n: usize) -> Vec<crate::
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
     const N: usize = 8;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_prepend.db"))
@@ -336,7 +339,7 @@ async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
 
     let records = build_prepended_child_batch(&pool, N).await;
 
-    crate::loro::projection::reproject_call_spy::reset();
+    agaric_engine::loro::projection::reproject_call_spy::reset();
     super::recompute_call_spy::reset();
 
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
@@ -346,7 +349,7 @@ async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
 
     // Still ONCE per touched parent/page — the deferral holds regardless of slot.
     assert_eq!(
-        crate::loro::projection::reproject_call_spy::count(),
+        agaric_engine::loro::projection::reproject_call_spy::count(),
         1,
         "prepend chunk must still reproject the parent group ONCE"
     );
@@ -390,7 +393,7 @@ async fn batch_import_prepend_defers_to_final_order_not_stale_snapshot() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn single_op_path_matches_batch_final_state() {
     const N: usize = 12;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("import_single.db"))
@@ -401,7 +404,7 @@ async fn single_op_path_matches_batch_final_state() {
 
     let records = build_child_batch(&pool, N).await;
 
-    crate::loro::projection::reproject_call_spy::reset();
+    agaric_engine::loro::projection::reproject_call_spy::reset();
     super::recompute_call_spy::reset();
 
     // Apply each op as its own single-op "chunk of one" (None accumulator ⇒
@@ -417,7 +420,7 @@ async fn single_op_path_matches_batch_final_state() {
     // The single-op path reprojects + recomputes once PER op (N each) — the
     // O(N)-per-block cadence the batch path collapses to one.
     assert_eq!(
-        crate::loro::projection::reproject_call_spy::count(),
+        agaric_engine::loro::projection::reproject_call_spy::count(),
         N,
         "single-op path reprojects inline once per op"
     );
@@ -453,25 +456,25 @@ async fn move_child_record(
     pool: &SqlitePool,
     block_id: &str,
     new_index: i64,
-) -> crate::op_log::OpRecord {
+) -> agaric_store::op_log::OpRecord {
     let payload = OpPayload::MoveBlock(MoveBlockPayload {
         block_id: BlockId::from_trusted(block_id),
         new_parent_id: Some(BlockId::from_trusted(PAGE_ID)),
         new_position: new_index,
         new_index: Some(new_index),
     });
-    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append move")
 }
 
 /// Append a single `DeleteBlock` op for `block_id` to the op_log and return the
 /// record.
-async fn delete_child_record(pool: &SqlitePool, block_id: &str) -> crate::op_log::OpRecord {
+async fn delete_child_record(pool: &SqlitePool, block_id: &str) -> agaric_store::op_log::OpRecord {
     let payload = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(block_id),
     });
-    crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append delete")
 }
@@ -489,8 +492,8 @@ async fn rank_of(pool: &SqlitePool, block_id: &str) -> i64 {
 /// pipeline.
 async fn apply_as_batch(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
-    records: Vec<crate::op_log::OpRecord>,
+    state: &agaric_engine::loro::shared::LoroState,
+    records: Vec<agaric_store::op_log::OpRecord>,
 ) {
     let task = crate::materializer::MaterializeTask::BatchApplyOps(Arc::new(records));
     super::handle_foreground_task(pool, &task, state)
@@ -519,7 +522,7 @@ async fn apply_as_batch(
 /// test actually exercises the stale-snapshot clobber.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_move_matches_inline_path() {
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("mixed_move.db"))
@@ -555,7 +558,7 @@ async fn mixed_create_and_move_matches_inline_path() {
 /// gate must not change the outcome relative to the known-correct inline path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_move_single_op_parity() {
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("mixed_move_single.db"))
@@ -600,7 +603,7 @@ async fn mixed_create_and_move_single_op_parity() {
 /// comparing) — proving the gate keeps the mixed batch on the inline path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn mixed_create_and_delete_sibling_matches_inline_path() {
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Batch path.
     let dir_b = TempDir::new().expect("tempdir");
@@ -677,7 +680,7 @@ async fn mixed_create_and_delete_sibling_matches_inline_path() {
 /// overwrite another's, most sharply for the shared top-level `None` key).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("multi_space.db"))
@@ -717,7 +720,7 @@ async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
             index: None,
             content: "space".into(),
         });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
             .expect("append space root create");
         let mut tx = pool.begin().await.expect("begin");
@@ -741,7 +744,7 @@ async fn multi_space_all_create_batch_does_not_collide_across_spaces() {
             content: "child".into(),
         });
         records.push(
-            crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
                 .await
                 .expect("append child"),
         );

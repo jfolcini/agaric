@@ -6,8 +6,8 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::db::{ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::MaterializeTask;
+use agaric_core::error::AppError;
 
 use super::*;
 
@@ -22,7 +22,7 @@ pub const MIN_RETENTION_DAYS: u64 = 7;
 
 /// A link between two pages (for graph visualization).
 ///
-/// Both endpoints decode via [`crate::ulid::UlidInline`] — a heap-free
+/// Both endpoints decode via [`agaric_core::ulid::UlidInline`] — a heap-free
 /// inline ULID (#2371) that avoids the per-edge `String` allocations of
 /// the hot `list_page_links_inner` bulk-decode path. Liveness is still
 /// guaranteed by the SQL itself, which filters `src_deleted = 0`,
@@ -30,8 +30,8 @@ pub const MIN_RETENTION_DAYS: u64 = 7;
 /// Pages (invariant #9 enforced in the query rather than the type).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, sqlx::FromRow, specta::Type)]
 pub struct PageLink {
-    pub source_id: crate::ulid::UlidInline,
-    pub target_id: crate::ulid::UlidInline,
+    pub source_id: agaric_core::ulid::UlidInline,
+    pub target_id: agaric_core::ulid::UlidInline,
     pub ref_count: i64,
 }
 
@@ -79,7 +79,7 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
     // fit; here the bound (90) is many orders of magnitude smaller, so
     // the cast is infallible.
     let cutoff = chrono::Utc::now()
-        - chrono::Duration::days(crate::snapshot::DEFAULT_RETENTION_DAYS.cast_signed());
+        - chrono::Duration::days(agaric_sync::snapshot::DEFAULT_RETENTION_DAYS.cast_signed());
     let cutoff_ms = cutoff.timestamp_millis();
 
     let eligible_ops: i64 = sqlx::query_scalar!(
@@ -93,7 +93,7 @@ pub async fn get_compaction_status_inner(pool: &SqlitePool) -> Result<Compaction
         total_ops,
         oldest_op_date,
         eligible_ops,
-        retention_days: crate::snapshot::DEFAULT_RETENTION_DAYS,
+        retention_days: agaric_sync::snapshot::DEFAULT_RETENTION_DAYS,
     })
 }
 
@@ -224,7 +224,7 @@ pub async fn compact_op_log_cmd_inner(
     // `eligible_in_tx` value is logged as a pre-flight metric only —
     // never returned over the wire.
     let (snapshot_id, real_deleted_count) =
-        match crate::snapshot::compact_op_log(pool, device_id, retention_days).await? {
+        match agaric_sync::snapshot::compact_op_log(pool, device_id, retention_days).await? {
             Some((id, n)) => (Some(id), n),
             None => (None, 0),
         };

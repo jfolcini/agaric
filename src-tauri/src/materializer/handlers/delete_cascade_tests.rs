@@ -1,8 +1,8 @@
 use crate::db::init_pool;
-use crate::loro::shared::LoroState;
-use crate::op::OpPayload;
-use crate::space::SpaceId;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_engine::loro::shared::LoroState;
+use agaric_store::op::OpPayload;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -136,11 +136,11 @@ async fn delete_block_dispatches_to_loro_for_each_descendant() {
         );
     }
 
-    let payload = OpPayload::DeleteBlock(crate::op::DeleteBlockPayload {
+    let payload = OpPayload::DeleteBlock(agaric_store::op::DeleteBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
     });
     let record = std::sync::Arc::new(
-        crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
             .expect("append op_log"),
     );
@@ -180,7 +180,7 @@ async fn delete_block_cohort_collected_before_update() {
     let (pool, _dir) = fresh_pool().await;
     seed_alive_subtree(&pool).await;
 
-    let payload = crate::op::DeleteBlockPayload {
+    let payload = agaric_store::op::DeleteBlockPayload {
         block_id: BlockId::from_trusted(PAGE_ID),
     };
 
@@ -211,7 +211,7 @@ async fn delete_block_cohort_collected_before_update() {
     // and the descendants-stamping UPDATE, not about which
     // production helper drives the UPDATE.
     sqlx::query(concat!(
-        crate::descendants_cte_active!(),
+        agaric_store::descendants_cte_active!(),
         "UPDATE blocks SET deleted_at = ? \
              WHERE id IN (SELECT id FROM descendants) AND deleted_at IS NULL",
     ))

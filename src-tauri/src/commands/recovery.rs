@@ -14,8 +14,8 @@
 //! the same "emit + query-on-mount backfill" shape the deep-link router
 //! uses (`useDeepLinkRouter` + `getCurrent()`).
 
-use crate::error::AppError;
 use crate::recovery::{RecoveryStatus, RecoveryStatusState};
+use agaric_core::error::AppError;
 
 /// Tauri command: return the boot-recovery status.
 ///

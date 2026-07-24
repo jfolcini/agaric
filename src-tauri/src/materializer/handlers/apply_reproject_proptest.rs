@@ -11,7 +11,7 @@
 //!
 //! ## Why the engine path is guaranteed (the #891 false-green trap)
 //!
-//! A test that applies ops WITHOUT `crate::loro::shared::install_for_test()`
+//! A test that applies ops WITHOUT `agaric_engine::loro::shared::install_for_test()`
 //! silently runs the `apply_*_sql_only` FALLBACK, whose provisional positions
 //! differ from production — so it would never see a reprojection bug. Every
 //! test here therefore:
@@ -49,15 +49,17 @@
 //!   `block_properties` / `block_links` SQL state.
 
 use crate::db::init_pool;
-use crate::loro::projection::reproject_dense_positions;
-use crate::loro::registry::LoroEngineRegistry;
-use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
-use crate::op_log::{OpRecord, append_local_op_at};
 use crate::proptest_db_harness::{HARNESS_DEVICE, op_chain_strategy, resolve_chain, ts_for};
-use crate::space::SpaceId;
-use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
-use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_engine::loro::projection::reproject_dense_positions;
+use agaric_engine::loro::registry::LoroEngineRegistry;
+use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
+use agaric_store::op_log::{OpRecord, append_local_op_at};
+use agaric_store::space::SpaceId;
+use agaric_sync::sync_protocol::loro_sync::{
+    ApplyOutcome, apply_remote, prepare_outgoing_for_pool,
+};
+use agaric_sync::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSyncMessage};
 use proptest::prelude::*;
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -139,7 +141,7 @@ async fn seed_space_row(pool: &SqlitePool) {
 /// succeeds via the page's stamped `space_id`.
 async fn seed_page_via_engine(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
 ) {
     let space = SpaceId::from_trusted(SPACE_ID);
@@ -395,7 +397,7 @@ impl ChainDriver {
     async fn drive(
         &mut self,
         pool: &SqlitePool,
-        state: &crate::loro::shared::LoroState,
+        state: &agaric_engine::loro::shared::LoroState,
         mut payload: OpPayload,
     ) {
         let ts = self.next_ts(&mut payload);
@@ -473,7 +475,7 @@ impl ChainDriver {
     async fn drive_local(
         &mut self,
         pool: &SqlitePool,
-        state: &crate::loro::shared::LoroState,
+        state: &agaric_engine::loro::shared::LoroState,
         mut payload: OpPayload,
     ) {
         use super::loro_apply;
@@ -735,7 +737,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = &crate::loro::shared::LoroState::new();
+            let state = &agaric_engine::loro::shared::LoroState::new();
 
             let (pool, _dir) = fresh_pool("b2").await;
             seed_space_row(&pool).await;
@@ -821,7 +823,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = &crate::loro::shared::LoroState::new();
+            let state = &agaric_engine::loro::shared::LoroState::new();
 
             // Resolve the op chain ONCE so both boots replay the IDENTICAL
             // payloads (same block ULIDs) — `resolve_chain` mints a fresh ULID
@@ -911,7 +913,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = &crate::loro::shared::LoroState::new();
+            let state = &agaric_engine::loro::shared::LoroState::new();
 
             // --- Shared common ancestor: the rooting page, created ONCE. ---
             // Both peers start from this same base snapshot so the page node has
@@ -966,7 +968,7 @@ proptest! {
 /// containing just the rooting page, created on the GLOBAL engine (cleared
 /// first) under a dedicated base device id. Both peers import this so the page
 /// shares ONE Loro identity across them.
-async fn build_base_snapshot(state: &crate::loro::shared::LoroState) -> Vec<u8> {
+async fn build_base_snapshot(state: &agaric_engine::loro::shared::LoroState) -> Vec<u8> {
     state.registry.clear();
     let (pool, _dir) = fresh_pool("b4-base").await;
     seed_space_row(&pool).await;
@@ -986,7 +988,7 @@ async fn build_base_snapshot(state: &crate::loro::shared::LoroState) -> Vec<u8> 
 /// its own `device_id` (⇒ its own Loro peer id), which is what makes the two
 /// peers' independent edits merge cleanly on cross-import.
 async fn build_peer_snapshot(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     name: &str,
     device_id: &str,
     base: &[u8],
@@ -1131,7 +1133,7 @@ proptest! {
     ) {
         let rt = Runtime::new().unwrap();
         rt.block_on(async {
-            let state = &crate::loro::shared::LoroState::new();
+            let state = &agaric_engine::loro::shared::LoroState::new();
 
             // Resolve the chain ONCE so both entry points replay the IDENTICAL
             // payloads (same block ULIDs). `resolve_chain` mints a fresh ULID
@@ -1295,7 +1297,7 @@ async fn deleted_at_of(pool: &SqlitePool, id: &str) -> Option<i64> {
 /// through [`apply_op_projected`] with the given `advance_cursor`, running the
 /// returned [`ApplyEffects`] fan-out on the engine exactly as `apply_op` does.
 async fn run_delete_restore(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     name: &str,
     parent_id: &str,
     child_id: &str,
@@ -1466,7 +1468,7 @@ async fn delete_restore_local_matches_remote() {
     // the deleted_at cascade is byte-comparable across the two drives.
     const DELETE_TS: i64 = 1_900_000_000_000;
 
-    let state = &crate::loro::shared::LoroState::new();
+    let state = &agaric_engine::loro::shared::LoroState::new();
     let remote = run_delete_restore(state, "dr-remote", PARENT_ID, CHILD_ID, DELETE_TS, true).await;
     let local = run_delete_restore(state, "dr-local", PARENT_ID, CHILD_ID, DELETE_TS, false).await;
 

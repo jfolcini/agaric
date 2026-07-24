@@ -1,7 +1,7 @@
 use super::super::*;
 use super::common::*;
-use crate::draft;
 use crate::soft_delete;
+use agaric_engine::draft;
 
 // ======================================================================
 // create_block
@@ -425,7 +425,7 @@ async fn create_block_huge_index_clamps_below_sentinel() {
         "content".into(),
         "hello".into(),
         None,
-        Some(crate::pagination::NULL_POSITION_SENTINEL),
+        Some(agaric_store::pagination::NULL_POSITION_SENTINEL),
     )
     .await
     .expect("a huge slot index clamps to the end, it is not rejected (#400)");
@@ -435,7 +435,7 @@ async fn create_block_huge_index_clamps_below_sentinel() {
         .expect("created block has a provisional position");
     assert_eq!(
         pos,
-        crate::pagination::NULL_POSITION_SENTINEL - 1,
+        agaric_store::pagination::NULL_POSITION_SENTINEL - 1,
         "provisional position must be clamped to exactly NULL_POSITION_SENTINEL - 1, got {pos}"
     );
 }
@@ -466,14 +466,14 @@ async fn move_block_huge_index_clamps_below_sentinel() {
         &mat,
         "MV_SENT_CHD".into(),
         None,
-        crate::pagination::NULL_POSITION_SENTINEL,
+        agaric_store::pagination::NULL_POSITION_SENTINEL,
     )
     .await
     .expect("a huge slot index clamps to the end, it is not rejected (#400)");
 
     assert_eq!(
         resp.new_position,
-        crate::pagination::NULL_POSITION_SENTINEL - 1,
+        agaric_store::pagination::NULL_POSITION_SENTINEL - 1,
         "provisional new_position must be clamped to exactly NULL_POSITION_SENTINEL - 1, got {}",
         resp.new_position
     );
@@ -579,7 +579,10 @@ async fn create_block_with_page_and_space_id_emits_two_ops_atomically() {
     assert_eq!(block.block_type, "page");
     assert_eq!(block.content.as_deref(), Some("Hello space"));
     assert_eq!(
-        block.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        block
+            .page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(block.id.as_str()),
         "page block must materialize page_id = self"
     );
@@ -2026,8 +2029,8 @@ async fn move_subtree_with_nested_page_keeps_nested_page_ids_2906() {
     assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
     // Normalize the baseline so every block carries its correct page_id/space_id
     // (inner/deep → page nested / space A) before the move under test.
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_space_ids(&pool).await.unwrap();
 
     let read = |id: String| {
         let pool = pool.clone();
@@ -2118,8 +2121,8 @@ async fn move_subtree_with_nested_page_keeps_nested_page_ids_2906() {
     // STRONGEST FORM: the in-tx rederive already equals the full canonical
     // rebuild — running it changes ZERO rows.
     let before = snapshot_page_space_ids(&pool).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_space_ids(&pool).await.unwrap();
     let after = snapshot_page_space_ids(&pool).await;
     assert_eq!(
         before, after,
@@ -2181,8 +2184,8 @@ async fn move_plain_subtree_matches_full_rebuild_2906() {
 
     assign_to_space(&pool, page_a.id.as_str(), TEST_SPACE_ID).await;
     assign_to_space(&pool, page_b.id.as_str(), TEST_SPACE_B_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_space_ids(&pool).await.unwrap();
 
     // --- MOVE root (with child+grand) from A to B; no flush. ---
     move_block_inner(
@@ -2215,8 +2218,8 @@ async fn move_plain_subtree_matches_full_rebuild_2906() {
 
     // Zero-row diff vs the full canonical rebuild.
     let before = snapshot_page_space_ids(&pool).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
-    crate::cache::rebuild_space_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_space_ids(&pool).await.unwrap();
     let after = snapshot_page_space_ids(&pool).await;
     assert_eq!(
         before, after,
@@ -2375,7 +2378,7 @@ async fn restore_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = restore_blocks_by_ids_inner(
@@ -3884,7 +3887,8 @@ async fn add_attachment_persists_blake3_content_hash() {
 
     // It must equal what the SYNC hasher computes for the same bytes — this is
     // the cross-check that the persisted hash matches the sync scheme.
-    let (_b, sync_hash) = crate::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
+    let (_b, sync_hash) =
+        agaric_sync::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
     assert_eq!(returned, sync_hash, "content_hash should match sync hasher");
 
     // And it must be persisted in the DB row, not just on the returned struct.
@@ -3961,7 +3965,7 @@ async fn rename_attachment_updates_filename() {
     );
 
     // Error path: renaming a non-existent attachment returns an error, not a panic.
-    let missing = crate::ulid::AttachmentId::from_trusted("00000000000000000000000000");
+    let missing = agaric_core::ulid::AttachmentId::from_trusted("00000000000000000000000000");
     let err = rename_attachment_inner(&pool, DEV, &mat, missing, "whatever.png".into()).await;
     assert!(err.is_err(), "renaming a missing attachment should error");
 
@@ -4315,14 +4319,14 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     // (c) Op log contains a `delete_attachment` whose payload carries the
     // expected `fs_path`. Walk the log directly so we check the persisted
     // shape (this is what remote peers and the C-3c GC pass will see).
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
     let del_op = ops
         .iter()
         .find(|o| o.op_type == "delete_attachment")
         .expect("op log must contain a delete_attachment entry");
-    let parsed: crate::op::DeleteAttachmentPayload =
+    let parsed: agaric_store::op::DeleteAttachmentPayload =
         serde_json::from_str(&del_op.payload).expect("delete_attachment payload must parse");
     assert_eq!(
         parsed.attachment_id.as_str(),
@@ -4404,7 +4408,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     assert!(maybe.is_none(), "DB row must be deleted");
 
     // Op log entry was still written.
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
     assert!(
@@ -4856,14 +4860,14 @@ async fn list_attachments_batch_empty_input_returns_empty_map() {
 }
 
 /// #2542 — `list_attachments_batch_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
 /// family: an over-cap `block_ids` list rejects with Validation before
 /// serialising the whole array into a single `json_each(?1)` scan.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = list_attachments_batch_inner(
@@ -4872,7 +4876,7 @@ async fn list_attachments_batch_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -5642,7 +5646,7 @@ async fn save_and_flush_draft() {
     );
 
     // An edit_block op should exist in the log
-    let ops = crate::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
+    let ops = agaric_store::op_log::get_ops_since(&ReadPool(pool.clone()), DEV, 0)
         .await
         .unwrap();
     assert_eq!(ops.len(), 1, "flush must produce one op");
@@ -6507,7 +6511,7 @@ async fn delete_blocks_by_ids_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = delete_blocks_by_ids_inner(
@@ -6923,7 +6927,7 @@ async fn move_blocks_to_space_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     seed_space(&pool, "MBS6_SPACE").await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("MBS6_{i:026}"))
         .collect();
     let result = move_blocks_to_space_inner(
@@ -7274,7 +7278,7 @@ async fn create_blocks_batch_rejects_empty_oversize() {
     );
 
     let oversize: Vec<crate::commands::CreateBlockSpec> = (0
-        ..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+        ..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| crate::commands::CreateBlockSpec {
             block_type: "content".into(),
             content: format!("c{i}"),
@@ -7679,7 +7683,7 @@ async fn add_attachment_with_bytes_stores_in_memory_hash_matching_disk_2192() {
     // The disk-read helper hashes the same bytes it reads back; that hash must
     // match too (the two paths must be byte-identical).
     let (_disk_bytes, disk_hash) =
-        crate::sync_files::read_attachment_file(app_data_dir, &att.fs_path).unwrap();
+        agaric_sync::sync_files::read_attachment_file(app_data_dir, &att.fs_path).unwrap();
     assert_eq!(
         att.content_hash.as_deref(),
         Some(disk_hash.as_str()),

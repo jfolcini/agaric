@@ -41,8 +41,8 @@
 //! tightening one schedule does not change the other. See the module
 //! doc-comment on [`super::consumer`] for the full table.
 
-use crate::error::AppError;
 use crate::materializer::MaterializeTask;
+use agaric_core::error::AppError;
 use sqlx::SqlitePool;
 use std::borrow::Cow;
 use std::sync::Arc;
@@ -1165,7 +1165,7 @@ async fn try_reenqueue_apply_op(
     seq: i64,
 ) -> Result<ApplyOpSweepDisposition, AppError> {
     let record = sqlx::query_as!(
-        crate::op_log::OpRecord,
+        agaric_store::op_log::OpRecord,
         "SELECT device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id \
          FROM op_log WHERE device_id = ? AND seq = ?",
         device_id,
@@ -1537,7 +1537,7 @@ mod tests {
     /// packing into `task_kind` is reversible.
     #[test]
     fn retry_kind_apply_op_roundtrip() {
-        use crate::op_log::OpRecord;
+        use agaric_store::op_log::OpRecord;
         let record = OpRecord {
             device_id: "dev-mat-A".into(),
             seq: 42,
@@ -1651,7 +1651,7 @@ mod tests {
     ///     `retry_persist_capped` bump — measure-item 2's signal.
     #[tokio::test]
     async fn record_failure_classifies_persistent_enqueue_telemetry_2509() {
-        use crate::op_log::OpRecord;
+        use agaric_store::op_log::OpRecord;
         let (pool, _dir) = test_pool().await;
         let metrics = test_metrics();
 

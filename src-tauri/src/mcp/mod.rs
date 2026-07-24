@@ -23,7 +23,6 @@
 //! Model for the rationale.
 
 pub mod activity;
-pub mod actor;
 pub mod dispatch;
 pub mod handler_utils;
 pub mod registry;
@@ -47,8 +46,8 @@ use tokio::sync::Notify;
 
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
 use crate::materializer::Materializer;
+use agaric_core::error::AppError;
 
 // ---------------------------------------------------------------------------
 // Server surface (#693)

@@ -54,10 +54,10 @@ async fn append_replicated_create(
     pool: &SqlitePool,
     device_id: &str,
     seq: i64,
-    block_id: &crate::ulid::BlockId,
+    block_id: &agaric_core::ulid::BlockId,
     ts: i64,
 ) {
-    use crate::op::{CreateBlockPayload, OpPayload};
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
     let mut payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: block_id.clone(),
         block_type: "content".into(),
@@ -68,9 +68,9 @@ async fn append_replicated_create(
     });
     payload.normalize_block_ids();
     let op_type = payload.op_type_str().to_owned();
-    let payload_json = crate::op_log::serialize_inner_payload(&payload).unwrap();
-    let hash = crate::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
-    let transfer = crate::sync_protocol::types::OpTransfer {
+    let payload_json = agaric_store::op_log::serialize_inner_payload(&payload).unwrap();
+    let hash = agaric_core::hash::compute_op_hash(device_id, seq, None, &op_type, &payload_json);
+    let transfer = agaric_sync::sync_protocol::types::OpTransfer {
         device_id: device_id.to_owned(),
         seq,
         parent_seqs: None,
@@ -80,7 +80,7 @@ async fn append_replicated_create(
         created_at: ts,
         origin: "user".to_owned(),
     };
-    crate::dag::insert_replicated_op(pool, &transfer)
+    agaric_sync::sync_protocol::insert_replicated_op(pool, &transfer)
         .await
         .expect("replicated audit op must ingest");
 }
@@ -115,7 +115,7 @@ async fn get_block_history_flags_replicated_foreign_ops_2481() {
     );
 
     // A foreign device's replicated CreateBlock: audit-only, flagged replicated.
-    let foreign_block = crate::ulid::BlockId::test_id("FGN2481");
+    let foreign_block = agaric_core::ulid::BlockId::test_id("FGN2481");
     append_replicated_create(&pool, "FOREIGN_DEV", 1, &foreign_block, 2).await;
     let foreign_hist = get_block_history_inner(&pool, foreign_block, None, None, None)
         .await
@@ -247,7 +247,7 @@ async fn test_compute_edit_diff_inner_happy_path() {
     assert!(!spans.is_empty(), "diff should contain at least one span");
 
     // The diff should contain a Delete span with "world" and an Insert span with "universe"
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     let delete_span = spans.iter().find(|s| s.tag == DiffTag::Delete);
     let insert_span = spans.iter().find(|s| s.tag == DiffTag::Insert);
     assert!(
@@ -310,7 +310,7 @@ async fn test_compute_edit_diff_inner_same_text_produces_equal_spans() {
 
     let spans = diff.expect("diff should be Some for an edit_block op");
     // Editing with the same text should yield all-Equal spans (no changes)
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     assert!(
         spans.iter().all(|s| s.tag == DiffTag::Equal),
         "diff should contain only Equal spans when text is unchanged, got: {spans:?}"
@@ -413,7 +413,7 @@ async fn compute_block_vs_current_diff_returns_spans_for_modified_block() {
     .await
     .unwrap();
 
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     assert!(
         spans.iter().any(|s| s.tag == DiffTag::Delete),
         "modified block must have a Delete span (text removed since historical), got: {spans:?}"
@@ -470,7 +470,7 @@ async fn compute_block_vs_current_diff_returns_no_spans_for_unmodified_block() {
             .await
             .unwrap();
 
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     assert!(
         spans.iter().all(|s| s.tag == DiffTag::Equal),
         "unmodified block must produce only Equal spans, got: {spans:?}"
@@ -608,7 +608,7 @@ async fn compute_block_vs_current_diff_picks_latest_created_at_on_seq_tie() {
         compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 4_102_444_800_500, 5)
             .await
             .unwrap();
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     let historical: String = spans
         .iter()
         .filter(|s| s.tag != DiffTag::Insert)
@@ -699,7 +699,7 @@ async fn compute_block_vs_current_diff_bounds_by_created_at_not_bare_seq() {
             .await
             .unwrap();
 
-    use crate::word_diff::DiffTag;
+    use agaric_core::word_diff::DiffTag;
     let historical: String = spans
         .iter()
         .filter(|s| s.tag != DiffTag::Insert)
@@ -775,7 +775,7 @@ async fn seed_page_with_ops(
         // distinct row (op_log PK is `(device_id, seq)` so duplicates
         // on the same device would collide anyway, but this also keeps
         // the test readable).
-        let payload = OpPayload::EditBlock(crate::op::EditBlockPayload {
+        let payload = OpPayload::EditBlock(agaric_store::op::EditBlockPayload {
             block_id: child.id.clone(),
             to_text: format!("edit-{i}"),
             prev_edit: None,

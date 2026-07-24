@@ -26,12 +26,12 @@
 // prelude is trimmed to only what that staying code still uses unqualified via
 // `use super::*;`.
 use super::MaterializeTask;
-use crate::cache;
-use crate::error::AppError;
-use crate::fts;
-use crate::op::{DeleteBlockPayload, OpType};
-use crate::op_log::OpRecord;
-use crate::tag_inheritance;
+use agaric_core::error::AppError;
+use agaric_store::cache;
+use agaric_store::fts;
+use agaric_store::op::{DeleteBlockPayload, OpType};
+use agaric_store::op_log::OpRecord;
+use agaric_store::tag_inheritance;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -9,8 +9,8 @@
 //! - [`handle_recurrence`] — full recurrence flow (DB reads, end-condition
 //!   checks, sibling creation) called when a task transitions to DONE
 //!
-//! The pure interval shift ([`crate::recurrence_math::shift_date_once`]) and
-//! per-block projection ([`crate::recurrence_math::project_block_dates`]) live
+//! The pure interval shift ([`agaric_store::recurrence_math::shift_date_once`]) and
+//! per-block projection ([`agaric_store::recurrence_math::project_block_dates`]) live
 //! one layer down in `recurrence_math` (#2621); the latter is re-exported here
 //! for the app-layer callers that still reach it as `crate::recurrence::…`.
 //!
@@ -36,12 +36,12 @@ mod tests;
 // itself rather than re-exporting it crate-wide and triggering a warning.
 pub(crate) use compute::handle_recurrence_in_tx;
 // The pure interval-shift math and per-block date projection moved down into
-// `crate::recurrence_math` (#2621) so the store-layer projected-agenda cache
+// `agaric_store::recurrence_math` (#2621) so the store-layer projected-agenda cache
 // can reuse them without depending on this app-layer module. Only
 // `project_block_dates` is still reached through this module
 // (`crate::recurrence::project_block_dates`, by `commands::agenda`), so it is
 // re-exported here; `shift_date_once` is consumed directly from
-// `crate::recurrence_math` by `parser::shift_date` and the tests, so it needs
+// `agaric_store::recurrence_math` by `parser::shift_date` and the tests, so it needs
 // no re-export. The shared projection is used by both the cache rebuild and
 // the on-the-fly fallback so the two paths cannot drift.
-pub(crate) use crate::recurrence_math::project_block_dates;
+pub(crate) use agaric_store::recurrence_math::project_block_dates;

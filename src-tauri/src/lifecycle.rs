@@ -1,12 +1,12 @@
 //! App-layer Tauri managed-state wrapper for the foreground hooks.
 //!
 //! The shared foreground/background gating primitive itself
-//! ([`crate::foreground::LifecycleHooks`]) lives in the foundation-layer
-//! [`crate::foreground`] module so the sync and materializer layers can
+//! ([`agaric_sync::foreground::LifecycleHooks`]) lives in the foundation-layer
+//! [`agaric_sync::foreground`] module so the sync and materializer layers can
 //! depend *down* on it. This module holds only the app-shell wiring: the
 //! Tauri managed-state wrapper registered in `lib.rs`'s `setup()`.
 
-use crate::foreground::LifecycleHooks;
+use agaric_sync::foreground::LifecycleHooks;
 
 /// Tauri managed-state wrapper for [`LifecycleHooks`].
 ///

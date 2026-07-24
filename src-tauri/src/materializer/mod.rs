@@ -7,7 +7,7 @@ mod metrics;
 pub mod retry_queue;
 #[cfg(test)]
 mod tests;
-use crate::op_log::OpRecord;
+use agaric_store::op_log::OpRecord;
 #[cfg(test)]
 use consumer::process_single_foreground_task;
 pub use coordinator::{BackgroundEnqueueOutcome, Materializer};

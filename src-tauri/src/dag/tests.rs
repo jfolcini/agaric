@@ -1,13 +1,13 @@
 use super::*;
 use crate::db::{ReadPool, init_pool};
-use crate::hash::compute_op_hash;
+use agaric_core::hash::compute_op_hash;
 // #2621 (dag inversion): the op / op_log names these fixtures build on used to
 // arrive through `super::*` from the pre-inversion `dag.rs` production imports.
 // The core now lives in `agaric_engine::dag`, so import the store types the
 // tests construct directly from their `crate::…` re-export paths.
-use crate::op::*;
-use crate::op_log::{OpRecord, append_local_op_at, get_op_by_seq};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::*;
+use agaric_store::op_log::{OpRecord, append_local_op_at, get_op_by_seq};
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -75,7 +75,7 @@ fn make_remote_record(
     // single-field `extract_block_id_from_payload` is no longer reachable
     // cross-crate now that op_log lives in `agaric-store`; use the equivalent
     // production single-pass extractor (its `.0` is the block_id).
-    let (block_id, _) = crate::op_log::extract_indexed_ids_from_payload(payload);
+    let (block_id, _) = agaric_store::op_log::extract_indexed_ids_from_payload(payload);
     OpRecord {
         device_id: device_id.to_owned(),
         seq,
@@ -1466,7 +1466,7 @@ async fn get_block_edit_heads_nonexistent_block() {
 /// compaction (snapshots exist, so the guard detects the broken chain).
 #[tokio::test]
 async fn find_lca_after_compaction_returns_invalid_operation() {
-    use crate::snapshot::compact_op_log;
+    use agaric_sync::snapshot::compact_op_log;
 
     let (pool, _dir) = test_pool().await;
 
@@ -1591,7 +1591,7 @@ async fn find_lca_after_compaction_returns_clear_error() {
 
     // H-13: op_log mutations now require the compaction bypass.
     let mut tx = pool.begin().await.unwrap();
-    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     sqlx::query("DELETE FROM op_log WHERE device_id = ? AND seq = 1")
@@ -1599,7 +1599,7 @@ async fn find_lca_after_compaction_returns_clear_error() {
         .execute(&mut *tx)
         .await
         .unwrap();
-    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -2119,7 +2119,7 @@ async fn cte_oracle_disjoint_chains_return_none() {
 // insert_replicated_op — #2481 phase 1 audit-only op-log replication
 // =====================================================================
 
-use crate::sync_protocol::types::OpTransfer;
+use agaric_sync::sync_protocol::types::OpTransfer;
 
 /// Build a valid replicated `OpTransfer` with a correct hash and a
 /// caller-chosen `origin`.

@@ -40,8 +40,8 @@
 //! is also safe under plain `cargo test`.
 
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, OpPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, OpPayload};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -62,7 +62,7 @@ const REMOTE_CONTENT: &str = "authored on a remote peer";
 /// child create, and in the engine tree so the child create resolves its parent
 /// there rather than cascading into the #2250 parent-absent SQL-only fallback.
 /// Returns the constructed `LoroState`.
-async fn seed_space_and_page() -> (SqlitePool, TempDir, crate::loro::shared::LoroState) {
+async fn seed_space_and_page() -> (SqlitePool, TempDir, agaric_engine::loro::shared::LoroState) {
     let dir = TempDir::new().expect("tempdir");
     let pool = init_pool(&dir.path().join("crash_injection.db"))
         .await
@@ -96,12 +96,12 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, crate::loro::shared::Lor
     .await
     .expect("seed page block");
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Seed the page directly into the per-space engine tree (bypassing the
     // create pipeline, which would SQL-only-fallback for a brand-new page with no
     // space at create time, #2250). Now the child create takes the engine path.
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -118,7 +118,7 @@ async fn seed_space_and_page() -> (SqlitePool, TempDir, crate::loro::shared::Lor
 /// Build a REMOTE `CreateBlock` op record. Modelled as remote: constructed
 /// in-memory from a *different* device with NO local op_log row (remote ops never
 /// reach the local op_log, #490-M1), so boot replay cannot re-materialize it.
-fn remote_create_record() -> crate::op_log::OpRecord {
+fn remote_create_record() -> agaric_store::op_log::OpRecord {
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
         block_id: BlockId::from_trusted(REMOTE_B),
         block_type: "content".into(),
@@ -134,9 +134,14 @@ fn remote_create_record() -> crate::op_log::OpRecord {
         unreachable!("constructed a CreateBlock above")
     };
     let payload_json = serde_json::to_string(inner).expect("serialize payload");
-    let hash =
-        crate::hash::compute_op_hash(REMOTE_DEVICE_ID, 1, None, "create_block", &payload_json);
-    crate::op_log::OpRecord {
+    let hash = agaric_core::hash::compute_op_hash(
+        REMOTE_DEVICE_ID,
+        1,
+        None,
+        "create_block",
+        &payload_json,
+    );
+    agaric_store::op_log::OpRecord {
         device_id: REMOTE_DEVICE_ID.to_string(),
         seq: 1,
         parent_seqs: None,
@@ -193,7 +198,7 @@ async fn remote_op_commit_failure_leaves_engine_ahead_then_reproject_converges_2
     }
 
     // ── Assert the divergence: engine is AHEAD of SQL ────────────────────────
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let engine_content_after_crash = {
         let mut guard = state
             .registry
@@ -325,7 +330,7 @@ async fn remote_op_commit_failure_leaves_engine_ahead_then_reproject_converges_2
 }
 
 /// #2604 — the SAME REMOTE-op commit-failure as above, but WITH the rollback
-/// wiring armed: a [`RevertScope`](crate::loro::revert::RevertScope) rewinds the
+/// wiring armed: a [`RevertScope`](agaric_engine::loro::revert::RevertScope) rewinds the
 /// engine on abort so it never gets ahead of committed SQL. This is the
 /// transactional-by-construction counterpart to the divergence the #2603 test
 /// pins — no `reproject_blocks_from_engine` recovery is needed because the
@@ -334,7 +339,7 @@ async fn remote_op_commit_failure_leaves_engine_ahead_then_reproject_converges_2
 async fn remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604() {
     let (pool, _dir, state) = seed_space_and_page().await;
     let record = remote_create_record();
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
     let cursor_before = cursor(&pool).await;
 
     // ── Crash injection UNDER an armed #2604 revert scope ────────────────────
@@ -345,7 +350,7 @@ async fn remote_op_abort_under_revert_scope_rewinds_engine_no_divergence_2604() 
     // engine to it — mirroring exactly what production `apply_op` does when its
     // `commit()` fails.
     {
-        let revert = crate::loro::revert::RevertScope::arm(&state);
+        let revert = agaric_engine::loro::revert::RevertScope::arm(&state);
         let mut tx = pool.begin().await.expect("begin crash tx");
         super::apply_op_projected(&mut tx, &record, &state, /* advance_cursor */ true)
             .await
@@ -434,7 +439,7 @@ async fn local_command_tx_abort_rewinds_engine_no_divergence_2604() {
     let (pool, _dir, state) = seed_space_and_page().await;
     let state = std::sync::Arc::new(state);
     let record = remote_create_record();
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
 
     // ── Abort injection: armed CommandTx, in-place apply, drop before commit ──
     {
@@ -501,7 +506,7 @@ async fn local_command_tx_commit_keeps_engine_and_projects_sql_2604() {
     let (pool, _dir, state) = seed_space_and_page().await;
     let state = std::sync::Arc::new(state);
     let record = remote_create_record();
-    let space = crate::space::SpaceId::from_trusted(SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_ID);
 
     {
         let mut tx = crate::db::CommandTx::begin_immediate(&pool, "test_local_commit_2604")

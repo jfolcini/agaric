@@ -23,7 +23,7 @@ use crate::commands::pages::{
 use crate::commands::tests::common::{
     TEST_SPACE_ID, assign_to_space, ensure_test_space, insert_block, test_pool,
 };
-use crate::filters::primitive::FilterPrimitive;
+use agaric_store::filters::primitive::FilterPrimitive;
 
 // serde ignores unknown top-level keys (`$comment*`) by default, so we do NOT
 // use `deny_unknown_fields`.
@@ -151,7 +151,7 @@ async fn pages_path_glob_conformance_rejects_invalid() {
                 ));
         assert_eq!(
             err.validation_code(),
-            Some(crate::error::ValidationCode::InvalidGlob),
+            Some(agaric_core::error::ValidationCode::InvalidGlob),
             "invalid pattern `{}` ({}) must carry the InvalidGlob code; got {err:?}",
             bad.pattern,
             bad.name

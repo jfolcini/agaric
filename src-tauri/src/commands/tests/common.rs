@@ -2,7 +2,9 @@
 pub use crate::db::ReadPool;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-pub use crate::space::{SpaceId, SpaceScope};
+// kept (#2897): test-prelude re-export consumed by sibling `#[cfg(test)]`
+// modules via `use super::common::*`.
+pub use agaric_store::space::{SpaceId, SpaceScope};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;

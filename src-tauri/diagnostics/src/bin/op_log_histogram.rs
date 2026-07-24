@@ -26,7 +26,7 @@ use std::process::ExitCode;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
-use agaric_lib::error::AppError;
+use agaric_core::error::AppError;
 
 // ---------------------------------------------------------------------------
 // CLI argument parsing (hand-rolled — mirrors agaric-mcp / audit_cross_space_refs)

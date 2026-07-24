@@ -24,7 +24,7 @@
 //!
 //! # Actor scoping
 //!
-//! Each handler (re-)scopes [`ACTOR`](crate::mcp::actor::ACTOR) around the
+//! Each handler (re-)scopes [`ACTOR`](agaric_store::task_locals::ACTOR) around the
 //! inner call. The server wraps `registry.call_tool(...)` in
 //! `ACTOR.scope(ctx, ...)` at the dispatch site so the nested scope is
 //! normally a no-op, but it future-proofs any direct invocation of
@@ -62,7 +62,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
-use super::actor::ActorContext;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{normalize_ulid_arg, parse_args, to_tool_result};
 use super::registry::{
@@ -76,16 +75,17 @@ use crate::commands::{
     list_projected_agenda_inner, list_property_defs_inner, list_spaces_registry_inner,
     list_tags_inner, search_blocks_inner,
 };
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_core::error::AppError;
+use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::task_locals::ActorContext;
 
 // ---------------------------------------------------------------------------
 // Caps — enforced at the tool boundary (decision)
 // ---------------------------------------------------------------------------
 
 /// Maximum results returned by the `search` tool. Below
-/// [`crate::pagination::MAX_PAGE_SIZE`] deliberately — agents see a narrower
+/// [`agaric_store::pagination::MAX_PAGE_SIZE`] deliberately — agents see a narrower
 /// page than the frontend.
 pub const SEARCH_RESULT_CAP: i64 = 50;
 
@@ -1078,8 +1078,8 @@ async fn handle_search(pool: &SqlitePool, args: Value) -> Result<Value, AppError
     for row in &mut resp.items {
         if let Some(s) = row.snippet.take() {
             row.snippet = Some(
-                s.replace(crate::fts::SNIPPET_HL_OPEN, "<mark>")
-                    .replace(crate::fts::SNIPPET_HL_CLOSE, "</mark>"),
+                s.replace(agaric_store::fts::SNIPPET_HL_OPEN, "<mark>")
+                    .replace(agaric_store::fts::SNIPPET_HL_CLOSE, "</mark>"),
             );
         }
     }
@@ -1111,7 +1111,7 @@ async fn handle_list_backlinks(pool: &SqlitePool, args: Value) -> Result<Value, 
     };
     let resp = list_backlinks_grouped_inner(
         pool,
-        crate::ulid::BlockId::from(block_id),
+        agaric_core::ulid::BlockId::from(block_id),
         None,
         None,
         args.cursor,
@@ -1270,7 +1270,7 @@ mod tests_m82 {
     use crate::commands::{create_page_in_space_inner, create_space_inner};
     use crate::db::init_pools;
     use crate::materializer::Materializer;
-    use crate::mcp::actor::{Actor, ActorContext};
+    use agaric_store::task_locals::{Actor, ActorContext};
     use serde_json::json;
     use sqlx::SqlitePool;
     use tempfile::TempDir;
@@ -1514,7 +1514,7 @@ mod tests_2719 {
     use crate::commands::create_space_inner;
     use crate::db::init_pool;
     use crate::materializer::Materializer;
-    use crate::mcp::actor::{Actor, ActorContext};
+    use agaric_store::task_locals::{Actor, ActorContext};
     use serde_json::json;
     use sqlx::SqlitePool;
     use std::path::PathBuf;

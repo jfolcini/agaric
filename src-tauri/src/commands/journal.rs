@@ -6,10 +6,10 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::pagination::BlockRow;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_core::error::AppError;
+use agaric_store::pagination::BlockRow;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use super::sanitize_internal_error;
 use super::*;
@@ -145,8 +145,8 @@ async fn resolve_or_create_journal_page(
     // space. Two spaces with the same date keep distinct daily notes.
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT b.id as "id!: agaric_core::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: agaric_core::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -347,8 +347,8 @@ pub async fn get_journal_page_by_date_inner(
 
     let row = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT b.id as "id!: agaric_core::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: agaric_core::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL
@@ -423,8 +423,8 @@ pub async fn list_journal_pages_in_range_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT b.id as "id!: crate::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: crate::ulid::BlockId", b.position, b.deleted_at,
-                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT b.id as "id!: agaric_core::ulid::BlockId", b.block_type, b.content, b.parent_id as "parent_id: agaric_core::ulid::BlockId", b.position, b.deleted_at,
+                  b.todo_state, b.priority, b.due_date, b.scheduled_date, b.page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks b
            WHERE b.block_type = 'page'
              AND b.deleted_at IS NULL

@@ -9,13 +9,15 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::db::{ReadPool, WritePool};
-use crate::device::DeviceId;
-use crate::error::AppError;
-use crate::pairing::PairingSession;
-use crate::pairing::{PairingMessage, generate_qr_svg, pairing_qr_payload, verify_device_exchange};
-use crate::peer_refs::{self, PeerRef};
-use crate::sync_events::{MdnsStatus, MdnsStatusState};
-use crate::sync_scheduler::SyncScheduler;
+use agaric_core::error::AppError;
+use agaric_store::peer_refs::{self, PeerRef};
+use agaric_sync::device::DeviceId;
+use agaric_sync::pairing::PairingSession;
+use agaric_sync::pairing::{
+    PairingMessage, generate_qr_svg, pairing_qr_payload, verify_device_exchange,
+};
+use agaric_sync::sync_events::{MdnsStatus, MdnsStatusState};
+use agaric_sync::sync_scheduler::SyncScheduler;
 
 use super::*;
 
@@ -169,7 +171,7 @@ pub fn start_pairing_inner(
 /// activates for the duration.
 ///
 /// #2008: a first-ever pair has zero peers, so on the host
-/// [`crate::sync_daemon::SyncDaemon::should_start_active`] would return
+/// [`agaric_sync::sync_daemon::SyncDaemon::should_start_active`] would return
 /// `false` and the daemon would stay dormant — not announcing over mDNS,
 /// not listening — so the joining device could neither discover nor connect
 /// to it and pairing would deadlock. Setting the pending-pairing marker
@@ -188,7 +190,8 @@ pub async fn start_pairing_armed_inner(
     // #855: store the passphrase proof in the pending-pairing marker so the
     // responder can require the joiner to prove knowledge of the passphrase
     // before we TOFU-pin it (closes the CN-spoof window).
-    peer_refs::set_pending_pairing(pool, &crate::pairing::pairing_proof(&info.passphrase)).await?;
+    peer_refs::set_pending_pairing(pool, &agaric_sync::pairing::pairing_proof(&info.passphrase))
+        .await?;
     scheduler.notify_change();
     Ok(info)
 }
@@ -288,7 +291,7 @@ pub async fn confirm_pairing_inner(
     // the FE (`PairingDialog` passes `''`); the old `else` branch that
     // pre-created a NULL-`cert_hash` `peer_ref` for a supplied device id was the
     // CN-spoof pinning surface #855 removes — it is deleted here.
-    peer_refs::set_pending_pairing(pool, &crate::pairing::pairing_proof(&passphrase)).await?;
+    peer_refs::set_pending_pairing(pool, &agaric_sync::pairing::pairing_proof(&passphrase)).await?;
 
     // Clear pairing session
     *lock_pairing_state(pairing_state)? = None;
@@ -521,7 +524,7 @@ pub async fn start_sync(
     peer_id: String,
     device_id: State<'_, DeviceId>,
     scheduler: State<'_, Arc<SyncScheduler>>,
-    progress: tauri::ipc::Channel<crate::sync_events::SyncProgressUpdate>,
+    progress: tauri::ipc::Channel<agaric_sync::sync_events::SyncProgressUpdate>,
 ) -> Result<SyncSessionInfo, AppError> {
     // #2621 Sync-D: the scheduler (in `agaric-sync`) stores an opaque
     // `SessionSinkWrapper` rather than the Tauri channel itself, keeping Tauri

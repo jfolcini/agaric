@@ -4,7 +4,7 @@
 //! foreground `apply_op_tx` pipeline with the Loro engine installed) AND the
 //! sql_only fallback arm (`apply_create_block_sql_only` /
 //! `apply_edit_block_sql_only`, called directly — exactly the fns the routing
-//! dispatches to when `crate::loro::shared::get()` is `None`), then asserts the
+//! dispatches to when `agaric_engine::loro::shared::get()` is `None`), then asserts the
 //! resulting `blocks` rows are IDENTICAL between the two arms on the columns the
 //! INSERT/UPDATE *shape* governs: `id`, `block_type`, `content`, `parent_id`,
 //! `page_id`.
@@ -61,8 +61,8 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -149,14 +149,14 @@ async fn seed_space(pool: &SqlitePool) {
 /// engine, so its descendants' creates genuinely take the engine path rather
 /// than cascading into the parent-absent fallback.
 fn seed_block_into_engine(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     space_id: &str,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
     position: i64,
 ) {
-    let space = crate::space::SpaceId::from_trusted(space_id);
+    let space = agaric_store::space::SpaceId::from_trusted(space_id);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -172,7 +172,7 @@ fn seed_block_into_engine(
 #[allow(clippy::too_many_arguments)]
 async fn create_via_loro(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -188,7 +188,7 @@ async fn create_via_loro(
         index,
         content: content.into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
@@ -214,7 +214,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
 
     seed_space(&pool).await;
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Seed page → parent → first child through the engine. The op-log-only
     // create projection does NOT stamp page_id / space_id / parent_id in SQL
@@ -331,7 +331,7 @@ async fn run_engine_arm() -> (Vec<ShapeRow>, Option<i64>, Option<i64>, Option<i6
         to_text: "edited-content".into(),
         prev_edit: None,
     });
-    let edit_record = crate::op_log::append_local_op(&pool, DEVICE_ID, edit)
+    let edit_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, edit)
         .await
         .expect("append edit");
     let mut tx = pool.begin().await.expect("begin edit");

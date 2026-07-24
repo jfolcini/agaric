@@ -27,10 +27,10 @@ use tracing::instrument;
 
 use crate::commands::{create_block_in_tx, set_property_in_tx};
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::space::SpaceId;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::space::SpaceId;
 
 use super::sanitize_internal_error;
 
@@ -1295,8 +1295,8 @@ mod tests_p6 {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn delete_block_refuses_to_delete_non_empty_space() {
         use crate::commands::blocks::delete_block_inner;
-        use crate::error::AppError;
         use crate::materializer::Materializer;
+        use agaric_core::error::AppError;
 
         let (pool, _dir) = test_pool().await;
         let materializer = Materializer::new(pool.clone());

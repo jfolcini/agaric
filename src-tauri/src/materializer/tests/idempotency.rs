@@ -245,7 +245,9 @@ async fn rebuild_pages_cache_counts_dedup_equals_single() {
         seed_pages(pool.clone()).await;
         // Populate `pages_cache` rows (with zeroed counts) the way the
         // sync RESET path does before enqueueing the count recompute.
-        crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+        agaric_store::cache::rebuild_pages_cache(&pool)
+            .await
+            .unwrap();
     }
     assert_dedup_equals_single(
         MaterializeTask::RebuildPagesCacheCounts,

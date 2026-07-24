@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::op_log;
+use agaric_store::op_log;
 
 // ======================================================================
 // add_tag — happy paths

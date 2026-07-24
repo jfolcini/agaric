@@ -1,12 +1,12 @@
 use super::*;
 use crate::db::init_pool;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::peer_refs::{self, PeerRef};
-use crate::sync_events::RecordingEventSink;
-use crate::sync_net::{self, SyncCert, SyncConnection, SyncServer};
-use crate::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator};
-use crate::sync_scheduler::SyncScheduler;
+use agaric_core::error::AppError;
+use agaric_store::peer_refs::{self, PeerRef};
+use agaric_sync::sync_events::RecordingEventSink;
+use agaric_sync::sync_net::{self, SyncCert, SyncConnection, SyncServer};
+use agaric_sync::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator};
+use agaric_sync::sync_scheduler::SyncScheduler;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -583,7 +583,7 @@ fn should_attempt_sync_accepts_new_paired_peer() {
 /// the first session and pairing deadlocks.
 #[test]
 fn should_attempt_sync_accepts_unpaired_peer_while_pairing_pending() {
-    let refs: Vec<crate::peer_refs::PeerRef> = vec![]; // no peer_refs yet — mid-pairing
+    let refs: Vec<agaric_store::peer_refs::PeerRef> = vec![]; // no peer_refs yet — mid-pairing
     assert!(
         should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", false, &refs, true),
         "while pairing is pending, an unpaired discovered peer must be a \
@@ -595,7 +595,7 @@ fn should_attempt_sync_accepts_unpaired_peer_while_pairing_pending() {
 /// a device must never try to sync with itself, pairing or not.
 #[test]
 fn should_attempt_sync_rejects_self_even_while_pairing_pending() {
-    let refs: Vec<crate::peer_refs::PeerRef> = vec![];
+    let refs: Vec<agaric_store::peer_refs::PeerRef> = vec![];
     assert!(
         !should_attempt_sync_with_discovered_peer("MY_DEVICE", "MY_DEVICE", false, &refs, true),
         "self-discovery guard must hold even while pairing is pending"
@@ -606,7 +606,7 @@ fn should_attempt_sync_rejects_self_even_while_pairing_pending() {
 /// an unpaired peer already in the discovered map must not re-trigger a sync.
 #[test]
 fn should_attempt_sync_rejects_already_discovered_even_while_pairing_pending() {
-    let refs: Vec<crate::peer_refs::PeerRef> = vec![];
+    let refs: Vec<agaric_store::peer_refs::PeerRef> = vec![];
     assert!(
         !should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", true, &refs, true),
         "already-discovered guard must hold even while pairing is pending"
@@ -842,7 +842,7 @@ async fn try_sync_with_peer_respects_backoff_gate() {
         "peer must be in backoff after failure"
     );
 
-    let apply_host_ctx_845: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_845: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -895,7 +895,7 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_UNREACHABLE")];
 
-    let apply_host_ctx_896: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_896: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1041,7 +1041,7 @@ async fn handle_incoming_sync_rejects_sync_with_self() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1123,7 +1123,7 @@ async fn run_sync_session_respects_cancel_flag() {
     // 2. conn.send_json(...)           (succeeds, message is buffered)
     // 3. while !is_terminal():
     //      cancel.load() → true → return Err("sync cancelled by user")
-    let run_session_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let run_session_host: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let result = run_sync_session(
         &mut orch,
@@ -1174,7 +1174,7 @@ async fn try_sync_with_peer_skips_peer_with_no_addresses() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
-    let apply_host_ctx_1171: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1171: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1224,7 +1224,7 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     // Acquire the per-peer lock before calling try_sync_with_peer
     let _guard = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
-    let apply_host_ctx_1219: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1219: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1304,7 +1304,7 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1358,7 +1358,7 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
     };
     let refs = vec![make_peer_ref("PEER_FAIL")];
 
-    let apply_host_ctx_1351: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1351: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1430,7 +1430,7 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
         "peer must be in backoff"
     );
 
-    let apply_host_ctx_1421: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1421: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1474,7 +1474,7 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     // Hold the per-peer lock so the function returns early
     let _lock = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
 
-    let apply_host_ctx_1463: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1463: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1514,7 +1514,7 @@ async fn s11_cancel_preserved_on_no_addresses_early_exit() {
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
 
-    let apply_host_ctx_1501: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_1501: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -1657,7 +1657,7 @@ async fn inmem_handle_incoming_sync_rejects_self() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1724,7 +1724,7 @@ async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1788,7 +1788,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1861,7 +1861,7 @@ async fn inmem_handle_incoming_sync_rejects_busy_peer() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -1924,7 +1924,7 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
     );
     // #855: the marker stores the passphrase proof; the connecting device must
     // present a matching proof to be admitted past S-1.
-    let expected_proof = crate::pairing::pairing_proof("pass one two three four");
+    let expected_proof = agaric_sync::pairing::pairing_proof("pass one two three four");
     peer_refs::set_pending_pairing(&pool, &expected_proof)
         .await
         .unwrap();
@@ -1965,7 +1965,7 @@ async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pendin
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2017,7 +2017,7 @@ async fn run_pairing_proof_scenario_855(
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let expected_proof = crate::pairing::pairing_proof("the real passphrase");
+    let expected_proof = agaric_sync::pairing::pairing_proof("the real passphrase");
     peer_refs::set_pending_pairing(&pool, &expected_proof)
         .await
         .unwrap();
@@ -2048,7 +2048,7 @@ async fn run_pairing_proof_scenario_855(
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2096,7 +2096,7 @@ async fn inmem_handle_incoming_sync_rejects_pairing_without_proof_855() {
 /// rejected, never pinned, window preserved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn inmem_handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
-    let wrong = crate::pairing::pairing_proof("a wrong passphrase guess");
+    let wrong = agaric_sync::pairing::pairing_proof("a wrong passphrase guess");
     let (response, victim_pinned, still_pending) =
         run_pairing_proof_scenario_855(Some(wrong)).await;
     assert!(
@@ -2162,7 +2162,7 @@ async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2248,7 +2248,7 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2397,7 +2397,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
                 },
             ],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2488,7 +2488,7 @@ async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
                 },
             ],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -2581,7 +2581,7 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
                 hash: "fakehash".to_string(),
             }],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -3038,7 +3038,7 @@ async fn daemon_start_and_shutdown() {
     let cancel = Arc::new(AtomicBool::new(false));
 
     // Generate a real self-signed cert for the test
-    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV")
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV")
         .expect("cert generation should succeed");
 
     // Start the daemon — this binds a TLS server on a random port
@@ -3091,7 +3091,7 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
-    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV2")
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV2")
         .expect("cert generation should succeed");
 
     let daemon = SyncDaemon::start(
@@ -3145,7 +3145,7 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
 
 #[test]
 fn generate_cert_produces_valid_pem() {
-    let cert = crate::sync_net::generate_self_signed_cert("TEST_DEV3")
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV3")
         .expect("cert generation should succeed");
 
     assert!(cert.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
@@ -3171,8 +3171,8 @@ async fn two_daemons_start_on_different_ports() {
     let cancel1 = Arc::new(AtomicBool::new(false));
     let cancel2 = Arc::new(AtomicBool::new(false));
 
-    let cert1 = crate::sync_net::generate_self_signed_cert("DEV_A").unwrap();
-    let cert2 = crate::sync_net::generate_self_signed_cert("DEV_B").unwrap();
+    let cert1 = agaric_sync::sync_net::generate_self_signed_cert("DEV_A").unwrap();
+    let cert2 = agaric_sync::sync_net::generate_self_signed_cert("DEV_B").unwrap();
 
     let d1 = SyncDaemon::start(
         pool1,
@@ -3251,7 +3251,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_B_DEV").unwrap();
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_B_DEV").unwrap();
 
     // Start daemon with NO peer refs — Branch C's first tick finds nothing.
     let daemon = SyncDaemon::start(
@@ -3350,7 +3350,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_B_L61_DEV").unwrap();
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_B_L61_DEV").unwrap();
 
     let daemon = SyncDaemon::start(
         pool.clone(),
@@ -3448,7 +3448,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = crate::sync_net::generate_self_signed_cert("BRANCH_C_DEV").unwrap();
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_C_DEV").unwrap();
 
     // Insert a peer ref that has NEVER synced (synced_at IS NULL → always due)
     // with a last_address so resolve_peer_address can find it.
@@ -3613,7 +3613,7 @@ fn process_discovery_paired_returns_some() {
 /// the responder's admit-while-pending (#1519) is waiting to accept.
 #[test]
 fn process_discovery_unpaired_returns_some_only_while_pairing_pending() {
-    let no_refs: Vec<crate::peer_refs::PeerRef> = vec![];
+    let no_refs: Vec<agaric_store::peer_refs::PeerRef> = vec![];
 
     // Not pending: unpaired peer is ignored (current paired-only behaviour).
     let mut discovered = HashMap::new();
@@ -3751,7 +3751,7 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -3814,7 +3814,7 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -3871,7 +3871,7 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
     let sink = Arc::new(RecordingEventSink::new());
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> = sink.clone();
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
 
     let daemon = SyncDaemon::start_if_peers_exist(
@@ -3929,7 +3929,7 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -4012,7 +4012,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -4057,13 +4057,13 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
 // before running its body. We exercise the gate at two levels:
 //
 // 1. `LifecycleHooks` in isolation — the atomic flag is shared between
-//    clones (covered in `crate::foreground::tests`; smoke-asserted here
+//    clones (covered in `agaric_sync::foreground::tests`; smoke-asserted here
 //    too to catch integration drift).
 // 2. Full daemon startup — `start_with_lifecycle` completes and the
 //    daemon shuts down cleanly regardless of initial foreground state.
 //    We cannot wait 30 s for the resync tick in a unit test, but the
 //    gate is also exercised by the isolated lifecycle test and by
-//    dedicated unit tests in `crate::foreground` / `coordinator.rs`.
+//    dedicated unit tests in `agaric_sync::foreground` / `coordinator.rs`.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
@@ -4073,9 +4073,9 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
     let scheduler = Arc::new(SyncScheduler::new());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_A").unwrap();
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_A").unwrap();
 
-    let lifecycle = crate::foreground::LifecycleHooks::new();
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     lifecycle.mark_backgrounded();
     assert!(
         lifecycle.is_backgrounded(),
@@ -4126,9 +4126,9 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     let scheduler = Arc::new(SyncScheduler::new());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = crate::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
+    let cert = agaric_sync::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
 
-    let lifecycle = crate::foreground::LifecycleHooks::new();
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
         pool: pool.clone(),
         device_id: "DEV_LIFECYCLE_B".into(),
@@ -4185,7 +4185,7 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
     // `LifecycleHooks::default()` internally. Assert the default
     // starts in foreground so legacy callers (tests, benches) observe
     // The same behaviour as before.
-    let hooks = crate::foreground::LifecycleHooks::default();
+    let hooks = agaric_sync::foreground::LifecycleHooks::default();
     assert!(
         !hooks.is_backgrounded(),
         "default lifecycle hooks must report foreground so the legacy `start` path runs tick bodies normally"
@@ -4216,11 +4216,11 @@ async fn lifecycle_default_from_start_is_equivalent_to_always_foreground() {
 ///    merge is a pull (`synced_at` set, `reset_count` NOT bumped).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn feat6_end_to_end_compact_then_snapshot_catchup() {
-    use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::op_log::append_local_op_at;
-    use crate::snapshot::create_snapshot;
-    use crate::sync_net::test_connection_pair;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
+    use agaric_store::op_log::append_local_op_at;
+    use agaric_sync::snapshot::create_snapshot;
+    use agaric_sync::sync_net::test_connection_pair;
 
     // ── Responder side: one materialized block + snapshot ────────────
     let (resp_pool, _resp_dir) = test_pool().await;
@@ -4255,9 +4255,9 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // #2502: mirror the op into the responder's ENGINE (dispatch_op writes only
     // the SQL projection) so its per-space Loro vv holds one FEAT6_RESP op —
     // the local frontier the own-lineage-loss reset check compares against.
-    let resp_space = crate::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
+    let resp_space = agaric_store::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
     let resp_state = resp_mat.loro_state();
-    crate::merge::engine_apply(
+    agaric_engine::merge::engine_apply(
         &format!("FEAT6_RESP/{}", record.seq),
         &OpPayload::CreateBlock(CreateBlockPayload {
             block_id: BlockId::test_id("FEAT6BLK001"),
@@ -4296,14 +4296,14 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // DELETE in the same enable/disable dance the real compaction path
     // uses so the BEFORE DELETE trigger (migration 0036) permits it.
     let mut tx = resp_pool.begin().await.unwrap();
-    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     sqlx::query("DELETE FROM op_log")
         .execute(&mut *tx)
         .await
         .unwrap();
-    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -4375,8 +4375,8 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // (`snapshot_covers_remote_heads`) still keys off the advertised
     // `heads` — the audit-replication cursor, per #2481.
     let crafted_resp_vv = {
-        let mut craft =
-            crate::loro::engine::LoroEngine::with_peer_id("FEAT6_RESP").expect("craft engine");
+        let mut craft = agaric_engine::loro::engine::LoroEngine::with_peer_id("FEAT6_RESP")
+            .expect("craft engine");
         for i in 0..5_i64 {
             craft
                 .apply_create_block(&format!("01HZFEAT6CRAFT{i:012}"), "content", "x", None, i)
@@ -4387,11 +4387,11 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     client_conn
         .send_json(&SyncMessage::HeadExchange {
             heads: vec![init_self_head, stale_resp_head],
-            loro_vvs: vec![crate::sync_protocol::types::SpaceVersionVector {
+            loro_vvs: vec![agaric_sync::sync_protocol::types::SpaceVersionVector {
                 space_id: resp_space.clone(),
                 vv: crafted_resp_vv,
             }],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -4417,17 +4417,19 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // initiator MERGES it into its own engine and reprojects SQL. Thread the
     // initiator's live registry so `apply_remote` has an engine to merge into.
     let init_state = init_mat.loro_state();
-    let outcome = crate::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
+    let outcome = agaric_sync::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
         &mut client_conn,
         &init_pool,
         &init_mat,
         &init_sink,
         "FEAT6_RESP",
         None,
-        Some(crate::sync_daemon::snapshot_transfer::EngineReloadCtx {
-            registry: &init_state.registry,
-            device_id: "FEAT6_INIT",
-        }),
+        Some(
+            agaric_sync::sync_daemon::snapshot_transfer::EngineReloadCtx {
+                registry: &init_state.registry,
+                device_id: "FEAT6_INIT",
+            },
+        ),
     )
     .await
     .expect("catch-up must succeed end-to-end");
@@ -4435,7 +4437,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     assert!(
         matches!(
             outcome,
-            crate::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { .. }
+            agaric_sync::sync_daemon::snapshot_transfer::CatchupOutcome::Applied { .. }
         ),
         "expected Applied, got {outcome:?}"
     );
@@ -4487,7 +4489,7 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     // #2503: the initiator's engine merged the responder's snapshot — the
     // block is present in the live engine, not just SQL.
     {
-        let space = crate::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZFEAT6SPACEXXXXXXXXXXXX");
         let mut g = init_state.registry.for_space(&space, "FEAT6_INIT").unwrap();
         assert!(
             g.engine_mut().read_block("FEAT6BLK001").unwrap().is_some(),
@@ -4517,8 +4519,8 @@ fn wire_roundtrip_602(msg: &SyncMessage) -> SyncMessage {
 /// messages to `handle_message`, forwards the reply, and drains
 /// `next_message` — until neither side has anything left to deliver.
 async fn pump_full_session_602(
-    initiator: &mut crate::sync_protocol::SyncOrchestrator,
-    responder: &mut crate::sync_protocol::SyncOrchestrator,
+    initiator: &mut agaric_sync::sync_protocol::SyncOrchestrator,
+    responder: &mut agaric_sync::sync_protocol::SyncOrchestrator,
 ) {
     use std::collections::VecDeque;
     let first = initiator.start().await.expect("initiator start");
@@ -4577,28 +4579,28 @@ async fn pump_full_session_602(
 async fn make_local_edit_602(
     pool: &SqlitePool,
     mat: &Materializer,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
-    space: &crate::space::SpaceId,
+    space: &agaric_store::space::SpaceId,
     block_id: &str,
     content: &str,
     ts: i64,
 ) {
-    use crate::op::{CreateBlockPayload, OpPayload};
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
     let payload = OpPayload::CreateBlock(CreateBlockPayload {
-        block_id: crate::ulid::BlockId::from_trusted(block_id),
+        block_id: agaric_core::ulid::BlockId::from_trusted(block_id),
         block_type: "content".into(),
         parent_id: None,
         position: Some(1),
         index: None,
         content: content.into(),
     });
-    let record = crate::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
+    let record = agaric_store::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
         .await
         .expect("append_local_op_at");
     mat.dispatch_op(&record).await.expect("dispatch_op");
     mat.flush_foreground().await.expect("flush_foreground");
-    crate::merge::engine_apply(
+    agaric_engine::merge::engine_apply(
         &format!("{device_id}/{}", record.seq),
         &payload,
         device_id,
@@ -4617,18 +4619,18 @@ async fn make_local_edit_602(
 async fn apply_local_op_602(
     pool: &SqlitePool,
     mat: &Materializer,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
-    space: &crate::space::SpaceId,
-    payload: crate::op::OpPayload,
+    space: &agaric_store::space::SpaceId,
+    payload: agaric_store::op::OpPayload,
     ts: i64,
 ) {
-    let record = crate::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
+    let record = agaric_store::op_log::append_local_op_at(pool, device_id, payload.clone(), ts)
         .await
         .expect("append_local_op_at");
     mat.dispatch_op(&record).await.expect("dispatch_op");
     mat.flush_foreground().await.expect("flush_foreground");
-    crate::merge::engine_apply(
+    agaric_engine::merge::engine_apply(
         &format!("{device_id}/{}", record.seq),
         &payload,
         device_id,
@@ -4664,13 +4666,13 @@ async fn apply_local_op_602(
 ///   3. both Loro engines converge to the same version vector.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue602_two_edited_devices_converge_without_reset_required() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV602A";
     const DEV_B: &str = "DEV602B";
     const BLOCK_A: &str = "01HZ602BLKAXXXXXXXXXXXXXXX";
     const BLOCK_B: &str = "01HZ602BLKBXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ602SPACEXXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ602SPACEXXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -4821,14 +4823,14 @@ async fn issue602_two_edited_devices_converge_without_reset_required() {
 /// `Failed` from the second `LoroSync` in the stream.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2536_multi_space_delta_sync_completes() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV2536A";
     const DEV_B: &str = "DEV2536B";
     const BLOCK_PERSONAL: &str = "01HZ2536BLKPERSONALXXXXXXX";
     const BLOCK_WORK: &str = "01HZ2536BLKWORKXXXXXXXXXXX";
-    let space_personal = crate::space::SpaceId::from_trusted("01HZ2536SPACEPERSONALXXXXX");
-    let space_work = crate::space::SpaceId::from_trusted("01HZ2536SPACEWORKXXXXXXXXX");
+    let space_personal = agaric_store::space::SpaceId::from_trusted("01HZ2536SPACEPERSONALXXXXX");
+    let space_work = agaric_store::space::SpaceId::from_trusted("01HZ2536SPACEWORKXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -4955,14 +4957,14 @@ async fn issue2536_multi_space_delta_sync_completes() {
 /// no intermediate handle_message errored.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
-    use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV2536IA";
     const DEV_B: &str = "DEV2536IB";
     const BLOCK_PERSONAL: &str = "01HZ2536IBLKPERSONALXXXXXX";
     const BLOCK_WORK: &str = "01HZ2536IBLKWORKXXXXXXXXXX";
-    let space_personal = crate::space::SpaceId::from_trusted("01HZ2536ISPACEPERSONALXXXX");
-    let space_work = crate::space::SpaceId::from_trusted("01HZ2536ISPACEWORKXXXXXXXX");
+    let space_personal = agaric_store::space::SpaceId::from_trusted("01HZ2536ISPACEPERSONALXXXX");
+    let space_work = agaric_store::space::SpaceId::from_trusted("01HZ2536ISPACEWORKXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -5128,8 +5130,8 @@ async fn run_one_real_loopback_session_2129(
     resp_mat: &Materializer,
     resp_device: &str,
     resp_cert: &SyncCert,
-) -> crate::sync_protocol::SyncState {
-    use crate::sync_protocol::SyncOrchestrator;
+) -> agaric_sync::sync_protocol::SyncState {
+    use agaric_sync::sync_protocol::SyncOrchestrator;
 
     let timeout = std::time::Duration::from_secs(5);
 
@@ -5184,7 +5186,7 @@ async fn run_one_real_loopback_session_2129(
     let init_cancel = AtomicBool::new(false);
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let init_run_host: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let init_run_host: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(init_mat.clone());
     let init_result = tokio::time::timeout(
         timeout,
@@ -5224,9 +5226,9 @@ async fn run_one_real_loopback_session_2129(
 /// ingest path was built for; it exercises the real TLS socket + wire path.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
-    let space = crate::space::SpaceId::from_trusted("01HZ2481REPLSPACEXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2481REPLSPACEXXXXXXXXX");
     let devices = make_n_devices_2141(&["DEV2481AA", "DEV2481BB"]).await;
     let (a, b) = (&devices[0], &devices[1]);
 
@@ -5244,7 +5246,7 @@ async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() 
     .await;
 
     // Capture A's authored op head (seq + hash) for a verbatim comparison.
-    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+    let a_head = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap()
         .into_iter()
@@ -5311,7 +5313,7 @@ async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() 
 /// OpLogBatch transport), silently losing its cross-device History entry.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
     let devices = make_n_devices_2141(&["DEV2593AA", "DEV2593BB"]).await;
     let (a, b) = (&devices[0], &devices[1]);
@@ -5321,19 +5323,19 @@ async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
     // bypasses the command-layer 256 KiB content cap — modelling a
     // sync-applied/imported op — and computes the correct blake3 hash.
     let big_content = "z".repeat(11_000_000);
-    let payload = crate::op::OpPayload::CreateBlock(crate::op::CreateBlockPayload {
-        block_id: crate::ulid::BlockId::test_id("BIG2593"),
+    let payload = agaric_store::op::OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+        block_id: agaric_core::ulid::BlockId::test_id("BIG2593"),
         block_type: "content".into(),
         parent_id: None,
         position: Some(0),
         index: None,
         content: big_content.clone(),
     });
-    crate::op_log::append_local_op_at(&a.pool, &a.id, payload, 1_736_942_400_000)
+    agaric_store::op_log::append_local_op_at(&a.pool, &a.id, payload, 1_736_942_400_000)
         .await
         .expect("append oversized op to A");
 
-    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+    let a_head = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap()
         .into_iter()
@@ -5378,7 +5380,7 @@ async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
         "stored audit-only (never applied to state)"
     );
     assert!(
-        stored_payload.len() > crate::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
+        stored_payload.len() > agaric_sync::sync_constants::OP_LOG_BATCH_INLINE_MAX_BYTES,
         "the full oversized payload replicated (chunked transport), not truncated"
     );
     assert!(
@@ -5403,9 +5405,9 @@ async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
 /// replicated rows) — streams it back; A re-ingests it as an audit record.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socket() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
-    let space = crate::space::SpaceId::from_trusted("01HZ2481HEALSPACEXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2481HEALSPACEXXXXXXXXX");
     let devices = make_n_devices_2141(&["DEV2481HA", "DEV2481HB"]).await;
     let (a, b) = (&devices[0], &devices[1]);
 
@@ -5421,7 +5423,7 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
     )
     .await;
 
-    let a_head = crate::sync_protocol::get_local_heads(&a.pool)
+    let a_head = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap()
         .into_iter()
@@ -5447,7 +5449,7 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
     // backup). `op_log` is append-only (migration 0036 immutability triggers),
     // so the DELETE rides the same mutation-bypass sentinel compaction uses.
     let mut tx = a.pool.begin().await.unwrap();
-    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     sqlx::query("DELETE FROM op_log WHERE device_id = ?")
@@ -5455,7 +5457,7 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
         .execute(&mut *tx)
         .await
         .unwrap();
-    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -5531,10 +5533,10 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
 /// completion of each session before the next begins — no sleeps.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn two_edited_devices_converge_over_real_loopback_tls() {
-    use crate::op::{
+    use agaric_store::op::{
         AddTagPayload, CreateBlockPayload, DeleteBlockPayload, OpPayload, SetPropertyPayload,
     };
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
     install_crypto_provider();
 
@@ -5547,7 +5549,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     // Device B's blocks: a content block plus a tag block it links.
     const BLOCK_B: &str = "01HZ2129BLKBXXXXXXXXXXXXXX";
     const TAG_B: &str = "01HZ2129TAGBXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2129SPACEXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2129SPACEXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -5596,7 +5598,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
         // `scheduled_date` are column-backed on `blocks` instead — see
         // op.rs `RESERVED_PROPERTY_KEYS`).
         OpPayload::SetProperty(SetPropertyPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_A),
             key: "custom_rank".into(),
             value_text: None,
             value_num: Some(42.0),
@@ -5615,7 +5617,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
         DEV_A,
         &space,
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A_DEL),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_A_DEL),
             block_type: "content".into(),
             parent_id: None,
             position: Some(2),
@@ -5632,7 +5634,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
         DEV_A,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_A_DEL),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_A_DEL),
         }),
         1_736_942_400_300,
     )
@@ -5659,7 +5661,7 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
         DEV_B,
         &space,
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(TAG_B),
+            block_id: agaric_core::ulid::BlockId::from_trusted(TAG_B),
             block_type: "tag".into(),
             parent_id: None,
             position: Some(2),
@@ -5677,8 +5679,8 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
         DEV_B,
         &space,
         OpPayload::AddTag(AddTagPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_B),
-            tag_id: crate::ulid::BlockId::from_trusted(TAG_B),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_B),
+            tag_id: agaric_core::ulid::BlockId::from_trusted(TAG_B),
         }),
         1_736_942_401_200,
     )
@@ -5844,10 +5846,10 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
 /// engine version vectors.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
-    use crate::op::{
+    use agaric_store::op::{
         DeleteBlockPayload, MoveBlockPayload, OpPayload, PurgeBlockPayload, RestoreBlockPayload,
     };
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
     install_crypto_provider();
 
@@ -5858,7 +5860,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     const BLOCK_C: &str = "01HZ21290000000000000000CC";
     const BLOCK_D: &str = "01HZ21290000000000000000DD";
     const BLOCK_E: &str = "01HZ21290000000000000000EE";
-    let space = crate::space::SpaceId::from_trusted("01HZ2129MOVESPACEXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2129MOVESPACEXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -5927,8 +5929,8 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         DEV_A,
         &space,
         OpPayload::MoveBlock(MoveBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_C),
-            new_parent_id: Some(crate::ulid::BlockId::from_trusted(BLOCK_P)),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_C),
+            new_parent_id: Some(agaric_core::ulid::BlockId::from_trusted(BLOCK_P)),
             new_position: 1,
             new_index: Some(0),
         }),
@@ -5945,7 +5947,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         DEV_A,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_D),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_D),
         }),
         del_d_ts,
     )
@@ -5958,7 +5960,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         DEV_A,
         &space,
         OpPayload::RestoreBlock(RestoreBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_D),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_D),
             // The restore guard matches the delete op's epoch-ms created_at.
             deleted_at_ref: del_d_ts,
         }),
@@ -5976,7 +5978,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         DEV_B,
         &space,
         OpPayload::DeleteBlock(DeleteBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_E),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_E),
         }),
         del_e_ts,
     )
@@ -5989,7 +5991,7 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
         DEV_B,
         &space,
         OpPayload::PurgeBlock(PurgeBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLOCK_E),
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLOCK_E),
         }),
         ts,
     )
@@ -6089,12 +6091,12 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
 /// from #2006 is a separate follow-up.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV2006A";
     const DEV_B: &str = "DEV2006B";
     const BLOCK_SHARED: &str = "01HZ2006BLKXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2006SPACEXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2006SPACEXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -6236,13 +6238,13 @@ async fn issue2006_concurrent_same_block_edits_converge_deterministically() {
 ///      identical Loro version vectors.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2006_interrupted_then_resumed_transfer_converges() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV2006IRA";
     const DEV_B: &str = "DEV2006IRB";
     const BLOCK_A: &str = "01HZ2006IRBLKAXXXXXXXXXXXX";
     const BLOCK_B: &str = "01HZ2006IRBLKBXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2006IRSPACEXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2006IRSPACEXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -6418,12 +6420,12 @@ async fn issue2006_interrupted_then_resumed_transfer_converges() {
 /// the responder advanced `synced_at` from the initiator's `SyncComplete`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue610_only_the_puller_records_synced_at() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV610A";
     const DEV_B: &str = "DEV610B";
     const BLOCK_B: &str = "01HZ610BLKBXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ610SPACEXXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ610SPACEXXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -6490,7 +6492,7 @@ async fn issue610_only_the_puller_records_synced_at() {
 
     // Consequence: the reverse direction is still 'due' — B will pull A's
     // state on its next scheduled tick (this is how A's edits reach B).
-    let scheduler = crate::sync_scheduler::SyncScheduler::default();
+    let scheduler = agaric_sync::sync_scheduler::SyncScheduler::default();
     let b_peers = peer_refs::list_peer_refs(&pool_b).await.unwrap();
     assert!(
         scheduler
@@ -6517,12 +6519,12 @@ async fn issue610_only_the_puller_records_synced_at() {
 /// recording on the short-circuit branch would otherwise go undetected.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue610_empty_registry_initiator_records_via_synccomplete() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const DEV_A: &str = "DEV610EA";
     const DEV_B: &str = "DEV610EB";
     const BLOCK_A: &str = "01HZ610EBLKAXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ610ESPACEXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ610ESPACEXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -6602,15 +6604,15 @@ async fn issue610_empty_registry_initiator_records_via_synccomplete() {
 /// `peer_vv=None` before).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn head_exchange_streams_update_when_initiator_advertises_vv() {
-    use crate::sync_protocol::SyncOrchestrator;
-    use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
-    use crate::sync_protocol::types::{DeviceHead, SpaceVersionVector};
+    use agaric_sync::sync_protocol::SyncOrchestrator;
+    use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
+    use agaric_sync::sync_protocol::types::{DeviceHead, SpaceVersionVector};
 
     const DEV_A: &str = "DEVVVA";
     const DEV_B: &str = "DEVVVB";
     const BLOCK_A: &str = "01HZVVBLKAXXXXXXXXXXXXXXXX";
     const BLOCK_B: &str = "01HZVVBLKBXXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZVVSPACEXXXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZVVSPACEXXXXXXXXXXXXXXX");
 
     let (pool_a, _dir_a) = test_pool().await;
     let (pool_b, _dir_b) = test_pool().await;
@@ -6666,7 +6668,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
                 space_id: space.clone(),
                 vv: a_vv.clone(),
             }],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -6686,7 +6688,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             // newly-live incremental apply converges (A gains B's block). The
             // Update's from_vv == A's own advertised vv, so the
             // reachability gate passes and the delta imports.
-            let outcome = crate::sync_protocol::loro_sync::apply_remote(
+            let outcome = agaric_sync::sync_protocol::loro_sync::apply_remote(
                 &pool_a,
                 &state_a.registry,
                 DEV_A,
@@ -6697,7 +6699,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
             assert!(
                 matches!(
                     outcome,
-                    crate::sync_protocol::loro_sync::ApplyOutcome::Imported { .. }
+                    agaric_sync::sync_protocol::loro_sync::ApplyOutcome::Imported { .. }
                 ),
                 "A must import the Update (its own from_vv is reachable), got {outcome:?}"
             );
@@ -6722,7 +6724,7 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
         .handle_message(SyncMessage::HeadExchange {
             heads: vec![head],
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -6765,12 +6767,12 @@ async fn head_exchange_streams_update_when_initiator_advertises_vv() {
 /// (fallback: the heads never identified the peer).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_responder() {
-    use crate::sync_protocol::{SyncOrchestrator, SyncState};
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState};
 
     const RESP_DEV: &str = "RESP778";
     const FRESH_DEV: &str = "FRESH778";
     const BLOCK: &str = "01HZ778BLKXXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ778SPACEXXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ778SPACEXXXXXXXXXXXXXX");
 
     // ── Responder: one seeded local edit ─────────────────────────────
     // `handle_incoming_sync` builds its orchestrator against the
@@ -6948,13 +6950,13 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 /// 4 MB block lands in the initiator's DB byte-for-byte.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
-    use crate::sync_constants::LORO_INLINE_MAX_BYTES;
-    use crate::sync_protocol::{SyncOrchestrator, SyncState, loro_sync};
+    use agaric_sync::sync_constants::LORO_INLINE_MAX_BYTES;
+    use agaric_sync::sync_protocol::{SyncOrchestrator, SyncState, loro_sync};
 
     const RESP_DEV: &str = "RESP611";
     const INIT_DEV: &str = "INIT611";
     const BLOCK: &str = "01HZ611BLKXXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ611SPACEXXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ611SPACEXXXXXXXXXXXXXX");
 
     // ~4 MB of LCG-generated printable ASCII — high-entropy enough
     // that Loro's snapshot encoding cannot compress it back under the
@@ -7015,9 +7017,9 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
     .expect("prepare_outgoing for premise check")
     .expect("#1257 freshness gate must not refuse a consistent engine");
     let snapshot_len = match &outgoing {
-        crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot { bytes, .. } => {
-            bytes.len()
-        }
+        agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+            bytes, ..
+        } => bytes.len(),
         other => panic!("peer_vv=None must yield a Snapshot, got {other:?}"),
     };
     assert!(
@@ -7166,7 +7168,7 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
     };
     let refs = vec![make_peer_ref("PEER_M46_FAIL")];
 
-    let apply_host_ctx_7140: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_7140: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -7221,7 +7223,7 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     scheduler.record_failure("PEER_M46_BACK");
     assert!(!scheduler.may_retry("PEER_M46_BACK"));
 
-    let apply_host_ctx_7193: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_7193: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -7292,7 +7294,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
         let cancel = cancel.clone();
         let cert = cert.clone();
         tokio::spawn(async move {
-            let apply_host_ctx_7262: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+            let apply_host_ctx_7262: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
                 std::sync::Arc::new(materializer.clone());
             let ctx = SyncSessionContext {
                 pool: &pool,
@@ -7373,7 +7375,7 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     // cancel check fires and returns Err("sync cancelled by user").
     let cancel = AtomicBool::new(true);
 
-    let apply_host_ctx_7341: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_7341: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -7463,7 +7465,7 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
     // No cancel pending.
     let cancel = AtomicBool::new(false);
 
-    let apply_host_ctx_7429: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_7429: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -7606,7 +7608,7 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
-    let event_sink: Arc<dyn crate::sync_events::SyncEventSink> =
+    let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
@@ -7681,7 +7683,7 @@ struct Device2141 {
     id: String,
     pool: SqlitePool,
     mat: Materializer,
-    state: std::sync::Arc<crate::loro::shared::LoroState>,
+    state: std::sync::Arc<agaric_engine::loro::shared::LoroState>,
     cert: SyncCert,
     // Held only to keep the temp DB directory alive for the test's
     // lifetime; never read.
@@ -7749,7 +7751,7 @@ async fn make_n_devices_2141(ids: &[&str]) -> Vec<Device2141> {
 async fn run_session_2141(
     initiator: &Device2141,
     responder: &Device2141,
-) -> crate::sync_protocol::SyncState {
+) -> agaric_sync::sync_protocol::SyncState {
     run_one_real_loopback_session_2129(
         &initiator.pool,
         &initiator.mat,
@@ -7764,7 +7766,7 @@ async fn run_session_2141(
 }
 
 /// #2141: decode a device's engine version vector for `space`.
-fn device_vv_2141(dev: &Device2141, space: &crate::space::SpaceId) -> loro::VersionVector {
+fn device_vv_2141(dev: &Device2141, space: &agaric_store::space::SpaceId) -> loro::VersionVector {
     let vv = {
         let mut g = dev.state.registry.for_space(space, &dev.id).expect("space");
         g.engine_mut().version_vector()
@@ -7798,8 +7800,8 @@ fn device_vv_2141(dev: &Device2141, space: &crate::space::SpaceId) -> loro::Vers
 /// the next begins — no sleeps.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
-    use crate::op::{AddTagPayload, OpPayload, SetPropertyPayload};
-    use crate::sync_protocol::SyncState;
+    use agaric_store::op::{AddTagPayload, OpPayload, SetPropertyPayload};
+    use agaric_sync::sync_protocol::SyncState;
 
     // Run the same scenario for N = 3 and N = 4.
     for ids in [
@@ -7807,7 +7809,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
         vec!["DEV2141W", "DEV2141X", "DEV2141Y", "DEV2141Z"],
     ] {
         let n = ids.len();
-        let space = crate::space::SpaceId::from_trusted("01HZ2141SPACEXXXXXXXXXXXXX");
+        let space = agaric_store::space::SpaceId::from_trusted("01HZ2141SPACEXXXXXXXXXXXXX");
         let devices = make_n_devices_2141(&ids).await;
 
         // Each device makes a DISTINCT divergent content block. Block ids
@@ -7841,7 +7843,7 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
             &devices[0].id,
             &space,
             OpPayload::SetProperty(SetPropertyPayload {
-                block_id: crate::ulid::BlockId::from_trusted(&block_ids[0]),
+                block_id: agaric_core::ulid::BlockId::from_trusted(&block_ids[0]),
                 key: "custom_rank".into(),
                 value_text: None,
                 value_num: Some(7.0),
@@ -7858,8 +7860,8 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
             &devices[1].state,
             &devices[1].id,
             &space,
-            OpPayload::CreateBlock(crate::op::CreateBlockPayload {
-                block_id: crate::ulid::BlockId::from_trusted(tag_block),
+            OpPayload::CreateBlock(agaric_store::op::CreateBlockPayload {
+                block_id: agaric_core::ulid::BlockId::from_trusted(tag_block),
                 block_type: "tag".into(),
                 parent_id: None,
                 position: Some(2),
@@ -7876,8 +7878,8 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
             &devices[1].id,
             &space,
             OpPayload::AddTag(AddTagPayload {
-                block_id: crate::ulid::BlockId::from_trusted(&block_ids[1]),
-                tag_id: crate::ulid::BlockId::from_trusted(tag_block),
+                block_id: agaric_core::ulid::BlockId::from_trusted(&block_ids[1]),
+                tag_id: agaric_core::ulid::BlockId::from_trusted(tag_block),
             }),
             1_736_942_500_200,
         )
@@ -7989,9 +7991,9 @@ async fn issue2141_n_devices_converge_round_robin_over_real_loopback_tls() {
 /// #2129 helper) so a hang fails fast instead of wedging CI.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn issue2141_device_acts_as_responder_and_initiator_concurrently() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
-    let space = crate::space::SpaceId::from_trusted("01HZ2141CONCSPACEXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2141CONCSPACEXXXXXXXXX");
     let devices = make_n_devices_2141(&["DEV2141RA", "DEV2141RB", "DEV2141RC"]).await;
     let (a, b, c) = (&devices[0], &devices[1], &devices[2]);
 
@@ -8091,7 +8093,11 @@ async fn issue2141_device_acts_as_responder_and_initiator_concurrently() {
 async fn connect_real_pair_2140(
     init_cert: &SyncCert,
     resp_cert: &SyncCert,
-) -> (SyncConnection, SyncConnection, crate::sync_net::SyncServer) {
+) -> (
+    SyncConnection,
+    SyncConnection,
+    agaric_sync::sync_net::SyncServer,
+) {
     let timeout = std::time::Duration::from_secs(5);
 
     let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
@@ -8130,9 +8136,9 @@ async fn connect_real_pair_2140(
 /// the drop left no poisoned state behind.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
-    let space = crate::space::SpaceId::from_trusted("01HZ2140DROPSPACEXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2140DROPSPACEXXXXXXXXX");
     let devices = make_n_devices_2141(&["DEV2140DA", "DEV2140DB"]).await;
     let (a, b) = (&devices[0], &devices[1]);
 
@@ -8178,7 +8184,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
 
     // Send a valid opening HeadExchange so the responder is mid-session,
     // then drop the client connection.
-    let heads = crate::sync_protocol::get_local_heads(&a.pool)
+    let heads = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap();
     tokio::time::timeout(
@@ -8186,7 +8192,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
         client_conn.send_json(&SyncMessage::HeadExchange {
             heads,
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -8410,10 +8416,10 @@ async fn issue2140_partial_message_then_close_is_bounded_error() {
 /// `snapshot_transfer.rs`.)
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
-    use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::op_log::append_local_op_at;
-    use crate::snapshot::create_snapshot;
-    use crate::sync_protocol::SyncState;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
+    use agaric_store::op_log::append_local_op_at;
+    use agaric_sync::snapshot::create_snapshot;
+    use agaric_sync::sync_protocol::SyncState;
 
     const INIT_DEV: &str = "DEV2140SI";
     const RESP_DEV: &str = "DEV2140SR";
@@ -8427,7 +8433,7 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
         &resp.pool,
         RESP_DEV,
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_id: agaric_core::ulid::BlockId::from_trusted(SNAP_BLOCK),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -8442,10 +8448,10 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     resp.mat.flush_foreground().await.unwrap();
     // Mirror the op into the responder's engine so its outgoing snapshot /
     // state is consistent with the SQL projection.
-    crate::merge::engine_apply(
+    agaric_engine::merge::engine_apply(
         &format!("{RESP_DEV}/{}", record.seq),
         &OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_id: agaric_core::ulid::BlockId::from_trusted(SNAP_BLOCK),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -8453,7 +8459,7 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
             content: "compacted-state content".into(),
         }),
         RESP_DEV,
-        &crate::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX"),
+        &agaric_store::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX"),
         &record.created_at.to_string(),
         &resp.state,
     );
@@ -8462,14 +8468,14 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
 
     // Simulate compaction: wipe the responder's op_log (H-13 bypass dance).
     let mut tx = resp.pool.begin().await.unwrap();
-    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     sqlx::query("DELETE FROM op_log")
         .execute(&mut *tx)
         .await
         .unwrap();
-    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -8483,7 +8489,7 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
         &init.pool,
         RESP_DEV,
         OpPayload::CreateBlock(CreateBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(SNAP_BLOCK),
+            block_id: agaric_core::ulid::BlockId::from_trusted(SNAP_BLOCK),
             block_type: "content".into(),
             parent_id: None,
             position: Some(1),
@@ -8503,12 +8509,14 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
     // trips on, driving ResetRequired → snapshot catch-up. These engine ops are
     // deliberately kept OUT of the op_log (so the advertised head stays
     // `{RESP: 1}` for the covering check) and are wiped by the snapshot apply.
-    let snap_space = crate::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX");
+    let snap_space = agaric_store::space::SpaceId::from_trusted("01HZ2140SNAPSPACEXXXXXXXXX");
     for i in 0..6 {
-        crate::merge::engine_apply(
+        agaric_engine::merge::engine_apply(
             &format!("{RESP_DEV}/{}", i + 1),
             &OpPayload::CreateBlock(CreateBlockPayload {
-                block_id: crate::ulid::BlockId::from_trusted(&format!("01HZ2140INITCLAIM{i:09}")),
+                block_id: agaric_core::ulid::BlockId::from_trusted(&format!(
+                    "01HZ2140INITCLAIM{i:09}"
+                )),
                 block_type: "content".into(),
                 parent_id: None,
                 position: Some(1),
@@ -8583,9 +8591,9 @@ async fn issue2140_snapshot_fallback_on_real_compaction_over_real_socket() {
 /// `may_retry == true`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
-    let space = crate::space::SpaceId::from_trusted("01HZ2140BOSPACEXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2140BOSPACEXXXXXXXXXXX");
     let devices = make_n_devices_2141(&["DEV2140BA", "DEV2140BB"]).await;
     let (a, b) = (&devices[0], &devices[1]);
 
@@ -8632,7 +8640,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
         Arc::new(RecordingEventSink::new()) as Arc<dyn SyncEventSink>,
         Arc::new(AtomicBool::new(false)),
     ));
-    let heads = crate::sync_protocol::get_local_heads(&a.pool)
+    let heads = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap();
     tokio::time::timeout(
@@ -8640,7 +8648,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
         client_conn.send_json(&SyncMessage::HeadExchange {
             heads,
             loro_vvs: vec![],
-            engine_format_version: crate::loro::engine::ENGINE_FORMAT_VERSION,
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
             op_log_replication: false,
             wire_compression: false,
             op_log_batch_chunked: false,
@@ -8718,12 +8726,12 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
 /// scheduler backoff/failure state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
-    use crate::sync_protocol::SyncState;
+    use agaric_sync::sync_protocol::SyncState;
 
     const RESP_DEV: &str = "RESP2537";
     const INIT_DEV: &str = "INIT2537";
     const BLOCK: &str = "01HZ2537BLKXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2537SPACEXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2537SPACEXXXXXXXXXXXXX");
 
     // Shared daemon-wide state: ONE cancel flag + ONE scheduler, exactly as
     // production wires them into both the daemon handle and the responder.
@@ -8961,7 +8969,7 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
-    let apply_host_ctx_8925: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_8925: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,
@@ -9058,7 +9066,7 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
 /// deterministically.
 #[tokio::test(start_paused = true)]
 async fn dispatch_guard_2539_times_out_with_session_loop_error_shape() {
-    use crate::sync_constants::HANDSHAKE_TIMEOUT;
+    use agaric_sync::sync_constants::HANDSHAKE_TIMEOUT;
 
     let never = std::future::pending::<Result<Option<SyncMessage>, AppError>>();
     let err = super::server::dispatch_with_handshake_timeout(never)
@@ -9134,7 +9142,7 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
     const INIT_DEV: &str = "INIT2539";
     const RESP_DEV: &str = "RESP2539";
     const BLOCK: &str = "01HZ2539BLKXXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2539SPACEXXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2539SPACEXXXXXXXXXXXXX");
 
     // ── Responder: real handle_incoming_sync with one seeded edit ─────
     let (resp_pool, _resp_dir) = test_pool().await;
@@ -9193,7 +9201,7 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
     let scheduler = Arc::new(SyncScheduler::new());
     let cancel = AtomicBool::new(false);
 
-    let apply_host_ctx_9155: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_9155: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(init_mat.clone());
     let ctx = SyncSessionContext {
         pool: &init_pool,
@@ -9289,7 +9297,7 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
 
     const PEER: &str = "PEER2539CU";
     const BLOCK: &str = "01HZ2539CBLKXXXXXXXXXXXXXX";
-    let space = crate::space::SpaceId::from_trusted("01HZ2539CSPACEXXXXXXXXXXXX");
+    let space = agaric_store::space::SpaceId::from_trusted("01HZ2539CSPACEXXXXXXXXXXXX");
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
@@ -9326,14 +9334,16 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
         .expect("script send ResetRequired");
 
         let bytes = {
-            let mut e = crate::loro::engine::LoroEngine::with_peer_id(PEER).expect("script engine");
+            let mut e =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id(PEER).expect("script engine");
             e.apply_create_block(BLOCK, "content", "caught-up content (#2539)", None, 0)
                 .expect("script create block");
             e.export_snapshot().expect("script export snapshot")
         };
         conn.send_json(&SyncMessage::LoroSync {
-            msg: crate::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
-                protocol_version: crate::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+            msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+                protocol_version:
+                    agaric_sync::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
                 space_id: script_space,
                 bytes,
             },
@@ -9352,7 +9362,7 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
-    let apply_host_ctx_9312: std::sync::Arc<dyn crate::apply_host::ApplyHost> =
+    let apply_host_ctx_9312: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let ctx = SyncSessionContext {
         pool: &pool,

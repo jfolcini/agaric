@@ -1,7 +1,7 @@
 use super::common::*;
-use crate::op_log;
 use crate::soft_delete;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op_log;
 
 // ======================================================================
 // restore_all_deleted — happy paths (B-46)
@@ -176,7 +176,7 @@ async fn restore_all_deleted_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf.page_id
             .as_ref()
-            .map(super::super::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: leaf starts under page_a"
     );
@@ -845,7 +845,7 @@ async fn restore_child_under_deleted_parent_restores_parent_chain() {
         .unwrap();
     {
         let mut conn = pool.acquire().await.unwrap();
-        crate::tag_inheritance::recompute_subtree_inheritance(&mut conn, "O1_PG")
+        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut conn, "O1_PG")
             .await
             .unwrap();
     }

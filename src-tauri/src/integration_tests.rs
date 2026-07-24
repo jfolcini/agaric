@@ -35,16 +35,16 @@ use crate::commands::tests::common::{
 };
 use crate::commands::*;
 use crate::db::{ReadPool, init_pool};
-use crate::draft;
-use crate::hash;
 use crate::materializer::Materializer;
-use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
-use crate::op_log;
-use crate::pagination::BlockRow;
 use crate::recovery;
-use crate::snapshot;
-use crate::space::{SpaceId, SpaceScope};
-use crate::ulid::BlockId;
+use agaric_core::hash;
+use agaric_core::ulid::BlockId;
+use agaric_engine::draft;
+use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
+use agaric_store::op_log;
+use agaric_store::pagination::BlockRow;
+use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_sync::snapshot;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -150,7 +150,11 @@ async fn settle_bg_tasks(mat: &Materializer) {
 /// synthetic pre-existing root is replayed straight into the engine. This lets
 /// subsequent child `CreateBlock` ops resolve their space (via the parent) and
 /// route through the engine path.
-async fn seed_page_both(pool: &SqlitePool, state: &crate::loro::shared::LoroState, id: &str) {
+async fn seed_page_both(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    id: &str,
+) {
     insert_block(pool, id, TYPE_PAGE, "seed-page", None, Some(1)).await;
     // Assign the page (and thus its future descendants) to the test space so
     // `resolve_block_space` succeeds for child ops.
@@ -216,7 +220,7 @@ async fn create_child_via_engine(
 /// (dense reproject) — not the fallback whose provisional `index + 1`
 /// positions would only COINCIDENTALLY match dense ranks. A future regression
 /// that drops `install_for_test` / the space assignment fails here loudly.
-fn assert_blocks_in_engine(state: &crate::loro::shared::LoroState, ids: &[&str]) {
+fn assert_blocks_in_engine(state: &agaric_engine::loro::shared::LoroState, ids: &[&str]) {
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
     let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
     for id in ids {
@@ -468,7 +472,7 @@ async fn recovery_on_empty_database_is_noop() {
         &pool,
         DEV,
         &mat,
-        &crate::loro::registry::LoroEngineRegistry::new(),
+        &agaric_engine::loro::registry::LoroEngineRegistry::new(),
     )
     .await
     .unwrap();
@@ -519,7 +523,7 @@ async fn recovery_flushes_unflushed_draft_as_edit_op() {
         &pool,
         DEV,
         &mat,
-        &crate::loro::registry::LoroEngineRegistry::new(),
+        &agaric_engine::loro::registry::LoroEngineRegistry::new(),
     )
     .await
     .unwrap();
@@ -600,7 +604,7 @@ async fn recovery_skips_already_flushed_draft_without_duplicate() {
         &pool,
         DEV,
         &mat,
-        &crate::loro::registry::LoroEngineRegistry::new(),
+        &agaric_engine::loro::registry::LoroEngineRegistry::new(),
     )
     .await
     .unwrap();
@@ -669,7 +673,7 @@ async fn recovery_unflushed_draft_with_prior_edit_includes_prev_edit() {
         &pool,
         DEV,
         &mat,
-        &crate::loro::registry::LoroEngineRegistry::new(),
+        &agaric_engine::loro::registry::LoroEngineRegistry::new(),
     )
     .await
     .unwrap();

@@ -3,9 +3,11 @@
 pub use crate::commands::*;
 pub use crate::db::ReadPool;
 pub use crate::db::init_pool;
-pub use crate::error::AppError;
+// kept (#2897): test-prelude re-exports consumed by sibling integration-test
+// modules via `use super::common::*` (siblings see only pub items).
 pub use crate::materializer::Materializer;
-pub use crate::space::{SpaceId, SpaceScope};
+pub use agaric_core::error::AppError;
+pub use agaric_store::space::{SpaceId, SpaceScope};
 pub use sqlx::SqlitePool;
 pub use std::path::PathBuf;
 pub use tempfile::TempDir;

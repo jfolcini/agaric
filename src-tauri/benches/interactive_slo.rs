@@ -50,7 +50,6 @@
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
-use agaric_lib::cache::rebuild_projected_agenda_cache;
 use agaric_lib::commands::{
     batch_resolve_inner, count_agenda_batch_inner, count_backlinks_batch_inner, create_block_inner,
     export_page_markdown_inner, get_block_inner, get_properties_inner, list_blocks_inner,
@@ -58,8 +57,9 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::op::OpRef;
-use agaric_lib::space::{SpaceId, SpaceScope};
+use agaric_store::cache::rebuild_projected_agenda_cache;
+use agaric_store::op::OpRef;
+use agaric_store::space::{SpaceId, SpaceScope};
 
 use sqlx::SqlitePool;
 use std::cell::Cell;
@@ -1262,7 +1262,7 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
                             .clone()
                             .into_iter()
                             .map(Into::into)
-                            .collect::<Vec<agaric_lib::ulid::PageId>>(),
+                            .collect::<Vec<agaric_core::ulid::PageId>>(),
                         &SpaceScope::Global,
                     )
                     .await
@@ -1485,7 +1485,7 @@ fn bench_list_page_links(c: &mut Criterion) {
     // cache (the production hot path is populated incrementally; this
     // wholesale rebuild is the same code FULL_CACHE_REBUILD_TASKS runs
     // on delete/restore/purge, just hoisted to fixture time).
-    rt.block_on(agaric_lib::cache::rebuild_page_link_cache(&pool))
+    rt.block_on(agaric_store::cache::rebuild_page_link_cache(&pool))
         .unwrap();
 
     let mut group = c.benchmark_group("interactive_slo");

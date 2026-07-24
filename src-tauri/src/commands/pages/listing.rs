@@ -13,14 +13,14 @@ use tauri::State;
 
 use crate::commands::tags::MAX_FILTER_TAG_IDS;
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::error::ValidationCode;
-use crate::pagination::{
+use agaric_core::error::AppError;
+use agaric_core::error::ValidationCode;
+use agaric_core::ulid::BlockId;
+use agaric_store::pagination::{
     self, BlockRow, NULL_POSITION_SENTINEL, PageRequest, PageResponse, position_keyset_binds,
     split_position_keyset_page,
 };
-use crate::space::SpaceScope;
-use crate::ulid::BlockId;
+use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
@@ -208,11 +208,11 @@ pub async fn get_page_inner(
     // conflict-copy exclusion was dropped in migration 0058.)
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
-                parent_id as "parent_id: crate::ulid::BlockId", position,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: agaric_core::ulid::BlockId", position,
                 deleted_at,
                  todo_state, priority, due_date, scheduled_date,
-                page_id as "page_id: crate::ulid::BlockId"
+                page_id as "page_id: agaric_core::ulid::BlockId"
          FROM blocks
          WHERE page_id = ?1
            AND id != ?1
@@ -563,10 +563,10 @@ pub async fn load_page_subtree_inner(
 
     let rows = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
-                parent_id as "parent_id: crate::ulid::BlockId", position,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: agaric_core::ulid::BlockId", position,
                 deleted_at, todo_state, priority, due_date,
-                scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+                scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks
            WHERE page_id = ?1
              AND id != ?1

@@ -1,14 +1,14 @@
 //! Tests for materializer queue coordination, dispatch routing, dedup logic, shutdown, flush barriers, and metrics.
 use super::*;
 use crate::db::init_pool;
-use crate::error::AppError;
-use crate::op::{
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     AddAttachmentPayload, AddTagPayload, CreateBlockPayload, DeleteAttachmentPayload,
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     PurgeBlockPayload, RestoreBlockPayload, SetPropertyPayload,
 };
-use crate::op_log::append_local_op;
-use crate::ulid::BlockId;
+use agaric_store::op_log::append_local_op;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc as StdArc;
@@ -33,7 +33,7 @@ pub(super) fn fake_op_record(op_type: &str, payload: &str) -> OpRecord {
     // test-only single-field `extract_block_id_from_payload` is no longer
     // reachable cross-crate now that op_log lives in `agaric-store`; use the
     // equivalent production single-pass extractor (its `.0` is the block_id).
-    let (block_id, _) = crate::op_log::extract_indexed_ids_from_payload(payload);
+    let (block_id, _) = agaric_store::op_log::extract_indexed_ids_from_payload(payload);
     OpRecord {
         device_id: DEV.into(),
         seq: 1,

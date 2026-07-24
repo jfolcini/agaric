@@ -21,7 +21,7 @@
 //!
 //! # Actor scoping
 //!
-//! Each call is wrapped in [`ACTOR::scope`](crate::mcp::actor::ACTOR) so
+//! Each call is wrapped in [`ACTOR::scope`](agaric_store::task_locals::ACTOR) so
 //! downstream `append_local_op_in_tx` stamps `origin = 'agent:<name>'`
 //! (slice 1). The server dispatcher already wraps outer
 //! `call_tool` invocations; scoping again here is idempotent and keeps
@@ -44,7 +44,6 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sqlx::SqlitePool;
 
-use super::actor::ActorContext;
 use super::dispatch::{scoped_dispatch, unknown_tool_error};
 use super::handler_utils::{
     normalize_ulid_arg, parse_args, to_tool_result, validate_block_in_space,
@@ -58,10 +57,11 @@ use crate::commands::{
     add_tag_inner, create_block_inner, create_block_inner_with_space, delete_block_inner,
     edit_block_inner, list_spaces_registry_inner, set_property_inner,
 };
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::space::{SpaceId, SpaceScope};
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::space::{SpaceId, SpaceScope};
+use agaric_store::task_locals::ActorContext;
 
 // ---------------------------------------------------------------------------
 // Typed argument structs (one per tool)
@@ -467,7 +467,7 @@ fn tool_desc_list_spaces() -> ToolDescription {
 /// #2505: resolve the owning-page id set for `seed` (post-commit) and emit
 /// `blocks:changed` so open views reload the touched page store(s).
 ///
-/// Reuses [`crate::sync_protocol::loro_sync::resolve_changed_page_ids`] — the
+/// Reuses [`agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids`] — the
 /// exact `parent_id`-chain walk the sync path (#1071) uses — so the payload is
 /// semantically identical to `SyncEvent::Complete`'s `changed_page_ids`. The
 /// walk reads `parent_id` (set synchronously in the command tx), NOT the
@@ -480,7 +480,7 @@ async fn emit_blocks_changed_for(
     emitter: &dyn ViewChangeEmitter,
     seed: BlockId,
 ) {
-    match crate::sync_protocol::loro_sync::resolve_changed_page_ids(
+    match agaric_sync::sync_protocol::loro_sync::resolve_changed_page_ids(
         pool,
         std::slice::from_ref(&seed),
     )
@@ -613,7 +613,8 @@ async fn handle_set_property(
     // `Some(TOOL_SET_PROPERTY)` keeps the agent-facing error message
     // naming the tool, without duplicating the precheck at this boundary.
     let active_id =
-        crate::ulid::verify_active(pool, &crate::ulid::BlockId::from_trusted(&block_id)).await?;
+        crate::ulid::verify_active(pool, &agaric_core::ulid::BlockId::from_trusted(&block_id))
+            .await?;
     // Clone the key for the property-changed emit below — `set_property_inner`
     // takes it by value.
     let key_for_emit = args.key.clone();
@@ -641,7 +642,7 @@ async fn handle_set_property(
     // property-change dispatcher needs no changes.
     emit_blocks_changed_for(pool, emitter, BlockId::from_trusted(&block_id)).await;
     emitter.emit_property_changed(block_id, vec![key_for_emit]);
-    to_tool_result(&crate::pagination::BlockRow::from(resp))
+    to_tool_result(&agaric_store::pagination::BlockRow::from(resp))
 }
 
 async fn handle_add_tag(
@@ -665,8 +666,8 @@ async fn handle_add_tag(
         pool,
         device_id,
         materializer,
-        crate::ulid::BlockId::from(block_id.clone()),
-        crate::ulid::BlockId::from(tag_id),
+        agaric_core::ulid::BlockId::from(block_id.clone()),
+        agaric_core::ulid::BlockId::from(tag_id),
     )
     .await?;
     // The tagged block's page re-renders (a tag chip appears on the block).

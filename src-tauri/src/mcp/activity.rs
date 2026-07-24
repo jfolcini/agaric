@@ -133,7 +133,7 @@ pub struct ActivityEntry {
     /// `bulk_set_property` and similar future tools that append more
     /// than one op per call).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub op_ref: Option<crate::op::OpRef>,
+    pub op_ref: Option<agaric_store::op::OpRef>,
     /// Forward-compat: any further `OpRef`s produced by the
     /// same tool call, in append order. Empty for the (current)
     /// single-op RW tools and for RO / failing tools. Defaults to
@@ -142,7 +142,7 @@ pub struct ActivityEntry {
     /// `mcp:activity` event stays compact for the common case.
     /// Serialised as `additionalOpRefs`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub additional_op_refs: Vec<crate::op::OpRef>,
+    pub additional_op_refs: Vec<agaric_store::op::OpRef>,
 }
 
 impl fmt::Debug for ActivityEntry {
@@ -450,13 +450,13 @@ pub struct ToolCompletionEvent<'a> {
     /// `None` for RO tools and for tools that produced no op.
     /// Captured from the `LAST_APPEND` task-local inside the
     /// tool dispatch scope.
-    pub op_ref: Option<crate::op::OpRef>,
+    pub op_ref: Option<agaric_store::op::OpRef>,
     /// Forward-compat: any further `OpRef`s produced by the
     /// same call, in append order. Empty for single-op tools (every
     /// RW tool today). Captured by draining the `LAST_APPEND`
     /// task-local in the dispatch scope and assigning index 0 to
     /// `op_ref` and the tail here.
-    pub additional_op_refs: Vec<crate::op::OpRef>,
+    pub additional_op_refs: Vec<agaric_store::op::OpRef>,
 }
 
 /// Convenience wrapper that builds an [`ActivityEntry`] with `Utc::now()`
@@ -483,7 +483,7 @@ pub fn emit_tool_completion(ctx: &ActivityContext, event: ToolCompletionEvent<'_
 // ---------------------------------------------------------------------------
 
 /// Test-only emitter that stores every emitted entry in a `Mutex<Vec<...>>`
-/// for later assertion. Modeled on [`crate::sync_events::RecordingEventSink`].
+/// for later assertion. Modeled on [`agaric_sync::sync_events::RecordingEventSink`].
 #[cfg(test)]
 #[derive(Debug, Default)]
 pub struct RecordingEmitter(pub Mutex<Vec<ActivityEntry>>);
@@ -711,7 +711,7 @@ mod tests {
         let emitter: Arc<dyn ActivityEmitter> = Arc::new(RecordingEmitter::new());
         let ctx = ActivityContext::new(ring.clone(), emitter.clone());
 
-        let op_ref = crate::op::OpRef {
+        let op_ref = agaric_store::op::OpRef {
             device_id: "DEV-A".to_string(),
             seq: 42,
         };
@@ -948,7 +948,7 @@ mod tests {
             agent_name: Some("claude".to_string()),
             result: ActivityResult::Ok,
             session_id: "01JABCDEFGHJKMNPQRSTVWXYZ0".to_string(),
-            op_ref: Some(crate::op::OpRef {
+            op_ref: Some(agaric_store::op::OpRef {
                 device_id: "DEV-A".to_string(),
                 seq: 7,
             }),
@@ -1007,16 +1007,16 @@ mod tests {
             agent_name: Some("claude".to_string()),
             result: ActivityResult::Ok,
             session_id: "SESS".to_string(),
-            op_ref: Some(crate::op::OpRef {
+            op_ref: Some(agaric_store::op::OpRef {
                 device_id: "DEV-A".to_string(),
                 seq: 1,
             }),
             additional_op_refs: vec![
-                crate::op::OpRef {
+                agaric_store::op::OpRef {
                     device_id: "DEV-A".to_string(),
                     seq: 2,
                 },
-                crate::op::OpRef {
+                agaric_store::op::OpRef {
                     device_id: "DEV-A".to_string(),
                     seq: 3,
                 },

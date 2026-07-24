@@ -16,13 +16,13 @@
 //! absolute.
 
 use crate::db::init_pool;
-use crate::loro::engine::PropertyValue;
-use crate::op::{
+use agaric_core::ulid::BlockId;
+use agaric_engine::loro::engine::PropertyValue;
+use agaric_store::op::{
     AddTagPayload, CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload,
     OpPayload, SPACE_PROPERTY_KEY, SetPropertyPayload,
 };
-use crate::space::SpaceId;
-use crate::ulid::BlockId;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -64,8 +64,12 @@ async fn fresh_pool_with_registered_space() -> (SqlitePool, TempDir) {
 
 /// Append `payload` to the op log and drive it through the production
 /// `apply_op_tx` (LOCAL path), committing.
-async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payload: OpPayload) {
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+async fn apply(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    payload: OpPayload,
+) {
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append op");
     let mut tx = pool.begin().await.expect("begin");
@@ -81,7 +85,7 @@ async fn apply(pool: &SqlitePool, state: &crate::loro::shared::LoroState, payloa
 /// and sync, so exercising the handler directly is the faithful path.
 async fn apply_set_property_direct(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     payload: SetPropertyPayload,
 ) {
     let mut tx = pool.begin().await.expect("begin");
@@ -130,7 +134,10 @@ async fn stamp_page_id(pool: &SqlitePool, block_id: &str) {
 
 /// Create page + child + grandchild with NO space, page_id stamped on the
 /// content blocks. Leaves the subtree in the pre-assignment #2249 state.
-async fn create_no_space_subtree(pool: &SqlitePool, state: &crate::loro::shared::LoroState) {
+async fn create_no_space_subtree(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+) {
     apply(pool, state, create_op(PAGE_ID, "page", None, "page")).await;
     apply(
         pool,
@@ -159,7 +166,7 @@ fn space() -> SpaceId {
 #[tokio::test]
 async fn no_space_creates_take_sql_only_fallback() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     let before = super::sql_only_fallback::count();
     apply(&pool, &state, create_op(PAGE_ID, "page", None, "page")).await;
@@ -193,7 +200,7 @@ async fn no_space_creates_take_sql_only_fallback() {
 #[tokio::test]
 async fn set_property_space_hydrates_subtree() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     create_no_space_subtree(&pool, &state).await;
 
     let before = super::sql_only_fallback::count();
@@ -248,7 +255,7 @@ async fn set_property_space_hydrates_subtree() {
 #[tokio::test]
 async fn subtree_ops_take_engine_path_after_hydration() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     // A tag block for the AddTag op (block_tags.tag_id REFERENCES blocks(id)).
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id) \
@@ -321,7 +328,7 @@ async fn subtree_ops_take_engine_path_after_hydration() {
 #[tokio::test]
 async fn engine_matches_sql_for_subtree() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position, space_id) \
              VALUES (?, 'tag', 'label', NULL, 0, ?)",
@@ -416,7 +423,7 @@ async fn engine_matches_sql_for_subtree() {
 #[tokio::test]
 async fn re_hydration_and_boot_replay_are_idempotent() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     create_no_space_subtree(&pool, &state).await;
     apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
 
@@ -476,7 +483,7 @@ async fn unregistered_space_skips_hydration() {
     const UNREGISTERED: &str = "01ARZ3NDEKTSV4RRFFQ69G5FB0";
 
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     create_no_space_subtree(&pool, &state).await;
 
     let before = super::sql_only_fallback::count();
@@ -505,7 +512,7 @@ async fn unregistered_space_skips_hydration() {
 #[tokio::test]
 async fn clearing_space_skips_hydration() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     create_no_space_subtree(&pool, &state).await;
     // First assign so there is something to clear.
     apply(&pool, &state, set_space_op(PAGE_ID, Some(SPACE_ID))).await;
@@ -575,7 +582,7 @@ async fn register_second_space(pool: &SqlitePool) {
 async fn reassignment_prunes_old_space_and_converges_only_in_new_2907() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
     register_second_space(&pool).await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     // Page + subtree, assigned to S1 first — this hydrates the whole subtree
     // into S1's per-space engine (the #2326 path).
@@ -629,10 +636,10 @@ async fn reassignment_prunes_old_space_and_converges_only_in_new_2907() {
     // FRESH PEER: import each per-space doc into its own fresh engine, exactly
     // as a peer receiving both per-space snapshots would.
     let mut peer_s1 =
-        crate::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s1");
+        agaric_engine::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s1");
     peer_s1.import(&s1_bytes).expect("import s1");
     let mut peer_s2 =
-        crate::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s2");
+        agaric_engine::loro::engine::LoroEngine::with_peer_id("fresh-peer-2907").expect("peer s2");
     peer_s2.import(&s2_bytes).expect("import s2");
 
     // Convergence: the subtree lives ONLY in S2 on the fresh peer — no S1
@@ -672,7 +679,7 @@ async fn reassignment_prunes_old_space_and_converges_only_in_new_2907() {
 #[tokio::test]
 async fn first_assignment_and_same_space_set_do_not_prune_2907() {
     let (pool, _dir) = fresh_pool_with_registered_space().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     create_no_space_subtree(&pool, &state).await;
 
     // FIRST assignment: old_space = None ⇒ prune nothing, hydrate S1.

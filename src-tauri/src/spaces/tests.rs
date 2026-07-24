@@ -15,7 +15,7 @@ use super::bootstrap::{
     migrate_personal_pages_to_work_for_test as migrate_personal_pages_to_work,
 };
 use crate::db::init_pool;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
 
 const DEV: &str = "test-device";
 

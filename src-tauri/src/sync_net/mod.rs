@@ -1,5 +1,5 @@
 //! #2621 Sync-D: production moved to [`agaric_sync::sync_net`]; this app-side
-//! shim re-exports it so every `crate::sync_net::…` path resolves unchanged, and
+//! app-side module hosts app-coupled tests (production lives in `agaric_sync::sync_net`);
 //! hosts the app-coupled tests (`src/sync_net/tests.rs`, which reach into the
 //! daemon / materializer glue that lives above `agaric-sync`).
 //!
@@ -9,7 +9,8 @@
 //! are re-declared under `#[cfg(test)]`.
 #![cfg_attr(test, allow(unused_imports))]
 
-pub use agaric_sync::sync_net::*;
+#[cfg(test)]
+use agaric_sync::sync_net::*;
 
 #[cfg(test)]
 use agaric_core::error::AppError;

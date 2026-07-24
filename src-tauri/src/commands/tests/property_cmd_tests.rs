@@ -1,7 +1,7 @@
 use super::super::*;
 use super::common::*;
-use crate::op_log;
-use crate::ulid::ActiveBlockId;
+use agaric_core::ulid::ActiveBlockId;
+use agaric_store::op_log;
 use chrono::Datelike;
 
 // ======================================================================
@@ -855,13 +855,13 @@ async fn batch_properties_empty_ids_returns_empty_map() {
 }
 
 /// #2542 — `get_batch_properties_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `block_ids`
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `block_ids`
 /// list rejects with Validation before the runaway `json_each(?1)` scan.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_batch_properties_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_batch_properties_inner(
@@ -2691,7 +2691,9 @@ async fn rebuild_agenda_cache_includes_scheduled_date_entries() {
     mat.flush_background().await.unwrap();
 
     // Rebuild agenda cache
-    crate::cache::rebuild_agenda_cache(&pool).await.unwrap();
+    agaric_store::cache::rebuild_agenda_cache(&pool)
+        .await
+        .unwrap();
 
     // Check that the agenda cache contains the entry
     let row = sqlx::query!(
@@ -3065,8 +3067,8 @@ async fn recurrence_daily_creates_next_occurrence() {
     // Find the new sibling block (any block with todo_state=TODO that isn't original)
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3168,8 +3170,8 @@ async fn recurrence_weekly_shifts_by_7_days() {
     // Find new block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3244,8 +3246,8 @@ async fn recurrence_monthly_handles_month_end() {
 
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3323,8 +3325,8 @@ async fn recurrence_custom_plus_3d() {
 
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3462,8 +3464,8 @@ async fn test_set_todo_state_recurrence_is_atomic() {
     // Find the new sibling block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3779,8 +3781,8 @@ async fn recurrence_continues_when_repeat_count_not_exhausted() {
     // Should create a new TODO block
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -3872,8 +3874,8 @@ async fn recurrence_sets_repeat_origin_on_sibling() {
     // Find the new sibling
     let new_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         block.id
     )
@@ -4087,8 +4089,8 @@ async fn set_todo_state_done_with_dot_plus_repeat_shifts_from_today() {
     // Find the sibling (new block with TODO state, same parent)
     let blocks = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )
@@ -4194,8 +4196,8 @@ async fn set_todo_state_done_with_plus_plus_repeat_catches_up() {
     // Find the sibling
     let blocks = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority,
-                due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority,
+                due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
          FROM blocks WHERE todo_state = 'TODO' AND id != ?1 AND deleted_at IS NULL"#,
         resp.id,
     )
@@ -5823,7 +5825,7 @@ async fn get_property_normalizes_lowercase_block_id() {
 
     let row = get_property_inner(
         &pool,
-        &crate::ulid::BlockId::from(lower),
+        &agaric_core::ulid::BlockId::from(lower),
         "journal_template",
     )
     .await
@@ -5883,7 +5885,7 @@ async fn set_todo_state_batch_writes_one_tx_for_n_blocks() {
         ids.clone()
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::BlockId>>(),
+            .collect::<Vec<agaric_core::ulid::BlockId>>(),
         Some("DONE".into()),
     )
     .await
@@ -6171,7 +6173,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_todo_state_batch_inner(
@@ -6181,7 +6183,7 @@ async fn set_todo_state_batch_rejects_oversize_list() {
         oversize
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::BlockId>>(),
+            .collect::<Vec<agaric_core::ulid::BlockId>>(),
         Some("TODO".into()),
     )
     .await;
@@ -6273,7 +6275,7 @@ async fn set_property_batch_writes_one_tx_for_n_blocks() {
         ids.clone()
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::BlockId>>(),
+            .collect::<Vec<agaric_core::ulid::BlockId>>(),
         "todo_state".into(),
         Some("DONE".into()),
     )
@@ -6545,7 +6547,7 @@ async fn set_property_batch_rejects_oversize_list() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let result = set_property_batch_inner(
@@ -6555,7 +6557,7 @@ async fn set_property_batch_rejects_oversize_list() {
         oversize
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::BlockId>>(),
+            .collect::<Vec<agaric_core::ulid::BlockId>>(),
         "todo_state".into(),
         Some("TODO".into()),
     )

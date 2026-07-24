@@ -3,18 +3,18 @@
 //!
 //! `peer_refs` itself moved down into `agaric-store`, and its unit tests moved
 //! with it. The one test below exercises the pending-pairing marker round-trip
-//! using `crate::pairing::pairing_proof` — an app-only helper that cannot move
+//! using `agaric_sync::pairing::pairing_proof` — an app-only helper that cannot move
 //! into the store — so it stays here, driving the re-exported
-//! `crate::peer_refs::…` API against the app's test pool.
+//! `agaric_store::peer_refs::…` API against the app's test pool.
 
-use crate::peer_refs::{
+use agaric_store::peer_refs::{
     clear_pending_pairing, get_pending_pairing_proof, is_pending_pairing, set_pending_pairing,
 };
 
 #[tokio::test]
 async fn pending_pairing_set_check_clear_roundtrip() {
     let (pool, _dir) = crate::commands::tests::common::test_pool().await;
-    let proof = crate::pairing::pairing_proof("correct horse battery staple");
+    let proof = agaric_sync::pairing::pairing_proof("correct horse battery staple");
 
     assert!(
         !is_pending_pairing(&pool).await.unwrap(),

@@ -28,13 +28,13 @@ use sqlx::SqlitePool;
 use tauri::State;
 
 use crate::db::{CommandTx, ReadPool};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{DeletePropertyPayload, OpPayload, UndoResult, is_reserved_property_key};
-use crate::op_log;
-use crate::pagination::{self, BlockRow, HistoryEntry, PageResponse};
-use crate::pairing::PairingSession;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{DeletePropertyPayload, OpPayload, UndoResult, is_reserved_property_key};
+use agaric_store::op_log;
+use agaric_store::pagination::{self, BlockRow, HistoryEntry, PageResponse};
+use agaric_sync::pairing::PairingSession;
 
 // Domain sub-modules
 pub(crate) mod advanced_query;
@@ -192,37 +192,37 @@ pub use tags::{
 
 // pub(crate) helpers used by other crate modules (e.g. recurrence.rs)
 // #882: `create_block_in_tx` / `set_property_in_tx` moved to the neutral
-// `crate::domain::block_ops` layer (removing the residual
+// `agaric_engine::block_ops` layer (removing the residual
 // `recurrence → commands` / `spaces → commands` upward edges). Re-export
 // keeps `crate::commands::{create_block_in_tx, set_property_in_tx}` and the
 // ~20 command-internal callers (journal/pages/spaces/properties, via the
 // `super::*` glob) churn-free. `delete_property_in_tx` still lives in
 // `commands::blocks`.
-pub(crate) use crate::domain::block_ops::{create_block_in_tx, set_property_in_tx};
+pub(crate) use agaric_engine::block_ops::{create_block_in_tx, set_property_in_tx};
 pub(crate) use blocks::delete_property_in_tx;
 // #642: `is_valid_iso_date` (+ its delegate `validate_date_format`) moved to
-// the neutral `crate::domain::block_ops` layer. Re-export keeps the
+// the neutral `agaric_engine::block_ops` layer. Re-export keeps the
 // `crate::commands::is_valid_iso_date` / `crate::commands::validate_date_format`
 // paths and every unqualified command-internal caller (via the `super::*`
 // glob) churn-free; `recurrence` now imports `is_valid_iso_date` directly
-// from `crate::domain::block_ops`.
-pub(crate) use crate::domain::block_ops::{is_valid_iso_date, validate_date_format};
+// from `agaric_engine::block_ops`.
+pub(crate) use agaric_engine::block_ops::{is_valid_iso_date, validate_date_format};
 
 // #882: `MAX_CONTENT_LENGTH` / `MAX_BLOCK_DEPTH` moved alongside
-// `create_block_in_tx` into `crate::domain::block_ops`. Re-export keeps
+// `create_block_in_tx` into `agaric_engine::block_ops`. Re-export keeps
 // `crate::commands::MAX_CONTENT_LENGTH` (MCP #699, tests) and every
 // glob-internal caller (`move_ops.rs`, `drafts.rs`) resolving unchanged.
-pub(crate) use crate::domain::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
+pub(crate) use agaric_engine::block_ops::{MAX_BLOCK_DEPTH, MAX_CONTENT_LENGTH};
 
 // The `MAX_BATCH_BLOCK_IDS` cap and its shared `ensure_batch_within_cap`
-// guard moved down into `crate::pagination` (the store layer) so store-side
+// guard moved down into `agaric_store::pagination` (the store layer) so store-side
 // callers like `pagination::trash::trash_descendant_counts` enforce the cap
 // without reaching *up* into `commands`. The guard helper is re-exported
 // here so every production `*_by_ids` call site keeps using
 // `crate::commands::ensure_batch_within_cap` unchanged; the `MAX_BATCH_BLOCK_IDS`
-// constant is referenced directly at its store home (`crate::pagination::…`)
+// constant is referenced directly at its store home (`agaric_store::pagination::…`)
 // by the doc-links / tests that cite it, so it needs no (lib-unused) re-export.
-pub(crate) use crate::pagination::ensure_batch_within_cap;
+pub(crate) use agaric_store::pagination::ensure_batch_within_cap;
 
 /// Maximum allowed attachment size (50 MB).
 ///
@@ -271,7 +271,7 @@ const ALLOWED_MIME_PATTERNS: &[&str] = &[
 // Response types
 // ---------------------------------------------------------------------------
 
-// #642: `validate_date_format` moved to `crate::domain::block_ops` (pure;
+// #642: `validate_date_format` moved to `agaric_engine::block_ops` (pure;
 // `AppError` + `chrono` only) and is re-exported above so the unqualified
 // command-internal callers (agenda / journal / blocks::queries) keep
 // resolving it via the `super::*` glob unchanged.
@@ -410,11 +410,11 @@ pub struct WithOps<T> {
     #[serde(flatten)]
     pub inner: T,
     /// The op-log refs appended by this command, in append order.
-    pub op_refs: Vec<crate::op::OpRef>,
+    pub op_refs: Vec<agaric_store::op::OpRef>,
 }
 
 /// #2468: run a mutating command future inside a
-/// [`crate::task_locals::LAST_APPEND`] capture scope and attach the
+/// [`agaric_store::task_locals::LAST_APPEND`] capture scope and attach the
 /// harvested `OpRef`s to the response.
 ///
 /// This reuses the exact mechanism the MCP dispatch layer uses to attribute
@@ -430,10 +430,10 @@ pub(crate) async fn capture_op_refs<T, F>(fut: F) -> Result<WithOps<T>, AppError
 where
     F: std::future::Future<Output = Result<T, AppError>>,
 {
-    let (result, op_refs) = crate::task_locals::LAST_APPEND
+    let (result, op_refs) = agaric_store::task_locals::LAST_APPEND
         .scope(std::cell::RefCell::new(Vec::new()), async move {
             let r = fut.await;
-            let refs = crate::task_locals::take_appends();
+            let refs = agaric_store::task_locals::take_appends();
             (r, refs)
         })
         .await;
@@ -522,8 +522,8 @@ pub struct SetPropertyArgs {
 
 #[derive(Debug, Clone, Serialize, serde::Deserialize, sqlx::FromRow, specta::Type)]
 pub struct AttachmentRow {
-    pub id: crate::ulid::BlockId,
-    pub block_id: crate::ulid::BlockId,
+    pub id: agaric_core::ulid::BlockId,
+    pub block_id: agaric_core::ulid::BlockId,
     pub mime_type: String,
     pub filename: String,
     pub size_bytes: i64,
@@ -658,7 +658,7 @@ pub struct ResolvedBlock {
 /// Internal row type for the batch_resolve query (sqlx-compatible).
 #[derive(Debug, sqlx::FromRow)]
 struct ResolvedBlockRow {
-    id: crate::ulid::BlockId,
+    id: agaric_core::ulid::BlockId,
     title: Option<String>,
     block_type: String,
     deleted: Option<bool>,
@@ -771,7 +771,7 @@ async fn delete_property_core(
 /// Internal row type for the batch properties query (sqlx-compatible).
 #[derive(Debug, sqlx::FromRow)]
 struct BatchPropertyRow {
-    block_id: crate::ulid::BlockId,
+    block_id: agaric_core::ulid::BlockId,
     key: String,
     value_text: Option<String>,
     value_num: Option<f64>,
@@ -809,21 +809,21 @@ struct RepeatingBlockRow {
 }
 
 impl RepeatingBlockRow {
-    /// Extract the core [`crate::pagination::ActiveBlockRow`] fields
-    /// (used when building [`crate::pagination::ActiveProjectedAgendaEntry`]
+    /// Extract the core [`agaric_store::pagination::ActiveBlockRow`] fields
+    /// (used when building [`agaric_store::pagination::ActiveProjectedAgendaEntry`]
     /// values). The SQL that produced this row filters
     /// `deleted_at IS NULL` (see
     /// `commands/agenda.rs::list_projected_agenda_on_the_fly`), so the
     /// active claim is sound.
-    fn to_active_block_row(&self) -> crate::pagination::ActiveBlockRow {
-        crate::pagination::ActiveBlockRow {
-            id: crate::ulid::ActiveBlockId::from_trusted_active(&self.id),
+    fn to_active_block_row(&self) -> agaric_store::pagination::ActiveBlockRow {
+        agaric_store::pagination::ActiveBlockRow {
+            id: agaric_core::ulid::ActiveBlockId::from_trusted_active(&self.id),
             block_type: self.block_type.clone(),
             content: self.content.clone(),
             parent_id: self
                 .parent_id
                 .as_deref()
-                .map(crate::ulid::BlockId::from_trusted),
+                .map(agaric_core::ulid::BlockId::from_trusted),
             position: self.position,
             deleted_at: self.deleted_at,
             todo_state: self.todo_state.clone(),
@@ -833,7 +833,7 @@ impl RepeatingBlockRow {
             page_id: self
                 .page_id
                 .as_deref()
-                .map(crate::ulid::BlockId::from_trusted),
+                .map(agaric_core::ulid::BlockId::from_trusted),
         }
     }
 }
@@ -911,7 +911,7 @@ pub(crate) fn sanitize_internal_error(err: AppError) -> AppError {
 #[cfg(test)]
 mod sanitize_internal_error_tests {
     use super::{new_error_id, sanitize_internal_error};
-    use crate::error::AppError;
+    use agaric_core::error::AppError;
 
     /// Extract the `<id>` from `...(err: <id>)` so tests can assert its shape.
     fn extract_id(msg: &str) -> &str {

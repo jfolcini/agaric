@@ -1,7 +1,7 @@
 //! Frontend logging command handlers (F-19).
 
 use super::sanitize_internal_error;
-use crate::error::AppError;
+use agaric_core::error::AppError;
 
 /// Per-field byte ceiling applied at the IPC boundary. The
 /// frontend rate-limiter caps emission frequency, but a single
@@ -16,7 +16,7 @@ pub(crate) const MAX_FRONTEND_LOG_FIELD_BYTES: usize = 64 * 1024;
 
 /// Truncate a single frontend log field to [`MAX_FRONTEND_LOG_FIELD_BYTES`].
 ///
-/// Delegates to [`crate::text_utils::truncate_at_char_boundary`]:
+/// Delegates to [`agaric_core::text_utils::truncate_at_char_boundary`]:
 /// preserve the head of the field, append a `…[truncated N bytes]`
 /// marker, and split on a UTF-8 char boundary so the cut never lands
 /// inside a multibyte codepoint. The marker wording is owned here so
@@ -26,7 +26,7 @@ pub(crate) const MAX_FRONTEND_LOG_FIELD_BYTES: usize = 64 * 1024;
 /// Returns the input unchanged when its length is at or below the cap
 /// — no allocation in the common case.
 pub(crate) fn truncate_log_field(s: String) -> String {
-    crate::text_utils::truncate_at_char_boundary(s, MAX_FRONTEND_LOG_FIELD_BYTES, |extra| {
+    agaric_core::text_utils::truncate_at_char_boundary(s, MAX_FRONTEND_LOG_FIELD_BYTES, |extra| {
         format!("…[truncated {extra} bytes]")
     })
 }

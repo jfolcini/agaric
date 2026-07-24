@@ -1,7 +1,7 @@
 use super::*;
 use crate::db::init_pool;
-use crate::op::MoveBlockPayload;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::MoveBlockPayload;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 

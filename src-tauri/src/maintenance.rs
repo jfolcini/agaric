@@ -2,7 +2,7 @@
 //!
 //! A general-purpose maintenance loop for periodic cleanups that do not
 //! belong inside the materializer's hot path. Modelled on
-//! [`crate::draft::spawn_orphan_drafts_sweeper`] (single `tokio::spawn` +
+//! [`agaric_engine::draft::spawn_orphan_drafts_sweeper`] (single `tokio::spawn` +
 //! `tokio::time::interval` ticker) but generalised over a vector of
 //! [`MaintenanceJob`] entries, so new jobs are added simply by extending
 //! the vector at the spawn site (see `lib.rs`) without re-wiring the daemon.
@@ -19,7 +19,7 @@
 //! trace easier to read during an incident.
 //!
 //! Lifecycle: shutdown via the same shared `AtomicBool` shape used by
-//! [`crate::draft::spawn_orphan_drafts_sweeper`] and
+//! [`agaric_engine::draft::spawn_orphan_drafts_sweeper`] and
 //! [`crate::materializer::retry_queue::spawn_sweeper`] — the daemon
 //! polls the flag at the top of each tick and exits cleanly. The
 //! per-job `predicate` closure is the right hook for app-state gating
@@ -44,7 +44,7 @@
 //!     [`loro_snapshot_if_dirty`], and `projected_agenda_midnight_tick` —
 //!     the remaining materializer-enqueue / snapshot / agenda jobs.
 
-use crate::error::AppError;
+use agaric_core::error::AppError;
 use chrono::Datelike;
 use sqlx::SqlitePool;
 use std::future::Future;
@@ -337,9 +337,9 @@ pub async fn tombstone_purge(
 /// there is no "registry not yet initialised" skip arm anymore.
 pub async fn loro_snapshot_if_dirty(
     write_pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) -> Result<(), AppError> {
-    let ok = crate::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
+    let ok = agaric_engine::loro::snapshot::save_all_engines(write_pool, &state.registry).await;
     tracing::debug!(saved = ok, "loro_snapshot_if_dirty tick ran");
     Ok(())
 }
@@ -380,7 +380,7 @@ pub async fn projected_agenda_midnight_tick(
 }
 
 /// Spawn the maintenance daemon. Mirrors the shape of
-/// [`crate::draft::spawn_orphan_drafts_sweeper`] and
+/// [`agaric_engine::draft::spawn_orphan_drafts_sweeper`] and
 /// [`crate::materializer::retry_queue::spawn_sweeper`]: fire-and-forget,
 /// polls a shared shutdown flag on each tick, sequential job execution.
 ///
@@ -886,7 +886,7 @@ mod tests {
         let pool = crate::db::init_pool(&dir.path().join("test.db"))
             .await
             .unwrap();
-        loro_snapshot_if_dirty(&pool, &crate::loro::shared::LoroState::new())
+        loro_snapshot_if_dirty(&pool, &agaric_engine::loro::shared::LoroState::new())
             .await
             .expect("loro_snapshot_if_dirty must succeed on a fresh, empty registry");
     }

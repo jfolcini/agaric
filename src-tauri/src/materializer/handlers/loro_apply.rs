@@ -15,8 +15,8 @@ pub(crate) use agaric_engine::apply::loro_apply::*;
 #[cfg(test)]
 mod purge_derived_tables_tests {
     use crate::db::init_pool;
-    use crate::op::PurgeBlockPayload;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::PurgeBlockPayload;
 
     /// #1583: `purge_block_sql_cascade` must EXPLICITLY clear
     /// `block_tag_refs` and `page_link_cache` for the purged subtree
@@ -182,8 +182,8 @@ mod purge_derived_tables_tests {
 
         // Purge block A (deletes only its attachment ROW — never the file).
         let mut conn = pool.acquire().await.expect("acquire");
-        let payload = crate::op::PurgeBlockPayload {
-            block_id: crate::ulid::BlockId::from_trusted(BLK_A),
+        let payload = agaric_store::op::PurgeBlockPayload {
+            block_id: agaric_core::ulid::BlockId::from_trusted(BLK_A),
         };
         super::purge_block_sql_cascade(&mut conn, &payload)
             .await

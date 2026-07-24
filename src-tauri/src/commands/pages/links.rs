@@ -12,8 +12,8 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::{ReadPool, WritePool};
-use crate::error::AppError;
-use crate::space::SpaceScope;
+use agaric_core::error::AppError;
+use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
@@ -114,7 +114,7 @@ pub async fn list_page_links_inner(
 ///
 /// All reads (the cache-empty probe, the `block_links` presence probe, and
 /// the final SELECT) go through `read_pool`; only the rebuild touches
-/// `write_pool` via [`crate::cache::rebuild_page_link_cache_split`].
+/// `write_pool` via [`agaric_store::cache::rebuild_page_link_cache_split`].
 #[instrument(skip(write_pool, read_pool, tag_ids), err)]
 pub async fn list_page_links_inner_split(
     write_pool: &SqlitePool,
@@ -180,7 +180,7 @@ pub async fn list_page_links_inner_split_with_cap(
                 .await?
                 == 1;
         if block_links_present {
-            crate::cache::rebuild_page_link_cache_split(write_pool, read_pool).await?;
+            agaric_store::cache::rebuild_page_link_cache_split(write_pool, read_pool).await?;
         }
     }
 
@@ -250,8 +250,8 @@ pub async fn list_page_links_inner_split_with_cap(
              WHERE space_id = ?1
          )
          SELECT
-            plc.source_page_id AS "source_id!: crate::ulid::UlidInline",
-            plc.target_page_id AS "target_id!: crate::ulid::UlidInline",
+            plc.source_page_id AS "source_id!: agaric_core::ulid::UlidInline",
+            plc.target_page_id AS "target_id!: agaric_core::ulid::UlidInline",
             plc.edge_count AS "ref_count!: i64"
          FROM page_link_cache plc
          WHERE plc.source_page_id != plc.target_page_id

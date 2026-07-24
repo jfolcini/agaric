@@ -1,7 +1,6 @@
 //! #2621 Sync-D: production moved to [`agaric_sync::sync_protocol`]; this
-//! app-side shim re-exports it so every `crate::sync_protocol::…` path resolves
-//! unchanged, and hosts the app-coupled tests (which reference app-only
-//! `Materializer` / `recovery`).
+//! app-side module hosts the app-coupled tests (which reference app-only
+//! `Materializer` / `recovery`); production lives in `agaric_sync::sync_protocol`.
 //!
 //! `loro_sync_tests.rs` was an inline child of the `loro_sync` submodule, so its
 //! `use super::*` reached `loro_sync`'s namespace; it is hosted in a wrapper that
@@ -9,7 +8,8 @@
 //! escapes the inline-module directory back to `src/sync_protocol/`.
 #![cfg_attr(test, allow(unused_imports))]
 
-pub use agaric_sync::sync_protocol::*;
+#[cfg(test)]
+use agaric_sync::sync_protocol::*;
 
 #[cfg(test)]
 mod tests;

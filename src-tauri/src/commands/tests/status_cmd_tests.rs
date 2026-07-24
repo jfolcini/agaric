@@ -64,7 +64,7 @@ async fn get_status_returns_initial_metrics() {
 /// must appear in `StatusInfo.sync_peer_failure_counts`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn get_status_surfaces_peer_failure_counts() {
-    use crate::sync_scheduler::SyncScheduler;
+    use agaric_sync::sync_scheduler::SyncScheduler;
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = SyncScheduler::new();

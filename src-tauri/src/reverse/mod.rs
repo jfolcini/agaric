@@ -16,8 +16,8 @@ use sqlx::SqlitePool;
 use std::str::FromStr;
 
 use crate::db::ReadPool;
-use crate::error::AppError;
-use crate::op::{OpPayload, OpType};
+use agaric_core::error::AppError;
+use agaric_store::op::{OpPayload, OpType};
 
 pub async fn compute_reverse(
     pool: &SqlitePool,
@@ -25,7 +25,8 @@ pub async fn compute_reverse(
     seq: i64,
 ) -> Result<OpPayload, AppError> {
     // I-Core-8: wrap to typed read-pool — caller is in write context
-    let record = crate::op_log::get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await?;
+    let record =
+        agaric_store::op_log::get_op_by_seq(&ReadPool(pool.clone()), device_id, seq).await?;
     let op_type = OpType::from_str(&record.op_type)
         .map_err(|e| AppError::validation(format!("unknown op_type in record: {e}")))?;
     match op_type {

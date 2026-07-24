@@ -3,9 +3,9 @@
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op_log::OpRecord;
 
 /// Restore a soft-deleted block and the connected same-cohort subtree
 /// descending from it.
@@ -21,7 +21,7 @@ use crate::op_log::OpRecord;
 /// make that fan-out observable in tests, not as guidance for a production
 /// caller. Do NOT wire this into production.
 ///
-/// #1119: cohort filter uses the shared [`crate::descendants_cte_cohort`]
+/// #1119: cohort filter uses the shared [`agaric_store::descendants_cte_cohort`]
 /// walk (the same primitive #1055 adopted in
 /// `project_restore_block_to_sql`, `apply_restore_block_sql_only`, and
 /// `collect_restore_cohort`), so cohort identity is keyed on
@@ -71,7 +71,7 @@ pub async fn restore_block(
     // recursive arm and again for the outer filter.
     // dynamic-sql: recursive cohort CTE built via `concat!` of the `descendants_cte_cohort!` macro expansion (not a string literal, so `sqlx::query!` is unusable)
     let result = sqlx::query(concat!(
-        crate::descendants_cte_cohort!(),
+        agaric_store::descendants_cte_cohort!(),
         "UPDATE blocks SET deleted_at = NULL \
          WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
     ))
@@ -87,7 +87,7 @@ pub async fn restore_block(
     // detection + surfacing here. Standard-variant helper is invariant
     // to deleted_at state, so post-cascade it walks the now-restored
     // subtree and reports MAX depth correctly.
-    if crate::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
+    if agaric_store::block_descendants::cascade_depth_saturated(&mut **tx, block_id).await? {
         tracing::warn!(
             block_id = %block_id,
             op = "restore_block",
@@ -209,7 +209,9 @@ mod tests {
 
         // Baseline: `pages_cache` filters `deleted_at IS NULL`, so the
         // seed page is absent.
-        crate::cache::rebuild_pages_cache(&pool).await.unwrap();
+        agaric_store::cache::rebuild_pages_cache(&pool)
+            .await
+            .unwrap();
         let pre_count: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM pages_cache WHERE page_id = ?")
                 .bind(page_id)

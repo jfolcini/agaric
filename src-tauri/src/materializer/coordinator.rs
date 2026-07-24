@@ -6,8 +6,8 @@ use super::{
     BACKGROUND_CAPACITY, FOREGROUND_CAPACITY, MaterializeTask, QUEUE_PRESSURE_DENOMINATOR,
     QUEUE_PRESSURE_NUMERATOR,
 };
-use crate::error::AppError;
-use crate::foreground::LifecycleHooks;
+use agaric_core::error::AppError;
+use agaric_sync::foreground::LifecycleHooks;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -205,7 +205,7 @@ pub struct Materializer {
     /// `commit_and_dispatch`) reach engine state through
     /// [`Self::loro_state`]; the queue consumers thread a clone into
     /// `apply_op` / `apply_op_tx`.
-    pub(super) loro: Arc<crate::loro::shared::LoroState>,
+    pub(super) loro: Arc<agaric_engine::loro::shared::LoroState>,
     /// #2291: shared trailing-debounce state coalescing the inbound-sync
     /// cache-rebuild fan-out. Armed by
     /// [`Self::arm_inbound_rebuild_debounce`] on each inbound import drain;
@@ -332,7 +332,7 @@ impl Drop for PendingRefreshGuard {
 
 impl Materializer {
     /// Test/tooling convenience constructor: single pool, no lifecycle
-    /// hooks, and a FRESH per-instance [`crate::loro::shared::LoroState`]
+    /// hooks, and a FRESH per-instance [`agaric_engine::loro::shared::LoroState`]
     /// — each `Materializer::new` owns an isolated engine registry,
     /// which is exactly the per-test isolation contract (#2249). Engine
     /// state is reachable via [`Self::loro_state`].
@@ -342,7 +342,7 @@ impl Materializer {
             None,
             pool,
             None,
-            Arc::new(crate::loro::shared::LoroState::new()),
+            Arc::new(agaric_engine::loro::shared::LoroState::new()),
         )
     }
 
@@ -352,7 +352,7 @@ impl Materializer {
             Some(read_pool.clone()),
             read_pool,
             None,
-            Arc::new(crate::loro::shared::LoroState::new()),
+            Arc::new(agaric_engine::loro::shared::LoroState::new()),
         )
     }
 
@@ -371,7 +371,7 @@ impl Materializer {
         write_pool: SqlitePool,
         read_pool: SqlitePool,
         lifecycle: LifecycleHooks,
-        loro: Arc<crate::loro::shared::LoroState>,
+        loro: Arc<agaric_engine::loro::shared::LoroState>,
     ) -> Self {
         Self::build(
             write_pool,
@@ -400,7 +400,7 @@ impl Materializer {
         read_pool_for_consumer: Option<SqlitePool>,
         reader_pool_for_caches: SqlitePool,
         lifecycle: Option<LifecycleHooks>,
-        loro: Arc<crate::loro::shared::LoroState>,
+        loro: Arc<agaric_engine::loro::shared::LoroState>,
     ) -> Self {
         let (fg_tx, fg_rx) = mpsc::channel::<MaterializeTask>(FOREGROUND_CAPACITY);
         let (bg_tx, bg_rx) = mpsc::channel::<MaterializeTask>(BACKGROUND_CAPACITY);
@@ -537,7 +537,7 @@ impl Materializer {
     /// `&Materializer` for `commit_and_dispatch`) thread this into the
     /// shared `apply_*_via_loro` helpers; tests use it to seed/assert
     /// engine state for the SAME registry the apply pipeline mutates.
-    pub fn loro_state(&self) -> &Arc<crate::loro::shared::LoroState> {
+    pub fn loro_state(&self) -> &Arc<agaric_engine::loro::shared::LoroState> {
         &self.loro
     }
 
@@ -1129,7 +1129,7 @@ impl Materializer {
     }
 
     pub async fn status(&self) -> StatusInfo {
-        self.status_with_scheduler::<crate::sync_scheduler::SyncScheduler>(None)
+        self.status_with_scheduler::<agaric_sync::sync_scheduler::SyncScheduler>(None)
             .await
     }
 
@@ -1254,8 +1254,8 @@ impl Materializer {
             // #1319: surface the cross-session sync snapshot-fallback
             // aggregate (process-global, monotonic count + last occurrence)
             // through the status endpoint.
-            snapshot_fallback_count: crate::sync_protocol::snapshot_fallback_metrics::count(),
-            snapshot_fallback_last: crate::sync_protocol::snapshot_fallback_metrics::last(),
+            snapshot_fallback_count: agaric_sync::sync_protocol::snapshot_fallback_metrics::count(),
+            snapshot_fallback_last: agaric_sync::sync_protocol::snapshot_fallback_metrics::last(),
         }
     }
 }
@@ -1297,15 +1297,15 @@ const POST_SNAPSHOT_CACHE_REBUILDS: &[(&str, MaterializeTask)] = &[
 ];
 
 #[async_trait::async_trait]
-impl crate::apply_host::ApplyHost for Materializer {
-    fn loro_state(&self) -> Arc<crate::loro::shared::LoroState> {
+impl agaric_sync::apply_host::ApplyHost for Materializer {
+    fn loro_state(&self) -> Arc<agaric_engine::loro::shared::LoroState> {
         std::sync::Arc::clone(self.loro_state())
     }
 
     async fn enqueue_inbound_sync_rebuilds(
         &self,
-        changed_blocks: &[crate::ulid::BlockId],
-        purged_blocks: &[crate::ulid::BlockId],
+        changed_blocks: &[agaric_core::ulid::BlockId],
+        purged_blocks: &[agaric_core::ulid::BlockId],
     ) -> Result<(), AppError> {
         Materializer::enqueue_inbound_sync_rebuilds(self, changed_blocks, purged_blocks).await
     }
@@ -1382,7 +1382,7 @@ impl crate::apply_host::ApplyHost for Materializer {
 /// `Materializer` (tests) or an already-erased `Arc<dyn ApplyHost>`
 /// (production) uniformly via `impl Into<Arc<dyn ApplyHost>>`, wrapping the
 /// concrete coordinator exactly once with no double indirection.
-impl From<Materializer> for Arc<dyn crate::apply_host::ApplyHost> {
+impl From<Materializer> for Arc<dyn agaric_sync::apply_host::ApplyHost> {
     fn from(materializer: Materializer) -> Self {
         Arc::new(materializer)
     }
@@ -1396,7 +1396,7 @@ pub trait SchedulerLike {
     fn failure_counts_snapshot(&self) -> Vec<(String, u32)>;
 }
 
-impl SchedulerLike for crate::sync_scheduler::SyncScheduler {
+impl SchedulerLike for agaric_sync::sync_scheduler::SyncScheduler {
     fn failure_counts_snapshot(&self) -> Vec<(String, u32)> {
         self.failure_counts()
     }

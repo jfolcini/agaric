@@ -39,7 +39,7 @@ use crate::db::{DbPools, base_connect_options};
 /// change.
 pub struct WriteCtx {
     write: SqlitePool,
-    device_id: crate::device::DeviceId,
+    device_id: agaric_sync::device::DeviceId,
     materializer: crate::materializer::Materializer,
 }
 
@@ -47,7 +47,7 @@ impl WriteCtx {
     /// Construct from the same values backing the standalone managed states.
     pub fn new(
         write: SqlitePool,
-        device_id: crate::device::DeviceId,
+        device_id: agaric_sync::device::DeviceId,
         materializer: crate::materializer::Materializer,
     ) -> Self {
         Self {
@@ -89,7 +89,7 @@ impl WriteCtx {
 /// means a latent bug leaked the sentinel, so surface it with a `warn`.
 async fn clear_leaked_bypass_sentinel(
     write_pool: &SqlitePool,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), agaric_core::error::AppError> {
     let cleared = sqlx::query!("DELETE FROM _op_log_mutation_allowed")
         .execute(write_pool)
         .await?
@@ -325,7 +325,7 @@ fn prune_old_backups(db_path: &Path, keep: usize) {
 ///
 /// Enables `PRAGMA foreign_keys = ON` on every connection in both pools —
 /// SQLite does NOT enforce FK constraints by default, so this is mandatory.
-pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppError> {
+pub async fn init_pools(db_path: &Path) -> Result<DbPools, agaric_core::error::AppError> {
     // #2919 — snapshot the existing on-disk vault before migrations run. No-op
     // for a fresh or in-memory DB. Must precede the pool connect below so a
     // fresh vault's `create_if_missing` shell isn't mistaken for real data.
@@ -414,7 +414,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
         // `sqlx::Error::Configuration` → `From<sqlx::Error>` so we honour the
         // "never construct `AppError::Database` directly" invariant on the
         // enum and the failure lands as `kind: "database"`.
-        return Err(crate::error::AppError::from(sqlx::Error::Configuration(
+        return Err(agaric_core::error::AppError::from(sqlx::Error::Configuration(
             format!(
                 "read pool failed query_only assertion at boot: PRAGMA query_only = {query_only} \
                  (expected 1); the read pool is not write-protected"
@@ -452,7 +452,7 @@ pub async fn init_pools(db_path: &Path) -> Result<DbPools, crate::error::AppErro
 /// non-test/bench callers should use [`init_pools`] so the
 /// `query_only` pragma rejects accidental writes through the read
 /// pool at the SQLite engine level.
-pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, crate::error::AppError> {
+pub async fn init_pool(db_path: &Path) -> Result<SqlitePool, agaric_core::error::AppError> {
     let connect_options = base_connect_options(db_path);
 
     let pool = SqlitePoolOptions::new()

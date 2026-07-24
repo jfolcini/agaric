@@ -24,7 +24,7 @@
 
 use std::sync::Arc;
 
-use crate::sync_events::{
+use agaric_sync::sync_events::{
     BlocksChangedEvent, EVENT_BLOCKS_CHANGED, EVENT_PROPERTY_CHANGED, PropertyChangedEvent,
 };
 

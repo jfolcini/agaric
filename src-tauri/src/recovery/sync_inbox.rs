@@ -1,6 +1,6 @@
 //! #535 — boot replay of leftover write-ahead Loro-sync inbox slots.
 //!
-//! [`apply_remote`](crate::sync_protocol::loro_sync::apply_remote) durably
+//! [`apply_remote`](agaric_sync::sync_protocol::loro_sync::apply_remote) durably
 //! INSERTs each inbound message's raw bytes into `loro_sync_inbox` BEFORE
 //! importing them into the engine, and DELETEs the row inside the SAME tx as
 //! the SQL projection. A crash in that window leaves a row behind: the engine
@@ -15,9 +15,9 @@
 
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
-use crate::loro::registry::LoroEngineRegistry;
 use crate::materializer::Materializer;
+use agaric_core::error::AppError;
+use agaric_engine::loro::registry::LoroEngineRegistry;
 
 /// Replay every leftover row in `loro_sync_inbox`, oldest first.
 ///
@@ -87,8 +87,8 @@ pub async fn replay_sync_inbox(
     // #2541: accumulate the per-row changed / tombstone-purged block ids so
     // the inbound cache/FTS fan-out fires exactly once after the walk (sets:
     // the same block can recur across slots; the fan-out is per-id).
-    let mut changed_all: HashSet<crate::ulid::BlockId> = HashSet::new();
-    let mut purged_all: HashSet<crate::ulid::BlockId> = HashSet::new();
+    let mut changed_all: HashSet<agaric_core::ulid::BlockId> = HashSet::new();
+    let mut purged_all: HashSet<agaric_core::ulid::BlockId> = HashSet::new();
     // FIFO by the AUTOINCREMENT id (authoritative insert order). Start below
     // the smallest possible id (1) so the first chunk includes every row.
     let mut last_seen: i64 = 0;
@@ -141,7 +141,8 @@ pub async fn replay_sync_inbox(
             // NULL → no purge delta → empty set. A malformed tombstone must
             // NOT wedge boot: log + fall back to empty (the pre-#2292 additive
             // behaviour), never propagate the parse error out of the walk.
-            let tombstone_purged: Vec<crate::ulid::BlockId> = match row.purged_ids.as_deref() {
+            let tombstone_purged: Vec<agaric_core::ulid::BlockId> = match row.purged_ids.as_deref()
+            {
                 None => Vec::new(),
                 Some(json) => match serde_json::from_str(json) {
                     Ok(ids) => ids,
@@ -159,7 +160,7 @@ pub async fn replay_sync_inbox(
                 },
             };
 
-            match crate::sync_protocol::loro_sync::replay_inbox_row(
+            match agaric_sync::sync_protocol::loro_sync::replay_inbox_row(
                 pool,
                 registry,
                 device_id,
@@ -194,8 +195,8 @@ pub async fn replay_sync_inbox(
     // are empty, #2264). Non-fatal: the projections committed in-tx above,
     // so an enqueue failure (queue closed at shutdown) must not fail boot —
     // log and continue, mirroring the live orchestrator's convention.
-    let changed: Vec<crate::ulid::BlockId> = changed_all.into_iter().collect();
-    let purged: Vec<crate::ulid::BlockId> = purged_all.into_iter().collect();
+    let changed: Vec<agaric_core::ulid::BlockId> = changed_all.into_iter().collect();
+    let purged: Vec<agaric_core::ulid::BlockId> = purged_all.into_iter().collect();
     if let Err(e) = materializer
         .enqueue_inbound_sync_rebuilds(&changed, &purged)
         .await
@@ -229,8 +230,8 @@ pub async fn replay_sync_inbox(
 mod tests {
     use super::*;
     use crate::db::init_pool;
-    use crate::loro::engine::LoroEngine;
-    use crate::space::SpaceId;
+    use agaric_engine::loro::engine::LoroEngine;
+    use agaric_store::space::SpaceId;
     use tempfile::TempDir;
 
     const SPACE_A: &str = "01HZ00000000000000000000SP";

@@ -10,9 +10,9 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::{ReadPool, WritePool};
-use crate::error::AppError;
-use crate::space::SpaceScope;
-use crate::ulid::PageId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::PageId;
+use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
@@ -201,7 +201,7 @@ pub async fn list_page_aliases_by_prefix_inner(
     limit: Option<i64>,
     scope: &SpaceScope,
 ) -> Result<Vec<(String, String, Option<String>)>, AppError> {
-    let like_pattern = format!("%{}%", crate::sql_utils::escape_like(prefix));
+    let like_pattern = format!("%{}%", agaric_core::sql_utils::escape_like(prefix));
     // R1 (#347): reject out-of-range `limit` instead of silently passing
     // an unbounded value to SQLite. Matches the `list_blocks` / `list_trash`
     // contract (`pagination::PageParams::new`): a supplied limit must be in

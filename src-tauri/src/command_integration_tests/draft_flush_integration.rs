@@ -37,7 +37,7 @@ async fn block_content(pool: &SqlitePool, block_id: &str) -> Option<String> {
 }
 
 async fn draft_exists(pool: &SqlitePool, block_id: &str) -> bool {
-    crate::draft::get_draft(pool, block_id)
+    agaric_engine::draft::get_draft(pool, block_id)
         .await
         .unwrap()
         .is_some()
@@ -71,7 +71,7 @@ async fn flush_draft_materializes_content_not_stale() {
     let id = created.id.as_str().to_string();
 
     // Autosave a newer draft, then flush it (blur / unmount path).
-    crate::draft::save_draft(&pool, DEV, &id, "after")
+    agaric_engine::draft::save_draft(&pool, DEV, &id, "after")
         .await
         .unwrap();
 
@@ -144,10 +144,10 @@ async fn flush_all_drafts_materializes_content_not_stale() {
     let a_id = a.id.as_str().to_string();
     let b_id = b.id.as_str().to_string();
 
-    crate::draft::save_draft(&pool, DEV, &a_id, "a-after")
+    agaric_engine::draft::save_draft(&pool, DEV, &a_id, "a-after")
         .await
         .unwrap();
-    crate::draft::save_draft(&pool, DEV, &b_id, "b-after")
+    agaric_engine::draft::save_draft(&pool, DEV, &b_id, "b-after")
         .await
         .unwrap();
 
@@ -199,7 +199,7 @@ async fn flush_draft_superseded_by_newer_edit_does_not_regress() {
 
     // 1. Autosave a stale draft. Its monotonic anchor captures the op-log
     //    high-water at THIS moment (the create op).
-    crate::draft::save_draft(&pool, DEV, &id, "stale-draft")
+    agaric_engine::draft::save_draft(&pool, DEV, &id, "stale-draft")
         .await
         .unwrap();
 

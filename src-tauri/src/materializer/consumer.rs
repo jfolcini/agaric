@@ -34,7 +34,7 @@ use super::metrics::QueueMetrics;
 
 pub(super) fn log_consumer_result(
     label: &str,
-    result: &Result<Result<(), crate::error::AppError>, tokio::task::JoinError>,
+    result: &Result<Result<(), agaric_core::error::AppError>, tokio::task::JoinError>,
     level: tracing::Level,
 ) {
     // Callers parameterise the failure level so transient
@@ -170,7 +170,7 @@ pub(super) async fn retry_with_backoff<S, Fut>(
 ) -> RetryOutcome
 where
     S: FnMut() -> Fut,
-    Fut: std::future::Future<Output = Result<(), crate::error::AppError>> + Send + 'static,
+    Fut: std::future::Future<Output = Result<(), agaric_core::error::AppError>> + Send + 'static,
 {
     let mut outcome = RetryOutcome {
         succeeded: false,
@@ -277,7 +277,7 @@ pub(super) async fn run_foreground(
     mut rx: mpsc::Receiver<MaterializeTask>,
     shutdown_flag: Arc<AtomicBool>,
     metrics: Arc<QueueMetrics>,
-    loro: Arc<crate::loro::shared::LoroState>,
+    loro: Arc<agaric_engine::loro::shared::LoroState>,
 ) {
     loop {
         let Some(first_task) = rx.recv().await else {
@@ -432,7 +432,7 @@ async fn process_foreground_segment(
     pool: &SqlitePool,
     tasks: Vec<MaterializeTask>,
     metrics: &Arc<QueueMetrics>,
-    loro: &Arc<crate::loro::shared::LoroState>,
+    loro: &Arc<agaric_engine::loro::shared::LoroState>,
 ) {
     // H-5 / H-6 (2026-04): the foreground segment used to bucket tasks
     // by `extract_block_id(task)` and dispatch each bucket in parallel
@@ -476,7 +476,7 @@ pub(super) async fn process_single_foreground_task(
     pool: &SqlitePool,
     task: MaterializeTask,
     metrics: &Arc<QueueMetrics>,
-    loro: &Arc<crate::loro::shared::LoroState>,
+    loro: &Arc<agaric_engine::loro::shared::LoroState>,
 ) {
     // Barriers carry a `tokio::sync::Notify`; the only work is
     // `notify.notify_one()`. There is no DB read, no fallible step, no
@@ -867,7 +867,7 @@ pub(super) async fn run_background(
 #[cfg(test)]
 mod m10_tests {
     use super::*;
-    use crate::op_log::OpRecord;
+    use agaric_store::op_log::OpRecord;
 
     fn make_op_record(seq: i64) -> OpRecord {
         OpRecord {

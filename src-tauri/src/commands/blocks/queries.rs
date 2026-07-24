@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::super::*;
-use crate::pagination::ActiveBlockRow;
-use crate::space::SpaceScope;
+use agaric_store::pagination::ActiveBlockRow;
+use agaric_store::space::SpaceScope;
 
 /// List active blocks with pagination, applying at most one exclusive filter.
 ///
@@ -214,7 +214,7 @@ async fn count_blocks_by_type(
 pub async fn get_block_inner(pool: &SqlitePool, block_id: BlockId) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ?"#,
         block_id
     )
     .fetch_optional(pool)
@@ -248,7 +248,7 @@ pub async fn get_active_block_inner(
 ) -> Result<BlockRow, AppError> {
     let row: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(pool)
@@ -280,7 +280,7 @@ pub async fn get_active_block_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 ///
 /// `scope` — [`SpaceScope::Active`] restricts the result set
 /// To the named space ('s broken-chip rendering for foreign-space
@@ -515,7 +515,7 @@ pub async fn batch_resolve(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `root_ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`].
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `root_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, root_ids), err)]
@@ -558,14 +558,14 @@ pub async fn trash_descendant_counts(
 /// shape of every other UI-facing read in this module.
 ///
 /// Empty `block_ids` returns an empty map (not an error). Above
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] entries rejects with
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] entries rejects with
 /// [`AppError::Validation`] (mirrors every other batch boundary in this
 /// surface).
 ///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`].
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`].
 /// - [`AppError::Json`] — failed to serialize `block_ids`.
 /// - [`AppError::Database`] — propagated from sqlx.
 #[instrument(skip(pool, block_ids), err)]
@@ -598,7 +598,7 @@ pub async fn first_child_for_blocks_inner(
                AND deleted_at IS NULL \
          ) \
          SELECT {cols} FROM ranked WHERE rn = 1",
-        cols = crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+        cols = agaric_store::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
     let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(ids_json)
@@ -642,7 +642,7 @@ pub async fn first_child_for_blocks(
 ///
 /// Empty input returns an empty `Vec` (not an error, mirrors
 /// [`batch_resolve_inner`] and the bulk-read convention across the
-/// `*_by_ids` family). Above [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+/// `*_by_ids` family). Above [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// entries rejects with [`AppError::Validation`] (mirrors every other
 /// batch boundary in this surface).
 ///
@@ -654,7 +654,7 @@ pub async fn first_child_for_blocks(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 #[instrument(skip(pool, ids), err)]
 pub async fn get_blocks_inner(
     pool: &SqlitePool,
@@ -674,7 +674,7 @@ pub async fn get_blocks_inner(
     let sql = format!(
         "SELECT {} FROM blocks \
          WHERE id IN (SELECT value FROM json_each(?1))",
-        crate::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
+        agaric_store::pagination::block_row_columns::BLOCK_ROW_RUNTIME_SELECT,
     );
     let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(ids_json)
@@ -704,7 +704,7 @@ pub async fn get_blocks(
 /// limit).
 ///
 /// The space-filter shape mirrors `pagination::list_trash` (and the
-/// canonical [`crate::space_filter_canonical::SPACE_FILTER_CANONICAL`]
+/// canonical [`agaric_store::space_filter_canonical::SPACE_FILTER_CANONICAL`]
 /// fragment inlined across `pagination/{hierarchy,trash}.rs`):
 /// `b.space_id = ?1` (#533, migration 0086 — `space_id` is now a
 /// first-class column). A soft-deleted block retains its `space_id`

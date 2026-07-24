@@ -23,9 +23,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
-use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op_log::OpRecord;
 
 /// Chunk size for the op_log read pass. Bounded so a multi-thousand-op
 /// replay does not load the entire op log into memory at once. The
@@ -504,7 +504,7 @@ pub async fn replay_unmaterialized_ops(
     let dirty = dirty.drain();
     let mut parents_reprojected = 0usize;
     if let Some(device_id) = replay_device_id.as_deref() {
-        use crate::space::SpaceId;
+        use agaric_store::space::SpaceId;
 
         // #2541: per-group failures are LOGGED + RECORDED, never propagated.
         // The dirty set is already drained and the apply cursor has already
@@ -569,8 +569,10 @@ pub async fn replay_unmaterialized_ops(
         match pool.acquire().await {
             Ok(mut conn) => {
                 for (space_id, parent, ordered) in &orderings {
-                    match crate::loro::projection::reproject_dense_positions(&mut conn, ordered)
-                        .await
+                    match agaric_engine::loro::projection::reproject_dense_positions(
+                        &mut conn, ordered,
+                    )
+                    .await
                     {
                         Ok(()) => parents_reprojected += 1,
                         Err(e) => record_group_error(

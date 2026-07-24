@@ -104,6 +104,7 @@ name = "agaric-diagnostics"
 version = "0.5.0"
 dependencies = [
  "agaric",
+ "agaric-core",
  "regex",
  "rustc-hash",
  "sqlx",

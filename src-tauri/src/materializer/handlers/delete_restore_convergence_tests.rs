@@ -4,7 +4,7 @@
 //! via the real foreground `apply_op_tx` pipeline with the Loro engine
 //! installed) AND the sql_only fallback arm (`apply_delete_block_sql_only` /
 //! `apply_restore_block_sql_only`, called directly — exactly the fns the
-//! routing dispatches to when `crate::loro::shared::get()` is `None`), then
+//! routing dispatches to when `agaric_engine::loro::shared::get()` is `None`), then
 //! asserts the resulting `blocks` soft-delete state is IDENTICAL between the
 //! two arms after each settle.
 //!
@@ -39,8 +39,8 @@
 
 use super::*;
 use crate::db::init_pool;
-use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload, RestoreBlockPayload};
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -163,14 +163,14 @@ async fn seed_blocks_sql(pool: &SqlitePool) {
 /// cannot engine-apply through a create op (no space at create time) so its
 /// descendants' creates/deletes/restores take the engine path.
 fn seed_block_into_engine(
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     space_id: &str,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
     position: i64,
 ) {
-    let space = crate::space::SpaceId::from_trusted(space_id);
+    let space = agaric_store::space::SpaceId::from_trusted(space_id);
     let mut guard = state
         .registry
         .for_space(&space, DEVICE_ID)
@@ -184,7 +184,7 @@ fn seed_block_into_engine(
 
 async fn create_via_loro(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     block_id: &str,
     block_type: &str,
     parent: Option<&str>,
@@ -198,7 +198,7 @@ async fn create_via_loro(
         index: None,
         content: "seed".into(),
     });
-    let record = crate::op_log::append_local_op(pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(pool, DEVICE_ID, payload)
         .await
         .expect("append create");
     let mut tx = pool.begin().await.expect("begin create");
@@ -238,7 +238,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         .await
         .expect("register space");
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     // Seed the whole subtree through the engine so every block resolves to
     // SPACE_ID and the Delete / Restore ops take the via_loro arm.
     //
@@ -297,7 +297,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
     let delete = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(PARENT_ID),
     });
-    let delete_record = crate::op_log::append_local_op(&pool, DEVICE_ID, delete)
+    let delete_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, delete)
         .await
         .expect("append delete");
     let mut tx = pool.begin().await.expect("begin delete");
@@ -327,7 +327,7 @@ async fn run_engine_arm() -> (Vec<DeleteShapeRow>, Vec<i64>, Vec<DeleteShapeRow>
         block_id: BlockId::from_trusted(PARENT_ID),
         deleted_at_ref: delete_record.created_at,
     });
-    let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+    let restore_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, restore)
         .await
         .expect("append restore");
     let mut tx = pool.begin().await.expect("begin restore");
@@ -540,7 +540,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         .await
         .expect("register space");
 
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
 
     create_via_loro(&pool, &state, PAGE_ID, "page", None, 0).await;
     sqlx::query("UPDATE blocks SET page_id = ?, space_id = ? WHERE id = ?")
@@ -575,7 +575,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
     let del_child = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(CHILD_ID),
     });
-    let del_child_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_child)
+    let del_child_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_child)
         .await
         .expect("append delete child");
     let mut tx = pool.begin().await.expect("begin delete child");
@@ -590,7 +590,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
     let del_parent = OpPayload::DeleteBlock(DeleteBlockPayload {
         block_id: BlockId::from_trusted(PARENT_ID),
     });
-    let del_parent_record = crate::op_log::append_local_op(&pool, DEVICE_ID, del_parent)
+    let del_parent_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, del_parent)
         .await
         .expect("append delete parent");
     let mut tx = pool.begin().await.expect("begin delete parent");
@@ -615,7 +615,7 @@ async fn run_orphan_engine_arm() -> Vec<DeleteShapeRow> {
         block_id: BlockId::from_trusted(CHILD_ID),
         deleted_at_ref: del_child_record.created_at,
     });
-    let restore_record = crate::op_log::append_local_op(&pool, DEVICE_ID, restore)
+    let restore_record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, restore)
         .await
         .expect("append restore child");
     let mut tx = pool.begin().await.expect("begin restore child");
@@ -688,7 +688,7 @@ async fn run_orphan_fallback_arm() -> Vec<DeleteShapeRow> {
         .expect("tag the page");
     {
         let mut conn = pool.acquire().await.expect("acquire");
-        crate::tag_inheritance::recompute_subtree_inheritance(&mut conn, PAGE_ID)
+        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut conn, PAGE_ID)
             .await
             .expect("seed inheritance");
     }

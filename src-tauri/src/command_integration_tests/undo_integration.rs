@@ -24,7 +24,7 @@ use super::common::*;
 /// their children (the engine's parent-before-child requirement).
 async fn seed_block_both(
     pool: &SqlitePool,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     id: &str,
     block_type: &str,
     content: &str,
@@ -51,8 +51,12 @@ async fn seed_block_both(
 /// uses; the local `*_inner` command layer writes only PROVISIONAL positions and
 /// never reprojects, so a faithful "what does production materialise" test must
 /// route the forward move through here, NOT through `move_block_inner`.
-async fn dispatch_via_engine(pool: &SqlitePool, mat: &Materializer, payload: crate::op::OpPayload) {
-    let record = crate::op_log::append_local_op(pool, DEV, payload)
+async fn dispatch_via_engine(
+    pool: &SqlitePool,
+    mat: &Materializer,
+    payload: agaric_store::op::OpPayload,
+) {
+    let record = agaric_store::op_log::append_local_op(pool, DEV, payload)
         .await
         .expect("append_local_op");
     mat.dispatch_op(&record).await.expect("dispatch_op");
@@ -80,8 +84,8 @@ async fn dispatch_via_engine(pool: &SqlitePool, mat: &Materializer, payload: cra
 /// against the wrong code.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_cross_page_move_reprojects_source_group_dense() {
-    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -265,8 +269,8 @@ async fn undo_cross_page_move_reprojects_source_group_dense() {
 /// rejects.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_cross_parent_move_persists_settled_position_both_groups() {
-    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -715,7 +719,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
     assert_eq!(
         leaf.page_id
             .as_ref()
-            .map(super::super::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: leaf starts under page_a"
     );
@@ -781,7 +785,7 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
         leaf_row
             .parent_id
             .as_ref()
-            .map(super::super::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str()),
         "sanity: undo restored parent_id to page_a"
     );
@@ -799,8 +803,8 @@ async fn undo_move_block_synchronously_refreshes_page_id() {
 /// per-space engine tree (a hard purge would have removed both).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
-    use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -913,8 +917,8 @@ async fn reverse_create_block_leaves_recoverable_soft_delete_not_purge_1543() {
 /// too; afterwards the #1257 freshness gate must NOT refuse export.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
-    use crate::op::{CreateBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -982,7 +986,7 @@ async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
     }
 
     // (b) THE REGRESSION: the freshness gate no longer refuses the space.
-    let msg = crate::sync_protocol::loro_sync::prepare_outgoing_for_pool(
+    let msg = agaric_sync::sync_protocol::loro_sync::prepare_outgoing_for_pool(
         &pool,
         &state.registry,
         &space,
@@ -1002,8 +1006,8 @@ async fn undo_of_create_does_not_trip_1257_freshness_gate_2655() {
 /// exported CRDT content matches SQL in both directions.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_redo_edit_converges_engine_2655() {
-    use crate::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, EditBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1043,7 +1047,7 @@ async fn undo_redo_edit_converges_engine_2655() {
     .await;
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_content = |state: &crate::loro::shared::LoroState| -> Option<String> {
+    let engine_content = |state: &agaric_engine::loro::shared::LoroState| -> Option<String> {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         g.engine_mut()
             .read_block_content(BLK)
@@ -1090,8 +1094,8 @@ async fn undo_redo_edit_converges_engine_2655() {
 /// and a subsequent redo (DeleteBlock) must re-tombstone it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_redo_delete_converges_engine_2655() {
-    use crate::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, DeleteBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1129,7 +1133,7 @@ async fn undo_redo_delete_converges_engine_2655() {
     .await;
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_deleted = |state: &crate::loro::shared::LoroState| {
+    let engine_deleted = |state: &agaric_engine::loro::shared::LoroState| {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         g.engine_mut().read_deleted(BLK).expect("read_deleted")
     };
@@ -1178,8 +1182,8 @@ async fn undo_redo_delete_converges_engine_2655() {
 /// property map so the exported CRDT carries it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_property_converges_engine_2655() {
-    use crate::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, OpPayload, SetPropertyPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1224,14 +1228,14 @@ async fn undo_property_converges_engine_2655() {
     }
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_prop = |state: &crate::loro::shared::LoroState| -> Option<String> {
+    let engine_prop = |state: &agaric_engine::loro::shared::LoroState| -> Option<String> {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         match g
             .engine_mut()
             .read_property_typed(BLK, "importance")
             .expect("read_property_typed")
         {
-            Some(crate::loro::engine::PropertyValue::Str(s)) => Some(s),
+            Some(agaric_engine::loro::engine::PropertyValue::Str(s)) => Some(s),
             other => panic!("expected a Str property, got {other:?}"),
         }
     };
@@ -1301,8 +1305,8 @@ async fn sql_property_value_text(pool: &SqlitePool, block_id: &str, key: &str) -
 /// engine and SQL.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_redo_add_tag_converges_engine_2838() {
-    use crate::op::{AddTagPayload, CreateBlockPayload, OpPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddTagPayload, CreateBlockPayload, OpPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1357,7 +1361,7 @@ async fn undo_redo_add_tag_converges_engine_2838() {
     .await;
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_has_tag = |state: &crate::loro::shared::LoroState| -> bool {
+    let engine_has_tag = |state: &agaric_engine::loro::shared::LoroState| -> bool {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         g.engine_mut()
             .read_tags(BLK)
@@ -1416,8 +1420,8 @@ async fn undo_redo_add_tag_converges_engine_2838() {
 /// `block_tags` map (reverse `AddTag`), converging with SQL.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_remove_tag_converges_engine_2838() {
-    use crate::op::{AddTagPayload, CreateBlockPayload, OpPayload, RemoveTagPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{AddTagPayload, CreateBlockPayload, OpPayload, RemoveTagPayload};
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1481,7 +1485,7 @@ async fn undo_remove_tag_converges_engine_2838() {
     .await;
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_has_tag = |state: &crate::loro::shared::LoroState| -> bool {
+    let engine_has_tag = |state: &agaric_engine::loro::shared::LoroState| -> bool {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         g.engine_mut()
             .read_tags(BLK)
@@ -1519,8 +1523,10 @@ async fn undo_remove_tag_converges_engine_2838() {
 /// engine's property map (reverse `SetProperty`), converging with SQL.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn undo_delete_property_converges_engine_2838() {
-    use crate::op::{CreateBlockPayload, DeletePropertyPayload, OpPayload, SetPropertyPayload};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{
+        CreateBlockPayload, DeletePropertyPayload, OpPayload, SetPropertyPayload,
+    };
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -1575,7 +1581,7 @@ async fn undo_delete_property_converges_engine_2838() {
     .await;
 
     let space = SpaceId::from_trusted(TEST_SPACE_ID);
-    let engine_prop = |state: &crate::loro::shared::LoroState| -> Option<String> {
+    let engine_prop = |state: &agaric_engine::loro::shared::LoroState| -> Option<String> {
         let mut g = state.registry.for_space(&space, DEV).expect("for_space");
         match g
             .engine_mut()
@@ -1583,7 +1589,7 @@ async fn undo_delete_property_converges_engine_2838() {
             .expect("read_property_typed")
         {
             None => None,
-            Some(crate::loro::engine::PropertyValue::Str(s)) => Some(s),
+            Some(agaric_engine::loro::engine::PropertyValue::Str(s)) => Some(s),
             other => panic!("expected a Str property or None, got {other:?}"),
         }
     };

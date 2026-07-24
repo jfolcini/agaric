@@ -9,14 +9,14 @@ use std::hint::black_box;
 
 use criterion::{BatchSize, BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
+use agaric_core::ulid::BlockId;
 use agaric_lib::commands::create_block_inner;
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::snapshot::{
+use agaric_sync::snapshot::{
     BlockPropertySnapshot, BlockSnapshot, SnapshotData, SnapshotTables, apply_snapshot,
     create_snapshot, decode_snapshot, encode_snapshot, get_latest_snapshot,
 };
-use agaric_lib::ulid::BlockId;
 
 use std::collections::BTreeMap;
 

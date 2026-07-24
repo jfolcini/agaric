@@ -20,7 +20,7 @@
 //!   Phase-3 cross-space filter on the sync-ingress / bulk-import apply path,
 //!   so a synced cross-space ref property persists undetected. A5 surfaces
 //!   it. Uses the orphan-tolerant rule of
-//!   [`validate_ref_property_cross_space`](agaric_lib::spaces::cross_space_validation)
+//!   [`validate_ref_property_cross_space`](agaric_store::cross_space_validation)
 //!   — only a target in a DIFFERENT *assigned* space counts (an unassigned
 //!   orphan source/target is not "cross-space"), and the `space` key itself
 //!   is exempt (that is how pages move between spaces).
@@ -46,7 +46,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 // Local copies of the canonical ULID-token regexes
 // ---------------------------------------------------------------------------
 //
-// The canonical regexes live in `crate::cache` as `pub(crate)` items
+// The canonical regexes live in `agaric_store::cache` as `pub(crate)` items
 // (see `src-tauri/src/cache/mod.rs`). The audit binary re-declares them
 // locally — three lines — instead of widening the `cache` module's API
 // surface. If the canonical regexes ever change, this file must be kept

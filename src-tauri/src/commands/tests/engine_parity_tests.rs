@@ -23,7 +23,7 @@
 
 use super::super::*;
 use super::common::*;
-use crate::ulid::ActiveBlockId;
+use agaric_core::ulid::ActiveBlockId;
 
 /// Seed one block into the per-space Loro engine, mirroring an
 /// `insert_block` SQL seed so engine and SQL start in lockstep.

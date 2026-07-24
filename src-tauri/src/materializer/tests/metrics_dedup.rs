@@ -73,12 +73,12 @@ fn materializer_with_read_pool_and_lifecycle_does_not_panic_without_current_runt
         "test precondition: thread must not be in a tokio runtime context",
     );
 
-    let lifecycle = crate::foreground::LifecycleHooks::new();
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,
         lifecycle,
-        std::sync::Arc::new(crate::loro::shared::LoroState::new()),
+        std::sync::Arc::new(agaric_engine::loro::shared::LoroState::new()),
     );
 
     mat.shutdown();

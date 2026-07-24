@@ -1,5 +1,5 @@
 //! #2621 Sync-D: production moved to [`agaric_sync::sync_daemon`]; this app-side
-//! shim re-exports it so every `crate::sync_daemon::…` path resolves unchanged,
+//! app-side module hosts app-coupled tests (production lives in `agaric_sync::sync_daemon`);
 //! and hosts the app-coupled tests (which reference app-only `Materializer` /
 //! `recovery`).
 //!
@@ -11,11 +11,12 @@
 //! module's namespace (`super` = the wrapper).
 #![cfg_attr(test, allow(unused_imports))]
 
-pub use agaric_sync::sync_daemon::*;
+#[cfg(test)]
+use agaric_sync::sync_daemon::*;
 
 // `sync_daemon/tests.rs` (super = this module) reaches these through `use super::*`.
 #[cfg(test)]
-use crate::sync_events::{SyncEvent, SyncEventSink};
+use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
 #[cfg(test)]
 use std::sync::Arc;
 #[cfg(test)]

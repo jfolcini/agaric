@@ -4,9 +4,9 @@ use super::coordinator::{
     INBOUND_REBUILD_DEBOUNCE, INBOUND_REBUILD_MAX_WAIT, InboundRebuildDebounce, Materializer,
 };
 use super::{CreateBlockHint, MaterializeTask, TagOpHint};
-use crate::error::AppError;
-use crate::op::OpType;
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_store::op::OpType;
+use agaric_store::op_log::OpRecord;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -430,7 +430,7 @@ const SYNC_FTS_PER_BLOCK_MAX: usize = super::BACKGROUND_CAPACITY / 4;
 /// testable: empty set → no FTS work; small set → one targeted
 /// `UpdateFtsBlock` per block; large set → a single full `RebuildFtsIndex`
 /// (see [`SYNC_FTS_PER_BLOCK_MAX`] for why the large case falls back).
-fn inbound_sync_fts_tasks(changed_blocks: &[crate::ulid::BlockId]) -> Vec<MaterializeTask> {
+fn inbound_sync_fts_tasks(changed_blocks: &[agaric_core::ulid::BlockId]) -> Vec<MaterializeTask> {
     if changed_blocks.is_empty() {
         Vec::new()
     } else if changed_blocks.len() > SYNC_FTS_PER_BLOCK_MAX {
@@ -480,7 +480,7 @@ const SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX: usize = SYNC_FTS_PER_BLOCK_MAX;
 /// remove a purged block's / purged tag's rows synchronously — same reason
 /// [`inbound_sync_fts_tasks`] ignores it.
 fn inbound_sync_block_tag_refs_tasks(
-    changed_blocks: &[crate::ulid::BlockId],
+    changed_blocks: &[agaric_core::ulid::BlockId],
 ) -> Vec<MaterializeTask> {
     if changed_blocks.is_empty() {
         Vec::new()
@@ -682,8 +682,8 @@ impl Materializer {
     /// because the consumer retry path handles them.
     pub async fn enqueue_inbound_sync_rebuilds(
         &self,
-        changed_blocks: &[crate::ulid::BlockId],
-        purged_blocks: &[crate::ulid::BlockId],
+        changed_blocks: &[agaric_core::ulid::BlockId],
+        purged_blocks: &[agaric_core::ulid::BlockId],
     ) -> Result<(), AppError> {
         // #2264: nothing changed, nothing purged → nothing to rebuild.
         if changed_blocks.is_empty() && purged_blocks.is_empty() {
@@ -1696,7 +1696,7 @@ mod tests {
     //! End-to-end coverage of the FtsOptimize threshold lives in
     //! `materializer::tests`.
     use super::*;
-    use crate::op_log::OpRecord;
+    use agaric_store::op_log::OpRecord;
     use std::mem::discriminant;
     use std::sync::Arc;
 
@@ -1781,8 +1781,8 @@ mod tests {
     #[test]
     fn inbound_sync_fts_tasks_small_set_is_per_block() {
         let changed = [
-            crate::ulid::BlockId::test_id("B1"),
-            crate::ulid::BlockId::test_id("B2"),
+            agaric_core::ulid::BlockId::test_id("B1"),
+            agaric_core::ulid::BlockId::test_id("B2"),
         ];
         let tasks = inbound_sync_fts_tasks(&changed);
         assert_eq!(
@@ -1803,7 +1803,7 @@ mod tests {
     #[test]
     fn inbound_sync_fts_tasks_at_threshold_is_per_block() {
         let changed: Vec<_> = (0..SYNC_FTS_PER_BLOCK_MAX)
-            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
             .collect();
         let tasks = inbound_sync_fts_tasks(&changed);
         assert_eq!(tasks.len(), SYNC_FTS_PER_BLOCK_MAX);
@@ -1820,7 +1820,7 @@ mod tests {
     #[test]
     fn inbound_sync_fts_tasks_large_set_is_single_full_rebuild() {
         let changed: Vec<_> = (0..=SYNC_FTS_PER_BLOCK_MAX)
-            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
             .collect();
         let tasks = inbound_sync_fts_tasks(&changed);
         assert_eq!(
@@ -1845,8 +1845,8 @@ mod tests {
     #[test]
     fn inbound_sync_block_tag_refs_tasks_small_set_is_per_block() {
         let changed = [
-            crate::ulid::BlockId::test_id("B1"),
-            crate::ulid::BlockId::test_id("B2"),
+            agaric_core::ulid::BlockId::test_id("B1"),
+            agaric_core::ulid::BlockId::test_id("B2"),
         ];
         let tasks = inbound_sync_block_tag_refs_tasks(&changed);
         assert_eq!(
@@ -1867,7 +1867,7 @@ mod tests {
     #[test]
     fn inbound_sync_block_tag_refs_tasks_at_threshold_is_per_block() {
         let changed: Vec<_> = (0..SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX)
-            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
             .collect();
         let tasks = inbound_sync_block_tag_refs_tasks(&changed);
         assert_eq!(tasks.len(), SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX);
@@ -1884,7 +1884,7 @@ mod tests {
     #[test]
     fn inbound_sync_block_tag_refs_tasks_large_set_is_single_full_rebuild() {
         let changed: Vec<_> = (0..=SYNC_BLOCK_TAG_REFS_PER_BLOCK_MAX)
-            .map(|i| crate::ulid::BlockId::test_id(&format!("B{i}")))
+            .map(|i| agaric_core::ulid::BlockId::test_id(&format!("B{i}")))
             .collect();
         let tasks = inbound_sync_block_tag_refs_tasks(&changed);
         assert_eq!(

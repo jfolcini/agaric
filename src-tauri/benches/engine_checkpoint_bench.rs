@@ -51,7 +51,7 @@ use std::hint::black_box;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use agaric_lib::loro::engine::LoroEngine;
+use agaric_engine::loro::engine::LoroEngine;
 use criterion::{Criterion, criterion_group, criterion_main};
 
 /// Device id whose deterministic peer id every fixture engine is built under.

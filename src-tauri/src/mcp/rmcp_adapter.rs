@@ -51,10 +51,10 @@ use super::McpSurface;
 use super::activity::{
     ActivityContext, ActivityResult, ActorKind, ToolCompletionEvent, emit_tool_completion,
 };
-use super::actor::{ACTOR, Actor, ActorContext};
 use super::registry::ToolRegistry;
 use super::server::ERROR_CLIP_CAP;
-use crate::error::AppError;
+use agaric_core::error::AppError;
+use agaric_store::task_locals::{ACTOR, Actor, ActorContext};
 
 /// #1569 — upper bound on the number of Unicode scalar values (chars)
 /// kept from a self-reported MCP `clientInfo.name` before it becomes an
@@ -200,11 +200,11 @@ impl Drop for ToolCompletionGuard {
         // handler recorded. If none were recorded, nothing reached the op_log
         // (a read, or a write cancelled before its first
         // `append_local_op_in_tx`), so there is nothing to record — stay silent.
-        let mut op_refs = crate::task_locals::take_appends().into_iter();
+        let mut op_refs = agaric_store::task_locals::take_appends().into_iter();
         let Some(op_ref) = op_refs.next() else {
             return;
         };
-        let additional_op_refs: Vec<crate::op::OpRef> = op_refs.collect();
+        let additional_op_refs: Vec<agaric_store::op::OpRef> = op_refs.collect();
         // The tool's result value is unavailable here (the future never
         // returned it), so the summary degrades to the bare tool name and the
         // outcome is recorded as `Ok`: op refs are only recorded once a write
@@ -338,7 +338,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         // on the spawned future, not on the enclosing handler.
         let (result, op_refs) = ACTOR
             .scope(scoped_ctx, async move {
-                crate::task_locals::LAST_APPEND
+                agaric_store::task_locals::LAST_APPEND
                     .scope(std::cell::RefCell::new(Vec::new()), async move {
                         // #2954 — arm the drop-safe emission guard for the
                         // duration of the (cancellable) call. Only meaningful
@@ -356,7 +356,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
                         // cancellation window. Capture the op refs and disarm
                         // the guard: the normal emission below is henceforth the
                         // authoritative one, so the guard must not double-emit.
-                        let captured = crate::task_locals::take_appends();
+                        let captured = agaric_store::task_locals::take_appends();
                         if let Some(g) = completion_guard.as_mut() {
                             g.disarm();
                         }
@@ -382,7 +382,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
         };
         let mut iter = op_refs.into_iter();
         let op_ref = iter.next();
-        let additional_op_refs: Vec<crate::op::OpRef> = iter.collect();
+        let additional_op_refs: Vec<agaric_store::op::OpRef> = iter.collect();
         if let Some(ref ctx) = self.activity_ctx {
             emit_tool_completion(
                 ctx,
@@ -573,12 +573,12 @@ mod tests {
     }
 
     use super::*;
-    use crate::error::AppError;
     use crate::mcp::activity::{
         ActivityContext, ActivityRing, MCP_ACTIVITY_EVENT, RecordingEmitter,
     };
-    use crate::mcp::actor::{Actor, current_actor};
     use crate::mcp::registry::{ToolDescription, ToolRegistry};
+    use agaric_core::error::AppError;
+    use agaric_store::task_locals::{Actor, current_actor};
 
     /// Minimal in-memory registry. Records the actor observed inside
     /// `call_tool` so the test can assert that the rmcp adapter's
@@ -638,7 +638,7 @@ mod tests {
     /// `server.rs`'s grace-period `timeout(GRACE, fut)` drops the whole
     /// connection future while the write is already durable.
     struct MockHangingRwRegistry {
-        op_ref: crate::op::OpRef,
+        op_ref: agaric_store::op::OpRef,
     }
 
     impl ToolRegistry for MockHangingRwRegistry {
@@ -658,7 +658,7 @@ mod tests {
         ) -> Result<Value, AppError> {
             // The op-log append `append_local_op_in_tx` performs inside the
             // (now-committed) transaction, recorded BEFORE the durable commit.
-            crate::task_locals::record_append(self.op_ref.clone());
+            agaric_store::task_locals::record_append(self.op_ref.clone());
             // Suspend forever, standing in for the window after the write is
             // durable but before this future resolves and the normal emission
             // runs. The test drops the future here.
@@ -686,7 +686,7 @@ mod tests {
     /// `entries.len() == 1` assertion fails.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn rw_mutation_emits_activity_even_when_dropped_mid_commit() {
-        let op_ref = crate::op::OpRef {
+        let op_ref = agaric_store::op::OpRef {
             device_id: "dev-cancel".to_string(),
             seq: 42,
         };

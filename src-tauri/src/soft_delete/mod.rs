@@ -22,11 +22,16 @@ mod proptest_b3;
 pub use restore::restore_block;
 pub use trash::cascade_soft_delete;
 
+// Moved query helpers (`agaric_store::soft_delete`) — pulled in only for the
+// inline `#[cfg(test)]` tests below; production call sites reference them at
+// `agaric_store::soft_delete::…` directly (#2897).
+#[cfg(test)]
+use agaric_store::soft_delete::{is_deleted, soft_delete_block};
+
 // Wave S4e (#2621): the two pure query helpers now live in `agaric-store`;
 // re-exported here so `crate::soft_delete::{is_deleted,soft_delete_block}`
 // resolve unchanged. The materializer-coupled `cascade_soft_delete` /
 // `restore_block` orchestration (and the test module below) stay in this crate.
-pub use agaric_store::soft_delete::{is_deleted, soft_delete_block};
 
 // `get_descendants` removed (2026-05-02). It returned a
 // non-conflict-but-possibly-deleted descendant set (
@@ -34,7 +39,7 @@ pub use agaric_store::soft_delete::{is_deleted, soft_delete_block};
 // `ActiveBlockId` model the rest of the codebase reaches for. It also
 // had zero production callers — only its own `#[cfg(test)]` module
 // referenced it. The remaining cascade / restore / purge call sites
-// use the `descendants_cte_*` macros from `crate::block_descendants`
+// use the `descendants_cte_*` macros from `agaric_store::block_descendants`
 // directly, with the variant chosen at the call site:
 // - cascade_soft_delete   → descendants_cte_active!()
 // - restore_block         → descendants_cte_standard!()
@@ -573,9 +578,10 @@ mod tests {
         drop(_guard);
 
         // The helper itself agrees on the saturation status.
-        let saturated = crate::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_DEEP_R")
-            .await
-            .unwrap();
+        let saturated =
+            agaric_store::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_DEEP_R")
+                .await
+                .unwrap();
         assert!(
             saturated,
             "helper must report saturation on a 105-block chain"
@@ -637,9 +643,10 @@ mod tests {
 
         drop(_guard);
 
-        let saturated = crate::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_OK_R")
-            .await
-            .unwrap();
+        let saturated =
+            agaric_store::block_descendants::cascade_depth_saturated(&pool, "PEND26N2_OK_R")
+                .await
+                .unwrap();
         assert!(
             !saturated,
             "helper must NOT report saturation on a 99-block chain"

@@ -89,9 +89,14 @@ async fn content_delete_restore_keeps_tag_usage_count_in_sync_2172() {
 
     // Delete the content block via the real command path. The content
     // lifecycle narrowing keeps RebuildTagsCache, so usage_count must drop.
-    let deleted = delete_block_inner(&pool, DEV, &mat, crate::ulid::BlockId::from_trusted("CBLK"))
-        .await
-        .unwrap();
+    let deleted = delete_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        agaric_core::ulid::BlockId::from_trusted("CBLK"),
+    )
+    .await
+    .unwrap();
     settle(&mat).await;
     assert_eq!(
         usage(&pool).await,
@@ -104,7 +109,7 @@ async fn content_delete_restore_keeps_tag_usage_count_in_sync_2172() {
         &pool,
         DEV,
         &mat,
-        crate::ulid::BlockId::from_trusted("CBLK"),
+        agaric_core::ulid::BlockId::from_trusted("CBLK"),
         deleted.deleted_at,
     )
     .await
@@ -571,7 +576,7 @@ async fn list_tags_empty_result_returns_no_cursor_m85() {
 // only the named space's subset.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pend18_query_by_tags_scope_parity() {
-    use crate::space::{SpaceId, SpaceScope};
+    use agaric_store::space::{SpaceId, SpaceScope};
     let (pool, _dir) = test_pool().await;
 
     ensure_test_space(&pool).await;
@@ -646,8 +651,8 @@ async fn pend18_query_by_tags_scope_parity() {
 /// resolved (not silently flattened).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tag_expr_resolves_nested_and_or_not() {
-    use crate::space::SpaceScope;
-    use crate::tag_query::TagExpr;
+    use agaric_store::space::SpaceScope;
+    use agaric_store::tag_query::TagExpr;
     let (pool, _dir) = test_pool().await;
 
     // Three tags.
@@ -749,8 +754,8 @@ async fn query_by_tag_expr_resolves_nested_and_or_not() {
 /// error BEFORE any resolution — the untrusted-input depth gate (#1472).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_tag_expr_rejects_over_max_depth() {
-    use crate::space::SpaceScope;
-    use crate::tag_query::TagExpr;
+    use agaric_store::space::SpaceScope;
+    use agaric_store::tag_query::TagExpr;
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "QTE_DEEP", "tag", "deep", None, None).await;
 
@@ -862,7 +867,7 @@ async fn add_tag_orphan_adoption_hydrates_tag_into_space_engine() {
     // (2) ENGINE: the adopted tag block must now be present in the target
     // space's Loro engine — THE #2674 fix. Under the old inline-UPDATE path this
     // read returned `None` (the tag was never hydrated into the engine).
-    let space = crate::space::SpaceId::from_trusted(TEST_SPACE_ID);
+    let space = agaric_store::space::SpaceId::from_trusted(TEST_SPACE_ID);
     let mut guard = mat
         .loro_state()
         .registry
@@ -1065,7 +1070,7 @@ async fn add_tags_by_ids_rejects_oversize_list() {
     let mat = Materializer::new(pool.clone());
     insert_block(&pool, "ABI5_TAG", "tag", "urgent", None, None).await;
 
-    let oversize: Vec<BlockId> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<BlockId> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| BlockId::from(format!("ABI5_{i:026}")))
         .collect();
     let result = add_tags_by_ids_inner(&pool, DEV, &mat, oversize, "ABI5_TAG".into()).await;

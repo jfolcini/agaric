@@ -28,8 +28,8 @@
 
 use sqlx::SqlitePool;
 
-use crate::error::AppError;
 use crate::materializer::{MaterializeTask, Materializer};
+use agaric_core::error::AppError;
 
 /// Refresh caches affected by recovered drafts, then block until the
 /// materializer background queue drains so consumers never observe stale

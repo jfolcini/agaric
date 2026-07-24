@@ -205,7 +205,7 @@ fn bench_resolve_page_by_alias(c: &mut Criterion) {
                         resolve_page_by_alias_inner(
                             &pool,
                             &alias,
-                            &agaric_lib::space::SpaceScope::Global,
+                            &agaric_store::space::SpaceScope::Global,
                         )
                         .await
                         .unwrap()

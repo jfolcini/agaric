@@ -1,9 +1,9 @@
 //! Reverse functions for property ops (set, delete).
 
-use crate::error::AppError;
-use crate::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
-use crate::op_log::OpRecord;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
+use agaric_store::op_log::OpRecord;
 use sqlx::SqlitePool;
 
 struct PriorPropertyRow {
@@ -174,9 +174,9 @@ async fn find_prior_property(
 mod tests_m64 {
     use super::*;
     use crate::db::init_pool;
-    use crate::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
-    use crate::op_log::{OpRecord, append_local_op_at};
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{DeletePropertyPayload, OpPayload, SetPropertyPayload};
+    use agaric_store::op_log::{OpRecord, append_local_op_at};
     use std::path::PathBuf;
     use tempfile::TempDir;
 

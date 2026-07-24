@@ -6,15 +6,15 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{AddTagPayload, OpPayload, RemoveTagPayload, SetPropertyPayload};
-use crate::op_log;
-use crate::pagination::ActiveBlockRow;
-use crate::pagination::PageResponse;
-use crate::space::SpaceScope;
-use crate::tag_query::{self, TagCacheRow, TagExpr};
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{AddTagPayload, OpPayload, RemoveTagPayload, SetPropertyPayload};
+use agaric_store::op_log;
+use agaric_store::pagination::ActiveBlockRow;
+use agaric_store::pagination::PageResponse;
+use agaric_store::space::SpaceScope;
+use agaric_store::tag_query::{self, TagCacheRow, TagExpr};
 
 use super::*;
 
@@ -27,7 +27,7 @@ use super::*;
 /// cap of 1000 is generous for any legitimate UI gesture while keeping the
 /// dynamic SQL placeholder + bind count — which scales 1:1 with this array —
 /// safely under SQLite's default parameter limit (999 / 32 766 depending on
-/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS)
+/// build). Mirrors the [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
 /// cap on the `*_by_ids` write family.
 pub(crate) const MAX_FILTER_TAG_IDS: usize = 1000;
 
@@ -177,7 +177,7 @@ pub async fn add_tag_inner(
 // an inert text property. Caller must have validated the pre-conditions below.
 pub(crate) async fn apply_tag_to_block_in_tx(
     tx: &mut CommandTx,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     tag_id: &str,
@@ -190,9 +190,11 @@ pub(crate) async fn apply_tag_to_block_in_tx(
     // calls `apply_tag_to_block_resolved` directly, so the loop does O(1)
     // space queries instead of ~2N (#2191).
     let src_space =
-        crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(block_id)).await?;
+        agaric_store::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(block_id))
+            .await?;
     let mut tag_space =
-        crate::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id)).await?;
+        agaric_store::space::resolve_block_space(&mut ***tx, &BlockId::from_trusted(tag_id))
+            .await?;
 
     // Check for existing association (TOCTOU-safe). A duplicate is reported
     // to the caller as `Ok(None)` — NO op is appended — so the single-row
@@ -249,13 +251,13 @@ pub(crate) async fn apply_tag_to_block_in_tx(
 #[allow(clippy::too_many_arguments)]
 async fn apply_tag_to_block_resolved(
     tx: &mut CommandTx,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     tag_id: &str,
     payload: OpPayload,
-    src_space: Option<&crate::space::SpaceId>,
-    tag_space: &mut Option<crate::space::SpaceId>,
+    src_space: Option<&agaric_store::space::SpaceId>,
+    tag_space: &mut Option<agaric_store::space::SpaceId>,
     already_tagged: bool,
 ) -> Result<Option<op_log::OpRecord>, AppError> {
     // Phase 2 (Path A) — tags are space-scoped; a tag may not be
@@ -758,7 +760,7 @@ pub async fn add_tag(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or a cross-space pairing
 /// - [`AppError::NotFound`] — `tag_id` does not resolve to a live block
 /// - [`AppError::InvalidOperation`] — `tag_id` is not a `block_type = 'tag'` block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
@@ -831,7 +833,8 @@ pub async fn add_tags_by_ids_inner(
     // lock. The batched map mirrors `resolve_block_space`'s orphan semantics:
     // a block absent from the map has no space (an orphan) → `None`.
     let mut tag_space =
-        crate::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(tag_id_str)).await?;
+        agaric_store::space::resolve_block_space(&mut **tx, &BlockId::from_trusted(tag_id_str))
+            .await?;
 
     // Only the live, non-self blocks actually reach the per-block core, so
     // pre-resolve spaces + dup status for exactly that set (skips wasted work
@@ -843,7 +846,7 @@ pub async fn add_tags_by_ids_inner(
         .collect();
 
     let block_spaces =
-        crate::spaces::cross_space_validation::resolve_block_spaces_batch(&mut tx, &candidate_ids)
+        agaric_store::cross_space_validation::resolve_block_spaces_batch(&mut tx, &candidate_ids)
             .await?;
 
     // #2191: pre-fetch the WHOLE dup set for this tag in ONE query, replacing

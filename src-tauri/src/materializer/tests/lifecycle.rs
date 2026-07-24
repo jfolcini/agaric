@@ -336,12 +336,12 @@ async fn wait_for_pending_block_count_refreshes_handles_overlapping_spawns() {
 #[tokio::test]
 async fn with_read_pool_and_lifecycle_accepts_tasks() {
     let (pool, _dir) = test_pool().await;
-    let lifecycle = crate::foreground::LifecycleHooks::new();
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,
         lifecycle,
-        std::sync::Arc::new(crate::loro::shared::LoroState::new()),
+        std::sync::Arc::new(agaric_engine::loro::shared::LoroState::new()),
     );
     assert!(
         mat.try_enqueue_background(MaterializeTask::RebuildTagsCache)
@@ -360,12 +360,12 @@ async fn with_read_pool_and_lifecycle_accepts_tasks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn lifecycle_flag_flip_does_not_break_queues() {
     let (pool, _dir) = test_pool().await;
-    let lifecycle = crate::foreground::LifecycleHooks::new();
+    let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     let mat = Materializer::with_read_pool_and_lifecycle(
         pool.clone(),
         pool,
         lifecycle.clone(),
-        std::sync::Arc::new(crate::loro::shared::LoroState::new()),
+        std::sync::Arc::new(agaric_engine::loro::shared::LoroState::new()),
     );
 
     // Flip backgrounded → foreground a few times while enqueueing.

@@ -1,6 +1,6 @@
 use super::super::*;
 use super::common::*;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
 
 // ======================================================================
 // page_aliases (#598)
@@ -536,7 +536,7 @@ async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
     // Zero is below the [1, MAX] range.
     let zero = list_page_aliases_by_prefix_inner(&pool, "r1-", Some(0), &SpaceScope::Global).await;
     assert!(
-        matches!(zero, Err(crate::error::AppError::Validation { .. })),
+        matches!(zero, Err(agaric_core::error::AppError::Validation { .. })),
         "limit=0 must be rejected as Validation, got {zero:?}"
     );
 
@@ -544,7 +544,7 @@ async fn list_page_aliases_by_prefix_inner_rejects_out_of_range_limit_r1() {
     let huge =
         list_page_aliases_by_prefix_inner(&pool, "r1-", Some(10_000), &SpaceScope::Global).await;
     assert!(
-        matches!(huge, Err(crate::error::AppError::Validation { .. })),
+        matches!(huge, Err(agaric_core::error::AppError::Validation { .. })),
         "limit=10000 must be rejected as Validation, got {huge:?}"
     );
 
@@ -714,7 +714,7 @@ async fn list_page_aliases_by_prefix_inner_scopes_to_active_space() {
 // via the denormalised `blocks.page_id` column rather than the
 // `parent_id` direct-children filter. The raw `insert_block` helper
 // bypasses the materializer, so each export test must call
-// `crate::cache::rebuild_page_ids` after seeding rows so the column the
+// `agaric_store::cache::rebuild_page_ids` after seeding rows so the column the
 // new walk keys on is populated. (Production paths set `page_id`
 // inside `create_block_in_tx`, so this is purely a test fixture
 // concern.)
@@ -751,7 +751,7 @@ async fn export_page_markdown_basic() {
         Some(2),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -805,7 +805,7 @@ async fn export_page_markdown_resolves_tag_ulids() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -855,7 +855,7 @@ async fn export_page_markdown_resolves_page_link_ulids() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -917,7 +917,7 @@ async fn export_page_markdown_same_page_block_ref_roundtrips_2963() {
         Some(2),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
 
@@ -953,7 +953,7 @@ async fn export_page_markdown_same_page_block_ref_roundtrips_2963() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -1036,7 +1036,7 @@ async fn export_page_markdown_cross_page_block_ref_is_human_readable_2963() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
 
@@ -1083,7 +1083,7 @@ async fn export_page_markdown_dangling_block_ref_marked_unresolved_2963() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
 
@@ -1117,7 +1117,7 @@ async fn export_page_markdown_dangling_block_ref_marked_unresolved_2963() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn export_page_markdown_inline_query_tag_roundtrips_2968() {
     use crate::commands::pages::inline_query_md::{InlineQuerySpec, decode_v2, encode_v2};
-    use crate::filters::{FilterExpr, FilterPrimitive};
+    use agaric_store::filters::{FilterExpr, FilterPrimitive};
 
     let (pool, _dir) = test_pool().await;
 
@@ -1149,7 +1149,7 @@ async fn export_page_markdown_inline_query_tag_roundtrips_2968() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC_PAGE).await.unwrap();
 
@@ -1187,7 +1187,7 @@ async fn export_page_markdown_inline_query_tag_roundtrips_2968() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let _result = import_markdown_inner(
         &pool,
@@ -1309,7 +1309,7 @@ async fn export_page_markdown_emits_block_scoped_attachment_link_2961() {
         "report.pdf",
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -1360,7 +1360,7 @@ async fn export_page_markdown_dedupes_inline_image_attachment_2961() {
         "pic.png",
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -1407,7 +1407,7 @@ async fn export_page_markdown_no_attachments_unchanged_2961() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -1530,7 +1530,7 @@ async fn export_page_markdown_emits_page_own_attachment_link_2991() {
         "cover.png",
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -1571,7 +1571,7 @@ async fn export_page_markdown_dedupes_page_own_inline_attachment_2991() {
         "pic.png",
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, "01AAAAAAAAAAAAAAAAAAAAPAGE")
         .await
@@ -1641,7 +1641,7 @@ async fn export_page_markdown_walks_full_subtree_with_pagination() {
         )
         .await;
     }
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
 
@@ -1698,7 +1698,7 @@ async fn export_page_markdown_single_snapshot_no_dup_under_concurrent_reorder() 
         )
         .await;
     }
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Background writer: continuously reshuffle child positions so that
     // rows cross the keyset cursor boundary mid-export. Pre-fix this is
@@ -1836,7 +1836,7 @@ async fn export_page_markdown_batch_resolves_mixed_references() {
         Some(3),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
 
@@ -1911,7 +1911,7 @@ async fn export_page_markdown_handles_many_unrelated_tags() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, page_id).await.unwrap();
 
@@ -1949,7 +1949,7 @@ async fn export_page_markdown_frontmatter_filters_internal_and_renders_ref_num()
     insert_block(&pool, PAGE, "page", "Props Page", None, Some(1)).await;
     // The page a value_ref property points at.
     insert_block(&pool, REF_TARGET, "page", "Linked Page", None, Some(1)).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Seed a mix of properties on the page block.
     let seed = |key: &'static str, col: &'static str, val: &'static str| {
@@ -2036,7 +2036,7 @@ async fn export_page_markdown_frontmatter_renders_bool_properties() {
 
     const PAGE: &str = "01AAAAAAAAAAAAAAAAAAAAPAGE";
     insert_block(&pool, PAGE, "page", "Bool Page", None, Some(1)).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Insert a true boolean property (value_bool = 1).
     sqlx::query(
@@ -2094,7 +2094,7 @@ async fn import_markdown_frontmatter_round_trips_typed_page_properties_1432() {
     // so the target must live in the import's space (`TEST_SPACE_ID`) for the
     // title→ULID resolution to succeed on re-import.
     assign_to_space(&pool, REF_TARGET, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Declare typed property definitions so the import path coerces each
     // frontmatter scalar into the correct `block_properties` column.
@@ -2297,7 +2297,7 @@ async fn import_markdown_frontmatter_ref_is_space_scoped_1432() {
     const LOCAL_PAGE: &str = "01AAAAAAAAAAAAAAAAAAALOCL1";
     insert_block(&pool, LOCAL_PAGE, "page", "Local Title", None, Some(1)).await;
     assign_to_space(&pool, LOCAL_PAGE, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Declare two ref-typed property defs.
     for key in ["cross_ref", "local_ref"] {
@@ -2785,17 +2785,17 @@ async fn import_markdown_empty_content() {
 /// test can assert the `Started` → `Progress`* → `Complete` contract
 /// without a Tauri `Channel`.
 #[derive(Default)]
-struct RecordingImportSink(std::sync::Mutex<Vec<crate::import::ImportProgressUpdate>>);
+struct RecordingImportSink(std::sync::Mutex<Vec<agaric_engine::import::ImportProgressUpdate>>);
 
 impl crate::import::ImportProgressSink for RecordingImportSink {
-    fn emit(&self, update: crate::import::ImportProgressUpdate) {
+    fn emit(&self, update: agaric_engine::import::ImportProgressUpdate) {
         self.0.lock().unwrap().push(update);
     }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_emits_started_progress_complete() {
-    use crate::import::ImportProgressUpdate as U;
+    use agaric_engine::import::ImportProgressUpdate as U;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -2871,7 +2871,7 @@ async fn import_markdown_emits_started_progress_complete() {
 /// dismiss the progress bar even when nothing was imported.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_progress_empty_file_started_then_complete() {
-    use crate::import::ImportProgressUpdate as U;
+    use agaric_engine::import::ImportProgressUpdate as U;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -2929,7 +2929,7 @@ async fn import_markdown_progress_empty_file_started_then_complete() {
 /// must treat the import as failed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn import_markdown_progress_failure_emits_no_complete() {
-    use crate::import::ImportProgressUpdate as U;
+    use agaric_engine::import::ImportProgressUpdate as U;
 
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
@@ -3011,7 +3011,7 @@ async fn import_markdown_single_transaction() {
     // Verify page exists
     let page: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'TxTest'"#
     )
     .fetch_optional(&pool)
     .await
@@ -3022,7 +3022,7 @@ async fn import_markdown_single_transaction() {
     // Verify all content blocks exist under the page hierarchy
     let all_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position"#
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position"#
     )
     .fetch_all(&pool)
     .await
@@ -3038,7 +3038,7 @@ async fn import_markdown_single_transaction() {
         parent_block
             .parent_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str()),
         "Parent block should be child of the page"
     );
@@ -3049,7 +3049,10 @@ async fn import_markdown_single_transaction() {
         .find(|b| b.content.as_deref() == Some("Child A"))
         .expect("Child A must exist");
     assert_eq!(
-        child_a.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        child_a
+            .parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(parent_block.id.as_str()),
         "Child A should be child of Parent block"
     );
@@ -3067,7 +3070,7 @@ async fn import_markdown_single_transaction() {
         grandchild
             .parent_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(child_b.id.as_str()),
         "Grandchild should be child of Child B"
     );
@@ -3076,7 +3079,7 @@ async fn import_markdown_single_transaction() {
     // "priority" is a reserved key stored in blocks.priority column
     let refreshed_parent: BlockRow = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ?"#,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ?"#,
         parent_block.id
     )
     .fetch_one(&pool)
@@ -3269,7 +3272,7 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
     // The page exists once.
     let page: BlockRow = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'BigFlat'"#
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE block_type = 'page' AND content = 'BigFlat'"#
     )
     .fetch_one(&pool)
     .await
@@ -3280,7 +3283,7 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
     // path, just committed across several transactions.
     let content_blocks: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position, id"#
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE block_type = 'content' ORDER BY position, id"#
     )
     .fetch_all(&pool)
     .await
@@ -3292,12 +3295,12 @@ async fn import_markdown_multi_chunk_tree_matches_single_chunk() {
     );
     for b in &content_blocks {
         assert_eq!(
-            b.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+            b.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str),
             Some(page.id.as_str()),
             "every depth-0 block must be a direct child of the page across chunk boundaries"
         );
         assert_eq!(
-            b.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+            b.page_id.as_ref().map(agaric_core::ulid::BlockId::as_str),
             Some(page.id.as_str()),
             "every block must carry the page's page_id regardless of which chunk wrote it"
         );
@@ -4901,7 +4904,9 @@ async fn create_block_sets_page_id_self_for_page() {
     .await
     .unwrap();
     assert_eq!(
-        page.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        page.page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str()),
         "page block's page_id should be its own id"
     );
@@ -4909,7 +4914,10 @@ async fn create_block_sets_page_id_self_for_page() {
     // Verify via direct DB read
     let fetched = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(
-        fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        fetched
+            .page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str())
     );
 
@@ -4945,7 +4953,10 @@ async fn create_block_sets_page_id_for_content_block() {
     .unwrap();
 
     assert_eq!(
-        child.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        child
+            .page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str()),
         "content block's page_id should be the parent page's id"
     );
@@ -4977,7 +4988,10 @@ async fn move_block_updates_page_id() {
     .unwrap();
 
     assert_eq!(
-        child.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        child
+            .page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str())
     );
 
@@ -4995,7 +5009,10 @@ async fn move_block_updates_page_id() {
 
     let fetched = get_block_inner(&pool, child.id.clone()).await.unwrap();
     assert_eq!(
-        fetched.page_id.as_ref().map(crate::ulid::BlockId::as_str),
+        fetched
+            .page_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_b.id.as_str()),
         "page_id should update after move"
     );
@@ -5041,7 +5058,7 @@ async fn move_block_updates_descendants_page_id() {
         grandchild
             .page_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_a.id.as_str())
     );
 
@@ -5062,7 +5079,7 @@ async fn move_block_updates_descendants_page_id() {
         fetched_grandchild
             .page_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page_b.id.as_str()),
         "descendants' page_id should update after move"
     );
@@ -5105,14 +5122,14 @@ async fn rebuild_page_ids_restores_correct_values() {
         .unwrap();
 
     // Run rebuild
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let fetched_page = get_block_inner(&pool, page.id.clone()).await.unwrap();
     assert_eq!(
         fetched_page
             .page_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str())
     );
 
@@ -5121,7 +5138,7 @@ async fn rebuild_page_ids_restores_correct_values() {
         fetched_child
             .page_id
             .as_ref()
-            .map(crate::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str())
     );
 
@@ -5444,7 +5461,7 @@ async fn load_page_subtree_returns_active_descendants_excluding_root() {
     .unwrap();
     // `page_id` is materializer-maintained in production; backfill by
     // hand for the test fixture so the WHERE page_id = ? filter hits.
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let subtree = load_page_subtree_inner(&pool, "01HZPAGE000000000000000PGE", TEST_SPACE_ID)
         .await
@@ -5574,7 +5591,7 @@ async fn load_page_subtree_rejects_foreign_space() {
         } => {
             assert_eq!(
                 code,
-                crate::error::ValidationCode::PageNotInSpace,
+                agaric_core::error::ValidationCode::PageNotInSpace,
                 "#2810 — foreign-space rejection must carry PageNotInSpace, not just kind \
                  'validation', so the frontend heal can key on the structured code"
             );
@@ -5831,7 +5848,7 @@ async fn import_resolves_existing_wikilink_to_ulid_1446() {
     const TARGET: &str = "01AAAAAAAAAAAAAAAAAAATARGT";
     insert_block(&pool, TARGET, "page", "Other Page", None, Some(1)).await;
     assign_to_space(&pool, TARGET, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = "- see [[Other Page]] for details";
     let result = import_markdown_inner(
@@ -5871,7 +5888,7 @@ async fn import_creates_missing_wikilink_target_and_links_1446() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = "- linking to [[Brand New]] here";
     import_markdown_inner(
@@ -5926,7 +5943,7 @@ async fn import_ambiguous_wikilink_left_plain_1446() {
     insert_block(&pool, DUP2, "page", "Dup Title", None, Some(1)).await;
     assign_to_space(&pool, DUP1, TEST_SPACE_ID).await;
     assign_to_space(&pool, DUP2, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = "- ref to [[Dup Title]] stays plain";
     let result = import_markdown_inner(
@@ -5991,7 +6008,7 @@ async fn import_wikilink_batch_resolution_preserves_semantics_2200() {
     // A case-variant of the unique title, present with the EXACT case only.
     // `[[uniq page]]` (lowercase) must NOT match `Uniq Page` — resolution is
     // binary/case-sensitive — so it is treated as missing and CREATED.
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = "- unique [[Uniq Page]]\n- ambiguous [[Amb Page]]\n- missing [[Fresh Page]]\n- casevariant [[uniq page]]";
     let result = import_markdown_inner(
@@ -6097,7 +6114,7 @@ async fn import_folder_path_maps_to_namespace_title_1446() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6157,7 +6174,7 @@ async fn import_export_namespace_and_wikilink_round_trip_1446() {
     .await;
     assign_to_space(&pool, SRC, TEST_SPACE_ID).await;
     assign_to_space(&pool, LINK_TARGET, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Export → the ULID link becomes the human `[[Helpers]]` form.
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
@@ -6222,7 +6239,7 @@ async fn import_wikilink_heading_anchor_resolves_to_base_page_1282() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6287,7 +6304,7 @@ async fn import_wikilink_blockid_anchor_resolves_to_base_page_1282() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6343,7 +6360,7 @@ async fn import_wikilink_shared_base_anchors_single_create_1282() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6416,7 +6433,7 @@ async fn import_wikilink_plain_no_anchor_unchanged_1282() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6471,7 +6488,7 @@ async fn import_wikilink_empty_base_left_literal_1282() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Count pre-existing pages so we can assert NONE were created by the import.
     let pages_before: i64 = sqlx::query_scalar(
@@ -6588,7 +6605,7 @@ async fn import_wikilink_block_anchor_same_doc_resolves_to_block_ref_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6649,7 +6666,7 @@ async fn import_wikilink_block_anchor_forward_reference_resolves_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6705,7 +6722,7 @@ async fn import_wikilink_block_anchor_self_title_resolves_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6773,7 +6790,7 @@ async fn import_wikilink_block_anchor_not_found_falls_back_to_page_link_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6831,7 +6848,7 @@ async fn import_wikilink_block_anchor_cross_note_unchanged_1282_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6892,7 +6909,7 @@ async fn import_wikilink_block_anchor_dedup_same_anchor_2510() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -6964,7 +6981,7 @@ async fn import_wikilink_heading_anchor_same_doc_resolves_to_block_ref_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7024,7 +7041,7 @@ async fn import_wikilink_heading_anchor_self_title_forward_resolves_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7076,7 +7093,7 @@ async fn import_wikilink_heading_anchor_normalized_match_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7129,7 +7146,7 @@ async fn import_wikilink_heading_anchor_duplicate_first_occurrence_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7185,7 +7202,7 @@ async fn import_wikilink_heading_anchor_unresolved_empty_base_literal_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7240,7 +7257,7 @@ async fn import_wikilink_heading_anchor_cross_note_unchanged_2567() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7316,7 +7333,7 @@ async fn import_markdown_hashtags_no_tag_rows_1922() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7416,7 +7433,7 @@ async fn import_inline_bare_tag_links_and_round_trips_1924() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7481,7 +7498,7 @@ async fn import_inline_multiword_tag_links_and_round_trips_1924() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     import_markdown_inner(
         &pool,
@@ -7586,7 +7603,7 @@ async fn import_tag_does_not_reuse_cross_space_tag_1924() {
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
     ensure_test_space_b(&pool).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // A `project` tag that lives in the OTHER space (space B).
     let foreign_tag = "01FOREIGNTAGPROJECT0000000";
@@ -7656,7 +7673,7 @@ async fn import_tag_inside_code_fence_stays_literal_1924() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // A bulleted fence whose body contains a `#tag`-looking token.
     let md_in = "- ```\n  #shouldstayliteral\n  ```";
@@ -7707,7 +7724,7 @@ async fn import_heading_line_is_not_a_tag_1924() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     import_markdown_inner(
         &pool,
@@ -7749,7 +7766,7 @@ async fn import_tag_case_folds_to_single_tag_1924() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     import_markdown_inner(
         &pool,
@@ -7806,7 +7823,7 @@ async fn import_tag_reuses_unicode_case_variant_1990() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Pre-seed a capital-sigma `#Σ` tag in the IMPORT's space.
     let existing_tag = "01EXISTINGSIGMATAG00000000";
@@ -7888,7 +7905,7 @@ async fn import_namespaced_title_collision_creates_duplicate_page_1922() {
     )
     .await;
     assign_to_test_space(&pool, EXISTING).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let result = import_markdown_inner(
         &pool,
@@ -7938,7 +7955,7 @@ async fn import_top_of_file_frontmatter_with_prose_body_1922() {
     let mat = Materializer::new(pool.clone());
     ensure_test_space(&pool).await;
     mark_block_as_space(&pool, TEST_SPACE_ID).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // True Case 1: the file STARTS with the `---` fence, then a single prose
     // line (no `# Heading`, no `- ` bullet). `category` is an unseeded,
@@ -8043,7 +8060,7 @@ async fn export_emits_bulleted_indented_block_content_1916() {
     insert_block(&pool, PAGE, "page", "Hierarchy Page", None, Some(1)).await;
     insert_block(&pool, CHILD, "content", "Parent block", Some(PAGE), Some(1)).await;
     insert_block(&pool, GRAND, "content", "Child block", Some(CHILD), Some(1)).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
@@ -8086,7 +8103,7 @@ async fn export_emits_task_metadata_as_property_lines_1916() {
         Some("2026-06-28"),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
@@ -8265,7 +8282,7 @@ async fn import_export_full_round_trip_1916_1917_1918() {
     insert_block(&pool, TAG, "tag", "important", None, Some(1)).await;
     assign_to_space(&pool, TAG, TEST_SPACE_ID).await;
     insert_block_tag(&pool, SRC, TAG).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // 1. Export.
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
@@ -8459,7 +8476,7 @@ async fn import_export_frontmatter_scalar_escaping_round_trip_2715() {
         .execute(&pool)
         .await
         .unwrap();
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Export → the frontmatter fence must stay well-formed (exactly two `---`
     // fence lines at column 0: open + close).
@@ -8542,7 +8559,7 @@ async fn import_export_multiline_block_content_round_trip_2716() {
     // (bullet) and `key:: charlie` (property). The exporter must escape them.
     const CONTENT: &str = "alpha\n- bravo\nkey:: charlie\ndelta";
     insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
 
@@ -8622,7 +8639,7 @@ async fn import_export_fenced_code_block_round_trip_2725() {
     // are literal code, NOT new blocks/properties.
     const CONTENT: &str = "```\n- fake item\nkey:: fake prop\n```";
     insert_block(&pool, BLK, "content", CONTENT, Some(SRC), Some(1)).await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, SRC).await.unwrap();
 
@@ -8686,7 +8703,7 @@ async fn import_export_fenced_code_block_round_trip_2725() {
 // #1925 — import attachments referenced by Logseq/Obsidian vaults
 // ======================================================================
 
-use crate::import::VaultFile;
+use agaric_engine::import::VaultFile;
 
 /// Read every `attachments` row (id, block_id, fs_path, content_hash) for the
 /// page imported into the test space, ordered by id. Module-local helper.
@@ -9105,7 +9122,7 @@ async fn import_code_fence_embed_stays_literal_1925() {
 /// #1925 — unit coverage for the pure detection + match + mime helpers.
 #[test]
 fn attachment_ref_detection_and_match_rules_1925() {
-    use crate::import::{detect_attachment_refs, guess_attachment_mime, match_vault_file};
+    use agaric_engine::import::{detect_attachment_refs, guess_attachment_mime, match_vault_file};
 
     // Skips absolute URLs / data: / attachment: refs; captures embeds + images.
     let content = "![[a.png]] ![alt](assets/b.png) ![x](https://h/c.png) \
@@ -9698,7 +9715,7 @@ async fn import_markdown_within_attachment_budget_still_ingests_2724() {
 #[test]
 fn ingest_read_counts_counts_occurrences_not_distinct_refs_2724() {
     use crate::commands::pages::markdown::ingest_read_counts;
-    use crate::import::AttachmentRef;
+    use agaric_engine::import::AttachmentRef;
 
     let vault = vec![VaultFile {
         path: "assets/a.png".into(),
@@ -9840,7 +9857,7 @@ async fn export_emits_custom_descendant_block_property_2962() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     sqlx::query(
         "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'assignee', 'Alice')",
@@ -9891,7 +9908,7 @@ async fn export_emits_custom_property_for_nested_descendant_2962() {
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     sqlx::query("INSERT INTO block_properties (block_id, key, value_num) VALUES (?, 'effort', 2)")
         .bind(CHILD)
@@ -10006,7 +10023,7 @@ async fn import_round_trips_typed_descendant_block_property_2982() {
         .execute(&pool)
         .await
         .unwrap();
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     // Export: the descendant's typed custom property renders as `score:: 42`
     // (#2962 — already correct pre-#2982; this fix is import-side only).
@@ -10168,7 +10185,7 @@ async fn export_descendant_reserved_columns_not_duplicated_2962() {
     .execute(&pool)
     .await
     .unwrap();
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let md = export_page_markdown_inner(&pool, PAGE).await.unwrap();
 
@@ -10210,7 +10227,7 @@ async fn export_descendant_internal_and_recurrence_keys_not_round_tripped_2962()
         Some(1),
     )
     .await;
-    crate::cache::rebuild_page_ids(&pool).await.unwrap();
+    agaric_store::cache::rebuild_page_ids(&pool).await.unwrap();
 
     let seed = |key: &'static str, val: &'static str| {
         let pool = pool.clone();

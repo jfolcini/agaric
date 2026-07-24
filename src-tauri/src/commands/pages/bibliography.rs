@@ -3,7 +3,7 @@
 //! `import_bibliography` turns a BibTeX or CSL-JSON file into one reference
 //! page per entry, each carrying typed properties (`citation-key`,
 //! `reference-type`, `authors`, `year`, `doi`, `url`, `journal`,
-//! `abstract`). Parsing is pure and lives in [`crate::bibliography`]; this
+//! `abstract`). Parsing is pure and lives in [`agaric_engine::bibliography`]; this
 //! module owns the transactional apply, mirroring `import_markdown_inner`'s
 //! patterns (in-tx space validation, `CommandTx::begin_immediate`, chunked
 //! commits, materializer dispatch).
@@ -19,11 +19,11 @@ use sqlx::SqlitePool;
 use tauri::State;
 use tracing::instrument;
 
-use crate::bibliography::{self, BibEntry, BibliographyFormat};
 use crate::db::{CommandTx, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::space::SpaceId;
+use agaric_core::error::AppError;
+use agaric_engine::bibliography::{self, BibEntry, BibliographyFormat};
+use agaric_store::space::SpaceId;
 
 use super::super::*;
 
@@ -430,16 +430,16 @@ pub async fn import_bibliography_inner(
                 None => (None, None),
             };
             let (value_text, value_num, value_date, value_ref, value_bool) =
-                crate::domain::block_ops::typed_property_args_for_registry_value(
+                agaric_engine::block_ops::typed_property_args_for_registry_value(
                     key,
                     value,
                     value_type.as_deref(),
                 );
-            let declaration = value_type.map(|vt| crate::domain::block_ops::PropertyDeclaration {
+            let declaration = value_type.map(|vt| agaric_engine::block_ops::PropertyDeclaration {
                 value_type: vt,
                 options,
             });
-            match crate::domain::block_ops::set_property_in_tx_with_declaration(
+            match agaric_engine::block_ops::set_property_in_tx_with_declaration(
                 &mut tx,
                 materializer.loro_state(),
                 device_id,

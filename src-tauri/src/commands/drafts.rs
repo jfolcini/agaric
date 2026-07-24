@@ -5,10 +5,10 @@ use tauri::State;
 use tracing::instrument;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx, WritePool};
-use crate::draft;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_engine::draft;
 
 use super::*;
 
@@ -436,7 +436,7 @@ pub async fn list_drafts_inner(pool: &sqlx::SqlitePool) -> Result<Vec<draft::Dra
 mod tests_h12 {
     use super::*;
     use crate::db::init_pool;
-    use crate::draft;
+    use agaric_engine::draft;
     use std::path::PathBuf;
     use tempfile::TempDir;
 

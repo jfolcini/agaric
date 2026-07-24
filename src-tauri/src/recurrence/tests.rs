@@ -337,7 +337,7 @@ use crate::commands::{
 };
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::pagination::BlockRow;
+use agaric_store::pagination::BlockRow;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
@@ -424,8 +424,8 @@ async fn set_date_property(
 async fn find_recurrence_siblings(pool: &SqlitePool, original_id: &str) -> Vec<BlockRow> {
     sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks WHERE id != ? AND todo_state = 'TODO' AND deleted_at IS NULL"#,
         original_id
     )
@@ -973,8 +973,8 @@ async fn handle_recurrence_sibling_position_does_not_collide() {
     // from the two pre-existing neighbors).
     let rows: Vec<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at,  todo_state, priority,
-                  due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId"
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at,  todo_state, priority,
+                  due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks
            WHERE parent_id = ?
              AND id NOT IN (?, ?, ?)
@@ -1334,7 +1334,7 @@ async fn plus_plus_cap_exceeded_propagates_through_handle_recurrence() {
 #[cfg(test)]
 mod parser_proptest {
     use super::shift_date;
-    use crate::recurrence_math::{days_in_month, shift_date_once};
+    use agaric_store::recurrence_math::{days_in_month, shift_date_once};
     use chrono::{Datelike, Local, NaiveDate};
     use proptest::prelude::*;
 

@@ -28,7 +28,7 @@
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Listener, Runtime};
 
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
 
 // ---------------------------------------------------------------------------
 // Event name constants

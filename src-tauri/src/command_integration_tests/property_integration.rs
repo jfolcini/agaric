@@ -1,5 +1,5 @@
 use super::common::*;
-use crate::op_log;
+use agaric_store::op_log;
 
 // ======================================================================
 // set_property / delete_property — op_log verification

@@ -4,7 +4,7 @@ use std::hint::black_box;
 
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 
-use agaric_lib::hash::{compute_op_hash, verify_op_hash};
+use agaric_core::hash::{compute_op_hash, verify_op_hash};
 
 // ---------------------------------------------------------------------------
 // Individual benchmarks

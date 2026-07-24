@@ -80,7 +80,7 @@
 use super::*;
 use crate::db::init_pool;
 use crate::materializer::Materializer;
-use crate::ulid::BlockId;
+use agaric_core::ulid::BlockId;
 use proptest::prelude::*;
 use sqlx::SqlitePool;
 use std::collections::{BTreeMap, BTreeSet};
@@ -157,7 +157,7 @@ struct Tree {
 }
 
 /// Fixed tombstone for independently-pre-deleted blocks — distinct from
-/// any cascade timestamp (`crate::now_rfc3339()` is a 2026 value, so a
+/// any cascade timestamp (`agaric_core::time::now_rfc3339()` is a 2026 value, so a
 /// 2020 literal can never collide).
 const PRE_DELETED_AT: i64 = 1_577_836_800_000;
 

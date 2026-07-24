@@ -377,7 +377,7 @@ async fn fg_retry_success() {
         &pool,
         MaterializeTask::ApplyOp(StdArc::new(r)),
         &metrics,
-        &Arc::new(crate::loro::shared::LoroState::new()),
+        &Arc::new(agaric_engine::loro::shared::LoroState::new()),
     )
     .await;
     assert_eq!(
@@ -404,7 +404,7 @@ async fn fg_retry_barrier() {
         &pool,
         MaterializeTask::Barrier(Arc::new(tokio::sync::Notify::new())),
         &metrics,
-        &Arc::new(crate::loro::shared::LoroState::new()),
+        &Arc::new(agaric_engine::loro::shared::LoroState::new()),
     )
     .await;
     assert_eq!(
@@ -426,7 +426,7 @@ async fn fg_retry_bad_payload() {
         &pool,
         MaterializeTask::ApplyOp(StdArc::new(fake_op_record("bogus_op_type", "{}"))),
         &metrics,
-        &Arc::new(crate::loro::shared::LoroState::new()),
+        &Arc::new(agaric_engine::loro::shared::LoroState::new()),
     )
     .await;
     assert_eq!(
@@ -601,7 +601,7 @@ async fn apply_op_different_device_trips_single_device_cursor_assert() {
     let _ = handle_foreground_task(
         &pool,
         &MaterializeTask::ApplyOp(StdArc::new(mine)),
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
     )
     .await;
 }
@@ -627,7 +627,7 @@ async fn apply_op_same_device_does_not_trip_single_device_cursor_assert() {
     handle_foreground_task(
         &pool,
         &MaterializeTask::ApplyOp(StdArc::new(mine)),
-        &crate::loro::shared::LoroState::new(),
+        &agaric_engine::loro::shared::LoroState::new(),
     )
     .await
     .expect("same-device single-op apply must succeed without tripping the #412 assert");

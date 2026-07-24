@@ -1,8 +1,8 @@
 use super::*;
 use crate::db::init_pool;
-use crate::loro::engine::LoroEngine;
-use crate::loro::registry::LoroEngineRegistry;
-use crate::space::SpaceId;
+use agaric_engine::loro::engine::LoroEngine;
+use agaric_engine::loro::registry::LoroEngineRegistry;
+use agaric_store::space::SpaceId;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 
@@ -629,7 +629,7 @@ async fn resolve_changed_page_ids_skips_orphan_without_page_ancestor() {
     .execute(&pool)
     .await
     .unwrap();
-    let page_ids = resolve_changed_page_ids(&pool, &[crate::ulid::BlockId::from(BLOCK_A)])
+    let page_ids = resolve_changed_page_ids(&pool, &[agaric_core::ulid::BlockId::from(BLOCK_A)])
         .await
         .expect("resolve");
     assert!(
@@ -674,9 +674,10 @@ async fn resolve_changed_page_ids_resolves_deep_block_past_depth_cap() {
         leaf = id;
     }
 
-    let page_ids = resolve_changed_page_ids(&pool, &[crate::ulid::BlockId::from(leaf.as_str())])
-        .await
-        .expect("resolve");
+    let page_ids =
+        resolve_changed_page_ids(&pool, &[agaric_core::ulid::BlockId::from(leaf.as_str())])
+            .await
+            .expect("resolve");
     assert_eq!(
         page_ids,
         vec![page.to_string()],
@@ -776,7 +777,7 @@ async fn concurrent_delete_vs_move_into_subtree_converges_deleted_at_on_both_pee
     }
     {
         let mut conn = pool1.acquire().await.expect("acquire pool1");
-        crate::loro::projection::project_delete_block_to_sql(&mut conn, BLOCK_A, cohort_ts)
+        agaric_engine::loro::projection::project_delete_block_to_sql(&mut conn, BLOCK_A, cohort_ts)
             .await
             .expect("local delete cascade");
     }
@@ -2377,7 +2378,9 @@ async fn incremental_tag_inheritance_matches_global_rebuild() {
     .unwrap();
 
     // Force a global rebuild and re-read.
-    crate::tag_inheritance::rebuild_all(&pool).await.unwrap();
+    agaric_store::tag_inheritance::rebuild_all(&pool)
+        .await
+        .unwrap();
     let global: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT block_id, tag_id, inherited_from FROM block_tag_inherited ORDER BY 1, 2, 3",
     )
@@ -3349,7 +3352,7 @@ async fn inbound_small_delta_changed_set_bounded_to_touched_block_2264() {
         } => {
             let changed: Vec<&str> = changed_blocks
                 .iter()
-                .map(crate::ulid::BlockId::as_str)
+                .map(agaric_core::ulid::BlockId::as_str)
                 .collect();
             assert_eq!(
                 changed,
@@ -3499,7 +3502,7 @@ async fn content_only_inbound_delta_skips_tag_inheritance_rebuild_2265() {
         ApplyOutcome::Imported { changed_blocks, .. } => {
             let changed: Vec<&str> = changed_blocks
                 .iter()
-                .map(crate::ulid::BlockId::as_str)
+                .map(agaric_core::ulid::BlockId::as_str)
                 .collect();
             assert_eq!(changed, vec![BLOCK_A], "content edit changes only AA");
         }
@@ -3586,7 +3589,7 @@ async fn inbound_move_delta_recomputes_descendant_inherited_tags_2265() {
         ApplyOutcome::Imported { changed_blocks, .. } => {
             let changed: Vec<&str> = changed_blocks
                 .iter()
-                .map(crate::ulid::BlockId::as_str)
+                .map(agaric_core::ulid::BlockId::as_str)
                 .collect();
             assert_eq!(
                 changed,

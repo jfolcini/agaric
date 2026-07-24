@@ -1,6 +1,6 @@
 use super::common::*;
-use crate::op_log;
-use crate::space::SpaceScope;
+use agaric_store::op_log;
+use agaric_store::space::SpaceScope;
 
 // ======================================================================
 // page aliases — CRUD & resolution
@@ -357,7 +357,7 @@ async fn quick_capture_block_reuses_existing_journal_page() {
         block
             .parent_id
             .as_ref()
-            .map(super::super::ulid::BlockId::as_str),
+            .map(agaric_core::ulid::BlockId::as_str),
         Some(page.id.as_str()),
         "quick capture must reuse the pre-existing today journal page"
     );
@@ -840,9 +840,9 @@ async fn restore_page_to_op_op_log_chain_valid_after_restore() {
 /// propagated its `NonReversible` via `?` and killed the whole restore.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn restore_page_to_op_skips_non_reversible_and_completes() {
-    use crate::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
-    use crate::op_log::append_local_op_at;
-    use crate::ulid::BlockId;
+    use agaric_core::ulid::BlockId;
+    use agaric_store::op::{CreateBlockPayload, MoveBlockPayload, OpPayload};
+    use agaric_store::op_log::append_local_op_at;
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);

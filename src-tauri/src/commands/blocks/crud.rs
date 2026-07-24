@@ -1,5 +1,5 @@
 use crate::db::{CommandTx, WriteCtx};
-use crate::op::{
+use agaric_store::op::{
     DeleteBlockPayload, DeletePropertyPayload, EditBlockPayload, PurgeBlockPayload,
     RestoreBlockPayload, SPACE_PROPERTY_KEY,
 };
@@ -9,13 +9,13 @@ use tracing::instrument;
 
 use super::super::*;
 // #882: the create-block / set-property tx cores moved to the neutral
-// `crate::domain::block_ops` layer. The `*_inner` wrappers below (which own
+// `agaric_engine::block_ops` layer. The `*_inner` wrappers below (which own
 // the transaction + post-commit dispatch) stay here and call into domain.
-use crate::domain::block_ops::{
+use agaric_engine::block_ops::{
     PropertyDeclaration, create_block_in_tx, set_property_in_tx,
     set_property_in_tx_with_declaration,
 };
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
 
 /// Look up the most-recent `edit_block`/`create_block` op for the given
 /// `block_id`, scoped to the supplied connection (typically a live
@@ -441,7 +441,7 @@ pub async fn edit_block_inner(
     // 1. Validate block exists and is not deleted (inside tx = TOCTOU-safe)
     let existing: Option<BlockRow> = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content, parent_id as "parent_id: crate::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: crate::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content, parent_id as "parent_id: agaric_core::ulid::BlockId", position, deleted_at, todo_state, priority, due_date, scheduled_date, page_id as "page_id: agaric_core::ulid::BlockId" FROM blocks WHERE id = ? AND deleted_at IS NULL"#,
         block_id
     )
     .fetch_optional(&mut **tx)
@@ -461,7 +461,7 @@ pub async fn edit_block_inner(
     // Referential cross-space integrity: reject an edit that
     // introduces `[[ULID]]` / `#[ULID]` tokens pointing at a block in a
     // different space than this one.
-    crate::spaces::cross_space_validation::validate_content_cross_space_refs(
+    agaric_store::cross_space_validation::validate_content_cross_space_refs(
         &mut tx,
         &BlockId::from_trusted(&block_id),
         &to_text,
@@ -902,7 +902,7 @@ pub async fn delete_blocks_by_ids_inner(
     let mut delete_fanout: Vec<(
         Arc<op_log::OpRecord>,
         Vec<String>,
-        Option<crate::space::SpaceId>,
+        Option<agaric_store::space::SpaceId>,
     )> = Vec::with_capacity(live_roots.len());
     for (root, root_block_type) in &live_roots {
         let payload = DeleteBlockPayload {
@@ -927,7 +927,7 @@ pub async fn delete_blocks_by_ids_inner(
         // both resolved while the rows are still `deleted_at IS NULL`.
         let cohort = crate::materializer::collect_delete_cohort(&mut tx, &payload).await?;
         let delete_space_id =
-            crate::space::resolve_block_space(&mut **tx, &payload.block_id).await?;
+            agaric_store::space::resolve_block_space(&mut **tx, &payload.block_id).await?;
         delete_fanout.push((op_record, cohort, delete_space_id));
     }
 
@@ -967,7 +967,7 @@ pub async fn delete_blocks_by_ids_inner(
     // (the helper takes a single seed); the SQL it emits is bounded
     // by the same depth-100 invariant.
     for (root, _root_block_type) in &live_roots {
-        crate::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
+        agaric_store::tag_inheritance::remove_subtree_inherited(&mut tx, root).await?;
     }
 
     // #2042: pages_cache counts are recomputed by the background
@@ -1057,7 +1057,7 @@ pub async fn delete_blocks_by_ids(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
+/// - [`AppError::Validation`] — empty input list, > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries, or `space_id` is not a live space block
 #[instrument(skip(pool, device_id, materializer, block_ids), err)]
 pub async fn move_blocks_to_space_inner(
     pool: &SqlitePool,
@@ -1290,10 +1290,10 @@ pub async fn restore_block_inner(
     // structural (#1055): each batch's recursive arm only descends through
     // `deleted_at = ?` children, which also keeps conflict copies (independent
     // lifecycles) out of the bulk restore.
-    let restore_cohort = crate::block_descendants::collect_subtree_ids_unbounded(
+    let restore_cohort = agaric_store::block_descendants::collect_subtree_ids_unbounded(
         &mut tx,
         &block_id,
-        crate::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
+        agaric_store::block_descendants::DescendantWalkFilter::Cohort(deleted_at_ref),
     )
     .await?;
     let restore_cohort_json = serde_json::Value::from(restore_cohort).to_string();
@@ -1326,7 +1326,7 @@ pub async fn restore_block_inner(
     // that fans the descendant cohort out. The command tx only owns the SQL
     // `deleted_at` clear here; we keep `topmost` for the re-derivation root.
     let restored_ancestor_top =
-        crate::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id)
+        agaric_store::block_descendants::restore_deleted_ancestor_chain(&mut tx, &block_id)
             .await?
             .topmost;
 
@@ -1353,7 +1353,7 @@ pub async fn restore_block_inner(
     // synchronously (callers read space-scoped lists right after commit, so
     // both columns must be re-derived in-tx). Shared helper lives in
     // `crate::commands::block_cleanup`.
-    crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &block_id).await?;
+    agaric_store::block_descendants::rederive_page_and_space_ids(&mut tx, &block_id).await?;
 
     // #1884: when an ancestor chain was also restored above, drive the
     // re-derivation / inheritance / cache recompute from the TOPMOST restored
@@ -1365,12 +1365,13 @@ pub async fn restore_block_inner(
         .clone()
         .unwrap_or_else(|| block_id.clone());
     if inheritance_root != block_id {
-        crate::commands::block_cleanup::rederive_page_and_space_ids(&mut tx, &inheritance_root)
+        agaric_store::block_descendants::rederive_page_and_space_ids(&mut tx, &inheritance_root)
             .await?;
     }
 
     // P-4: Recompute inherited tags for restored subtree
-    crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &inheritance_root).await?;
+    agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &inheritance_root)
+        .await?;
 
     // #2042: pages_cache counts for the restored subtree's pages are recomputed
     // by the background `RebuildPagesCacheCounts` task (enqueued via
@@ -1395,7 +1396,7 @@ pub async fn restore_block_inner(
 type PurgeEngineFanout = (
     Arc<op_log::OpRecord>,
     Vec<String>,
-    Option<crate::space::SpaceId>,
+    Option<agaric_store::space::SpaceId>,
 );
 
 /// #1257 PRE-CASCADE capture for the post-commit engine purge fan-out.
@@ -1419,12 +1420,12 @@ type PurgeEngineFanout = (
 async fn capture_purge_engine_fanout(
     tx: &mut CommandTx,
     root_id: &str,
-) -> Result<(Vec<String>, Option<crate::space::SpaceId>), AppError> {
+) -> Result<(Vec<String>, Option<agaric_store::space::SpaceId>), AppError> {
     let cohort = sqlx::query_scalar::<_, String>(concat!(
         // #1655: single-root purge cohort walk via the shared
         // `descendants_cte_purge!()` macro (no `deleted_at` filter,
         // `depth < 100` cap) instead of re-inlining the CTE body.
-        crate::descendants_cte_purge!(),
+        agaric_store::descendants_cte_purge!(),
         "SELECT id FROM descendants",
     ))
     .bind(root_id)
@@ -1434,7 +1435,7 @@ async fn capture_purge_engine_fanout(
         .fetch_optional(&mut ***tx)
         .await?
         .flatten()
-        .map(|s| crate::space::SpaceId::from_trusted(&s));
+        .map(|s| agaric_store::space::SpaceId::from_trusted(&s));
     Ok((cohort, space_id))
 }
 
@@ -1460,7 +1461,7 @@ fn dispatch_purge_engine_fanout(materializer: &Materializer, fanout: &[PurgeEngi
                 "{}/{}#cohort/{}",
                 op_record.device_id, op_record.seq, cohort_id,
             );
-            crate::merge::engine_apply(
+            agaric_engine::merge::engine_apply(
                 &op_id,
                 &payload,
                 &op_record.device_id,
@@ -1538,7 +1539,7 @@ pub async fn purge_block_inner(
     // committed). Standard-variant under-detection of pure-conflict
     // chains is acceptable: the cap is preserved either way and the
     // operator gets a clear error on the common case.
-    if crate::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
+    if agaric_store::block_descendants::cascade_depth_saturated(&mut **tx, &block_id).await? {
         return Err(AppError::validation(format!(
             "block '{block_id}' subtree is too deep to purge (>=99 levels); \
              the recursive cascade would hit the depth-100 cap and leave \
@@ -1587,7 +1588,7 @@ pub async fn purge_block_inner(
     // remote ops.
     let (purged_attachment_paths, count) = crate::commands::block_cleanup::purge_subtree_tables(
         &mut tx,
-        crate::descendants_cte_purge!(),
+        agaric_store::descendants_cte_purge!(),
         "SELECT id FROM descendants",
         Some(&block_id),
     )
@@ -1781,7 +1782,7 @@ pub async fn restore_all_deleted_inner(
 
     // Recompute tag inheritance for all restored root blocks
     for root in &roots {
-        crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
+        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
 
     // Commit + drain enqueued background dispatches in FIFO order.
@@ -1943,7 +1944,7 @@ pub async fn purge_all_deleted_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn restore_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2076,7 +2077,7 @@ pub async fn restore_blocks_by_ids_inner(
 
     // Recompute tag inheritance for each restored root subtree.
     for root in &roots {
-        crate::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
+        agaric_store::tag_inheritance::recompute_subtree_inheritance(&mut tx, &root.id).await?;
     }
 
     // #2042: pages_cache counts for the restored subtrees' pages are recomputed
@@ -2128,7 +2129,7 @@ pub async fn restore_blocks_by_ids_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) entries
+/// - [`AppError::Validation`] — empty input list, or > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) entries
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn purge_blocks_by_ids_inner(
     pool: &SqlitePool,
@@ -2324,7 +2325,7 @@ pub async fn purge_blocks_by_ids_inner(
 /// the caller can queue background dispatch.
 pub(crate) async fn delete_property_in_tx(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
     device_id: &str,
     block_id: &str,
     key: &str,
@@ -2602,7 +2603,7 @@ pub struct CreateBlockSpec {
 ///
 /// **Validation:**
 /// - Empty `specs` list → [`AppError::Validation`].
-/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](crate::pagination::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
+/// - `specs.len()` > [`MAX_BATCH_BLOCK_IDS`](agaric_store::pagination::MAX_BATCH_BLOCK_IDS) → [`AppError::Validation`].
 ///
 /// **Forward references:** a spec's `parent_id` may reference a block
 /// id created EARLIER in the same batch. `create_block_in_tx`'s parent
@@ -2632,7 +2633,7 @@ pub async fn create_blocks_batch_inner(
     // property validation) still run in-loop and are covered by
     // `create_block_in_tx`'s validate-before-engine-apply ordering.
     for spec in &specs {
-        crate::domain::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
+        agaric_engine::block_ops::validate_create_block_shape(&spec.block_type, &spec.content)?;
     }
 
     let mut tx = CommandTx::begin_immediate(pool, "create_blocks_batch").await?;
@@ -2671,7 +2672,7 @@ pub async fn create_blocks_batch_inner(
         // #623. The helper types the flat string value per key.
         for (key, value) in &spec.properties {
             let (value_text, value_num, value_date, value_ref, value_bool) =
-                crate::domain::block_ops::typed_property_args_for_string_value(key, value.clone());
+                agaric_engine::block_ops::typed_property_args_for_string_value(key, value.clone());
             let (_block, prop_op) = set_property_in_tx(
                 &mut tx,
                 materializer.loro_state(),

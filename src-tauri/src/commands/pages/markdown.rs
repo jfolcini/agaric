@@ -11,13 +11,14 @@ use tracing::instrument;
 use tauri::State;
 
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
-use crate::import;
-use crate::import::{ImportProgressSink, ImportProgressUpdate, ImportResult, VaultFile};
+use crate::import::ImportProgressSink;
 use crate::materializer::Materializer;
-use crate::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
-use crate::space::SpaceId;
-use crate::ulid::{BlockId, PageId};
+use agaric_core::error::AppError;
+use agaric_core::ulid::{BlockId, PageId};
+use agaric_engine::import;
+use agaric_engine::import::{ImportProgressUpdate, ImportResult, VaultFile};
+use agaric_store::pagination::{BlockRow, Cursor, NULL_POSITION_SENTINEL, PageRequest};
+use agaric_store::space::SpaceId;
 
 use super::super::*;
 
@@ -83,7 +84,7 @@ fn check_attachment_budget(file_count: usize, total_bytes: u64) -> Result<(), Ap
 /// neither `]` nor a newline, non-greedy so `[[A]] [[B]]` matches twice). A
 /// token whose body is a canonical 26-char Crockford-base32 ULID is left
 /// untouched (it is already an internal `[[ULID]]` ref) — the resolver checks
-/// the captured body against [`crate::cache::PAGE_LINK_RE`] before rewriting.
+/// the captured body against [`agaric_store::cache::PAGE_LINK_RE`] before rewriting.
 ///
 /// #1920 — this Rust regex (`\[\[([^\]\n]+?)\]\]`) is the CANONICAL source for
 /// the inbound wiki-link grammar. It is mirrored byte-for-byte by the frontend
@@ -266,7 +267,7 @@ fn collect_inbound_page_link_names(blocks: &[import::ParsedBlock]) -> Vec<String
             }
             let name = cap[1].trim();
             // Skip canonical `[[ULID]]` bodies — they are already internal refs.
-            if name.is_empty() || crate::cache::PAGE_LINK_RE.is_match(&cap[0]) {
+            if name.is_empty() || agaric_store::cache::PAGE_LINK_RE.is_match(&cap[0]) {
                 continue;
             }
             names.insert(name.to_string());
@@ -305,7 +306,7 @@ fn rewrite_inbound_page_links(content: &str, resolved: &HashMap<String, String>)
                 return whole.to_string();
             }
             // Already an internal `[[ULID]]` ref — keep verbatim.
-            if crate::cache::PAGE_LINK_RE.is_match(whole) {
+            if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
                 return whole.to_string();
             }
             let name = caps[1].trim();
@@ -494,10 +495,10 @@ fn resolve_ulids_for_export(
     page_titles: &HashMap<String, String>,
     block_refs: &HashMap<String, String>,
 ) -> String {
-    // #1920 — `crate::cache` is the canonical definition site for both regexes;
-    // `crate::fts::strip` imports them for FTS stripping. Reference the
+    // #1920 — `agaric_store::cache` is the canonical definition site for both regexes;
+    // `agaric_store::fts::strip` imports them for FTS stripping. Reference the
     // canonical cache path here rather than going through `fts`.
-    use crate::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
+    use agaric_store::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
 
     // Replace #[ULID] → #tagname. A tag whose name contains whitespace is
     // emitted in the `#[[multi word]]` form (#1924/#1950) so it survives a
@@ -647,9 +648,9 @@ pub async fn export_page_markdown_inner(
     pool: &SqlitePool,
     page_id: &str,
 ) -> Result<String, AppError> {
-    // #1920 — canonical path (`crate::cache` defines these; `crate::fts::strip`
+    // #1920 — canonical path (`agaric_store::cache` defines these; `agaric_store::fts::strip`
     // imports them for its own use).
-    use crate::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
+    use agaric_store::cache::{BLOCK_REF_RE, PAGE_LINK_RE, TAG_REF_RE};
     use std::collections::HashSet;
 
     // Validate ULID format upfront so malformed inputs surface
@@ -682,10 +683,10 @@ pub async fn export_page_markdown_inner(
     // so the page read shares the #660 snapshot tx with the walk below.
     let page = sqlx::query_as!(
         BlockRow,
-        r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
-                parent_id as "parent_id: crate::ulid::BlockId", position,
+        r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content,
+                parent_id as "parent_id: agaric_core::ulid::BlockId", position,
                 deleted_at, todo_state, priority, due_date, scheduled_date,
-                page_id as "page_id: crate::ulid::BlockId"
+                page_id as "page_id: agaric_core::ulid::BlockId"
            FROM blocks
            WHERE id = ? AND deleted_at IS NULL"#,
         page_id,
@@ -707,7 +708,7 @@ pub async fn export_page_markdown_inner(
     //    Page size of 200 matches `MAX_PAGE_SIZE` in the pagination
     //    layer; the `+ 1` fetch-limit + `truncate` shape mirrors
     //    `pagination::build_page_response`. `Cursor` and `PageRequest`
-    //    are reused from `crate::pagination` as the single source of
+    //    are reused from `agaric_store::pagination` as the single source of
     //    truth for keyset cursor encoding (versioning, base64).
     const DESCENDANT_PAGE_SIZE: i64 = 200;
     let mut descendants: Vec<BlockRow> = Vec::new();
@@ -726,11 +727,11 @@ pub async fn export_page_markdown_inner(
         // the page row itself (`id = ?1`) excluded.
         let rows = sqlx::query_as!(
             BlockRow,
-            r#"SELECT id as "id!: crate::ulid::BlockId", block_type, content,
-                    parent_id as "parent_id: crate::ulid::BlockId", position,
+            r#"SELECT id as "id!: agaric_core::ulid::BlockId", block_type, content,
+                    parent_id as "parent_id: agaric_core::ulid::BlockId", position,
                     deleted_at,
                      todo_state, priority, due_date, scheduled_date,
-                    page_id as "page_id: crate::ulid::BlockId"
+                    page_id as "page_id: agaric_core::ulid::BlockId"
              FROM blocks
              WHERE page_id = ?1
                AND id != ?1
@@ -2166,7 +2167,7 @@ async fn apply_frontmatter_properties(
                     continue;
                 }
             } else {
-                crate::domain::block_ops::typed_property_args_for_registry_value(
+                agaric_engine::block_ops::typed_property_args_for_registry_value(
                     key,
                     value.clone(),
                     value_type.as_deref(),
@@ -2181,11 +2182,11 @@ async fn apply_frontmatter_properties(
         let declaration =
             value_type
                 .clone()
-                .map(|vt| crate::domain::block_ops::PropertyDeclaration {
+                .map(|vt| agaric_engine::block_ops::PropertyDeclaration {
                     value_type: vt,
                     options: options.clone(),
                 });
-        let (_page_block, prop_op) = crate::domain::block_ops::set_property_in_tx_with_declaration(
+        let (_page_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
             &mut tx,
             materializer.loro_state(),
             device_id,
@@ -2618,7 +2619,7 @@ async fn resolve_inbound_tags(
             if let Some(c) = r.content {
                 // `or_insert` keeps the FIRST (smallest-id, since ORDER BY id
                 // ASC) row per normalized name — the tags-cache winner.
-                map.entry(crate::tag_norm::normalize_tag_name(&c))
+                map.entry(agaric_core::tag_norm::normalize_tag_name(&c))
                     .or_insert(r.id);
             }
         }
@@ -2635,7 +2636,7 @@ async fn resolve_inbound_tags(
         ))
         .collect();
     for token_name in tag_token_names {
-        let norm = crate::tag_norm::normalize_tag_name(&token_name);
+        let norm = agaric_core::tag_norm::normalize_tag_name(&token_name);
 
         // Already resolved/created in this pass (case/dedup convergence).
         if let Some(ulid) = resolved_tag_norm.get(&norm) {
@@ -2777,7 +2778,7 @@ async fn apply_frontmatter_tags(
                     .collect()
             };
         for tag_name in tag_items {
-            let norm = crate::tag_norm::normalize_tag_name(tag_name);
+            let norm = agaric_core::tag_norm::normalize_tag_name(tag_name);
 
             // Resolve: this-pass creation → existing in-space snapshot → create.
             let tag_id: String = if let Some(id) = resolved_tag_norm.get(&norm) {
@@ -2844,7 +2845,7 @@ async fn apply_frontmatter_tags(
             // impossible here (page and tag share the import's space), but
             // degrade to a warning rather than aborting the durable import if it
             // ever occurs.
-            let payload = crate::op::OpPayload::AddTag(crate::op::AddTagPayload {
+            let payload = agaric_store::op::OpPayload::AddTag(agaric_store::op::AddTagPayload {
                 block_id: BlockId::from_trusted(&page_id),
                 tag_id: BlockId::from_trusted(&tag_id),
             });
@@ -3172,7 +3173,7 @@ async fn insert_blocks(
             )
             .fetch_optional(&mut **tx)
             .await?
-            .map(|row| crate::domain::block_ops::PropertyDeclaration {
+            .map(|row| agaric_engine::block_ops::PropertyDeclaration {
                 value_type: row.value_type,
                 options: row.options,
             });
@@ -3184,12 +3185,12 @@ async fn insert_blocks(
             // `typed_property_args_for_string_value` whenever the declared
             // type doesn't itself claim the value).
             let (value_text, value_num, value_date, value_ref, value_bool) =
-                crate::domain::block_ops::typed_property_args_for_registry_value(
+                agaric_engine::block_ops::typed_property_args_for_registry_value(
                     key,
                     value.clone(),
                     declaration.as_ref().map(|d| d.value_type.as_str()),
                 );
-            let (_block, prop_op) = crate::domain::block_ops::set_property_in_tx_with_declaration(
+            let (_block, prop_op) = agaric_engine::block_ops::set_property_in_tx_with_declaration(
                 &mut tx,
                 materializer.loro_state(),
                 device_id,
@@ -3338,7 +3339,7 @@ async fn resolve_anchor_links(
                     {
                         return whole.to_string();
                     }
-                    if crate::cache::PAGE_LINK_RE.is_match(whole) {
+                    if agaric_store::cache::PAGE_LINK_RE.is_match(whole) {
                         return whole.to_string();
                     }
                     let name = caps[1].trim();

@@ -40,13 +40,13 @@ use std::str::FromStr;
 
 use super::{attachment_ops, block_ops, tag_ops};
 use crate::db::MAX_SQL_PARAMS;
-use crate::error::AppError;
-use crate::op::{
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{
     CreateBlockPayload, DeletePropertyPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     OpType, SetPropertyPayload,
 };
-use crate::op_log::OpRecord;
-use crate::ulid::BlockId;
+use agaric_store::op_log::OpRecord;
 
 // C5 (#344): per-op bind-parameter widths. Each batch helper builds a
 // UNION-ALL with one subquery per op; to keep every executed statement
@@ -523,7 +523,7 @@ async fn fetch_prior_attachment_batch(
         let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
         for (j, &op_idx) in chunk.iter().enumerate() {
             let record = &ops[op_idx];
-            let payload: crate::op::DeleteAttachmentPayload =
+            let payload: agaric_store::op::DeleteAttachmentPayload =
                 serde_json::from_str(&record.payload)?;
             let att_id = payload.attachment_id.as_str().to_string();
             if j == 0 {
@@ -627,7 +627,7 @@ fn build_reverse_move_block(
         };
     let (new_position, new_index) = match old_index {
         Some(idx) => (
-            crate::pagination::index_to_provisional_position(idx),
+            agaric_store::pagination::index_to_provisional_position(idx),
             Some(idx),
         ),
         None => (old_pos.unwrap_or(1), None),
@@ -695,21 +695,21 @@ fn build_reverse_delete_attachment(
     let p_json = prior_payload.ok_or(AppError::NonReversible {
         op_type: "delete_attachment".into(),
     })?;
-    let add_payload: crate::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
+    let add_payload: agaric_store::op::AddAttachmentPayload = serde_json::from_str(p_json)?;
     Ok(OpPayload::AddAttachment(add_payload))
 }
 
 /// Batch-fetch op records by `(device_id, seq)` pairs in a single
 /// UNION-ALL query. Returns records in the same order as the input
 /// `refs` slice; missing rows surface as `AppError::NotFound` —
-/// mirroring [`crate::op_log::get_op_by_seq`].
+/// mirroring [`agaric_store::op_log::get_op_by_seq`].
 ///
 /// Used by `revert_ops_inner` so the batch undo path makes exactly
 /// one round-trip to fetch all op records, replacing the prior
 /// `for op in ops { get_op_by_seq(...) }` loop.
 pub async fn get_op_records_batch(
     pool: &SqlitePool,
-    refs: &[crate::op::OpRef],
+    refs: &[agaric_store::op::OpRef],
 ) -> Result<Vec<OpRecord>, AppError> {
     if refs.is_empty() {
         return Ok(Vec::new());
@@ -792,7 +792,7 @@ pub async fn get_op_records_batch(
 /// predicate never overflows SQLite's bind limit.
 pub async fn reject_replicated_targets(
     pool: &SqlitePool,
-    refs: &[crate::op::OpRef],
+    refs: &[agaric_store::op::OpRef],
 ) -> Result<(), AppError> {
     if refs.is_empty() {
         return Ok(());

@@ -28,7 +28,7 @@ use super::reserved_key_blocks_column;
 /// marker row, when the `app_settings` table (migration 0053) exists.
 pub(crate) async fn ensure_blocks_table_exists(
     pool: &SqlitePool,
-) -> Result<bool, crate::error::AppError> {
+) -> Result<bool, agaric_core::error::AppError> {
     // R4 (#347): propagate probe errors with `?` rather than masking a
     // transient failure as `0`/false. A swallowed error here would skip
     // recovery entirely and let migrations run against a missing `blocks`
@@ -191,7 +191,7 @@ pub(crate) const ENGINE_REPROJECT_PENDING_KEY: &str = "recovery.engine_reproject
 async fn set_engine_reproject_pending<'e, E>(
     exec: E,
     pending: bool,
-) -> Result<(), crate::error::AppError>
+) -> Result<(), agaric_core::error::AppError>
 where
     E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
 {
@@ -219,7 +219,7 @@ where
 /// ancient/odd schema returns `false` rather than erroring the boot.
 pub(crate) async fn engine_reproject_pending(
     pool: &SqlitePool,
-) -> Result<bool, crate::error::AppError> {
+) -> Result<bool, agaric_core::error::AppError> {
     let table_exists: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'app_settings'",
     )
@@ -322,7 +322,7 @@ pub(crate) fn op_created_at_ms(row: &sqlx::sqlite::SqliteRow, fallback_ms: i64) 
 /// would actually recover that content is a separate rework — see #2503).
 async fn persisted_engine_snapshot_count(
     executor: &mut sqlx::SqliteConnection,
-) -> Result<i64, crate::error::AppError> {
+) -> Result<i64, agaric_core::error::AppError> {
     let table_exists: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'loro_doc_state'",
     )
@@ -360,7 +360,7 @@ async fn persisted_engine_snapshot_count(
 ///
 /// It reuses the SAME projection helpers the live inbound-sync path
 /// (`sync_protocol::loro_sync::import_and_project`) runs — a throwaway
-/// [`crate::loro::engine::LoroEngine`] per space imports the persisted snapshot,
+/// [`agaric_engine::loro::engine::LoroEngine`] per space imports the persisted snapshot,
 /// its full live tree is enumerated parent-before-child, and each block is
 /// projected through Pass A (core columns + properties), Pass B (tags), Pass C
 /// (soft-delete) exactly as a sync pull would. The engine is the source of
@@ -406,8 +406,8 @@ async fn persisted_engine_snapshot_count(
 /// the rebuild block at the end of the function body for the rationale.
 pub(crate) async fn reproject_blocks_from_engine(
     pool: &SqlitePool,
-) -> Result<bool, crate::error::AppError> {
-    use crate::loro::projection::{
+) -> Result<bool, agaric_core::error::AppError> {
+    use agaric_engine::loro::projection::{
         project_block_full_to_sql, reproject_block_deleted_at_from_engine,
         reproject_block_properties_from_engine, reproject_block_tags_from_engine,
     };
@@ -467,7 +467,7 @@ pub(crate) async fn reproject_blocks_from_engine(
         // Build a throwaway engine and load this space's persisted snapshot. A
         // decode failure is non-fatal: skip this space (its local content still
         // stands from the op-log pass) and keep rebuilding the rest.
-        let mut engine = crate::loro::engine::LoroEngine::new();
+        let mut engine = agaric_engine::loro::engine::LoroEngine::new();
         if let Err(e) = engine.import(bytes) {
             tracing::error!(
                 space_id = %space_id_str,
@@ -479,7 +479,7 @@ pub(crate) async fn reproject_blocks_from_engine(
             continue;
         }
 
-        let space_id = crate::space::SpaceId::from_trusted(space_id_str);
+        let space_id = agaric_store::space::SpaceId::from_trusted(space_id_str);
         // Full live tree, parent-before-child (soft-deleted nodes are included,
         // so Pass C can re-stamp their tombstones). Hard-purged blocks are gone
         // from the engine index already, so there is nothing to sweep here.
@@ -499,7 +499,10 @@ pub(crate) async fn reproject_blocks_from_engine(
         // (#2920). If the bulk read fails because ONE block's engine metadata is
         // corrupt, re-read block-by-block so only the bad block(s) are skipped
         // instead of aborting the entire space.
-        let id_refs: Vec<&str> = block_ids.iter().map(crate::ulid::BlockId::as_str).collect();
+        let id_refs: Vec<&str> = block_ids
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
         let core = match engine.read_blocks_bulk(&id_refs) {
             Ok(core) => core,
             Err(e) => {
@@ -627,7 +630,7 @@ pub(crate) async fn reproject_blocks_from_engine(
                 reproject_block_tags_from_engine(&mut sp, block_id, tags).await?;
                 reproject_block_deleted_at_from_engine(&mut sp, block_id, deleted_at.as_deref())
                     .await?;
-                Ok::<(), crate::error::AppError>(())
+                Ok::<(), agaric_core::error::AppError>(())
             }
             .await;
             match res {
@@ -712,13 +715,13 @@ pub(crate) async fn reproject_blocks_from_engine(
     // a rebuild failure must NOT wedge boot — the primary content is already
     // durably committed above, every read path degrades gracefully on a stale
     // cache, and the boot fan-out + next-op incremental updates are a backstop.
-    if let Err(e) = crate::cache::rebuild_page_ids(pool).await {
+    if let Err(e) = agaric_store::cache::rebuild_page_ids(pool).await {
         tracing::warn!(error = %e, "recovery (#2504): page_id rebuild after engine reproject failed (non-fatal; boot fan-out retries)");
     }
-    if let Err(e) = crate::fts::rebuild_fts_index(pool).await {
+    if let Err(e) = agaric_store::fts::rebuild_fts_index(pool).await {
         tracing::warn!(error = %e, "recovery (#2504): FTS rebuild after engine reproject failed (non-fatal; reprojected content unsearchable until next rebuild)");
     }
-    if let Err(e) = crate::tag_inheritance::rebuild_all(pool).await {
+    if let Err(e) = agaric_store::tag_inheritance::rebuild_all(pool).await {
         tracing::warn!(error = %e, "recovery (#2504): tag-inheritance rebuild after engine reproject failed (non-fatal; inherited-tag reads stale until next rebuild)");
     }
 
@@ -771,7 +774,7 @@ pub(crate) async fn reproject_blocks_from_engine(
 async fn recover_blocks_from_op_log(
     executor: &mut sqlx::SqliteConnection,
     deleted_at_is_ms: bool,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), agaric_core::error::AppError> {
     // Guard: op_log might not exist on ancient databases.
     // R4 (#347): propagate with `?` — a transient probe failure must not
     // silently skip block recovery.
@@ -847,7 +850,7 @@ async fn recover_blocks_from_op_log(
         let payload_str: String = row.try_get("payload")?;
 
         let payload: serde_json::Value =
-            serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
+            serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
 
         match op_type.as_str() {
             "create_block" => {
@@ -875,7 +878,7 @@ async fn recover_blocks_from_op_log(
                         payload
                             .get("index")
                             .and_then(serde_json::Value::as_i64)
-                            .map(crate::pagination::index_to_provisional_position)
+                            .map(agaric_store::pagination::index_to_provisional_position)
                     });
 
                 // #1536: keep `OR IGNORE` so recovery is idempotent (a re-run,
@@ -926,15 +929,18 @@ async fn recover_blocks_from_op_log(
                     // the op payload; only `content` + `block_id` are read (the
                     // other fields are inert placeholders), exactly as
                     // `apply_edit_block_sql_only` does.
-                    let snapshot = crate::loro::engine::BlockSnapshot {
+                    let snapshot = agaric_engine::loro::engine::BlockSnapshot {
                         block_id: block_id.to_owned(),
                         block_type: String::new(),
                         content: to_text.to_owned(),
                         parent_id: None,
                         position: 0,
                     };
-                    crate::loro::projection::project_edit_block_to_sql(&mut *executor, &snapshot)
-                        .await?;
+                    agaric_engine::loro::projection::project_edit_block_to_sql(
+                        &mut *executor,
+                        &snapshot,
+                    )
+                    .await?;
                 }
             }
             "move_block" => {
@@ -952,7 +958,7 @@ async fn recover_blocks_from_op_log(
                 let new_position = payload
                     .get("new_index")
                     .and_then(serde_json::Value::as_i64)
-                    .map(crate::pagination::index_to_provisional_position)
+                    .map(agaric_store::pagination::index_to_provisional_position)
                     .or_else(|| {
                         payload
                             .get("new_position")
@@ -1209,7 +1215,7 @@ async fn recover_blocks_from_op_log(
 pub(crate) async fn recover_derived_state_from_op_log(
     pool: &SqlitePool,
     blocks_recovered_this_boot: bool,
-) -> Result<(), crate::error::AppError> {
+) -> Result<(), agaric_core::error::AppError> {
     // Guard: skip if op_log is empty or missing.
     //
     // R4 (#347): propagate probe errors with `?` rather than masking them
@@ -1343,7 +1349,7 @@ pub(crate) async fn recover_derived_state_from_op_log(
                 row.try_get("seq")?,
             ));
             let payload: serde_json::Value =
-                serde_json::from_str(&payload_str).map_err(crate::error::AppError::Json)?;
+                serde_json::from_str(&payload_str).map_err(agaric_core::error::AppError::Json)?;
 
             match op_type.as_str() {
                 "set_property" => {
@@ -1429,10 +1435,10 @@ pub(crate) async fn recover_derived_state_from_op_log(
                         // payload field that matches the column's storage.
                         let col_value: Option<&str> = match key {
                             "due_date" | "scheduled_date" => value_date,
-                            crate::op::SPACE_PROPERTY_KEY => value_ref,
+                            agaric_store::op::SPACE_PROPERTY_KEY => value_ref,
                             _ => value_text,
                         };
-                        if key == crate::op::SPACE_PROPERTY_KEY {
+                        if key == agaric_store::op::SPACE_PROPERTY_KEY {
                             // #605: `blocks.space_id` carries an FK and recovery
                             // runs with `foreign_keys=ON`, so an op whose target
                             // is absent (purged locally, or created on another
@@ -1545,8 +1551,10 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // so there is no FK-guard concern (unlike `set_property` /
                     // `add_tag`, which keep their guards inline). All branches are
                     // idempotent (0-row UPDATE/DELETE no-ops).
-                    crate::loro::projection::project_delete_property_to_sql(&mut tx, block_id, key)
-                        .await?;
+                    agaric_engine::loro::projection::project_delete_property_to_sql(
+                        &mut tx, block_id, key,
+                    )
+                    .await?;
                 }
                 "add_tag" => {
                     let block_id = payload["block_id"].as_str().unwrap_or("");
@@ -1595,8 +1603,10 @@ pub(crate) async fn recover_derived_state_from_op_log(
                     // this replay rebuilds only `block_tags`, exactly as the old
                     // inline DELETE did (the `block_tag_inherited` view is
                     // reconstructed by its own recompute path, not this loop).
-                    crate::loro::projection::project_remove_tag_to_sql(&mut tx, block_id, tag_id)
-                        .await?;
+                    agaric_engine::loro::projection::project_remove_tag_to_sql(
+                        &mut tx, block_id, tag_id,
+                    )
+                    .await?;
                 }
                 // #374: `attachments` is the one AUTHORITATIVE child of `blocks`
                 // (its rows are the source of truth for fs_path / mime_type /
@@ -2443,7 +2453,8 @@ mod tests {
         // never reach B's op_log (#490-M1), so there is deliberately no op_log
         // row for the remote content.
         let snapshot = {
-            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
                 .apply_create_block(REMOTE_PAGE, "page", "Remote Page", None, 0)
                 .unwrap();
@@ -2649,7 +2660,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let snap1 = {
-            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
                 .apply_create_block(PAGE, "page", "Good Page", None, 0)
                 .unwrap();
@@ -2664,7 +2676,8 @@ mod tests {
             engine.export_snapshot().unwrap()
         };
         let snap2 = {
-            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
                 .apply_create_block(OTHER_SPACE_BLK, "content", "other space content", None, 0)
                 .unwrap();
@@ -2735,7 +2748,8 @@ mod tests {
         assert!(engine_reproject_pending(&pool).await.unwrap());
 
         let snap = {
-            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
                 .apply_create_block(BLK, "content", "all good", None, 0)
                 .unwrap();
@@ -2770,7 +2784,8 @@ mod tests {
         let (pool, _dir) = test_pool().await;
 
         let snap = {
-            let mut engine = crate::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
+            let mut engine =
+                agaric_engine::loro::engine::LoroEngine::with_peer_id("device-A").unwrap();
             engine
                 .apply_create_block(GOOD, "content", "survives", None, 0)
                 .unwrap();

@@ -376,7 +376,7 @@ async fn reindex_block_tag_refs_usage_count_recovers_via_durable_obligation_2831
     // --- Prove the retry-of-reindex is a NO-OP for usage_count: the ref row
     // already exists, so the reindex diff is empty and cannot heal the count.
     // This is the #2831 hole the durable obligation closes. ---
-    let changed = crate::cache::reindex_block_tag_refs(&pool, src)
+    let changed = agaric_store::cache::reindex_block_tag_refs(&pool, src)
         .await
         .unwrap();
     assert!(

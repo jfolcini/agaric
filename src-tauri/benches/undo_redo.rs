@@ -20,9 +20,9 @@ use agaric_lib::commands::{
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
-use agaric_lib::op::OpRef;
-use agaric_lib::pagination::{self, PageRequest};
 use agaric_lib::reverse;
+use agaric_store::op::OpRef;
+use agaric_store::pagination::{self, PageRequest};
 
 use sqlx::SqlitePool;
 use tempfile::TempDir;

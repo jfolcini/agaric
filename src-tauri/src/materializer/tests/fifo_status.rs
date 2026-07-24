@@ -1,5 +1,5 @@
 use super::*;
-use crate::loro::shared::LoroState;
+use agaric_engine::loro::shared::LoroState;
 
 /// H-5 / H-6 (2026-04) regression guard: two `ApplyOp` tasks targeting
 /// *different* block_ids are now processed strictly FIFO (no JoinSet

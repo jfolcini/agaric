@@ -10,11 +10,11 @@ use tauri::State;
 
 use crate::db::now_ms;
 use crate::db::{CommandTx, ReadPool, WriteCtx};
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::OpPayload;
-use crate::op_log;
-use crate::ulid::{AttachmentId, BlockId};
+use agaric_core::error::AppError;
+use agaric_core::ulid::{AttachmentId, BlockId};
+use agaric_store::op::OpPayload;
+use agaric_store::op_log;
 
 use super::*;
 
@@ -161,7 +161,7 @@ pub async fn add_attachment_inner(
     // (absolute paths, `..` traversal, drive prefixes). The full path
     // resolution happens later in read/write, but validating here stops
     // bad rows from ever reaching the `attachments` table.
-    crate::sync_files::check_attachment_fs_path_shape(&fs_path)?;
+    agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
 
     // Generate ULID for attachment_id
     let attachment_id = ulid::Ulid::r#gen().to_string().to_uppercase();
@@ -171,7 +171,7 @@ pub async fn add_attachment_inner(
     // `Ulid::r#gen().to_string().to_uppercase()` above, so `from_trusted`
     // is the correct entry point — it normalizes (no-op here, already
     // uppercase) without re-validating the ULID format.
-    let payload = OpPayload::AddAttachment(crate::op::AddAttachmentPayload {
+    let payload = OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
         attachment_id: BlockId::from_trusted(&attachment_id),
         block_id: block_id.clone(),
         mime_type: mime_type.clone(),
@@ -228,7 +228,7 @@ pub async fn add_attachment_inner(
         let dir = app_data_dir.to_path_buf();
         let path = fs_path.clone();
         let (_bytes, hash) = tokio::task::spawn_blocking(move || {
-            crate::sync_files::read_attachment_file(&dir, &path)
+            agaric_sync::sync_files::read_attachment_file(&dir, &path)
         })
         .await
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
@@ -411,7 +411,7 @@ pub async fn add_attachment_with_bytes_inner(
         let dir = app_data_dir.to_path_buf();
         let path = fs_path.clone();
         tokio::task::spawn_blocking(move || {
-            crate::sync_files::write_attachment_file(&dir, &path, &bytes)?;
+            agaric_sync::sync_files::write_attachment_file(&dir, &path, &bytes)?;
             Ok::<String, AppError>(blake3::hash(&bytes).to_hex().to_string())
         })
         .await
@@ -512,7 +512,7 @@ pub async fn read_attachment_inner(
     // Synchronous std::fs read on the blocking pool (H).
     let dir = app_data_dir.to_path_buf();
     let (bytes, _hash) = tokio::task::spawn_blocking(move || {
-        crate::sync_files::read_attachment_file(&dir, &fs_path)
+        agaric_sync::sync_files::read_attachment_file(&dir, &fs_path)
     })
     .await
     .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
@@ -571,7 +571,7 @@ pub async fn delete_attachment_inner(
     };
     let fs_path = row.fs_path;
 
-    let payload = OpPayload::DeleteAttachment(crate::op::DeleteAttachmentPayload {
+    let payload = OpPayload::DeleteAttachment(agaric_store::op::DeleteAttachmentPayload {
         attachment_id: attachment_id.clone(),
         fs_path: fs_path.clone(),
     });
@@ -652,7 +652,7 @@ pub async fn rename_attachment_inner(
     // the op payload and the UPDATE both record the trimmed form.
     let new_filename = validate_attachment_filename(&new_filename)?;
 
-    let payload = OpPayload::RenameAttachment(crate::op::RenameAttachmentPayload {
+    let payload = OpPayload::RenameAttachment(agaric_store::op::RenameAttachmentPayload {
         attachment_id: attachment_id.clone(),
         old_filename,
         new_filename: new_filename.clone(),
@@ -738,7 +738,7 @@ pub async fn list_attachments_inner(
 /// # Errors
 ///
 /// - [`AppError::Validation`] — `block_ids.len()` >
-///   [`crate::pagination::MAX_BATCH_BLOCK_IDS`]
+///   [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`]
 /// - [`AppError::Database`] — on query failure
 #[instrument(skip(pool, block_ids), err)]
 pub async fn list_attachments_batch_inner(

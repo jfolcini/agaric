@@ -1,10 +1,10 @@
 use super::*;
 use crate::db::init_pool;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op::{CreateBlockPayload, OpPayload};
-use crate::op_log::append_local_op_at;
-use crate::ulid::BlockId;
+use agaric_core::error::AppError;
+use agaric_core::ulid::BlockId;
+use agaric_store::op::{CreateBlockPayload, OpPayload};
+use agaric_store::op_log::append_local_op_at;
 use serde::{Deserialize, Serialize};
 use sqlx::SqlitePool;
 use std::collections::BTreeMap;
@@ -1365,8 +1365,8 @@ async fn apply_snapshot_rejects_null_in_not_null_column() {
         block_properties: Vec<BlockPropertySnapshot>,
         block_links: Vec<BlockLinkSnapshot>,
         attachments: Vec<AttachmentSnapshot>,
-        property_definitions: Vec<crate::snapshot::types::PropertyDefinitionSnapshot>,
-        page_aliases: Vec<crate::snapshot::types::PageAliasSnapshot>,
+        property_definitions: Vec<agaric_sync::snapshot::types::PropertyDefinitionSnapshot>,
+        page_aliases: Vec<agaric_sync::snapshot::types::PageAliasSnapshot>,
     }
     #[derive(Serialize)]
     struct NullableData<'a> {
@@ -3741,7 +3741,7 @@ async fn compact_stale_read_seq_guard() {
     // H-13: enable the op_log mutation bypass for the duration of this tx,
     // mirroring the production compaction path.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
-    crate::op_log::enable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::enable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     for (dev_id, max_seq) in &stale_frontier {
@@ -3753,7 +3753,7 @@ async fn compact_stale_read_seq_guard() {
             .await
             .unwrap();
     }
-    crate::op_log::disable_op_log_mutation_bypass(&mut tx)
+    agaric_store::op_log::disable_op_log_mutation_bypass(&mut tx)
         .await
         .unwrap();
     tx.commit().await.unwrap();
@@ -4192,7 +4192,7 @@ async fn apply_snapshot_round_trips_space_id_533() {
             // restore it re-registers the space in the `spaces` table via
             // the 0089 trigger, which the restored `blocks.space_id`
             // values now require (FK to spaces(id)).
-            block_properties: vec![crate::snapshot::types::BlockPropertySnapshot {
+            block_properties: vec![agaric_sync::snapshot::types::BlockPropertySnapshot {
                 block_id: BlockId::test_id(space),
                 key: "is_space".to_string(),
                 value_text: Some("true".to_string()),
@@ -4774,10 +4774,10 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     //    try_receive_snapshot_catchup` (lines 460-461): upsert the peer
     //    ref, then `update_on_sync(.., up_to_hash, "")` with the empty
     //    string as the documented "we sent nothing" sentinel.
-    crate::peer_refs::upsert_peer_ref(&dst_pool, src_device)
+    agaric_store::peer_refs::upsert_peer_ref(&dst_pool, src_device)
         .await
         .unwrap();
-    crate::peer_refs::update_on_sync(&dst_pool, src_device, &snap_up_to_hash, "")
+    agaric_store::peer_refs::update_on_sync(&dst_pool, src_device, &snap_up_to_hash, "")
         .await
         .expect("peer_refs::update_on_sync must succeed against a freshly upserted peer");
 
@@ -4823,7 +4823,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     // Peer matches the snapshot's `up_to_hash`. Phrased the way
     // describes it, this is "the resulting chain's `prev_hash` for the
     // snapshot's source device equals `snapshot.up_to_hash`".
-    let anchored_peer_ref = crate::peer_refs::get_peer_ref(&dst_pool, src_device)
+    let anchored_peer_ref = agaric_store::peer_refs::get_peer_ref(&dst_pool, src_device)
         .await
         .unwrap()
         .expect("peer_refs row for the snapshot source device must exist after anchor");
@@ -4847,7 +4847,7 @@ async fn apply_snapshot_followed_by_anchor_yields_consistent_prev_hash() {
     .fetch_one(&dst_pool)
     .await
     .unwrap();
-    let expected_hash = crate::hash::compute_op_hash(
+    let expected_hash = agaric_core::hash::compute_op_hash(
         dst_local_device,
         new_op.seq,
         new_op.parent_seqs.as_deref(),
@@ -4973,13 +4973,13 @@ async fn apply_snapshot_wipes_loro_doc_state_inbox_and_zeroes_cursor_607() {
 /// the post-snapshot SQL (no pre-reset content anywhere).
 #[tokio::test]
 async fn apply_snapshot_then_exit_save_and_rehydrate_has_no_pre_reset_state_779() {
-    use crate::loro::engine::LoroEngine;
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::loro::snapshot::{
+    use agaric_engine::loro::engine::LoroEngine;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_engine::loro::snapshot::{
         load_all_space_snapshots, rehydrate_registry, reload_registry_from_db, save_all_engines,
         save_snapshot,
     };
-    use crate::space::SpaceId;
+    use agaric_store::space::SpaceId;
 
     const DEVICE: &str = "device-779";
     let (pool, _dir) = test_pool().await;
@@ -5080,7 +5080,7 @@ async fn apply_snapshot_then_exit_save_and_rehydrate_has_no_pre_reset_state_779(
 /// by peers.
 #[tokio::test]
 async fn apply_snapshot_bumps_peer_epoch_792() {
-    use crate::loro::peer_epoch::load_peer_epoch;
+    use agaric_engine::loro::peer_epoch::load_peer_epoch;
 
     let (pool, _dir) = test_pool().await;
     let materializer = test_materializer(&pool);
@@ -5129,11 +5129,13 @@ async fn apply_snapshot_bumps_peer_epoch_792() {
 /// and the block arrives.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_snapshot_reset_then_new_ops_reach_peer_792() {
-    use crate::loro::engine::peer_id_from_device_id;
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::loro::snapshot::reload_registry_from_db;
-    use crate::space::SpaceId;
-    use crate::sync_protocol::loro_sync::{ApplyOutcome, apply_remote, prepare_outgoing_for_pool};
+    use agaric_engine::loro::engine::peer_id_from_device_id;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_engine::loro::snapshot::reload_registry_from_db;
+    use agaric_store::space::SpaceId;
+    use agaric_sync::sync_protocol::loro_sync::{
+        ApplyOutcome, apply_remote, prepare_outgoing_for_pool,
+    };
 
     const DEVICE_A: &str = "device-792-A";
     const DEVICE_B: &str = "device-792-B";
@@ -5554,7 +5556,7 @@ async fn apply_snapshot_drops_dangling_refs_1567() {
     // Dangling page_aliases row: page_id absent from the snapshot.
     data.tables
         .page_aliases
-        .push(crate::snapshot::types::PageAliasSnapshot {
+        .push(agaric_sync::snapshot::types::PageAliasSnapshot {
             page_id: BlockId::test_id("GHOST-BLOCK").to_string(),
             alias: "ghost-alias".to_string(),
         });
@@ -5617,13 +5619,13 @@ async fn apply_snapshot_round_trips_property_definitions_and_page_aliases_2052()
     // both sides (NULL and non-NULL) so a dropped-column regression that, say,
     // always binds NULL would be caught by the populated case.
     data.tables.property_definitions = vec![
-        crate::snapshot::types::PropertyDefinitionSnapshot {
+        agaric_sync::snapshot::types::PropertyDefinitionSnapshot {
             key: "status".to_string(),
             value_type: "select".to_string(),
             options: Some(r#"["todo","doing","done"]"#.to_string()),
             created_at: "2025-01-15T00:00:00Z".to_string(),
         },
-        crate::snapshot::types::PropertyDefinitionSnapshot {
+        agaric_sync::snapshot::types::PropertyDefinitionSnapshot {
             key: "estimate".to_string(),
             value_type: "number".to_string(),
             options: None,
@@ -5634,11 +5636,11 @@ async fn apply_snapshot_round_trips_property_definitions_and_page_aliases_2052()
     // 0061), so both must point at a block present in the snapshot — BLOCK-1
     // and BLOCK-2 are in `sample_snapshot_data`.
     data.tables.page_aliases = vec![
-        crate::snapshot::types::PageAliasSnapshot {
+        agaric_sync::snapshot::types::PageAliasSnapshot {
             page_id: BlockId::test_id("BLOCK-1").to_string(),
             alias: "Home".to_string(),
         },
-        crate::snapshot::types::PageAliasSnapshot {
+        agaric_sync::snapshot::types::PageAliasSnapshot {
             page_id: BlockId::test_id("BLOCK-2").to_string(),
             alias: "Inbox".to_string(),
         },
@@ -6114,7 +6116,9 @@ async fn apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474() {
         .await
         .unwrap();
     assert_eq!(op_count_before, 3, "pre-condition: 3 ops in the log");
-    let heads_before = crate::sync_protocol::get_local_heads(&pool).await.unwrap();
+    let heads_before = agaric_sync::sync_protocol::get_local_heads(&pool)
+        .await
+        .unwrap();
     assert_eq!(
         heads_before.len(),
         1,
@@ -6153,7 +6157,9 @@ async fn apply_snapshot_wipes_unsynced_local_ops_and_resets_heads_2474() {
 
     // (c) The device-local head query — the sync handshake's advertise
     // source — resets to EMPTY (no ops → no heads).
-    let heads_after = crate::sync_protocol::get_local_heads(&pool).await.unwrap();
+    let heads_after = agaric_sync::sync_protocol::get_local_heads(&pool)
+        .await
+        .unwrap();
     assert!(
         heads_after.is_empty(),
         "#2474: post-reset get_local_heads must be empty — the next HeadExchange \
@@ -6243,7 +6249,7 @@ async fn apply_snapshot_bumps_peer_epoch_2474() {
     let mat = test_materializer(&pool);
 
     assert_eq!(
-        crate::loro::peer_epoch::load_peer_epoch(&pool)
+        agaric_engine::loro::peer_epoch::load_peer_epoch(&pool)
             .await
             .unwrap(),
         0,
@@ -6255,7 +6261,7 @@ async fn apply_snapshot_bumps_peer_epoch_2474() {
     apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
 
     assert_eq!(
-        crate::loro::peer_epoch::load_peer_epoch(&pool)
+        agaric_engine::loro::peer_epoch::load_peer_epoch(&pool)
             .await
             .unwrap(),
         1,
@@ -6276,9 +6282,9 @@ async fn apply_snapshot_bumps_peer_epoch_2474() {
 /// Pins: `loro_doc_state` wipe + engines reload empty + epoch installed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn apply_snapshot_wipes_loro_doc_state_and_engines_reload_empty_2474() {
-    use crate::loro::registry::LoroEngineRegistry;
-    use crate::loro::snapshot::{reload_registry_from_db, save_all_engines};
-    use crate::space::SpaceId;
+    use agaric_engine::loro::registry::LoroEngineRegistry;
+    use agaric_engine::loro::snapshot::{reload_registry_from_db, save_all_engines};
+    use agaric_store::space::SpaceId;
 
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
@@ -6377,7 +6383,7 @@ async fn applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474() {
         .unwrap();
     assert_eq!(ids_first, vec!["BLOCK-PEER".to_string()]);
     assert_eq!(
-        crate::loro::peer_epoch::load_peer_epoch(&pool)
+        agaric_engine::loro::peer_epoch::load_peer_epoch(&pool)
             .await
             .unwrap(),
         1,
@@ -6400,7 +6406,7 @@ async fn applying_the_same_snapshot_twice_is_reapplied_not_deduped_2474() {
 
     // But the epoch bumps AGAIN — each apply is an independent RESET.
     assert_eq!(
-        crate::loro::peer_epoch::load_peer_epoch(&pool)
+        agaric_engine::loro::peer_epoch::load_peer_epoch(&pool)
             .await
             .unwrap(),
         2,

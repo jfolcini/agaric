@@ -1,8 +1,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 
 use agaric_lib::db::init_pool;
-use agaric_lib::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
-use agaric_lib::pagination::PageRequest;
+use agaric_store::fts::{fts_optimize, rebuild_fts_index, search_fts, update_fts_for_block};
+use agaric_store::pagination::PageRequest;
 use sqlx::SqlitePool;
 use tempfile::TempDir;
 use tokio::runtime::Runtime;
@@ -85,7 +85,7 @@ fn bench_search_fts(c: &mut Criterion) {
         rt.block_on(seed_blocks_with_fts(&pool, count));
 
         group.bench_with_input(BenchmarkId::from_parameter(count), &count, |b, _| {
-            let meta = agaric_lib::fts::metadata_filter::MetadataPredicates::default();
+            let meta = agaric_store::fts::metadata_filter::MetadataPredicates::default();
             b.to_async(&rt).iter(|| {
                 search_fts(
                     &pool,

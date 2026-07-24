@@ -16,8 +16,8 @@
 //!   tool converts them back to `<mark>` / `</mark>`.
 
 use super::super::{MatchOffset, SearchBlockRow, SearchFilter};
-use crate::space::{SpaceId, SpaceScope};
-use crate::ulid::ActiveBlockId;
+use agaric_core::ulid::ActiveBlockId;
+use agaric_store::space::{SpaceId, SpaceScope};
 use serde_json::json;
 
 // ---------------------------------------------------------------------

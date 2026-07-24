@@ -1,6 +1,6 @@
 use super::super::*;
 use super::common::*;
-use crate::space::{SpaceId, SpaceScope};
+use agaric_store::space::{SpaceId, SpaceScope};
 
 // ======================================================================
 // get_backlinks
@@ -101,7 +101,7 @@ async fn search_blocks_inner_finds_indexed_block() {
         Some(0),
     )
     .await;
-    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+    agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
     let result = search_blocks_inner(
@@ -122,7 +122,7 @@ async fn search_blocks_inner_finds_indexed_block() {
 async fn search_blocks_inner_no_results_for_unindexed_term() {
     let (pool, _dir) = test_pool().await;
     insert_block(&pool, "SRCH2", "content", "apple banana", None, Some(0)).await;
-    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+    agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
 
     assign_all_to_test_space(&pool).await;
     let result = search_blocks_inner(
@@ -169,7 +169,7 @@ async fn search_blocks_with_parent_id_filter() {
     )
     .await;
 
-    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+    agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without filter — both should appear
     assign_all_to_test_space(&pool).await;
@@ -242,7 +242,7 @@ async fn search_blocks_with_tag_filter() {
     insert_tag_assoc(&pool, "BLK_XY", "TAG_Y").await;
     insert_tag_assoc(&pool, "BLK_X", "TAG_X").await;
 
-    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+    agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // Without tag filter — all three
     assign_all_to_test_space(&pool).await;
@@ -332,7 +332,7 @@ async fn search_blocks_without_filters() {
     )
     .await;
 
-    crate::fts::rebuild_fts_index(&pool).await.unwrap();
+    agaric_store::fts::rebuild_fts_index(&pool).await.unwrap();
 
     // No filters (backward compatible) — all matching results returned
     assign_all_to_test_space(&pool).await;
@@ -1839,13 +1839,13 @@ async fn count_backlinks_batch_empty_page_ids_returns_empty() {
 }
 
 /// #2542 — `count_backlinks_batch_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `page_ids` list
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap `page_ids` list
 /// rejects with Validation before the runaway `json_each(?1)` scan.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn count_backlinks_batch_rejects_oversize() {
     let (pool, _dir) = test_pool().await;
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = count_backlinks_batch_inner(
@@ -1855,7 +1855,7 @@ async fn count_backlinks_batch_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
@@ -2029,7 +2029,7 @@ async fn count_backlinks_batch_large_input_beyond_sqlite_param_limit() {
         &pool,
         ids.into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::PageId>>(),
+            .collect::<Vec<agaric_core::ulid::PageId>>(),
         &SpaceScope::Global,
     )
     .await
@@ -2092,7 +2092,7 @@ async fn count_backlinks_batch_active_scope() {
             .clone()
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::PageId>>(),
+            .collect::<Vec<agaric_core::ulid::PageId>>(),
         &SpaceScope::Global,
     )
     .await
@@ -2107,7 +2107,7 @@ async fn count_backlinks_batch_active_scope() {
             .clone()
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::PageId>>(),
+            .collect::<Vec<agaric_core::ulid::PageId>>(),
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_ID)),
     )
     .await
@@ -2129,7 +2129,7 @@ async fn count_backlinks_batch_active_scope() {
         page_ids
             .into_iter()
             .map(Into::into)
-            .collect::<Vec<crate::ulid::PageId>>(),
+            .collect::<Vec<agaric_core::ulid::PageId>>(),
         &SpaceScope::Active(SpaceId::from_trusted(TEST_SPACE_B_ID)),
     )
     .await
@@ -3302,7 +3302,7 @@ async fn list_backlinks_grouped_disjointness_feat3p4() {
     )
     .await
     .unwrap();
-    let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
+    let collect_ids = |resp: &agaric_store::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
             .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.as_str().into() }))
@@ -3380,7 +3380,7 @@ async fn list_unlinked_references_returns_only_current_space_blocks_feat3p4() {
 
     let resp = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3454,7 +3454,7 @@ async fn list_unlinked_references_with_none_space_id_returns_all_feat3p4() {
 
     let resp = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3506,7 +3506,7 @@ async fn list_unlinked_references_with_nonexistent_space_id_returns_empty_feat3p
 
     let resp = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3580,7 +3580,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
         .unwrap();
     assign_to_space(&pool, "LUR_PB", TEST_SPACE_B_ID).await;
 
-    let collect_ids = |resp: &crate::backlink::GroupedBacklinkResponse| {
+    let collect_ids = |resp: &agaric_store::backlink::GroupedBacklinkResponse| {
         resp.groups
             .iter()
             .flat_map(|g| g.blocks.iter().map(|b| -> String { b.id.as_str().into() }))
@@ -3588,7 +3588,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     };
     let a = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3599,7 +3599,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     .unwrap();
     let b = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -3610,7 +3610,7 @@ async fn list_unlinked_references_disjointness_feat3p4() {
     .unwrap();
     let unscoped = list_unlinked_references_inner(
         &pool,
-        &crate::ulid::PageId::from("LUR_TGT"),
+        &agaric_core::ulid::PageId::from("LUR_TGT"),
         None,
         None,
         None,
@@ -4087,7 +4087,9 @@ async fn get_blocks_returns_full_rows_for_n_ids() {
     assert_eq!(c2.block_type, "content");
     assert_eq!(c2.content.as_deref(), Some("child two"));
     assert_eq!(
-        c2.parent_id.as_ref().map(crate::ulid::BlockId::as_str),
+        c2.parent_id
+            .as_ref()
+            .map(agaric_core::ulid::BlockId::as_str),
         Some("GB_PAGE")
     );
     assert_eq!(c2.position, Some(2));
@@ -4106,7 +4108,7 @@ async fn get_blocks_empty_returns_empty_and_rejects_oversize() {
     let empty = get_blocks_inner(&pool, vec![]).await.unwrap();
     assert!(empty.is_empty(), "empty input must return an empty Vec");
 
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = get_blocks_inner(
@@ -4115,13 +4117,13 @@ async fn get_blocks_empty_returns_empty_and_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
 
 /// #1573 — `first_child_for_blocks_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
 /// family: an over-cap `block_ids` list rejects with Validation, while an
 /// under-cap list returns the first-child map (here an empty map, since no
 /// matching parents exist).
@@ -4140,7 +4142,7 @@ async fn first_child_for_blocks_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = first_child_for_blocks_inner(
@@ -4149,13 +4151,13 @@ async fn first_child_for_blocks_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
 
 /// #1795 — `batch_resolve_inner` must share the
-/// [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
+/// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap with the rest of the batch
 /// family: an over-cap `ids` list rejects with Validation before reaching
 /// the unbounded `json_each(?1)` membership scan, while an under-cap list
 /// resolves normally (here an empty result, since no matching ids exist).
@@ -4171,7 +4173,7 @@ async fn batch_resolve_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = batch_resolve_inner(
@@ -4181,13 +4183,13 @@ async fn batch_resolve_rejects_oversize() {
     )
     .await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }
 
 /// #1795 — `trash_descendant_counts` (via `trash_descendant_counts_inner`)
-/// must share the [`crate::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap
+/// must share the [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] cap: an over-cap
 /// `root_ids` list rejects with Validation before seeding the recursive-CTE
 /// root walk, while an under-cap list returns the (here empty) count map.
 /// Mirrors `first_child_for_blocks_rejects_oversize` (#1573).
@@ -4206,12 +4208,12 @@ async fn trash_descendant_counts_rejects_oversize() {
     assert!(under.is_empty(), "under-cap input must not error");
 
     // Over-cap: one more than the shared cap rejects with Validation.
-    let oversize: Vec<String> = (0..=crate::pagination::MAX_BATCH_BLOCK_IDS)
+    let oversize: Vec<String> = (0..=agaric_store::pagination::MAX_BATCH_BLOCK_IDS)
         .map(|i| format!("ID{i}"))
         .collect();
     let big = trash_descendant_counts_inner(&pool, oversize).await;
     assert!(
-        matches!(big, Err(crate::error::AppError::Validation { .. })),
+        matches!(big, Err(agaric_core::error::AppError::Validation { .. })),
         "oversize input must reject with Validation"
     );
 }

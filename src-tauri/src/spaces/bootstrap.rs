@@ -21,10 +21,10 @@
 use sqlx::SqlitePool;
 
 use crate::db::CommandTx;
-use crate::domain::block_ops::set_property_in_tx;
-use crate::error::AppError;
 use crate::materializer::Materializer;
-use crate::op_log::OpRecord;
+use agaric_core::error::AppError;
+use agaric_engine::block_ops::set_property_in_tx;
+use agaric_store::op_log::OpRecord;
 
 // #2621 THE INVERSION: re-export the moved consts + the tag migrator at the
 // old `crate::spaces::bootstrap::…` paths so every existing external call
@@ -32,6 +32,9 @@ use crate::op_log::OpRecord;
 // `crate::spaces::SPACE_*`, the `spaces/mod.rs` `pub use bootstrap::{…}`
 // surface, and `commands/tags.rs`'s doc references to
 // `migrate_orphan_tags_to_space`) resolves unchanged.
+// kept (#2897): bootstrap seeded-ULID seam — the deterministic Personal/Work
+// space constants live in `agaric-engine`; this module re-exports them so the
+// app-side bootstrap stays their single canonical `crate::spaces::…` entry.
 pub use agaric_engine::spaces::{
     MIGRATION_THRESHOLD_ULID, SPACE_PERSONAL_DEFAULT_ACCENT, SPACE_PERSONAL_ULID,
     SPACE_WORK_DEFAULT_ACCENT, SPACE_WORK_ULID, migrate_orphan_tags_to_space,
