@@ -13,13 +13,7 @@
 # the comment block directly above it (keyed by crate+table), and any footer.
 
 # --- app crate: cross-crate writers migrating behind owner-crate fns ---
-1 app agenda_cache  # migrating: slice 1 (app caches + block_cleanup)
-1 app block_links  # migrating: slice 1 (app caches + block_cleanup)
-1 app block_tag_inherited  # migrating: slice 1 (app caches + block_cleanup)
-26 app blocks  # migrating: slice 2 (app blocks); recovery carve-out subset remains post-slice-2/3
-1 app pages_cache  # migrating: slice 1 (app caches + block_cleanup)
-1 app projected_agenda_cache  # migrating: slice 1 (app caches + block_cleanup)
-1 app tags_cache  # migrating: slice 1 (app caches + block_cleanup)
+25 app blocks  # migrating: slice 2 (app blocks); recovery carve-out subset remains post-slice-2/3
 
 # --- engine crate: projection-time cache co-writers (legitimate carve-out,
 # two-arm lockstep / sql_only fallback, #891) + op_log ingest (migrating) ---

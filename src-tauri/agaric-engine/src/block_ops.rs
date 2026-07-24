@@ -888,6 +888,41 @@ pub async fn set_property_in_tx_with_declaration(
     ))
 }
 
+/// Physically delete every `blocks` row in a purge subtree (#2895 slice 1).
+///
+/// The final `DELETE FROM blocks` of the app's subtree-purge chain, moved
+/// behind the `blocks`-owning crate. `member_subquery` is the SQL that yields
+/// the set of block ids being purged, and `cte_prefix` is the optional
+/// `WITH RECURSIVE …` prefix that defines the relation it selects from. `bind`
+/// is the single value bound to the `?` / `?1` placeholder in `cte_prefix` (a
+/// seed block id, or a JSON id array for the multi-root variant); pass `None`
+/// for the "all soft-deleted" variant, whose member set carries no
+/// placeholder. Returns the number of `blocks` rows deleted.
+///
+/// Operates on a borrowed `&mut SqliteConnection` (never a pool): it opens no
+/// transaction of its own and runs inside the caller's IMMEDIATE tx, preserving
+/// the #110 raw-write-tx convention. Deferred FK checks (PRAGMA set by the
+/// caller) let this single DELETE sweep the whole subtree.
+pub async fn delete_blocks_in_subtree(
+    conn: &mut sqlx::SqliteConnection,
+    cte_prefix: &str,
+    member_subquery: &str,
+    bind: Option<&str>,
+) -> Result<u64, AppError> {
+    // dynamic-sql: #664/#2895 — the purge chain is emitted against three
+    // runtime membership shapes (single-root recursive CTE / multi-root
+    // json_each CTE / flat deleted-set); the macro form cannot take a runtime
+    // query string.
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
+        "{cte_prefix}DELETE FROM blocks \
+         WHERE id IN ({member_subquery})"
+    )));
+    if let Some(b) = bind {
+        q = q.bind(b.to_string());
+    }
+    Ok(q.execute(conn).await?.rows_affected())
+}
+
 // ===========================================================================
 // Tests — `validate_property_value` matrix
 // ===========================================================================

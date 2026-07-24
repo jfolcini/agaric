@@ -18,6 +18,7 @@ mod page_id;
 mod page_links;
 mod pages;
 mod projected_agenda;
+mod purge;
 mod tags;
 
 #[cfg(test)]
@@ -169,6 +170,9 @@ pub use pages::{rebuild_pages_cache, rebuild_pages_cache_counts, rebuild_pages_c
 #[cfg(test)]
 pub(crate) use pages::recompute_all_pages_cache_counts;
 pub use projected_agenda::{rebuild_projected_agenda_cache, rebuild_projected_agenda_cache_split};
+// #2895 slice 1: physical subtree purge of the store-owned satellite /
+// derived-cache tables, extracted from the app's `block_cleanup` orchestrator.
+pub use purge::purge_block_satellite_caches;
 // Pinned-today variant for the on-the-fly / cached parity test. Now `pub`
 // (not `#[cfg(test)]`) because the app-layer agenda command tests
 // (`crate::commands::tests::agenda_cmd_tests`, which stay in the app crate)
