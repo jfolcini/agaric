@@ -952,15 +952,13 @@ pub async fn delete_blocks_by_ids_inner(
             .collect()
     };
     let union_cohort_json = serde_json::to_string(&union_cohort)?;
-    // dynamic-sql: json_each id-list UPDATE over the walked cohort union;
-    // single bound JSON parameter, immune to the SQLite variable limit.
-    let result = sqlx::query(
-        "UPDATE blocks SET deleted_at = ?2 \
-         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL",
+    // #2895 slice 2: the json_each cohort soft-delete UPDATE now lives behind
+    // the `blocks`-owning engine crate (byte-identical SQL).
+    let deleted_rows = agaric_engine::block_ops::write_cohort_deleted_at_json(
+        &mut tx,
+        &union_cohort_json,
+        agaric_engine::block_ops::CohortDeletedAt::Stamp(now),
     )
-    .bind(&union_cohort_json)
-    .bind(now)
-    .execute(&mut **tx)
     .await?;
 
     // P-4 — sweep inherited tag rows for every root. Per-root call
@@ -1003,7 +1001,7 @@ pub async fn delete_blocks_by_ids_inner(
     // Return the number of blocks the cascade soft-deleted (roots +
     // descendants combined). Callers can compare against
     // `block_ids.len()` to compute "skipped because missing".
-    Ok(result.rows_affected().cast_signed())
+    Ok(deleted_rows.cast_signed())
 }
 
 /// Tauri command: batch-delete blocks by ids.
@@ -1297,15 +1295,13 @@ pub async fn restore_block_inner(
     )
     .await?;
     let restore_cohort_json = serde_json::Value::from(restore_cohort).to_string();
-    // dynamic-sql: json_each id-list UPDATE over the walked cohort; single
-    // bound JSON parameter, immune to the SQLite variable limit.
-    let result = sqlx::query(
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2",
+    // #2895 slice 2: the json_each cohort restore UPDATE now lives behind the
+    // `blocks`-owning engine crate (byte-identical SQL).
+    let restored_rows = agaric_engine::block_ops::write_cohort_deleted_at_json(
+        &mut tx,
+        &restore_cohort_json,
+        agaric_engine::block_ops::CohortDeletedAt::ClearWhereRef(deleted_at_ref),
     )
-    .bind(&restore_cohort_json)
-    .bind(deleted_at_ref)
-    .execute(&mut **tx)
     .await?;
 
     // #1884: also restore UPWARD. The downward CTE above only clears
@@ -1386,7 +1382,7 @@ pub async fn restore_block_inner(
 
     Ok(RestoreResponse {
         block_id,
-        restored_count: result.rows_affected(),
+        restored_count: restored_rows,
     })
 }
 
@@ -1728,12 +1724,9 @@ pub async fn restore_all_deleted_inner(
         tx.enqueue_lifecycle_background(Arc::new(op_record), root.block_type.clone());
     }
 
-    // Bulk restore: clear deleted_at on ALL deleted blocks
-    let result = sqlx::query!("UPDATE blocks SET deleted_at = NULL WHERE deleted_at IS NOT NULL")
-        .execute(&mut **tx)
-        .await?;
-
-    let count = result.rows_affected();
+    // Bulk restore: clear deleted_at on ALL deleted blocks. #2895 slice 2:
+    // behind the `blocks`-owning engine crate (byte-identical SQL).
+    let count = agaric_engine::block_ops::clear_all_deleted_at(&mut tx).await?;
 
     // (a) + P7 (#346): refresh `page_id` for every restored block
     // synchronously. The async `RebuildPageIds` materializer task dispatched
@@ -1758,27 +1751,9 @@ pub async fn restore_all_deleted_inner(
     // invariant #9). No `deleted_at` filter is needed — nothing is deleted
     // at this point — and conflict copies, now also alive, are correctly
     // routed to their own page ancestry.
-    sqlx::query!("UPDATE blocks SET page_id = id WHERE block_type = 'page'")
-        .execute(&mut **tx)
-        .await?;
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
-    sqlx::query!(
-        "WITH RECURSIVE page_of(id, page_id, depth) AS ( \
-             SELECT id, id, 0 FROM blocks WHERE block_type = 'page' \
-             UNION ALL \
-             SELECT b.id, p.page_id, p.depth + 1 \
-             FROM blocks b \
-             JOIN page_of p ON b.parent_id = p.id \
-             WHERE b.block_type != 'page' AND p.depth < 100 \
-         ) \
-         UPDATE blocks SET page_id = ( \
-             SELECT page_id FROM page_of WHERE page_of.id = blocks.id \
-         ) \
-         WHERE block_type != 'page' \
-           AND EXISTS (SELECT 1 FROM page_of WHERE page_of.id = blocks.id)"
-    )
-    .execute(&mut **tx)
-    .await?;
+    // #2895 slice 2: both page_id backfill statements now live behind the
+    // `blocks`-owning engine crate (`rebuild_all_page_ids` — byte-identical).
+    agaric_engine::block_ops::rebuild_all_page_ids(&mut tx).await?;
 
     // Recompute tag inheritance for all restored root blocks
     for root in &roots {
@@ -2064,16 +2039,14 @@ pub async fn restore_blocks_by_ids_inner(
             .collect()
     };
     let union_cohort_json = serde_json::to_string(&union_cohort)?;
-    // dynamic-sql: json_each id-list UPDATE over the walked cohort union;
-    // single bound JSON parameter, immune to the SQLite variable limit.
-    let result = sqlx::query(
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NOT NULL",
+    // #2895 slice 2: the json_each cohort bulk-restore UPDATE now lives behind
+    // the `blocks`-owning engine crate (byte-identical SQL).
+    let count = agaric_engine::block_ops::write_cohort_deleted_at_json(
+        &mut tx,
+        &union_cohort_json,
+        agaric_engine::block_ops::CohortDeletedAt::ClearAll,
     )
-    .bind(&union_cohort_json)
-    .execute(&mut **tx)
     .await?;
-    let count = result.rows_affected();
 
     // Recompute tag inheritance for each restored root subtree.
     for root in &roots {

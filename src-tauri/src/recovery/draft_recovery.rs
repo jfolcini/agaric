@@ -160,11 +160,15 @@ pub(super) async fn recover_single_draft(
         // consistent with op_log even if the engine dispatch below fails.
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
         let record = append_local_op_in_tx(&mut tx, device_id, op, crate::db::now_ms()).await?;
-        sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
-            .bind(&draft.content)
-            .bind(&draft.block_id)
-            .execute(&mut *tx)
-            .await?;
+        // #2895 slice 2: the direct content UPDATE now lives behind the
+        // `blocks`-owning engine crate (`set_block_content` — unguarded
+        // `UPDATE blocks SET content = ? WHERE id = ?`, byte-identical SQL).
+        agaric_engine::block_ops::set_block_content(
+            &mut tx,
+            draft.block_id.as_str(),
+            &draft.content,
+        )
+        .await?;
         tx.commit().await?;
 
         // #620 / #1322: dispatch the synthetic record to the materializer as a

@@ -290,6 +290,7 @@ pub async fn create_block_in_tx(
         // The seed (`pid`, depth 0) plus N ancestors yields MAX(depth) = N,
         // i.e. the parent's depth from the root — identical semantics to
         // the previous inline `path` CTE.
+        // dynamic-sql: concat! of the ancestors CTE macro expansion — query! needs a string literal.
         let parent_depth = sqlx::query_scalar::<_, i64>(concat!(
             agaric_store::ancestors_cte_standard!(),
             "SELECT MAX(depth) FROM ancestors",
@@ -913,6 +914,7 @@ pub async fn delete_blocks_in_subtree(
     // runtime membership shapes (single-root recursive CTE / multi-root
     // json_each CTE / flat deleted-set); the macro form cannot take a runtime
     // query string.
+    // dynamic-sql: runtime membership shapes (see above).
     let mut q = sqlx::query(sqlx::AssertSqlSafe(format!(
         "{cte_prefix}DELETE FROM blocks \
          WHERE id IN ({member_subquery})"
@@ -970,6 +972,240 @@ pub async fn null_orphan_space_ids(conn: &mut sqlx::SqliteConnection) -> Result<
     .execute(&mut *conn)
     .await?;
     Ok(res.rows_affected())
+}
+
+// ===========================================================================
+// #2895 slice 2 — narrow `blocks` write primitives migrated from the app
+// crate's non-recovery command paths (blocks CRUD, history/undo, soft-delete,
+// draft recovery). Each reproduces its former app-crate statement
+// BYTE-FOR-BYTE (same SQL text, same predicates, same bind order) so moving a
+// call site behind the `blocks`-owning crate cannot alter the effective SQL.
+// All operate on a borrowed `&mut SqliteConnection` (never a pool): they open
+// no transaction and run inside the caller's IMMEDIATE tx, preserving the #110
+// raw-write-tx convention.
+// ===========================================================================
+
+/// Which `deleted_at` transition to apply across a JSON id-array cohort.
+///
+/// The three variants preserve the three distinct predicates the former
+/// app-crate cohort UPDATEs used, all sharing one `json_each(?1)` membership
+/// shape.
+pub enum CohortDeletedAt {
+    /// Soft-delete: stamp `deleted_at = <ts>` on LIVE (`deleted_at IS NULL`)
+    /// cohort members. Idempotent under re-run.
+    Stamp(i64),
+    /// Restore a specific delete cohort: clear `deleted_at` on members whose
+    /// `deleted_at` still equals the originating delete's `<ref>` timestamp.
+    ClearWhereRef(i64),
+    /// Bulk restore: clear `deleted_at` on ANY tombstoned
+    /// (`deleted_at IS NOT NULL`) cohort member.
+    ClearAll,
+}
+
+/// Apply a `deleted_at` transition across the cohort whose ids are the values
+/// of the bound JSON array `ids_json` (`SELECT value FROM json_each(?1)`).
+/// Returns the number of `blocks` rows updated.
+///
+/// Migrated call sites: bulk delete / restore cohort UPDATEs in
+/// `commands::blocks::crud` and the undo/revert cascade UPDATEs in
+/// `commands::history`.
+pub async fn write_cohort_deleted_at_json(
+    conn: &mut sqlx::SqliteConnection,
+    ids_json: &str,
+    op: CohortDeletedAt,
+) -> Result<u64, AppError> {
+    // dynamic-sql: one static per-variant literal selected by match (no user
+    // input interpolated); each is byte-identical to the former app-crate
+    // cohort UPDATE. Runtime form because the three predicates share one
+    // json_each membership shape.
+    let sql: &str = match op {
+        CohortDeletedAt::Stamp(_) => {
+            "UPDATE blocks SET deleted_at = ?2 \
+             WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NULL"
+        }
+        CohortDeletedAt::ClearWhereRef(_) => {
+            "UPDATE blocks SET deleted_at = NULL \
+             WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at = ?2"
+        }
+        CohortDeletedAt::ClearAll => {
+            "UPDATE blocks SET deleted_at = NULL \
+             WHERE id IN (SELECT value FROM json_each(?1)) AND deleted_at IS NOT NULL"
+        }
+    };
+    // dynamic-sql: per-variant static literal selected at runtime (see match above).
+    let mut q = sqlx::query(sql).bind(ids_json);
+    match op {
+        CohortDeletedAt::Stamp(ts) | CohortDeletedAt::ClearWhereRef(ts) => q = q.bind(ts),
+        CohortDeletedAt::ClearAll => {}
+    }
+    Ok(q.execute(conn).await?.rows_affected())
+}
+
+/// Clear `deleted_at` on EVERY tombstoned row (bulk "restore all"). Returns
+/// the number of rows restored. (`crud::restore_all_deleted`.)
+pub async fn clear_all_deleted_at(conn: &mut sqlx::SqliteConnection) -> Result<u64, AppError> {
+    // dynamic-sql: byte-identical to the former app-crate literal.
+    Ok(
+        // dynamic-sql: byte-identical moved app-crate literal (see fn doc).
+        sqlx::query("UPDATE blocks SET deleted_at = NULL WHERE deleted_at IS NOT NULL")
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
+/// Rebuild `page_id` for the whole table after a bulk restore: pages
+/// self-reference, then a single recursive walk propagates each page's id
+/// down to its non-page descendants. Byte-identical to the former two
+/// app-crate statements (`crud::restore_all_deleted`, #346/P7). No
+/// `deleted_at` filter is needed — nothing is deleted at this point.
+pub async fn rebuild_all_page_ids(conn: &mut sqlx::SqliteConnection) -> Result<(), AppError> {
+    // dynamic-sql: two byte-identical static literals.
+    sqlx::query("UPDATE blocks SET page_id = id WHERE block_type = 'page'")
+        .execute(&mut *conn)
+        .await?;
+    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants
+    // dynamic-sql: byte-identical moved app-crate literal (see fn doc).
+    sqlx::query(
+        "WITH RECURSIVE page_of(id, page_id, depth) AS ( \
+             SELECT id, id, 0 FROM blocks WHERE block_type = 'page' \
+             UNION ALL \
+             SELECT b.id, p.page_id, p.depth + 1 \
+             FROM blocks b \
+             JOIN page_of p ON b.parent_id = p.id \
+             WHERE b.block_type != 'page' AND p.depth < 100 \
+         ) \
+         UPDATE blocks SET page_id = ( \
+             SELECT page_id FROM page_of WHERE page_of.id = blocks.id \
+         ) \
+         WHERE block_type != 'page' \
+           AND EXISTS (SELECT 1 FROM page_of WHERE page_of.id = blocks.id)",
+    )
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
+/// Reparent a LIVE block to `new_parent_id` at `position` (undo of a move):
+/// `UPDATE blocks SET parent_id = ?, position = ? WHERE id = ? AND
+/// deleted_at IS NULL`. Returns rows affected (0 ⇒ not found / soft-deleted,
+/// which the caller maps to `NotFound`). (`commands::history` move revert.)
+pub async fn reparent_active_block(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    new_parent_id: Option<&str>,
+    position: i64,
+) -> Result<u64, AppError> {
+    // dynamic-sql: byte-identical to the former app-crate literal.
+    Ok(sqlx::query(
+        "UPDATE blocks SET parent_id = ?, position = ? \
+         WHERE id = ? AND deleted_at IS NULL",
+    )
+    .bind(new_parent_id)
+    .bind(position)
+    .bind(block_id)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
+/// Overwrite a LIVE block's content (undo of an edit):
+/// `UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL`.
+/// Returns rows affected (0 ⇒ not found / soft-deleted, mapped to `NotFound`
+/// by the caller). (`commands::history` edit revert.)
+pub async fn set_active_block_content(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    content: &str,
+) -> Result<u64, AppError> {
+    // dynamic-sql: byte-identical to the former app-crate literal.
+    Ok(
+        // dynamic-sql: byte-identical moved app-crate literal (see fn doc).
+        sqlx::query("UPDATE blocks SET content = ? WHERE id = ? AND deleted_at IS NULL")
+            .bind(content)
+            .bind(block_id)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
+/// Overwrite a block's content unconditionally (draft recovery re-applies the
+/// unflushed draft text): `UPDATE blocks SET content = ? WHERE id = ?` — NO
+/// `deleted_at` guard, matching the former app-crate statement exactly.
+/// (`recovery::draft_recovery`.)
+pub async fn set_block_content(
+    conn: &mut sqlx::SqliteConnection,
+    block_id: &str,
+    content: &str,
+) -> Result<u64, AppError> {
+    // dynamic-sql: byte-identical to the former app-crate literal.
+    Ok(sqlx::query("UPDATE blocks SET content = ? WHERE id = ?")
+        .bind(content)
+        .bind(block_id)
+        .execute(conn)
+        .await?
+        .rows_affected())
+}
+
+/// Restore a single seed's connected same-cohort subtree (downward only): the
+/// shared `descendants_cte_cohort!` walk + `UPDATE ... deleted_at = NULL WHERE
+/// id IN (SELECT id FROM descendants) AND deleted_at = ?`. Byte-identical to
+/// `soft_delete::restore`'s former statement (#1119). Binds: seed id, then the
+/// cohort timestamp twice (recursive-arm filter + outer filter). Returns rows
+/// affected.
+pub async fn restore_cohort_subtree(
+    conn: &mut sqlx::SqliteConnection,
+    seed_block_id: &str,
+    deleted_at_ref: i64,
+) -> Result<u64, AppError> {
+    // dynamic-sql: recursive cohort CTE built via concat! of the
+    // descendants_cte_cohort! macro expansion (not a string literal, so the
+    // query! macro is unusable); byte-identical to the former app-crate site.
+    // dynamic-sql: concat! of descendants_cte_cohort! macro expansion — query! unusable.
+    Ok(sqlx::query(concat!(
+        agaric_store::descendants_cte_cohort!(),
+        "UPDATE blocks SET deleted_at = NULL \
+         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
+    ))
+    .bind(seed_block_id)
+    .bind(deleted_at_ref)
+    .bind(deleted_at_ref)
+    .execute(conn)
+    .await?
+    .rows_affected())
+}
+
+/// Cascade soft-delete a seed's LIVE descendant subtree, stamping
+/// `deleted_at = <ts>` (`soft_delete::trash`). Byte-identical to the former
+/// app-crate inline recursive-CTE UPDATE (kept as an explicit literal rather
+/// than the `descendants_cte_active!` macro to preserve the original
+/// whitespace exactly). Binds: seed id, then the delete timestamp. Returns
+/// rows affected.
+pub async fn cascade_soft_delete_subtree(
+    conn: &mut sqlx::SqliteConnection,
+    seed_block_id: &str,
+    deleted_at: i64,
+) -> Result<u64, AppError> {
+    // byte-identical to the former app-crate literal.
+    // dynamic-sql: inline recursive descendants CTE + UPDATE.
+    Ok(sqlx::query(
+        "WITH RECURSIVE descendants(id, depth) AS ( \
+             SELECT id, 0 FROM blocks WHERE id = ? \
+             UNION ALL \
+             SELECT b.id, d.depth + 1 FROM blocks b \
+             INNER JOIN descendants d ON b.parent_id = d.id \
+             WHERE b.deleted_at IS NULL AND d.depth < 100 \
+         ) \
+         UPDATE blocks SET deleted_at = ? \
+         WHERE id IN (SELECT id FROM descendants) \
+           AND deleted_at IS NULL",
+    )
+    .bind(seed_block_id)
+    .bind(deleted_at)
+    .execute(conn)
+    .await?
+    .rows_affected())
 }
 
 // ===========================================================================

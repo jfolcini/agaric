@@ -64,22 +64,11 @@ pub async fn restore_block(
     // walk exactly via the shared `descendants_cte_cohort!` macro so this
     // primitive restores the seed's connected same-cohort subtree, not
     // every block under the seed that merely shares the `deleted_at`
-    // value. Uses untyped `sqlx::query` so the macro expansion can be
-    // `concat!`d in (the compile-time `sqlx::query!` requires a string
-    // literal and cannot accept `concat!()` of a `macro_rules!`
-    // expansion). Three binds: seed id, then the cohort timestamp for the
-    // recursive arm and again for the outer filter.
-    // dynamic-sql: recursive cohort CTE built via `concat!` of the `descendants_cte_cohort!` macro expansion (not a string literal, so `sqlx::query!` is unusable)
-    let result = sqlx::query(concat!(
-        agaric_store::descendants_cte_cohort!(),
-        "UPDATE blocks SET deleted_at = NULL \
-         WHERE id IN (SELECT id FROM descendants) AND deleted_at = ?",
-    ))
-    .bind(block_id)
-    .bind(deleted_at_ref)
-    .bind(deleted_at_ref)
-    .execute(&mut **tx)
-    .await?;
+    // value. #2895 slice 2: the raw cohort-restore UPDATE now lives behind
+    // the `blocks`-owning engine crate (`restore_cohort_subtree` — same
+    // macro expansion, same three binds, byte-identical SQL).
+    let rows =
+        agaric_engine::block_ops::restore_cohort_subtree(&mut tx, block_id, deleted_at_ref).await?;
 
     // Warn when the cascade walk hit the depth-100 cap so an
     // operator has a breadcrumb if a pathological tree silently truncated
@@ -114,7 +103,6 @@ pub async fn restore_block(
     // otherwise. Emit a warn breadcrumb with both identifiers so triage has
     // something to grep for. Intentionally NOT promoted to `Err` — callers
     // (e.g. undo-redo) rely on `Ok(0)` for idempotent retries.
-    let rows = result.rows_affected();
     if rows == 0 {
         tracing::warn!(
             block_id = %block_id,

@@ -66,24 +66,11 @@ pub async fn cascade_soft_delete(
     // enqueued below).
     let mut tx = CommandTx::begin_immediate(pool, "soft_delete_cascade").await?;
 
-    // depth<100: DESCENDANT_DEPTH_CAP, see block_descendants (query! needs a
-    // string literal, so the cap stays inline; mirrors descendants_cte_active!)
-    let result = sqlx::query!(
-        "WITH RECURSIVE descendants(id, depth) AS ( \
-             SELECT id, 0 FROM blocks WHERE id = ? \
-             UNION ALL \
-             SELECT b.id, d.depth + 1 FROM blocks b \
-             INNER JOIN descendants d ON b.parent_id = d.id \
-             WHERE b.deleted_at IS NULL AND d.depth < 100 \
-         ) \
-         UPDATE blocks SET deleted_at = ? \
-         WHERE id IN (SELECT id FROM descendants) \
-           AND deleted_at IS NULL",
-        block_id,
-        now,
-    )
-    .execute(&mut **tx)
-    .await?;
+    // #2895 slice 2: the raw cascade soft-delete UPDATE now lives behind the
+    // `blocks`-owning engine crate (`cascade_soft_delete_subtree` — same
+    // inline depth-100 recursive CTE, same binds, byte-identical SQL).
+    let count =
+        agaric_engine::block_ops::cascade_soft_delete_subtree(&mut tx, block_id, now).await?;
 
     // Warn when the cascade walk hit the depth-100 cap so an
     // operator has a breadcrumb if a pathological tree silently truncated
@@ -98,8 +85,6 @@ pub async fn cascade_soft_delete(
              below depth 100 were not soft-deleted. Tree is pathologically deep.",
         );
     }
-
-    let count = result.rows_affected();
 
     // SQL-review + route the cache-rebuild fan-out through
     // the canonical `delete_block` op-type dispatch. Enqueueing a
