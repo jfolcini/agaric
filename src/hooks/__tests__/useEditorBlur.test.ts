@@ -25,13 +25,37 @@ import { deleteDraft, getPropertyDef, saveDraft, setProperty } from '@/lib/tauri
 // composed with useEditorBlur) and the #2675 inline-property tests (the
 // commit flow's getPropertyDef/setProperty IPCs); the plain useEditorBlur
 // unit tests never reach IPC.
+// The integration tests drive the real `useDraftAutosave`, which now calls
+// `commands.{saveDraft,flushDraft,deleteDraft}` from `@/lib/bindings` and
+// unwraps the `Result` envelope. The same spies back both the (still-wrapped)
+// `@/lib/tauri` surface and the `commands.*` surface so the `vi.mocked(...)`
+// assertions keep working, and they resolve the `{ status: 'ok', data }` shape.
+const { mockSaveDraft, mockFlushDraft, mockDeleteDraft } = vi.hoisted(() => ({
+  mockSaveDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockFlushDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+  mockDeleteDraft: vi.fn(() => Promise.resolve({ status: 'ok', data: null })),
+}))
+
 vi.mock('@/lib/tauri', () => ({
-  saveDraft: vi.fn(() => Promise.resolve()),
-  flushDraft: vi.fn(() => Promise.resolve()),
-  deleteDraft: vi.fn(() => Promise.resolve()),
+  saveDraft: mockSaveDraft,
+  flushDraft: mockFlushDraft,
+  deleteDraft: mockDeleteDraft,
   getPropertyDef: vi.fn(() => Promise.resolve(null)),
   setProperty: vi.fn(() => Promise.resolve({ op_refs: [] })),
 }))
+
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      saveDraft: mockSaveDraft,
+      flushDraft: mockFlushDraft,
+      deleteDraft: mockDeleteDraft,
+    },
+  }
+})
 
 /**
  * Historical overlay class/attribute selectors. Pre--L-3 these were

@@ -13,7 +13,7 @@ import { axe } from 'vitest-axe'
 
 import type { BlockHistoryItemProps } from '@/components/HistoryListItem/BlockHistoryItem'
 import { BlockHistoryItem } from '@/components/HistoryListItem/BlockHistoryItem'
-import { computeBlockVsCurrentDiff } from '@/lib/tauri'
+import { commands } from '@/lib/bindings'
 
 vi.mock('@/hooks/useRichContentCallbacks', () => ({
   useRichContentCallbacks: vi.fn(() => ({
@@ -28,11 +28,14 @@ vi.mock('@/hooks/useRichContentCallbacks', () => ({
 // The compared-to-current diff fetch is invoked lazily on expand; stub
 // the IPC so the effect doesn't fire a real Tauri call during the axe
 // audit. The render-only tests don't expand, so this is defensive.
-vi.mock('@/lib/tauri', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/tauri')>('@/lib/tauri')
+vi.mock('@/lib/bindings', async () => {
+  const actual = await vi.importActual<typeof import('@/lib/bindings')>('@/lib/bindings')
   return {
     ...actual,
-    computeBlockVsCurrentDiff: vi.fn(async () => []),
+    commands: {
+      ...actual.commands,
+      computeBlockVsCurrentDiff: vi.fn(async () => ({ status: 'ok', data: [] })),
+    },
   }
 })
 
@@ -81,7 +84,10 @@ beforeEach(() => {
   // `mock*ValueOnce` queues persist across tests (clearAllMocks only resets
   // call history), so reset the diff mock to its default resolving impl to
   // keep the failure-path tests isolated.
-  vi.mocked(computeBlockVsCurrentDiff).mockReset().mockResolvedValue([])
+  vi.mocked(commands.computeBlockVsCurrentDiff).mockReset().mockResolvedValue({
+    status: 'ok',
+    data: [],
+  })
 })
 
 describe('BlockHistoryItem (extracted sibling)', () => {
@@ -133,7 +139,7 @@ describe('BlockHistoryItem (extracted sibling)', () => {
   // #1736: when the compared-to-current diff fetch rejects, the row must
   // surface an inline error + retry instead of an empty diff container.
   describe('compared-to-current diff fetch failure (#1736)', () => {
-    const mockedDiff = vi.mocked(computeBlockVsCurrentDiff)
+    const mockedDiff = vi.mocked(commands.computeBlockVsCurrentDiff)
 
     it('renders an inline error + retry affordance when the fetch rejects', async () => {
       mockedDiff.mockRejectedValueOnce(new Error('ipc boom'))
@@ -153,7 +159,7 @@ describe('BlockHistoryItem (extracted sibling)', () => {
       // regardless of how many times the effect fires.
       mockedDiff
         .mockReset()
-        .mockResolvedValue([{ tag: 'Insert', value: 'recovered' }])
+        .mockResolvedValue({ status: 'ok', data: [{ tag: 'Insert', value: 'recovered' }] })
         .mockRejectedValueOnce(new Error('ipc boom'))
 
       renderInList(defaultProps({ isExpanded: true }))

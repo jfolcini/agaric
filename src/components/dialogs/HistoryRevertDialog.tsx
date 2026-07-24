@@ -14,9 +14,10 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { HistoryEntry } from '@/lib/bindings'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { HistoryEntry } from '@/lib/tauri'
-import { revertOps } from '@/lib/tauri'
 
 export interface HistoryRevertDialogProps {
   open: boolean
@@ -42,7 +43,7 @@ export function HistoryRevertDialog({
     setReverting(true)
     try {
       const ops = selectedEntries.map((e) => ({ device_id: e.device_id, seq: e.seq }))
-      await revertOps({ ops })
+      unwrap(await commands.revertOps(ops))
       announce(t('announce.opsReverted', { count: ops.length }))
       await onSuccess()
     } catch (err) {

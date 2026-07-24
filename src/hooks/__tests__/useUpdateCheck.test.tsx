@@ -32,7 +32,6 @@ import {
   useUpdateStatus,
 } from '@/hooks/useUpdateCheck'
 import { PREFERENCES, readPreference } from '@/lib/preferences'
-import { flushAllDrafts } from '@/lib/tauri'
 
 // ── Module mocks ────────────────────────────────────────────────────
 // These need to be hoisted, hence the `vi.mock` + module-scope captured
@@ -55,18 +54,16 @@ vi.mock('@tauri-apps/api/app', () => ({
   getVersion: (...args: unknown[]) => mockGetVersion(...args),
 }))
 
-const { mockIsFlatpak } = vi.hoisted(() => ({
+const { mockIsFlatpak, mockFlushAllDrafts } = vi.hoisted(() => ({
   mockIsFlatpak: vi.fn(),
+  mockFlushAllDrafts: vi.fn(),
 }))
 
 vi.mock('@/lib/bindings', () => ({
   commands: {
     isFlatpak: (...args: unknown[]) => mockIsFlatpak(...args),
+    flushAllDrafts: (...args: unknown[]) => mockFlushAllDrafts(...args),
   },
-}))
-
-vi.mock('@/lib/tauri', () => ({
-  flushAllDrafts: vi.fn(),
 }))
 
 vi.mock('@/lib/logger', () => ({
@@ -143,8 +140,8 @@ beforeEach(() => {
   originalUA = navigator.userAgent
   setUserAgent(DESKTOP_UA)
   localStorage.clear()
-  vi.mocked(flushAllDrafts).mockReset()
-  vi.mocked(flushAllDrafts).mockResolvedValue({ flushed: 0 })
+  mockFlushAllDrafts.mockReset()
+  mockFlushAllDrafts.mockResolvedValue({ status: 'ok', data: { flushed: 0 } })
   mockCheck.mockReset()
   mockRelaunch.mockReset()
   mockGetVersion.mockReset()
@@ -255,9 +252,9 @@ describe('checkForUpdatesNow — manual entry point', () => {
 describe('install flow', () => {
   it('flushes drafts, downloads + installs, then relaunches in order', async () => {
     const order: string[] = []
-    vi.mocked(flushAllDrafts).mockImplementation(async () => {
+    mockFlushAllDrafts.mockImplementation(async () => {
       order.push('flush')
-      return { flushed: 0 }
+      return { status: 'ok', data: { flushed: 0 } }
     })
     const downloadAndInstall = vi.fn(async () => {
       order.push('install')
@@ -307,7 +304,7 @@ describe('install flow', () => {
     // Technical review #1: flushAllDrafts failure must prevent
     // downloadAndInstall so an interrupted install can't lose a
     // user's in-flight edit.
-    vi.mocked(flushAllDrafts).mockRejectedValueOnce(new Error('sqlite contention'))
+    mockFlushAllDrafts.mockRejectedValueOnce(new Error('sqlite contention'))
     const downloadAndInstall = vi.fn(async () => {})
     mockCheck.mockResolvedValueOnce({ version: '1.2.3', downloadAndInstall })
 

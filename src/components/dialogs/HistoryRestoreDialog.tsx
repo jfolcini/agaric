@@ -14,11 +14,12 @@ import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { HistoryEntry } from '@/lib/bindings'
 import { formatTimestamp } from '@/lib/format'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { HistoryEntry } from '@/lib/tauri'
-import { restorePageToOp } from '@/lib/tauri'
 
 export interface HistoryRestoreDialogProps {
   open: boolean
@@ -42,11 +43,9 @@ export function HistoryRestoreDialog({
     if (!restoreTarget) return
     setRestoring(true)
     try {
-      const result = await restorePageToOp({
-        pageId: '__all__',
-        targetDeviceId: restoreTarget.device_id,
-        targetSeq: restoreTarget.seq,
-      })
+      const result = unwrap(
+        await commands.restorePageToOp('__all__', restoreTarget.device_id, restoreTarget.seq),
+      )
       notify.success(t('history.restoreSuccess', { count: result.ops_reverted }))
       announce(t('announce.restoreToHereSucceeded', { count: result.ops_reverted }))
       if (result.non_reversible_skipped > 0) {

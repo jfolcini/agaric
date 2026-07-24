@@ -10,7 +10,7 @@ import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SYNC_MDNS_DISABLED_EVENT, useMdnsStatus } from '@/hooks/useMdnsStatus'
-import type { MdnsStatus } from '@/lib/tauri'
+import type { MdnsStatus } from '@/lib/bindings'
 
 // -- Hoisted mocks ------------------------------------------------------------
 
@@ -25,9 +25,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  getMdnsStatus: (...args: unknown[]) => mockGetMdnsStatus(...args),
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    getMdnsStatus: (...args: unknown[]) => mockGetMdnsStatus(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T>(data: T) => ({ status: 'ok' as const, data })
 
 const HEALTHY: MdnsStatus = { disabled: false, reason: null }
 const DISABLED: MdnsStatus = { disabled: true, reason: 'multicast lock missing' }
@@ -45,7 +50,7 @@ beforeEach(() => {
     })
   }
   mockListen.mockResolvedValue(mockUnlisten)
-  mockGetMdnsStatus.mockResolvedValue(HEALTHY)
+  mockGetMdnsStatus.mockResolvedValue(ok(HEALTHY))
 })
 
 afterEach(() => {
@@ -104,7 +109,7 @@ describe('useMdnsStatus — mount backfill', () => {
     // The live event is emitted by the daemon before this listener
     // registers whenever peers already exist at boot, so the backfill is
     // the path that actually surfaces the disabled state in practice.
-    mockGetMdnsStatus.mockResolvedValue(DISABLED)
+    mockGetMdnsStatus.mockResolvedValue(ok(DISABLED))
     const { result } = renderHook(() => useMdnsStatus())
     await waitFor(() => expect(mockGetMdnsStatus).toHaveBeenCalledTimes(1))
     await waitFor(() =>
@@ -113,7 +118,7 @@ describe('useMdnsStatus — mount backfill', () => {
   })
 
   it('stays healthy when the backfill reports mDNS working', async () => {
-    mockGetMdnsStatus.mockResolvedValue(HEALTHY)
+    mockGetMdnsStatus.mockResolvedValue(ok(HEALTHY))
     const { result } = renderHook(() => useMdnsStatus())
     await waitFor(() => expect(mockGetMdnsStatus).toHaveBeenCalledTimes(1))
     expect(result.current).toEqual({ disabled: false, reason: null })

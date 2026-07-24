@@ -8,7 +8,7 @@ import {
   showRecoveryDegradedBanner,
   useRecoveryStatus,
 } from '@/hooks/useRecoveryStatus'
-import type { RecoveryStatus } from '@/lib/tauri'
+import type { RecoveryStatus } from '@/lib/bindings'
 
 // -- Hoisted mocks ------------------------------------------------------------
 
@@ -23,9 +23,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   listen: (...args: unknown[]) => mockListen(...args),
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  getRecoveryStatus: (...args: unknown[]) => mockGetRecoveryStatus(...args),
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    getRecoveryStatus: (...args: unknown[]) => mockGetRecoveryStatus(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T>(data: T) => ({ status: 'ok' as const, data })
 
 // `sonner` is mocked globally via test-setup.ts → src/__tests__/mocks/sonner.ts.
 
@@ -50,7 +55,7 @@ beforeEach(() => {
     })
   }
   mockListen.mockResolvedValue(mockUnlisten)
-  mockGetRecoveryStatus.mockResolvedValue(HEALTHY)
+  mockGetRecoveryStatus.mockResolvedValue(ok(HEALTHY))
 })
 
 afterEach(() => {
@@ -121,14 +126,14 @@ describe('useRecoveryStatus — mount backfill', () => {
     // The live event is emitted by the backend before this listener
     // registers, so the backfill is the path that actually surfaces a
     // degraded boot in practice.
-    mockGetRecoveryStatus.mockResolvedValue(DEGRADED)
+    mockGetRecoveryStatus.mockResolvedValue(ok(DEGRADED))
     renderHook(() => useRecoveryStatus())
     await waitFor(() => expect(mockGetRecoveryStatus).toHaveBeenCalledTimes(1))
     await waitFor(() => expect(toast.warning).toHaveBeenCalledTimes(1))
   })
 
   it('does not show a banner when the backfill reports a healthy boot', async () => {
-    mockGetRecoveryStatus.mockResolvedValue(HEALTHY)
+    mockGetRecoveryStatus.mockResolvedValue(ok(HEALTHY))
     renderHook(() => useRecoveryStatus())
     await waitFor(() => expect(mockGetRecoveryStatus).toHaveBeenCalledTimes(1))
     expect(toast.warning).not.toHaveBeenCalled()
@@ -144,7 +149,7 @@ describe('useRecoveryStatus — mount backfill', () => {
   it('the live event and the backfill collapse into one deduped toast', async () => {
     // Both fire with the same fixed id, so sonner shows a single banner —
     // here we assert both code paths target the same dedup id.
-    mockGetRecoveryStatus.mockResolvedValue(DEGRADED)
+    mockGetRecoveryStatus.mockResolvedValue(ok(DEGRADED))
     renderHook(() => useRecoveryStatus())
     getListenerCallback(RECOVERY_DEGRADED_EVENT)({ payload: DEGRADED })
     await waitFor(() => expect(mockGetRecoveryStatus).toHaveBeenCalledTimes(1))

@@ -29,11 +29,12 @@
 import { useEffect, useRef } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import type { RecoveryStatus } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getRecoveryStatus } from '@/lib/tauri'
-import type { RecoveryStatus } from '@/lib/tauri'
 
 /** Event name — must mirror `EVENT_RECOVERY_DEGRADED` in
  *  `src-tauri/src/recovery/mod.rs`. */
@@ -101,8 +102,10 @@ export function useRecoveryStatus(): void {
     if (!enabled || backfilled.current) return
     backfilled.current = true
     let cancelled = false
-    getRecoveryStatus()
-      .then((status) => {
+    commands
+      .getRecoveryStatus()
+      .then((res) => {
+        const status = unwrap(res)
         if (cancelled) return
         showRecoveryDegradedBanner(status)
       })

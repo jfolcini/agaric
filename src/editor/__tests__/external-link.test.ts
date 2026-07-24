@@ -15,10 +15,12 @@ import { ExternalLink, isValidHttpUrl } from '@/editor/extensions/external-link'
 
 // ── Mocks ────────────────────────────────────────────────────────────────
 
-const mockFetchLinkMetadata = vi.fn().mockResolvedValue({})
+const mockFetchLinkMetadata = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
 
-vi.mock('@/lib/tauri', () => ({
-  fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    fetchLinkMetadata: (...args: unknown[]) => mockFetchLinkMetadata(...args),
+  },
 }))
 
 const mockOpenUrl = vi.fn().mockResolvedValue(true)

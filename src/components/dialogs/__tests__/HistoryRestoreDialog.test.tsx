@@ -13,13 +13,19 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { HistoryRestoreDialog } from '@/components/dialogs/HistoryRestoreDialog'
 import { announce } from '@/lib/announcer'
+import type { HistoryEntry } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { restorePageToOp } from '@/lib/tauri'
-import type { HistoryEntry } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', () => ({
-  restorePageToOp: vi.fn(),
+const { mockRestore } = vi.hoisted(() => ({ mockRestore: vi.fn() }))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    restorePageToOp: (...args: unknown[]) => mockRestore(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T,>(data: T) => ({ status: 'ok' as const, data })
 
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
@@ -28,8 +34,6 @@ vi.mock('@/lib/notify', () => ({
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
 }))
-
-const mockRestore = vi.mocked(restorePageToOp)
 const mockNotify = vi.mocked(notify)
 const mockAnnounce = vi.mocked(announce)
 
@@ -53,7 +57,7 @@ afterEach(() => {
 describe('HistoryRestoreDialog', () => {
   it('confirming the restore fires restorePageToOp and toasts success', async () => {
     const user = userEvent.setup()
-    mockRestore.mockResolvedValue({ ops_reverted: 3, non_reversible_skipped: 0 } as never)
+    mockRestore.mockResolvedValue(ok({ ops_reverted: 3, non_reversible_skipped: 0 }))
     const onSuccess = vi.fn()
     render(
       <HistoryRestoreDialog

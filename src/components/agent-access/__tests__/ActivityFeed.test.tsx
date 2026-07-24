@@ -15,11 +15,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ActivityFeed } from '@/components/agent-access/ActivityFeed'
 import type { ActivityEntry } from '@/hooks/useMcpActivityFeed'
 import { notify } from '@/lib/notify'
-import { revertOps } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', () => ({
-  revertOps: vi.fn(),
+const { mockRevert } = vi.hoisted(() => ({ mockRevert: vi.fn() }))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    revertOps: (...args: unknown[]) => mockRevert(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T,>(data: T) => ({ status: 'ok' as const, data })
 
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
@@ -29,7 +35,6 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }))
 
-const mockRevert = vi.mocked(revertOps)
 const mockNotify = vi.mocked(notify)
 
 // An agent-authored, successful RW entry with an opRef → the only
@@ -55,11 +60,11 @@ afterEach(() => {
 describe('ActivityFeed', () => {
   it('undoing an agent op fires revertOps and toasts success', async () => {
     const user = userEvent.setup()
-    mockRevert.mockResolvedValue(undefined as never)
+    mockRevert.mockResolvedValue(ok([]))
     render(<ActivityFeed entries={[UNDOABLE]} />)
     await user.click(screen.getByTestId('mcp-activity-undo'))
     await waitFor(() => {
-      expect(mockRevert).toHaveBeenCalledWith({ ops: [UNDOABLE.opRef] })
+      expect(mockRevert).toHaveBeenCalledWith([UNDOABLE.opRef])
       expect(mockNotify.success).toHaveBeenCalled()
     })
   })
