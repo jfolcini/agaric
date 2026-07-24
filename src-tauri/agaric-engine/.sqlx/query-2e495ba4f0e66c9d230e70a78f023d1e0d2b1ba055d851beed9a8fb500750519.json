@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM op_log WHERE created_at < ?1 AND device_id = ?2 AND seq <= ?3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 3
+    },
+    "nullable": []
+  },
+  "hash": "2e495ba4f0e66c9d230e70a78f023d1e0d2b1ba055d851beed9a8fb500750519"
+}
