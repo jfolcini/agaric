@@ -12,6 +12,7 @@
 import {
   type TypedHandlers,
   appErrorRejection,
+  assertValidReservedPropertyValue,
   assertValidSetPropertyValue,
   notFoundRejection,
   returnEmptyPage,
@@ -46,8 +47,14 @@ function setReservedColumnProperty(
   valueText: string | null,
   valueDate: string | null,
 ): Record<string, unknown> | null {
+  const channelValue = channel === 'value_text' ? valueText : valueDate
+  // #3091 — reserved keys carry their own value contract the backend VALIDATES
+  // (never normalizes): todo_state membership (case-sensitive) and non-empty
+  // dates. Enforce it here so an invalid reserved value (e.g. a lowercase
+  // `done`) fails instead of landing raw on the column.
+  assertValidReservedPropertyValue(key, channel, channelValue)
   const b = blocks.get(blockId)
-  if (b) b[key] = channel === 'value_text' ? valueText : valueDate
+  if (b) b[key] = channelValue
   const op = pushOp('set_property', { block_id: blockId, key, from_value: null })
   return b ? { ...b, op_refs: [{ device_id: op.device_id, seq: op.seq }] } : null
 }
@@ -176,6 +183,7 @@ export const propertiesHandlers = {
     // on the column, once as a spurious row the backend never writes.
     const reservedChannel = RESERVED_PROPERTY_COLUMN[key]
     if (reservedChannel !== undefined) {
+      // #3091 — reserved-value validation runs inside setReservedColumnProperty.
       return setReservedColumnProperty(blockId, key, reservedChannel, valueText, valueDate)
     }
     // Capture the prior typed value (if any) so revert can restore it.
@@ -404,6 +412,10 @@ export const propertiesHandlers = {
     if (!column) {
       throw validationRejection(`property key '${key}' is not settable in batch`)
     }
+    // #3091 — same reserved-value validation the single `set_property` applies
+    // (backend validates once for the whole batch: todo_state/priority
+    // membership, non-empty dates). A `null` value is a clear and passes.
+    assertValidReservedPropertyValue(key, column, value)
     let updated = 0
     for (const id of inputIds) {
       const b = blocks.get(id)

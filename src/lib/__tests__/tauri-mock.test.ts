@@ -1203,6 +1203,9 @@ describe('purge_block', () => {
   })
 
   it('purged block is gone from list_blocks', () => {
+    // #3091 — a block must be soft-deleted before it can be purged (the
+    // backend's `purge_block_inner` guard), so tombstone it first.
+    invoke('delete_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     invoke('purge_block', { blockId: SEED_IDS.BLOCK_GS_1 })
     const result = invoke('list_blocks', { parentId: SEED_IDS.PAGE_GETTING_STARTED }) as {
       items: Record<string, unknown>[]
@@ -1215,12 +1218,30 @@ describe('purge_block', () => {
     // it BFS-walks the full descendant subtree via `parent_id` and physically
     // deletes every block (no `deleted_at` filter), not just the target. Purge
     // the "Getting Started" page itself and its children must vanish too.
+    // #3091 — soft-delete the page first (delete_block cascades the tombstone
+    // to the whole active subtree) so the purge guard is satisfied.
+    invoke('delete_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })
     invoke('purge_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })
     expect(() => invoke('get_block', { blockId: SEED_IDS.PAGE_GETTING_STARTED })).toThrow(
       'not found',
     )
     // Child cascaded away with the parent (the divergence #3079 fixed).
     expect(() => invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow('not found')
+  })
+
+  it('#3091 — refuses to purge a LIVE (non-soft-deleted) block', () => {
+    // Mirrors `purge_block_inner`'s InvalidOperation guard: the FE only purges
+    // from Trash, so a live-block purge is a contract violation, not a silent
+    // erase.
+    expect(() => invoke('purge_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toThrow(
+      'must be soft-deleted before purging',
+    )
+    // The block is untouched — still queryable.
+    expect(invoke('get_block', { blockId: SEED_IDS.BLOCK_GS_1 })).toBeTruthy()
+  })
+
+  it('#3091 — purging a missing block rejects with NotFound', () => {
+    expect(() => invoke('purge_block', { blockId: 'NONEXISTENT_ID_XXXXXXXXXX' })).toThrow()
   })
 })
 

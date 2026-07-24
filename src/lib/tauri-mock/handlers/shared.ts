@@ -45,6 +45,71 @@ export function validationRejection(message: string): Error & AppError {
   return appErrorRejection({ kind: 'validation', message })
 }
 
+/** Shorthand for a mock `invalid_operation` rejection — mirrors `AppError::InvalidOperation(...)` (#2463 kind-parity rule). */
+export function invalidOperationRejection(message: string): Error & AppError {
+  return appErrorRejection({ kind: 'invalid_operation', message })
+}
+
+/**
+ * #3091 — mirror the backend's reserved-key value VALIDATION (NOT
+ * normalization: `validate_reserved_property_value` in
+ * `commands/properties.rs` and `validate_set_property` in `agaric-store/op.rs`
+ * only validate — they never rewrite casing or reformat dates, so the mock must
+ * not either). Throws a `validation` rejection when:
+ *   1. a `todo_state` value is outside its option set, matched
+ *      CASE-SENSITIVELY (the backend's `defaults.contains(&value)` /
+ *      `property_definitions.options` membership check — a lowercase `done`
+ *      is REJECTED, never silently upper-cased);
+ *   2. a reserved DATE key (`due_date` / `scheduled_date`) or `todo_state`
+ *      carries an empty/whitespace-only value (`set_property.value_date.empty`
+ *      / `set_property.value_text.empty`).
+ *
+ * `priority` is intentionally NOT membership-validated here: its option set is
+ * user-configurable (`set_priority_levels`), so the valid set depends on the
+ * live `property_definitions` row when one exists. The backend DOES fall back
+ * to a fixed `["1","2","3"]` when no definition row is present (same shape as
+ * the todo_state fallback), so the mock is knowingly PERMISSIVE for priority:
+ * enforcing the fixed fallback would false-fail tests that configure custom
+ * levels without seeding a definition row. The mock enforces `todo_state`
+ * membership (its `TODO/DOING/DONE` defaults are stable) and non-empty values,
+ * and leaves `priority` values unrestricted.
+ */
+const TODO_STATE_DEFAULTS: readonly string[] = ['TODO', 'DOING', 'DONE']
+
+export function assertValidReservedPropertyValue(
+  key: string,
+  channel: 'value_text' | 'value_date',
+  value: string | null,
+): void {
+  if (value === null) return
+  if (channel === 'value_date') {
+    // Backend rejects an empty/whitespace value_date (`set_property.value_date.empty`);
+    // it does NOT reformat or otherwise normalize the date string.
+    if (value.trim() === '') {
+      throw validationRejection('set_property.value_date.empty')
+    }
+    return
+  }
+  if (key !== 'todo_state') return
+  if (value.trim() === '') {
+    throw validationRejection('set_property.value_text.empty')
+  }
+  // Validate against the seeded definition's options if present, else the
+  // built-in TODO/DOING/DONE defaults (the `validate_reserved_property_value`
+  // fallback the mock's definition-less store always lands on).
+  const def = propertyDefs.get('todo_state')
+  const rawOptions = def?.['value_type'] === 'select' ? (def['options'] as string | null) : null
+  const options =
+    rawOptions !== null && rawOptions !== undefined
+      ? (JSON.parse(rawOptions) as string[])
+      : TODO_STATE_DEFAULTS
+  if (!options.includes(value)) {
+    throw validationRejection(
+      `todo_state '${value}' is not in allowed options: ${options.join(', ')}`,
+    )
+  }
+}
+
 /**
  * #2656 — mirror the real backend's `set_property` value validation
  * (`op.rs::validate_property_value` + the select-membership check in

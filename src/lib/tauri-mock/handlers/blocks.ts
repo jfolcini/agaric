@@ -11,7 +11,9 @@
 
 import {
   type TypedHandlers,
+  assertValidReservedPropertyValue,
   insertAtSlotAndRenumber,
+  invalidOperationRejection,
   nextCohortMarker,
   notFoundRejection,
   refreshDescendantPageIds,
@@ -19,7 +21,9 @@ import {
   validationRejection,
 } from '@/lib/tauri-mock/handlers/shared'
 import {
+  attachmentBytes,
   attachments,
+  blockTagRefs,
   blockTags,
   blocks,
   fakeId,
@@ -27,6 +31,61 @@ import {
   properties,
   pushOp,
 } from '@/lib/tauri-mock/seed'
+
+// #3091 — depth at which the backend refuses to purge a subtree. The recursive
+// purge CTE (`descendants_cte_purge!()`) caps at `depth < 100`, and
+// `cascade_depth_saturated` flags `MAX(depth) >= 99` as the (conservative)
+// saturation boundary — a subtree whose deepest descendant sits at depth ≥ 99
+// would truncate at the cap and strand rows past depth 100. `purge_block_inner`
+// turns that into a hard `validation` error (the op/materializer path instead
+// extends the set to a fixpoint, so this guard is command-path only, mirrored on
+// the mock's single-root `purge_block` handler).
+const PURGE_DEPTH_SATURATION = 99
+
+/**
+ * #3091 — physically erase a resolved purge cohort (a set of block ids) plus
+ * EVERY satellite row the backend removes for that subtree. Mirrors the union of
+ * the backend's explicit cascade list (`agaric-engine`
+ * `purge_block_sql_cascade`) and FK `ON DELETE CASCADE`s
+ * (`purge_subtree_tables` + migrations 0034/0061):
+ *   - `blocks`
+ *   - `block_properties` (block_id side; the value_ref side is not modeled)
+ *   - `block_tags`: `block_id IN cohort OR tag_id IN cohort` — a purged block
+ *     USED AS a tag on a surviving block leaves a dangling ref that FK-cascades.
+ *   - `block_tag_refs`: `source_id IN cohort OR tag_id IN cohort` — both FK
+ *     columns CASCADE; the mock previously left this table entirely untouched.
+ *   - `attachments` + their raw bytes — `attachments` is keyed by
+ *     attachment_id, so the old `attachments.delete(blockId)` was a silent
+ *     no-op that leaked every row and its bytes; delete rows whose `block_id`
+ *     is in the cohort instead.
+ *   - `page_aliases` (page_id side).
+ */
+function purgeCohortAndSatellites(cohort: Iterable<string>): void {
+  const ids = cohort instanceof Set ? cohort : new Set(cohort)
+  for (const id of ids) {
+    blocks.delete(id)
+    properties.delete(id)
+    blockTags.delete(id)
+    blockTagRefs.delete(id)
+    pageAliases.delete(id)
+  }
+  // tag_id side: a purged block used AS a tag on a SURVIVING block leaves a
+  // dangling association/reference the backend FK-cascades. Sweep every set.
+  for (const tagSet of blockTags.values()) {
+    for (const id of ids) tagSet.delete(id)
+  }
+  for (const refSet of blockTagRefs.values()) {
+    for (const id of ids) refSet.delete(id)
+  }
+  // attachments are keyed by attachment_id — delete rows (and their bytes)
+  // whose owning block is in the cohort.
+  for (const [attId, row] of attachments.entries()) {
+    if (ids.has(row['block_id'] as string)) {
+      attachments.delete(attId)
+      attachmentBytes.delete(attId)
+    }
+  }
+}
 
 export const blocksHandlers = {
   list_blocks: (args) => {
@@ -237,11 +296,23 @@ export const blocksHandlers = {
       // the properties map).
       const props = (spec['properties'] as Record<string, string> | undefined) ?? {}
       for (const [key, value] of Object.entries(props)) {
-        if (key === 'todo_state') row['todo_state'] = value
-        else if (key === 'priority') row['priority'] = value
-        else if (key === 'due_date') row['due_date'] = value
-        else if (key === 'scheduled_date') row['scheduled_date'] = value
-        else {
+        // #3091 — reserved keys landing on the block row are still subject to
+        // the backend's reserved-value validation (todo_state/priority
+        // membership, non-empty dates); mirror it here so a bad create-time
+        // property fails rather than writing a raw value to the column.
+        if (key === 'todo_state') {
+          assertValidReservedPropertyValue('todo_state', 'value_text', value)
+          row['todo_state'] = value
+        } else if (key === 'priority') {
+          assertValidReservedPropertyValue('priority', 'value_text', value)
+          row['priority'] = value
+        } else if (key === 'due_date') {
+          assertValidReservedPropertyValue('due_date', 'value_date', value)
+          row['due_date'] = value
+        } else if (key === 'scheduled_date') {
+          assertValidReservedPropertyValue('scheduled_date', 'value_date', value)
+          row['scheduled_date'] = value
+        } else {
           if (!properties.has(id)) properties.set(id, new Map())
           properties.get(id)?.set(key, {
             block_id: id,
@@ -447,34 +518,53 @@ export const blocksHandlers = {
   purge_block: (args) => {
     const a = args as Record<string, unknown>
     const rootId = a['blockId'] as string
+    // #3091 — soft-delete guard, mirroring `purge_block_inner`
+    // (`crud.rs`): a missing block is `NotFound`, and a LIVE (not
+    // soft-deleted) block is rejected with `InvalidOperation` rather than
+    // purged silently. The FE only ever purges from Trash, but the mock must
+    // enforce the same contract so a stray live-block purge fails in tests.
+    const root = blocks.get(rootId)
+    if (!root) throw notFoundRejection(`block '${rootId}'`)
+    if (!root['deleted_at']) {
+      throw invalidOperationRejection(`block '${rootId}' must be soft-deleted before purging`)
+    }
     // BFS the full descendant subtree via `parent_id` (no `deleted_at`
-    // filter — purge erases the whole subtree regardless of tombstone state).
+    // filter — purge erases the whole subtree regardless of tombstone state),
+    // tracking depth so the depth-cap guard below can fire.
     const cohort: string[] = []
-    const stack: string[] = [rootId]
+    const stack: Array<{ id: string; depth: number }> = [{ id: rootId, depth: 0 }]
     const seen = new Set<string>()
+    let maxDepth = 0
     while (stack.length > 0) {
-      const id = stack.pop()
-      if (id == null) break
+      const node = stack.pop()
+      if (node == null) break
+      const { id, depth } = node
       if (seen.has(id)) continue
       seen.add(id)
       if (!blocks.has(id)) continue
       cohort.push(id)
+      if (depth > maxDepth) maxDepth = depth
       for (const child of blocks.values()) {
         if (child['parent_id'] === id && !seen.has(child['id'] as string)) {
-          stack.push(child['id'] as string)
+          stack.push({ id: child['id'] as string, depth: depth + 1 })
         }
       }
     }
-    // Physically delete every block in the cohort plus its satellite state
-    // (mirrors `purge_blocks_by_ids`' per-id cleanup, now applied to the whole
-    // cascaded subtree).
-    for (const id of cohort) {
-      blocks.delete(id)
-      properties.delete(id)
-      blockTags.delete(id)
-      attachments.delete(id)
-      pageAliases.delete(id)
+    // #3091 — depth-cap guard, mirroring `purge_block_inner`'s
+    // `cascade_depth_saturated` check (`MAX(depth) >= 99`): refuse a subtree
+    // so deep the backend cascade would saturate the depth-100 cap and strand
+    // descendants. Same `validation` kind + message text as the backend.
+    if (maxDepth >= PURGE_DEPTH_SATURATION) {
+      throw validationRejection(
+        `block '${rootId}' subtree is too deep to purge (>=99 levels); ` +
+          `the recursive cascade would hit the depth-100 cap and leave ` +
+          `descendants below depth 100 dangling. Purge in chunks instead.`,
+      )
     }
+    // Physically delete every block in the cohort plus its FULL satellite state
+    // (blocks, block_properties, block_tags incl. tag_id side, block_tag_refs,
+    // attachments + bytes, page_aliases).
+    purgeCohortAndSatellites(cohort)
     pushOp('purge_block', { block_id: rootId })
     return { block_id: rootId, purged_count: cohort.length }
   },
@@ -491,14 +581,16 @@ export const blocksHandlers = {
   },
 
   purge_all_deleted: () => {
-    let count = 0
+    // #3091 — empty-trash path: collect every tombstoned block, then run the
+    // SAME satellite cleanup as `purge_block` (previously this only removed the
+    // `blocks` rows and leaked every satellite — block_tags/block_tag_refs
+    // where the purged id was used as a tag, attachments, page_aliases, …).
+    const cohort: string[] = []
     for (const [id, b] of blocks.entries()) {
-      if (b['deleted_at']) {
-        blocks.delete(id)
-        count++
-      }
+      if (b['deleted_at']) cohort.push(id)
     }
-    return { affected_count: count }
+    purgeCohortAndSatellites(cohort)
+    return { affected_count: cohort.length }
   },
 
   // Single-IPC batch restore. Iterates the input ids,
@@ -531,19 +623,18 @@ export const blocksHandlers = {
   purge_blocks_by_ids: (args) => {
     const a = args as Record<string, unknown>
     const ids = (a['blockIds'] as string[]) ?? []
-    let count = 0
+    // #3091 — collect the actually-soft-deleted ids (missing/live ids are
+    // silently skipped, matching `purge_blocks_by_ids_inner`), then run the
+    // SAME full satellite cleanup as `purge_block` (uniform across all three
+    // purge handlers — block_tags tag_id side, block_tag_refs, attachment bytes
+    // were all leaked by the old per-id cleanup shape).
+    const cohort: string[] = []
     for (const id of ids) {
       const b = blocks.get(id)
-      if (b?.['deleted_at']) {
-        blocks.delete(id)
-        properties.delete(id)
-        blockTags.delete(id)
-        attachments.delete(id)
-        pageAliases.delete(id)
-        count++
-      }
+      if (b?.['deleted_at']) cohort.push(id)
     }
-    return { affected_count: count }
+    purgeCohortAndSatellites(cohort)
+    return { affected_count: cohort.length }
   },
 
   get_block: (args) => {
