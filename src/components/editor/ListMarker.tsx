@@ -16,16 +16,12 @@
 
 import type React from 'react'
 
+import { BULLET_GLYPH, listMarkerText } from '@/lib/list-marker-glyph'
 import type { ListStyle } from '@/lib/list-style'
 
-/** The bullet glyph (canonical `•`, matching the marker decoration). */
-export const BULLET_GLYPH = '•'
-
-export function listMarkerText(style: ListStyle, ordinal: number | undefined): string {
-  if (style === 'ordered') return `${ordinal ?? 1}.`
-  if (style === 'bullet') return BULLET_GLYPH
-  return ''
-}
+// Re-exported so existing importers (`@/components/editor/ListMarker`) and
+// tests keep their import path; the definitions live in the pure glyph module.
+export { BULLET_GLYPH, listMarkerText }
 
 export function ListMarker({
   style,

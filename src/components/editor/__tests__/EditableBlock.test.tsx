@@ -193,6 +193,7 @@ function makeRovingEditor(
     // signal arms the draft debounce; tests that exercise emptiness override it.
     editor: 'editor' in overrides ? overrides.editor : { fake: true, isEmpty: false },
     mount: overrides.mount ?? vi.fn(),
+    updateListMarker: vi.fn(),
     unmount: overrides.unmount ?? vi.fn(() => null),
     activeBlockId: overrides.activeBlockId ?? null,
     getMarkdown: overrides.getMarkdown ?? vi.fn(() => null),

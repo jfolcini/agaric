@@ -115,6 +115,12 @@ export function useLazyRovingEditor(options: RovingEditorOptions): UseLazyRoving
         pendingMountRef.current = { blockId, markdown, opts }
         requestLoad()
       },
+      updateListMarker() {
+        // No live editor yet, so there is no decoration to paint; the read-only
+        // StaticBlock shows the marker meanwhile. Once the editor goes live,
+        // EditableBlock's marker effect re-fires (its `rovingEditor.editor` dep
+        // flips) and pushes the marker into the real handle. No buffering here.
+      },
       unmount() {
         // Nothing was ever live, so no content changed. Drop any buffered mount.
         pendingMountRef.current = null
