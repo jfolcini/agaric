@@ -77,6 +77,7 @@ pub(super) fn dedup_tasks(tasks: Vec<MaterializeTask>) -> Vec<MaterializeTask> {
                 }
             }
             MaterializeTask::ApplyOp(_)
+            | MaterializeTask::ReplayApplyOp(..)
             | MaterializeTask::BatchApplyOps(_)
             | MaterializeTask::Barrier(_) => {
                 result.push(task);

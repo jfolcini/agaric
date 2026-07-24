@@ -10,8 +10,8 @@ use super::*;
 // `domain::block_ops`, the batch import path) calling the kernel through the
 // unchanged `crate::materializer::handlers::…` paths.
 pub(crate) use agaric_engine::apply::kernel::{
-    ApplyEffects, ChunkAccumulator, advance_apply_cursor, apply_op_projected, apply_op_tx,
-    collect_delete_cohort, collect_restore_cohort,
+    ApplyEffects, ApplyMode, ChunkAccumulator, advance_apply_cursor, apply_op_projected,
+    apply_op_projected_with_mode, apply_op_tx, collect_delete_cohort, collect_restore_cohort,
 };
 
 /// RAII timer that records the elapsed wall-clock of one [`apply_op`] to the
@@ -43,10 +43,28 @@ impl Drop for OpApplyTimer {
 /// Takes `&Arc<OpRecord>` so callers (the `MaterializeTask::ApplyOp` arm)
 /// that already hold the record as `Arc<OpRecord>` thread the borrow
 /// through without a deep clone.
-#[tracing::instrument(skip(pool, record, state), fields(seq = record.seq), err)]
 pub(super) async fn apply_op(
     pool: &SqlitePool,
     record: &Arc<OpRecord>,
+    state: &crate::loro::shared::LoroState,
+) -> Result<(), AppError> {
+    // #2896: live / remote single-op apply reprojects inline. Only the
+    // boot-replay path reaches `apply_op_with_mode` with
+    // `ApplyMode::ReplaySuppressed`.
+    apply_op_with_mode(pool, record, ApplyMode::Normal, state).await
+}
+
+/// #2896 — [`apply_op`] with an EXPLICIT [`ApplyMode`]. The boot-replay
+/// foreground task (`MaterializeTask::ReplayApplyOp`) routes through here so
+/// each replayed op defers its inline reprojection into the replay-owned
+/// [`ReplayDirtyParents`] sink; the [`apply_op`] wrapper passes
+/// [`ApplyMode::Normal`]. The mode is stated per dispatch, so a concurrent
+/// non-replay applier can never inherit replay suppression.
+#[tracing::instrument(skip(pool, record, state, mode), fields(seq = record.seq), err)]
+pub(super) async fn apply_op_with_mode(
+    pool: &SqlitePool,
+    record: &Arc<OpRecord>,
+    mode: ApplyMode,
     state: &crate::loro::shared::LoroState,
 ) -> Result<(), AppError> {
     // Time the whole per-op apply and record it to the
@@ -78,7 +96,7 @@ pub(super) async fn apply_op(
     // NOT move the cursor — #1257). The single-device `debug_assert!` guard and
     // the `advance_apply_cursor` call moved INTO that function's
     // `advance_cursor` branch.
-    let apply_result = apply_op_projected(&mut tx, record, state, true).await;
+    let apply_result = apply_op_projected_with_mode(&mut tx, record, state, true, mode).await;
     // Lift the recorded checkpoints out of the shared log WHILE the
     // `BEGIN IMMEDIATE` write lock is still held (the `commit()`/rollback below
     // releases it). This keeps the log armed only under that lock, so no

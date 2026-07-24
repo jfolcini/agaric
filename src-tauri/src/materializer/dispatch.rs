@@ -1723,6 +1723,7 @@ mod tests {
     fn task_label(t: &MaterializeTask) -> String {
         match t {
             MaterializeTask::ApplyOp(_) => "ApplyOp".into(),
+            MaterializeTask::ReplayApplyOp(..) => "ReplayApplyOp".into(),
             MaterializeTask::BatchApplyOps(_) => "BatchApplyOps".into(),
             MaterializeTask::RebuildTagsCache => "RebuildTagsCache".into(),
             MaterializeTask::RefreshTagUsageCount { tag_id } => {

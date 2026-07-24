@@ -65,6 +65,11 @@ pub async fn apply_create_block_via_loro(
     device_id: &str,
     p: &CreateBlockPayload,
     chunk: Option<&mut super::ChunkAccumulator>,
+    // #2896: the EXPLICIT boot-replay reprojection-deferral sink. `Some` only on
+    // the boot-replay path (`ApplyMode::ReplaySuppressed`); `None` (every other
+    // caller) reprojects inline. Replaces the retired ambient boot-replay
+    // suppression global on `LoroState`.
+    replay_dirty: Option<&super::ReplayDirtyParents>,
 ) -> Result<(), AppError> {
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
@@ -171,14 +176,16 @@ pub async fn apply_create_block_via_loro(
             acc.record_reproject(space_id.as_str().to_owned(), parent_key, siblings);
         }
         None => {
-            // #2295: during boot replay the reprojection is suppressed and
+            // #2295/#2896: during boot replay the reprojection is suppressed and
             // deferred to a single end-of-replay reproject from the engine's
-            // final state (see `LoroState::replay_suppress_reproject`). Record
-            // this create's parent group instead of reprojecting inline. Off
-            // replay (flag=false) this branch is byte-identical to before.
-            if state.is_replay_suppressed() {
+            // final state. The `replay_dirty` sink is passed EXPLICITLY by the
+            // replay caller (via `ApplyMode::ReplaySuppressed`); record this
+            // create's parent group into it instead of reprojecting inline. Off
+            // replay (`replay_dirty == None`) this branch is byte-identical to
+            // before.
+            if let Some(dirty) = replay_dirty {
                 let parent_key = p.parent_id.as_ref().map(agaric_core::ulid::BlockId::as_str);
-                state.record_replay_dirty(space_id.as_str(), parent_key);
+                dirty.record(space_id.as_str(), parent_key);
             } else {
                 projection::reproject_dense_positions(conn, &siblings).await?;
             }
@@ -658,6 +665,11 @@ pub async fn apply_move_block_via_loro(
     state: &crate::loro::shared::LoroState,
     device_id: &str,
     p: &MoveBlockPayload,
+    // #2896: the EXPLICIT boot-replay reprojection-deferral sink. `Some` only on
+    // the boot-replay path (`ApplyMode::ReplaySuppressed`); `None` (every other
+    // caller) reprojects inline. Replaces the retired ambient boot-replay
+    // suppression global on `LoroState`.
+    replay_dirty: Option<&super::ReplayDirtyParents>,
 ) -> Result<(), AppError> {
     use crate::loro::engine::BlockSnapshot;
     use crate::loro::projection;
@@ -747,18 +759,19 @@ pub async fn apply_move_block_via_loro(
     };
 
     projection::project_move_block_to_sql(conn, &snapshot).await?;
-    // #2295: during boot replay both reprojections are suppressed and deferred
-    // to a single end-of-replay reproject per touched parent from the engine's
-    // final state (see `LoroState::replay_suppress_reproject`). Record the same
-    // groups the inline path would have reprojected — the source (old-parent)
-    // group always, and the target (new-parent) group only when reparenting
+    // #2295/#2896: during boot replay both reprojections are suppressed and
+    // deferred to a single end-of-replay reproject per touched parent from the
+    // engine's final state. The `replay_dirty` sink is passed EXPLICITLY by the
+    // replay caller (via `ApplyMode::ReplaySuppressed`). Record the same groups
+    // the inline path would have reprojected — the source (old-parent) group
+    // always, and the target (new-parent) group only when reparenting
     // (`!new_siblings.is_empty()`, the exact condition guarding the second
-    // inline reproject). Off replay (flag=false) the reproject calls below are
-    // byte-identical to before.
-    if state.is_replay_suppressed() {
-        state.record_replay_dirty(space_id.as_str(), old_parent.as_deref());
+    // inline reproject). Off replay (`replay_dirty == None`) the reproject calls
+    // below are byte-identical to before.
+    if let Some(dirty) = replay_dirty {
+        dirty.record(space_id.as_str(), old_parent.as_deref());
         if !new_siblings.is_empty() {
-            state.record_replay_dirty(space_id.as_str(), snapshot.parent_id.as_deref());
+            dirty.record(space_id.as_str(), snapshot.parent_id.as_deref());
         }
     } else {
         // Reproject the source group (it shrank, or — for a same-parent move —

@@ -1184,3 +1184,106 @@ async fn apply_op_restore_fans_ancestor_chain_out_to_engine_no_reproject_redelet
          PAGE_ID.child_block_count (was left stale)",
     );
 }
+
+/// #2896 — soundness by construction: the reprojection-suppression decision now
+/// travels per-op as an explicit `ApplyMode`, never as ambient shared state.
+///
+/// This pins the exact bug class the retired boot-replay suppression global on
+/// `LoroState` allowed: a NORMAL-mode apply that runs while a boot-replay sink is
+/// LIVE (a concurrent applier during the replay window) must reproject INLINE
+/// and must NEVER defer into the replay sink. The old global made that
+/// impossible to guarantee (a concurrent applier read the shared flag and
+/// wrongly suppressed); the explicit mode makes it impossible to violate (a
+/// normal op carries no sink by construction).
+#[tokio::test]
+async fn apply_op_tx_normal_mode_ignores_active_replay_sink_2896() {
+    use agaric_engine::apply::kernel::{ApplyMode, ReplayDirtyParents, apply_op_tx_with_mode};
+
+    // Distinct 26-char block ids for this test's creates.
+    const NORMAL_B1: &str = "01HZ0000000000000000000NB1";
+    const NORMAL_B2: &str = "01HZ0000000000000000000NB2";
+    const SUPPRESSED_A1: &str = "01HZ0000000000000000000SA1";
+
+    let (pool, _dir) = fresh_pool_with_page().await;
+    let state = crate::loro::shared::LoroState::new();
+    seed_page_via_loro(&pool, &state).await;
+
+    // A live boot-replay sink — the "in-progress replay context". Under the old
+    // design this window was represented by a process-wide flag that ANY applier
+    // observed; here it is a local capability the replay driver owns.
+    let sink = ReplayDirtyParents::new();
+
+    // Two NORMAL-mode creates under PAGE_ID while the sink is live. These stand
+    // in for a concurrent live/remote applier running during the replay window.
+    for (bid, pos) in [(NORMAL_B1, 5_i64), (NORMAL_B2, 9_i64)] {
+        let payload = OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: BlockId::from_trusted(bid),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+            position: Some(pos),
+            index: None,
+            content: "normal".into(),
+        });
+        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+            .await
+            .expect("append normal op");
+        let mut tx = pool.begin().await.expect("begin");
+        apply_op_tx_with_mode(&mut tx, &record, None, &state, ApplyMode::Normal)
+            .await
+            .expect("apply normal op");
+        tx.commit().await.expect("commit");
+    }
+
+    // The normal-mode creates reprojected INLINE (authoritative dense 1-based
+    // ranks), proving their reprojection was NOT suppressed by the live sink.
+    let positions: Vec<i64> =
+        sqlx::query_scalar("SELECT position FROM blocks WHERE parent_id = ? ORDER BY position")
+            .bind(PAGE_ID)
+            .fetch_all(&pool)
+            .await
+            .expect("fetch normal-group positions");
+    assert_eq!(
+        positions,
+        vec![1, 2],
+        "normal-mode creates must be densely reprojected inline, even while a replay sink is live"
+    );
+    // Critically: the sink is STILL EMPTY. A normal-mode apply carries no sink,
+    // so it can never defer into replay's set — the #2896 soundness guarantee.
+    let leaked = sink.drain();
+    assert!(
+        leaked.is_empty(),
+        "normal-mode apply must NOT record into an active replay sink; leaked {leaked:?}"
+    );
+
+    // Contrast: the SAME pipeline in ReplaySuppressed mode DOES record its
+    // touched `(space_id, parent)` group into that exact sink — the only way to
+    // reach suppression is to pass the mode explicitly.
+    let payload = OpPayload::CreateBlock(CreateBlockPayload {
+        block_id: BlockId::from_trusted(SUPPRESSED_A1),
+        block_type: "content".into(),
+        parent_id: Some(BlockId::from_trusted(PAGE_ID)),
+        position: Some(3),
+        index: None,
+        content: "replayed".into(),
+    });
+    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        .await
+        .expect("append suppressed op");
+    let mut tx = pool.begin().await.expect("begin");
+    apply_op_tx_with_mode(
+        &mut tx,
+        &record,
+        None,
+        &state,
+        ApplyMode::ReplaySuppressed(sink.clone()),
+    )
+    .await
+    .expect("apply suppressed op");
+    tx.commit().await.expect("commit");
+    let recorded = sink.drain();
+    assert_eq!(
+        recorded,
+        vec![(SPACE_ID.to_string(), Some(PAGE_ID.to_string()))],
+        "replay-suppressed apply must record its touched group into the explicit sink"
+    );
+}

@@ -90,6 +90,24 @@ pub enum MaterializeTask {
     /// deep clone of the record's owned `String` payloads. Pairs with
     /// The fix on `BatchApplyOps`.
     ApplyOp(Arc<OpRecord>),
+    /// #2896 — a boot-replay op. Identical to [`ApplyOp`](Self::ApplyOp) in
+    /// every respect (dedup, retry, metrics, cursor advance) EXCEPT that it
+    /// carries the replay-owned reprojection-deferral sink: the consumer applies
+    /// it in `ApplyMode::ReplaySuppressed`, so each replayed create/move records
+    /// its touched sibling group into this sink instead of reprojecting inline.
+    /// The replay driver drains the sink once, after the whole replay flushes,
+    /// to reproject each touched parent ONCE from the engine's final state.
+    ///
+    /// This variant is what makes the suppression mode EXPLICIT (per-op) rather
+    /// than an ambient global: a concurrent live op arrives as a plain `ApplyOp`
+    /// and reprojects inline by construction, so it can never inherit replay
+    /// suppression. A failed replay op that exhausts retries persists as a plain
+    /// `ApplyOp` retry row (the sink is dropped) — a later re-apply outside the
+    /// replay window correctly reprojects inline, matching the prior behaviour.
+    ReplayApplyOp(
+        Arc<OpRecord>,
+        agaric_engine::apply::kernel::ReplayDirtyParents,
+    ),
     /// The inner `Vec<OpRecord>` is wrapped in an `Arc` so that
     /// cloning the task (e.g. for the foreground/background retry arms in
     /// `consumer.rs`) is a refcount bump rather than a deep clone of a
