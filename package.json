@@ -161,6 +161,7 @@
   "overrides": {
     "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
+    "postcss": ">=8.5.18",
     "qs": ">=6.15.2",
     "serialize-javascript": ">=7.0.5",
     "smol-toml": ">=1.6.1",
