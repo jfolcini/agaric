@@ -72,6 +72,39 @@ _spec.loader.exec_module(_crt)
 
 cfg_test_line_set = _crt.cfg_test_line_set
 is_test_file = _crt.is_test_file
+_glob_match = _crt._glob_match
+
+# Guard-LOCAL test-file glob extension. The shared TEST_FILE_GLOBS in
+# check-raw-tx.py (tests.rs / tests/** / *_tests.rs) is deliberately NOT
+# mutated here — instead we widen the exclusion set only for THIS guard.
+# These cover whole-file modules that are `#[cfg(test)]`/test-feature gated
+# at their `mod` declaration but whose FILENAMES don't match the shared
+# globs (so their fixture-seed writes would otherwise be miscounted as
+# production cross-crate writes), plus standalone audit/diagnostic bins:
+#   * **/*proptest*.rs       — property-test modules (all `#[cfg(test)]`):
+#       apply_reproject_proptest.rs, dag/proptest_b2.rs,
+#       soft_delete/proptest_b3.rs, reverse/proptest_b1.rs,
+#       proptest_db_harness.rs, loro/engine_proptest.rs.
+#   * **/test_support.rs     — `#[cfg(any(test, feature="test-util"))]`
+#       test-pool helper in agaric-store.
+#   * **/src/bin/**          — standalone bins (e.g. diagnostics audit tools)
+#       whose fixture seeds are not production store writes.
+EXTRA_TEST_FILE_GLOBS = [
+    "**/*proptest*.rs",
+    "**/test_support.rs",
+    "**/src/bin/**",
+]
+
+
+def is_excluded_file(rel_path: str) -> bool:
+    """Test/fixture files skipped by the scan.
+
+    The shared `is_test_file` (tests.rs / tests/** / *_tests.rs) OR this
+    guard's local `EXTRA_TEST_FILE_GLOBS` extension.
+    """
+    return is_test_file(rel_path) or any(
+        _glob_match(rel_path, g) for g in EXTRA_TEST_FILE_GLOBS
+    )
 
 # --- Ownership map ---------------------------------------------------------
 # Crate that OWNS each core table (its authoritative raw writer). Writes to
@@ -99,6 +132,11 @@ CRATE_ROOTS: list[tuple[str, Path]] = [
     ("store", REPO_ROOT / "src-tauri" / "agaric-store" / "src"),
     ("engine", REPO_ROOT / "src-tauri" / "agaric-engine" / "src"),
     ("sync", REPO_ROOT / "src-tauri" / "agaric-sync" / "src"),
+    # The diagnostics crate is scanned so a FUTURE non-bin production write
+    # to an owned table there is caught; today it holds only standalone
+    # audit bins under src/bin, which `EXTRA_TEST_FILE_GLOBS` (**/src/bin/**)
+    # excludes as fixture-seed code.
+    ("diagnostics", REPO_ROOT / "src-tauri" / "diagnostics" / "src"),
     ("app", REPO_ROOT / "src-tauri" / "src"),
 ]
 
@@ -106,14 +144,18 @@ CRATE_ROOTS: list[tuple[str, Path]] = [
 def _write_re(table: str) -> re.Pattern[str]:
     """Regex matching a raw write statement targeting `table`.
 
-    Covers `INSERT [OR ...] INTO t`, `UPDATE t`, `DELETE FROM t`. `\\s+`
-    lets the statement span lines inside a macro string, and the trailing
-    `\\b` word boundary keeps `blocks` from matching `block_links`,
-    `_new_blocks`, or `blocks_fts`. Case-insensitive for lowercase SQL.
+    Covers `INSERT [OR ...] INTO t`, SQLite's bare `REPLACE INTO t`
+    synonym, `UPDATE t`, `DELETE FROM t`. `\\s+` lets the statement span
+    lines inside a macro string, and the trailing `\\b` word boundary keeps
+    `blocks` from matching `block_links`, `_new_blocks`, or `blocks_fts`.
+    Case-insensitive for lowercase SQL. Note `REPLACE\\s+INTO` is a separate
+    alternative from `INSERT ... INTO` so the bare-`REPLACE` form is caught
+    on its own (`INSERT OR REPLACE INTO` is still matched by the INSERT arm).
     """
     t = re.escape(table)
     return re.compile(
-        r"(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|UPDATE|DELETE\s+FROM)\s+" + t + r"\b",
+        r"(?:INSERT(?:\s+OR\s+\w+)?\s+INTO|REPLACE\s+INTO|UPDATE|DELETE\s+FROM)"
+        r"\s+" + t + r"\b",
         re.IGNORECASE,
     )
 
@@ -239,7 +281,7 @@ def _crate_files() -> list[tuple[str, Path]]:
             continue
         for p in sorted(root.rglob("*.rs")):
             rel = str(p.relative_to(REPO_ROOT))
-            if is_test_file(rel):
+            if is_excluded_file(rel):
                 continue
             result.append((crate, p))
     return result
@@ -337,10 +379,16 @@ def run_self_test() -> int:
         ('sqlx::query!("DELETE FROM op_log WHERE seq > ?")', "op_log", True),
         ("INSERT OR REPLACE INTO peer_refs (peer_id) VALUES (?)",
          "peer_refs", True),
+        # Bare SQLite `REPLACE INTO` synonym (no `INSERT OR`) must match.
+        ('sqlx::query!("REPLACE INTO blocks (id) VALUES (?)")',
+         "blocks", True),
         # MUST NOT match — word-boundary / prefix hazards.
         ("UPDATE block_links SET target_id = ?", "blocks", False),
         ("INSERT INTO _new_blocks SELECT * FROM blocks_old", "blocks", False),
         ("UPDATE blocks_fts SET c0 = ?", "blocks", False),
+        # Bare `REPLACE INTO block_links` must NOT match the `blocks` table
+        # (word boundary holds for the REPLACE arm too).
+        ("REPLACE INTO block_links (source_id) VALUES (?)", "blocks", False),
     ]
     for fixture, table, expect in regex_cases:
         got = WRITE_RES[table].search(fixture) is not None
@@ -373,6 +421,29 @@ def run_self_test() -> int:
             f"got {len(op_log_hits)} (test-module write not excluded)"
         )
 
+    # --- Exclusion contract: guard-local EXTRA_TEST_FILE_GLOBS ---
+    # Whole-file test modules whose filenames escape the shared globs, plus
+    # standalone bins, must be excluded from the scan; ordinary production
+    # files must NOT be. (fixture rel-path, expect_excluded)
+    exclusion_cases: list[tuple[str, bool]] = [
+        ("src-tauri/src/materializer/handlers/apply_reproject_proptest.rs",
+         True),
+        ("src-tauri/src/dag/proptest_b2.rs", True),
+        ("src-tauri/src/soft_delete/proptest_b3.rs", True),
+        ("src-tauri/agaric-store/src/test_support.rs", True),
+        ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),
+        # Ordinary production files must stay in scope.
+        ("src-tauri/src/materializer/handlers/mod.rs", False),
+        ("src-tauri/agaric-store/src/op_log/append.rs", False),
+    ]
+    for rel, expect_excluded in exclusion_cases:
+        got = is_excluded_file(rel)
+        if got != expect_excluded:
+            failures.append(
+                f"is_excluded_file({rel!r}) expected {expect_excluded}, "
+                f"got {got}"
+            )
+
     if failures:
         print("check-table-ownership self-test FAILED:", file=sys.stderr)
         for f in failures:
@@ -380,7 +451,7 @@ def run_self_test() -> int:
         return 1
     print(
         f"check-table-ownership self-test passed "
-        f"({len(regex_cases) + 2} cases)."
+        f"({len(regex_cases) + 2 + len(exclusion_cases)} cases)."
     )
     return 0
 
