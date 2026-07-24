@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Editor & Content
 
-Companion to `docs/UI-MAP.md § Editor surfaces` (what the user sees) and `docs/UX.md § Editor architecture` (rules at point of edit). This file documents the **content format**, the **serializer contract**, the **roving-editor lifecycle**, the **FE/BE authority boundary**, and the **undo model**.
+Companion to `docs/UI-MAP.md § Editor surfaces` (what the user sees) and `docs/UX.md § Editor architecture` (rules at point of edit). This file documents the **content format**, the **serializer contract**, the **roving-editor lifecycle**, the **FE/BE authority boundary**, and the **undo model**. For the list/block-composition model (list-ness as a block attribute rather than an in-block ProseMirror list), see `docs/architecture/list-ergonomics.md`.
 
 ## Storage format
 
