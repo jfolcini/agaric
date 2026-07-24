@@ -103,5 +103,10 @@
     "active": true,
     "expiresOn": "2026-09-14T00:00:00.000Z",
     "notes": "markdown-it quadratic-complexity DoS (GHSA-6v5v-wf23-fmfq). DoS requires adversarial markdown; Agaric renders the user's own local content (single-user local-first, no adversarial input) per the AGENTS.md threat model. No upstream fix matching the pinned version yet. Expires 90d; re-review on expiry."
+  },
+  "1124288": {
+    "active": true,
+    "expiresOn": "2026-10-22T00:00:00.000Z",
+    "notes": "postcss path traversal in previous-source-map sourceMappingURL auto-loading (GHSA-r28c-9q8g-f849) via the build toolchain (vite/tailwind). postcss is a dev/build-time transitive dep that processes the repo's own trusted CSS; it is not in the production Tauri app runtime and is never fed adversarial source maps per the AGENTS.md single-user local-first threat model. Expires 90d; re-review on expiry."
   }
 }
