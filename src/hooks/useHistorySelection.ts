@@ -14,7 +14,7 @@ import type React from 'react'
 import { useCallback } from 'react'
 
 import { useListMultiSelect } from '@/hooks/useListMultiSelect'
-import type { HistoryEntry } from '@/lib/tauri'
+import type { HistoryEntry } from '@/lib/bindings'
 
 /** Op types that cannot be reversed. */
 export const NON_REVERSIBLE_OPS = new Set(['purge_block', 'delete_attachment'])

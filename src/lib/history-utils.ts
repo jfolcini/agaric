@@ -1,4 +1,4 @@
-import type { HistoryEntry } from '@/lib/tauri'
+import type { HistoryEntry } from '@/lib/bindings'
 
 /**
  * Extract a text preview from an op-log entry payload.

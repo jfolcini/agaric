@@ -84,13 +84,6 @@ const KNOWN_UNWRAPPED = new Set([
   'getMcpRwSocketPath',
   'mcpRwSetEnabled',
   'mcpRwDisconnectAll',
-  // (a) GCal status + control surface — direct `commands.*` consumers.
-  'getGcalStatus',
-  'forceGcalResync',
-  'disconnectGcal',
-  'setGcalWindowDays',
-  'setGcalPrivacyMode',
-  'beginGcalOauth',
   // (b) wrapped under a different name in tauri.ts — see the wrapper
   // body for the corresponding `commands.*` call.
   'listAttachmentsBatch', // wrapped as `getBatchAttachments`

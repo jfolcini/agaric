@@ -31,7 +31,7 @@ import { TrashRowItem } from '@/components/TrashView/TrashRowItem'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { RichContentCallbacks } from '@/hooks/useRichContentCallbacks'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 
 // Estimated row height in CSS px. A trash row is a bordered card with
 // content + relative-date + optional breadcrumb (`p-4` padding); ~96px is

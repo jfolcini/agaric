@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { CompareOp } from '@/lib/tauri'
+import type { CompareOp } from '@/lib/bindings'
 
 export interface BacklinkPropertyFilterFormProps {
   propertyKeys: string[]

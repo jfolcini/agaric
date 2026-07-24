@@ -16,7 +16,7 @@ import { LoadMoreButton } from '@/components/common/LoadMoreButton'
 import { HistoryListItem } from '@/components/HistoryListItem'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { entryKey, isRevertible } from '@/hooks/useHistorySelection'
-import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
+import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 
 export interface HistoryListViewProps {
   entries: HistoryEntry[]

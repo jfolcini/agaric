@@ -24,7 +24,7 @@ import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
-import type { FilterPrimitive } from '@/lib/tauri'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 import type {
   BuilderGroupNode,

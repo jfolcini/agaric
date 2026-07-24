@@ -12,8 +12,8 @@
 
 import { useEffect } from 'react'
 
+import type { BlockRow } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
-import type { BlockRow } from '@/lib/tauri'
 
 export interface UseTrashListShortcutsOptions {
   filteredBlocks: BlockRow[]

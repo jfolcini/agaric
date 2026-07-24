@@ -18,7 +18,7 @@ import {
 } from '@/components/SpaceManageDialog/SpaceDeleteButton'
 import { SpaceJournalTemplateEditor } from '@/components/SpaceManageDialog/SpaceJournalTemplateEditor'
 import { SpaceNameEditor } from '@/components/SpaceManageDialog/SpaceNameEditor'
-import type { SpaceRow } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 
 export interface SpaceRowEditorProps {
   space: SpaceRow

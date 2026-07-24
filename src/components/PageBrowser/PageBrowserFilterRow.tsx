@@ -20,8 +20,7 @@ import { useTranslation } from 'react-i18next'
 import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
-import type { DatePredicate } from '@/lib/bindings'
-import type { FilterPrimitive } from '@/lib/tauri'
+import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */
 export const MAX_PAGE_FILTERS = 8

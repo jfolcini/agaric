@@ -27,8 +27,8 @@ import { renderRichContent } from '@/components/RichContentRenderer'
 import { Badge } from '@/components/ui/badge'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import type { BacklinkGroup, BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import type { BacklinkGroup, BlockRow } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 
 export interface BacklinkGroupRendererProps {

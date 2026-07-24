@@ -36,8 +36,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import type { BacklinkFilter } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import type { BacklinkFilter } from '@/lib/tauri'
 
 type FilterCategory =
   | 'type'

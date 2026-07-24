@@ -11,8 +11,8 @@
 import { useMemo } from 'react'
 
 import type { SortOption } from '@/hooks/usePageBrowserSort'
+import type { BlockRow } from '@/lib/bindings'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
-import type { BlockRow } from '@/lib/tauri'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 /**

@@ -12,7 +12,7 @@ import type React from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
-import type { AggregateResult } from '@/lib/tauri'
+import type { AggregateResult } from '@/lib/bindings'
 
 /** Format one aggregate result's numeric value as a display string. */
 function formatAggregateValue(result: AggregateResult): string {

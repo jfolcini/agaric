@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 import { PageLink } from '@/components/pages/PageLink'
 import { Badge } from '@/components/ui/badge'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
+import type { BlockRow } from '@/lib/bindings'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
-import type { BlockRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 export interface QueryResultListProps {

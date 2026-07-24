@@ -7,7 +7,7 @@
  * import (core imports the reducers; the reducers reference the state type).
  */
 
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import type { FlatBlock } from '@/lib/tree-utils'
 
 export type { FlatBlock }

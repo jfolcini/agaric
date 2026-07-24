@@ -43,7 +43,7 @@ import type {
   SortColumn,
   SortKey,
   SortSource,
-} from '@/lib/tauri'
+} from '@/lib/bindings'
 
 /** The labelled, closed set of `SortColumn`s offered in the sort source picker. */
 const SORT_COLUMNS: readonly SortColumn[] = [

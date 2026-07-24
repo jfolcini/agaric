@@ -19,7 +19,7 @@
 import { create } from 'zustand'
 
 import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
-import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
+import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 /**
