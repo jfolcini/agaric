@@ -1,6 +1,6 @@
 {
   "name": "agaric",
-  "version": "0.9.1",
+  "version": "0.9.2",
   "private": true,
   "license": "GPL-3.0-or-later",
   "type": "module",
@@ -162,9 +162,9 @@
     "js-yaml": "^4.2.0",
     "markdown-it": "^14.2.0",
     "qs": ">=6.15.2",
+    "serialize-javascript": ">=7.0.5",
     "smol-toml": ">=1.6.1",
-    "uuid": "^14.0.0",
-    "serialize-javascript": ">=7.0.5"
+    "uuid": "^14.0.0"
   },
   "engines": {
     "node": ">=24"
