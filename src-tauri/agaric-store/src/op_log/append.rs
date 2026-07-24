@@ -4,7 +4,7 @@ use crate::op::OpPayload;
 use agaric_core::error::AppError;
 use agaric_core::hash::compute_op_hash;
 
-use super::payload::serialize_inner_payload;
+use super::payload::{extract_indexed_ids_from_payload, serialize_inner_payload};
 use super::record::OpRecord;
 
 // ---------------------------------------------------------------------------
@@ -373,4 +373,120 @@ pub async fn append_local_op_at(
     let record = append_local_op_in_tx(&mut tx, device_id, op_payload, created_at).await?;
     tx.commit().await?;
     Ok(record)
+}
+
+// ---------------------------------------------------------------------------
+// Remote-ingest write path (#2895 slice 5)
+// ---------------------------------------------------------------------------
+//
+// These two primitives are the store-owned homes for the `op_log` INSERTs that
+// previously lived inline in `agaric-engine`'s `dag.rs` (the remote-op ingest
+// path and the merge-op creation path). Both write `op_log`, so ownership of
+// that table's raw-write surface now lives entirely in this crate (the
+// `check-table-ownership` #2895 baseline no longer grandfathers any engine
+// `op_log` write). They deliberately stay two narrow functions rather than one
+// merged helper: the ingest path is `INSERT OR IGNORE` (duplicate delivery is a
+// benign no-op) over the full column set including `origin`/`is_replicated`,
+// whereas the merge path is a plain `INSERT` over the 9-column subset that
+// leans on column defaults — collapsing them would change the duplicate-PK and
+// default-stamping semantics.
+//
+// # op_log-immutability triggers (migration 0036)
+//
+// Neither primitive interacts with the `_op_log_mutation_allowed` bypass. The
+// immutability triggers fire only on `BEFORE UPDATE` / `BEFORE DELETE` of
+// `op_log`; INSERTs are never gated, so — exactly as at the original engine
+// sites — no [`enable_op_log_mutation_bypass`] wrapper is needed or used.
+
+/// Ingest a hash-verified **remote** op into `op_log` within an existing
+/// transaction (#2895 slice 5; moved verbatim from `agaric-engine`'s
+/// `dag::ingest_remote_record`).
+///
+/// Uses `INSERT OR IGNORE`: a duplicate delivery at the same
+/// `(device_id, seq)` composite PK is a benign no-op. Returns `true` when a
+/// row was actually inserted, `false` when the insert was ignored (duplicate).
+/// The caller is responsible for the divergence probe that distinguishes a
+/// same-hash re-delivery (falls through to this no-op) from a different-hash
+/// fork (rejected before reaching here), and for committing the transaction.
+///
+/// The indexed `block_id` (migration 0030) and `attachment_id` (migration
+/// 0064) columns are populated from the serialized JSON payload via
+/// [`extract_indexed_ids_from_payload`] — the remote path only carries the
+/// serialized string, so it parses once here rather than per field. `origin`
+/// (#2481 cross-device attribution) and `is_replicated` (the migration-0099
+/// isolation boundary: `true`/`1` for audit records, `false`/`0` for the
+/// strict merge path) are stamped from the caller-supplied values.
+pub async fn ingest_remote_op_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    record: &OpRecord,
+    origin: &str,
+    is_replicated: bool,
+) -> Result<bool, AppError> {
+    let (block_id, attachment_id) = extract_indexed_ids_from_payload(&record.payload);
+    let is_replicated: i64 = i64::from(is_replicated);
+
+    let result = sqlx::query!(
+        "INSERT OR IGNORE INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id, origin, is_replicated) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        record.device_id,
+        record.seq,
+        record.parent_seqs,
+        record.hash,
+        record.op_type,
+        record.payload,
+        record.created_at,
+        block_id,
+        attachment_id,
+        origin,
+        is_replicated,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
+/// Insert a multi-parent **merge** op into `op_log` within an existing
+/// transaction (#2895 slice 5; moved verbatim from `agaric-engine`'s
+/// `dag::append_merge_op`).
+///
+/// Plain `INSERT` (not `INSERT OR IGNORE`): a duplicate `(device_id, seq)` is a
+/// programming error and must surface, not be silently dropped. The
+/// remaining columns (`origin`, `is_replicated`, `is_undo`, `reverses_*`) are
+/// intentionally omitted so the row takes its schema defaults, matching the
+/// original engine site byte-for-byte. `block_id` / `attachment_id` are passed
+/// in pre-extracted from the typed `OpPayload` by the caller (which still owns
+/// the seq/hash/parent computation). The caller commits the transaction.
+#[allow(clippy::too_many_arguments)]
+pub async fn insert_merge_op_in_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    device_id: &str,
+    seq: i64,
+    parent_seqs: &str,
+    hash: &str,
+    op_type: &str,
+    payload: &str,
+    created_at: i64,
+    block_id: Option<&str>,
+    attachment_id: Option<&str>,
+) -> Result<(), AppError> {
+    sqlx::query!(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        device_id,
+        seq,
+        parent_seqs,
+        hash,
+        op_type,
+        payload,
+        created_at,
+        block_id,
+        attachment_id,
+    )
+    .execute(&mut **tx)
+    .await?;
+
+    Ok(())
 }

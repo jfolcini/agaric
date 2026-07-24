@@ -272,3 +272,144 @@ async fn concurrent_appends_same_device_serialize_correctly() {
         "concurrent appends must produce contiguous seq range"
     );
 }
+
+// ── Remote-ingest primitives (#2895 slice 5) ─────────────────────────
+
+/// `ingest_remote_op_in_tx` lands a hash-agnostic remote record, stamps
+/// `origin` / `is_replicated` from the caller-supplied values, and populates
+/// the indexed `block_id` / `attachment_id` columns from the JSON payload.
+/// A second delivery at the same `(device_id, seq)` is a benign no-op that
+/// returns `false` (the `INSERT OR IGNORE` contract).
+#[tokio::test]
+async fn ingest_remote_op_in_tx_lands_row_and_is_idempotent() {
+    let (pool, _dir) = test_pool().await;
+
+    let record = OpRecord {
+        device_id: "remote-device".into(),
+        seq: 7,
+        parent_seqs: None,
+        hash: "a".repeat(64),
+        op_type: "add_attachment".into(),
+        payload: r#"{"block_id":"BLK-RMT","attachment_id":"ATT-RMT"}"#.into(),
+        created_at: FIXED_TS,
+        block_id: None,
+    };
+
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let inserted = ingest_remote_op_in_tx(&mut tx, &record, "agent:tester", true)
+        .await
+        .expect("first ingest must succeed");
+    tx.commit().await.unwrap();
+    assert!(inserted, "first delivery must insert a row");
+
+    // Row landed with the expected indexed ids + provenance columns. Runtime
+    // (untyped) queries so this read-back adds no `.sqlx` offline-cache entries.
+    let block_id: Option<String> = sqlx::query_scalar(
+        "SELECT block_id FROM op_log WHERE device_id = 'remote-device' AND seq = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let attachment_id: Option<String> = sqlx::query_scalar(
+        "SELECT attachment_id FROM op_log WHERE device_id = 'remote-device' AND seq = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let origin: String = sqlx::query_scalar(
+        "SELECT origin FROM op_log WHERE device_id = 'remote-device' AND seq = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let is_replicated: i64 = sqlx::query_scalar(
+        "SELECT is_replicated FROM op_log WHERE device_id = 'remote-device' AND seq = 7",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(block_id.as_deref(), Some("BLK-RMT"));
+    assert_eq!(attachment_id.as_deref(), Some("ATT-RMT"));
+    assert_eq!(origin, "agent:tester");
+    assert_eq!(is_replicated, 1, "audit ingest stamps is_replicated = 1");
+
+    // Duplicate delivery is a benign no-op.
+    let mut tx2 = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    let reinserted = ingest_remote_op_in_tx(&mut tx2, &record, "agent:tester", true)
+        .await
+        .expect("duplicate ingest must not error");
+    tx2.commit().await.unwrap();
+    assert!(
+        !reinserted,
+        "duplicate (device_id, seq) delivery must be ignored"
+    );
+
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM op_log WHERE device_id = 'remote-device'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(count, 1, "duplicate delivery must not add a second row");
+}
+
+/// `insert_merge_op_in_tx` lands a merge row via a plain `INSERT`; the
+/// omitted columns take their schema defaults (`origin = 'user'`,
+/// `is_replicated = 0`, `is_undo = 0`).
+#[tokio::test]
+async fn insert_merge_op_in_tx_lands_row_with_defaults() {
+    let (pool, _dir) = test_pool().await;
+
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    insert_merge_op_in_tx(
+        &mut tx,
+        "merge-device",
+        1,
+        r#"[["dev-a",1],["dev-b",1]]"#,
+        &"b".repeat(64),
+        "create_block",
+        r#"{"block_id":"BLK-MRG"}"#,
+        FIXED_TS,
+        Some("BLK-MRG"),
+        None,
+    )
+    .await
+    .expect("merge insert must succeed");
+    tx.commit().await.unwrap();
+
+    // Runtime (untyped) read-back — no `.sqlx` offline-cache entries added.
+    let block_id: Option<String> = sqlx::query_scalar(
+        "SELECT block_id FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let attachment_id: Option<String> = sqlx::query_scalar(
+        "SELECT attachment_id FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let origin: String = sqlx::query_scalar(
+        "SELECT origin FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let is_replicated: i64 = sqlx::query_scalar(
+        "SELECT is_replicated FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let is_undo: i64 = sqlx::query_scalar(
+        "SELECT is_undo FROM op_log WHERE device_id = 'merge-device' AND seq = 1",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(block_id.as_deref(), Some("BLK-MRG"));
+    assert_eq!(attachment_id, None);
+    assert_eq!(origin, "user", "omitted origin defaults to 'user'");
+    assert_eq!(is_replicated, 0, "omitted is_replicated defaults to 0");
+    assert_eq!(is_undo, 0, "omitted is_undo defaults to 0");
+}

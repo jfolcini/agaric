@@ -34,9 +34,7 @@ use agaric_core::error::AppError;
 use agaric_core::hash::{compute_op_hash, verify_op_hash};
 use agaric_store::db::ReadPool;
 use agaric_store::op::*;
-use agaric_store::op_log::{
-    OpRecord, extract_indexed_ids_from_payload, get_op_by_seq, serialize_inner_payload,
-};
+use agaric_store::op_log::{OpRecord, get_op_by_seq, serialize_inner_payload};
 
 /// Hard cap on the number of `prev_edit` chain steps `find_lca` will
 /// walk before giving up. This constant is the canonical definition of the
@@ -601,50 +599,27 @@ async fn ingest_remote_record(
         ));
     }
 
-    // INSERT OR IGNORE — duplicate delivery is a no-op.
-    // Returns true if a row was inserted, false if it was a duplicate.
+    // INSERT OR IGNORE — duplicate delivery is a no-op. The store-owned
+    // primitive (#2895 slice 5) returns true when a row was inserted, false
+    // when it was a duplicate; it also populates the indexed block_id
+    // (migration 0030) / attachment_id (migration 0064) columns from the JSON
+    // payload for fast block-scoped and reverse-attachment lookups.
     //
-    // Populate the indexed block_id (migration 0030) and attachment_id
-    // (SQL-review B-4 / migration 0064) columns from the JSON payload so
-    // sync'd remote ops participate in fast block-scoped and reverse-attachment
-    // lookups (the latter via the `idx_op_log_attachment_id` partial index used
-    // by `reverse::attachment_ops::reverse_delete_attachment`). Local ops use
-    // the typed `OpPayload` accessors directly; here we only have the
-    // serialized payload string, so parse it once for both columns rather than
-    // once per field.
-    let (block_id, attachment_id) = extract_indexed_ids_from_payload(&record.payload);
-
-    // #2481: `origin` carries cross-device attribution (Audit profile passes
-    // the transfer-carried value; Strict keeps the `"user"` default).
-    // `is_replicated` is the isolation boundary — `1` for audit records so boot
-    // replay / materializer / apply-cursor bookkeeping provably skip them
-    // (migration 0099); `0` for the strict merge path.
-    let is_replicated: i64 = match profile {
-        IngestProfile::Strict => 0,
-        IngestProfile::Audit => 1,
-    };
-
-    let result = sqlx::query!(
-        "INSERT OR IGNORE INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id, origin, is_replicated) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        record.device_id,
-        record.seq,
-        record.parent_seqs,
-        record.hash,
-        record.op_type,
-        record.payload,
-        record.created_at,
-        block_id,
-        attachment_id,
+    // #2481: `origin` carries cross-device attribution and `is_replicated` is
+    // the isolation boundary — audit records (`is_replicated = true`, migration
+    // 0099) are provably skipped by boot replay / materializer / apply-cursor
+    // bookkeeping; the Audit profile passes the transfer-carried origin, while
+    // Strict keeps the `"user"` default and `is_replicated = false`.
+    let inserted = agaric_store::op_log::ingest_remote_op_in_tx(
+        &mut tx,
+        record,
         origin,
-        is_replicated,
+        matches!(profile, IngestProfile::Audit),
     )
-    .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
-    Ok(result.rows_affected() > 0)
+    Ok(inserted)
 }
 
 /// Create a merge op whose `parent_seqs` contains entries from multiple
@@ -712,21 +687,21 @@ pub async fn append_merge_op(
     // block_id, applied to attachment_id (Some only for attachment ops).
     let attachment_id: Option<&str> = op_payload.attachment_id();
 
-    sqlx::query!(
-        "INSERT INTO op_log \
-         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, attachment_id) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    // #2895 slice 5: the raw op_log INSERT now lives behind the store-owned
+    // primitive. Plain INSERT (not OR IGNORE) — a duplicate (device_id, seq)
+    // for a freshly-minted merge op is a programming error and must surface.
+    agaric_store::op_log::insert_merge_op_in_tx(
+        &mut tx,
         device_id,
         seq,
-        parent_seqs_json,
-        hash,
-        op_type,
-        payload_json,
+        &parent_seqs_json,
+        &hash,
+        &op_type,
+        &payload_json,
         created_at,
         block_id,
         attachment_id,
     )
-    .execute(&mut *tx)
     .await?;
 
     tx.commit().await?;
