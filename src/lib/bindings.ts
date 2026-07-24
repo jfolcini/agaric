@@ -681,7 +681,7 @@ export const commands = {
 	 * 
 	 *  One call toggles the whole app between full-tracing and sampling: the
 	 *  backend's runtime sampler reads the new ratio on the next root span (see
-	 *  [`crate::observability::set_sampling_ratio`]), and the frontend tracer sets
+	 *  [`agaric_observability::set_sampling_ratio`]), and the frontend tracer sets
 	 *  the same ratio locally — so "sample 10%" or "trace everything" is a single
 	 *  app-wide switch. `ratio` is clamped to `[0.0, 1.0]`; `1.0` = full tracing,
 	 *  `0.0` = drop new roots.
@@ -2518,7 +2518,7 @@ export type PageId = BlockId;
 /**
  *  A link between two pages (for graph visualization).
  * 
- *  Both endpoints decode via [`crate::ulid::UlidInline`] — a heap-free
+ *  Both endpoints decode via [`agaric_core::ulid::UlidInline`] — a heap-free
  *  inline ULID (#2371) that avoids the per-edge `String` allocations of
  *  the hot `list_page_links_inner` bulk-decode path. Liveness is still
  *  guaranteed by the SQL itself, which filters `src_deleted = 0`,
