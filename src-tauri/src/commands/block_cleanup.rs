@@ -64,103 +64,6 @@ pub async fn purge_subtree_tables(
     member_subquery: &str,
     bind: Option<&str>,
 ) -> Result<(Vec<String>, u64), AppError> {
-    // block_tags: either column may reference a member block.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM block_tags \
-             WHERE block_id IN ({member_subquery}) \
-                OR tag_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // block_tag_inherited (P-4): block_id, tag_id, or inherited_from.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM block_tag_inherited \
-             WHERE block_id IN ({member_subquery}) \
-                OR tag_id IN ({member_subquery}) \
-                OR inherited_from IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // block_properties: owned by a member block.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM block_properties \
-             WHERE block_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // block_properties: value_ref pointing into the subtree — DELETE the
-    // property row rather than NULLing the ref. Under the exactly-one-value
-    // CHECK (migration 0062) a value_ref-only row has no fallback typed
-    // value, so a SET-NULL would produce an invariant-violating all-NULL
-    // row; migration 0062 aligned the value_ref FK to ON DELETE CASCADE and
-    // this application-level cascade matches that direction.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM block_properties \
-             WHERE value_ref IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // block_links: either end may be in the subtree.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM block_links \
-             WHERE source_id IN ({member_subquery}) \
-                OR target_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // agenda_cache (keyed on block_id).
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM agenda_cache \
-             WHERE block_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // tags_cache (keyed on tag_id).
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM tags_cache \
-             WHERE tag_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // pages_cache (keyed on page_id).
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM pages_cache \
-             WHERE page_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
     // #85 F2: capture attachment file paths for the post-commit unlink
     // BEFORE the rows are deleted, else the rows vanish and the files leak.
     let attachment_paths = query_strings(
@@ -173,7 +76,18 @@ pub async fn purge_subtree_tables(
     )
     .await?;
 
-    // attachments (keyed on block_id).
+    // #2895 slice 1: the store-owned satellite / derived-cache purge (block_tags,
+    // block_tag_inherited, block_properties×2, block_links, agenda_cache,
+    // tags_cache, pages_cache, fts_blocks, page_aliases, projected_agenda_cache)
+    // now lives behind the owning crate's
+    // `agaric_store::cache::purge_block_satellite_caches`, threading the SAME
+    // borrowed connection so the caller's IMMEDIATE tx is preserved. FK checks
+    // remain deferred by the caller; `blocks` is deleted last (below).
+    agaric_store::cache::purge_block_satellite_caches(conn, cte_prefix, member_subquery, bind)
+        .await?;
+
+    // attachments (keyed on block_id) — app-owned, fs-backed satellite; the
+    // captured on-disk paths are unlinked post-commit by the caller.
     exec(
         conn,
         bind,
@@ -184,7 +98,7 @@ pub async fn purge_subtree_tables(
     )
     .await?;
 
-    // block_drafts (keyed on block_id).
+    // block_drafts (keyed on block_id) — device-local, never synced/snapshotted.
     exec(
         conn,
         bind,
@@ -195,50 +109,13 @@ pub async fn purge_subtree_tables(
     )
     .await?;
 
-    // fts_blocks — FTS5 virtual table, no FK, must be cleaned explicitly.
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM fts_blocks \
-             WHERE block_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // page_aliases (keyed on page_id).
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM page_aliases \
-             WHERE page_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // projected_agenda_cache (keyed on block_id).
-    exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM projected_agenda_cache \
-             WHERE block_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
-    // blocks themselves (keyed on id; deferred FK lets the single DELETE
-    // sweep the whole subtree).
-    let rows = exec(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}DELETE FROM blocks \
-             WHERE id IN ({member_subquery})"
-        ),
-    )
-    .await?;
+    // blocks themselves (keyed on id; deferred FK lets the single DELETE sweep
+    // the whole subtree). #2895 slice 1: the engine owns the `blocks`
+    // projection, so the final delete lives behind
+    // `agaric_engine::block_ops::delete_blocks_in_subtree`.
+    let rows =
+        agaric_engine::block_ops::delete_blocks_in_subtree(conn, cte_prefix, member_subquery, bind)
+            .await?;
 
     Ok((attachment_paths, rows))
 }
