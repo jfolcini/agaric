@@ -65,7 +65,7 @@ pub(super) async fn apply_op_with_mode(
     pool: &SqlitePool,
     record: &Arc<OpRecord>,
     mode: ApplyMode,
-    state: &crate::loro::shared::LoroState,
+    state: &agaric_engine::loro::shared::LoroState,
 ) -> Result<(), AppError> {
     // Time the whole per-op apply and record it to the
     // `agaric.materializer.op_apply.duration` histogram on EVERY exit (the

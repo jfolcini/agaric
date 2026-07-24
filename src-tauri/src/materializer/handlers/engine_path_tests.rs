@@ -1205,7 +1205,7 @@ async fn apply_op_tx_normal_mode_ignores_active_replay_sink_2896() {
     const SUPPRESSED_A1: &str = "01HZ0000000000000000000SA1";
 
     let (pool, _dir) = fresh_pool_with_page().await;
-    let state = crate::loro::shared::LoroState::new();
+    let state = agaric_engine::loro::shared::LoroState::new();
     seed_page_via_loro(&pool, &state).await;
 
     // A live boot-replay sink — the "in-progress replay context". Under the old
@@ -1224,7 +1224,7 @@ async fn apply_op_tx_normal_mode_ignores_active_replay_sink_2896() {
             index: None,
             content: "normal".into(),
         });
-        let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+        let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
             .await
             .expect("append normal op");
         let mut tx = pool.begin().await.expect("begin");
@@ -1266,7 +1266,7 @@ async fn apply_op_tx_normal_mode_ignores_active_replay_sink_2896() {
         index: None,
         content: "replayed".into(),
     });
-    let record = crate::op_log::append_local_op(&pool, DEVICE_ID, payload)
+    let record = agaric_store::op_log::append_local_op(&pool, DEVICE_ID, payload)
         .await
         .expect("append suppressed op");
     let mut tx = pool.begin().await.expect("begin");
