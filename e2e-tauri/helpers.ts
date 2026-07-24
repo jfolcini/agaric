@@ -51,8 +51,13 @@
 // Boot of a real WebKitWebView + first live-backend IPC round-trip is slower
 // than a headless-chrome mock, so keep every wait generous and never race.
 export const APP_READY_TIMEOUT = 60_000
-export const NAV_TIMEOUT = 30_000
-export const ACTION_TIMEOUT = 30_000
+// Runs 30061419172 / 30059678579 measured MARGINAL timeouts on the shared CI
+// runner: failed durable-read asserts had their element in the DOM by the
+// time the afterTest diagnostics captured it seconds later. This is a weekly
+// non-blocking lane — generous waits cost nothing when green, so every
+// interaction gets the full boot-scale budget.
+export const NAV_TIMEOUT = 60_000
+export const ACTION_TIMEOUT = 60_000
 
 /** Primary nav destinations addressable by their sidebar label. */
 export type NavLabel = 'Journal' | 'Tags' | 'Pages' | 'Settings'
