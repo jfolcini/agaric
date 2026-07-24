@@ -17,7 +17,7 @@ import { Badge } from '@/components/ui/badge'
 import { CardButton } from '@/components/ui/card-button'
 import { Spinner } from '@/components/ui/spinner'
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
 

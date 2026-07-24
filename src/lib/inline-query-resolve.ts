@@ -39,10 +39,15 @@
  * (no `NotOn` predicate), key-only reserved filters, and any unrecognised shape.
  */
 
-import type { DatePredicate, PropertyPredicate, PropertyValue } from '@/lib/bindings'
+import type {
+  DatePredicate,
+  FilterExpr,
+  FilterPrimitive,
+  PropertyPredicate,
+  PropertyValue,
+} from '@/lib/bindings'
 import { parseDate } from '@/lib/parse-date'
 import type { PropertyFilter, parseQueryExpression } from '@/lib/query-utils'
-import type { FilterExpr, FilterPrimitive } from '@/lib/tauri'
 
 /** Reserved property keys that live on the block ROW (not `block_properties`). */
 const RESERVED_ROW_KEYS = new Set(['todo_state', 'priority', 'due_date', 'scheduled_date'])

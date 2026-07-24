@@ -24,8 +24,8 @@ import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
 import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
+import type { FilterPrimitive } from '@/lib/bindings'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
-import type { FilterPrimitive } from '@/lib/tauri'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 interface PageBrowserFiltersState {

@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import type { BacklinkSort } from '@/lib/tauri'
+import type { BacklinkSort } from '@/lib/bindings'
 
 // ---------------------------------------------------------------------------
 // Props

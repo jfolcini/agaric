@@ -2,7 +2,7 @@
  * Shared palette value types. Extracted from CommandPalette.tsx (#751).
  */
 
-import type { SearchBlockRow } from '@/lib/tauri'
+import type { SearchBlockRow } from '@/lib/bindings'
 
 /**
  * Merged palette group: a page header + ≤ N block hits + a surplus

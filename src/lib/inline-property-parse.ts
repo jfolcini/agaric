@@ -47,7 +47,7 @@
  * actual `set_property` writes and the strip-only-on-success policy.
  */
 
-import type { PropertyDefinition } from '@/lib/tauri'
+import type { PropertyDefinition } from '@/lib/bindings'
 
 /**
  * Keys the parser never treats as inline properties. Mirrors

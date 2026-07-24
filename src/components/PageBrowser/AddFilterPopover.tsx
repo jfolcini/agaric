@@ -43,8 +43,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { usePriorityLevels } from '@/hooks/usePriorityLevels'
-import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
-import type { FilterExpr, FilterPrimitive } from '@/lib/tauri'
+import type { DatePredicate, FilterExpr, FilterPrimitive, PropertyPredicate } from '@/lib/bindings'
 
 export interface AddFilterPopoverProps {
   /** Emits the chosen primitive. The parent appends it to its chip set. */

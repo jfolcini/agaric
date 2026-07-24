@@ -17,8 +17,8 @@ import { AddFilterRow } from '@/components/backlink-filter/AddFilterRow'
 import { FilterPillRow, type FilterWithKey } from '@/components/filters/FilterPillRow'
 import { FilterSortControls } from '@/components/filters/FilterSortControls'
 import { Button } from '@/components/ui/button'
+import type { BacklinkFilter, BacklinkSort, SortDir } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import type { BacklinkFilter, BacklinkSort, SortDir } from '@/lib/tauri'
 
 // ---------------------------------------------------------------------------
 // Types

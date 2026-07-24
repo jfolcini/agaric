@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useState } from 'react'
 
+import type { BlockRow } from '@/lib/bindings'
 import { columnValue } from '@/lib/query-result-columns'
-import type { BlockRow } from '@/lib/tauri'
 
 export type SortDirection = 'asc' | 'desc'
 

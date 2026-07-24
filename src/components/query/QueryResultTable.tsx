@@ -4,8 +4,8 @@ import { useTranslation } from 'react-i18next'
 
 import { PageLink } from '@/components/pages/PageLink'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import type { BlockRow } from '@/lib/bindings'
 import { handleBlockNavigation, resolveBlockDisplay } from '@/lib/query-result-utils'
-import type { BlockRow } from '@/lib/tauri'
 
 /** Column definition for table mode. */
 export interface TableColumn {

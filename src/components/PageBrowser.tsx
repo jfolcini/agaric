@@ -47,11 +47,11 @@ import { usePageCreation } from '@/hooks/usePageCreation'
 import { useSavedPagesViews } from '@/hooks/useSavedPagesViews'
 import { useStarredPages } from '@/hooks/useStarredPages'
 import { useViewportObserver } from '@/hooks/useViewportObserver'
+import type { BlockRow } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { notify } from '@/lib/notify'
 import type { SavedPagesView } from '@/lib/preferences'
 import type { PagesViewTuple } from '@/lib/saved-pages-views'
-import type { BlockRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const HEADER_ROW_HEIGHT = 36

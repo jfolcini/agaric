@@ -25,8 +25,8 @@
 
 import { useCallback } from 'react'
 
+import type { BlockRow, PageWithMetadataRow } from '@/lib/bindings'
 import { PREFERENCES, type SortOption, usePreference } from '@/lib/preferences'
-import type { BlockRow, PageWithMetadataRow } from '@/lib/tauri'
 import { getRecentPagesForSpace } from '@/stores/recent-pages'
 
 /**

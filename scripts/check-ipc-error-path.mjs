@@ -196,6 +196,23 @@ function callsIpc(src) {
   // Match `from '@/lib/tauri'` (single or double quotes).
   if (/from\s+['"]@\/lib\/tauri['"]/.test(withoutTypeImports)) return true
 
+  // Match a runtime `commands` import from the generated tauri-specta
+  // bindings (`import { commands } from '@/lib/bindings'`). The #2927
+  // migration moves callers off the hand-written `@/lib/tauri` wrappers
+  // onto `commands.*` on the typed bindings — those are `invoke` call
+  // sites exactly like the wrapper layer, so a component using them needs
+  // the same error-path coverage. Type-only imports from bindings bring
+  // in no runtime value and are excluded two ways: full-line `import type
+  // { … }` is stripped above, and inline-type imports (`import { type
+  // Block } from '@/lib/bindings'`) never carry a bare `commands`
+  // specifier, so neither matches here. `events` (a one-way event
+  // subscription surface, like `listen`) is deliberately not matched.
+  if (
+    /import\s+\{[^}]*\bcommands\b[^}]*\}\s+from\s+['"]@\/lib\/bindings['"]/.test(withoutTypeImports)
+  ) {
+    return true
+  }
+
   // Match direct `invoke` import from the Tauri core module. `listen`
   // from `@tauri-apps/api/event` is deliberately not matched — it's
   // a one-way event subscription, not an IPC `invoke` call.
@@ -373,6 +390,16 @@ function runSelfTest() {
 
     const IPC_SRC = "import { foo } from '@/lib/tauri'\nexport const C = () => foo()\n"
     const NO_IPC_SRC = 'export const C = () => null\n'
+    // #2927: a runtime `commands` import from the generated bindings is an
+    // IPC call site and must be treated exactly like `@/lib/tauri`.
+    const BINDINGS_IPC_SRC =
+      "import { commands } from '@/lib/bindings'\nexport const C = () => commands.foo()\n"
+    // A type-only import from the bindings (both the `import type` form and
+    // the inline `type` form) is NOT an IPC call site — no runtime value.
+    const BINDINGS_TYPE_SRC =
+      "import type { Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
+    const BINDINGS_INLINE_TYPE_SRC =
+      "import { type Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
     const COVERED_TEST = "it('rejects', () => { foo.mockRejectedValueOnce(new Error('x')) })\n"
     const NO_REJECT_TEST = "it('renders', () => { render(<C />) })\n"
 
@@ -388,6 +415,13 @@ function runSelfTest() {
     fs.writeFileSync(path.join(componentsDir, 'Plain.tsx'), NO_IPC_SRC)
     // 5. IPC component, no test, but allowlisted → excused.
     fs.writeFileSync(path.join(componentsDir, 'sub', 'Allowed.tsx'), IPC_SRC)
+    // 6. Runtime `commands` binding import, covered test → checked (#2927).
+    fs.writeFileSync(path.join(componentsDir, 'BindingsIpc.tsx'), BINDINGS_IPC_SRC)
+    fs.writeFileSync(path.join(testsDir, 'BindingsIpc.test.tsx'), COVERED_TEST)
+    // 7. Type-only bindings import, no test → NOT an IPC caller, ignored.
+    fs.writeFileSync(path.join(componentsDir, 'BindingsType.tsx'), BINDINGS_TYPE_SRC)
+    // 8. Inline-type bindings import, no test → NOT an IPC caller, ignored.
+    fs.writeFileSync(path.join(componentsDir, 'BindingsInlineType.tsx'), BINDINGS_INLINE_TYPE_SRC)
 
     const allowlist = { 'src/components/sub/Allowed.tsx': 'covered via Parent.test.tsx' }
 
@@ -409,6 +443,17 @@ function runSelfTest() {
     if (!r.missingTest.includes('src/components/sub/Allowed.tsx'))
       ok('allowlisted component passes')
     else fail('allowlisted component passes', 'Allowed.tsx was flagged despite allowlist')
+
+    if (r.checked.includes('BindingsIpc.tsx')) ok('runtime bindings `commands` import is IPC')
+    else fail('runtime bindings `commands` import is IPC', `checked=${JSON.stringify(r.checked)}`)
+
+    if (!r.missingTest.includes('src/components/BindingsType.tsx'))
+      ok('type-only bindings import is ignored')
+    else fail('type-only bindings import is ignored', 'BindingsType.tsx was flagged')
+
+    if (!r.missingTest.includes('src/components/BindingsInlineType.tsx'))
+      ok('inline-type bindings import is ignored')
+    else fail('inline-type bindings import is ignored', 'BindingsInlineType.tsx was flagged')
 
     if (r.staleAllowlist.length === 0) ok('matched allowlist entry is not stale')
     else fail('matched allowlist entry is not stale', JSON.stringify(r.staleAllowlist))

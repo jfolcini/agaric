@@ -34,9 +34,9 @@ import {
 } from '@/components/ui/sheet'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useIsTouch } from '@/hooks/useIsTouch'
+import type { PropertyDefinition } from '@/lib/bindings'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { formatPropertyName } from '@/lib/property-utils'
-import type { PropertyDefinition } from '@/lib/tauri'
 
 export interface AddPropertyPopoverProps {
   /** Definitions to show in the picker. Already filtered by the parent. */

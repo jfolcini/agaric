@@ -1,4 +1,4 @@
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { truncateContent } from '@/lib/text-utils'
 
 /** Detects the `[[ULID...]]` cache-miss fallback emitted by useBlockResolve. */

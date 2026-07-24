@@ -32,8 +32,8 @@ import {
   groupByState,
   sortAgendaBlocksBy,
 } from '@/lib/agenda-sort'
+import type { BlockRow } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
-import type { BlockRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 

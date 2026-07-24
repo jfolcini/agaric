@@ -23,7 +23,7 @@ import { HistoryItemCore } from '@/components/HistoryListItem/HistoryItemCore'
 import { DiffDisplay } from '@/components/rendering/DiffDisplay'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import type { DiffSpan, HistoryEntry } from '@/lib/tauri'
+import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 
 export type {

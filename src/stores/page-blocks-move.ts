@@ -10,7 +10,7 @@
  * `page-blocks-reducers.ts`.
  */
 
-import type { MoveResponse } from '@/lib/tauri'
+import type { MoveResponse } from '@/lib/bindings'
 import { buildFlatTree, type FlatBlock } from '@/lib/tree-utils'
 import { cloneBlocksByIdWith } from '@/stores/page-blocks-map'
 import type { PageBlockState } from '@/stores/page-blocks-types'

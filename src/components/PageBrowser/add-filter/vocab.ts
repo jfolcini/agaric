@@ -7,8 +7,7 @@
  * `frontend import cycles (zero)` hook forbids).
  */
 
-import type { DatePredicate, PropertyPredicate } from '@/lib/bindings'
-import type { FilterPrimitive } from '@/lib/tauri'
+import type { DatePredicate, FilterPrimitive, PropertyPredicate } from '@/lib/bindings'
 
 /** Which inline value-editor is open inside the popover (null = category menu). */
 export type EditorKey =

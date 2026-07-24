@@ -25,7 +25,7 @@
  *      the structured form; old blocks keep rendering exactly as before.
  */
 
-import type { FilterExpr } from '@/lib/tauri'
+import type { FilterExpr } from '@/lib/bindings'
 
 /** The decoded structured payload of a `v2:` inline query block. */
 export interface InlineQuerySpec {

@@ -7,7 +7,7 @@
  * dispatching to the module-level `buildFilterForCategory` switch.
  */
 
-import type { CompareOp } from '@/lib/tauri'
+import type { CompareOp } from '@/lib/bindings'
 
 /**
  * Full state shape consumed by the module-level `build*Filter` helpers.
