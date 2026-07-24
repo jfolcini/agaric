@@ -25,7 +25,7 @@
 //! per Phase 2's "each new bench gets a row in interactive_slo.rs"
 //! convention.
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_lib::commands::{
     list_page_history_inner, redo_page_op_inner, revert_ops_inner, undo_page_op_inner,
@@ -404,4 +404,3 @@ criterion_group!(
     bench_undo_page_op,
     bench_redo_page_op,
 );
-criterion_main!(benches);

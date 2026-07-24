@@ -37,7 +37,7 @@
 //! `blocks.space_id` column (0086) backed by a `spaces` registry row (0089);
 //! no reserved property keys (0088). Ids are fixed-width so they sort.
 
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group};
 
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{list_all_pages_in_space_inner, load_page_subtree_inner};
@@ -305,4 +305,3 @@ criterion_group!(
     bench_cold_first_page_render,
     bench_cold_initial_materialization,
 );
-criterion_main!(cold_start_benches);

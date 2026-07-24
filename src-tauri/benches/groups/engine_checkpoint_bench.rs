@@ -52,7 +52,7 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use agaric_engine::loro::engine::LoroEngine;
-use criterion::{Criterion, criterion_group, criterion_main};
+use criterion::{Criterion, criterion_group};
 
 /// Device id whose deterministic peer id every fixture engine is built under.
 const BENCH_DEVICE: &str = "01ENGINECHECKPOINTBENCHDEV1";
@@ -279,4 +279,3 @@ fn bench_engine_checkpoint(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_engine_checkpoint);
-criterion_main!(benches);

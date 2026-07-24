@@ -17,7 +17,7 @@
 //! filter on those columns. IDs are real ULIDs (`BlockId::new()`) so the
 //! commands' `BlockId::from_string` validation passes.
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_core::ulid::BlockId;
 use agaric_lib::commands::{get_blocks_inner, load_page_subtree_inner};
@@ -198,5 +198,3 @@ fn bench_get_blocks(c: &mut Criterion) {
 // ===========================================================================
 
 criterion_group!(page_load_benches, bench_load_page_subtree, bench_get_blocks,);
-
-criterion_main!(page_load_benches);

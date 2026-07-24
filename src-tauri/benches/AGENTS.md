@@ -39,10 +39,12 @@ for name in $(grep -A1 '^\[\[bench\]\]' Cargo.toml \
 done
 ```
 
-A non-zero exit / `panicked at` is a real seed/fixture failure. Heads-up: the
-heavy 100K-seed benches (e.g. `cache_bench`) are SLOW under cold `--test` (no
-warmup — 10×+ inflation, see the COLD-timings note below); that's expected, not
-a hang. To smoke just one bench, run a single `"$bin" --test`.
+A non-zero exit / `panicked at` is a real seed/fixture failure. Heads-up: a
+themed binary that owns heavy 100K-seed groups (e.g. `core_bench`, which owns
+the former `cache_bench`) is SLOW under cold `--test` (no warmup — 10×+
+inflation, see the COLD-timings note below), and now runs ALL its groups in one
+shot; that's expected, not a hang. To smoke just one group, filter:
+`"$bin" --test cache` (or `cargo bench --bench core_bench -- --test cache`).
 
 ## How to RUN/verify a bench reliably (avoid the E0308 flake)
 
@@ -69,7 +71,7 @@ no race):**
 ```bash
 cd src-tauri
 cargo bench --no-run                 # one cohesive build resolves consistently
-for f in commands_bench history_bench …; do
+for f in engine_bench query_bench agenda_bench io_bench core_bench; do
   bin=$(ls -t target/release/deps/${f}-* | grep -vE '\.(d|so|dwp)$' | head -1)
   "$bin" --test                      # criterion --test = run each bench once, no measurement
 done
@@ -131,8 +133,39 @@ not move) if bench code isn't formatted. Run `cargo fmt` first. Verify HEAD
 actually advanced after committing — a masked hook abort looks like success
 under `rtk`.
 
+## Layout: themed binaries + `groups/` mods (#2879)
+
+The 30 former single-`criterion_main!` bench crates were consolidated into a
+handful of **themed bench binaries** (`engine_bench`, `query_bench`,
+`agenda_bench`, `io_bench`, `core_bench`) to cut Rust build/link time — each
+`[[bench]]` used to be a separate crate linking `agaric_lib` + criterion, and
+that link multiplier is the pre-push/`--all-targets` long pole. The former bench
+files now live **verbatim** in `benches/groups/<name>.rs` and are pulled into
+their themed wrapper as `#[path = "groups/<name>.rs"] mod <name>;`; the wrapper
+is a thin file whose single `criterion_main!(...)` re-exports every group. Only
+each file's own `criterion_main!` + the `criterion_main` import were dropped in
+the move — **every `benchmark_group`/`bench_function`/`BenchmarkId` id string is
+unchanged**, so historical criterion baselines in the shared `target/criterion/`
+tree (keyed by id, not by binary) keep resolving. Files in `benches/groups/` are
+NOT top-level, so cargo auto-discovery does not turn them into stray targets.
+
+**Two benches stay standalone binaries:** `interactive_slo` (CI invokes it by
+name for the perf/SLO gate — never fold it in) and `loro_vs_sql_reads` (a
+hand-rolled `fn main()` harness, not criterion — it can't join a
+`criterion_main!`).
+
+To run one former bench, run its themed binary and filter by id, e.g.
+`cargo bench --bench core_bench -- hash` or
+`cargo bench --bench engine_bench -- engine_checkpoint`. The CI shard job and
+the local smoke loop enumerate `[[bench]]` names dynamically, so they pick up
+the new names automatically; a themed binary's `--test` run exercises EVERY
+group it owns, preserving the #978 fixture coverage.
+
 ## Cross-bench helpers are DUPLICATED, on purpose
 
-Each `[[bench]]` is its own crate root, so seeders (`fresh_pool`, `seed_*`,
-`ts_for`) are copy-pasted across files rather than shared. If you change a
-seeding pattern, grep the sibling benches and keep them in sync.
+Each former bench file (now a `mod` under `groups/`) still carries its own copy
+of the seeders (`fresh_pool`, `seed_*`, `ts_for`) rather than sharing them —
+they were copy-pasted when the benches were separate crates and remain
+per-`mod`. Because each file is a distinct module, identically-named helpers in
+sibling mods of the SAME themed binary do NOT collide. If you change a seeding
+pattern, grep the sibling `groups/*.rs` files and keep them in sync.

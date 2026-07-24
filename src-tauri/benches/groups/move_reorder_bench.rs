@@ -6,7 +6,7 @@
 //! The command uses transactions with cycle detection CTEs and sibling
 //! position shifts, making it non-trivial under load.
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_lib::commands::move_block_inner;
 use agaric_lib::db::init_pool;
@@ -114,4 +114,3 @@ fn bench_move_block(c: &mut Criterion) {
 }
 
 criterion_group!(benches, bench_move_block);
-criterion_main!(benches);

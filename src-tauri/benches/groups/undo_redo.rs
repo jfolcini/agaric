@@ -12,7 +12,7 @@
 //!
 //! Manual only — never in CI or pre-commit (see AGENTS.md).
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_lib::commands::{
     compute_edit_diff_inner, redo_page_op_inner, restore_page_to_op_inner, revert_ops_inner,
@@ -806,13 +806,3 @@ criterion_group!(restore_benches, bench_restore_page_to_op,);
 criterion_group!(redo_benches, bench_redo_page_op,);
 
 criterion_group!(diff_benches, bench_compute_edit_diff,);
-
-criterion_main!(
-    reverse_benches,
-    page_history_benches,
-    undo_benches,
-    revert_benches,
-    restore_benches,
-    redo_benches,
-    diff_benches,
-);

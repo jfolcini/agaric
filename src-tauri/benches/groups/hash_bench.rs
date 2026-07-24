@@ -2,7 +2,7 @@
 
 use std::hint::black_box;
 
-use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, criterion_group};
 
 use agaric_core::hash::{compute_op_hash, verify_op_hash};
 
@@ -94,4 +94,3 @@ criterion_group!(
     bench_hash_no_parent_seqs,
     bench_hash_varying_payload,
 );
-criterion_main!(benches);

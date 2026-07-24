@@ -1,4 +1,4 @@
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::db::init_pool;
 use agaric_store::cache::{
@@ -288,4 +288,3 @@ criterion_group!(
     bench_reindex_block_links,
     bench_rebuild_page_ids,
 );
-criterion_main!(benches);

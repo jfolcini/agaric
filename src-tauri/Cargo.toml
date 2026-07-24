@@ -425,116 +425,53 @@ split-debuginfo = "unpacked"
 name = "agaric_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+# Benches (#2879): the 30 former single-`criterion_main!` bench crates were
+# consolidated into a handful of THEMED bench binaries to cut Rust build/link
+# time — each `[[bench]]` was a separate crate linking `agaric_lib` + criterion,
+# multiplying link work under `cargo bench` and pre-push `--all-targets` clippy.
+# Each former bench file now lives verbatim in `benches/groups/<name>.rs` and is
+# pulled into its themed wrapper as a `#[path] mod`; every criterion
+# `benchmark_group`/`bench_function` id string is UNCHANGED, so historical
+# baselines in the shared `target/criterion/` tree (keyed by id, not by binary)
+# keep resolving. The CI deep-check shard job enumerates these `[[bench]]` names
+# dynamically (`grep -A1 '^[[bench]]' | grep -vx interactive_slo`), so the
+# smaller list simply shards fewer, larger targets — coverage is preserved
+# because each themed binary's `--test` smoke run exercises every group it owns.
+#
+# `interactive_slo` and `loro_vs_sql_reads` stay STANDALONE: interactive_slo is
+# invoked by name for the SLO perf gate and must not change; loro_vs_sql_reads
+# is a hand-rolled `fn main()` harness (not criterion) that can't fold into a
+# `criterion_main!`.
+
+# engine / apply / history / undo-redo / op-log / snapshot / compaction:
+# engine_checkpoint_bench, undo_redo, history_bench, snapshot_bench,
+# compaction_bench, op_log_bench, soft_delete_bench.
 [[bench]]
-name = "hash_bench"
+name = "engine_bench"
 harness = false
 
+# read / query / index: backlink_query_bench, tag_query_bench, pagination_bench,
+# graph_bench, fts_bench, property_bench, property_def_bench, alias_bench.
 [[bench]]
-name = "op_log_bench"
+name = "query_bench"
 harness = false
 
-[[bench]]
-name = "cache_bench"
-harness = false
-
-[[bench]]
-name = "pagination_bench"
-harness = false
-
-[[bench]]
-name = "soft_delete_bench"
-harness = false
-
-[[bench]]
-name = "commands_bench"
-harness = false
-
-[[bench]]
-name = "fts_bench"
-harness = false
-
-[[bench]]
-name = "draft_bench"
-harness = false
-
-[[bench]]
-name = "undo_redo"
-harness = false
-
-[[bench]]
-name = "backlink_query_bench"
-harness = false
-
-[[bench]]
-name = "move_reorder_bench"
-harness = false
-
-[[bench]]
-name = "snapshot_bench"
-harness = false
-
-# #2604 — per-op fork/checkpoint overhead for the rollback-safe engine apply.
-[[bench]]
-name = "engine_checkpoint_bench"
-harness = false
-
-[[bench]]
-name = "import_bench"
-harness = false
-
-[[bench]]
-name = "tag_query_bench"
-harness = false
-
+# agenda / scheduled-item: agenda_bench, agenda_expansion_bench.
 [[bench]]
 name = "agenda_bench"
 harness = false
 
+# import / export / attachment / draft I/O: import_bench, export_bench,
+# attachment_bench, draft_bench.
 [[bench]]
-name = "agenda_expansion_bench"
+name = "io_bench"
 harness = false
 
+# core commands / cache / cold-start / resource / move-reorder / hash /
+# page-load: commands_bench, cache_bench, cold_start_bench,
+# resource_envelope_bench, move_reorder_bench, hash_bench, page_load_bench.
 [[bench]]
-name = "property_bench"
-harness = false
-
-[[bench]]
-name = "compaction_bench"
-harness = false
-
-[[bench]]
-name = "alias_bench"
-harness = false
-
-[[bench]]
-name = "export_bench"
-harness = false
-
-[[bench]]
-name = "graph_bench"
-harness = false
-
-[[bench]]
-name = "attachment_bench"
-harness = false
-
-[[bench]]
-name = "property_def_bench"
-harness = false
-
-# #978 — coverage for two hot, user-facing read commands on the editor/block
-# path that had no bench: `load_page_subtree` (every page open) and
-# `get_blocks` (batch fetch for multi-select / backlink hydration).
-[[bench]]
-name = "page_load_bench"
-harness = false
-
-# Phase 2 §B.1 of `pending/scale-benchmarks-100k-2026-05-14.md` — history +
-# undo/redo at scale ([1K, 10K, 100K] ops on a single page). The 50-op
-# revert at 100K is the budget point that feeds the matching row in
-# `interactive_slo.rs` (200 ms gate).
-[[bench]]
-name = "history_bench"
+name = "core_bench"
 harness = false
 
 # Phase 1 of `pending/scale-benchmarks-100k-2026-05-14.md` — latency-gate
@@ -543,7 +480,8 @@ harness = false
 # per-command budget (sourced from ARCHITECTURE.md §25). Intended to be
 # run once in CI; the two §25 *Problem* commands (`list_page_links`,
 # `list_projected_agenda`) are gated behind `SLO_INCLUDE_PROBLEM=1`
-# until their fix plans land.
+# until their fix plans land. MUST stay its own binary (CI invokes it by name
+# and greps its `interactive_slo:` output for the SLO gate).
 [[bench]]
 name = "interactive_slo"
 harness = false
@@ -553,20 +491,9 @@ harness = false
 # `pend-09/spike-archive` for the original source.  Throwaway in
 # spirit; lives only until the spike's open question 8 is closed
 # (see `docs/session-log/2026-sessions-401-800.md` Session 698 + `git tag pend-09/spike-archive`).
+# Hand-rolled `fn main()` harness (not criterion) — stays standalone.
 [[bench]]
 name = "loro_vs_sql_reads"
-harness = false
-
-# #1231 Phase 2 — cold-start / vault-open at 100K blocks (time-to-first-render:
-# pool open + page-list load + first-page render + initial materialization).
-[[bench]]
-name = "cold_start_bench"
-harness = false
-
-# #1231 Phase 3 — resource envelope at 100K blocks (DB-on-disk size + row
-# counts; peak memory is an out-of-process gap, documented in the bench).
-[[bench]]
-name = "resource_envelope_bench"
 harness = false
 
 # Stdio ↔ MCP socket bridge binary shipped alongside the Tauri app.

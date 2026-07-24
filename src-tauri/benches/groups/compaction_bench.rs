@@ -5,7 +5,7 @@
 //!   1. `get_compaction_status` — query op log statistics at varying table sizes
 //!   2. `compact_op_log`        — full compaction (snapshot + purge) at varying sizes
 
-use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
 use agaric_lib::commands::{compact_op_log_cmd_inner, get_compaction_status_inner};
 use agaric_lib::db::init_pool;
@@ -157,4 +157,3 @@ fn bench_compact_op_log(c: &mut Criterion) {
 
 criterion_group!(status_benches, bench_get_compaction_status);
 criterion_group!(compact_benches, bench_compact_op_log);
-criterion_main!(status_benches, compact_benches);
