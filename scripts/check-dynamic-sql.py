@@ -35,7 +35,15 @@ caught, and test fixtures are excluded.
 Invocation: prek passes the set of changed files as argv (hook id
 `check-dynamic-sql`). Run manually over the whole tree with:
 
-    python3 scripts/check-dynamic-sql.py $(git ls-files 'src-tauri/src/*.rs')
+    python3 scripts/check-dynamic-sql.py $(git ls-files \
+        'src-tauri/src/*.rs' 'src-tauri/agaric-store/src/*.rs' \
+        'src-tauri/agaric-engine/src/*.rs' 'src-tauri/agaric-sync/src/*.rs' \
+        'src-tauri/diagnostics/src/*.rs')
+
+Since #3107 the scan follows the four crate roots the table-ownership guard
+(#2895) polices (app / agaric-store / agaric-engine / agaric-sync) plus the
+diagnostics crate — the #2621 crate split relocated much dynamic-SQL surface
+into the subcrates, which this guard previously never followed.
 
 Stdlib only — no third-party deps.
 """
@@ -63,6 +71,54 @@ _spec.loader.exec_module(_crt)
 strip_rust_comments = _crt.strip_rust_comments
 cfg_test_line_set = _crt.cfg_test_line_set
 is_test_file = _crt.is_test_file
+_glob_match = _crt._glob_match
+
+# --- Scan roots -----------------------------------------------------------
+# The #2621 crate split moved substantial dynamic-SQL surface out of
+# `src-tauri/src` into `agaric-store` / `agaric-engine` / `agaric-sync`, but
+# this guard kept scanning only `src-tauri/src` — a NEW runtime `sqlx::query(`
+# in a subcrate was invisible to the ratchet (#3107). Scan the SAME four crate
+# roots the table-ownership guard (#2895) polices, plus the diagnostics crate.
+#
+# These MIRROR `check-table-ownership.py`'s `CRATE_ROOTS` /
+# `EXTRA_TEST_FILE_GLOBS` / `is_excluded_file` deliberately by REPLICATION
+# rather than import: the two guards stay decoupled (no dynamic-sql →
+# table-ownership dependency edge). Keep this list in sync with that guard —
+# when a crate root is added there (e.g. a future `agaric-core`), add it here
+# too so the scan never silently goes stale again.
+#
+# Longer paths must be probed before `src-tauri/src` so a subcrate file is not
+# misattributed to the "app" prefix (only matters for the startswith check in
+# `main`).
+CRATE_ROOTS: list[Path] = [
+    REPO_ROOT / "src-tauri" / "agaric-store" / "src",
+    REPO_ROOT / "src-tauri" / "agaric-engine" / "src",
+    REPO_ROOT / "src-tauri" / "agaric-sync" / "src",
+    REPO_ROOT / "src-tauri" / "diagnostics" / "src",
+    REPO_ROOT / "src-tauri" / "src",
+]
+
+# Guard-local test/fixture exclusions layered on top of the shared
+# `is_test_file` (tests.rs / tests/** / *_tests.rs). Mirrors
+# check-table-ownership.py: whole-file property-test modules that are
+# `#[cfg(test)]`-gated at their `mod` declaration but whose FILENAMES escape
+# the shared globs, the `test-util` pool helper, and standalone audit/bin
+# binaries (their fixture-seed queries are not production dynamic SQL).
+EXTRA_TEST_FILE_GLOBS = [
+    "**/*proptest*.rs",
+    "**/test_support.rs",
+    "**/src/bin/**",
+]
+
+
+def is_excluded_file(rel_path: str) -> bool:
+    """Test/fixture/bin files skipped by the scan.
+
+    The shared `is_test_file` OR this guard's `EXTRA_TEST_FILE_GLOBS`.
+    """
+    return is_test_file(rel_path) or any(
+        _glob_match(rel_path, g) for g in EXTRA_TEST_FILE_GLOBS
+    )
 
 # Runtime (non-macro) query constructors. The trailing `(` (with optional
 # whitespace) distinguishes them from the compile-checked macro forms
@@ -136,11 +192,14 @@ def site_has_marker(path: Path, indices: list[int]) -> list[int]:
 
 def all_production_files() -> list[Path]:
     files: list[Path] = []
-    for p in sorted((REPO_ROOT / "src-tauri" / "src").rglob("*.rs")):
-        rel = str(p.relative_to(REPO_ROOT))
-        if is_test_file(rel):
+    for root in CRATE_ROOTS:
+        if not root.is_dir():
             continue
-        files.append(p)
+        for p in sorted(root.rglob("*.rs")):
+            rel = str(p.relative_to(REPO_ROOT))
+            if is_excluded_file(rel):
+                continue
+            files.append(p)
     return files
 
 
@@ -226,13 +285,45 @@ def run_self_test() -> int:
     for s in should_not_match:
         if DYN_SQL_RE.search(s):
             failures.append(f"expected NO match, but matched: {s!r}")
+
+    # --- Scan-scope contract (#3107) ---
+    # The scan must reach the subcrate roots the #2621 split moved dynamic SQL
+    # into, and must exclude proptest / bin / test-support fixture files that
+    # legitimately open ad-hoc queries. (rel-path, expect_excluded).
+    scope_cases: list[tuple[str, bool]] = [
+        # Subcrate production files MUST be scanned (not excluded).
+        ("src-tauri/agaric-store/src/op_log/append.rs", False),
+        ("src-tauri/agaric-engine/src/loro/projection.rs", False),
+        ("src-tauri/agaric-sync/src/lib.rs", False),
+        ("src-tauri/src/commands/blocks/crud.rs", False),
+        # Property-test modules whose filenames escape the shared globs, the
+        # test-util pool helper, and standalone bins MUST be excluded.
+        ("src-tauri/src/dag/proptest_b2.rs", True),
+        ("src-tauri/agaric-store/src/test_support.rs", True),
+        ("src-tauri/diagnostics/src/bin/audit_cross_space_refs.rs", True),
+        # The shared test-file globs still apply across all roots.
+        ("src-tauri/agaric-store/src/op_log/tests.rs", True),
+    ]
+    scoped_roots = tuple(
+        str(root.relative_to(REPO_ROOT)) + "/" for root in CRATE_ROOTS
+    )
+    for rel, expect_excluded in scope_cases:
+        if not rel.startswith(scoped_roots):
+            failures.append(f"scope: {rel!r} not under any scanned crate root")
+        got = is_excluded_file(rel)
+        if got != expect_excluded:
+            failures.append(
+                f"is_excluded_file({rel!r}) expected {expect_excluded}, "
+                f"got {got}"
+            )
+
     if failures:
         print("check-dynamic-sql self-test FAILED:", file=sys.stderr)
         for f in failures:
             print(f"  {f}", file=sys.stderr)
         return 1
-    print(f"check-dynamic-sql self-test passed "
-          f"({len(should_match) + len(should_not_match)} cases).")
+    total = len(should_match) + len(should_not_match) + len(scope_cases)
+    print(f"check-dynamic-sql self-test passed ({total} cases).")
     return 0
 
 
@@ -247,8 +338,11 @@ def main(argv: list[str]) -> int:
     baseline = read_baseline()
 
     # Determine which files to check. prek passes changed files; a manual
-    # whole-tree run passes the full glob. Either way, only police
-    # production .rs under src-tauri/src/.
+    # whole-tree run passes the full glob. Either way, only police production
+    # .rs under one of the scanned crate roots (#3107).
+    root_prefixes = tuple(
+        str(root.relative_to(REPO_ROOT)) + "/" for root in CRATE_ROOTS
+    )
     targets: list[Path] = []
     for arg in argv:
         p = Path(arg)
@@ -258,9 +352,9 @@ def main(argv: list[str]) -> int:
             rel = str(p.resolve().relative_to(REPO_ROOT))
         except ValueError:
             continue
-        if not rel.startswith("src-tauri/src/"):
+        if not rel.startswith(root_prefixes):
             continue
-        if is_test_file(rel):
+        if is_excluded_file(rel):
             continue
         if not p.is_file():
             continue

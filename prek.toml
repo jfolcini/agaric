@@ -850,15 +850,19 @@ stages = ["pre-commit", "pre-push"]
 # a file that grows PAST its baseline must carry a `// dynamic-sql: <reason>`
 # marker at every dynamic site, applying back-pressure toward the compile-
 # checked macros. Comment-/string-stripping and `#[cfg(test)]`-module skipping
-# are shared with check-raw-tx.py. Regenerate the baseline with
-# `python3 scripts/check-dynamic-sql.py --update-baseline`. Allowlist/rules
-# live in scripts/check-dynamic-sql.py.
+# are shared with check-raw-tx.py. Since #3107 the scan follows the four crate
+# roots the #2621 split moved dynamic-SQL surface into (app = src-tauri/src,
+# agaric-store, agaric-engine, agaric-sync) — mirroring the table-ownership
+# hook's `files` — plus the diagnostics crate (its bins are excluded at the
+# guard level). Regenerate the baseline with `python3
+# scripts/check-dynamic-sql.py --update-baseline`. Allowlist/rules live in
+# scripts/check-dynamic-sql.py.
 [[repos.hooks]]
 id = "check-dynamic-sql"
 name = "dynamic-SQL justification guard (#646)"
 entry = "python3 scripts/check-dynamic-sql.py"
 language = "system"
-files = '^src-tauri/src/.*\.rs$'
+files = '^src-tauri/(src|agaric-store/src|agaric-engine/src|agaric-sync/src)/.*\.rs$'
 stages = ["pre-commit", "pre-push"]
 
 # #1188: the guard's detection regex must tolerate a turbofish between the
