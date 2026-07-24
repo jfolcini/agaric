@@ -61,7 +61,10 @@ describe('Agaric real-backend smoke (#155)', () => {
     //    characters under a janky first render) doesn't commit corrupt text and
     //    fail the marker assertion. Hyphenate so a dropped space can't merge
     //    words — the marker is still unique via the timestamp.
-    const marker = `wdio-real-backend-smoke-${Date.now()}`
+    // Collapse adjacent duplicate digits: WebKit deterministically coalesces
+    // repeated keystrokes (run 30057838392: '22'->'2', '88'->'8'), so the typed
+    // marker must contain no adjacent duplicate characters.
+    const marker = `wdio-real-backend-smoke-${`${Date.now()}`.replace(/(.)\1+/g, '$1')}`
     await typeMarkerVerified(marker)
 
     // 5. Commit the block (Enter flushes and moves the roving editor to a fresh

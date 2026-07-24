@@ -170,9 +170,30 @@ export async function openJournalBlockEditor(): Promise<void> {
   await addBlock.waitForClickable({ timeout: ACTION_TIMEOUT })
   await addBlock.click()
 
-  const editor = $('[data-testid="block-editor"] [contenteditable="true"]')
-  await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
-  await editor.click()
+  // The virgin-vault empty-state path ("Add your first block") seeds the first
+  // block but can settle it straight to a StaticBlock without the roving
+  // editor ever mounting focused (observed live in run 30057838392: block-tree
+  // + block-static present, no block-editor). If the editor doesn't appear,
+  // click the (empty) static block to enter edit mode instead of timing out.
+  const editorSelector = '[data-testid="block-editor"] [contenteditable="true"]'
+  const appeared = await $(editorSelector)
+    .waitForDisplayed({ timeout: 10_000 })
+    .then(
+      () => true,
+      () => false,
+    )
+  if (!appeared) {
+    const lastStatic = $$('[data-testid="block-static"]')
+    const count = await lastStatic.length
+    if (count === 0) {
+      throw new Error(
+        'openJournalBlockEditor: neither a focused block editor nor any block-static appeared after the Add-block CTA',
+      )
+    }
+    await (await lastStatic[count - 1]).click()
+    await $(editorSelector).waitForDisplayed({ timeout: ACTION_TIMEOUT })
+  }
+  await $(editorSelector).click()
 }
 
 /**
@@ -204,7 +225,19 @@ export async function typeMarkerVerified(text: string): Promise<void> {
     const editor = $(editorSelector)
     await editor.waitForDisplayed({ timeout: ACTION_TIMEOUT })
     await editor.click()
-    await browser.keys(text.split(''))
+    if (attempt === 1) {
+      await browser.keys(text.split(''))
+    } else {
+      // Run 30057838392 proved the drop is DETERMINISTIC, not a race: adjacent
+      // duplicate characters coalesce ("crossview"→"crosview" identically on
+      // all attempts; "22"/"88" digit pairs each lost one). A plain retype can
+      // therefore never converge. On retries, pace each keystroke so WebKit's
+      // key handling sees distinct events even for repeated characters.
+      for (const ch of text) {
+        await browser.keys([ch])
+        await browser.pause(40)
+      }
+    }
     // Poll briefly: ProseMirror applies the transaction and re-renders text
     // asynchronously, so read back under a short waitUntil rather than once.
     let matched = false

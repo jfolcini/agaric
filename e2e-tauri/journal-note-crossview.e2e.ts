@@ -18,7 +18,10 @@ import {
   waitForAppReady,
 } from './helpers'
 
-const MARKER = 'wdio-journal-crossview'
+// Marker rule (run 30057838392): NO adjacent duplicate characters — WebKit
+// key handling deterministically coalesces repeated keystrokes ('ss'->'s'),
+// so a marker with doubles can never be typed verbatim.
+const MARKER = 'wdio-journal-viewhop'
 
 describe('Agaric real-backend cross-view durability (#3085)', () => {
   it('keeps a Journal block after switching to Pages and back', async () => {
