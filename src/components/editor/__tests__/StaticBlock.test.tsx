@@ -17,6 +17,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { BULLET_GLYPH } from '@/components/editor/ListMarker'
+import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
 import { StaticBlock } from '@/components/editor/StaticBlock'
 import { clearRichContentParseCache } from '@/components/RichContentRenderer'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -1921,6 +1923,36 @@ describe('StaticBlock', () => {
 
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+  })
+
+  // #3000 — the same-line list marker (bullet / computed ordinal), resolved
+  // from ListMarkerContext by block id.
+  describe('list marker', () => {
+    it('renders no marker without a provider (plain block)', () => {
+      render(<StaticBlock blockId="B1" content="plain" onFocus={vi.fn()} />)
+      expect(screen.queryByTestId('list-marker')).toBeNull()
+    })
+
+    it('renders a bullet marker on the same line as the text', () => {
+      render(
+        <ListMarkerProvider value={{ styleOf: () => 'bullet', ordinalOf: () => undefined }}>
+          <StaticBlock blockId="B1" content="buy milk" onFocus={vi.fn()} />
+        </ListMarkerProvider>,
+      )
+      const marker = screen.getByTestId('list-marker')
+      expect(marker).toHaveTextContent(BULLET_GLYPH)
+      // Same container as the text ⇒ same line, not a split-off row (#2999).
+      expect(marker.parentElement).toHaveTextContent('buy milk')
+    })
+
+    it('renders the computed ordinal for an ordered block', () => {
+      render(
+        <ListMarkerProvider value={{ styleOf: () => 'ordered', ordinalOf: () => 3 }}>
+          <StaticBlock blockId="B1" content="third" onFocus={vi.fn()} />
+        </ListMarkerProvider>,
+      )
+      expect(screen.getByTestId('list-marker')).toHaveTextContent('3.')
     })
   })
 })

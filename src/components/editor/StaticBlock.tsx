@@ -18,6 +18,8 @@ import type React from 'react'
 import { memo, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ListMarker } from '@/components/editor/ListMarker'
+import { useListMarker } from '@/components/editor/ListMarkerContext'
 import { StaticBlockAttachments } from '@/components/editor/StaticBlockAttachments'
 import { StaticQueryBlock } from '@/components/editor/StaticQueryBlock'
 import { useRichContent } from '@/components/editor/useRichContent'
@@ -58,6 +60,10 @@ function StaticBlockInner({
   onSelect,
 }: StaticBlockProps): React.ReactElement {
   const { t } = useTranslation()
+
+  // #3000 — the block's same-line list marker (bullet / computed ordinal),
+  // resolved from ListMarkerContext by id. `'none'` renders nothing.
+  const { style: listStyle, ordinal: listOrdinal } = useListMarker(blockId)
 
   const richContent = useRichContent(content, {
     onNavigate,
@@ -140,6 +146,7 @@ function StaticBlockInner({
         data-block-id={blockId}
         onClick={handleOuterClick}
       >
+        <ListMarker style={listStyle} ordinal={listOrdinal} />
         {richContent ?? (
           <span className="block-placeholder text-muted-foreground italic">
             {t('block.emptyPlaceholder')}
