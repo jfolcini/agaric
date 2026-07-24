@@ -21,7 +21,6 @@
 2 engine block_links  # projection co-writer (two-arm lockstep, #891)
 2 engine block_tag_inherited  # projection co-writer (two-arm lockstep, #891)
 2 engine block_tag_refs  # projection co-writer (two-arm lockstep, #891)
-2 engine op_log  # migrating: slice 5 (store::op_log::ingest_remote_op_in_tx)
 2 engine page_link_cache  # projection co-writer (two-arm lockstep, #891)
 4 engine pages_cache  # projection co-writer (two-arm lockstep, #891)
 2 engine projected_agenda_cache  # projection co-writer (two-arm lockstep, #891)
