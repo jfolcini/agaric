@@ -252,8 +252,17 @@ const REQUIRED_SCENARIOS: ReadonlyArray<readonly [op: string, scenario: string]>
   ['set_todo_state', 'agenda-reserved-columns'],
 
   ['purge_block', 'subtree-with-satellites'],
+  ['purge_block', 'used-as-tag-cleanup'],
   ['set_property', 'reserved-key-routes-to-column'],
   ['delete_property', 'reserved-key-clears-column'],
+
+  // purge_block/soft-delete-guard (#3091) is deliberately NOT a tuple: the
+  // conformance op-runner cannot express it. The soft-delete guard + depth cap
+  // live only in the `purge_block_inner` COMMAND path, while the runner applies
+  // the PurgeBlock OP via append_local_op + dispatch_op (the materializer's
+  // guard-free `purge_block_sql_cascade`), so backend and mock would diverge on
+  // a live-block purge fixture. Its coverage is the mock unit tests
+  // (tauri-mock.test.ts) + the backend's own command-layer tests.
 
   // create_block/tag-space-scope (#3081, shipped in #3092) is deliberately NOT a
   // tuple: the harness cannot express it (assign_all_to_test_space masks space-less

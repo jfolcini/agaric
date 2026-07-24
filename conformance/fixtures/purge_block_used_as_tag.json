@@ -1,0 +1,100 @@
+{
+  "description": "#3091 — purging a block that is USED AS A TAG on a surviving block must also erase the dangling tag association (backend deletes block_tags WHERE tag_id IN cohort; the mock previously only cleaned the block_id side). Tag the survivor S2 with tag block S3, soft-delete S3, then purge S3: S2 survives but its tag ref to S3 is gone, so block_tags is empty. Pins the tag_id-side satellite cleanup via the existing block_tags snapshot table (no snapshot extension needed).",
+  "expected": {
+    "block_tags": [],
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B1",
+        "page_id": "B1",
+        "parent_id": null,
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "deleted_at": null,
+        "due_date": null,
+        "id": "B2",
+        "page_id": "B1",
+        "parent_id": "B1",
+        "position": 1,
+        "priority": null,
+        "scheduled_date": null,
+        "todo_state": null
+      }
+    ],
+    "op_log_digest": {
+      "count": 3,
+      "ops": [
+        {
+          "op_type": "add_tag"
+        },
+        {
+          "op_type": "delete_block"
+        },
+        {
+          "op_type": "purge_block"
+        }
+      ]
+    },
+    "page_links": [],
+    "properties": []
+  },
+  "name": "purge_block_used_as_tag",
+  "ops": [
+    {
+      "args": {
+        "blockId": "S2",
+        "tagId": "S3"
+      },
+      "command": "add_tag"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "delete_block"
+    },
+    {
+      "args": {
+        "blockId": "S3"
+      },
+      "command": "purge_block"
+    }
+  ],
+  "scenarios": ["used-as-tag-cleanup"],
+  "seed": {
+    "blocks": [
+      {
+        "block_type": "page",
+        "content": "Home",
+        "id": "S1",
+        "parent_id": null,
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "survivor",
+        "id": "S2",
+        "parent_id": "S1",
+        "position": 1
+      },
+      {
+        "block_type": "content",
+        "content": "tag-block",
+        "id": "S3",
+        "parent_id": "S1",
+        "position": 2
+      }
+    ],
+    "properties": [],
+    "tags": []
+  }
+}
