@@ -167,7 +167,12 @@ export async function openJournalBlockEditor(): Promise<void> {
     './/button[contains(normalize-space(.), "Add block") or ' +
       'contains(normalize-space(.), "Add your first block")]',
   )
-  await addBlock.waitForClickable({ timeout: ACTION_TIMEOUT })
+  // First boot on a virgin vault renders the Journal shell quickly but the day
+  // section (and its CTA) only after today's page auto-creates behind the
+  // calendar-dates load + boot-time index rebuilds — observed >30s under CI
+  // load (run 30059678579: shell testids present, no day-section content at
+  // 30s). Give the FIRST interactive element the full boot budget.
+  await addBlock.waitForClickable({ timeout: APP_READY_TIMEOUT })
   await addBlock.click()
 
   // The virgin-vault empty-state path ("Add your first block") seeds the first
