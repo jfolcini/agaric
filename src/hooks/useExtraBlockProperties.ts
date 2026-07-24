@@ -37,6 +37,7 @@
 import { useMemo, useRef } from 'react'
 
 import { useBatchPropertyRows } from '@/hooks/useBatchPropertyRows'
+import { LIST_STYLE_KEY } from '@/lib/list-style'
 import type { PropertyRow } from '@/lib/tauri'
 
 const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
@@ -44,6 +45,10 @@ const BUILTIN_PROPERTY_KEYS: ReadonlySet<string> = new Set([
   'priority',
   'due_date',
   'scheduled_date',
+  // #3000 — listStyle renders as the block's list marker, not a property chip;
+  // exclude it here so a bullet/ordered block doesn't also show a redundant
+  // `listStyle: bullet` row in the property-chip UI.
+  LIST_STYLE_KEY,
 ])
 
 export type BlockPropertiesMap = Record<string, Array<{ key: string; value: string }>>
