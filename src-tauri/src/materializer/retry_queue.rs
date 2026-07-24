@@ -346,7 +346,11 @@ impl RetryKind {
             MaterializeTask::RebuildPageLinkCache => {
                 Some((Self::RebuildPageLinkCache, GLOBAL_TASK_SENTINEL.to_string()))
             }
-            MaterializeTask::ApplyOp(record) => Some((
+            // #2896: a `ReplayApplyOp` that exhausts retries persists as a plain
+            // `ApplyOp` retry row (the replay sink is dropped) — matching the
+            // prior behaviour where replay enqueued plain `ApplyOp`s. A later
+            // re-apply runs outside the replay window and reprojects inline.
+            MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => Some((
                 Self::ApplyOp {
                     device_id: record.device_id.clone(),
                     seq: record.seq,

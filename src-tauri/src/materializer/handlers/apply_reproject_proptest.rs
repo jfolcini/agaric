@@ -504,9 +504,18 @@ impl ChainDriver {
         // handlers that call the via_loro helpers directly on the LOCAL path.
         match &payload {
             OpPayload::CreateBlock(p) => {
-                loro_apply::apply_create_block_via_loro(&mut tx, state, &self.device_id, p, None)
-                    .await
-                    .expect("local create_block");
+                // #2896: `None` reprojection sink = `ApplyMode::Normal` (inline
+                // reproject), matching the LOCAL command path these mirror.
+                loro_apply::apply_create_block_via_loro(
+                    &mut tx,
+                    state,
+                    &self.device_id,
+                    p,
+                    None,
+                    None,
+                )
+                .await
+                .expect("local create_block");
             }
             OpPayload::EditBlock(p) => {
                 loro_apply::apply_edit_block_via_loro(&mut tx, state, &self.device_id, p)
@@ -514,7 +523,7 @@ impl ChainDriver {
                     .expect("local edit_block");
             }
             OpPayload::MoveBlock(p) => {
-                loro_apply::apply_move_block_via_loro(&mut tx, state, &self.device_id, p)
+                loro_apply::apply_move_block_via_loro(&mut tx, state, &self.device_id, p, None)
                     .await
                     .expect("local move_block");
             }

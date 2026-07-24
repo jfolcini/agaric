@@ -578,7 +578,9 @@ pub(super) async fn process_single_foreground_task(
         // per successfully-persisted retry row.
         let err_msg = outcome.last_error_msg.as_deref().unwrap_or("unknown error");
         match &task {
-            MaterializeTask::ApplyOp(record) => {
+            // #2896: a boot-replay op that exhausts retries is handled exactly
+            // like a plain `ApplyOp` (it persists as one — see `retry_queue`).
+            MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
                 tracing::warn!(
                     kind = "ApplyOp",
                     seq = record.seq,

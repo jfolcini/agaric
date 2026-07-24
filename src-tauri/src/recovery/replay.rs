@@ -420,19 +420,18 @@ pub async fn replay_unmaterialized_ops(
     // touched parent ONCE, below, from the engine's FINAL state.
     let state = materializer.loro_state();
 
-    // #2295 — RAII backstop: whatever happens in the enqueue loop / drain
-    // (`?`-early-return on a chunk read or the foreground flush), the
-    // suppression flag is ALWAYS cleared. The success path clears it
-    // explicitly FIRST (before draining) so the drop here is an idempotent
-    // no-op; the error path relies on this drop (next boot re-replays).
-    struct SuppressionGuard<'a>(&'a crate::loro::shared::LoroState);
-    impl Drop for SuppressionGuard<'_> {
-        fn drop(&mut self) {
-            self.0.end_replay_suppression();
-        }
-    }
-    state.begin_replay_suppression();
-    let _suppress_guard = SuppressionGuard(state);
+    // #2896 — the EXPLICIT reprojection-deferral sink. This replaces the retired
+    // ambient boot-replay suppression global on `LoroState` + its comment-enforced
+    // quiescence invariant: instead of flipping a process-wide flag, we OWN this
+    // sink here and thread a clone into every op we enqueue (via
+    // `MaterializeTask::ReplayApplyOp`), so each replayed create/move records its
+    // touched `(space_id, parent)` group HERE instead of reprojecting inline.
+    // Any op NOT dispatched by this driver (a concurrent live/remote op) carries
+    // no sink and reprojects inline by construction — it can never inherit this
+    // suppression. Nothing needs to be cleared on the error path: an aborted
+    // replay simply drops the sink, and the next boot re-replays (the apply
+    // cursor only advances on successful apply).
+    let dirty = agaric_engine::apply::kernel::ReplayDirtyParents::new();
 
     // #2295 — remember the (single, per the #412 guard above) device id so we
     // can acquire the right per-space engine for the end-of-replay reproject.
@@ -469,7 +468,9 @@ pub async fn replay_unmaterialized_ops(
             // #2295: capture the device id before the record moves into the
             // task — the end-of-replay reproject needs it to reach the engine.
             replay_device_id = Some(record.device_id.clone());
-            let task = MaterializeTask::ApplyOp(Arc::new(record));
+            // #2896: carry a clone of the replay-owned sink on the task so the
+            // consumer applies this op in `ApplyMode::ReplaySuppressed(dirty)`.
+            let task = MaterializeTask::ReplayApplyOp(Arc::new(record), dirty.clone());
             match materializer.enqueue_foreground(task).await {
                 Ok(()) => {
                     report.ops_replayed += 1;
@@ -480,7 +481,7 @@ pub async fn replay_unmaterialized_ops(
                     // the cursor only advances on successful apply.
                     tracing::warn!(
                         error = %e,
-                        "replay: failed to enqueue ApplyOp — will retry on next boot"
+                        "replay: failed to enqueue ReplayApplyOp — will retry on next boot"
                     );
                     report.replay_errors.push(format!("enqueue: {e}"));
                 }
@@ -494,18 +495,13 @@ pub async fn replay_unmaterialized_ops(
     // interleave with the replayed real ops.
     materializer.flush_foreground().await?;
 
-    // #2295 — every replayed op has now applied, so the per-space engines hold
-    // FINAL state. Reproject each touched parent group ONCE from that state.
-    //
-    // Order matters:
-    //   1. Clear the suppression flag FIRST, so anything that applies an op
-    //      after this point reprojects inline normally (quiescence means
-    //      nothing should, but the ordering is the invariant).
-    //   2. Drain the dirty set (this leaves it empty for the next boot).
-    //   3. Reproject each `(space_id, parent)` from the engine's final sibling
-    //      order.
-    state.end_replay_suppression();
-    let dirty = state.drain_replay_dirty();
+    // #2295/#2896 — every replayed op has now applied, so the per-space engines
+    // hold FINAL state. Drain the replay-owned sink and reproject each touched
+    // `(space_id, parent)` group ONCE from that final sibling order. No flag to
+    // clear: the sink is local to this driver, so any op that applied without it
+    // (there should be none during boot, but a concurrent applier is now
+    // harmless by construction) already reprojected inline.
+    let dirty = dirty.drain();
     let mut parents_reprojected = 0usize;
     if let Some(device_id) = replay_device_id.as_deref() {
         use crate::space::SpaceId;

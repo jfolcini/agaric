@@ -44,10 +44,28 @@ pub async fn apply_op_projected(
     state: &crate::loro::shared::LoroState,
     advance_cursor: bool,
 ) -> Result<ApplyEffects, AppError> {
+    // #2896: every caller of this signature (the LOCAL command sites) applies in
+    // `ApplyMode::Normal` — reproject inline. Only the boot-replay path reaches
+    // the mode-aware variant below.
+    apply_op_projected_with_mode(tx, record, state, advance_cursor, ApplyMode::Normal).await
+}
+
+/// #2896 — mode-aware form of [`apply_op_projected`]. The single-op REMOTE /
+/// boot-replay path ([`apply_op`]) threads its [`ApplyMode`] through here so a
+/// replayed op defers its inline reprojection into the replay-owned
+/// [`ReplayDirtyParents`] sink; every other caller uses the [`apply_op_projected`]
+/// wrapper, which passes [`ApplyMode::Normal`].
+pub async fn apply_op_projected_with_mode(
+    tx: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+    state: &crate::loro::shared::LoroState,
+    advance_cursor: bool,
+    mode: ApplyMode,
+) -> Result<ApplyEffects, AppError> {
     // #2200: pass `None` — single-op / LOCAL apply is a "chunk of one", so the
     // derived maintenance passes (dense reproject, count recompute) run inline,
     // exactly as before. Only the batch import path opts into deferral.
-    let effects = apply_op_tx(tx, record, None, state).await?;
+    let effects = apply_op_tx_with_mode(tx, record, None, state, mode).await?;
 
     if advance_cursor {
         // #412 / #667 — SINGLE-DEVICE-CURSOR ASSUMPTION (single-op mirror of
@@ -132,6 +150,96 @@ pub async fn advance_apply_cursor(
     .execute(&mut *conn)
     .await?;
     Ok(())
+}
+
+/// #2896 — the reprojection-suppression sink threaded EXPLICITLY through the
+/// boot-replay apply path, replacing the retired process-wide boot-replay
+/// suppression `AtomicBool` on `LoroState`.
+///
+/// Boot replay (`recovery::replay::replay_unmaterialized_ops`) drives every
+/// unmaterialised op through the FULL per-op [`apply_op_tx`] (`chunk = None`)
+/// path, so each replayed create/move would reproject its whole sibling group
+/// INLINE — an O(N²) reprojection storm across a crash-recovery boot. The
+/// replay driver instead constructs ONE `ReplayDirtyParents`, threads a clone
+/// into each op it enqueues (via `MaterializeTask::ReplayApplyOp`), and — once
+/// every op has applied — drains it to reproject each touched
+/// `(space_id, parent)` group ONCE from the engine's FINAL state.
+///
+/// ## Soundness by construction (#2896)
+///
+/// The suppress-or-reproject decision now travels WITH the op as an
+/// [`ApplyMode`] argument, not as ambient shared state. A concurrent NON-replay
+/// applier is dispatched as [`ApplyMode::Normal`] by its OWN caller and
+/// therefore reprojects inline — it cannot observe replay's mode or defer into
+/// replay's set. The comment-enforced quiescence invariant the old global
+/// relied on is no longer required.
+///
+/// The `Arc<Mutex<…>>` interior lets the replay driver share one sink across
+/// the async foreground queue (the ops apply on the materializer consumer task,
+/// not on the replay task) while keeping a handle to drain it. The `HashSet`
+/// dedupes repeated touches of the same group; drain order is irrelevant (each
+/// reproject writes the final dense ranks for its own group). The `parent` key
+/// is space-qualified because the `None` (top-level) key would otherwise
+/// collide across spaces — mirrors [`ChunkAccumulator`].
+type ReplayDirtySet =
+    std::sync::Arc<std::sync::Mutex<std::collections::HashSet<(String, Option<String>)>>>;
+
+#[derive(Debug, Clone, Default)]
+pub struct ReplayDirtyParents(ReplayDirtySet);
+
+impl ReplayDirtyParents {
+    /// Construct an empty sink.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record a `(space_id, parent)` sibling group touched while replaying.
+    /// Idempotent: the `HashSet` dedupes repeated touches of the same group.
+    pub fn record(&self, space_id: &str, parent: Option<&str>) {
+        self.0
+            .lock()
+            .expect("ReplayDirtyParents mutex poisoned")
+            .insert((space_id.to_string(), parent.map(str::to_string)));
+    }
+
+    /// Take the dirty-parent set, leaving it empty. Returned in arbitrary
+    /// order; the reproject is order-independent.
+    pub fn drain(&self) -> Vec<(String, Option<String>)> {
+        let mut set = self.0.lock().expect("ReplayDirtyParents mutex poisoned");
+        std::mem::take(&mut *set).into_iter().collect()
+    }
+}
+
+/// #2896 — the EXPLICIT per-op apply mode, replacing the retired ambient
+/// boot-replay suppression global on `LoroState`. Every apply caller states its
+/// own mode, so a concurrent applier cannot observe (and wrongly inherit)
+/// another caller's replay suppression.
+///
+/// [`Normal`](ApplyMode::Normal) reprojects each touched sibling group inline
+/// (the live / local / remote path). [`ReplaySuppressed`](ApplyMode::ReplaySuppressed)
+/// defers the inline reproject, recording the touched group into the
+/// caller-owned [`ReplayDirtyParents`] sink for a single end-of-replay reproject
+/// (the boot-replay path only).
+#[derive(Debug, Clone, Default)]
+pub enum ApplyMode {
+    /// Reproject touched sibling groups inline — every non-replay path.
+    #[default]
+    Normal,
+    /// Boot replay: skip the inline reproject and record the touched
+    /// `(space_id, parent)` group into the sink for one end-of-replay pass.
+    ReplaySuppressed(ReplayDirtyParents),
+}
+
+impl ApplyMode {
+    /// The reprojection-deferral sink, if this mode suppresses inline
+    /// reprojection. `None` for [`ApplyMode::Normal`] — the caller reprojects
+    /// inline.
+    pub fn replay_dirty(&self) -> Option<&ReplayDirtyParents> {
+        match self {
+            ApplyMode::Normal => None,
+            ApplyMode::ReplaySuppressed(sink) => Some(sink),
+        }
+    }
 }
 
 /// #2200 Tier-2 import scaling: per-CHUNK accumulator that turns two
@@ -328,14 +436,37 @@ pub struct ApplyEffects {
 /// pass (#2200). When `None` (single-op `apply_op`, every LOCAL command path)
 /// both passes run inline exactly as before, so the "chunk of one" flushes
 /// once with an identical result.
-#[tracing::instrument(skip(conn, record, chunk, state), fields(seq = record.seq), err)]
 pub async fn apply_op_tx(
     conn: &mut sqlx::SqliteConnection,
     record: &OpRecord,
     chunk: Option<&mut ChunkAccumulator>,
     state: &crate::loro::shared::LoroState,
 ) -> Result<ApplyEffects, AppError> {
+    // #2896: default to inline reprojection. Only the boot-replay path opts into
+    // `ApplyMode::ReplaySuppressed` via `apply_op_tx_with_mode`.
+    apply_op_tx_with_mode(conn, record, chunk, state, ApplyMode::Normal).await
+}
+
+/// #2896 — [`apply_op_tx`] with an EXPLICIT [`ApplyMode`]. Boot replay passes
+/// [`ApplyMode::ReplaySuppressed`] so each replayed create/move records its
+/// touched sibling group into the replay-owned [`ReplayDirtyParents`] sink
+/// instead of reprojecting inline; the [`apply_op_tx`] wrapper defaults to
+/// [`ApplyMode::Normal`]. The mode is stated by each caller, so a concurrent
+/// non-replay applier can never inherit replay suppression (the #2896 soundness
+/// fix that retired the ambient boot-replay suppression global).
+#[tracing::instrument(skip(conn, record, chunk, state, mode), fields(seq = record.seq), err)]
+pub async fn apply_op_tx_with_mode(
+    conn: &mut sqlx::SqliteConnection,
+    record: &OpRecord,
+    chunk: Option<&mut ChunkAccumulator>,
+    state: &crate::loro::shared::LoroState,
+    mode: ApplyMode,
+) -> Result<ApplyEffects, AppError> {
     use std::str::FromStr;
+    // #2896: the reprojection-deferral sink for the boot-replay path. `None`
+    // (every non-replay caller — `ApplyMode::Normal`) means each touched sibling
+    // group reprojects inline. Threaded to the create/move handlers below.
+    let replay_dirty = mode.replay_dirty();
     let op_type = OpType::from_str(&record.op_type).map_err(|e| {
         AppError::validation(format!("unknown op_type '{}': {}", record.op_type, e))
     })?;
@@ -368,8 +499,15 @@ pub async fn apply_op_tx(
             // #2200 Item 1: when in a chunk, DEFER the dense-position
             // reprojection to end-of-chunk (record the touched parent group in
             // the accumulator); off the chunk path (`None`) reproject inline.
-            apply_create_block_via_loro(conn, state, &record.device_id, &p, chunk.as_deref_mut())
-                .await?;
+            apply_create_block_via_loro(
+                conn,
+                state,
+                &record.device_id,
+                &p,
+                chunk.as_deref_mut(),
+                replay_dirty,
+            )
+            .await?;
         }
         OpType::EditBlock => {
             let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
@@ -484,7 +622,7 @@ pub async fn apply_op_tx(
                 src_page,
                 old_parent_id,
             };
-            apply_move_block_via_loro(conn, state, &record.device_id, &p).await?;
+            apply_move_block_via_loro(conn, state, &record.device_id, &p, replay_dirty).await?;
         }
         OpType::AddTag => {
             let p: AddTagPayload = serde_json::from_str(&record.payload)?;

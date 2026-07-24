@@ -28,6 +28,23 @@ pub(crate) async fn handle_foreground_task(
             }
             Ok(())
         }
+        // #2896 — a boot-replay op: apply in `ApplyMode::ReplaySuppressed` so
+        // its inline reprojection defers into the replay-owned sink (`dirty`).
+        // Identical to `ApplyOp` apart from the explicit mode.
+        MaterializeTask::ReplayApplyOp(record, dirty) => {
+            let mode = ApplyMode::ReplaySuppressed(dirty.clone());
+            if let Err(e) = apply_op_with_mode(pool, record, mode, state).await {
+                tracing::warn!(
+                    op_type = %record.op_type,
+                    device_id = %record.device_id,
+                    seq = record.seq,
+                    error = %e,
+                    "failed to apply boot-replay op — will retry"
+                );
+                return Err(e);
+            }
+            Ok(())
+        }
         MaterializeTask::BatchApplyOps(records) => {
             // #382 — SINGLE-DEVICE-BATCH ASSUMPTION.
             //
@@ -576,9 +593,10 @@ async fn handle_background_task_inner(
             )
             .await
         }
-        MaterializeTask::ApplyOp(record) => {
+        MaterializeTask::ApplyOp(record) | MaterializeTask::ReplayApplyOp(record, _) => {
             // (bg mirror): mirror the foreground catch-all — an
-            // `ApplyOp` in the background queue is a dispatch bug. Promote
+            // `ApplyOp` / `ReplayApplyOp` in the background queue is a dispatch
+            // bug (#2896: both are foreground-only). Promote
             // to error level and return `Err(Validation)` so the bg
             // consumer's outcome inspection bumps `bg_errors`.
             //
