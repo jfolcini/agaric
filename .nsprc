@@ -62,7 +62,7 @@
   "1120792": {
     "active": true,
     "expiresOn": "2026-09-13T00:00:00.000Z",
-    "notes": "js-yaml quadratic-complexity DoS in YAML merge keys (GHSA-h67p-54hq-rp68) via markdownlint-cli2 > js-yaml. markdownlint-cli2 is a dev-only lint tool (not in the production Tauri app or dev runtime) parsing trusted in-repo markdown/config — no adversarial YAML input per the AGENTS.md threat model. No upstream fix published yet. Expires 90d; re-review on expiry."
+    "notes": "js-yaml quadratic-complexity DoS in YAML merge keys (GHSA-h67p-54hq-rp68) via markdownlint-cli2 > js-yaml. markdownlint-cli2 is a dev-only lint tool (not in the production Tauri app or dev runtime) parsing trusted in-repo markdown/config \u2014 no adversarial YAML input per the AGENTS.md threat model. No upstream fix published yet. Expires 90d; re-review on expiry."
   },
   "1120800": {
     "active": true,
@@ -82,7 +82,7 @@
   "1120803": {
     "active": true,
     "expiresOn": "2026-09-14T00:00:00.000Z",
-    "notes": "dompurify IN_PLACE preserves attributes of a clobbered root element → XSS (GHSA-r47g-fvhr-h676). Requires attacker-controlled DOM in IN_PLACE mode; no adversarial input per the AGENTS.md threat model (single-user local-first). Expires 90d; re-review on expiry."
+    "notes": "dompurify IN_PLACE preserves attributes of a clobbered root element \u2192 XSS (GHSA-r47g-fvhr-h676). Requires attacker-controlled DOM in IN_PLACE mode; no adversarial input per the AGENTS.md threat model (single-user local-first). Expires 90d; re-review on expiry."
   },
   "1120805": {
     "active": true,
@@ -108,5 +108,10 @@
     "active": true,
     "expiresOn": "2026-10-22T00:00:00.000Z",
     "notes": "postcss path traversal in previous-source-map sourceMappingURL auto-loading (GHSA-r28c-9q8g-f849) via the build toolchain (vite/tailwind). postcss is a dev/build-time transitive dep that processes the repo's own trusted CSS; it is not in the production Tauri app runtime and is never fed adversarial source maps per the AGENTS.md single-user local-first threat model. Expires 90d; re-review on expiry."
+  },
+  "1124334": {
+    "active": true,
+    "expiresOn": "2026-10-23T00:00:00.000Z",
+    "notes": "brace-expansion DoS via unbounded expansion length causing an out-of-memory crash (GHSA-mh99-v99m-4gvg). Reached only through DEV tooling \u2014 @wdio/config, @stryker-mutator/core, archiver-utils, filelist, mocha, readdir-glob \u2014 plus license-checker's glob/minimatch chain. `npm ls brace-expansion --omit=dev` is empty: it is not in the production Tauri app bundle, and the expansion patterns come from the repo's own trusted config, never adversarial input, per the AGENTS.md single-user local-first threat model. Not overridable: bumping brace-expansion to >=5.0.8 fixes the advisory but breaks license-checker with `TypeError: expand is not a function` (5.x changed its export shape), and all three resolved majors (1.1.16 / 2.1.2 / 5.0.7) are inside the vulnerable range so there is no same-major fix. Expires 90d; re-review on expiry."
   }
 }
