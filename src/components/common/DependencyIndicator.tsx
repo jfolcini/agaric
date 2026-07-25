@@ -24,9 +24,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useBatchPropertyRows, useBatchPropertyRowsLoading } from '@/hooks/useBatchPropertyRows'
+import { unwrap } from '@/lib/app-error'
+import type { PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { PropertyRow } from '@/lib/tauri'
-import { batchResolve, getProperties } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 export interface DependencyIndicatorProps {
@@ -85,7 +86,7 @@ export function DependencyIndicator({
           if (cached) {
             props = cached
           } else {
-            props = await getProperties(blockId)
+            props = unwrap(await commands.getProperties(blockId))
             propertiesCache?.current.set(blockId, props)
           }
         }
@@ -103,7 +104,9 @@ export function DependencyIndicator({
 
         // Try to resolve the title of the blocking task
         try {
-          const resolved = await batchResolve([blockedByProp.value_ref], 'global')
+          const resolved = unwrap(
+            await commands.batchResolve([blockedByProp.value_ref], { kind: 'global' }),
+          )
           if (!cancelled && resolved.length > 0 && resolved[0]?.title) {
             setBlockedByTitle(resolved[0].title)
           }

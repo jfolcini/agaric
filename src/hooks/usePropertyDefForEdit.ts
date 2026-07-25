@@ -12,9 +12,10 @@
 
 import { useEffect, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BlockRow } from '@/lib/tauri'
-import { getPropertyDef, listBlocks } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyDefForEditReturn {
@@ -46,7 +47,9 @@ export function usePropertyDefForEdit(
     // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary every time the user opens
     // the per-block property-editor popover.
-    getPropertyDef(editingProp.key)
+    commands
+      .getPropertyDef(editingProp.key)
+      .then(unwrap)
       .then((def) => {
         if (stale) return
         if (def?.value_type === 'select' && def.options) {
@@ -75,7 +78,21 @@ export function usePropertyDefForEdit(
           if (!currentSpaceId) {
             if (!stale) setRefPages([])
           } else {
-            listBlocks({ blockType: 'page', spaceId: currentSpaceId })
+            commands
+              .listBlocks(
+                {
+                  parentId: null,
+                  blockType: 'page',
+                  tagId: null,
+                  date: null,
+                  dateRange: null,
+                  source: null,
+                  cursor: null,
+                  limit: null,
+                },
+                { kind: 'active', space_id: currentSpaceId },
+              )
+              .then(unwrap)
               .then((res) => {
                 if (!stale) setRefPages(res.items)
               })

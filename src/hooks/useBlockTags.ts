@@ -1,17 +1,11 @@
 import { useCallback, useEffect, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { BlockRow } from '@/lib/tauri'
-import {
-  addTag,
-  createBlock,
-  listBlocks,
-  listInheritedTagsForBlock,
-  listTagsForBlock,
-  removeTag,
-} from '@/lib/tauri'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -76,7 +70,21 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
       setAllTags([])
       return
     }
-    listBlocks({ blockType: 'tag', spaceId: capturedSpaceId })
+    commands
+      .listBlocks(
+        {
+          parentId: null,
+          blockType: 'tag',
+          tagId: null,
+          date: null,
+          dateRange: null,
+          source: null,
+          cursor: null,
+          limit: null,
+        },
+        { kind: 'active', space_id: capturedSpaceId },
+      )
+      .then(unwrap)
       .then((resp) => {
         if (cancelled) return
         if (useSpaceStore.getState().currentSpaceId !== capturedSpaceId) return
@@ -107,7 +115,10 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     setInheritedTagIds(new Set())
     setLoading(true)
     if (blockId) {
-      Promise.all([listTagsForBlock(blockId), listInheritedTagsForBlock(blockId)])
+      Promise.all([
+        commands.listTagsForBlock(blockId).then(unwrap),
+        commands.listInheritedTagsForBlock(blockId).then(unwrap),
+      ])
         .then(([directIds, inheritedIds]) => {
           if (cancelled) return
           const direct = new Set(directIds)
@@ -133,7 +144,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     async (tagId: string) => {
       if (!blockId) return
       try {
-        const resp = await addTag(blockId, tagId)
+        const resp = unwrap(await commands.addTag(blockId, tagId))
         const { rootParentId } = pageStore.getState()
         // #2468 — thread the appended op ref(s) so undo is ref-addressed.
         // `op_refs` is EMPTY on an idempotent no-op (tag already attached):
@@ -164,7 +175,7 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
     async (tagId: string) => {
       if (!blockId) return
       try {
-        const resp = await removeTag(blockId, tagId)
+        const resp = unwrap(await commands.removeTag(blockId, tagId))
         const { rootParentId } = pageStore.getState()
         // #2468 — see handleAddTag: skip the undo push on an idempotent
         // no-op (`op_refs` empty — the tag was not attached).
@@ -196,16 +207,21 @@ export function useBlockTags(blockId: string | null): UseBlockTagsReturn {
         // block; a tag created for the page (or when `addTag` failed) could
         // stay orphaned and vanish from the space-scoped Tags view (#3081).
         const spaceId = useSpaceStore.getState().currentSpaceId
-        const resp = await createBlock({
-          blockType: 'tag',
-          content: trimmed,
-          ...(spaceId != null && { spaceId }),
-        })
+        const resp = unwrap(
+          await commands.createBlock(
+            'tag',
+            trimmed,
+            null,
+            null,
+            spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId },
+            null,
+          ),
+        )
         const entry = { id: resp.id, name: trimmed }
         setAllTags((prev) => [...prev, entry])
         useResolveStore.getState().set(resp.id, trimmed, false)
         if (blockId) {
-          const tagResp = await addTag(blockId, resp.id)
+          const tagResp = unwrap(await commands.addTag(blockId, resp.id))
           const { rootParentId } = pageStore.getState()
           // #2468 — see handleAddTag (a just-created tag can't already be
           // attached, but honor the empty-refs no-op contract regardless).

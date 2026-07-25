@@ -38,9 +38,10 @@ import { QueryResultList } from '@/components/query/QueryResultList'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useAdvancedQuery } from '@/hooks/useAdvancedQuery'
+import { unwrap } from '@/lib/app-error'
+import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey, SpaceScope } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { createBlock, setProperty } from '@/lib/tauri'
-import type { AggregateSpec, FilterPrimitive, GroupSpec, SortKey } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import {
   type BuilderPath,
@@ -131,17 +132,27 @@ export function AdvancedQueryView({ onNavigate }: AdvancedQueryViewProps): React
     async (name: string): Promise<void> => {
       try {
         const spec = serializeQuerySpec(builder, controls)
-        const block = await createBlock({
-          blockType: 'content',
-          content: name,
-          ...(currentSpaceId != null && { spaceId: currentSpaceId }),
-        })
-        await setProperty({ blockId: block.id, key: VIEW_TYPE_KEY, valueText: QUERY_VIEW_MARKER })
-        await setProperty({
-          blockId: block.id,
-          key: QUERY_SPEC_KEY,
-          valueText: JSON.stringify(spec),
-        })
+        const scope: SpaceScope =
+          currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId }
+        const block = unwrap(await commands.createBlock('content', name, null, null, scope, null))
+        unwrap(
+          await commands.setProperty(block.id, VIEW_TYPE_KEY, {
+            value_text: QUERY_VIEW_MARKER,
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }),
+        )
+        unwrap(
+          await commands.setProperty(block.id, QUERY_SPEC_KEY, {
+            value_text: JSON.stringify(spec),
+            value_num: null,
+            value_date: null,
+            value_ref: null,
+            value_bool: null,
+          }),
+        )
         notify.success(t('advancedQuery.savedViews.saved', { name }))
         setSavedViewsRefresh((n) => n + 1)
       } catch {

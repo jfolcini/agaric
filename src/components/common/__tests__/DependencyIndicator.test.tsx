@@ -20,24 +20,27 @@ const mockGetProperties = vi.fn()
 const mockGetBatchProperties = vi.fn()
 const mockBatchResolve = vi.fn()
 
-vi.mock('@/lib/tauri', () => ({
-  getProperties: (...args: unknown[]) => mockGetProperties(...args),
-  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
-  batchResolve: (...args: unknown[]) => mockBatchResolve(...args),
-}))
-
-// #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) now
-// calls `commands.getBatchProperties` from `@/lib/bindings` directly. Route
-// the same spy through the bindings surface, wrapped in the envelope shape
-// `unwrap` expects.
+// #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) calls
+// `commands.getBatchProperties` from `@/lib/bindings` directly.
+// #2927 phase 6 — `DependencyIndicator` itself is now off the `@/lib/tauri`
+// wrapper too: its legacy fallback fetch is `commands.getProperties` and its
+// title lookup is `commands.batchResolve`. All three spies therefore live on
+// the bindings surface, wrapped in the `{status:'ok', data}` envelope that
+// `unwrap` expects. Keeping `getProperties` on the (now unused) wrapper
+// surface would have made the `not.toHaveBeenCalled()` provider-path guards
+// below pass vacuously.
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
     commands: {
       ...actual.commands,
+      getProperties: (...args: unknown[]) =>
+        mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       getBatchProperties: (...args: unknown[]) =>
         mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
