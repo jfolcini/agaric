@@ -14,17 +14,28 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  batchResolve: vi.fn(),
-}))
+// #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
+// mocking only the `@/lib/tauri` wrapper no longer intercepts. Back the
+// generated surface instead, resolving the same typed-result envelope `unwrap`
+// expects.
+const mockedBatchResolve = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 import { useBacklinkResolution } from '@/hooks/useBacklinkResolution'
-import type { BacklinkGroup } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
+import type { BacklinkGroup } from '@/lib/bindings'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-const mockedBatchResolve = vi.mocked(batchResolve)
 
 // 26-char uppercase ULIDs for matching the [0-9A-Z]{26} regex
 const ULID_A = '01HAAAAA0000000000000000AA'
@@ -92,7 +103,7 @@ describe('useBacklinkResolution', () => {
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
     })
 
     await waitFor(() => {
@@ -294,10 +305,9 @@ describe('useBacklinkResolution', () => {
     const { result } = renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith(
-        expect.arrayContaining([ULID_A, ULID_B]),
-        'global',
-      )
+      expect(mockedBatchResolve).toHaveBeenCalledWith(expect.arrayContaining([ULID_A, ULID_B]), {
+        kind: 'global',
+      })
     })
 
     await waitFor(() => {
@@ -390,9 +400,12 @@ describe('useBacklinkResolution', () => {
     renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'SPACE_AAAA')
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
+        kind: 'active',
+        space_id: 'SPACE_AAAA',
+      })
     })
-    expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], 'global')
+    expect(mockedBatchResolve).not.toHaveBeenCalledWith([ULID_A], { kind: 'global' })
   })
 
   it('falls back to global scope when there is no active space', async () => {
@@ -406,7 +419,7 @@ describe('useBacklinkResolution', () => {
     renderHook(() => useBacklinkResolution(groups))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], 'global')
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], { kind: 'global' })
     })
   })
 

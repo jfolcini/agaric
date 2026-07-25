@@ -88,9 +88,21 @@ vi.mock('@/stores/page-blocks', () => ({
   getPageStore: mockGetPageStore,
 }))
 
-vi.mock('@/lib/tauri', () => ({
-  getBlock: (...args: unknown[]) => mockGetBlock(...args),
-}))
+// #2927 phase 5 — `refreshAfterUndoRedo` now calls the generated
+// `commands.getBlock`, so mocking only the `@/lib/tauri` wrapper no longer
+// intercepts. Back the generated surface instead, resolving the same
+// typed-result envelope `unwrap` expects.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBlock: (...args: unknown[]) =>
+        mockGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),

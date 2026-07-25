@@ -30,9 +30,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { editBlock } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceNameEditor'
 
@@ -74,7 +75,7 @@ export function SpaceNameEditor({
       return
     }
     try {
-      await editBlock(spaceId, trimmed)
+      unwrap(await commands.editBlock(spaceId, trimmed))
       await onRefresh()
     } catch (err) {
       logger.error(LOG_MODULE, 'rename failed', { spaceId }, err)

@@ -9,9 +9,10 @@
 
 import { useEffect, useMemo, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BlockRow } from '@/lib/tauri'
-import { trashDescendantCounts } from '@/lib/tauri'
 
 export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, number> {
   const [counts, setCounts] = useState<Record<string, number>>({})
@@ -27,7 +28,9 @@ export function useTrashDescendantCounts(blocks: BlockRow[]): Record<string, num
       return
     }
     let cancelled = false
-    trashDescendantCounts(rootIds)
+    commands
+      .trashDescendantCounts(rootIds)
+      .then(unwrap)
       .then((next) => {
         if (cancelled) return
         setCounts(next ?? {})

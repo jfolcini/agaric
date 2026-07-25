@@ -7,9 +7,23 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  batchResolve: vi.fn(),
-}))
+// #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
+// mocking only the `@/lib/tauri` wrapper no longer intercepts. Back the
+// generated surface instead, resolving the same typed-result envelope `unwrap`
+// expects.
+const mockedBatchResolve = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -22,11 +36,9 @@ vi.mock('@/lib/logger', () => ({
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useTrashBreadcrumbs } from '@/hooks/useTrashBreadcrumbs'
+import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
 
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedLoggerWarn = vi.mocked(logger.warn)
 
 beforeEach(() => {
@@ -50,7 +62,7 @@ describe('useTrashBreadcrumbs', () => {
 
     const { result } = renderHook(() => useTrashBreadcrumbs(blocks))
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], 'global')
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['P1'], { kind: 'global' })
     // Before resolve flushes: page map empty, getPageLabel returns null.
     expect(result.current(blocks[0] as BlockRow)).toBe(null)
 

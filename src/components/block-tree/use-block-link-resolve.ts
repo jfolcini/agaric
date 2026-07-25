@@ -12,8 +12,9 @@
 
 import { useEffect, useMemo } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { batchResolve } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -61,7 +62,12 @@ export async function fetchAndCacheLinks(
   isCancelled: () => boolean,
 ): Promise<void> {
   try {
-    const resolved = await batchResolve([...ids], spaceId ?? 'global')
+    const resolved = unwrap(
+      await commands.batchResolve(
+        [...ids],
+        spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId },
+      ),
+    )
     if (isCancelled()) return
     const store = useResolveStore.getState()
     const resolvedIds = new Set(resolved.map((r) => r.id))

@@ -16,10 +16,11 @@ import type { RefObject } from 'react'
 import { useCallback, useRef } from 'react'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 
 type TFn = TFunction
@@ -74,7 +75,7 @@ export function useBlockNavigateToLink({
       // Flush current editor state before navigating
       handleFlushRef.current()
       try {
-        const targetBlock = await getBlock(targetId)
+        const targetBlock = unwrap(await commands.getBlock(targetId))
         // Populate cache with the fetched block info
         useResolveStore
           .getState()
@@ -94,7 +95,7 @@ export function useBlockNavigateToLink({
         if (targetBlock.parent_id && targetBlock.parent_id !== rootParentId) {
           // Fetch the parent to get the actual page title (not the target block's content)
           try {
-            const parentBlock = await getBlock(targetBlock.parent_id)
+            const parentBlock = unwrap(await commands.getBlock(targetBlock.parent_id))
             onNavigateToPage?.(targetBlock.parent_id, parentBlock.content ?? 'Untitled', targetId)
           } catch (err) {
             logger.warn(

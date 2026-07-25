@@ -8,9 +8,10 @@
 import { useCallback, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import type { BlockRow } from '@/lib/tauri'
-import { deleteBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 
 interface DeleteTarget {
@@ -42,7 +43,7 @@ export function usePageDelete(
     async (pageId: string) => {
       setDeletingId(pageId)
       try {
-        await deleteBlock(pageId)
+        unwrap(await commands.deleteBlock(pageId))
         setPages((prev) => prev.filter((p) => p.id !== pageId))
         useResolveStore.getState().set(pageId, '(deleted)', true)
         notify.success(t('pageBrowser.deleteSuccess'))

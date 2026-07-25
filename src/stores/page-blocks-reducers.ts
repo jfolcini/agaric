@@ -13,7 +13,9 @@
 
 import type { StoreApi } from 'zustand'
 
-import { retryOnPoolBusy } from '@/lib/app-error'
+import { retryOnPoolBusy, unwrap } from '@/lib/app-error'
+import type { BlockRow, CreateBlockSpec, OpRef } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { internalizeRefTokens, parseIndentedMarkdown } from '@/lib/block-clipboard'
 import { newBlockId } from '@/lib/block-id'
 import { computeIndentedBlocks, findPrevSiblingAt, planSplit } from '@/lib/block-tree-ops'
@@ -22,15 +24,6 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { buildImportRefInternalizers } from '@/lib/paste-internalize'
-import type { BlockRow, CreateBlockSpec, OpRef } from '@/lib/tauri'
-import {
-  createBlock,
-  createBlocksBatch,
-  deleteBlock,
-  editBlock,
-  moveBlock,
-  moveBlocksBatch,
-} from '@/lib/tauri'
 import {
   buildIndexById,
   getDragDescendants,
@@ -206,13 +199,16 @@ export function createReducers({
         // block. retryOnPoolBusy re-throws every non-pool_busy error
         // unchanged, so the catch below behaves identically for real errors.
         const result = await retryOnPoolBusy(() =>
-          createBlock({
-            blockType: 'content',
-            content,
-            ...(parentId != null && { parentId }),
-            index: afterSlot + 1,
-            blockId: newId,
-          }),
+          commands
+            .createBlock(
+              'content',
+              content,
+              parentId ?? null,
+              afterSlot + 1,
+              { kind: 'global' },
+              newId,
+            )
+            .then(unwrap),
         )
 
         // Confirm the provisional insert. Because the block already carries the
@@ -273,7 +269,7 @@ export function createReducers({
         // user text. Without this a 50ms back-pressure spike rolled the
         // optimistic edit back and toasted "save failed" for text the user
         // can still see on screen.
-        const resp = await retryOnPoolBusy(() => editBlock(blockId, content))
+        const resp = await retryOnPoolBusy(() => commands.editBlock(blockId, content).then(unwrap))
         // #753 — adopt the backend echo instead of discarding it. The
         // optimistic update above wrote the raw text we SENT; the backend
         // may normalize it (`edit_block` echoes the canonical BlockRow),
@@ -353,7 +349,7 @@ export function createReducers({
 
       try {
         // #730 — pool_busy retry (see edit/createBelow).
-        const resp = await retryOnPoolBusy(() => deleteBlock(blockId))
+        const resp = await retryOnPoolBusy(() => commands.deleteBlock(blockId).then(unwrap))
         // #2543 — re-confirm the removal at COMMIT time. If a racing sync
         // load() whose snapshot predated the delete commit restored the block
         // while delete_block was in flight, re-splice it out now, recomputing
@@ -544,7 +540,9 @@ export function createReducers({
 
         try {
           // #730 — pool_busy retry (see edit/createBelow).
-          const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
+          const resp = await retryOnPoolBusy(() =>
+            commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
+          )
 
           // Defensive: a reorder never crosses parents. If the backend echoes a
           // different parent, the provisional guess was wrong — reload reconciles
@@ -665,7 +663,9 @@ export function createReducers({
 
       try {
         // #730 — pool_busy retry (see edit/createBelow).
-        const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+        const resp = await retryOnPoolBusy(() =>
+          commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
+        )
 
         if (!handle) {
           // No local splice was applied — reload for the correct flattened
@@ -722,7 +722,9 @@ export function createReducers({
         // preserving the #774 slot semantics WITHIN the tx. Replaces the old
         // per-root `moveBlock` IPC loop + full page reload. #730 — the single
         // call still goes through the shared pool_busy retry.
-        const resp = await retryOnPoolBusy(() => moveBlocksBatch(ordered, newParentId, newIndex))
+        const resp = await retryOnPoolBusy(() =>
+          commands.moveBlocksBatch(ordered, newParentId, newIndex).then(unwrap),
+        )
 
         // Surgical reconcile from the authoritative response — no blind load().
         // Computed inside the functional updater so it runs against the state
@@ -814,7 +816,7 @@ export function createReducers({
         try {
           // #730 — pool_busy retry (see edit/createBelow).
           const resp = await retryOnPoolBusy(() =>
-            moveBlock(blockId, prevSibling.id, prevChildCount),
+            commands.moveBlock(blockId, prevSibling.id, prevChildCount).then(unwrap),
           )
 
           // #774 — mirror reorder/moveUp/moveDown: if the backend echoes a
@@ -894,7 +896,9 @@ export function createReducers({
 
         try {
           // #730 — pool_busy retry (see edit/createBelow).
-          const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+          const resp = await retryOnPoolBusy(() =>
+            commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
+          )
 
           // #774 — mirror reorder/moveUp/moveDown: dedent requests a specific
           // grandparent (`newParentId`). If the backend echoes a different
@@ -948,7 +952,9 @@ export function createReducers({
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent)
           try {
-            const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            const resp = await retryOnPoolBusy(() =>
+              commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
+            )
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
@@ -991,7 +997,9 @@ export function createReducers({
           // The MoveResponse echoes the canonical (parent_id, position) the
           // backend committed, so we mirror it without a follow-up `list_blocks`
           // IPC. #730 — pool_busy retry (see edit/createBelow).
-          const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
+          const resp = await retryOnPoolBusy(() =>
+            commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
+          )
 
           // Defensive: if the backend echoes a different parent (shouldn't
           // happen for moveUp, but the response shape allows it), reload
@@ -1039,7 +1047,9 @@ export function createReducers({
           const newParentId = parent.parent_id ?? null
           const newIndex = siblingSlot(blocks, parent) + 1
           try {
-            const resp = await retryOnPoolBusy(() => moveBlock(blockId, newParentId, newIndex))
+            const resp = await retryOnPoolBusy(() =>
+              commands.moveBlock(blockId, newParentId, newIndex).then(unwrap),
+            )
             await get().load()
             notifyUndoNewAction(rootParentId, resp.op_refs)
             return true
@@ -1090,7 +1100,9 @@ export function createReducers({
 
         try {
           // #730 — pool_busy retry (see edit/createBelow).
-          const resp = await retryOnPoolBusy(() => moveBlock(blockId, parentId, newIndex))
+          const resp = await retryOnPoolBusy(() =>
+            commands.moveBlock(blockId, parentId, newIndex).then(unwrap),
+          )
 
           if ((resp.new_parent_id ?? null) !== (parentId ?? null)) {
             await get().load()
@@ -1189,7 +1201,9 @@ export function createReducers({
           if (specs.length === 0) continue
           // #730 — route through the shared pool_busy retry like the other
           // structural actions.
-          const created = await retryOnPoolBusy(() => createBlocksBatch(specs))
+          const created = await retryOnPoolBusy(() =>
+            commands.createBlocksBatch(specs).then(unwrap),
+          )
           for (let k = 0; k < indicesAtLevel.length; k += 1) {
             const idx = indicesAtLevel[k]
             const row = created[k]

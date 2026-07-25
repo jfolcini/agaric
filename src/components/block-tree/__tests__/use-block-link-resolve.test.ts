@@ -8,9 +8,23 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  batchResolve: vi.fn(),
-}))
+// #2927 phase 5 — the hook now calls the generated `commands.batchResolve`, so
+// mocking only the `@/lib/tauri` wrapper no longer intercepts. Back the
+// generated surface instead, resolving the same typed-result envelope `unwrap`
+// expects.
+const mockedBatchResolve = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -26,14 +40,12 @@ import {
   fetchAndCacheLinks,
   useBlockLinkResolve,
 } from '@/components/block-tree/use-block-link-resolve'
+import type { ResolvedBlock } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { ResolvedBlock } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { keyFor } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedLoggerWarn = vi.mocked(logger.warn)
 
 const TEST_SPACE_ID = 'SPACE_TEST'
@@ -103,7 +115,10 @@ describe('useBlockLinkResolve', () => {
     renderHook(() => useBlockLinkResolve([{ id: BLOCK_1, content: `see [[${ULID_A}]]` }]))
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], TEST_SPACE_ID)
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_A], {
+        kind: 'active',
+        space_id: TEST_SPACE_ID,
+      })
     })
 
     await waitFor(() => {
@@ -229,7 +244,10 @@ describe('useBlockLinkResolve — content-signature memo guard (#1266)', () => {
     rerender({ blocks: [{ id: BLOCK_1, content: `now [[${ULID_B}]]` }] })
 
     await waitFor(() => {
-      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_B], TEST_SPACE_ID)
+      expect(mockedBatchResolve).toHaveBeenCalledWith([ULID_B], {
+        kind: 'active',
+        space_id: TEST_SPACE_ID,
+      })
     })
   })
 
