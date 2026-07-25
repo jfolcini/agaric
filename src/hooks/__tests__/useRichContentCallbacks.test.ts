@@ -15,26 +15,38 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 // #2996 — `useTagClickHandler` now verifies an unresolved tag target via
 // `getBlock` before navigating (mirroring the `[[` block-link guard). Mock the
-// tauri wrapper and the notifier so the guard path is observable.
-vi.mock('@/lib/tauri', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('@/lib/tauri')>()),
-  getBlock: vi.fn(),
-}))
+// IPC surface and the notifier so the guard path is observable.
+//
+// #2927 phase 5 — the hook calls the generated `commands.getBlock`, so mocking
+// only the `@/lib/tauri` wrapper no longer intercepts. Back the generated
+// surface instead, resolving the same typed-result envelope `unwrap` expects.
+const mockedGetBlock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBlock: (...args: unknown[]) =>
+        mockedGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }))
 
 import { useRichContentCallbacks, useTagClickHandler } from '@/hooks/useRichContentCallbacks'
+import type { BlockRow } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useTabsStore } from '@/stores/tabs'
 
-const mockedGetBlock = vi.mocked(getBlock)
 const mockedNotifyError = vi.mocked(notify.error)
 
-function makeBlockRow(overrides: Partial<Awaited<ReturnType<typeof getBlock>>>) {
+function makeBlockRow(overrides: Partial<BlockRow>) {
   return {
     id: 'X',
     block_type: 'tag',
@@ -48,7 +60,7 @@ function makeBlockRow(overrides: Partial<Awaited<ReturnType<typeof getBlock>>>) 
     scheduled_date: null,
     page_id: null,
     ...overrides,
-  } as Awaited<ReturnType<typeof getBlock>>
+  } as BlockRow
 }
 
 beforeEach(() => {

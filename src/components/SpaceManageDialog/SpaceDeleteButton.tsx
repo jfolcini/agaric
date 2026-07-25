@@ -37,9 +37,10 @@ import {
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { deleteBlock } from '@/lib/tauri'
 
 const LOG_MODULE = 'components/SpaceManageDialog/SpaceDeleteButton'
 
@@ -75,7 +76,7 @@ export function SpaceDeleteButton({
     if (pending) return
     setPending(true)
     try {
-      await deleteBlock(spaceId)
+      unwrap(await commands.deleteBlock(spaceId))
       // Only close on success — on failure the dialog stays open (recoverable)
       // per the documented contract at the top of this file.
       setConfirmOpen(false)

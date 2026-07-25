@@ -15,9 +15,10 @@
 import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { createBlock } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import type { usePageBlockStoreApi } from '@/stores/page-blocks'
 
@@ -58,7 +59,9 @@ export function useBlockAutoCreateFirstBlock({
     if (autoCreatedForRef.current === rootParentId) return
     autoCreatedForRef.current = rootParentId
 
-    createBlock({ blockType: 'content', content: '', parentId: rootParentId })
+    commands
+      .createBlock('content', '', rootParentId, null, { kind: 'global' }, null)
+      .then(unwrap)
       .then((result) => {
         const current = pageStore.getState()
         // Only apply if we're still on the same page

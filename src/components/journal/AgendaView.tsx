@@ -23,11 +23,12 @@ import {
   loadMoreAgendaFilters,
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { BlockRow } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 interface AgendaViewProps {
@@ -115,7 +116,7 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
 
         // Resolve page titles for breadcrumbs
         if (outcome.pageIds.length === 0) return
-        const resolved = await batchResolve(outcome.pageIds, 'global')
+        const resolved = unwrap(await commands.batchResolve(outcome.pageIds, { kind: 'global' }))
         if (cancelled) return
         setAgendaPageTitles(buildPageTitleMap(resolved))
       } catch (err) {

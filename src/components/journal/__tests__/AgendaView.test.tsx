@@ -30,10 +30,28 @@ vi.mock('@/lib/agenda-filters', () => ({
 
 // ── Mock tauri lib ──────────────────────────────────────────────────
 vi.mock('@/lib/tauri', () => ({
-  batchResolve: vi.fn(),
   queryByProperty: vi.fn(),
   paginationLimit: (n: number) => n,
 }))
+
+// #2927 phase 5 — AgendaView now calls the generated `commands.batchResolve`,
+// so mocking only the `@/lib/tauri` wrapper no longer intercepts it. Back the
+// generated surface instead, resolving the same typed-result envelope
+// `unwrap` expects. (`queryByProperty` above still routes through the
+// wrapper via `@/lib/agenda-filters`.)
+const mockedBatchResolve = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      batchResolve: (...args: unknown[]) =>
+        mockedBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // ── Mock logger ─────────────────────────────────────────────────────
 vi.mock('@/lib/logger', () => ({
@@ -137,13 +155,12 @@ import {
   loadMoreUnfilteredAgenda,
 } from '@/lib/agenda-filters'
 import { notify } from '@/lib/notify'
-import { batchResolve, queryByProperty } from '@/lib/tauri'
+import { queryByProperty } from '@/lib/tauri'
 
 const mockedNotifyRetry = vi.mocked(notify.retry)
 const mockedExecuteAgendaFilters = vi.mocked(executeAgendaFilters)
 const mockedLoadMoreAgendaFilters = vi.mocked(loadMoreAgendaFilters)
 const mockedLoadMoreUnfilteredAgenda = vi.mocked(loadMoreUnfilteredAgenda)
-const mockedBatchResolve = vi.mocked(batchResolve)
 const mockedQueryByProperty = vi.mocked(queryByProperty)
 
 /** Shared factory + domain defaults for AgendaView tests. */
@@ -370,7 +387,7 @@ describe('AgendaView', () => {
       )
     })
 
-    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], 'global')
+    expect(mockedBatchResolve).toHaveBeenCalledWith(['PAGE1', 'PAGE2'], { kind: 'global' })
   })
 
   // 6b. Resolves page_ids for page grouping

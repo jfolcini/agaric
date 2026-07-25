@@ -7,9 +7,23 @@
 import { renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  trashDescendantCounts: vi.fn(),
-}))
+// #2927 phase 5 — the hook now calls the generated
+// `commands.trashDescendantCounts`, so mocking only the `@/lib/tauri` wrapper
+// no longer intercepts. Back the generated surface instead, resolving the same
+// typed-result envelope `unwrap` expects.
+const mockedTrashDescendantCounts = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      trashDescendantCounts: (...args: unknown[]) =>
+        mockedTrashDescendantCounts(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -22,11 +36,9 @@ vi.mock('@/lib/logger', () => ({
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useTrashDescendantCounts } from '@/hooks/useTrashDescendantCounts'
+import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BlockRow } from '@/lib/tauri'
-import { trashDescendantCounts } from '@/lib/tauri'
 
-const mockedTrashDescendantCounts = vi.mocked(trashDescendantCounts)
 const mockedLoggerWarn = vi.mocked(logger.warn)
 
 beforeEach(() => {

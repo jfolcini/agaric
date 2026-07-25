@@ -10,10 +10,11 @@
 
 import { useCallback, useRef } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getBlock } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -119,7 +120,7 @@ export function useTagClickHandler(): (tagId: string) => void {
       // keeps its synchronous `(tagId) => void` signature.
       void (async () => {
         try {
-          const block = await getBlock(tagId)
+          const block = unwrap(await commands.getBlock(tagId))
           if (block.deleted_at !== null) {
             notify.error(translate('blockTree.linkTargetNotFound'))
             return

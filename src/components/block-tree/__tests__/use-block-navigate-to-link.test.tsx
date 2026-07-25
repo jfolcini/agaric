@@ -12,9 +12,23 @@ import type { TFunction } from 'i18next'
 import { useRef } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  getBlock: vi.fn(),
-}))
+// #2927 phase 5 — the hook now calls the generated `commands.getBlock`, so
+// mocking only the `@/lib/tauri` wrapper no longer intercepts. Back the
+// generated surface instead, resolving the same typed-result envelope `unwrap`
+// expects.
+const mockedGetBlock = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBlock: (...args: unknown[]) =>
+        mockedGetBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('sonner', () => ({
   toast: {
@@ -34,12 +48,11 @@ vi.mock('@/lib/logger', () => ({
 
 import { useBlockNavigateToLink } from '@/components/block-tree/use-block-navigate-to-link'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
+import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { getBlock } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
-const mockedGetBlock = vi.mocked(getBlock)
 const mockedLoggerError = vi.mocked(logger.error)
 
 const TEST_SPACE_ID = 'SPACE_TEST'
@@ -71,7 +84,7 @@ function useHarness(params: HarnessParams) {
   })
 }
 
-function makeBlock(overrides: Record<string, unknown>): Awaited<ReturnType<typeof getBlock>> {
+function makeBlock(overrides: Record<string, unknown>): BlockRow {
   return {
     id: 'X',
     block_type: 'content',
@@ -84,7 +97,7 @@ function makeBlock(overrides: Record<string, unknown>): Awaited<ReturnType<typeo
     due_date: null,
     scheduled_date: null,
     ...overrides,
-  } as Awaited<ReturnType<typeof getBlock>>
+  } as BlockRow
 }
 
 beforeEach(async () => {

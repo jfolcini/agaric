@@ -13,9 +13,10 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
 
 export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => string | null {
   const { t } = useTranslation()
@@ -32,7 +33,9 @@ export function useTrashBreadcrumbs(blocks: BlockRow[]): (block: BlockRow) => st
   useEffect(() => {
     if (pageIds.length === 0) return
     let cancelled = false
-    batchResolve(pageIds, 'global')
+    commands
+      .batchResolve(pageIds, { kind: 'global' })
+      .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
         const map = new Map<string, ResolvedBlock | null>()

@@ -19,9 +19,10 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { BacklinkGroup, ResolvedBlock } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { BacklinkGroup, ResolvedBlock } from '@/lib/tauri'
-import { batchResolve } from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -105,7 +106,12 @@ export function useBacklinkResolution(groups: BacklinkGroup[]): UseBacklinkResol
     // fall into the broken-link UX via the attempted-unresolved set below),
     // falling back to the literal 'global' only when no space is active
     // (pre-bootstrap / trash-like surfaces), mirroring useBlockLinkResolve.ts.
-    batchResolve(idsToResolve, currentSpaceId ?? 'global')
+    commands
+      .batchResolve(
+        idsToResolve,
+        currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId },
+      )
+      .then(unwrap)
       .then((resolved) => {
         if (cancelled) return
         const returnedIds = new Set(resolved.map((r) => r.id))

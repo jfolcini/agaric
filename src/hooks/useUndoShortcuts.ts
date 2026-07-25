@@ -23,10 +23,11 @@ import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { t as translate } from '@/lib/i18n'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { notify } from '@/lib/notify'
-import { getBlock } from '@/lib/tauri'
 import { useBlockStore } from '@/stores/blocks'
 import { useNavigationStore } from '@/stores/navigation'
 import { getPageStore } from '@/stores/page-blocks'
@@ -38,7 +39,7 @@ import { useUndoStore } from '@/stores/undo'
 async function refreshAfterUndoRedo(pageId: string): Promise<void> {
   await getPageStore(pageId)?.getState().load()
   try {
-    const pageBlock = await getBlock(pageId)
+    const pageBlock = unwrap(await commands.getBlock(pageId))
     if (pageBlock?.content) {
       useTabsStore.getState().replacePage(pageId, pageBlock.content)
       useResolveStore.getState().set(pageId, pageBlock.content, false)

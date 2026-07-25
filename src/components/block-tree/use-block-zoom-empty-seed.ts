@@ -27,9 +27,10 @@
 import type { TFunction } from 'i18next'
 import { useEffect, useRef } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { createBlock } from '@/lib/tauri'
 import type { FlatBlock } from '@/lib/tree-utils'
 import { getDragDescendants } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
@@ -81,7 +82,9 @@ export function useBlockZoomEmptySeed({
 
     seededForRef.current = zoomedBlockId
 
-    createBlock({ blockType: 'content', content: '', parentId: zoomedBlockId })
+    commands
+      .createBlock('content', '', zoomedBlockId, null, { kind: 'global' }, null)
+      .then(unwrap)
       .then((result) => {
         const current = pageStore.getState()
         // Bail if the user zoomed elsewhere or the zoom root vanished while the

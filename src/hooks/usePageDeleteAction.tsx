@@ -38,9 +38,10 @@ import { useCallback, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { deleteBlock, restoreBlocksByIds } from '@/lib/tauri'
 
 /** Locked-in copy slots a caller can override per-invocation. */
 export interface PageDeleteConfirmCopy {
@@ -111,7 +112,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
 
   const handleUndo = useCallback(
     (pageId: string) => {
-      restoreBlocksByIds([pageId])
+      commands
+        .restoreBlocksByIds([pageId])
+        .then(unwrap)
         .then(() => {
           notify.success(t('pageDeleteAction.restored'))
         })
@@ -128,7 +131,7 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     const { id, onDeleted, onFailed } = target
     setDeletingId(id)
     try {
-      await deleteBlock(id)
+      unwrap(await commands.deleteBlock(id))
       notify.success(t('pageDeleteAction.deleted'), {
         action: {
           label: t('pageDeleteAction.undo'),
