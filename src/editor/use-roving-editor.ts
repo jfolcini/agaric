@@ -556,11 +556,39 @@ export function useRovingEditor(options: RovingEditorOptions = {}): RovingEditor
     [],
   )
 
+  // #3134 — `immediatelyRender: false` is load-bearing, not a perf tweak.
+  //
+  // With TipTap's default (`true`), `EditorInstanceManager` constructs the
+  // `Editor` inside a `useState` initialiser — i.e. during render — and
+  // immediately arms a 1 ms `scheduleDestroy()` timer to reclaim it if the
+  // render is never committed. That timer is only disarmed by the passive
+  // effect that flips `isComponentMounted`, and React flushes passive effects
+  // asynchronously (a separate scheduler task from the commit). On a slow cold
+  // boot — this editor pulls a ~50-extension graph, and `RovingEditorHost` sits
+  // behind `React.lazy` + `Suspense` — more than 1 ms can elapse between the
+  // commit and that flush, so the timer fires first and destroys the editor
+  // that `useLazyRovingEditor` had already adopted in its layout effect.
+  //
+  // `Editor.destroy()` nulls `commandManager` while leaving the instance itself
+  // non-null and still referenced by `EditorSurface`, so the next render of
+  // `FormattingToolbar`'s `useEditorState` selector threw "Cannot read
+  // properties of null (reading 'can')" and the Journal error boundary replaced
+  // the entire panel. (TipTap rebuilt an instance moments later, which is why
+  // it only ever showed up as e2e flake: fail once, pass on retry.)
+  //
+  // Deferring construction to the passive effect removes the race outright:
+  // the constructor's timer has no editor to reclaim, and every later
+  // arm/disarm pair runs back-to-back inside one synchronous effect flush.
+  // Both `useRovingEditor` and `useLazyRovingEditor` already treat a null
+  // editor as "not live yet" (the stub buffers mounts and replays them on
+  // adopt), so the extra render with `editor === null` is an already-supported
+  // state, not a new one.
   const editor = useEditor({
     extensions,
     editable: true,
     editorProps: EDITOR_PROPS,
     content: INITIAL_CONTENT,
+    immediatelyRender: false,
   })
 
   // B-77 cleanup layer 5 — when the host component unmounts
