@@ -12,20 +12,28 @@
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import type { SpaceRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { SpaceRow } from '@/lib/tauri'
-import { listSpaces } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/lib/tauri', async (importActual) => {
-  const actual = await importActual<typeof import('@/lib/tauri')>()
+// #2927 phase 7 — `useSpaceStore` calls `commands.listSpaces()` from
+// `@/lib/bindings` directly (the `@/lib/tauri` wrapper is gone). The spy
+// resolves the bare `SpaceRow[]`; the binding shim below wraps it in the
+// `{ status: 'ok', data }` envelope `unwrap` expects, so a
+// `mockRejectedValueOnce` still surfaces as a rejected IPC.
+const mockedListSpaces = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    listSpaces: vi.fn(),
+    commands: {
+      ...actual.commands,
+      listSpaces: (...args: unknown[]) =>
+        mockedListSpaces(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
-
-const mockedListSpaces = vi.mocked(listSpaces)
 
 const STORAGE_KEY = 'agaric:space'
 

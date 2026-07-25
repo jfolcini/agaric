@@ -15,9 +15,10 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { getPageAliases, setPageAliases } from '@/lib/tauri'
 
 export interface UsePageAliasesReturn {
   /** Current alias list (sorted in the order the user added them). */
@@ -58,7 +59,9 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
   // a few rows may still return `null` until they're rewritten).
   useEffect(() => {
     if (!pageId) return
-    getPageAliases(pageId)
+    commands
+      .getPageAliases(pageId)
+      .then(unwrap)
       .then((result) => setAliases(Array.isArray(result) ? result : []))
       .catch((err: unknown) => {
         logger.error('PageHeader', 'Failed to load page aliases', { pageId }, err)
@@ -75,7 +78,9 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
       const next = [...aliases, aliasInput.trim()]
       setAliases(next)
       announce(t('announce.aliasAdded'))
-      setPageAliases(pageId, next)
+      commands
+        .setPageAliases(pageId, next)
+        .then(unwrap)
         .then(() => setAliasInput(''))
         .catch((err: unknown) => {
           logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
@@ -97,14 +102,17 @@ export function usePageAliases(pageId: string, t: (key: string) => string): UseP
       const next = aliases.filter((a) => a !== alias)
       setAliases(next)
       announce(t('announce.aliasRemoved'))
-      setPageAliases(pageId, next).catch((err: unknown) => {
-        logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
-        notify.error(t('pageHeader.aliasUpdateFailed'))
-        announce(t('announce.aliasFailed'))
-        // See the matching comment in handleAddAlias: only roll back if
-        // this call's optimistic update is still the current state.
-        setAliases((current) => (current === next ? previous : current))
-      })
+      commands
+        .setPageAliases(pageId, next)
+        .then(unwrap)
+        .catch((err: unknown) => {
+          logger.error('PageHeader', 'Failed to update page aliases', { pageId }, err)
+          notify.error(t('pageHeader.aliasUpdateFailed'))
+          announce(t('announce.aliasFailed'))
+          // See the matching comment in handleAddAlias: only roll back if
+          // this call's optimistic update is still the current state.
+          setAliases((current) => (current === next ? previous : current))
+        })
     },
     [aliases, pageId, t],
   )

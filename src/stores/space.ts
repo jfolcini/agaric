@@ -16,12 +16,13 @@
 import { create } from 'zustand'
 import { persist, subscribeWithSelector } from 'zustand/middleware'
 
+import { unwrap } from '@/lib/app-error'
+import type { SpaceRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
-import type { SpaceRow } from '@/lib/tauri'
-import { listSpaces } from '@/lib/tauri'
 
 const LOG_MODULE = 'stores/space'
 
@@ -135,7 +136,7 @@ export const useSpaceStore = create<SpaceState>()(
 
         refreshAvailableSpaces: async () => {
           try {
-            const raw = await listSpaces()
+            const raw = unwrap(await commands.listSpaces())
             // Defensive — IPC boundary hardening (AGENTS pitfall #25).
             // Any non-array response is treated as "no spaces" so the
             // UI never crashes on a shape mismatch.

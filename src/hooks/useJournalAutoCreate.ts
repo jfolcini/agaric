@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { formatDate } from '@/lib/date-utils'
 import { getShortcutKeys } from '@/lib/keyboard-config'
-import { getJournalPageByDate } from '@/lib/tauri'
 
 interface UseJournalAutoCreateOptions {
   loading: boolean
@@ -47,7 +48,9 @@ export function useJournalAutoCreate({
     if (autoCreatedRef.current === dateStr) return
     if (createdPages.has(dateStr)) return
     let cancelled = false
-    getJournalPageByDate({ date: dateStr, spaceId })
+    commands
+      .getJournalPageByDate(dateStr, { kind: 'active', space_id: spaceId })
+      .then(unwrap)
       .then((page) => {
         if (cancelled) return
         if (page != null) return
@@ -84,7 +87,9 @@ export function useJournalAutoCreate({
       // Per-keypress probe replaces the in-memory `pageMap.has`
       // gate. Skips creation when a page already exists for `dateStr`,
       // matching the previous short-circuit semantics.
-      getJournalPageByDate({ date: dateStr, spaceId })
+      commands
+        .getJournalPageByDate(dateStr, { kind: 'active', space_id: spaceId })
+        .then(unwrap)
         .then((page) => {
           if (page != null) return
           // #755 — same in-flight guard as the mount path. Rapid double

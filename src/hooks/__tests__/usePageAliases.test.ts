@@ -15,10 +15,26 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  getPageAliases: vi.fn(),
-  setPageAliases: vi.fn(),
-}))
+// #2927 phase 7 — `usePageAliases` calls `commands.getPageAliases` /
+// `commands.setPageAliases` from `@/lib/bindings` directly. The spies keep
+// resolving/rejecting with the bare payload; the shim wraps a fulfilment in
+// the `{ status: 'ok', data }` envelope `unwrap` expects.
+const mockedGet = vi.hoisted(() => vi.fn())
+const mockedSet = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getPageAliases: (...args: unknown[]) =>
+        mockedGet(...args).then((data: unknown) => ({ status: 'ok', data })),
+      setPageAliases: (...args: unknown[]) =>
+        mockedSet(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/announcer', () => ({
   announce: vi.fn(),
@@ -46,10 +62,7 @@ vi.mock('sonner', () => ({
 
 import { usePageAliases } from '@/hooks/usePageAliases'
 import { announce } from '@/lib/announcer'
-import { getPageAliases, setPageAliases } from '@/lib/tauri'
 
-const mockedGet = vi.mocked(getPageAliases)
-const mockedSet = vi.mocked(setPageAliases)
 const mockedAnnounce = vi.mocked(announce)
 const t = (key: string) => key
 

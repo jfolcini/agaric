@@ -16,9 +16,22 @@ import { axe } from 'vitest-axe'
 
 import type { PageHeading } from '@/lib/bindings'
 
-vi.mock('@/lib/tauri', () => ({
-  listAllPagesInSpace: vi.fn(),
-}))
+// #2927 phase 7 — `PagesTreeSection` calls `commands.listAllPagesInSpace`
+// from `@/lib/bindings` directly. The spy sees the real wire arguments
+// `(scope, tagIds)`; the shim wraps a fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects.
+const mockedListAllPagesInSpace = vi.hoisted(() => vi.fn())
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: {
@@ -30,10 +43,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { PagesTreeSection } from '@/components/pages/PagesTreeSection'
-import { listAllPagesInSpace } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
-
-const mockedListAllPagesInSpace = vi.mocked(listAllPagesInSpace)
 
 /** Helper: minimal PageHeading row (todo/priority/dates fields default null). */
 function makePageHeading(id: string, content: string): PageHeading {
@@ -103,7 +113,10 @@ describe('PagesTreeSection', () => {
 
     // Let the IPC settle. The section should still be hidden.
     await waitFor(() => {
-      expect(mockedListAllPagesInSpace).toHaveBeenCalledWith('SPACE_TEST')
+      expect(mockedListAllPagesInSpace).toHaveBeenCalledWith(
+        { kind: 'active', space_id: 'SPACE_TEST' },
+        null,
+      )
     })
 
     // Section never renders — the early `return null` swallows the panel.

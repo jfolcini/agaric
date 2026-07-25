@@ -22,8 +22,9 @@ const mockCreateBlock = vi.fn()
 
 // The stores imported above pull additional names from `./tauri` at module
 // load; stub the ones they bind so the mocked module satisfies every importer.
+// (#2927 phase 7 — `@/stores/space` no longer binds `listSpaces` from this
+// module, so the stub that used to satisfy it has been dropped.)
 vi.mock('@/lib/tauri', () => ({
-  listSpaces: vi.fn(),
   listBlocks: vi.fn(),
   listBlocksLimit: vi.fn(),
   listAllPagesInSpace: (...args: unknown[]) => mockListAllPagesInSpace(...args),

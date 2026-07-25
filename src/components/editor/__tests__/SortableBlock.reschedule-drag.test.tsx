@@ -79,8 +79,22 @@ vi.mock('@/lib/tauri', () => ({
     .mockResolvedValue({ items: [], next_cursor: null, has_more: false, total_count: null }),
   undoPageOp: vi.fn(),
   redoPageOp: vi.fn(),
-  loadPageSubtree: vi.fn().mockResolvedValue({ blocks: [] }),
 }))
+
+// #2927 phase 7 — the page-blocks store's `load()` moved to
+// `commands.loadPageSubtree` from `@/lib/bindings`. Keep the same empty-page
+// stand-in reachable (a `@/lib/tauri` stub for it would now be inert), wrapped
+// in the `{ status: 'ok', data }` envelope `unwrap` expects.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      loadPageSubtree: async () => ({ status: 'ok', data: { blocks: [] } }),
+    },
+  }
+})
 
 import { SortableBlock } from '@/components/editor/SortableBlock'
 import { RESCHEDULE_DRAG_TYPE } from '@/components/journal/RescheduleDropZone'

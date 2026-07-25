@@ -22,9 +22,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { listJournalPagesInRange } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const inflightByKey = new Map<string, Promise<Map<string, string>>>()
@@ -43,7 +44,12 @@ async function doFetch(
   startDate: string,
   endDate: string,
 ): Promise<Map<string, string>> {
-  const rows = await listJournalPagesInRange({ startDate, endDate, spaceId })
+  const rows = unwrap(
+    await commands.listJournalPagesInRange(startDate, endDate, {
+      kind: 'active',
+      space_id: spaceId,
+    }),
+  )
   const map = new Map<string, string>()
   for (const b of rows) {
     if (b.content) map.set(b.content, b.id)

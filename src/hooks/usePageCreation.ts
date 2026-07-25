@@ -29,10 +29,10 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { useRegisterPrimaryFocus } from '@/hooks/usePrimaryFocus'
-import { isConflict } from '@/lib/app-error'
+import { isConflict, unwrap } from '@/lib/app-error'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
-import { createPageInSpace } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 interface UsePageCreationParams {
@@ -99,7 +99,7 @@ export function usePageCreation({
     }
     setIsCreating(true)
     try {
-      const newId = await createPageInSpace({ content: name, spaceId: activeSpaceId })
+      const newId = unwrap(await commands.createPageInSpace(null, name, activeSpaceId))
       setNewPageName('')
       // The optimistic prepend assumes the new page belongs
       // at the top of the *current* result set. That only holds when no
