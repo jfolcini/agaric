@@ -6,12 +6,26 @@
 import { act, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const mockGetPropertyDef = vi.fn()
-const mockListBlocks = vi.fn()
-vi.mock('@/lib/tauri', () => ({
-  getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
-  listBlocks: (...args: unknown[]) => mockListBlocks(...args),
-}))
+// #2927 phase 6 — the hook now calls the generated `commands.getPropertyDef` /
+// `commands.listBlocks`, so mocking only the `@/lib/tauri` wrapper no longer
+// intercepts. Back the generated surface instead, resolving the same typed-result
+// envelope `unwrap` expects.
+const mockGetPropertyDef = vi.hoisted(() => vi.fn())
+const mockListBlocks = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getPropertyDef: (...args: unknown[]) =>
+        mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listBlocks: (...args: unknown[]) =>
+        mockListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 const mockLoggerWarn = vi.fn()
 vi.mock('@/lib/logger', () => ({
@@ -21,7 +35,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { usePropertyDefForEdit } from '@/hooks/usePropertyDefForEdit'
-import type { BlockRow } from '@/lib/tauri'
+import type { BlockRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
 function makePage(id: string, content: string): BlockRow {
@@ -112,9 +126,22 @@ describe('usePropertyDefForEdit', () => {
       expect(result.current.refPages).toHaveLength(2)
     })
     expect(result.current.selectOptions).toBeNull()
-    // #2248 — the active space is forwarded to `listBlocks` (wrapped into an
-    // active SpaceScope inside the wrapper).
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: 'SPACE_1' })
+    // #2248 — the active space is forwarded to `list_blocks` as an active
+    // SpaceScope, alongside the `ListBlocksRequest` DTO (the real wire shape
+    // since #2927 phase 6 removed the wrapper).
+    expect(mockListBlocks).toHaveBeenCalledWith(
+      {
+        parentId: null,
+        blockType: 'page',
+        tagId: null,
+        date: null,
+        dateRange: null,
+        source: null,
+        cursor: null,
+        limit: null,
+      },
+      { kind: 'active', space_id: 'SPACE_1' },
+    )
   })
 
   it('skips the ref-page fetch and leaves refPages empty when there is no active space (#2248)', async () => {

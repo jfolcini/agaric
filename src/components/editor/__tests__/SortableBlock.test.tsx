@@ -210,6 +210,8 @@ vi.mock('@/lib/tauri', () => ({
 // `SortableBlock` now calls `commands.setProperty` from `@/lib/bindings`
 // directly instead of the `@/lib/tauri` wrapper. Route the same spy through
 // the bindings surface, wrapped in the `{status:'ok', data}` envelope.
+// #2927 phase 6 — same for `usePropertyDefForEdit` (also rendered for real
+// here), which now calls `commands.getPropertyDef` / `commands.listBlocks`.
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -218,6 +220,10 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
       ...actual.commands,
       setProperty: (...args: unknown[]) =>
         mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getPropertyDef: (...args: unknown[]) =>
+        mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listBlocks: (...args: unknown[]) =>
+        mockListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
@@ -4065,7 +4071,21 @@ describe('SortableBlock error paths', () => {
 
     // listBlocks was called (active space seeded) and rejected — refPages
     // falls back to [].
-    expect(mockListBlocks).toHaveBeenCalledWith({ blockType: 'page', spaceId: 'SPACE_1' })
+    // #2927 phase 6 — the real `list_blocks` wire shape: the `ListBlocksRequest`
+    // DTO plus a separate active `SpaceScope` (was the wrapper's params object).
+    expect(mockListBlocks).toHaveBeenCalledWith(
+      {
+        parentId: null,
+        blockType: 'page',
+        tagId: null,
+        date: null,
+        dateRange: null,
+        source: null,
+        cursor: null,
+        limit: null,
+      },
+      { kind: 'active', space_id: 'SPACE_1' },
+    )
 
     // Ref picker shows "No pages found" because refPages is empty
     expect(screen.getByTestId('ref-no-results')).toBeInTheDocument()

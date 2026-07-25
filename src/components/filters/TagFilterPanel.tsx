@@ -23,14 +23,14 @@ import { Spinner } from '@/components/ui/spinner'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
 import { useListKeyboardNavigation } from '@/hooks/useListKeyboardNavigation'
-import type { TagExpr } from '@/lib/bindings'
+import { unwrap } from '@/lib/app-error'
+import type { BlockRow, PageResponse, SpaceScope, TagExpr } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { type TagQueryParams, compileTagExpr, tagBuilderHasLeaves } from '@/lib/tagExpr'
-import type { BlockRow, PageResponse } from '@/lib/tauri'
-import { batchResolve, getBlock, listTagsByPrefix, queryByTagExpr, queryByTags } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
@@ -175,22 +175,32 @@ function FlatModeToggle({
  * the flat simple-mode `query_by_tags` runs. Extracted so the panel body stays
  * declarative.
  */
-function runTagQuery(
+async function runTagQuery(
   tagExpr: TagExpr | null,
   flatParams: TagQueryParams,
   spaceId: string | null,
   cursor?: string,
 ): Promise<PageResponse<BlockRow>> {
-  const paging = { ...(cursor != null && { cursor }), limit: PAGINATION_LIMIT, spaceId }
+  const scope: SpaceScope =
+    spaceId == null ? { kind: 'global' } : { kind: 'active', space_id: spaceId }
+  const cursorArg = cursor ?? null
   if (tagExpr != null) {
-    return queryByTagExpr({ expr: tagExpr, ...paging })
+    return unwrap(
+      await commands.queryByTagExpr(tagExpr, null, cursorArg, PAGINATION_LIMIT, scope, null),
+    )
   }
-  return queryByTags({
-    tagIds: flatParams.tagIds,
-    prefixes: flatParams.prefixes,
-    mode: flatParams.mode,
-    ...paging,
-  })
+  return unwrap(
+    await commands.queryByTags(
+      flatParams.tagIds,
+      flatParams.prefixes,
+      flatParams.mode,
+      null,
+      cursorArg,
+      PAGINATION_LIMIT,
+      scope,
+      null,
+    ),
+  )
 }
 
 export function TagFilterPanel(): React.ReactElement {
@@ -223,7 +233,7 @@ export function TagFilterPanel(): React.ReactElement {
   const searchTags = useCallback(
     async (p: string) => {
       try {
-        const tags = await listTagsByPrefix({ prefix: p })
+        const tags = unwrap(await commands.listTagsByPrefix(p, null))
         setMatchingTags(
           tags.map((tag) => ({
             tag_id: tag.tag_id,
@@ -378,7 +388,9 @@ export function TagFilterPanel(): React.ReactElement {
       ...new Set(results.map((b) => b.page_id).filter((id): id is string => id != null)),
     ]
     if (parentIds.length === 0) return
-    batchResolve(parentIds, 'global')
+    commands
+      .batchResolve(parentIds, { kind: 'global' })
+      .then(unwrap)
       .then((resolved) => {
         if (Array.isArray(resolved)) {
           setPageTitles((prev) => {
@@ -451,7 +463,7 @@ export function TagFilterPanel(): React.ReactElement {
       }
       if (block.parent_id) {
         try {
-          const parent = await getBlock(block.parent_id)
+          const parent = unwrap(await commands.getBlock(block.parent_id))
           navigateToPage(block.parent_id, parent.content ?? 'Untitled', block.id)
         } catch {
           notify.error(t('tags.loadFailed'))

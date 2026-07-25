@@ -75,6 +75,10 @@ vi.mock('@/lib/tauri', () => ({
 // instead of the `@/lib/tauri` wrapper. Route the same spy through both
 // surfaces, wrapping the resolved value in the `{status:'ok', data}`
 // envelope that `unwrap` expects.
+// #2927 phase 6 — `DependencyIndicator` moved its blocking-task title lookup
+// onto `commands.batchResolve`, so route that spy through the generated
+// surface too (leaving it on the wrapper alone would have let the real
+// binding fire while `mockBatchResolve`'s stubbed title sat unused).
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -85,6 +89,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
       getBatchProperties: (...args: unknown[]) =>
         mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+      batchResolve: (...args: unknown[]) =>
+        mockBatchResolve(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })
