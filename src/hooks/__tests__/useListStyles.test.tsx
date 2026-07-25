@@ -10,9 +10,23 @@ import { renderHook, waitFor } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  getBatchProperties: vi.fn(),
-}))
+// #2927 phase 4 migrated `useBatchPropertyRows` off the `@/lib/tauri` wrapper
+// onto the generated `commands.getBatchProperties`, so mocking only the wrapper
+// no longer intercepts. Back the generated surface instead, resolving the same
+// typed-result envelope `unwrap` expects.
+const mockedGetBatchProperties = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBatchProperties: (...args: unknown[]) =>
+        mockedGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -20,11 +34,8 @@ vi.mock('@/lib/logger', () => ({
 
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import { useListStyles } from '@/hooks/useListStyles'
+import type { PropertyRow } from '@/lib/bindings'
 import { LIST_STYLE_KEY } from '@/lib/list-style'
-import type { PropertyRow } from '@/lib/tauri'
-import { getBatchProperties } from '@/lib/tauri'
-
-const mockedGetBatchProperties = vi.mocked(getBatchProperties)
 
 function row(overrides: Partial<PropertyRow> & { key: string }): PropertyRow {
   return {

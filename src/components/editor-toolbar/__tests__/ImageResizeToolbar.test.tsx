@@ -6,16 +6,19 @@ import { axe } from 'vitest-axe'
 
 import { t } from '@/lib/i18n'
 
-vi.mock('@/lib/tauri', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('@/lib/tauri')>()
+// #2927 phase 4 — `ImageResizeToolbar` now calls `commands.setProperty`
+// from `@/lib/bindings` directly instead of the `@/lib/tauri` wrapper.
+const mockedSetProperty = vi.fn().mockResolvedValue({ status: 'ok', data: {} })
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
-    ...mod,
-    setProperty: vi.fn(() => Promise.resolve({})),
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) => mockedSetProperty(...args),
+    },
   }
 })
-
-const { setProperty } = await import('@/lib/tauri')
-const mockedSetProperty = vi.mocked(setProperty)
 
 import {
   DEFAULT_IMAGE_ALIGNMENT,
@@ -78,10 +81,12 @@ describe('ImageResizeToolbar', () => {
     renderToolbar()
 
     await user.click(screen.getByTestId('image-resize-25'))
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: 'image_width',
-      valueText: '25',
+    expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_width', {
+      value_text: '25',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
   })
 
@@ -120,10 +125,12 @@ describe('ImageResizeToolbar', () => {
       await user.click(screen.getByTestId(`image-resize-${preset.value}`))
 
       expect(onWidthChange).toHaveBeenCalledWith(preset.value)
-      expect(mockedSetProperty).toHaveBeenCalledWith({
-        blockId: 'B1',
-        key: 'image_width',
-        valueText: preset.value,
+      expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_width', {
+        value_text: preset.value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
     },
   )
@@ -212,10 +219,12 @@ describe('ImageResizeToolbar', () => {
     await user.click(screen.getByTestId('image-align-left'))
 
     expect(onAlignmentChange).toHaveBeenCalledWith('left' as ImageAlignment)
-    expect(mockedSetProperty).toHaveBeenCalledWith({
-      blockId: 'B1',
-      key: 'image_alignment',
-      valueText: 'left',
+    expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_alignment', {
+      value_text: 'left',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
   })
 
@@ -236,10 +245,12 @@ describe('ImageResizeToolbar', () => {
       await user.click(screen.getByTestId(`image-align-${align.value}`))
 
       expect(onAlignmentChange).toHaveBeenCalledWith(align.value as ImageAlignment)
-      expect(mockedSetProperty).toHaveBeenCalledWith({
-        blockId: 'B1',
-        key: 'image_alignment',
-        valueText: align.value,
+      expect(mockedSetProperty).toHaveBeenCalledWith('B1', 'image_alignment', {
+        value_text: align.value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
       })
     },
   )

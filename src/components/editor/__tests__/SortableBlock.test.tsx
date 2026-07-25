@@ -206,6 +206,22 @@ vi.mock('@/lib/tauri', () => ({
   loadPageSubtree: (...args: unknown[]) => mockLoadPageSubtree(...args),
 }))
 
+// #2927 phase 4 — the real (unmocked) `BlockPropertyEditor` rendered inside
+// `SortableBlock` now calls `commands.setProperty` from `@/lib/bindings`
+// directly instead of the `@/lib/tauri` wrapper. Route the same spy through
+// the bindings surface, wrapped in the `{status:'ok', data}` envelope.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      setProperty: (...args: unknown[]) =>
+        mockSetProperty(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
+
 // Mock sonner toast
 const mockToastError = vi.fn()
 vi.mock('sonner', () => ({
@@ -3024,10 +3040,12 @@ describe('SortableBlock property chip click-to-edit', () => {
     await user.click(highOption)
 
     // setProperty should have been called with the selected value
-    expect(mockSetProperty).toHaveBeenCalledWith({
-      blockId: 'BLOCK_42',
-      key: 'priority_level',
-      valueText: 'High',
+    expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'priority_level', {
+      value_text: 'High',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
 
     // Dropdown should be closed
@@ -3471,15 +3489,19 @@ describe('SortableBlock property key rename', () => {
     await waitFor(() => {
       expect(mockSetProperty).toHaveBeenCalledTimes(2)
     })
-    expect(mockSetProperty).toHaveBeenCalledWith({
-      blockId: 'BLOCK_42',
-      key: 'duration',
-      valueText: '2h',
+    expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'duration', {
+      value_text: '2h',
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
-    expect(mockSetProperty).toHaveBeenCalledWith({
-      blockId: 'BLOCK_42',
-      key: 'effort',
-      valueText: null,
+    expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'effort', {
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: null,
+      value_bool: null,
     })
   })
 })
@@ -3646,10 +3668,12 @@ describe('SortableBlock ref property picker', () => {
     await user.click(pageBtn)
 
     // setProperty should have been called with valueRef
-    expect(mockSetProperty).toHaveBeenCalledWith({
-      blockId: 'BLOCK_42',
-      key: 'linked',
-      valueRef: 'PAGE_Y',
+    expect(mockSetProperty).toHaveBeenCalledWith('BLOCK_42', 'linked', {
+      value_text: null,
+      value_num: null,
+      value_date: null,
+      value_ref: 'PAGE_Y',
+      value_bool: null,
     })
 
     // Picker should be closed

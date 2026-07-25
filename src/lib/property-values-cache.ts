@@ -17,6 +17,8 @@
  * list, never `effort`'s.
  */
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { EVENT_PROPERTY_CHANGED } from '@/lib/block-event-names'
 import { logger } from '@/lib/logger'
 import {
@@ -25,7 +27,6 @@ import {
   registerPropertyChangeTarget,
 } from '@/lib/property-change-dispatch'
 import { queryClient } from '@/lib/query-client'
-import { listPropertyValues } from '@/lib/tauri'
 
 export { EVENT_PROPERTY_CHANGED }
 
@@ -51,7 +52,7 @@ export function propertyValuesQueryKey(
  */
 export const propertyValuesQueryFn = async (key: string): Promise<string[]> => {
   try {
-    return await listPropertyValues(key)
+    return unwrap(await commands.listPropertyValues(key))
   } catch (e) {
     logger.warn('property-values-cache', 'failed to load property data', { key }, e)
     return []

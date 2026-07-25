@@ -32,9 +32,10 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { PropertyRow } from '@/lib/tauri'
-import { getBatchProperties } from '@/lib/tauri'
 
 interface BatchPropertiesValue {
   /**
@@ -202,7 +203,9 @@ export function BatchPropertiesProvider({
 
     let stale = false
     setLoading(true)
-    getBatchProperties(idsToFetch)
+    commands
+      .getBatchProperties(idsToFetch)
+      .then(unwrap)
       .then((record) => {
         if (stale) return
         const { map, changed } = mergeFetchedIntoCache(cacheRef.current, idsToFetch, record)

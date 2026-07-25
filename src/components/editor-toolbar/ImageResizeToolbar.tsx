@@ -5,9 +5,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useRovingTabindex } from '@/hooks/useRovingTabindex'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { setProperty } from '@/lib/tauri'
 
 /** Width presets for image resize controls. */
 export const IMAGE_WIDTH_PRESETS = [
@@ -70,16 +71,21 @@ export function ImageResizeToolbar({
   const handleClick = useCallback(
     (value: string) => {
       onWidthChange(value)
-      setProperty({
-        blockId,
-        key: 'image_width',
-        valueText: value,
-      }).catch((err) => {
-        logger.warn('ImageResizeToolbar', 'property save failed', { blockId, value }, err)
-        // Revert on failure — restore previous width
-        onWidthChange(currentWidth)
-        notify.error(t('imageResize.saveFailed'))
-      })
+      commands
+        .setProperty(blockId, 'image_width', {
+          value_text: value,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+        .then(unwrap)
+        .catch((err) => {
+          logger.warn('ImageResizeToolbar', 'property save failed', { blockId, value }, err)
+          // Revert on failure — restore previous width
+          onWidthChange(currentWidth)
+          notify.error(t('imageResize.saveFailed'))
+        })
     },
     [blockId, currentWidth, onWidthChange, t],
   )
@@ -87,16 +93,21 @@ export function ImageResizeToolbar({
   const handleAlign = useCallback(
     (value: ImageAlignment) => {
       onAlignmentChange(value)
-      setProperty({
-        blockId,
-        key: 'image_alignment',
-        valueText: value,
-      }).catch((err) => {
-        logger.warn('ImageResizeToolbar', 'alignment save failed', { blockId, value }, err)
-        // Revert on failure — restore previous alignment
-        onAlignmentChange(currentAlignment)
-        notify.error(t('imageAlign.saveFailed'))
-      })
+      commands
+        .setProperty(blockId, 'image_alignment', {
+          value_text: value,
+          value_num: null,
+          value_date: null,
+          value_ref: null,
+          value_bool: null,
+        })
+        .then(unwrap)
+        .catch((err) => {
+          logger.warn('ImageResizeToolbar', 'alignment save failed', { blockId, value }, err)
+          // Revert on failure — restore previous alignment
+          onAlignmentChange(currentAlignment)
+          notify.error(t('imageAlign.saveFailed'))
+        })
     },
     [blockId, currentAlignment, onAlignmentChange, t],
   )

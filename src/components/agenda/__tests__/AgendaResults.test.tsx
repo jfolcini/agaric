@@ -70,6 +70,25 @@ vi.mock('@/lib/tauri', () => ({
   setScheduledDate: vi.fn(),
 }))
 
+// #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`)
+// now calls `commands.getBatchProperties` from `@/lib/bindings` directly
+// instead of the `@/lib/tauri` wrapper. Route the same spy through both
+// surfaces, wrapping the resolved value in the `{status:'ok', data}`
+// envelope that `unwrap` expects.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getProperties: (...args: unknown[]) =>
+        mockGetProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+      getBatchProperties: (...args: unknown[]) =>
+        mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
+
 vi.mock('@/components/ui/button', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/ui/button')>()
   return {

@@ -25,9 +25,27 @@
 import { act, render, renderHook, waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const mockGetBatchProperties = vi.fn()
+
 vi.mock('@/lib/tauri', () => ({
-  getBatchProperties: vi.fn(),
+  getBatchProperties: (...args: unknown[]) => mockGetBatchProperties(...args),
 }))
+
+// #2927 phase 4 — `useBatchPropertyRows` (via `BatchPropertiesProvider`) now
+// calls `commands.getBatchProperties` from `@/lib/bindings` directly. Route
+// the same spy through the bindings surface, wrapped in the envelope shape
+// `unwrap` expects.
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      getBatchProperties: (...args: unknown[]) =>
+        mockGetBatchProperties(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 vi.mock('@/lib/logger', () => ({
   logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -36,9 +54,8 @@ vi.mock('@/lib/logger', () => ({
 import { BatchPropertiesProvider } from '@/hooks/useBatchPropertyRows'
 import type { ViewportObserver } from '@/hooks/useViewportObserver'
 import { useViewportWindow } from '@/hooks/useViewportWindow'
-import { getBatchProperties } from '@/lib/tauri'
 
-const mockedGetBatchProperties = vi.mocked(getBatchProperties)
+const mockedGetBatchProperties = mockGetBatchProperties
 
 /**
  * Drives the real production path (#2288): `useViewportWindow` narrows the
