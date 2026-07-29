@@ -44,9 +44,10 @@ import { SheetBody } from '@/components/ui/sheet'
 import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { quickCaptureBlock } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 interface QuickCaptureDialogProps {
@@ -94,7 +95,7 @@ export function QuickCaptureDialog({
       if (spaceId == null) {
         throw new Error('No active space; cannot quick-capture')
       }
-      await quickCaptureBlock(trimmed, spaceId)
+      unwrap(await commands.quickCaptureBlock(trimmed, spaceId))
       notify.success(t('quickCapture.successToast'))
       onOpenChange(false)
     } catch (err) {

@@ -26,10 +26,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { formatDate, MIN_JOURNAL_DATE } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { listJournalPagesInRange } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 /** Number of days revealed per `loadOlder()` call (one "batch"). */
@@ -137,7 +138,12 @@ export function useStreamDates(): UseStreamDatesResult {
       }
     }
 
-    listJournalPagesInRange({ startDate, endDate, spaceId: currentSpaceId })
+    commands
+      .listJournalPagesInRange(startDate, endDate, {
+        kind: 'active',
+        space_id: currentSpaceId,
+      })
+      .then(unwrap)
       .then((rows) => {
         if (cancelled || !mountedRef.current) return
         const map = new Map<string, string>()

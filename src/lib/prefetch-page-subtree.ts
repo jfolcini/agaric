@@ -29,9 +29,10 @@
  *    is treated as absent and swept on the next read that touches it.
  */
 
+import { unwrap } from '@/lib/app-error'
+import type { PageSubtree } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { PageSubtree } from '@/lib/tauri'
-import { loadPageSubtree } from '@/lib/tauri'
 
 /**
  * TTL for a parked prefetch promise, ms. Deliberately short — this bridges
@@ -120,7 +121,9 @@ export function prefetchPageSubtree(spaceId: string, pageId: string): void {
   if (prefetchMap.has(key)) return // dedup — post-sweep, any present entry is live
   if (liveCount >= MAX_INFLIGHT_PREFETCHES) return // cap — drop this intent
 
-  const promise = loadPageSubtree(pageId, spaceId)
+  const promise = commands
+    .loadPageSubtree(pageId, { kind: 'active', space_id: spaceId })
+    .then(unwrap)
   promise.catch((err: unknown) => {
     // #2850 — swallow so an unconsumed rejected speculative fetch (the
     // common case) never becomes an unhandled rejection. `warn` (not

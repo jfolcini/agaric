@@ -37,13 +37,14 @@ import { addDays, addMonths, addWeeks, subDays, subMonths, subWeeks } from 'date
 import { useEffect } from 'react'
 
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { matchesShortcutBinding } from '@/lib/keyboard-config'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
 import { getPaletteCommand } from '@/lib/palette-commands'
 import { addRecentCommand, getRecentCommands } from '@/lib/recent-commands'
-import { createPageInSpace } from '@/lib/tauri'
 import { type JournalMode, useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -316,7 +317,9 @@ function tryCreateNewPage(e: KeyboardEvent, t: (key: string) => string): boolean
     notify.error(t('space.notReady'))
     return true
   }
-  createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+  commands
+    .createPageInSpace(null, 'Untitled', currentSpaceId)
+    .then(unwrap)
     .then((newId) => {
       useResolveStore.getState().set(newId, 'Untitled', false)
       useTabsStore.getState().navigateToPage(newId, 'Untitled')

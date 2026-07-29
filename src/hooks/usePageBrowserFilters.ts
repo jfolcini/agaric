@@ -36,9 +36,10 @@ import {
   type PageFilterWithKey,
   pageFilterSummary,
 } from '@/components/PageBrowser/PageBrowserFilterRow'
+import { unwrap } from '@/lib/app-error'
+import type { FilterPrimitive } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { FilterPrimitive } from '@/lib/tauri'
-import { resolvePageByAlias } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
 import { useResolveStore } from '@/stores/resolve'
@@ -173,7 +174,12 @@ export function usePageBrowserFilters(currentSpaceId: string | null): UsePageBro
     const query = filterText.trim()
     // Pass `spaceId: currentSpaceId` so an alias
     // pointing at a foreign-space page does not surface here.
-    resolvePageByAlias({ alias: query, spaceId: currentSpaceId })
+    commands
+      .resolvePageByAlias(
+        query,
+        currentSpaceId == null ? { kind: 'global' } : { kind: 'active', space_id: currentSpaceId },
+      )
+      .then(unwrap)
       .then((result) => {
         if (myReqId !== aliasReqIdRef.current) return
         setAliasMatchId(result ? result[0] : null)

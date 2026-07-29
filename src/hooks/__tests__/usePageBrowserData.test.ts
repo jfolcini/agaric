@@ -12,16 +12,26 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
-import type { FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
+import type { FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 
-vi.mock('@/lib/tauri', () => ({
-  listPagesWithMetadata: vi.fn(),
-  deleteBlock: vi.fn(),
-}))
+// #2927 phase 7 — `usePageBrowserData` calls `commands.listPagesWithMetadata`
+// from `@/lib/bindings` directly. The spy now sees the real wire arguments
+// `(filter, cursor, limit)` rather than the wrapper's params object, and the
+// shim wraps a fulfilment in the `{ status: 'ok', data }` envelope `unwrap`
+// expects.
+const mockedList = vi.hoisted(() => vi.fn())
 
-import { listPagesWithMetadata } from '@/lib/tauri'
-
-const mockedList = vi.mocked(listPagesWithMetadata)
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listPagesWithMetadata: (...args: unknown[]) =>
+        mockedList(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 const mockedToastError = vi.mocked(toast.error)
 
 function page(id: string): PageWithMetadataRow {
@@ -79,8 +89,13 @@ describe('usePageBrowserData', () => {
     })
 
     await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(3))
-    // The third (recovery) call carries no cursor.
-    expect(mockedList.mock.calls[2]?.[0]).not.toHaveProperty('cursor')
+    // The third (recovery) call carries no cursor. On the generated binding
+    // the cursor is the second positional argument, sent as an explicit
+    // `null` when absent.
+    expect(mockedList.mock.calls[2]?.[1]).toBeNull()
+    // …and the second (rejected) call is the one that DID carry it, so the
+    // assertion above can't pass vacuously.
+    expect(mockedList.mock.calls[1]?.[1]).toBe('CUR')
     expect(mockedToastError).not.toHaveBeenCalled()
   })
 

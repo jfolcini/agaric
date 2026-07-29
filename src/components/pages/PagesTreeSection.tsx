@@ -30,10 +30,11 @@ import { useTranslation } from 'react-i18next'
 
 import { CollapsiblePanelHeader } from '@/components/common/CollapsiblePanelHeader'
 import { PageTreeItem } from '@/components/pages/PageTreeItem'
+import { unwrap } from '@/lib/app-error'
 import type { PageHeading } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { buildPageTree, type PageTreeNode } from '@/lib/page-tree'
-import { listAllPagesInSpace } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 export interface PagesTreeSectionProps {
@@ -106,7 +107,9 @@ export function PagesTreeSection({
       return
     }
     let cancelled = false
-    listAllPagesInSpace(currentSpaceId)
+    commands
+      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
+      .then(unwrap)
       .then((rows) => {
         if (cancelled) return
         // Defensive narrowing: some smoke-test mocks resolve `invoke`

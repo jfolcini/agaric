@@ -203,7 +203,6 @@ vi.mock('@/lib/tauri', () => ({
   setProperty: (...args: unknown[]) => mockSetProperty(...args),
   getPropertyDef: (...args: unknown[]) => mockGetPropertyDef(...args),
   listBlocks: (...args: unknown[]) => mockListBlocks(...args),
-  loadPageSubtree: (...args: unknown[]) => mockLoadPageSubtree(...args),
 }))
 
 // #2927 phase 4 — the real (unmocked) `BlockPropertyEditor` rendered inside
@@ -212,6 +211,9 @@ vi.mock('@/lib/tauri', () => ({
 // the bindings surface, wrapped in the `{status:'ok', data}` envelope.
 // #2927 phase 6 — same for `usePropertyDefForEdit` (also rendered for real
 // here), which now calls `commands.getPropertyDef` / `commands.listBlocks`.
+// #2927 phase 7 — `page-blocks`' `load()` moved to
+// `commands.loadPageSubtree` the same way; its wire args are
+// `(rootBlockId, scope)`.
 vi.mock('@/lib/bindings', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
@@ -224,6 +226,8 @@ vi.mock('@/lib/bindings', async (importOriginal) => {
         mockGetPropertyDef(...args).then((data: unknown) => ({ status: 'ok', data })),
       listBlocks: (...args: unknown[]) =>
         mockListBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+      loadPageSubtree: (...args: unknown[]) =>
+        mockLoadPageSubtree(...args).then((data: unknown) => ({ status: 'ok', data })),
     },
   }
 })

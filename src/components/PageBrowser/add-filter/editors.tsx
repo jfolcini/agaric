@@ -26,10 +26,11 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
+import { unwrap } from '@/lib/app-error'
+import type { PageHeading } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
-import type { PageHeading } from '@/lib/tauri'
-import { listAllPagesInSpace } from '@/lib/tauri'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -590,7 +591,9 @@ export function LinkTargetEditor({
         cancelled = true
       }
     }
-    listAllPagesInSpace(currentSpaceId)
+    commands
+      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
+      .then(unwrap)
       .then((res) => {
         if (!cancelled) setPages(res)
       })

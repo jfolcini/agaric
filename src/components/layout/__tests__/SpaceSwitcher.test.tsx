@@ -27,15 +27,24 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { SpaceSwitcher } from '@/components/layout/SpaceSwitcher'
-import type { SpaceRow } from '@/lib/tauri'
-import { listSpaces } from '@/lib/tauri'
+import type { SpaceRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/lib/tauri', async (importActual) => {
-  const actual = await importActual<typeof import('@/lib/tauri')>()
+// #2927 phase 7 — `useSpaceStore.refreshAvailableSpaces` calls
+// `commands.listSpaces()` from `@/lib/bindings` directly. The spy keeps
+// resolving/rejecting with the bare `SpaceRow[]`; the shim wraps a
+// fulfilment in the `{ status: 'ok', data }` envelope `unwrap` expects.
+const mockedListSpaces = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
   return {
     ...actual,
-    listSpaces: vi.fn(),
+    commands: {
+      ...actual.commands,
+      listSpaces: (...args: unknown[]) =>
+        mockedListSpaces(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
   }
 })
 
@@ -77,8 +86,6 @@ vi.mock('@/components/SpaceManageDialog', () => ({
   SpaceManageDialog: ({ open }: { open: boolean; onOpenChange: (open: boolean) => void }) =>
     open ? <div data-testid="space-manage-dialog-stub" /> : null,
 }))
-
-const mockedListSpaces = vi.mocked(listSpaces)
 
 const PERSONAL: SpaceRow = { id: 'SPACE_AAAA', name: 'Personal', accent_color: null }
 const WORK: SpaceRow = { id: 'SPACE_ZZZZ', name: 'Work', accent_color: null }

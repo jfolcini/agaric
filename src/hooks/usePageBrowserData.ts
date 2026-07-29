@@ -35,14 +35,20 @@ import { useTranslation } from 'react-i18next'
 
 import { pageSortWireFor, type SortOption } from '@/hooks/usePageBrowserSort'
 import { usePageDelete } from '@/hooks/usePageDelete'
-import { isAppError, isCancellation, type TypedAppError, validationCode } from '@/lib/app-error'
+import {
+  isAppError,
+  isCancellation,
+  type TypedAppError,
+  unwrap,
+  validationCode,
+} from '@/lib/app-error'
+import type { BlockRow, FilterPrimitive, PageResponse, PageWithMetadataRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { t as i18nT } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
 import { queryClient } from '@/lib/query-client'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import type { BlockRow, FilterPrimitive, PageResponse, PageWithMetadataRow } from '@/lib/tauri'
-import { listPagesWithMetadata } from '@/lib/tauri'
 
 /**
  * Phase 3 — wrap a paginating IPC call so that a v2 cursor
@@ -161,13 +167,21 @@ export function usePageBrowserData({
         // `default` and re-sort client-side via `sortPages`.
         return withCursorRecovery(
           (c) =>
-            listPagesWithMetadata({
-              sort: pageSortWireFor(sortOption),
-              spaceId,
-              ...(wireFilters.length > 0 && { filters: wireFilters }),
-              ...(c != null && { cursor: c }),
-              limit: PAGINATION_LIMIT,
-            }),
+            commands
+              .listPagesWithMetadata(
+                // No frontend-side default for `sort` — the Rust
+                // `#[default] Alphabetical` attribute on `PageSort` is the
+                // single source of truth, and `filters` is sent as an
+                // explicit `[]` so the wire shape stays unambiguous.
+                {
+                  sort: pageSortWireFor(sortOption) ?? null,
+                  spaceId,
+                  filters: wireFilters,
+                } as Parameters<typeof commands.listPagesWithMetadata>[0],
+                c ?? null,
+                PAGINATION_LIMIT,
+              )
+              .then(unwrap),
           pageParam,
         ).catch((err: unknown) => {
           // E18 — a malformed/disallowed compound filter rejects with an

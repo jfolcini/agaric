@@ -17,8 +17,22 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { formatDate } from '@/lib/date-utils'
 
+// #2927 phase 7 — `useStreamDates` calls `commands.listJournalPagesInRange`
+// from `@/lib/bindings` directly. The spy sees the real wire arguments
+// `(startDate, endDate, scope)`; the shim wraps a fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects.
 const listJournalPagesInRange = vi.hoisted(() => vi.fn())
-vi.mock('@/lib/tauri', () => ({ listJournalPagesInRange }))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      listJournalPagesInRange: (...args: unknown[]) =>
+        listJournalPagesInRange(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // Mutable active-space id so a single test can exercise the b1
 // no-active-space short-circuit by flipping it to `null`.
@@ -84,14 +98,13 @@ describe('useStreamDates', () => {
     await waitFor(() => expect(result.current.dates.length).toBe(initialLen + STREAM_BATCH_DAYS))
     // A wider range was refetched.
     expect(listJournalPagesInRange.mock.calls.length).toBe(callsBefore + 1)
-    const lastCall = listJournalPagesInRange.mock.calls.at(-1)?.[0] as {
-      startDate: string
-      endDate: string
-    }
-    expect(lastCall.endDate).toBe('2026-06-20')
+    // Wire args are positional: `(startDate, endDate, scope)`.
+    const lastCall = listJournalPagesInRange.mock.calls.at(-1) as [string, string, unknown]
+    expect(lastCall[1]).toBe('2026-06-20')
+    expect(lastCall[2]).toEqual({ kind: 'active', space_id: 'space-1' })
     // Oldest day moved further back.
     const oldest = result.current.dates.at(-1) as Date
-    expect(formatDate(oldest)).toBe(lastCall.startDate)
+    expect(formatDate(oldest)).toBe(lastCall[0])
   })
 
   it('addPage merges a created page without an extra fetch', async () => {

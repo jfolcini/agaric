@@ -11,13 +11,26 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePageCreation } from '@/hooks/usePageCreation'
-import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/tauri'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
 import { useSpaceStore } from '@/stores/space'
 
-// Partial tauri mock — only `createPageInSpace` is exercised here.
-vi.mock('@/lib/tauri', () => ({
-  createPageInSpace: vi.fn(),
-}))
+// #2927 phase 7 — `usePageCreation` calls `commands.createPageInSpace` from
+// `@/lib/bindings` directly. The spy sees the real wire arguments
+// `(parentId, content, spaceId)`; the shim wraps a fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects.
+const mockedCreate = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      createPageInSpace: (...args: unknown[]) =>
+        mockedCreate(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 // Primary-focus registration is a side effect unrelated to creation logic.
 vi.mock('@/hooks/usePrimaryFocus', () => ({
@@ -25,9 +38,7 @@ vi.mock('@/hooks/usePrimaryFocus', () => ({
 }))
 
 import { isConflict } from '@/lib/app-error'
-import { createPageInSpace } from '@/lib/tauri'
 
-const mockedCreate = vi.mocked(createPageInSpace)
 const mockedToastError = vi.mocked(toast.error)
 
 type Row = BlockRow | PageWithMetadataRow
@@ -88,7 +99,7 @@ describe('usePageCreation', () => {
       await result.current.handleCreatePage()
     })
 
-    expect(mockedCreate).toHaveBeenCalledWith({ content: 'My Page', spaceId: 'SPACE_A' })
+    expect(mockedCreate).toHaveBeenCalledWith(null, 'My Page', 'SPACE_A')
     expect(h.reload).not.toHaveBeenCalled()
     // Prepend updater produces [new, ...prev].
     const updater = h.setPages.mock.calls[0]?.[0] as (prev: Row[]) => Row[]
@@ -126,9 +137,12 @@ describe('usePageCreation', () => {
       await result.current.handleCreatePage()
     })
 
-    const arg = mockedCreate.mock.calls[0]?.[0]
-    expect(typeof arg?.content).toBe('string')
-    expect(arg?.content.length ?? 0).toBeGreaterThan(0)
+    // Wire args are `(parentId, content, spaceId)` — a top-level page, so
+    // `parentId` is an explicit `null`.
+    const [parentId, content] = mockedCreate.mock.calls[0] ?? []
+    expect(parentId).toBeNull()
+    expect(typeof content).toBe('string')
+    expect((content as string).length).toBeGreaterThan(0)
   })
 
   it('guards against a not-yet-ready space and never calls the IPC', async () => {

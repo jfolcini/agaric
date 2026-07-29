@@ -25,14 +25,14 @@
 import { createContext, createElement, useContext, useEffect, useRef } from 'react'
 import { createStore, type StoreApi, useStore } from 'zustand'
 
-import { validationCode } from '@/lib/app-error'
+import { unwrap, validationCode } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { INTERACTIONS, traceInteraction } from '@/lib/observability'
 import { consumePrefetchedPageSubtree } from '@/lib/prefetch-page-subtree'
 import { ValidationCode } from '@/lib/search-query/validation-codes'
-import { loadPageSubtree } from '@/lib/tauri'
 import { buildFlatTree } from '@/lib/tree-utils'
 import { useBlockStore } from '@/stores/blocks'
 import { buildBlocksById } from '@/stores/page-blocks-map'
@@ -265,7 +265,9 @@ export function createPageBlockStore(pageId: string): StoreApi<PageBlockState> {
           INTERACTIONS.PAGE_OPEN,
           () =>
             (generation === 1 ? consumePrefetchedPageSubtree(spaceId, rootParentId) : null) ??
-            loadPageSubtree(rootParentId, spaceId),
+            commands
+              .loadPageSubtree(rootParentId, { kind: 'active', space_id: spaceId })
+              .then(unwrap),
         )
         const allBlocks = subtree.blocks
         // Defensive: discard if rootParentId changed (shouldn't happen with per-page stores)

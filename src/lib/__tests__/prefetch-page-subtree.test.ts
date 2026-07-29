@@ -13,12 +13,26 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { PageSubtree } from '@/lib/tauri'
-import { loadPageSubtree } from '@/lib/tauri'
+import type { PageSubtree } from '@/lib/bindings'
 
-vi.mock('@/lib/tauri', () => ({
-  loadPageSubtree: vi.fn(),
-}))
+// #2927 phase 7 — `prefetch-page-subtree` calls `commands.loadPageSubtree`
+// from `@/lib/bindings` directly. The spy still resolves/rejects with the
+// bare `PageSubtree`; the shim wraps a fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects and lets rejections
+// through untouched.
+const mockedLoadPageSubtree = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      loadPageSubtree: (...args: unknown[]) =>
+        mockedLoadPageSubtree(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 import {
   _prefetchMapSizeForTest,
@@ -28,8 +42,6 @@ import {
   PREFETCH_TTL_MS,
   prefetchPageSubtree,
 } from '@/lib/prefetch-page-subtree'
-
-const mockedLoadPageSubtree = vi.mocked(loadPageSubtree)
 
 function subtree(tag: string): PageSubtree {
   // `tag` isn't part of the real shape — it's just so `toBe`/`resolves.toBe`
@@ -56,7 +68,10 @@ describe('prefetch-page-subtree', () => {
       prefetchPageSubtree('SPACE_A', 'PAGE_1')
 
       expect(mockedLoadPageSubtree).toHaveBeenCalledTimes(1)
-      expect(mockedLoadPageSubtree).toHaveBeenCalledWith('PAGE_1', 'SPACE_A')
+      expect(mockedLoadPageSubtree).toHaveBeenCalledWith('PAGE_1', {
+        kind: 'active',
+        space_id: 'SPACE_A',
+      })
       resolve(subtree('x'))
     })
 

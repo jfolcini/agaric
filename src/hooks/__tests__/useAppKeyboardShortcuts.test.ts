@@ -26,12 +26,22 @@ vi.mock('@/lib/logger', () => ({
   logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }))
 
-// Partial mock of tauri lib — only `createPageInSpace` is exercised here.
-// Other lib/tauri exports are not used by the hook so we don't bother
-// `importActual`.
-vi.mock('@/lib/tauri', () => ({
-  createPageInSpace: vi.fn(async () => 'NEW_PAGE_ID_00000000000000'),
-}))
+// #2927 phase 7 — the hook calls `commands.createPageInSpace` from
+// `@/lib/bindings` directly. The spy sees the real wire arguments
+// `(parentId, content, spaceId)`; the shim wraps its fulfilment in the
+// `{ status: 'ok', data }` envelope `unwrap` expects.
+const mockedCreate = vi.hoisted(() => vi.fn(async () => 'NEW_PAGE_ID_00000000000000'))
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      createPageInSpace: (...args: unknown[]) =>
+        mockedCreate(...(args as [])).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 const t = (key: string): string => key
 
@@ -146,9 +156,6 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
   })
 
   it('Ctrl+N (createNewPage) routes through createPageInSpace and navigates', async () => {
-    const { createPageInSpace } = await import('@/lib/tauri')
-    const mockedCreate = vi.mocked(createPageInSpace)
-
     renderHook(() => useAppKeyboardShortcuts({ t, isMobile: false }))
 
     fireEvent.keyDown(window, { key: 'n', ctrlKey: true })
@@ -157,10 +164,7 @@ describe('useAppKeyboardShortcuts — global shortcuts (window listener)', () =>
     await Promise.resolve()
     await Promise.resolve()
 
-    expect(mockedCreate).toHaveBeenCalledWith({
-      content: 'Untitled',
-      spaceId: 'SPACE_PERSONAL',
-    })
+    expect(mockedCreate).toHaveBeenCalledWith(null, 'Untitled', 'SPACE_PERSONAL')
   })
 })
 
