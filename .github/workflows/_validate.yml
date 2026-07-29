@@ -1414,23 +1414,48 @@ jobs:
         # `lcov --add-tracefile` takes the union of covered lines across the
         # two partition reports — the correct combine (concatenation would
         # duplicate records). `--ignore-errors` keeps the merge resilient to
-        # llvm-cov/lcov-2.x format strictness; this job is non-gating so a
-        # merge that still fails surfaces here without blocking the gate.
+        # llvm-cov/lcov-2.x format strictness.
         #
-        # Glob whatever shard artifacts actually exist (#819 (2)): the
-        # shard upload step is success-gated, so when one cargo-tests
-        # shard fails its lcov never uploads and hardcoding both paths
-        # turned every shard failure into a SECOND spurious red here.
-        # Partial (or zero) coverage publishes whatever is available;
-        # the real failure signal stays on the cargo-tests shard itself.
+        # #3170: a missing shard artifact is a DISTINCT failure from a real
+        # coverage drop, and must never be silently treated as one. The
+        # shard upload step is success-gated, so when a cargo-tests shard
+        # fails, its lcov never uploads — merging (or skipping past) whatever
+        # partial set survives and feeding it to the ratchet compares
+        # half-a-suite against a full-suite baseline, which manufactures a
+        # fake "coverage regression" on top of the real cargo-tests failure
+        # (one root cause reported as multiple confusing red checks). So
+        # before merging anything we assert every expected shard artifact is
+        # present; if any is missing we fail loudly with an explicit,
+        # unambiguous message instead of computing (or waving through) a
+        # partial number.
         run: |
           set -euo pipefail
           shopt -s nullglob
-          shards=(rust-coverage-shards/*.lcov)
-          if [ "${#shards[@]}" -eq 0 ]; then
-            echo "No shard lcov artifacts found (all shards failed before upload) — skipping merge."
-            exit 0
+
+          # EXPECTED_SHARDS mirrors cargo-tests' `strategy.matrix.shard`
+          # above (currently `[1, 2]`, i.e. 2 shards). GitHub Actions has no
+          # cross-job way to read a sibling job's matrix size via `needs`,
+          # so this count is a hand-kept literal — bump both together if the
+          # shard count ever changes.
+          EXPECTED_SHARDS=2
+
+          missing=()
+          for i in $(seq 1 "$EXPECTED_SHARDS"); do
+            if [ ! -f "rust-coverage-shards/coverage-${i}.lcov" ]; then
+              missing+=("$i")
+            fi
+          done
+
+          if [ "${#missing[@]}" -gt 0 ]; then
+            for i in "${missing[@]}"; do
+              msg="coverage skipped: shard ${i}/${EXPECTED_SHARDS} artifact missing — upstream test job failed; coverage NOT evaluated"
+              echo "::error::${msg}"
+              echo "### Coverage ratchet (rust): ${msg}" >> "$GITHUB_STEP_SUMMARY"
+            done
+            exit 1
           fi
+
+          shards=(rust-coverage-shards/*.lcov)
           echo "Merging ${#shards[@]} shard lcov(s): ${shards[*]}"
           args=()
           for f in "${shards[@]}"; do
