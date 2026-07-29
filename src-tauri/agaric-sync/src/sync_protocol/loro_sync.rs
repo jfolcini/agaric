@@ -560,8 +560,8 @@ pub async fn apply_remote(
         registry,
         device_id,
         &space_id,
-        &bytes,
-        inbox_id,
+        agaric_engine::loro::engine::ImportPayload::Single(&bytes),
+        &[inbox_id],
         // Live apply: the engine import delta carries the purged set, so no
         // tombstone is threaded in here (it is WRITTEN by import_and_project,
         // #2292). Only the recovery replay path supplies a recovered set.
@@ -763,12 +763,22 @@ pub(crate) async fn import_and_project(
     registry: &LoroEngineRegistry,
     device_id: &str,
     space_id: &SpaceId,
-    bytes: &[u8],
-    inbox_id: i64,
+    // #3164: ONE inbound blob (the live `apply_remote` shape) or a whole boot-
+    // replay batch imported as a single diff-producing unit. Everything after
+    // the import is payload-agnostic — the passes below project the UNION the
+    // engine resolved, which is what a batch import yields in one diff event.
+    payload: agaric_engine::loro::engine::ImportPayload<'_>,
+    // #3164: the write-ahead slot(s) this payload came from — one id on the
+    // live path, the whole batch on boot replay. EVERY id here is cleared in
+    // the SAME Phase-2 tx as the projection, so the #535 hinge ("a slot is
+    // deleted IFF its projection committed") holds for a batch exactly as it
+    // does for a row: the tx commits all of them or none of them.
+    inbox_ids: &[i64],
     // #2292: purged ids recovered from a crashed apply's durable tombstone
     // (`loro_sync_inbox.purged_ids`). Unioned into Pass D so a purge whose
     // engine delta is now empty (subtree already gone) is still re-swept from
     // SQL. Empty on the live apply path (the engine delta carries the set).
+    // #3164: on a batch this is the UNION of the batch's recovered tombstones.
     tombstone_purged: &[agaric_core::ulid::BlockId],
     delivery: InboundDeliveryKind,
 ) -> Result<
@@ -814,9 +824,22 @@ pub(crate) async fn import_and_project(
         // fallback.
         cpu_block_in_place(|| {
             let mut guard = registry.for_space(space_id, device_id)?;
-            guard
-                .engine_mut()
-                .import_with_changed_purged_tagscope(bytes)
+            let engine = guard.engine_mut();
+            match payload {
+                agaric_engine::loro::engine::ImportPayload::Single(bytes) => {
+                    engine.import_with_changed_purged_tagscope(bytes)
+                }
+                // #3164: N blobs, ONE diff event, ONE resolved delta — see
+                // `import_batch_with_changed_purged_tagscope` for the loro
+                // citation. An `Err` here means an UNKNOWN subset landed in
+                // the engine, so we must return before any slot is deleted;
+                // the `?` below does exactly that, leaving every slot for the
+                // caller's per-row retry (#535 unharmed: nothing projected,
+                // nothing deleted).
+                agaric_engine::loro::engine::ImportPayload::Batch(blobs) => {
+                    engine.import_batch_with_changed_purged_tagscope(blobs)
+                }
+            }
         })?
     };
 
@@ -862,13 +885,23 @@ pub(crate) async fn import_and_project(
         union.sort_unstable();
         union.dedup();
         let purged_json = serde_json::to_string(&union)?;
-        sqlx::query!(
-            "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
-            purged_json,
-            inbox_id,
-        )
-        .execute(pool)
-        .await?;
+        // #3164: on a batch the engine resolved ONE union purge delta, which
+        // cannot be attributed back to an individual blob — so stamp the union
+        // on EVERY slot in the batch. That is the conservative direction: if
+        // the projection tx rolls back, each surviving slot carries at least
+        // the ids it would have carried alone, so the next boot re-sweeps at
+        // least as much. Over-broad tombstones are harmless because Fix 2
+        // below narrows any recovered tombstone to ids the engine no longer
+        // holds live. Single-id (live) behaviour is unchanged.
+        for id in inbox_ids {
+            sqlx::query!(
+                "UPDATE loro_sync_inbox SET purged_ids = ? WHERE id = ?",
+                purged_json,
+                id,
+            )
+            .execute(pool)
+            .await?;
+        }
     }
 
     // #2292 (CR, Fix 2): a block the engine currently holds LIVE must not be
@@ -915,20 +948,36 @@ pub(crate) async fn import_and_project(
             InboundDeliveryKind::Live => {
                 // dynamic-sql: static-string COUNT probe guarding the no-op fast path
                 // (#2264 review); runtime form to keep the rare path off the macro cache.
-                let leftover: i64 = sqlx::query_scalar(
-                    "SELECT COUNT(*) FROM loro_sync_inbox WHERE space_id = ? AND id != ?",
-                )
-                .bind(space_id.as_str())
-                .bind(inbox_id)
-                .fetch_one(pool)
-                .await?;
-                leftover == 0
+                let total: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox WHERE space_id = ?")
+                        .bind(space_id.as_str())
+                        .fetch_one(pool)
+                        .await?;
+                // #3164: "no OTHER slot pending for this space" now means
+                // "every slot in this space belongs to THIS payload". Counting
+                // our own still-present ids (rather than subtracting
+                // `inbox_ids.len()`) keeps the answer exact if one of them
+                // raced away, and for the one-id live payload it is literally
+                // the pre-#3164 `... AND id != ?` count.
+                let mut ours_present: i64 = 0;
+                for id in inbox_ids {
+                    let present: Option<i64> = sqlx::query_scalar!(
+                        r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
+                        id,
+                    )
+                    .fetch_optional(pool)
+                    .await?;
+                    ours_present += i64::from(present.is_some());
+                }
+                total == ours_present
             }
         };
         if trusted {
-            sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
-                .execute(pool)
-                .await?;
+            for id in inbox_ids {
+                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
+                    .execute(pool)
+                    .await?;
+            }
             return Ok((changed_blocks, purged_blocks));
         }
         // Untrusted no-op: SQL may be behind the engine (the crash window
@@ -1134,9 +1183,22 @@ pub(crate) async fn import_and_project(
     // re-runs) or already gone (projection committed). The DELETE is a no-op
     // if the row was already removed (e.g. a concurrent replay), which keeps
     // double-replay safe.
-    sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", inbox_id)
-        .execute(&mut *tx)
-        .await?;
+    //
+    // #3164: for a BATCH this loop is the whole of the batching risk, and it is
+    // where the invariant is bought back. All N deletes and the union
+    // projection are in ONE tx: it commits (every projection landed AND every
+    // slot cleared) or it rolls back (nothing projected AND nothing cleared).
+    // There is no interleaving in which a slot outlives its committed
+    // projection or a projection outlives its slot — the two halves of #535 —
+    // because SQLite gives us no way to observe a partial tx. The only failure
+    // that batching genuinely widens is the ENGINE import (outside any tx), and
+    // that is handled upstream by importing before this tx and returning early
+    // on error.
+    for id in inbox_ids {
+        sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
+            .execute(&mut *tx)
+            .await?;
+    }
 
     tx.commit().await?;
 
@@ -1362,12 +1424,223 @@ pub async fn replay_inbox_row(
         registry,
         device_id,
         &space,
-        bytes,
-        inbox_id,
+        agaric_engine::loro::engine::ImportPayload::Single(bytes),
+        &[inbox_id],
         tombstone_purged,
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
+}
+
+/// One leftover write-ahead inbox slot, as handed to [`replay_inbox_batch`].
+///
+/// Owns its blob so the batch can build the contiguous `&[Vec<u8>]`
+/// `LoroDoc::import_batch` requires WITHOUT cloning the payloads — the #1574
+/// memory bound (at most one chunk of blobs resident) must survive batching.
+#[derive(Debug)]
+pub struct InboxSlot {
+    /// `loro_sync_inbox.id` — the slot cleared iff its projection commits.
+    pub id: i64,
+    /// The raw Loro-sync blob written ahead of the crashed import.
+    pub bytes: Vec<u8>,
+    /// #2292: ids decoded from this slot's durable `purged_ids` tombstone.
+    pub tombstone_purged: Vec<agaric_core::ulid::BlockId>,
+}
+
+/// #3164 — boot-recovery entry point for a whole batch of leftover slots that
+/// all target the SAME space, in id (insert) order.
+///
+/// Collapses N imports + N projections + N slot deletes into one
+/// `LoroDoc::import_batch`, one union projection and one transaction.
+///
+/// ## How #535 survives batching
+///
+/// The invariant is "a slot is deleted IFF its projection committed". Batching
+/// only threatens it if the deletes and the projection can be observed apart,
+/// so they are kept in the one Phase-2 tx inside [`import_and_project`]: it
+/// commits (all N projections landed, all N slots gone) or rolls back (nothing
+/// landed, all N slots survive for a later boot). There is no third outcome.
+///
+/// The one step batching genuinely widens is the ENGINE import, which is not
+/// transactional: `import_batch` can partially apply and still return `Err`
+/// (`loro-internal-1.13.6/src/loro.rs:1459-1478`). That is handled by ordering
+/// — the import happens before the projection tx opens, so an import error
+/// returns with **zero** slots deleted. The engine being ahead of SQL with the
+/// slots still present is precisely the state #535 was designed for, and the
+/// retry below (and, failing that, the next boot) heals it: re-import is
+/// idempotent and `RecoveryReplay` forces the full-projection fallback.
+///
+/// ## Poison isolation
+///
+/// A batch import that fails must not let one bad blob strand its space's other
+/// slots forever (the per-row walk's "log + continue" guarantee). On any batch
+/// failure this falls back to replaying the accepted slots ONE AT A TIME
+/// through [`replay_inbox_row`], which isolates the poison slot exactly as
+/// before. A blob whose in-batch dependency did not land may then be dropped by
+/// the per-row #1054 gate — the same self-healing outcome it would have had if
+/// delivered alone (next sync session → snapshot catch-up), never a silent
+/// projection loss.
+pub async fn replay_inbox_batch(
+    pool: &SqlitePool,
+    registry: &LoroEngineRegistry,
+    device_id: &str,
+    space_id: &str,
+    slots: Vec<InboxSlot>,
+) -> Result<BatchReplayOutcome, AppError> {
+    let mut out = BatchReplayOutcome::default();
+    if slots.is_empty() {
+        return Ok(out);
+    }
+    let space = SpaceId::from_trusted(space_id);
+
+    // #792 / #1054 pre-import gates, run over the WHOLE batch in id order
+    // against a cumulative version base — see `gate_replay_blobs` for why the
+    // per-blob guards cannot simply be mapped over the batch (a single peer's
+    // linear dep chain would gate every blob but the first as unreachable).
+    let gates = {
+        let blob_refs: Vec<&[u8]> = slots.iter().map(|s| s.bytes.as_slice()).collect();
+        let mut guard = registry.for_space(&space, device_id)?;
+        guard.engine_mut().gate_replay_blobs(&blob_refs)
+    };
+
+    let mut accepted: Vec<InboxSlot> = Vec::with_capacity(slots.len());
+    for (slot, gate) in slots.into_iter().zip(gates) {
+        match gate {
+            agaric_engine::loro::engine::ReplayBlobGate::Accept => accepted.push(slot),
+            agaric_engine::loro::engine::ReplayBlobGate::Fork(reason) => {
+                tracing::warn!(
+                    space_id,
+                    inbox_id = slot.id,
+                    reason = %reason,
+                    "loro_sync: boot-replay inbox slot forks our own (peer,counter) \
+                     space (#792); dropping the slot — the next sync session will \
+                     fall back to snapshot catch-up"
+                );
+                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
+                    .execute(pool)
+                    .await?;
+                // A dropped slot IS cleared, so it counts as replayed —
+                // identical to the per-row path, whose drop branches return
+                // `Ok` and are counted by `replay_sync_inbox`.
+                out.replayed += 1;
+            }
+            agaric_engine::loro::engine::ReplayBlobGate::Unreachable(reason) => {
+                tracing::warn!(
+                    space_id,
+                    inbox_id = slot.id,
+                    reason = %reason,
+                    "loro_sync: boot-replay inbox slot's update base is unreachable from \
+                     the local engine (#1054); dropping the slot — the next sync session \
+                     will detect the gap and fall back to snapshot catch-up"
+                );
+                sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", slot.id)
+                    .execute(pool)
+                    .await?;
+                out.replayed += 1;
+            }
+        }
+    }
+    if accepted.is_empty() {
+        return Ok(out);
+    }
+
+    let inbox_ids: Vec<i64> = accepted.iter().map(|s| s.id).collect();
+    // Union of the batch's durable tombstones — Pass D narrows it to ids the
+    // engine no longer holds live (#2292 Fix 2), so the union is safe.
+    let tombstone_union: Vec<agaric_core::ulid::BlockId> = {
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        accepted
+            .iter()
+            .flat_map(|s| s.tombstone_purged.iter())
+            .filter(|id| seen.insert(id.as_str().to_string()))
+            .cloned()
+            .collect()
+    };
+    // Move the blobs out into the contiguous slice `import_batch` needs — no
+    // clone, so the chunk's memory footprint is unchanged (#1574).
+    let blobs: Vec<Vec<u8>> = accepted
+        .iter_mut()
+        .map(|s| std::mem::take(&mut s.bytes))
+        .collect();
+
+    match import_and_project(
+        pool,
+        registry,
+        device_id,
+        &space,
+        agaric_engine::loro::engine::ImportPayload::Batch(&blobs),
+        &inbox_ids,
+        &tombstone_union,
+        InboundDeliveryKind::RecoveryReplay,
+    )
+    .await
+    {
+        Ok((changed, purged)) => {
+            // The tx committed ⇒ every accepted slot's projection landed AND
+            // every accepted slot is gone. Both halves of #535, together.
+            out.replayed += u64::try_from(inbox_ids.len()).unwrap_or(u64::MAX);
+            out.changed.extend(changed);
+            out.purged.extend(purged);
+            Ok(out)
+        }
+        Err(batch_err) => {
+            // Nothing was deleted (the projection tx never committed) and
+            // nothing was projected — fall back to the per-row path so one
+            // poison blob cannot strand the rest of this space's slots.
+            tracing::warn!(
+                space_id,
+                slots = inbox_ids.len(),
+                error = %batch_err,
+                "#3164: batched sync-inbox replay failed; no slot was cleared — \
+                 retrying the batch one slot at a time to isolate the poison blob"
+            );
+            for (slot, bytes) in accepted.iter().zip(&blobs) {
+                match replay_inbox_row(
+                    pool,
+                    registry,
+                    device_id,
+                    space_id,
+                    bytes,
+                    slot.id,
+                    &slot.tombstone_purged,
+                )
+                .await
+                {
+                    Ok((changed, purged)) => {
+                        out.replayed += 1;
+                        out.changed.extend(changed);
+                        out.purged.extend(purged);
+                    }
+                    Err(e) => {
+                        // Poison slot: left in place by `replay_inbox_row`, so
+                        // a later boot retries it. Reported, never fatal —
+                        // the per-row walk's "log + continue" contract.
+                        out.errors.push(format!("inbox {}: {e}", slot.id));
+                    }
+                }
+            }
+            Ok(out)
+        }
+    }
+}
+
+/// #3164 — what one [`replay_inbox_batch`] call achieved.
+///
+/// Mirrors the bookkeeping the per-row walk did inline, so batching does not
+/// change what `replay_sync_inbox` counts or reports: `replayed` is the number
+/// of slots CLEARED (projected, or dropped by a #792 / #1054 gate — both of
+/// which the per-row path also counted), and `errors` holds one message per
+/// slot left behind as poison.
+#[derive(Debug, Default)]
+pub struct BatchReplayOutcome {
+    /// Slots cleared by this call.
+    pub replayed: u64,
+    /// Blocks the import changed — for the caller's #2541 cache/FTS fan-out.
+    pub changed: Vec<agaric_core::ulid::BlockId>,
+    /// Blocks the import hard-purged — same fan-out.
+    pub purged: Vec<agaric_core::ulid::BlockId>,
+    /// One message per slot left in place for a later boot.
+    pub errors: Vec<String>,
 }
 
 // ---------------------------------------------------------------------------

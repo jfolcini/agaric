@@ -275,6 +275,54 @@ impl LoroEngine {
         &mut self,
         bytes: &[u8],
     ) -> Result<ImportDelta, AppError> {
+        self.import_payload_with_changed_purged_tagscope(ImportPayload::Single(bytes))
+    }
+
+    /// #3164 — batched sibling of [`Self::import_with_changed_purged_tagscope`]:
+    /// import MANY blobs and return the ONE [`ImportDelta`] describing their
+    /// combined effect.
+    ///
+    /// ## Why this collapses the projection, not just the decode
+    ///
+    /// `LoroDoc::import_batch` (`loro-internal-1.13.6/src/loro.rs:1397-1488`)
+    /// force-detaches the doc for the whole batch (`set_detached(true)` while
+    /// holding the txn mutex), runs `_import_with` per blob — which appends to
+    /// the `OpLog` ONLY, since a detached doc does not update `DocState` — and
+    /// then re-attaches exactly once via `_checkout_to_latest_with_guard`. The
+    /// `DiffEvent` this method subscribes to is therefore emitted **once for
+    /// the whole batch**, not once per blob, so the resolver below sees a
+    /// single union diff and the caller projects a single union set. (The
+    /// `bytes.len() == 1` early return at `loro.rs:1402` delegates straight to
+    /// `import`, so a one-blob batch is bit-identical to the single path.)
+    ///
+    /// ## Error shape callers must handle
+    ///
+    /// `import_batch` is NOT atomic: a per-blob failure is *remembered* and
+    /// returned after the re-attach (`loro.rs:1459-1478`), so blobs that
+    /// decoded fine have already landed in the oplog and the state. An `Err`
+    /// here therefore means "an unknown subset was imported" — callers must
+    /// treat it as "project nothing, delete nothing" and retry per blob.
+    ///
+    /// `import_batch` also SORTS the blobs (by export mode, then descending
+    /// change count — `loro.rs:1411-1415`). That is safe: every blob is
+    /// appended to the oplog before the single re-attach, and loro buffers a
+    /// blob whose deps have not arrived yet in `pending_changes`, so the final
+    /// oplog (and hence the union diff) does not depend on the input order.
+    pub fn import_batch_with_changed_purged_tagscope(
+        &mut self,
+        blobs: &[Vec<u8>],
+    ) -> Result<ImportDelta, AppError> {
+        self.import_payload_with_changed_purged_tagscope(ImportPayload::Batch(blobs))
+    }
+
+    /// Shared body of the single- and batch-import drivers. Everything after
+    /// the `doc.import*` call is payload-agnostic: the diff capture, the
+    /// no-op short-circuit, the legacy-migration fallback and the changed /
+    /// purged / tag-scope resolution all read post-import engine state.
+    fn import_payload_with_changed_purged_tagscope(
+        &mut self,
+        payload: ImportPayload<'_>,
+    ) -> Result<ImportDelta, AppError> {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
@@ -294,7 +342,12 @@ impl LoroEngine {
                 }))
         };
 
-        let import_result = self.doc.import(bytes).map(|_status| ());
+        let import_result = match payload {
+            ImportPayload::Single(bytes) => self.doc.import(bytes).map(|_status| ()),
+            // #3164: one detached append per blob, ONE re-attach ⇒ ONE diff
+            // event for the whole batch (see the fn docs for the citation).
+            ImportPayload::Batch(blobs) => self.doc.import_batch(blobs).map(|_status| ()),
+        };
         // Flush so the import diff is delivered to the subscriber, then
         // unsubscribe before any local migration ops below.
         self.doc.commit();
@@ -605,6 +658,20 @@ impl LoroEngine {
         }
         Ok(())
     }
+}
+
+/// #3164 — what to feed the shared import driver: one blob, or a batch that
+/// must be imported as a single diff-producing unit.
+///
+/// Exists so the single- and batch-import entry points share one body (and
+/// therefore one set of no-op / migration / resolver invariants) instead of
+/// forking a second copy of the ~100-line resolution flow.
+#[derive(Debug, Clone, Copy)]
+pub enum ImportPayload<'a> {
+    /// A single inbound blob — the live `apply_remote` shape.
+    Single(&'a [u8]),
+    /// Many blobs imported via `LoroDoc::import_batch`, yielding ONE diff.
+    Batch(&'a [Vec<u8>]),
 }
 
 /// What an incremental import changed, as resolved from the Loro import diff.

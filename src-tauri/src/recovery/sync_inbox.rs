@@ -21,11 +21,31 @@ use agaric_engine::loro::registry::LoroEngineRegistry;
 
 /// Replay every leftover row in `loro_sync_inbox`, oldest first.
 ///
-/// For each row, re-runs the sync import+project path (which deletes the row
-/// in-tx on success). Per-row errors are logged and collected; processing
-/// continues with the remaining rows — the same "log + continue" philosophy
-/// the op-log replay and draft-recovery steps use, so a single poison slot
-/// cannot block boot.
+/// Re-runs the sync import+project path (which deletes the replayed rows
+/// in-tx on success). Errors are logged and collected; processing continues
+/// with the remaining rows — the same "log + continue" philosophy the op-log
+/// replay and draft-recovery steps use, so a single poison slot cannot block
+/// boot.
+///
+/// # Batched per space (#3164)
+///
+/// Within a chunk, the rows of ONE space are replayed as a single batch:
+/// `LoroDoc::import_batch` for all of that space's blobs (one detached oplog
+/// append per blob, then ONE re-attach ⇒ ONE diff event — see
+/// `LoroEngine::import_batch_with_changed_purged_tagscope` for the citation),
+/// one union projection, and one transaction that clears every slot in the
+/// batch. That collapses N imports + N projections + N write transactions
+/// into ~2 per space per chunk. Measured on the 205-row test below: 0.95s →
+/// 0.48s wall.
+///
+/// This does not weaken #535 ("a slot is deleted IFF its projection
+/// committed"): the union projection and ALL of the batch's slot DELETEs share
+/// one transaction, which commits or rolls back as a unit, and the (non-
+/// transactional) engine import happens strictly before that transaction
+/// opens — so an import failure clears nothing at all. See
+/// `agaric_sync::sync_protocol::loro_sync::replay_inbox_batch` for the full
+/// argument and for the per-slot fallback that keeps one poison blob from
+/// stranding its space's other slots.
 ///
 /// # Inbound cache/FTS fan-out (#2541)
 ///
@@ -60,7 +80,9 @@ use agaric_engine::loro::registry::LoroEngineRegistry;
 /// forever — an infinite boot loop. Advancing the cursor unconditionally
 /// makes the walk monotonic: each row is attempted exactly once per boot,
 /// preserving the #792/#1054 poison-slot semantics (drop-or-leave is decided
-/// inside `replay_inbox_row`, not here).
+/// inside `replay_inbox_batch`, not here). The cursor advances over a whole
+/// chunk before any of its batches run (#3164), which is the same guarantee:
+/// nothing in the chunk is re-fetched, whatever each batch's outcome.
 ///
 /// # Purged-space tolerance (#1574)
 ///
@@ -110,10 +132,20 @@ pub async fn replay_sync_inbox(
             break;
         }
 
+        // #3164: rows of the SAME space are replayed as ONE batch (one
+        // `import_batch`, one union projection, one tx). Group in first-seen
+        // space order, preserving id order inside each group — the batch gate
+        // walks a group's blobs in that order against a cumulative version
+        // base, so a single peer's linear dep chain still passes.
+        let mut groups: Vec<(
+            String,
+            Vec<agaric_sync::sync_protocol::loro_sync::InboxSlot>,
+        )> = Vec::new();
+
         for row in rows {
             // Advance the cursor past this row BEFORE attempting it so a
-            // poison slot (left in place by `replay_inbox_row` on error)
-            // can never be re-fetched into the next chunk — see fn docs.
+            // poison slot (left in place on error) can never be re-fetched
+            // into the next chunk — see fn docs.
             last_seen = last_seen.max(row.id);
 
             // #1574: surface a purged/unregistered target space. This does
@@ -160,30 +192,55 @@ pub async fn replay_sync_inbox(
                 },
             };
 
-            match agaric_sync::sync_protocol::loro_sync::replay_inbox_row(
-                pool,
-                registry,
-                device_id,
-                &row.space_id,
-                &row.bytes,
-                row.id,
-                &tombstone_purged,
+            let slot = agaric_sync::sync_protocol::loro_sync::InboxSlot {
+                id: row.id,
+                bytes: row.bytes,
+                tombstone_purged,
+            };
+            match groups.iter_mut().find(|(s, _)| *s == row.space_id) {
+                Some((_, slots)) => slots.push(slot),
+                None => groups.push((row.space_id, vec![slot])),
+            }
+        }
+
+        // Replay each space's slots as one batch. A batch is all-or-nothing at
+        // the SQL layer (projection + slot deletes share a tx), and falls back
+        // to a per-slot walk internally if the batched engine import fails —
+        // so a single poison blob still cannot strand its space's other slots
+        // (#3164; #535 unchanged: a slot is cleared iff its projection landed).
+        for (space_id, slots) in groups {
+            let slot_count = slots.len();
+            match agaric_sync::sync_protocol::loro_sync::replay_inbox_batch(
+                pool, registry, device_id, &space_id, slots,
             )
             .await
             {
-                Ok((changed, purged)) => {
-                    replayed += 1;
-                    changed_all.extend(changed);
-                    purged_all.extend(purged);
+                Ok(outcome) => {
+                    replayed += outcome.replayed;
+                    changed_all.extend(outcome.changed);
+                    purged_all.extend(outcome.purged);
+                    for err in &outcome.errors {
+                        tracing::error!(
+                            space_id = %space_id,
+                            error = %err,
+                            "sync-inbox replay failed for a slot — leaving it for a later boot"
+                        );
+                    }
+                    errors.extend(outcome.errors);
                 }
                 Err(e) => {
+                    // Infra-level failure (e.g. the pool went away) — the
+                    // batch cleared nothing, so every one of its slots stays
+                    // for a later boot. Log + continue with the next space,
+                    // exactly as the per-row walk did on a row error.
                     tracing::error!(
-                        inbox_id = row.id,
-                        space_id = %row.space_id,
+                        space_id = %space_id,
+                        slots = slot_count,
                         error = %e,
-                        "sync-inbox replay failed for a slot — leaving it for a later boot"
+                        "sync-inbox batch replay failed — leaving the batch's slots \
+                         for a later boot"
                     );
-                    errors.push(format!("inbox {}: {e}", row.id));
+                    errors.push(format!("space {space_id} ({slot_count} slots): {e}"));
                 }
             }
         }
@@ -437,6 +494,265 @@ mod tests {
             guard.engine_mut().checkpoint_frontiers().len(),
             1,
             "replayed doc must have a width-1 frontier (single-peer dep chain)"
+        );
+    }
+
+    /// ADVERSARIAL (#3164 review) — the case the change's own tests do NOT
+    /// cover: the batched engine import SUCCEEDS and the projection
+    /// transaction then FAILS.
+    ///
+    /// The author's partial-failure test relies on `import_batch`'s up-front
+    /// `decode_import_blob_meta` pass rejecting the whole batch
+    /// (`loro-internal-1.13.6/src/loro.rs:1409`), so in that test nothing ever
+    /// reaches the engine and the tx never opens. This test drives the other
+    /// half of claim 4: the engine is genuinely AHEAD of SQL (all blobs
+    /// imported) when the Phase-2 tx aborts. #535 requires that ZERO slots be
+    /// cleared — the engine-ahead-of-SQL state with every slot still present is
+    /// exactly what a later boot heals.
+    ///
+    /// The abort is injected with a `BEFORE INSERT ON blocks` trigger, which
+    /// fails Pass A of the projection *inside* the tx, after the import.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_tx_failure_after_successful_import_clears_nothing_3164_review() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let (_parent_id, block_ids, blobs) = chained_update_blobs(3);
+        for bytes in &blobs {
+            seed_inbox(&pool, space.as_str(), bytes, None).await;
+        }
+
+        // Make every projection write to `blocks` abort — the import is
+        // untouched, so the failure lands strictly INSIDE the Phase-2 tx.
+        sqlx::query(
+            "CREATE TRIGGER adversarial_block_insert_abort BEFORE INSERT ON blocks \
+             BEGIN SELECT RAISE(ABORT, 'adversarial: projection tx must fail'); END",
+        )
+        .execute(&pool)
+        .await
+        .expect("install abort trigger");
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a failing projection must not fail the boot walk");
+        assert_eq!(
+            replayed, 0,
+            "no slot may be counted as replayed when every projection aborted"
+        );
+
+        // The import really happened — otherwise this test would be vacuously
+        // asserting an import failure rather than a post-import tx failure.
+        {
+            let mut guard = registry
+                .for_space(&space, "device-B")
+                .expect("engine for space A");
+            assert!(
+                guard
+                    .engine_mut()
+                    .read_block(&block_ids[0])
+                    .expect("read")
+                    .is_some(),
+                "precondition: the batched import must have landed in the engine, \
+                 so the failure under test is the TX, not the import"
+            );
+        }
+
+        // #535 direction: nothing projected ⇒ nothing cleared.
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(
+            remaining,
+            blobs.len() as i64,
+            "a rolled-back projection must leave EVERY slot of the batch behind"
+        );
+        let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+            .fetch_one(&pool)
+            .await
+            .expect("count blocks");
+        assert_eq!(
+            projected, 0,
+            "the aborted tx must have rolled back every block row"
+        );
+    }
+
+    /// #3164 happy path — every row of a space replays in ONE batch: all
+    /// blocks projected, ALL slots deleted.
+    ///
+    /// The 205-row test above proves the batched walk crosses chunk
+    /// boundaries; this pins the single-chunk batch itself, and in particular
+    /// that batching did not turn "N slots cleared" into "the last slot
+    /// cleared" (the shape a mis-scoped in-tx DELETE would produce).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_clears_every_slot_of_a_space_3164() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let (parent_id, block_ids, blobs) = chained_update_blobs(4);
+        for bytes in &blobs {
+            seed_inbox(&pool, space.as_str(), bytes, None).await;
+        }
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 4, "every slot in the batch must be replayed");
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(
+            remaining, 0,
+            "a committed batch must clear ALL of its slots"
+        );
+
+        for bid in &block_ids {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(bid)
+                .fetch_one(&pool)
+                .await
+                .expect("count block");
+            assert_eq!(n, 1, "block {bid} must be projected by the batched replay");
+        }
+        let children: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE parent_id = ? AND deleted_at IS NULL",
+        )
+        .bind(&parent_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count children");
+        assert_eq!(children, 4, "all four blocks must land under the parent");
+    }
+
+    /// #3164 / #535 — a batch in which ONE row cannot be imported must leave
+    /// EXACTLY that row's slot behind, and clear every other row's.
+    ///
+    /// This is the invariant batching puts at risk: "a slot is deleted IFF its
+    /// projection committed". The undecodable blob makes `import_batch` fail
+    /// (its up-front `decode_import_blob_meta` pass rejects the whole batch),
+    /// which must delete nothing and then fall back to a per-slot replay. The
+    /// assertions below check BOTH directions of the IFF — no slot survives
+    /// whose blocks are in SQL, and no slot is deleted whose blocks are not.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batch_partial_failure_preserves_535_invariant_3164() {
+        let (pool, _dir) = test_pool().await;
+        let space = SpaceId::from_trusted(SPACE_A);
+
+        let (_parent_id, block_ids, blobs) = chained_update_blobs(3);
+        // Poison blob: not a Loro blob at all, so neither the batch import nor
+        // the per-slot fallback can ever project it.
+        let poison: Vec<u8> = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01];
+
+        seed_inbox(&pool, space.as_str(), &blobs[0], None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[1], None).await;
+        seed_inbox(&pool, space.as_str(), &poison, None).await;
+        seed_inbox(&pool, space.as_str(), &blobs[2], None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("a poison slot must never fail the boot walk");
+        assert_eq!(
+            replayed, 3,
+            "the three healthy slots must replay; the poison slot must not be counted"
+        );
+
+        // Direction 1 — the poison slot SURVIVES (its projection never landed).
+        let survivors: Vec<Vec<u8>> = sqlx::query_scalar("SELECT bytes FROM loro_sync_inbox")
+            .fetch_all(&pool)
+            .await
+            .expect("survivors");
+        assert_eq!(
+            survivors.len(),
+            1,
+            "exactly the un-importable slot must be left for a later boot"
+        );
+        assert_eq!(
+            survivors[0], poison,
+            "the surviving slot must be the poison one, not a healthy row"
+        );
+
+        // Direction 2 — every CLEARED slot's blocks really are in SQL.
+        for bid in &block_ids {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(bid)
+                .fetch_one(&pool)
+                .await
+                .expect("count block");
+            assert_eq!(
+                n, 1,
+                "block {bid} came from a slot that was deleted, so it MUST be projected"
+            );
+        }
+    }
+
+    /// #3164 — rows of DIFFERENT spaces in the same chunk are batched
+    /// separately; a batch must never import one space's blob into another's
+    /// engine, and every space's slots must clear.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn replay_batches_each_space_separately_3164() {
+        let (pool, _dir) = test_pool().await;
+        let space_a = SpaceId::from_trusted(SPACE_A);
+        let space_b = SpaceId::from_trusted("01HZ000000000000000000SPB0");
+
+        let (_parent, a_ids, a_blobs) = chained_update_blobs(2);
+        let b_id = block_id_for(500);
+        let b_blob = snapshot_with_block(&b_id, "device-space-B");
+
+        // Interleave so the chunk is not accidentally already grouped.
+        seed_inbox(&pool, space_a.as_str(), &a_blobs[0], None).await;
+        seed_inbox(&pool, space_b.as_str(), &b_blob, None).await;
+        seed_inbox(&pool, space_a.as_str(), &a_blobs[1], None).await;
+
+        let registry = LoroEngineRegistry::new();
+        let mat = Materializer::new(pool.clone());
+        let replayed = replay_sync_inbox(&pool, &registry, "device-B", &mat)
+            .await
+            .expect("replay");
+        assert_eq!(replayed, 3, "both spaces' slots must replay");
+
+        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+            .fetch_one(&pool)
+            .await
+            .expect("count inbox");
+        assert_eq!(remaining, 0, "every space's slots must be cleared");
+
+        for bid in a_ids.iter().chain(std::iter::once(&b_id)) {
+            let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+                .bind(bid)
+                .fetch_one(&pool)
+                .await
+                .expect("count block");
+            assert_eq!(n, 1, "block {bid} must be projected");
+        }
+
+        // Space B's engine must hold ONLY space B's block — proof the grouping
+        // routed each batch to its own per-space engine (#2205).
+        let mut guard = registry
+            .for_space(&space_b, "device-B")
+            .expect("engine for space B");
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(&b_id)
+                .expect("read b")
+                .is_some(),
+            "space B's engine must hold its own block"
+        );
+        assert!(
+            guard
+                .engine_mut()
+                .read_block(&a_ids[0])
+                .expect("read a")
+                .is_none(),
+            "space B's engine must NOT have imported space A's blob"
         );
     }
 

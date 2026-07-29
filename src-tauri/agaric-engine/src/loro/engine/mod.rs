@@ -575,10 +575,13 @@ mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
 /// `pub` (not `pub(crate)`) so the app-crate sync/materializer callers reach it
 /// as `crate::loro::engine::TagScope` across the crate boundary (#2621, E1).
-pub use snapshot::{ImportDelta, TagScope};
+pub use snapshot::{ImportDelta, ImportPayload, TagScope};
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;
+/// #3164: batched boot-replay blob gate verdict — `pub` for the same
+/// cross-crate reason as `TagScope` (the sync crate drives the batch).
+pub use sync::ReplayBlobGate;
 
 /// #2604 — rollback-safe engine-apply staging primitives (`fork_staging`).
 mod staging;
@@ -1289,6 +1292,224 @@ mod tests {
             fresh.unreachable_update_in_blob(&snapshot).is_none(),
             "a snapshot-shaped blob must always be safe to import"
         );
+    }
+
+    /// ADVERSARIAL (#3164 review) — the load-bearing claim of the whole change
+    /// is that `import_batch` yields ONE diff covering the WHOLE batch, so the
+    /// returned `ImportDelta.changed` is the UNION of every blob's effect.
+    ///
+    /// Nothing in the change tested that directly (only the gate and the
+    /// end-to-end replay). If loro emitted one diff per blob, or the re-attach
+    /// diff (`EventTriggerKind::Checkout`, `loro.rs:1470` →
+    /// `_checkout_to_latest_with_guard`) were dropped by the root subscriber,
+    /// `changed` would come back short or empty — and the batched replay would
+    /// delete N slots having projected fewer than N blocks. Assert the batched
+    /// delta equals the union the per-blob sequence produces.
+    #[test]
+    fn import_batch_delta_is_the_union_of_every_blob_3164_review() {
+        use super::LoroEngine;
+        use std::collections::BTreeSet;
+
+        // One producer, a parent plus four children, each blob the delta since
+        // the previous vv — the real inbox-leftover shape.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let mut since = a.version_vector();
+        a.apply_create_block("PARENT-0", "content", "p", None, 0)
+            .expect("parent");
+        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        let mut ids: Vec<String> = Vec::new();
+        for i in 0..4usize {
+            let bid = format!("KID-{i}");
+            a.apply_create_block_at(&bid, "content", "payload", Some("PARENT-0"), i)
+                .expect("child");
+            blobs.push(a.export_update_since(&since).expect("delta"));
+            since = a.version_vector();
+            ids.push(bid);
+        }
+
+        // Reference: import the SAME blobs one at a time and union the deltas.
+        let mut seq = LoroEngine::with_peer_id("DEV-B").expect("seq");
+        let mut seq_changed: BTreeSet<String> = BTreeSet::new();
+        for b in &blobs {
+            let d = seq
+                .import_with_changed_purged_tagscope(b)
+                .expect("sequential import");
+            seq_changed.extend(d.changed.iter().map(|id| id.as_str().to_string()));
+        }
+
+        // Subject: ONE batched import.
+        let mut bat = LoroEngine::with_peer_id("DEV-C").expect("bat");
+        let delta = bat
+            .import_batch_with_changed_purged_tagscope(&blobs)
+            .expect("batch import");
+        let bat_changed: BTreeSet<String> = delta
+            .changed
+            .iter()
+            .map(|id| id.as_str().to_string())
+            .collect();
+
+        assert_eq!(
+            bat_changed, seq_changed,
+            "the batched ImportDelta must name exactly the blocks the per-blob \
+             sequence names — anything less means slots would be deleted whose \
+             blocks were never projected (#535)"
+        );
+        for bid in ids.iter().chain(std::iter::once(&"PARENT-0".to_string())) {
+            assert!(
+                bat_changed.contains(bid.as_str()),
+                "batched delta must include {bid}; got {bat_changed:?}"
+            );
+            assert!(
+                bat.read_block(bid).expect("read").is_some(),
+                "batched engine must actually hold {bid}"
+            );
+        }
+    }
+
+    /// ADVERSARIAL (#3164 review) — a batch whose blobs arrive OUT of causal
+    /// order must not be gated more harshly than the per-row loop would gate
+    /// the same sequence.
+    ///
+    /// The cumulative-base walk is one pass in slot order, so a blob whose
+    /// dependency appears LATER in the batch is reported unreachable. That is
+    /// the per-row loop's verdict too (it had not imported the later blob
+    /// either), so the gate must not diverge — this pins the equivalence
+    /// rather than assuming it.
+    #[test]
+    fn gate_replay_blobs_matches_per_row_on_out_of_order_batch_3164_review() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let mut since = a.version_vector();
+        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        for i in 0..3i64 {
+            a.apply_create_block(&format!("A-{i}"), "content", "x", None, i)
+                .expect("create");
+            blobs.push(a.export_update_since(&since).expect("delta"));
+            since = a.version_vector();
+        }
+        // Slot order 0, 2, 1 — blob 2's dep lands only in the LAST slot.
+        let shuffled: Vec<&[u8]> = vec![&blobs[0], &blobs[2], &blobs[1]];
+
+        // Reference: the per-row loop — gate against the live oplog, import on
+        // accept, drop on reject.
+        let mut per_row = LoroEngine::with_peer_id("DEV-B").expect("per-row");
+        let per_row_verdicts: Vec<bool> = shuffled
+            .iter()
+            .map(|b| {
+                if per_row.unreachable_update_in_blob(b).is_some() {
+                    false
+                } else {
+                    per_row
+                        .import_with_changed_purged_tagscope(b)
+                        .expect("import");
+                    true
+                }
+            })
+            .collect();
+
+        let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+        let batch_verdicts: Vec<bool> = fresh
+            .gate_replay_blobs(&shuffled)
+            .iter()
+            .map(|g| matches!(g, ReplayBlobGate::Accept))
+            .collect();
+
+        assert_eq!(
+            batch_verdicts, per_row_verdicts,
+            "the cumulative gate must reach the SAME accept/reject verdicts as \
+             the per-row loop on an out-of-causal-order batch"
+        );
+        assert_eq!(
+            batch_verdicts,
+            vec![true, false, true],
+            "sanity: the middle slot (dep arrives later) is the rejected one"
+        );
+    }
+
+    /// #3164 — the batch gate must accept ONE peer's linear dep chain in full.
+    ///
+    /// This is the regression the batched boot replay exists to avoid: mapping
+    /// `unreachable_update_in_blob` over a batch compares every blob against
+    /// the PRE-batch `oplog_vv()`, so blobs 2..N of a chain look unreachable
+    /// and their slots would be dropped. The cumulative base fixes that; the
+    /// assertion below pins BOTH halves (naive per-blob = reject, batch gate =
+    /// accept) so the fix cannot silently regress.
+    #[test]
+    fn gate_replay_blobs_accepts_single_peer_dep_chain_3164() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        // One producer, four sequential creates, each exported as the delta
+        // since the previous vv — exactly the #3165 inbox-leftover shape.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let mut since = a.version_vector();
+        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        for i in 0..4i64 {
+            a.apply_create_block(&format!("A-{i}"), "content", "x", None, i)
+                .expect("create");
+            blobs.push(a.export_update_since(&since).expect("delta"));
+            since = a.version_vector();
+        }
+
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
+        // Naive per-blob gating (what a batch must NOT do) rejects the tail.
+        let naive_rejects = blobs
+            .iter()
+            .filter(|b| fresh.unreachable_update_in_blob(b).is_some())
+            .count();
+        assert_eq!(
+            naive_rejects, 3,
+            "precondition: per-blob gating against the pre-batch vv rejects \
+             blobs 2..N of a dep chain — this is what #3164 must avoid"
+        );
+
+        let refs: Vec<&[u8]> = blobs.iter().map(Vec::as_slice).collect();
+        let gates = fresh.gate_replay_blobs(&refs);
+        assert_eq!(gates.len(), blobs.len(), "one verdict per blob");
+        assert!(
+            gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+            "the whole dep chain must be accepted by the cumulative-base gate, got {gates:?}"
+        );
+    }
+
+    /// #3164 — the batch gate must still REJECT a blob whose base no blob in
+    /// the batch supplies, and must not let an accepted blob's end frontier
+    /// paper over a genuine gap.
+    #[test]
+    fn gate_replay_blobs_rejects_genuinely_unreachable_update_3164() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        // Producer A: op 1 (exported), then ops 2-3 where only the LAST delta
+        // is queued — its base (A@2) is supplied by nothing in the batch.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since0 = a.version_vector();
+        a.apply_create_block("A-1", "content", "one", None, 0)
+            .expect("a-1");
+        let blob0 = a.export_update_since(&since0).expect("delta 0");
+        a.apply_create_block("A-2", "content", "two", None, 1)
+            .expect("a-2");
+        let gap_base = a.version_vector();
+        a.apply_create_block("A-3", "content", "three", None, 2)
+            .expect("a-3");
+        let orphan = a.export_update_since(&gap_base).expect("orphan delta");
+
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
+        let refs: Vec<&[u8]> = vec![&blob0, &orphan];
+        let gates = fresh.gate_replay_blobs(&refs);
+        assert!(
+            matches!(gates[0], ReplayBlobGate::Accept),
+            "the chain head must be accepted, got {:?}",
+            gates[0]
+        );
+        match &gates[1] {
+            ReplayBlobGate::Unreachable(reason) => assert!(
+                reason.contains("#1054"),
+                "reason must be self-diagnosing, got: {reason}"
+            ),
+            other => {
+                panic!("a blob whose base the batch never supplies must be flagged: {other:?}")
+            }
+        }
     }
 
     /// #1054 robustness — like the #792 guard, malformed bytes must
