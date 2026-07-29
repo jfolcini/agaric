@@ -256,16 +256,83 @@ mod tests {
     ///
     /// Each snapshot is exported from an engine with a DISTINCT `peer_id`
     /// (derived from `block_id`) so Loro treats each block's create op as a
-    /// distinct `(peer, counter)` lineage. Reusing one peer id across all
-    /// snapshots would make later imports collide with already-known ops
-    /// (same peer+counter ⇒ same op), so `import_with_changed_blocks` would
-    /// report no changed blocks and those rows would clear without ever
-    /// projecting — masking, not exercising, the chunked walk.
+    /// distinct `(peer, counter)` lineage. Reusing one peer id across
+    /// independently-built FRESH engines would make later imports collide
+    /// with already-known ops (same peer+counter ⇒ same op), so
+    /// `import_with_changed_blocks` would report no changed blocks and those
+    /// rows would clear without ever projecting.
+    ///
+    /// This is for the SINGLE-slot tests below. The multi-chunk test seeds via
+    /// [`chained_update_blobs`] instead, which gets per-row distinctness from
+    /// one peer's ascending counters rather than from 205 distinct peers
+    /// (#3165) — see that helper for why the distinct-peer shape was wrong.
     fn snapshot_with_block(block_id: &str, peer_id: &str) -> Vec<u8> {
         let mut e = LoroEngine::with_peer_id(peer_id).expect("engine");
         e.apply_create_block(block_id, "content", "payload", None, 0)
             .expect("create");
         e.export_snapshot().expect("export")
+    }
+
+    /// Build `count` inbox blobs as ONE remote peer's linear op chain, each
+    /// blob an incremental update carrying exactly one new block (#3165).
+    ///
+    /// Returns `(parent_id, block_ids, blobs)`; `blobs[i]` is the sole
+    /// carrier of `block_ids[i]`, and `blobs[0]` additionally carries the
+    /// common parent every seeded block hangs under.
+    ///
+    /// ## Why not `snapshot_with_block` per row
+    ///
+    /// The pre-#3165 seeding called [`snapshot_with_block`] once per row with
+    /// a distinct `device-{i}` peer id. Each such snapshot is a FRESH engine
+    /// with empty deps, so importing 205 of them into one doc produced a
+    /// 205-wide frontier of mutually-concurrent branches plus 205 root
+    /// siblings — a shape production cannot reach: frontier width tracks the
+    /// number of concurrent PEERS, not the number of queued messages, and
+    /// real inbox leftovers come from one or two peers inside the #535 crash
+    /// window. That artificial shape put `find_common_ancestor` (superlinear
+    /// in frontier width) and the sibling reprojection (#3162) at their worst
+    /// case, so the test's runtime was dominated by its own seeding rather
+    /// than by the walk it asserts (#3161).
+    ///
+    /// ## Why the chunk-boundary assertion is unweakened
+    ///
+    /// Each blob is an `ExportMode::updates` delta over the version vector
+    /// captured before that iteration's create, so it carries ONLY the ops
+    /// minted for that one block — not a cumulative snapshot. Row `i` is
+    /// therefore still the only row from which `block_ids[i]` can be
+    /// projected: a walk that stopped at the chunk boundary would leave the
+    /// blocks of the tail rows absent from SQL, exactly as before. The blobs
+    /// still replay independently (distinct `(peer, counter)` ops in
+    /// ascending causal order — the id-ascending walk visits them in the
+    /// order they were minted), so no row clears without projecting.
+    ///
+    /// Children are APPENDED under a common parent rather than prepended at
+    /// `TreeParentId::Root`, so no create shifts an existing sibling's rank.
+    fn chained_update_blobs(count: usize) -> (String, Vec<String>, Vec<Vec<u8>>) {
+        // Outside the `0..count` range `block_id_for` covers, so it can never
+        // collide with a child id.
+        let parent_id = block_id_for(999_999);
+        let mut engine = LoroEngine::with_peer_id("device-A").expect("engine");
+        // Baseline vv of the still-empty doc, so blob 0 carries the parent
+        // create as well as the first child's.
+        let mut since = engine.version_vector();
+        engine
+            .apply_create_block(&parent_id, "content", "parent", None, 0)
+            .expect("create parent");
+
+        let mut block_ids = Vec::with_capacity(count);
+        let mut blobs = Vec::with_capacity(count);
+        for i in 0..count {
+            let bid = block_id_for(i);
+            // `i` == the parent's current child count ⇒ append, no rank shift.
+            engine
+                .apply_create_block_at(&bid, "content", "payload", Some(&parent_id), i)
+                .expect("create child");
+            blobs.push(engine.export_update_since(&since).expect("export update"));
+            since = engine.version_vector();
+            block_ids.push(bid);
+        }
+        (parent_id, block_ids, blobs)
     }
 
     /// #2292: `purged_ids` is the durable purge tombstone (JSON array of block
@@ -297,12 +364,12 @@ mod tests {
 
         // 205 — spans 2 chunks.
         let row_count = usize::try_from(REPLAY_CHUNK_SIZE).expect("chunk size fits usize") + 5;
-        let mut block_ids = Vec::with_capacity(row_count);
-        for i in 0..row_count {
-            let bid = block_id_for(i);
-            let bytes = snapshot_with_block(&bid, &format!("device-{i}"));
-            seed_inbox(&pool, space.as_str(), &bytes, None).await;
-            block_ids.push(bid);
+        // #3165: one peer, one linear dep chain — 205 ROWS, not 205 concurrent
+        // peers. `blobs[i]` is still the sole carrier of `block_ids[i]`.
+        let (parent_id, block_ids, blobs) = chained_update_blobs(row_count);
+        assert_eq!(blobs.len(), row_count, "one blob per seeded row");
+        for bytes in &blobs {
+            seed_inbox(&pool, space.as_str(), bytes, None).await;
         }
 
         let before: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
@@ -343,6 +410,34 @@ mod tests {
                 .expect("count block");
             assert_eq!(n, 1, "block {bid} must be projected after chunked replay");
         }
+        // The common parent (carried by the FIRST row) is projected too, and
+        // every seeded block is a live child of it — so the per-block counts
+        // above are 205 DISTINCT rows, not one block counted 205 times.
+        let children: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM blocks WHERE parent_id = ? AND deleted_at IS NULL",
+        )
+        .bind(&parent_id)
+        .fetch_one(&pool)
+        .await
+        .expect("count children");
+        assert_eq!(
+            children,
+            i64::try_from(row_count).expect("row_count fits i64"),
+            "every seeded block must be projected as a live child of the common parent"
+        );
+
+        // #3165: the replayed doc's frontier must stay NARROW. One peer, one
+        // linear dep chain ⇒ exactly one frontier tip, regardless of how many
+        // rows were queued. If this ever widens, the seeding drifted back to
+        // the artificial mutually-concurrent shape.
+        let mut guard = registry
+            .for_space(&space, "device-B")
+            .expect("engine for space");
+        assert_eq!(
+            guard.engine_mut().checkpoint_frontiers().len(),
+            1,
+            "replayed doc must have a width-1 frontier (single-peer dep chain)"
+        );
     }
 
     /// #1574: an inbox row whose `space_id` is NOT in the `spaces` registry
