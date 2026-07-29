@@ -63,9 +63,15 @@ name: e2e-tauri-weekly
 
 on:
   schedule:
-    # Weekly, Mondays 04:17 UTC — off-peak and a non-:00 minute so this heavy
+    # Weekly, Mondays 02:43 UTC — off-peak and a non-:00 minute so this heavy
     # job does not pile onto the top-of-hour cron rush on GitHub's shared runners.
-    - cron: '17 4 * * 1'
+    #
+    # Deliberately staggered ~1.5h ahead of scheduled-deep-checks (04:17 Mon):
+    # this lane takes ~17 min, so it drains well before that far heavier lane
+    # (~40 min full-suite + ~26 min bench-slo + fuzz + mutants) starts. Running
+    # both on the same minute made the two heaviest lanes contend for the same
+    # runner pool. Keep these two crons apart when changing either. See #3168.
+    - cron: '43 2 * * 1'
   workflow_dispatch: {}
 
 # Never run two of these at once; a newer trigger supersedes an in-flight run.
