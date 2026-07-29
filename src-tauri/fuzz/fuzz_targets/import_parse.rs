@@ -14,8 +14,11 @@
 
 use libfuzzer_sys::fuzz_target;
 
-// Library target is named `agaric_lib` (see src-tauri/Cargo.toml `[lib]`).
-use agaric_lib::import::parse_logseq_markdown;
+// The parser lives in the `agaric-engine` crate (#2621 wave E4-import). The
+// app-side `agaric_lib::import` module kept only the Tauri-integration
+// `ImportProgressSink` seam once #2897 removed the re-export shim, so the
+// parser is no longer reachable through it.
+use agaric_engine::import::parse_logseq_markdown;
 
 fuzz_target!(|data: &[u8]| {
     // `parse_logseq_markdown` takes `&str`; only valid UTF-8 reaches it, and
