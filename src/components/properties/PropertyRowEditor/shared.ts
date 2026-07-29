@@ -6,8 +6,8 @@
  * unit-test surface is just data → data.
  */
 
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 
 /**
  * Extract the canonical string value for the current property, picking the

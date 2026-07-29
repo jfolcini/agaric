@@ -14,8 +14,10 @@ import { useTranslation } from 'react-i18next'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useDebouncedCallback } from '@/hooks/useDebouncedCallback'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { listTagsByPrefix, paginationLimit } from '@/lib/tauri'
+import { paginationLimit } from '@/lib/safe-limit'
 import { cn } from '@/lib/utils'
 
 interface TagResult {
@@ -41,7 +43,7 @@ export function TagValuePicker({
 
   const search = useCallback(async (prefix: string) => {
     try {
-      const tags = await listTagsByPrefix({ prefix, limit: paginationLimit(20) })
+      const tags = unwrap(await commands.listTagsByPrefix(prefix, paginationLimit(20)))
       setResults(
         tags.map((tag) => ({
           tag_id: tag.tag_id,

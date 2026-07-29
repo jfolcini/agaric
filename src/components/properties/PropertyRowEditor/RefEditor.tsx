@@ -18,7 +18,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Spinner } from '@/components/ui/spinner'
-import type { PropertyRow } from '@/lib/tauri'
+import type { PropertyRow } from '@/lib/bindings'
 import { useResolveStore } from '@/stores/resolve'
 
 export interface RefEditorProps {

@@ -15,21 +15,16 @@ import type {
   SlashCommandContext,
   SlashHandlerTables,
 } from '@/components/block-tree/use-block-slash-commands/types'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { guessMimeType, isAttachmentAllowed, readFileBytes } from '@/lib/file-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { formatRepeatLabel } from '@/lib/repeat-utils'
-import {
-  addAttachmentWithBytes,
-  deleteProperty,
-  setPriority as setPriorityCmd,
-  setProperty,
-  setTodoState as setTodoStateCmd,
-} from '@/lib/tauri'
 
 async function handleTodoState(ctx: SlashCommandContext, state: string): Promise<void> {
   try {
-    await setTodoStateCmd(ctx.blockId, state)
+    unwrap(await commands.setTodoState(ctx.blockId, state))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === ctx.blockId ? { ...b, todo_state: state } : b)),
@@ -43,7 +38,7 @@ async function handleTodoState(ctx: SlashCommandContext, state: string): Promise
 
 async function handlePriority(ctx: SlashCommandContext, priority: string): Promise<void> {
   try {
-    await setPriorityCmd(ctx.blockId, priority)
+    unwrap(await commands.setPriority(ctx.blockId, priority))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === ctx.blockId ? { ...b, priority } : b)),
@@ -78,11 +73,15 @@ async function handleAssigneePreset(
   }
   const value = label.split(' — ')[0]?.replace('ASSIGNEE ', '')
   try {
-    const resp = await setProperty({
-      blockId: ctx.blockId,
-      key: 'assignee',
-      ...(value != null && { valueText: value }),
-    })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'assignee', {
+        value_text: value ?? null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.setAssigneeMessage', { value }))
   } catch {
@@ -103,11 +102,15 @@ async function handleLocationPreset(
   }
   const value = label.split(' — ')[0]?.replace('LOCATION ', '')
   try {
-    const resp = await setProperty({
-      blockId: ctx.blockId,
-      key: 'location',
-      valueText: value,
-    })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'location', {
+        value_text: value ?? null,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.setLocationMessage', { value }))
   } catch {
@@ -124,7 +127,15 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
   // `value_text` AND non-member). The misleading `effort-custom` affordance has
   // been removed from EFFORT_COMMANDS, so only the fixed buckets reach here.
   try {
-    const resp = await setProperty({ blockId: ctx.blockId, key: 'effort', valueText: value })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'effort', {
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('slash.effortSet', { value }))
   } catch {
@@ -135,8 +146,8 @@ async function handleEffort(ctx: SlashCommandContext, value: string): Promise<vo
 async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise<void> {
   if (sub === 'remove') {
     try {
-      const countResp = await deleteProperty(ctx.blockId, 'repeat-count')
-      const untilResp = await deleteProperty(ctx.blockId, 'repeat-until')
+      const countResp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat-count'))
+      const untilResp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat-until'))
       // #2468 — `delete_property` now surfaces `op_refs` (was a `null`
       // response), so property removal is undoable by ref like every other
       // migrated mutation. Both deletes belong to ONE user action: combine
@@ -153,7 +164,15 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
   const count = Number.parseInt(sub, 10)
   if (Number.isNaN(count)) return
   try {
-    const resp = await setProperty({ blockId: ctx.blockId, key: 'repeat-count', valueNum: count })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'repeat-count', {
+        value_text: null,
+        value_num: count,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.repeatLimitedMessage', { count }))
   } catch {
@@ -164,7 +183,7 @@ async function handleRepeatLimit(ctx: SlashCommandContext, sub: string): Promise
 async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<void> {
   if (value === 'remove') {
     try {
-      const resp = await deleteProperty(ctx.blockId, 'repeat')
+      const resp = unwrap(await commands.deleteProperty(ctx.blockId, 'repeat'))
       // #2468 — see handleRepeatLimit: delete_property is now undoable by
       // ref; skip the undo push on an idempotent no-op (empty `op_refs`).
       if (resp.op_refs.length > 0) notifyUndo(ctx.rootParentId, resp.op_refs)
@@ -175,7 +194,15 @@ async function handleRepeat(ctx: SlashCommandContext, value: string): Promise<vo
     return
   }
   try {
-    const resp = await setProperty({ blockId: ctx.blockId, key: 'repeat', valueText: value })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'repeat', {
+        value_text: value,
+        value_num: null,
+        value_date: null,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     // ctx.t is typed as the file-local loose `TFn` to keep the dispatcher
     // generic; formatRepeatLabel takes the strict i18next `TFunction`. The
@@ -211,12 +238,9 @@ function handleAttach(ctx: SlashCommandContext): void {
       : undefined
     try {
       const bytes = await readFileBytes(file)
-      await addAttachmentWithBytes({
-        blockId: ctx.blockId,
-        filename,
-        mimeType,
-        bytes,
-      })
+      unwrap(
+        await commands.addAttachmentWithBytes(ctx.blockId, filename, mimeType, Array.from(bytes)),
+      )
       if (progressToastId !== undefined) notify.dismiss(progressToastId)
       notify.success(ctx.t('blockTree.attachedFileMessage', { filename }))
     } catch {

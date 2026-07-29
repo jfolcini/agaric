@@ -19,12 +19,13 @@ import {
   readCurrentValue,
 } from '@/components/properties/PropertyRowEditor/shared'
 import { useDateInput } from '@/hooks/useDateInput'
+import { unwrap } from '@/lib/app-error'
+import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setPriorityLevels } from '@/lib/priority-levels'
-import type { PageHeading, PropertyDefinition, PropertyRow } from '@/lib/tauri'
-import { listAllPagesInSpace, setProperty, updatePropertyDefOptions } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 export interface UsePropertyRowEditorArgs {
@@ -220,7 +221,9 @@ export function usePropertyRowEditor({
   const handleSaveOptions = useCallback(async () => {
     if (!def) return
     try {
-      const updatedDef = await updatePropertyDefOptions(def.key, JSON.stringify(editingOptions))
+      const updatedDef = unwrap(
+        await commands.updatePropertyDefOptions(def.key, JSON.stringify(editingOptions)),
+      )
       onDefUpdated?.(updatedDef)
       setEditOptionsOpen(false)
       // Keep the priority-levels cache in sync when editing the
@@ -272,7 +275,9 @@ export function usePropertyRowEditor({
       setRefPickerOpen(true)
       return
     }
-    listAllPagesInSpace(currentSpaceId)
+    commands
+      .listAllPagesInSpace({ kind: 'active', space_id: currentSpaceId }, null)
+      .then(unwrap)
       .then((pages) => {
         setRefPages(pages)
         setRefPickerOpen(true)
@@ -297,7 +302,15 @@ export function usePropertyRowEditor({
       // save so it never sticks if the IPC call rejects.
       setSavingRefPageId(page.id)
       try {
-        await setProperty({ blockId, key: prop.key, valueRef: page.id })
+        unwrap(
+          await commands.setProperty(blockId, prop.key, {
+            value_text: null,
+            value_num: null,
+            value_date: null,
+            value_ref: page.id,
+            value_bool: null,
+          }),
+        )
         onRefSaved?.()
         setRefPickerOpen(false)
       } catch (err) {
