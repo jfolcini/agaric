@@ -197,4 +197,144 @@ impl LoroEngine {
         }
         None
     }
+
+    /// #3164 — run the #792 fork guard and the #1054 reachability guard over a
+    /// WHOLE batch of boot-replay blobs, in the order they will be imported.
+    ///
+    /// ## Why a batch needs its own gate
+    ///
+    /// [`Self::unreachable_update_in_blob`] compares a blob's causal base
+    /// against the doc's CURRENT `oplog_vv()`. The per-row replay loop imports
+    /// blob *i-1* before gating blob *i*, so a queue of updates from one peer
+    /// (the realistic #535 leftover shape: one linear dep chain) passes. A
+    /// batch gates every blob BEFORE importing any of them, so the same chain
+    /// would report blobs 2..N unreachable and DROP their slots — silent data
+    /// loss, and a direct regression of the #1574 / #3165 multi-chunk case.
+    ///
+    /// This walks the batch in order against a *cumulative* base: the local
+    /// `oplog_vv()`, advanced by the `partial_end_vv` of every blob that was
+    /// accepted so far. That is exactly the vv the per-row loop would have held
+    /// when it reached blob *i* — an accepted import always advances the oplog
+    /// to at least that blob's end frontier, and a REJECTED blob is not
+    /// imported, so it must not advance the base either.
+    ///
+    /// The #792 fork guard is run per blob against the PRE-batch own-peer
+    /// counter, which is order-free **whenever that counter is non-zero**: the
+    /// guard only accepts a blob whose `partial_end_vv[own]` is `<=` what we
+    /// already hold, so importing an accepted blob cannot move it.
+    ///
+    /// It is NOT order-free in the one case the guard short-circuits: a doc
+    /// that has never minted an op under its own peer id (`local_counter == 0`,
+    /// [`Self::own_peer_fork_in_blob`]) skips the check entirely, so a blob
+    /// carrying our own pre-reset history is accepted AND raises the counter.
+    /// The per-row loop would then gate blob *i+1* against the raised counter;
+    /// this batch gate does not. The divergence is deliberately left as-is: it
+    /// is the *permissive* direction, and #792 documents the empty-doc case as
+    /// the clean resync path (a peer re-sending our own pre-reset history into
+    /// a reset doc is not a fork), so matching the per-row loop here would only
+    /// re-introduce its false-positive slot drops. The residual risk — two
+    /// slots carrying DIVERGENT lineages of our own peer id in one batch, on a
+    /// doc with zero own ops — is narrow but real; see the #3164 review notes.
+    ///
+    /// Returns one decision per blob, positionally. Callers must treat a
+    /// non-[`ReplayBlobGate::Accept`] entry exactly as the single-row path
+    /// treats a `Some(reason)` from the underlying guard: drop the slot and let
+    /// the next live sync session route into snapshot catch-up.
+    pub fn gate_replay_blobs(&self, blobs: &[&[u8]]) -> Vec<ReplayBlobGate> {
+        // Cumulative reachability base — see fn docs.
+        let mut base: std::collections::HashMap<_, _> = self
+            .doc
+            .oplog_vv()
+            .iter()
+            .map(|(peer, counter)| (*peer, *counter))
+            .collect();
+
+        let mut out = Vec::with_capacity(blobs.len());
+        for bytes in blobs {
+            if let Some(reason) = self.own_peer_fork_in_blob(bytes) {
+                out.push(ReplayBlobGate::Fork(reason));
+                continue;
+            }
+            // Decode failures are tolerated exactly as in the single-blob
+            // guards: accept, and let the real import surface the error. The
+            // base cannot be advanced for such a blob (no metadata), which is
+            // conservative — a later blob may then be reported unreachable and
+            // dropped rather than silently mis-imported.
+            let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
+                Ok(m) => m,
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        "loro: gate_replay_blobs: blob meta decode failed; accepting \
+                         the blob ungated (import will surface the real error)"
+                    );
+                    out.push(ReplayBlobGate::Accept);
+                    continue;
+                }
+            };
+
+            // Snapshot-shaped blobs are self-contained (same carve-out as the
+            // single-blob gate); only update-shaped blobs are reachability-checked.
+            let mut reject: Option<String> = None;
+            if !meta.mode.is_snapshot() {
+                for (peer_id, &base_counter) in meta.partial_start_vv.iter() {
+                    if base_counter == 0 {
+                        continue;
+                    }
+                    match base.get(peer_id) {
+                        Some(&have) if have >= base_counter => continue,
+                        Some(&have) => {
+                            reject = Some(format!(
+                                "boot-replay update base unreachable (#1054): requires \
+                                 peer={peer_id} counter>={base_counter}, batch base has \
+                                 counter={have}"
+                            ));
+                            break;
+                        }
+                        None => {
+                            reject = Some(format!(
+                                "boot-replay update base unreachable (#1054): requires \
+                                 peer={peer_id} counter>={base_counter}, batch base has no \
+                                 entry for that peer"
+                            ));
+                            break;
+                        }
+                    }
+                }
+            }
+            if let Some(reason) = reject {
+                out.push(ReplayBlobGate::Unreachable(reason));
+                continue;
+            }
+
+            // Accepted ⇒ its ops will be in the oplog before the next blob is
+            // considered, so advance the cumulative base by its end frontier.
+            for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
+                base.entry(*peer_id)
+                    .and_modify(|c| {
+                        if end_counter > *c {
+                            *c = end_counter;
+                        }
+                    })
+                    .or_insert(end_counter);
+            }
+            out.push(ReplayBlobGate::Accept);
+        }
+        out
+    }
+}
+
+/// #3164 — per-blob verdict from [`LoroEngine::gate_replay_blobs`].
+///
+/// The two rejection arms carry the same *action* (drop the slot) but are kept
+/// distinct so the caller can log the same two messages the per-row path logs,
+/// keeping existing log greps and the #792 / #1054 audit trail intact.
+#[derive(Debug, Clone)]
+pub enum ReplayBlobGate {
+    /// Safe to include in the batch import.
+    Accept,
+    /// #792 — the blob forks our own `(peer, counter)` history.
+    Fork(String),
+    /// #1054 — the blob is update-shaped and its causal base is unreachable.
+    Unreachable(String),
 }
