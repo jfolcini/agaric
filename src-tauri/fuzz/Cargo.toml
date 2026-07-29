@@ -20,15 +20,15 @@ cargo-fuzz = true
 
 # cargo-machete scans a crate's `src/` for usage, but our targets live in
 # `fuzz_targets/*.rs` (non-standard [[bin]] paths it doesn't trace), so it
-# false-reports `agaric` and `agaric-store` as unused. The crate genuinely
-# depends on both — the targets `use agaric_lib::{snapshot::decode_snapshot,
-# deeplink::parse_deep_link, import::parse_logseq_markdown,
+# false-reports every dependency here as unused. The crate genuinely depends
+# on all four — the targets `use agaric_lib::{deeplink::parse_deep_link,
 # link_metadata::{parse_title, parse_description, parse_favicon,
-# detect_auth_required}}` and `use agaric_store::fts::{strip::strip_for_fts_with_maps,
-# sanitize_fts_query}` (#2945) and the crate fails to build without them.
-# Ignore the false positives.
+# detect_auth_required}}`, `use agaric_store::fts::{strip::strip_for_fts_with_maps,
+# sanitize_fts_query}` (#2945), `use agaric_sync::snapshot::decode_snapshot`
+# and `use agaric_engine::import::parse_logseq_markdown` (#2897 fallout) — and
+# the crate fails to build without them. Ignore the false positives.
 [package.metadata.cargo-machete]
-ignored = ["agaric", "agaric-store"]
+ignored = ["agaric", "agaric-store", "agaric-sync", "agaric-engine"]
 
 [dependencies]
 libfuzzer-sys = "0.4"
@@ -41,6 +41,23 @@ path = ".."
 # mirrors the `agaric` dep above and the parent `src-tauri/Cargo.toml` entry.
 [dependencies.agaric-store]
 path = "../agaric-store"
+version = "0.1.0"
+
+# #2897 fallout — that refactor removed the app-side `snapshot` re-export shim
+# (`src/snapshot/mod.rs` is now `#[cfg(test)]`-only), so
+# `agaric_lib::snapshot::decode_snapshot` no longer resolves in a non-test
+# build and the `snapshot_decode` target stopped compiling. Production lives in
+# `agaric_sync::snapshot` (#2621 Sync-D), so depend on the real crate directly.
+[dependencies.agaric-sync]
+path = "../agaric-sync"
+version = "0.1.0"
+
+# #2897 fallout, same shape — `agaric_lib::import` no longer re-exports
+# `parse_logseq_markdown` (only the Tauri-integration `ImportProgressSink` seam
+# stays app-side); the parser lives in `agaric_engine::import` (#2621 wave
+# E4-import).
+[dependencies.agaric-engine]
+path = "../agaric-engine"
 version = "0.1.0"
 
 # Excludes the fuzz crate from the parent workspace; cargo-fuzz builds it

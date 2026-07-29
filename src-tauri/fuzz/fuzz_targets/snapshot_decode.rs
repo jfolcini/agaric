@@ -12,10 +12,11 @@
 
 use libfuzzer_sys::fuzz_target;
 
-// The package is `agaric` but its library target is named `agaric_lib`
-// (`[lib] name` in src-tauri/Cargo.toml), so the import path uses the lib
-// name.
-use agaric_lib::snapshot::decode_snapshot;
+// Production `decode_snapshot` lives in the `agaric-sync` crate (#2621
+// Sync-D). The app-side `agaric_lib::snapshot` module is a `#[cfg(test)]`-only
+// test host since #2897 removed the re-export shim, so importing it from there
+// no longer compiles in a fuzz (non-test) build — depend on the real crate.
+use agaric_sync::snapshot::decode_snapshot;
 
 fuzz_target!(|data: &[u8]| {
     // `decode_snapshot` takes `R: Read`; `&[u8]` is `Read`. We only assert

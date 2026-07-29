@@ -41,11 +41,12 @@ name: Scheduled deep checks
 #                    and files/updates that ONE issue only on genuinely NEW
 #                    survivors (see `scripts/file-mutation-survivors.mjs`).
 #                    Scheduled-event-only; needs `issues: write`.
-#   fuzz           — #650/#2590: short coverage-guided fuzz runs over the
-#                    raw-input parsers (snapshot decode, deeplink parse,
-#                    Markdown/Obsidian import parse). Smoke-length here (the
-#                    per-target time budget is small); a real fuzzing campaign
-#                    runs longer out-of-band.
+#   fuzz           — #650/#2590/#2945: short coverage-guided fuzz runs over
+#                    the raw-input parsers (snapshot decode, deeplink parse,
+#                    Markdown/Obsidian import parse, FTS strip/sanitize, HTML
+#                    link-metadata parse). Smoke-length here (the per-target
+#                    time budget is small); a real fuzzing campaign runs longer
+#                    out-of-band.
 #   prek-all-files — #3058: `prek run --all-files` (pre-commit stage, whole
 #                    tree), HARD-FAILING — unlike every other lane above,
 #                    this one gates. No cargo build/clippy/test (the
@@ -1018,7 +1019,11 @@ jobs:
           RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
           set -euo pipefail
-          for target in snapshot_decode deeplink_parse import_parse; do
+          # Keep this list in sync with the `[[bin]]` targets in
+          # src-tauri/fuzz/Cargo.toml — #2945 added `fts_strip`/`html_parse`
+          # there but not here, so for three months they were built and never
+          # fuzzed. All five are smoke-verified to build and run crash-free.
+          for target in snapshot_decode deeplink_parse import_parse fts_strip html_parse; do
             echo "::group::fuzz $target"
             # `--target x86_64-unknown-linux-gnu` pins the gnu HOST target.
             # Recent cargo-fuzz defaults `--target` to
