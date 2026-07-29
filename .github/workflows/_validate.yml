@@ -47,6 +47,26 @@ name: Validate (prek-equivalent)
 # a whole continue to work — GitHub propagates per-job failures up to the
 # caller.
 
+# NO `schedule:` HERE — ON PURPOSE. A weekly whole-tree re-validation of `main`
+# is genuinely wanted, but this is not the workflow that should carry it:
+#   * `scheduled-deep-checks.yml` already runs it weekly, and runs MORE. Its
+#     `full-suite` job is a strict superset of a scheduled run of this file —
+#     the FULL prek suite in BOTH stages with NO category SKIPs, plus full
+#     vitest + full (unsharded) playwright + full nextest + doc-tests — and its
+#     `prek-all-files` job hard-fails on whole-tree pre-commit-stage drift.
+#     That job exists precisely as the counterweight to the per-PR category
+#     gating `detect-changes` below performs. A weekly copy of THIS workflow
+#     would re-run the same work, more weakly.
+#   * `detect-changes` has no diff to classify on a `schedule` event
+#     (`github.event.before` is empty), so it would take the fail-closed
+#     `full_suite` branch every week — i.e. degrade to exactly what
+#     `full-suite` already does, minus the unskipped pre-push stage.
+#   * `validate-all` is a REQUIRED status-check context (asserted by
+#     `branch-protection-assert.yml`). Emitting that context from a scheduled,
+#     non-PR event puts weekly pass/fail runs of a required check name onto
+#     `main`'s commits, where a red weekly canary is indistinguishable at a
+#     glance from a red merge gate.
+# If the weekly backstop ever needs to grow, grow `scheduled-deep-checks.yml`.
 on:
   workflow_call:
   # Manual runs from the Actions tab (e.g. re-validating main after an

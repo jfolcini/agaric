@@ -20,6 +20,43 @@
 # Runtime validation of this harness is deferred to the first scheduled run or
 # a manual `workflow_dispatch` (WebKitWebDriver cannot run on a dev box without
 # a display / the driver packages).
+#
+# -----------------------------------------------------------------------------
+# SPEC SCOPE — why this lane runs `e2e-tauri/*.e2e.ts` and NOT the 100+ specs
+# under `e2e/`.
+# -----------------------------------------------------------------------------
+# `wdio.conf.ts` already globs `./e2e-tauri/**/*.e2e.ts`, so there is no
+# allowlist here to widen: this lane runs EVERY real-backend spec that exists.
+# The set is small because the specs themselves are what is scarce, not the
+# runner configuration — a new `e2e-tauri/<name>.e2e.ts` is picked up with no
+# workflow edit.
+#
+# The `e2e/` Playwright specs CANNOT be pointed at this lane's real backend.
+# They are a different harness end to end, not a different flag:
+#   * Playwright drives headless CHROMIUM over CDP against a `vite preview`
+#     build on http://localhost:5173 (see `playwright.config.ts`). The real
+#     app renders in a WebKitGTK WebView driven by `WebKitWebDriver` (W3C
+#     WebDriver) through `tauri-driver` — different engine, different wire
+#     protocol. There is no Playwright browser/adapter that attaches to it.
+#   * The `e2e/` build is produced with `VITE_E2E=1` specifically so the JS
+#     mock survives tree-shaking (`src/main.tsx`); this lane builds WITHOUT
+#     `VITE_E2E` precisely so no mock is present. The two builds are mutually
+#     exclusive by construction.
+#   * `page.*` / `expect(locator)` (Playwright) vs `$`/`waitForExist`
+#     (WebdriverIO) means every spec body has to be re-authored, not re-pointed
+#     — which is exactly what `e2e-tauri/helpers.ts` exists to make cheap.
+# Additionally `wdio.conf.ts` pins `maxInstances: 1`: real-backend specs run
+# serially against ONE app process sharing ONE real SQLite database, so any
+# ported spec must be self-cleaning/order-independent. The Playwright suite
+# relies on `fullyParallel` + a per-context mock reset and is not written to
+# that constraint.
+#
+# So widening coverage here is a TEST-AUTHORING task (port high-value specs to
+# `e2e-tauri/`, one at a time, each validated by a scheduled/dispatch run),
+# tracked by #155 — not a CI-configuration change. Mock↔backend divergence in
+# the meantime is guarded by the `conformance/fixtures/*.json` harness, which
+# replays the same op sequences against BOTH the real backend and the mock
+# (see `e2e/AGENTS.md`).
 # =============================================================================
 
 name: e2e-tauri-weekly
@@ -62,12 +99,61 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: src-tauri
+          # Cache `~/.cargo/bin/` so the `cargo install tauri-driver` below
+          # survives week to week (same `cache-bin` pattern `_validate.yml`'s
+          # lint job uses for sqlx-cli). tauri-driver has no prebuilt binary in
+          # taiki-e/install-action's manifest, so it compiles from source on
+          # every cold run; the install step below is guarded on
+          # `command -v tauri-driver` so a cache hit skips that compile
+          # entirely — mirroring the sqlx-cli guard in `_validate.yml`.
+          cache-bin: 'true'
+          # Per-job-class key (issue #813): rust-cache keeps ONE immutable
+          # cache per key, so lanes with different target trees must not share
+          # one. This lane's tree is a `tauri build --debug` of the whole app
+          # (dev profile, real binary + externalBin sidecar) and matches none
+          # of `rust-lint` / `rust-cov` / `rust-mcp` / `rust-release` /
+          # `rust-bench*` / `rust-full-suite`.
+          shared-key: rust-e2e-tauri
+          # Only runs on `main` write the cache; a `workflow_dispatch` from a
+          # feature branch reads main's cache and writes only an ephemeral
+          # layer. Same `save-if` discipline as every sibling lane.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Install Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: npm
+
+      - name: Prepare apt (free dpkg lock, bound downloads)
+        # Same composite action `_validate.yml` (lint / playwright / cargo-tests
+        # / mcp-tests) and `scheduled-deep-checks.yml` (prek-all-files /
+        # full-suite) use: stops the runner's boot-time `unattended-upgrades`
+        # / `apt-daily` jobs that hold the dpkg lock, bounds mirror stalls, and
+        # — load-bearing for the cache step below — sets
+        # `APT::Keep-Downloaded-Packages "true"` + makes
+        # /var/cache/apt/archives writable so the .debs survive the install and
+        # can be saved. Without this step an `actions/cache` on the archive dir
+        # saves nothing (#1464).
+        uses: ./.github/actions/prepare-apt
+
+      # Cache the .debs across runs (#1464), same pattern as the `apt-tauri-*`
+      # and `apt-playwright-*` caches in `_validate.yml` /
+      # `scheduled-deep-checks.yml`: on a hit `apt-get install` resolves from
+      # the cache instead of the Ubuntu mirror (the observed slow part — the
+      # sibling lanes' comments record ~12 min apt steps on a bad mirror).
+      #
+      # OWN KEY (`apt-tauri-e2e-…`), deliberately NOT the shared `apt-tauri-…`
+      # key: this lane installs a SUPERSET (webkit2gtk-driver + xvfb on top of
+      # the standard Tauri stack). Reusing the shared key would let whichever
+      # lane saved first pin its own package set, so a hit here could be
+      # missing exactly the two .debs this lane adds. Bump the `-v1` suffix
+      # when the package list below changes.
+      - name: Cache apt archives (Tauri system deps + WebDriver/Xvfb)
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /var/cache/apt/archives/*.deb
+          key: apt-tauri-e2e-${{ runner.os }}-v1
 
       - name: Install system dependencies
         # The Tauri Linux build deps are copied verbatim from `_validate.yml`'s
@@ -104,7 +190,14 @@ jobs:
       - name: Install tauri-driver
         # tauri-driver is a cargo binary (NOT npm); it lands in ~/.cargo/bin,
         # where wdio.conf.ts looks for it. --locked pins its own dependency tree.
-        run: cargo install tauri-driver --locked
+        #
+        # Guarded on `command -v` so a warm `cache-bin` restore (see the Rust
+        # cache step) skips the from-source compile entirely — the same
+        # idempotence guard `_validate.yml` and `scheduled-deep-checks.yml` use
+        # for sqlx-cli, which is likewise absent from taiki-e/install-action's
+        # prebuilt manifest. On a cache miss this still compiles as before.
+        run: |
+          if ! command -v tauri-driver >/dev/null; then cargo install tauri-driver --locked; fi
 
       - name: Build Agaric debug binary
         # `tauri build --debug --no-bundle` compiles the real app to
