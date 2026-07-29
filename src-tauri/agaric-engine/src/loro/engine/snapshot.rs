@@ -226,10 +226,12 @@ impl LoroEngine {
         ),
         AppError,
     > {
-        // Thin compatibility wrapper — discard the tag-inheritance scope. The
-        // shared body lives in `import_with_changed_purged_tagscope`.
+        // Thin compatibility wrapper — discard the tag-inheritance scope and
+        // the #3162 rank-only hint (dropping the hint just means these callers
+        // fully reproject every changed block, exactly as they always have).
+        // The shared body lives in `import_with_changed_purged_tagscope`.
         self.import_with_changed_purged_tagscope(bytes)
-            .map(|(changed, purged, _scope)| (changed, purged))
+            .map(|delta| (delta.changed, delta.purged))
     }
 
     /// Sync-pull import driver returning the changed (live) blocks to reproject,
@@ -249,10 +251,13 @@ impl LoroEngine {
     ///   (the `Index::Key` in the diff `path`, or the updated keys of a
     ///   root-level map diff);
     /// * a `blocks_tree` structural change (create / move / delete) → the
-    ///   moved node PLUS every sibling at the affected parent(s), because the
-    ///   projected `position` is a per-parent dense rank that shifts for the
-    ///   whole sibling group (`TreeDiffItem.action` carries `parent` /
-    ///   `old_parent`).
+    ///   moved node PLUS the siblings at the affected parent(s) whose dense
+    ///   `position` rank actually shifted, i.e. those from the lowest index the
+    ///   diff touched in that parent onwards (`TreeDiffItem.action` carries
+    ///   `parent` / `old_parent` and the corresponding `index` / `old_index`;
+    ///   see `DiffCapture::affected_parents`). Those siblings are reported
+    ///   separately in [`ImportDelta::rank_only`] so the caller can refresh
+    ///   just their core columns (#3162).
     ///
     /// Soft-delete / restore need NO special handling: they are meta-map
     /// changes (the seed only), and Pass C of the caller re-derives the SQL
@@ -269,14 +274,7 @@ impl LoroEngine {
     pub fn import_with_changed_purged_tagscope(
         &mut self,
         bytes: &[u8],
-    ) -> Result<
-        (
-            Vec<agaric_core::ulid::BlockId>,
-            Vec<agaric_core::ulid::BlockId>,
-            TagScope,
-        ),
-        AppError,
-    > {
+    ) -> Result<ImportDelta, AppError> {
         // #2036: capture pre-import oplog frontiers for the no-op short-circuit.
         let before_frontiers = self.doc.oplog_frontiers();
 
@@ -310,7 +308,12 @@ impl LoroEngine {
         // #2036: no-op short-circuit — zero ops appended ⇒ state unchanged ⇒
         // nothing to reproject, purge, or re-inherit.
         if self.doc.oplog_frontiers() == before_frontiers {
-            return Ok((Vec::new(), Vec::new(), TagScope::Subtrees(Vec::new())));
+            return Ok(ImportDelta {
+                changed: Vec::new(),
+                rank_only: Vec::new(),
+                purged: Vec::new(),
+                tag_scope: TagScope::Subtrees(Vec::new()),
+            });
         }
         let after_import_frontiers = self.doc.oplog_frontiers();
 
@@ -331,9 +334,15 @@ impl LoroEngine {
         // tree node, so `self.index` is already current and nothing was purged —
         // take the truly-O(changed) fast path and skip all of it.
         if !cap.has_tree_diff && !cap.fallback && !migrated {
-            let changed = self.resolve_changed_blocks(&cap);
+            // No tree diff ⇒ `affected_parents` is empty ⇒ `rank_only` is too.
+            let (changed, rank_only) = self.resolve_changed_blocks(&cap);
             let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
-            return Ok((changed, Vec::new(), tag_scope));
+            return Ok(ImportDelta {
+                changed,
+                rank_only,
+                purged: Vec::new(),
+                tag_scope,
+            });
         }
 
         // Structural / fallback path: rebuild the index and compute the purged
@@ -348,15 +357,29 @@ impl LoroEngine {
 
         if cap.fallback || migrated {
             // Brute-force: reproject the whole live tree + globally rebuild the
-            // inherited-tag cache. Identical to the pre-#2036 behaviour.
-            return Ok((self.enumerate_live_preorder(), purged, TagScope::Global));
+            // inherited-tag cache. Identical to the pre-#2036 behaviour. No
+            // rank-only hint here — the fallback exists precisely because we
+            // could not resolve WHAT changed, so every block gets the full
+            // projection.
+            return Ok(ImportDelta {
+                changed: self.enumerate_live_preorder(),
+                rank_only: Vec::new(),
+                purged,
+                tag_scope: TagScope::Global,
+            });
         }
 
         // Recognised structural change (create / move / delete): resolve the
-        // precise changed set (incl. affected siblings) + scoped tag inheritance.
-        let changed = self.resolve_changed_blocks(&cap);
+        // precise changed set (incl. the siblings whose rank actually shifted)
+        // + scoped tag inheritance.
+        let (changed, rank_only) = self.resolve_changed_blocks(&cap);
         let tag_scope = TagScope::Subtrees(self.resolve_tag_scope(&cap));
-        Ok((changed, purged, tag_scope))
+        Ok(ImportDelta {
+            changed,
+            rank_only,
+            purged,
+            tag_scope,
+        })
     }
 
     /// Full live-tree enumeration in parent-before-child pre-order, exposed
@@ -398,7 +421,18 @@ impl LoroEngine {
     /// parent is projected before its created child — the caller's `parent_id`
     /// self-FK demands it). Purged ids are excluded (handled by the purged
     /// delta + caller Pass D).
-    fn resolve_changed_blocks(&self, cap: &DiffCapture) -> Vec<agaric_core::ulid::BlockId> {
+    ///
+    /// Returns `(changed, rank_only)`. `rank_only` is a strict SUBSET of
+    /// `changed` listing the blocks that are in the set ONLY because a sibling
+    /// rank shift moved their dense `position` — nothing else about them
+    /// changed in this import (#3162). See [`ImportDelta`] for the contract.
+    fn resolve_changed_blocks(
+        &self,
+        cap: &DiffCapture,
+    ) -> (
+        Vec<agaric_core::ulid::BlockId>,
+        Vec<agaric_core::ulid::BlockId>,
+    ) {
         let tree = self.tree();
         let mut set: std::collections::HashSet<String> = cap.block_id_keys.clone();
         for tid in &cap.node_ids {
@@ -408,31 +442,67 @@ impl LoroEngine {
                 set.insert(bid);
             }
         }
-        // Sibling rank shifts: every child of an affected parent is reprojected.
-        for parent in &cap.affected_parents {
-            if let Some(children) = tree.children(*parent) {
-                for c in children {
-                    if let Ok(meta) = tree.get_meta(c)
-                        && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
-                    {
-                        set.insert(bid);
+        // Blocks this import touched for a reason OTHER than a sibling rank
+        // shift: a property / tag / content / meta edit (gathered above) or a
+        // structural create / move / delete (`struct_roots`, the diff items'
+        // own targets). These ALWAYS need the full projection and must never be
+        // demoted to the rank-only path. Adding `struct_roots` to `set` too is
+        // belt-and-braces: a created / moved node is always a child of its
+        // affected parent at an index >= that parent's minimum, so the sibling
+        // walk below would reach it anyway — but relying on that is a needless
+        // load-bearing subtlety in the one place where a miss means silent
+        // CRDT-vs-SQL divergence.
+        let mut full: std::collections::HashSet<String> = set.clone();
+        for tid in &cap.struct_roots {
+            if let Ok(meta) = tree.get_meta(*tid)
+                && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+            {
+                full.insert(bid.clone());
+                set.insert(bid);
+            }
+        }
+        // Sibling rank shifts (#3162): ONLY the children from the lowest index
+        // this import touched in that parent onwards can have a different dense
+        // rank — see `DiffCapture::affected_parents` for the proof. An append
+        // (the common inbound shape) starts at the end and touches none.
+        let mut rank_only: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for (parent, lowest) in &cap.affected_parents {
+            let Some(children) = tree.children(*parent) else {
+                continue;
+            };
+            for c in children.iter().skip(*lowest) {
+                if let Ok(meta) = tree.get_meta(*c)
+                    && let Ok(bid) = read_string(&meta, FIELD_BLOCK_ID)
+                {
+                    if !full.contains(&bid) {
+                        rank_only.insert(bid.clone());
                     }
+                    set.insert(bid);
                 }
             }
         }
         // Live blocks only (a purged/deleted-from-tree id that surfaced via a
         // root-map key removal is dropped here; the purged delta covers it).
         set.retain(|b| self.index.contains_key(b));
+        rank_only.retain(|b| self.index.contains_key(b));
 
         let mut ranked: Vec<(usize, String)> = set
             .into_iter()
             .map(|b| (self.tree_depth_of(&b, &tree), b))
             .collect();
         ranked.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-        ranked
+        let changed = ranked
             .into_iter()
             .map(|(_, b)| agaric_core::ulid::BlockId::from_trusted(&b))
-            .collect()
+            .collect();
+
+        let mut rank_only: Vec<String> = rank_only.into_iter().collect();
+        rank_only.sort_unstable();
+        let rank_only = rank_only
+            .iter()
+            .map(|b| agaric_core::ulid::BlockId::from_trusted(b))
+            .collect();
+        (changed, rank_only)
     }
 
     /// Resolve the subtree roots whose inherited-tag rows may have shifted:
@@ -537,6 +607,38 @@ impl LoroEngine {
     }
 }
 
+/// What an incremental import changed, as resolved from the Loro import diff.
+///
+/// `changed` keeps its historical meaning exactly: every LIVE block whose
+/// projected SQL state this import may have altered, ordered
+/// parent-before-child for the caller's `parent_id` self-FK.
+///
+/// `rank_only` is a strict SUBSET of `changed` carrying an optimisation HINT
+/// (#3162): for those blocks the ONLY projected column that can differ is the
+/// dense sibling `position` — they are in the set solely because a create /
+/// move / delete elsewhere in their sibling group shifted their rank, and the
+/// import carried no property, tag, content, structural or soft-delete change
+/// for them (the resolver excludes anything it saw through another channel).
+/// A consumer may therefore project just their core columns and skip the
+/// property / tag / soft-delete passes.
+///
+/// The hint is safe by construction: it can only ever REMOVE work for blocks
+/// already in `changed`, never remove a block from `changed`. A consumer that
+/// ignores `rank_only` entirely and fully reprojects everything in `changed`
+/// is exactly as correct as pre-#3162 — which is what
+/// [`LoroEngine::import_with_changed_and_purged_blocks`] does.
+#[derive(Debug)]
+pub struct ImportDelta {
+    /// Live blocks to reproject, parent-before-child. Superset of `rank_only`.
+    pub changed: Vec<agaric_core::ulid::BlockId>,
+    /// Subset of `changed` whose only altered projected column is `position`.
+    pub rank_only: Vec<agaric_core::ulid::BlockId>,
+    /// Blocks hard-purged by this import (caller's Pass D).
+    pub purged: Vec<agaric_core::ulid::BlockId>,
+    /// How to refresh the derived inherited-tag cache.
+    pub tag_scope: TagScope,
+}
+
 /// How the caller must refresh the derived `block_tag_inherited` cache after an
 /// import (#2036 stage 3).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -565,8 +667,29 @@ struct DiffCapture {
     tag_changed: std::collections::HashSet<String>,
     /// Structurally created/moved nodes (drive tag-inheritance subtree roots).
     struct_roots: std::collections::HashSet<TreeID>,
-    /// Parents whose child sibling-group rank shifted (create/move/delete).
-    affected_parents: Vec<TreeParentId>,
+    /// Parents whose child sibling-group ranks shifted (create/move/delete),
+    /// each mapped to the LOWEST child index this import touched in that
+    /// parent (#3162).
+    ///
+    /// Loro emits the tree diff as an ORDERED sequence of items, each carrying
+    /// the index it acts at *in the state at the moment that item is applied*
+    /// (`TreeExternalDiff::Create`/`Move` carry the post-op `index`;
+    /// `Move`/`Delete` carry the pre-op `old_index`). An insertion at index `i`
+    /// shifts only the children at index >= `i`; a removal at index `i` shifts
+    /// only the children after `i`. Neither touches the prefix `[0, i)`.
+    ///
+    /// So with `m` = the minimum recorded index for a parent, EVERY item for
+    /// that parent acts at an index >= `m`, and the prefix `[0, m)` of that
+    /// parent's children is element-for-element identical before and after the
+    /// import — those siblings' dense ranks provably did not move. Only
+    /// `children[m..]` need reprojecting.
+    ///
+    /// Pre-#3162 this was a bare `Vec<TreeParentId>` and the resolver expanded
+    /// it to EVERY child, so an inbound create/move at `TreeParentId::Root`
+    /// reprojected the entire root sibling group — O(root children) per import,
+    /// O(n^2) over a replay walk. An append (the common inbound shape) now
+    /// touches no siblings at all.
+    affected_parents: std::collections::HashMap<TreeParentId, usize>,
     /// Whether the import carried any `blocks_tree` structural (`Diff::Tree`)
     /// change — i.e. a node was created, moved, or deleted. When false, the
     /// `block_id → TreeID` index is unchanged (content/property/tag edits touch
@@ -600,17 +723,31 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
                 for item in &td.diff {
                     cap.struct_roots.insert(item.target);
                     match &item.action {
-                        loro::TreeExternalDiff::Create { parent, .. } => {
-                            cap.affected_parents.push(*parent);
+                        // #3162: record the index each item acts at, not just
+                        // the parent — see `DiffCapture::affected_parents`.
+                        loro::TreeExternalDiff::Create { parent, index, .. } => {
+                            note_sibling_shift(cap, *parent, *index);
                         }
                         loro::TreeExternalDiff::Move {
-                            parent, old_parent, ..
+                            parent,
+                            index,
+                            old_parent,
+                            old_index,
+                            ..
                         } => {
-                            cap.affected_parents.push(*parent);
-                            cap.affected_parents.push(*old_parent);
+                            // A cross-parent move shifts BOTH groups: the new
+                            // parent from the insertion slot, the old parent
+                            // from the vacated slot. A same-parent reorder
+                            // folds into one entry at min(index, old_index).
+                            note_sibling_shift(cap, *parent, *index);
+                            note_sibling_shift(cap, *old_parent, *old_index);
                         }
-                        loro::TreeExternalDiff::Delete { old_parent, .. } => {
-                            cap.affected_parents.push(*old_parent);
+                        loro::TreeExternalDiff::Delete {
+                            old_parent,
+                            old_index,
+                            ..
+                        } => {
+                            note_sibling_shift(cap, *old_parent, *old_index);
                         }
                     }
                 }
@@ -638,6 +775,17 @@ fn classify_import_diff(cd: &loro::event::ContainerDiff, cap: &mut DiffCapture) 
         // LEGACY_BLOCKS_ROOT (rejected upstream) or any unknown root.
         _ => cap.fallback = true,
     }
+}
+
+/// Record that `parent`'s sibling group was disturbed at `index`, keeping the
+/// LOWEST index seen for that parent (#3162). See
+/// [`DiffCapture::affected_parents`] for why the minimum is the correct — and
+/// safe — summary of a whole ordered diff sequence.
+fn note_sibling_shift(cap: &mut DiffCapture, parent: TreeParentId, index: usize) {
+    cap.affected_parents
+        .entry(parent)
+        .and_modify(|lowest| *lowest = (*lowest).min(index))
+        .or_insert(index);
 }
 
 /// Extract the block_id(s) a `block_properties` / `block_tags` diff touches:
@@ -902,9 +1050,14 @@ mod incremental_detection_tests {
         (a, b)
     }
     fn push(a: &LoroEngine, b: &mut LoroEngine) -> (Vec<String>, Vec<String>, Option<Vec<String>>) {
+        let d = push_delta(a, b);
+        (ids(&d.changed), ids(&d.purged), scope(&d.tag_scope))
+    }
+    /// Like [`push`] but hands back the whole [`ImportDelta`] so the #3162
+    /// tests can assert on `rank_only` too.
+    fn push_delta(a: &LoroEngine, b: &mut LoroEngine) -> ImportDelta {
         let upd = a.export_update_since(&b.version_vector()).unwrap();
-        let (c, p, s) = b.import_with_changed_purged_tagscope(&upd).unwrap();
-        (ids(&c), ids(&p), scope(&s))
+        b.import_with_changed_purged_tagscope(&upd).unwrap()
     }
 
     #[test]
@@ -946,39 +1099,218 @@ mod incremental_detection_tests {
     }
 
     #[test]
-    fn create_child_reprojects_new_block_and_siblings() {
+    fn create_child_appended_reprojects_only_the_new_block() {
         let (mut a, mut b) = seed();
+        // AA's children are [BB]; CC is APPENDED at index 1, so BB (index 0)
+        // keeps its dense rank. Pre-#3162 the resolver expanded to every child
+        // of the affected parent and reprojected BB too.
         a.apply_create_block("CC", "content", "c", Some("AA"), 1)
             .unwrap();
-        let (changed, purged, sc) = push(&a, &mut b);
+        let d = push_delta(&a, &mut b);
         assert_eq!(
-            changed,
-            vec!["BB", "CC"],
-            "new child + existing sibling (dense-rank shift) reproject; AA unchanged",
+            ids(&d.changed),
+            vec!["CC"],
+            "an append shifts no sibling rank; only the new child reprojects (#3162)",
         );
-        assert!(purged.is_empty());
+        assert!(
+            d.rank_only.is_empty(),
+            "no sibling shifted, so nothing is rank-only",
+        );
+        assert!(d.purged.is_empty());
         assert_eq!(
-            sc,
+            scope(&d.tag_scope),
             Some(vec!["CC".to_string()]),
             "new node re-inherits ancestor tags"
         );
     }
 
+    /// #3162: inserting into the MIDDLE of a sibling group reprojects the new
+    /// block plus exactly the siblings at or after the insertion slot — never
+    /// the ones before it, whose dense rank provably did not move.
     #[test]
-    fn move_block_reprojects_both_sibling_groups() {
+    fn create_child_in_middle_reprojects_only_shifted_siblings_3162() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("P", "content", "p", None, 0).unwrap();
+        for (i, id) in ["C0", "C1", "C2", "C3"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "c", Some("P"), i)
+                .unwrap();
+        }
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        // Insert NEW at index 2 → C0/C1 keep ranks 0/1; C2/C3 shift to 3/4.
+        a.apply_create_block_at("NEW", "content", "n", Some("P"), 2)
+            .unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C2", "C3", "NEW"],
+            "only the siblings at/after the insertion slot shift rank (#3162)",
+        );
+        assert_eq!(
+            ids(&d.rank_only),
+            vec!["C2", "C3"],
+            "the shifted siblings need only their `position` refreshed; the \
+             newly created block always needs the full projection",
+        );
+    }
+
+    /// #3162 (the O(n^2) case from the issue): a create at `TreeParentId::Root`
+    /// used to reproject EVERY root-level block in the space. An append must
+    /// now touch exactly one.
+    #[test]
+    fn root_append_does_not_reproject_the_root_sibling_group_3162() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        for i in 0..12 {
+            a.apply_create_block_at(&format!("R{i:02}"), "content", "r", None, i)
+                .unwrap();
+        }
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        a.apply_create_block_at("R99", "content", "r", None, 12)
+            .unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.changed),
+            vec!["R99"],
+            "an inbound root-level append must not scale with the root sibling \
+             group (#3162)",
+        );
+        assert!(d.rank_only.is_empty());
+    }
+
+    /// #3162 — moves affect TWO sibling groups, each from its own slot: the OLD
+    /// parent from the vacated index, the NEW parent from the insertion index.
+    /// Siblings before either slot must be left alone.
+    #[test]
+    fn cross_parent_move_narrows_both_sibling_groups_3162() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("P", "content", "p", None, 0).unwrap();
+        a.apply_create_block("Q", "content", "q", None, 1).unwrap();
+        for (i, id) in ["P0", "P1", "P2"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "c", Some("P"), i)
+                .unwrap();
+        }
+        for (i, id) in ["Q0", "Q1", "Q2"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "c", Some("Q"), i)
+                .unwrap();
+        }
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        // P1 (old index 1 under P) moves to index 1 under Q.
+        // Old group: P2 shifts down (P0 does not). New group: Q1, Q2 shift up
+        // (Q0 does not).
+        a.apply_move_block_to("P1", Some("Q"), 1).unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.changed),
+            vec!["P1", "P2", "Q1", "Q2"],
+            "both groups narrow to the siblings after their own slot; P0 and Q0 \
+             keep their ranks (#3162)",
+        );
+        assert_eq!(
+            ids(&d.rank_only),
+            vec!["P2", "Q1", "Q2"],
+            "the moved block itself is structural and always fully reprojected",
+        );
+    }
+
+    /// #3162 — a delete shifts only the siblings AFTER the vacated slot.
+    #[test]
+    fn delete_narrows_old_sibling_group_3162() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("P", "content", "p", None, 0).unwrap();
+        for (i, id) in ["C0", "C1", "C2", "C3"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "c", Some("P"), i)
+                .unwrap();
+        }
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        a.apply_purge_block("C1").unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.purged),
+            vec!["C1"],
+            "the hard-purged block is reported through the purged delta",
+        );
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C2", "C3"],
+            "only the siblings after the vacated slot shift rank (#3162)",
+        );
+        assert_eq!(ids(&d.rank_only), vec!["C2", "C3"]);
+    }
+
+    /// #3162 — the rank-only hint must never swallow a block that ALSO changed
+    /// for another reason in the same import: the consumer skips the property /
+    /// tag / soft-delete passes for rank-only members, so a mis-classification
+    /// there is silent CRDT-vs-SQL divergence.
+    #[test]
+    fn rank_only_excludes_siblings_with_a_real_change_3162() {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block("P", "content", "p", None, 0).unwrap();
+        for (i, id) in ["C0", "C1", "C2"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", "c", Some("P"), i)
+                .unwrap();
+        }
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+
+        // One update carrying BOTH a rank shift (insert at 0) and a property
+        // edit on one of the shifted siblings.
+        a.apply_create_block_at("NEW", "content", "n", Some("P"), 0)
+            .unwrap();
+        a.apply_set_property("C1", "k", Some("v")).unwrap();
+        let d = push_delta(&a, &mut b);
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C0", "C1", "C2", "NEW"],
+            "insertion at index 0 shifts the whole group",
+        );
+        assert_eq!(
+            ids(&d.rank_only),
+            vec!["C0", "C2"],
+            "C1 also had a property change, so it must keep the FULL projection",
+        );
+    }
+
+    #[test]
+    fn move_block_reprojects_moved_node_and_shifted_new_siblings() {
         let (mut a, mut b) = seed();
         a.apply_create_block("CC", "content", "c", None, 1).unwrap();
         let _ = push(&a, &mut b); // sync the create
+        // Root is [AA, CC]; BB (AA's only child) moves to root and lands
+        // BETWEEN them, giving [AA, BB, CC].
         a.apply_move_block("BB", None, 0).unwrap(); // BB: child of AA -> root
-        let (changed, purged, sc) = push(&a, &mut b);
+        let d = push_delta(&a, &mut b);
+        let changed = ids(&d.changed);
         assert!(changed.contains(&"BB".to_string()), "moved node reprojects");
         assert!(
-            changed.contains(&"AA".to_string()) && changed.contains(&"CC".to_string()),
-            "new-parent (root) siblings reproject for rank shift, got {changed:?}",
+            changed.contains(&"CC".to_string()),
+            "CC sits after the insertion slot, so its dense rank shifts 1 -> 2, \
+             got {changed:?}",
         );
-        assert!(purged.is_empty());
+        // #3162: AA is BEFORE the insertion slot in the new-parent group, so
+        // its rank stays 0 — reprojecting it was pure waste. AA is also the
+        // OLD parent, whose remaining sibling group is now empty, so nothing
+        // shifts there either. Pre-#3162 every child of both affected parents
+        // was reprojected regardless.
+        assert!(
+            !changed.contains(&"AA".to_string()),
+            "AA's rank did not move; it must not be reprojected (#3162), got {changed:?}",
+        );
         assert_eq!(
-            sc,
+            ids(&d.rank_only),
+            vec!["CC"],
+            "CC only needs its `position` refreshed; BB moved, so it is \
+             structural and fully reprojected",
+        );
+        assert!(d.purged.is_empty());
+        assert_eq!(
+            scope(&d.tag_scope),
             Some(vec!["BB".to_string()]),
             "moved subtree re-inherits new ancestors"
         );
@@ -1017,9 +1349,9 @@ mod incremental_detection_tests {
         a.apply_edit_content("BB", 0, 0, "X").unwrap();
         let _ = push(&a, &mut b);
         let upd = a.export_update_since(&b.version_vector()).unwrap();
-        let (c, p, s) = b.import_with_changed_purged_tagscope(&upd).unwrap();
-        assert!(c.is_empty() && p.is_empty());
-        assert_eq!(s, TagScope::Subtrees(vec![]));
+        let d = b.import_with_changed_purged_tagscope(&upd).unwrap();
+        assert!(d.changed.is_empty() && d.purged.is_empty() && d.rank_only.is_empty());
+        assert_eq!(d.tag_scope, TagScope::Subtrees(vec![]));
     }
 
     /// #2036 follow-up: a non-structural edit takes the `rebuild_index`-skipping
