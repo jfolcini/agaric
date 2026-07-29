@@ -1385,4 +1385,402 @@ mod incremental_detection_tests {
         );
         assert_eq!(b.count_alive_blocks().unwrap(), 3);
     }
+
+    // -----------------------------------------------------------------------
+    // #3162 adversarial review — the `rank_only` contract checked against
+    // ENGINE STATE, not against the resolver's own bookkeeping.
+    //
+    // The consumer (`import_and_project`) skips the property / tag /
+    // soft-delete passes for every `rank_only` member, so a block that is
+    // classified rank-only while some OTHER projected column also changed is
+    // silent CRDT-vs-SQL divergence — no test goes red, the data is just
+    // wrong. These tests take a full before/after snapshot of every live
+    // block's projected state on the receiver and assert the contract
+    // directly.
+    // -----------------------------------------------------------------------
+
+    /// Everything the SQL projection derives from the engine for one block:
+    /// the four core columns (Pass A), the typed properties (Pass A-props),
+    /// the direct tags (Pass B) and the soft-delete seed (Pass C).
+    type ProjectedState = (
+        Option<(String, String, Option<String>, i64)>,
+        Vec<(String, PropertyValue)>,
+        Vec<String>,
+        Option<String>,
+    );
+
+    /// Snapshot the projected state of every live block in `e`.
+    fn projected_state(e: &LoroEngine) -> std::collections::BTreeMap<String, ProjectedState> {
+        let mut out = std::collections::BTreeMap::new();
+        for bid in e.enumerate_live_preorder() {
+            let id = bid.as_str().to_string();
+            let core = e.read_block(&id).unwrap().map(|s| {
+                (
+                    s.block_type.clone(),
+                    s.content.clone(),
+                    s.parent_id.clone(),
+                    s.position,
+                )
+            });
+            let mut props = e.read_all_properties_typed(&id).unwrap();
+            props.sort_by(|x, y| x.0.cmp(&y.0));
+            let mut tags = e.read_tags(&id).unwrap();
+            tags.sort();
+            let del = e.read_deleted_at(&id).unwrap();
+            out.insert(id, (core, props, tags, del));
+        }
+        out
+    }
+
+    /// Assert the two load-bearing invariants of the #3162 narrowing:
+    ///
+    /// 1. every live block whose projected state changed AT ALL is in
+    ///    `changed` (the narrowing must not drop a genuinely-changed block);
+    /// 2. every block in `rank_only` had ONLY its dense `position` change.
+    fn assert_rank_only_contract(
+        before: &std::collections::BTreeMap<String, ProjectedState>,
+        after: &std::collections::BTreeMap<String, ProjectedState>,
+        d: &ImportDelta,
+        label: &str,
+    ) {
+        let changed: std::collections::HashSet<String> = ids(&d.changed).into_iter().collect();
+        let rank_only: std::collections::HashSet<String> = ids(&d.rank_only).into_iter().collect();
+        assert!(
+            rank_only.is_subset(&changed),
+            "{label}: `rank_only` must be a subset of `changed`; \
+             rank_only={rank_only:?} changed={changed:?}",
+        );
+        for (id, aft) in after {
+            let Some(bef) = before.get(id) else {
+                // Newly live block: must be in `changed`, never rank-only.
+                assert!(
+                    changed.contains(id),
+                    "{label}: new block {id} not in changed"
+                );
+                assert!(
+                    !rank_only.contains(id),
+                    "{label}: new block {id} is rank-only"
+                );
+                continue;
+            };
+            if bef != aft {
+                assert!(
+                    changed.contains(id),
+                    "{label}: {id} changed projected state but is NOT in `changed`\n\
+                     before={bef:?}\nafter={aft:?}",
+                );
+            }
+            if rank_only.contains(id) {
+                let (bc, bp, bt, bd) = bef;
+                let (ac, ap, at, ad) = aft;
+                assert_eq!(
+                    bp, ap,
+                    "{label}: {id} is rank-only but its PROPERTIES changed \
+                     (Pass A-props is skipped for it ⇒ silent divergence)",
+                );
+                assert_eq!(
+                    bt, at,
+                    "{label}: {id} is rank-only but its TAGS changed \
+                     (Pass B is skipped for it ⇒ silent divergence)",
+                );
+                assert_eq!(
+                    bd, ad,
+                    "{label}: {id} is rank-only but its deleted_at seed changed \
+                     (Pass C is skipped for it ⇒ silent divergence)",
+                );
+                // Core columns: only `position` may differ.
+                let (bt_, bcont, bpar, _) = bc.clone().expect("live before");
+                let (at_, acont, apar, _) = ac.clone().expect("live after");
+                assert_eq!(bt_, at_, "{label}: {id} rank-only but block_type changed");
+                assert_eq!(bcont, acont, "{label}: {id} rank-only but content changed");
+                assert_eq!(bpar, apar, "{label}: {id} rank-only but parent_id changed");
+            }
+        }
+    }
+
+    /// Build a receiver seeded from `a`'s snapshot.
+    fn receiver(a: &LoroEngine) -> LoroEngine {
+        let mut b = LoroEngine::new();
+        b.import(&a.export_snapshot().unwrap()).unwrap();
+        b
+    }
+
+    /// A parent `P` with children C0..C5 plus a second parent `Q` with Q0..Q2,
+    /// both at root, all carrying a property and a tag so a mis-classification
+    /// has something to lose.
+    fn adversarial_seed() -> LoroEngine {
+        let mut a = LoroEngine::with_peer_id("DEV-A").unwrap();
+        a.apply_create_block_at("P", "content", "p", None, 0)
+            .unwrap();
+        a.apply_create_block_at("Q", "content", "q", None, 1)
+            .unwrap();
+        for (i, id) in ["C0", "C1", "C2", "C3", "C4", "C5"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", id, Some("P"), i)
+                .unwrap();
+            a.apply_set_property(id, "k", Some(id)).unwrap();
+            a.apply_add_tag(id, &format!("T{i}")).unwrap();
+        }
+        for (i, id) in ["Q0", "Q1", "Q2"].iter().enumerate() {
+            a.apply_create_block_at(id, "content", id, Some("Q"), i)
+                .unwrap();
+        }
+        a
+    }
+
+    /// Backwards same-parent reorder: C4 (index 4) moves to index 1. The
+    /// travelled span is [1, 4]; `min(index, old_index)` must cover all of it,
+    /// and C0 (before the span) must be left alone.
+    #[test]
+    fn adversarial_same_parent_backward_move_covers_travelled_span_3162() {
+        let mut a = adversarial_seed();
+        let mut b = receiver(&a);
+        let before = projected_state(&b);
+
+        a.apply_move_block_to("C4", Some("P"), 1).unwrap();
+        let d = push_delta(&a, &mut b);
+        let after = projected_state(&b);
+        assert_rank_only_contract(&before, &after, &d, "backward same-parent move");
+
+        // `apply_move_block_to` uses `LoroTree::mov_to` semantics — the index
+        // is the slot among the OTHER children — so C4 lands at 1 and the
+        // group becomes [C0, C4, C1, C2, C3, C5]. min(index=1, old_index=4)=1,
+        // so the walk starts at 1 and covers the whole travelled span. C5 is
+        // swept in as well even though its rank is unchanged: the minimum is a
+        // safe over-approximation, never an under-one. That costs one no-op
+        // `position` upsert, which is the point of the rank-only path.
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C1", "C2", "C3", "C4", "C5"],
+            "the travelled span [1,4] reprojects (plus a conservative tail); \
+             C0, before the span, is left alone",
+        );
+        assert_eq!(
+            ids(&d.rank_only),
+            vec!["C1", "C2", "C3", "C5"],
+            "the moved node itself is structural",
+        );
+        // C0 is before the span: independently confirm its rank did not move.
+        assert_eq!(before["C0"].0, after["C0"].0);
+        assert_eq!(before["C5"].0, after["C5"].0, "C5 was a no-op reprojection");
+    }
+
+    /// Cross-parent move whose DESTINATION index is lower than the source
+    /// index: C5 (index 5 under P) → index 0 under Q. The old group narrows
+    /// from 5 (nothing after it), the new group from 0 (everything).
+    #[test]
+    fn adversarial_cross_parent_move_to_lower_index_3162() {
+        let mut a = adversarial_seed();
+        let mut b = receiver(&a);
+        let before = projected_state(&b);
+
+        a.apply_move_block_to("C5", Some("Q"), 0).unwrap();
+        let d = push_delta(&a, &mut b);
+        let after = projected_state(&b);
+        assert_rank_only_contract(&before, &after, &d, "cross-parent move to lower index");
+
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C5", "Q0", "Q1", "Q2"],
+            "old group had nothing after the vacated tail slot; new group \
+             shifts entirely",
+        );
+        assert_eq!(ids(&d.rank_only), vec!["Q0", "Q1", "Q2"]);
+        for c in ["C0", "C1", "C2", "C3", "C4"] {
+            assert_eq!(
+                before[c].0, after[c].0,
+                "{c} is before the vacated slot; its rank must not move",
+            );
+        }
+
+        // Same shape, but with live siblings AFTER the vacated slot too: C1
+        // (index 1 under P) → index 0 under Q. Destination index (0) is lower
+        // than the source index (1), and BOTH groups have members that shift.
+        let mut a = adversarial_seed();
+        let mut b = receiver(&a);
+        let before = projected_state(&b);
+        a.apply_move_block_to("C1", Some("Q"), 0).unwrap();
+        let d = push_delta(&a, &mut b);
+        let after = projected_state(&b);
+        assert_rank_only_contract(&before, &after, &d, "cross-parent move, both groups shift");
+        assert_eq!(
+            ids(&d.changed),
+            vec!["C1", "C2", "C3", "C4", "C5", "Q0", "Q1", "Q2"],
+            "old group narrows from the vacated slot 1, new group from 0",
+        );
+        assert_eq!(
+            ids(&d.rank_only),
+            vec!["C2", "C3", "C4", "C5", "Q0", "Q1", "Q2"],
+        );
+        assert_eq!(
+            before["C0"].0, after["C0"].0,
+            "C0 precedes the vacated slot and must be untouched",
+        );
+    }
+
+    /// The silent-divergence shape the review was hunting: a rank shift and a
+    /// REAL change to the same block, arriving in ONE import. One case per
+    /// channel the resolver claims to exclude — content, tag, soft-delete.
+    #[test]
+    fn adversarial_rank_shift_plus_real_change_same_import_3162() {
+        // (a) content edit on a shifted sibling.
+        {
+            let mut a = adversarial_seed();
+            let mut b = receiver(&a);
+            let before = projected_state(&b);
+            a.apply_create_block_at("NEW", "content", "n", Some("P"), 0)
+                .unwrap();
+            a.apply_edit_content("C3", 0, 0, "Z").unwrap();
+            let d = push_delta(&a, &mut b);
+            let after = projected_state(&b);
+            assert_rank_only_contract(&before, &after, &d, "rank shift + content edit");
+            assert!(
+                !ids(&d.rank_only).contains(&"C3".to_string()),
+                "C3's content changed; it must not be demoted to rank-only",
+            );
+        }
+        // (b) tag add on a shifted sibling.
+        {
+            let mut a = adversarial_seed();
+            let mut b = receiver(&a);
+            let before = projected_state(&b);
+            a.apply_create_block_at("NEW", "content", "n", Some("P"), 0)
+                .unwrap();
+            a.apply_add_tag("C3", "TX").unwrap();
+            let d = push_delta(&a, &mut b);
+            let after = projected_state(&b);
+            assert_rank_only_contract(&before, &after, &d, "rank shift + tag add");
+            assert!(
+                !ids(&d.rank_only).contains(&"C3".to_string()),
+                "C3's tags changed; Pass B is skipped for rank-only members",
+            );
+        }
+        // (c) soft-delete of a shifted sibling (a live tree node, so it still
+        //     takes part in the sibling group).
+        {
+            let mut a = adversarial_seed();
+            let mut b = receiver(&a);
+            let before = projected_state(&b);
+            a.apply_create_block_at("NEW", "content", "n", Some("P"), 0)
+                .unwrap();
+            a.apply_delete_block("C3", "1767225600000").unwrap();
+            let d = push_delta(&a, &mut b);
+            let after = projected_state(&b);
+            assert_rank_only_contract(&before, &after, &d, "rank shift + soft delete");
+            assert!(
+                !ids(&d.rank_only).contains(&"C3".to_string()),
+                "C3's deleted_at seed changed; Pass C is skipped for rank-only \
+                 members",
+            );
+        }
+        // (d) property delete on a shifted sibling.
+        {
+            let mut a = adversarial_seed();
+            let mut b = receiver(&a);
+            let before = projected_state(&b);
+            a.apply_create_block_at("NEW", "content", "n", Some("P"), 0)
+                .unwrap();
+            a.apply_delete_property("C3", "k").unwrap();
+            let d = push_delta(&a, &mut b);
+            let after = projected_state(&b);
+            assert_rank_only_contract(&before, &after, &d, "rank shift + property delete");
+            assert!(!ids(&d.rank_only).contains(&"C3".to_string()));
+        }
+    }
+
+    /// Many structural items in ONE import, deliberately ordered so the diff
+    /// sequence touches high indices before low ones. This is the case where
+    /// a "min index" summary would break if Loro's indices were against the
+    /// ORIGINAL state rather than the incrementally-mutated one.
+    #[test]
+    fn adversarial_mixed_batch_single_import_3162() {
+        let mut a = adversarial_seed();
+        let mut b = receiver(&a);
+        let before = projected_state(&b);
+
+        // High index first, then progressively lower ones, mixed kinds.
+        a.apply_purge_block("C5").unwrap(); // remove at 5
+        a.apply_move_block_to("C4", Some("Q"), 2).unwrap(); // move out at 4, in at 2
+        a.apply_create_block_at("N3", "content", "n3", Some("P"), 3)
+            .unwrap(); // insert at 3
+        a.apply_move_block_to("C0", Some("P"), 2).unwrap(); // same-parent 0 -> 2
+        a.apply_set_property("C2", "k", Some("v2")).unwrap();
+        a.apply_add_tag("Q0", "TQ").unwrap();
+        a.apply_delete_block("Q2", "1767225600000").unwrap();
+
+        let d = push_delta(&a, &mut b);
+        let after = projected_state(&b);
+        assert_rank_only_contract(&before, &after, &d, "mixed batch, one import");
+        assert_eq!(ids(&d.purged), vec!["C5"]);
+    }
+
+    /// The narrowing lemma stated as a direct property: for EVERY live block
+    /// the receiver did not put in `changed`, the block's projected state is
+    /// byte-identical before and after. Driven over a deterministic pseudo
+    /// random walk of structural + content ops so the diff sequences are not
+    /// hand-picked.
+    #[test]
+    fn adversarial_narrowing_lemma_property_walk_3162() {
+        let mut a = adversarial_seed();
+        let mut b = receiver(&a);
+        // xorshift so the walk is reproducible without a dev-dependency.
+        let mut s: u64 = 0x9E37_79B9_7F4A_7C15;
+        let mut next = move || {
+            s ^= s << 13;
+            s ^= s >> 7;
+            s ^= s << 17;
+            s
+        };
+        // Uniform-enough index pick without any lossy cast.
+        fn pick(r: u64, n: usize) -> usize {
+            usize::try_from(r % u64::try_from(n).expect("n fits u64")).expect("fits usize")
+        }
+        let parents = ["P", "Q"];
+        let mut created = 0usize;
+        for round in 0..40 {
+            let before = projected_state(&b);
+            // 1-3 ops per import so single diffs carry several items.
+            let ops = 1 + pick(next(), 3);
+            for _ in 0..ops {
+                let live: Vec<String> = a
+                    .enumerate_live_preorder()
+                    .iter()
+                    .map(|x| x.as_str().to_string())
+                    .filter(|x| x != "P" && x != "Q")
+                    .collect();
+                if live.is_empty() {
+                    break;
+                }
+                let victim = live[pick(next(), live.len())].clone();
+                let parent = parents[pick(next(), 2)];
+                let slots = a.enumerate_live_preorder().len();
+                match next() % 6 {
+                    0 => {
+                        created += 1;
+                        let id = format!("X{created:03}");
+                        let idx = pick(next(), slots.max(1));
+                        let _ = a.apply_create_block_at(&id, "content", &id, Some(parent), idx);
+                    }
+                    1 => {
+                        let idx = pick(next(), slots.max(1));
+                        let _ = a.apply_move_block_to(&victim, Some(parent), idx);
+                    }
+                    2 => {
+                        let _ = a.apply_purge_block(&victim);
+                    }
+                    3 => {
+                        let _ = a.apply_set_property(&victim, "k", Some(&format!("r{round}")));
+                    }
+                    4 => {
+                        let _ = a.apply_add_tag(&victim, &format!("TT{round}"));
+                    }
+                    _ => {
+                        let _ = a.apply_edit_content(&victim, 0, 0, "z");
+                    }
+                }
+            }
+            let d = push_delta(&a, &mut b);
+            let after = projected_state(&b);
+            assert_rank_only_contract(&before, &after, &d, &format!("property walk round {round}"));
+        }
+    }
 }
