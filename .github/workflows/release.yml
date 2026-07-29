@@ -451,15 +451,62 @@ jobs:
       # TAURI_SIGNING_* secrets — never co-located with GITHUB_TOKEN or any JS
       # build (#815). `bundle.createUpdaterArtifacts` is intentionally left
       # false so the key never reaches `cargo tauri build`; we sign the
-      # already-built bundles out-of-band with `tauri signer sign` (the
-      # lockfile-pinned CLI via `npm run tauri`). Each `.sig` is uploaded in a
-      # SEPARATE step whose env holds only GITHUB_TOKEN, so each secret lives
-      # in exactly one step.
+      # already-built bundles out-of-band with `cargo tauri signer sign`. Each
+      # `.sig` is uploaded in a SEPARATE step whose env holds only
+      # GITHUB_TOKEN, so each secret lives in exactly one step.
+      #
+      # #2737 — these steps used to invoke `npm run tauri -- signer sign`,
+      # which runs node plus the whole `@tauri-apps/cli` require graph with
+      # TAURI_SIGNING_PRIVATE_KEY(_PASSWORD) in the process environment. That
+      # is the exact exposure #815 removed from the build step ("exposing the
+      # key to everything `cargo tauri build` executes bought nothing and
+      # risked the key leaking to dependency code"), and the updater key is
+      # the highest-value secret in the repo — it is the auto-update root of
+      # trust. The Rust CLI is a single static binary with no plugin/require
+      # graph, so the key is no longer readable by transitive JS dependencies.
       #
       # Order matters: these run AFTER the AppImage repack-and-clobber above so
       # Linux signs the FINAL repacked AppImage, and BEFORE the SBOM/attest
       # block below so the macOS `.app.tar.gz` is signed before the SBOM /
       # attestation steps reference the bundle.
+      - name: Install Tauri CLI for signing
+        # SECRETLESS BY CONSTRUCTION — this step has no `env:` block, so the
+        # signing key is absent from the process that compiles and installs
+        # the tool. Only the sign steps below carry the secrets, and all they
+        # run is the resulting static binary.
+        #
+        # The version is DERIVED from `@tauri-apps/cli` in package.json rather
+        # than hardcoded, so the Rust CLI and the npm CLI cannot drift apart.
+        # The two ship in lockstep upstream, and the `.sig` format plus CLI
+        # surface must match what the npm path produced. A hardcoded constant
+        # here would silently go stale the next time Dependabot bumps the npm
+        # package, and the failure would be a subtly different signature
+        # rather than a build error.
+        #
+        # Deliberately NOT restored from the `cache-bin` Rust cache the way
+        # the Android job's `cargo-tauri` is: this binary handles the updater
+        # root-of-trust key, so it is built from crates.io with `--locked` on
+        # every release rather than restored from a mutable cache. That costs
+        # a source compile per matrix cell and is the intended trade.
+        shell: bash
+        run: |
+          set -euo pipefail
+          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
+          # Require an EXACT pin. A range ('^2.11.4') would make the signing
+          # tool non-deterministic across releases, which is not acceptable
+          # for the updater root of trust.
+          case "$want" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "::error::@tauri-apps/cli must be an exact version, got '$want'"; exit 1 ;;
+          esac
+          have="$(cargo tauri --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+          if [ "$have" != "$want" ]; then
+            cargo install tauri-cli --version "$want" --locked --force
+          fi
+          # Fail loudly here rather than at the first sign step, where the
+          # secrets are in scope and the error would be harder to read.
+          cargo tauri --version
+
       - name: Sign updater payload (Linux AppImage)
         if: matrix.platform == 'ubuntu-24.04'
         env:
@@ -472,7 +519,7 @@ jobs:
           shopt -s nullglob
           appimages=("$BUNDLE_DIR"/Agaric_*_amd64.AppImage)
           [ ${#appimages[@]} -eq 1 ] || { echo "::error::expected exactly 1 AppImage, found ${#appimages[@]}"; exit 1; }
-          npm run tauri -- signer sign "${appimages[0]}"
+          cargo tauri signer sign "${appimages[0]}"
           test -f "${appimages[0]}.sig"
 
       - name: Upload Linux updater signature
@@ -507,7 +554,7 @@ jobs:
           shopt -s nullglob
           debs=("$BUNDLE_DIR"/*.deb)
           [ ${#debs[@]} -eq 1 ] || { echo "::error::expected exactly 1 .deb, found ${#debs[@]}"; exit 1; }
-          npm run tauri -- signer sign "${debs[0]}"
+          cargo tauri signer sign "${debs[0]}"
           test -f "${debs[0]}.sig"
 
       - name: Upload Linux .deb updater signature
@@ -535,7 +582,7 @@ jobs:
           shopt -s nullglob
           rpms=("$BUNDLE_DIR"/*.rpm)
           [ ${#rpms[@]} -eq 1 ] || { echo "::error::expected exactly 1 .rpm, found ${#rpms[@]}"; exit 1; }
-          npm run tauri -- signer sign "${rpms[0]}"
+          cargo tauri signer sign "${rpms[0]}"
           test -f "${rpms[0]}.sig"
 
       - name: Upload Linux .rpm updater signature
@@ -563,7 +610,7 @@ jobs:
           shopt -s nullglob
           setups=("$BUNDLE_DIR"/*-setup.exe)
           [ ${#setups[@]} -eq 1 ] || { echo "::error::expected exactly 1 NSIS setup, found ${#setups[@]}"; exit 1; }
-          npm run tauri -- signer sign "${setups[0]}"
+          cargo tauri signer sign "${setups[0]}"
           test -f "${setups[0]}.sig"
 
       - name: Upload Windows updater signature
@@ -597,7 +644,7 @@ jobs:
           shopt -s nullglob
           msis=("$BUNDLE_DIR"/*.msi)
           [ ${#msis[@]} -eq 1 ] || { echo "::error::expected exactly 1 .msi, found ${#msis[@]}"; exit 1; }
-          npm run tauri -- signer sign "${msis[0]}"
+          cargo tauri signer sign "${msis[0]}"
           test -f "${msis[0]}.sig"
 
       - name: Upload Windows MSI updater signature
@@ -643,7 +690,7 @@ jobs:
           shopt -s nullglob
           tarballs=("$BUNDLE_DIR"/*.app.tar.gz)
           [ ${#tarballs[@]} -eq 1 ] || { echo "::error::expected exactly 1 bundler app.tar.gz, found ${#tarballs[@]}"; exit 1; }
-          npm run tauri -- signer sign "${tarballs[0]}"
+          cargo tauri signer sign "${tarballs[0]}"
           test -f "${tarballs[0]}.sig"
 
       - name: Upload macOS updater signature
