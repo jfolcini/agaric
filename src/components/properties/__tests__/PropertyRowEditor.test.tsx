@@ -20,8 +20,8 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)

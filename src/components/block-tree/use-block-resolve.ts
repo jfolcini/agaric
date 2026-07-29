@@ -15,21 +15,16 @@ import { matchSorter } from 'match-sorter'
 import { useCallback, useEffect, useRef } from 'react'
 
 import type { PickerItem } from '@/editor/SuggestionList'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { PAGINATION_LIMIT } from '@/lib/constants'
 import { foldForSearch, matchesSearchFolded } from '@/lib/fold-for-search'
 import { t as translate } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPageDisplayName } from '@/lib/page-display'
-import {
-  createBlock,
-  createPageInSpace,
-  listAllPagesInSpace,
-  listAllTagsInSpace,
-  listPageAliasesByPrefix,
-  searchBlocks,
-  searchBlocksLimit,
-} from '@/lib/tauri'
+import { searchBlocksLimit } from '@/lib/safe-limit'
+import { requireActiveScope, toSpaceScope } from '@/lib/space-scope'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
@@ -112,7 +107,7 @@ async function searchPagesViaCache(q: string, pagesListRef: PagesListRef): Promi
     // backend).
     const spaceId = useSpaceStore.getState().currentSpaceId
     if (spaceId == null) return []
-    const pages = await listAllPagesInSpace(spaceId)
+    const pages = unwrap(await commands.listAllPagesInSpace(requireActiveScope(spaceId), null))
     source = pages.map((p) => ({ id: p.id, title: p.content ?? 'Untitled' }))
     // #732 — only persist the lazy fill while the active space is still
     // the one the fetch was issued for. A space switch mid-flight would
@@ -140,7 +135,27 @@ async function searchPagesViaFts(q: string, pagesListRef: PagesListRef): Promise
   // a `''` that used to mean "match nothing" but now throws.
   const spaceId = useSpaceStore.getState().currentSpaceId
   if (spaceId == null) return []
-  const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
+  const resp = unwrap(
+    await commands.searchBlocks(q, null, searchBlocksLimit(20), {
+      parentId: null,
+      tagIds: [],
+      scope: requireActiveScope(spaceId),
+      includePageGlobs: [],
+      excludePageGlobs: [],
+      caseSensitive: false,
+      wholeWord: false,
+      isRegex: false,
+      blockTypeFilter: null,
+      stateFilter: [],
+      priorityFilter: [],
+      dueFilter: null,
+      scheduledFilter: null,
+      propertyFilters: [],
+      excludedPropertyFilters: [],
+      excludedStateFilter: [],
+      excludedPriorityFilter: [],
+    }),
+  )
   const matches = resp.items
     .filter((b) => b.block_type === 'page')
     .map((b) => makePagePickerItem(b.id, b.content ?? 'Untitled'))
@@ -210,11 +225,9 @@ async function mergeAliasPrefixMatches(matches: PickerItem[], q: string): Promis
   if (q.length === 0) return
   try {
     const spaceId = useSpaceStore.getState().currentSpaceId
-    const rows = await listPageAliasesByPrefix({
-      prefix: q,
-      limit: PAGINATION_LIMIT,
-      spaceId: spaceId ?? null,
-    })
+    const rows = unwrap(
+      await commands.listPageAliasesByPrefix(q, PAGINATION_LIMIT, toSpaceScope(spaceId ?? null)),
+    )
     if (rows.length === 0) return
 
     const existingPageIds = new Set(matches.filter((m) => !m.isCreate).map((m) => m.id))
@@ -359,7 +372,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // same as `searchPagesViaCache`'s cache-fallback strategy.
       const requestSpaceId = useSpaceStore.getState().currentSpaceId
       if (requestSpaceId == null) return []
-      const tags = await listAllTagsInSpace(requestSpaceId)
+      const tags = unwrap(await commands.listAllTagsInSpace(requireActiveScope(requestSpaceId)))
       // Populate the resolve cache so tag_ref nodes can resolve the name
       // after the block is saved (serialized as #[ULID]) and reloaded.
       // #853 — gate behind the captured-space guard: a stale response from
@@ -467,7 +480,27 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // populatePageResolveCache guard — this callback had NO guard at
       // all before, unlike searchPages in the same file).
       const requestSpaceId = spaceId
-      const resp = await searchBlocks({ query: q, limit: searchBlocksLimit(20), spaceId })
+      const resp = unwrap(
+        await commands.searchBlocks(q, null, searchBlocksLimit(20), {
+          parentId: null,
+          tagIds: [],
+          scope: requireActiveScope(spaceId),
+          includePageGlobs: [],
+          excludePageGlobs: [],
+          caseSensitive: false,
+          wholeWord: false,
+          isRegex: false,
+          blockTypeFilter: null,
+          stateFilter: [],
+          priorityFilter: [],
+          dueFilter: null,
+          scheduledFilter: null,
+          propertyFilters: [],
+          excludedPropertyFilters: [],
+          excludedStateFilter: [],
+          excludedPriorityFilter: [],
+        }),
+      )
       // Show parent page title as breadcrumb when available.
       // Compose against current space so a foreign-space
       // parent (which shouldn't appear in the picker anyway, but
@@ -524,7 +557,7 @@ export function useBlockResolve(): UseBlockResolveReturn {
       throw new Error('Space store is not ready')
     }
     try {
-      const newId = await createPageInSpace({ content: label, spaceId: currentSpaceId })
+      const newId = unwrap(await commands.createPageInSpace(null, label, currentSpaceId))
       // Populate resolve cache so the link chip shows the title immediately
       useResolveStore.getState().set(newId, label, false)
       pagesListRef.current = [...pagesListRef.current, { id: newId, title: label }]
@@ -553,11 +586,9 @@ export function useBlockResolve(): UseBlockResolveReturn {
       // swallow-on-failure window: a scoping failure fails the whole create and
       // surfaces via the catch below instead of silently orphaning the tag.
       const spaceId = useSpaceStore.getState().currentSpaceId
-      const block = await createBlock({
-        blockType: 'tag',
-        content: name,
-        ...(spaceId != null && { spaceId }),
-      })
+      const block = unwrap(
+        await commands.createBlock('tag', name, null, null, toSpaceScope(spaceId), null),
+      )
       // Populate resolve cache so the tag chip shows the name immediately
       useResolveStore.getState().set(block.id, name, false)
       return block.id

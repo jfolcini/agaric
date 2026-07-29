@@ -12,9 +12,11 @@ import type {
 import { notifyUnknownNodeTypeToast } from '@/editor/markdown-serialize-toast'
 import { serialize } from '@/editor/markdown-serializer'
 import type { DocNode } from '@/editor/types'
+import { unwrap } from '@/lib/app-error'
+import type { OpRef } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { editBlock, getProperty, type OpRef } from '@/lib/tauri'
 import { useUndoStore } from '@/stores/undo'
 
 /**
@@ -46,7 +48,7 @@ export async function applyContentEdit(
   failKey: string,
 ): Promise<void> {
   try {
-    const resp = await editBlock(ctx.blockId, newContent)
+    const resp = unwrap(await commands.editBlock(ctx.blockId, newContent))
     // Heading/callout/numbered-list/divider slash commands
     // must clear the redo stack just like every other content-edit
     // mutation in `pageStore.edit()`. Pre-fix this was missing, so a
@@ -73,7 +75,9 @@ export function openDatePicker(ctx: SlashCommandContext, mode: DatePickerMode): 
 export function warnIfBlocked(ctx: SlashCommandContext): void {
   // Single-key PK lookup against the `blocked_by`
   // row instead of fetching every property on the block.
-  getProperty(ctx.blockId, 'blocked_by')
+  commands
+    .getProperty(ctx.blockId, 'blocked_by')
+    .then(unwrap)
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
       if (hasBlockedBy)

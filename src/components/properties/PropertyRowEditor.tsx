@@ -33,9 +33,9 @@ import {
 } from '@/components/properties/PropertyRowEditor/usePropertyRowEditor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import type { PropertyDefinition, PropertyRow } from '@/lib/bindings'
 import { LOCKED_PROPERTY_OPTIONS } from '@/lib/property-save-utils'
 import { formatPropertyName } from '@/lib/property-utils'
-import type { PropertyDefinition, PropertyRow } from '@/lib/tauri'
 
 export interface PropertyRowEditorProps {
   blockId: string

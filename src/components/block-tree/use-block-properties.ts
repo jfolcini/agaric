@@ -14,15 +14,12 @@
 import { useCallback, useRef } from 'react'
 
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPriorityCycle } from '@/lib/priority-levels'
-import {
-  getProperty,
-  setPriority as setPriorityCmd,
-  setTodoState as setTodoStateCmd,
-} from '@/lib/tauri'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -99,7 +96,9 @@ function useToggleQueue() {
 function warnIfBlocked(blockId: string): void {
   // Single-key PK lookup; the hook only needs the
   // `blocked_by` row, not the full vocabulary the FE used to ship.
-  getProperty(blockId, 'blocked_by')
+  commands
+    .getProperty(blockId, 'blocked_by')
+    .then(unwrap)
     .then((row) => {
       const hasBlockedBy = row != null && row.value_ref != null
       if (hasBlockedBy)
@@ -137,7 +136,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         }))
 
         try {
-          await setTodoStateCmd(blockId, nextState)
+          unwrap(await commands.setTodoState(blockId, nextState))
           const { rootParentId } = pageStore.getState()
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         } catch {
@@ -190,7 +189,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
         }))
 
         try {
-          await setPriorityCmd(blockId, nextState)
+          unwrap(await commands.setPriority(blockId, nextState))
           const { rootParentId } = pageStore.getState()
           if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         } catch {

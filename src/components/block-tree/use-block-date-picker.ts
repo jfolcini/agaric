@@ -5,16 +5,12 @@ import type { StoreApi } from 'zustand'
 
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import type { OpRef } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import {
-  createPageInSpace,
-  listAllPagesInSpace,
-  type OpRef,
-  setDueDate as setDueDateCmd,
-  setProperty,
-  setScheduledDate as setScheduledDateCmd,
-} from '@/lib/tauri'
+import { requireActiveScope } from '@/lib/space-scope'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
@@ -97,7 +93,7 @@ async function handleDueMode(ctx: DatePickContext): Promise<void> {
   if (!ctx.blockId) return
   const blockId = ctx.blockId
   try {
-    await setDueDateCmd(blockId, ctx.dateStr)
+    unwrap(await commands.setDueDate(blockId, ctx.dateStr))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, due_date: ctx.dateStr } : b)),
@@ -110,11 +106,15 @@ async function handleDueMode(ctx: DatePickContext): Promise<void> {
 async function handleRepeatUntilMode(ctx: DatePickContext): Promise<void> {
   if (!ctx.blockId) return
   try {
-    const resp = await setProperty({
-      blockId: ctx.blockId,
-      key: 'repeat-until',
-      valueDate: ctx.dateStr,
-    })
+    const resp = unwrap(
+      await commands.setProperty(ctx.blockId, 'repeat-until', {
+        value_text: null,
+        value_num: null,
+        value_date: ctx.dateStr,
+        value_ref: null,
+        value_bool: null,
+      }),
+    )
     notifyUndo(ctx.rootParentId, resp.op_refs)
     notify.success(ctx.t('blockTree.repeatUntilMessage', { date: ctx.dateStr }))
   } catch {
@@ -126,7 +126,7 @@ async function handleScheduleMode(ctx: DatePickContext): Promise<void> {
   if (!ctx.blockId) return
   const blockId = ctx.blockId
   try {
-    await setScheduledDateCmd(blockId, ctx.dateStr)
+    unwrap(await commands.setScheduledDate(blockId, ctx.dateStr))
     notifyUndo(ctx.rootParentId)
     ctx.pageStore.setState((s) => ({
       blocks: s.blocks.map((b) => (b.id === blockId ? { ...b, scheduled_date: ctx.dateStr } : b)),
@@ -161,14 +161,13 @@ async function handleDateMode(ctx: DatePickContext): Promise<void> {
     // date pages past index 99 are no longer truncated.  The
     // `currentSpaceId` null-check above guarantees a real spaceId, so no
     // pre-bootstrap fallback is needed here.
-    const pages = await listAllPagesInSpace(currentSpaceId)
+    const pages = unwrap(
+      await commands.listAllPagesInSpace(requireActiveScope(currentSpaceId), null),
+    )
     const existing = pages.find((p) => p.content === ctx.dateStr || p.content === ctx.legacyStr)
     let datePageId = existing?.id
     if (!datePageId) {
-      const newPageId = await createPageInSpace({
-        content: ctx.dateStr,
-        spaceId: currentSpaceId,
-      })
+      const newPageId = unwrap(await commands.createPageInSpace(null, ctx.dateStr, currentSpaceId))
       datePageId = newPageId
       useResolveStore.getState().set(newPageId, ctx.dateStr, false)
       ctx.pagesListRef.current = [

@@ -2,8 +2,9 @@ import type { TFunction } from 'i18next'
 import { useCallback, useRef, useState } from 'react'
 import type { StoreApi } from 'zustand'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { notify } from '@/lib/notify'
-import { deleteBlocksByIds, setTodoStateBatch } from '@/lib/tauri'
 import { getDragDescendants } from '@/lib/tree-utils'
 import type { PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -69,7 +70,7 @@ export function useBlockMultiSelect({
         let successCount = 0
         let failCount = 0
         try {
-          successCount = await setTodoStateBatch(ids, state)
+          successCount = unwrap(await commands.setTodoStateBatch(ids, state))
           // Treat any id we asked for that the backend silently
           // skipped (missing / already-deleted) as a "fail" for the
           // toast counter so the user sees an honest summary.
@@ -150,7 +151,7 @@ export function useBlockMultiSelect({
         // flat selection; ancestor-coalescing makes the returned
         // count >= selectedRoots, which still represents "every
         // requested row is gone".
-        const affected = await deleteBlocksByIds(ids)
+        const affected = unwrap(await commands.deleteBlocksByIds(ids))
         // The selection itself was processed atomically. Count
         // successful "selected rows that are now deleted" by
         // re-reading the in-memory state shape: since the call

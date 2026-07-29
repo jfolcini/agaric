@@ -15,34 +15,42 @@
 import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  createBlock: vi.fn(),
-  createPageInSpace: vi.fn(),
-  listAllPagesInSpace: vi.fn(),
-  listAllTagsInSpace: vi.fn(),
-  listPageAliasesByPrefix: vi.fn(),
-  searchBlocks: vi.fn(),
-  searchBlocksLimit: (n: number) => n,
-}))
+// #2927 phase 8 — the hook now calls generated `commands.*` directly, so
+// mocking only the `@/lib/tauri` wrapper no longer intercepts anything. Mock
+// the bindings surface instead, resolving the same typed-result envelope
+// `unwrap` expects (mirrors `use-block-link-resolve.test.ts`'s pattern).
+const mockedCreateBlock = vi.hoisted(() => vi.fn())
+const mockedCreatePageInSpace = vi.hoisted(() => vi.fn())
+const mockedListAllPagesInSpace = vi.hoisted(() => vi.fn())
+const mockedListAllTagsInSpace = vi.hoisted(() => vi.fn())
+const mockedListPageAliasesByPrefix = vi.hoisted(() => vi.fn())
+const mockedSearchBlocks = vi.hoisted(() => vi.fn())
+
+vi.mock('@/lib/bindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/bindings')>()
+  return {
+    ...actual,
+    commands: {
+      ...actual.commands,
+      createBlock: (...args: unknown[]) =>
+        mockedCreateBlock(...args).then((data: unknown) => ({ status: 'ok', data })),
+      createPageInSpace: (...args: unknown[]) =>
+        mockedCreatePageInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllPagesInSpace: (...args: unknown[]) =>
+        mockedListAllPagesInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listAllTagsInSpace: (...args: unknown[]) =>
+        mockedListAllTagsInSpace(...args).then((data: unknown) => ({ status: 'ok', data })),
+      listPageAliasesByPrefix: (...args: unknown[]) =>
+        mockedListPageAliasesByPrefix(...args).then((data: unknown) => ({ status: 'ok', data })),
+      searchBlocks: (...args: unknown[]) =>
+        mockedSearchBlocks(...args).then((data: unknown) => ({ status: 'ok', data })),
+    },
+  }
+})
 
 import { useBlockResolve } from '@/components/block-tree/use-block-resolve'
-import {
-  createBlock,
-  createPageInSpace,
-  listAllPagesInSpace,
-  listAllTagsInSpace,
-  listPageAliasesByPrefix,
-  searchBlocks,
-} from '@/lib/tauri'
 import { keyFor, useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
-
-const mockedCreateBlock = vi.mocked(createBlock)
-const mockedCreatePageInSpace = vi.mocked(createPageInSpace)
-const mockedListAllPagesInSpace = vi.mocked(listAllPagesInSpace)
-const mockedListPageAliasesByPrefix = vi.mocked(listPageAliasesByPrefix)
-const mockedListAllTagsInSpace = vi.mocked(listAllTagsInSpace)
-const mockedSearchBlocks = vi.mocked(searchBlocks)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -265,7 +273,10 @@ describe('searchTags', () => {
     })
 
     // #2543 — space-scoped IPC, not the old space-unscoped listTagsByPrefix.
-    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith('SPACE_TEST')
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith({
+      kind: 'active',
+      space_id: 'SPACE_TEST',
+    })
     // Non-exact match, so a "Create new tag" option is prepended (F-26)
     expect(items[0]).toEqual({ id: '__create__', label: 'pr', isCreate: true })
     const tagItems = items.filter((i) => !i.isCreate)
@@ -383,7 +394,10 @@ describe('searchTags', () => {
       items = await result.current.searchTags('todo]')
     })
 
-    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith('SPACE_TEST')
+    expect(mockedListAllTagsInSpace).toHaveBeenCalledWith({
+      kind: 'active',
+      space_id: 'SPACE_TEST',
+    })
     // Exact match against the STRIPPED query ('todo', not 'todo]') — no
     // create option. This is what actually proves the bracket was
     // stripped before the client-side filter/exact-match check ran (the
@@ -423,11 +437,14 @@ describe('onCreateTag', () => {
     // #3081 — the active spaceId is threaded through so the backend stamps
     // `blocks.space_id` in the same transaction; there is NO separate
     // best-effort setProperty(space) follow-up.
-    expect(mockedCreateBlock).toHaveBeenCalledWith({
-      blockType: 'tag',
-      content: 'urgent',
-      spaceId: 'SPACE_TEST',
-    })
+    expect(mockedCreateBlock).toHaveBeenCalledWith(
+      'tag',
+      'urgent',
+      null,
+      null,
+      { kind: 'active', space_id: 'SPACE_TEST' },
+      null,
+    )
     expect(newId).toBe('NEW_TAG_1')
   })
 
@@ -523,10 +540,14 @@ describe('onCreateTag', () => {
     })
 
     expect(newId).toBe('NEW_TAG_NOSPACE')
-    expect(mockedCreateBlock).toHaveBeenCalledWith({
-      blockType: 'tag',
-      content: 'nospace',
-    })
+    expect(mockedCreateBlock).toHaveBeenCalledWith(
+      'tag',
+      'nospace',
+      null,
+      null,
+      { kind: 'global' },
+      null,
+    )
   })
 })
 
@@ -589,7 +610,10 @@ describe('searchPages — short query (<=2 chars)', () => {
       items = await result.current.searchPages('al')
     })
 
-    expect(mockedListAllPagesInSpace).toHaveBeenCalledWith('SPACE_TEST')
+    expect(mockedListAllPagesInSpace).toHaveBeenCalledWith(
+      { kind: 'active', space_id: 'SPACE_TEST' },
+      null,
+    )
     // Should match "Alpha" (contains "al")
     const matchIds = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(matchIds).toContain('P10')
@@ -744,10 +768,24 @@ describe('searchPages — long query (>2 chars)', () => {
       items = await result.current.searchPages('meeting')
     })
 
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({
-      query: 'meeting',
-      limit: 20,
-      spaceId: 'SPACE_TEST',
+    expect(mockedSearchBlocks).toHaveBeenCalledWith('meeting', null, 20, {
+      parentId: null,
+      tagIds: [],
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      includePageGlobs: [],
+      excludePageGlobs: [],
+      caseSensitive: false,
+      wholeWord: false,
+      isRegex: false,
+      blockTypeFilter: null,
+      stateFilter: [],
+      priorityFilter: [],
+      dueFilter: null,
+      scheduledFilter: null,
+      propertyFilters: [],
+      excludedPropertyFilters: [],
+      excludedStateFilter: [],
+      excludedPriorityFilter: [],
     })
     // Only page-type blocks should be returned
     const nonCreate = items.filter((i) => !i.isCreate)
@@ -1147,10 +1185,24 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     })
 
     // FTS receives "text" (stripped), not "text]]"
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({
-      query: 'text',
-      limit: 20,
-      spaceId: 'SPACE_TEST',
+    expect(mockedSearchBlocks).toHaveBeenCalledWith('text', null, 20, {
+      parentId: null,
+      tagIds: [],
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      includePageGlobs: [],
+      excludePageGlobs: [],
+      caseSensitive: false,
+      wholeWord: false,
+      isRegex: false,
+      blockTypeFilter: null,
+      stateFilter: [],
+      priorityFilter: [],
+      dueFilter: null,
+      scheduledFilter: null,
+      propertyFilters: [],
+      excludedPropertyFilters: [],
+      excludedStateFilter: [],
+      excludedPriorityFilter: [],
     })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'P2', label: 'Text Document' })])
@@ -1185,10 +1237,24 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
       items = await result.current.searchPages('test]')
     })
 
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({
-      query: 'test',
-      limit: 20,
-      spaceId: 'SPACE_TEST',
+    expect(mockedSearchBlocks).toHaveBeenCalledWith('test', null, 20, {
+      parentId: null,
+      tagIds: [],
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      includePageGlobs: [],
+      excludePageGlobs: [],
+      caseSensitive: false,
+      wholeWord: false,
+      isRegex: false,
+      blockTypeFilter: null,
+      stateFilter: [],
+      priorityFilter: [],
+      dueFilter: null,
+      scheduledFilter: null,
+      propertyFilters: [],
+      excludedPropertyFilters: [],
+      excludedStateFilter: [],
+      excludedPriorityFilter: [],
     })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'P1', label: 'Test Page' })])
@@ -1263,10 +1329,24 @@ describe('searchPages — trailing bracket stripping (#586)', () => {
     })
 
     // FTS receives "meeting" (stripped), returns Meeting Notes
-    expect(mockedSearchBlocks).toHaveBeenCalledWith({
-      query: 'meeting',
-      limit: 20,
-      spaceId: 'SPACE_TEST',
+    expect(mockedSearchBlocks).toHaveBeenCalledWith('meeting', null, 20, {
+      parentId: null,
+      tagIds: [],
+      scope: { kind: 'active', space_id: 'SPACE_TEST' },
+      includePageGlobs: [],
+      excludePageGlobs: [],
+      caseSensitive: false,
+      wholeWord: false,
+      isRegex: false,
+      blockTypeFilter: null,
+      stateFilter: [],
+      priorityFilter: [],
+      dueFilter: null,
+      scheduledFilter: null,
+      propertyFilters: [],
+      excludedPropertyFilters: [],
+      excludedStateFilter: [],
+      excludedPriorityFilter: [],
     })
     const nonCreate = items.filter((i) => !i.isCreate)
     expect(nonCreate).toEqual([expect.objectContaining({ id: 'F60', label: 'Meeting Notes' })])
@@ -1286,10 +1366,7 @@ describe('onCreatePage', () => {
       newId = await result.current.onCreatePage('Brand New Page')
     })
 
-    expect(mockedCreatePageInSpace).toHaveBeenCalledWith({
-      content: 'Brand New Page',
-      spaceId: 'SPACE_TEST',
-    })
+    expect(mockedCreatePageInSpace).toHaveBeenCalledWith(null, 'Brand New Page', 'SPACE_TEST')
     // Phase 2 — the legacy `createBlock({ blockType: 'page' })`
     // path is no longer invoked; the space-aware wrapper replaces it.
     expect(mockedCreateBlock).not.toHaveBeenCalled()
@@ -1475,7 +1552,10 @@ describe('pagesListRef — space-switch invalidation (#732)', () => {
     await act(async () => {
       await result.current.searchPages('al')
     })
-    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith('SPACE_TEST')
+    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith(
+      { kind: 'active', space_id: 'SPACE_TEST' },
+      null,
+    )
 
     act(() => {
       useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
@@ -1487,7 +1567,10 @@ describe('pagesListRef — space-switch invalidation (#732)', () => {
     await act(async () => {
       items = await result.current.searchPages('al')
     })
-    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith('SPACE_B')
+    expect(mockedListAllPagesInSpace).toHaveBeenLastCalledWith(
+      { kind: 'active', space_id: 'SPACE_B' },
+      null,
+    )
     const ids = items.filter((i) => !i.isCreate).map((i) => i.id)
     expect(ids).toContain('PB')
     expect(ids).not.toContain('PA')
@@ -1789,10 +1872,9 @@ describe('searchPages — alias prefix matching', () => {
       items = await result.current.searchPages('weekly-meeting')
     })
 
-    expect(mockedListPageAliasesByPrefix).toHaveBeenCalledWith({
-      prefix: 'weekly-meeting',
-      limit: 50,
-      spaceId: 'SPACE_TEST',
+    expect(mockedListPageAliasesByPrefix).toHaveBeenCalledWith('weekly-meeting', 50, {
+      kind: 'active',
+      space_id: 'SPACE_TEST',
     })
 
     // Both alias matches should be at the top, in the returned order.
