@@ -822,7 +822,7 @@ pub async fn search_blocks_partitioned(
     // bails with [`AppError::Cancelled`] at the next row-batch
     // boundary.
     let registry: agaric_store::cancellation::CancellationRegistry = (*registry).clone();
-    let request_id = ulid::Ulid::r#gen().to_string();
+    let request_id = ulid::Ulid::generate().to_string();
     let guard = std::sync::Arc::new(agaric_store::cancellation::CancellationGuard::new());
     let token = guard.token();
     registry.insert(request_id.clone(), std::sync::Arc::clone(&guard));
