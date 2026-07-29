@@ -722,7 +722,7 @@ pub fn write_attachment_file(
     // `fs::rename` below to be atomic (same filesystem). The ULID suffix
     // mirrors `write_attachment_streaming`'s naming so both writers of
     // attachment bytes leave the same recognizable `*.tmp-*` shape on disk.
-    let suffix = u128::from(ulid::Ulid::r#gen());
+    let suffix = u128::from(ulid::Ulid::generate());
     let temp_path = match full_path.file_name() {
         Some(name) => {
             let mut s = std::ffi::OsString::from(name);
@@ -1189,7 +1189,7 @@ pub async fn write_attachment_streaming(
     // are not practically possible. We render in lower-case hex to
     // stay portable across filesystems that fold case in unhelpful
     // ways (NTFS, APFS-default).
-    let suffix = u128::from(ulid::Ulid::r#gen());
+    let suffix = u128::from(ulid::Ulid::generate());
     let temp_path = match final_path.file_name() {
         Some(name) => {
             let mut s = std::ffi::OsString::from(name);

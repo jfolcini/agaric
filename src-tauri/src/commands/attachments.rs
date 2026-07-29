@@ -164,11 +164,11 @@ pub async fn add_attachment_inner(
     agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
 
     // Generate ULID for attachment_id
-    let attachment_id = ulid::Ulid::r#gen().to_string().to_uppercase();
+    let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
     let now = now_ms();
 
     // Build OpPayload. `attachment_id` is freshly generated via
-    // `Ulid::r#gen().to_string().to_uppercase()` above, so `from_trusted`
+    // `Ulid::generate().to_string().to_uppercase()` above, so `from_trusted`
     // is the correct entry point — it normalizes (no-op here, already
     // uppercase) without re-validating the ULID format.
     let payload = OpPayload::AddAttachment(agaric_store::op::AddAttachmentPayload {
@@ -394,7 +394,7 @@ pub async fn add_attachment_with_bytes_inner(
     }
 
     // Backend-generated relative storage path — the FE never supplies one.
-    let storage_id = ulid::Ulid::r#gen().to_string().to_uppercase();
+    let storage_id = ulid::Ulid::generate().to_string().to_uppercase();
     let fs_path = format!("attachments/{storage_id}");
 
     // Write the bytes first (creates the attachments dir). `write_attachment_file`
