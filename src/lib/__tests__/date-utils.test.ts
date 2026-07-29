@@ -96,12 +96,44 @@ describe('formatCompactDate', () => {
   it('returns original string for day 32', () => {
     expect(formatCompactDate('2026-04-32')).toBe('2026-04-32')
   })
+
+  it('returns original string when there are more than 3 dash-separated parts', () => {
+    // 4 parts, but the first 3 parse to a valid month/day: only the
+    // `parts.length !== 3` guard (not the NaN/undefined guards below it)
+    // can reject this, since Number.parseInt-style coercion would happily
+    // ignore the extra segment.
+    expect(formatCompactDate('2026-04-15-extra')).toBe('2026-04-15-extra')
+  })
+
+  it('returns original string when a component is non-numeric', () => {
+    // Exactly 3 parts, so the length guard passes through; only 1 of the
+    // 3 components is NaN, which also exercises the `||` (vs `&&`) between
+    // the isNaN checks.
+    expect(formatCompactDate('2026-ab-15')).toBe('2026-ab-15')
+  })
 })
 
 describe('MONTH_SHORT', () => {
   it('has 12 entries', () => expect(MONTH_SHORT).toHaveLength(12))
   it('starts with Jan', () => expect(MONTH_SHORT[0]).toBe('Jan'))
   it('ends with Dec', () => expect(MONTH_SHORT[11]).toBe('Dec'))
+
+  it('contains all 12 month abbreviations in order', () => {
+    expect(MONTH_SHORT).toEqual([
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec',
+    ])
+  })
 })
 
 describe('getDateRangeForFilter', () => {
@@ -172,6 +204,30 @@ describe('getDateRangeForFilter', () => {
 
   it('returns null for unknown preset', () => {
     expect(getDateRangeForFilter('unknown', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "next-" with no digits (Regex quantifier guard)', () => {
+    expect(getDateRangeForFilter('next--days', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "next-N-days" with trailing garbage (Regex end-anchor guard)', () => {
+    expect(getDateRangeForFilter('next-7-days-tomorrow', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "next-N-days" with leading garbage (Regex start-anchor guard)', () => {
+    expect(getDateRangeForFilter('xnext-7-days', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "last-" with no digits (Regex quantifier guard)', () => {
+    expect(getDateRangeForFilter('last--days', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "last-N-days" with trailing garbage (Regex end-anchor guard)', () => {
+    expect(getDateRangeForFilter('last-7-days-ago', FAKE_NOW)).toBeNull()
+  })
+
+  it('does not match "last-N-days" with leading garbage (Regex start-anchor guard)', () => {
+    expect(getDateRangeForFilter('xlast-7-days', FAKE_NOW)).toBeNull()
   })
 
   it('returns Sunday-Saturday range for "this-week" when week starts on Sunday', () => {
@@ -269,6 +325,16 @@ describe('isDateFormattedPage', () => {
     expect(isDateFormattedPage('2026-04-06 extra')).toBe(false)
     expect(isDateFormattedPage('')).toBe(false)
   })
+
+  it('returns false for a title with leading characters before the date (Regex start-anchor guard)', () => {
+    expect(isDateFormattedPage('x2026-04-06')).toBe(false)
+  })
+
+  it('returns false for a title with the wrong digit counts (Regex digit-count guard)', () => {
+    expect(isDateFormattedPage('20261-04-06')).toBe(false)
+    expect(isDateFormattedPage('2026-4-06')).toBe(false)
+    expect(isDateFormattedPage('2026-04-6')).toBe(false)
+  })
 })
 
 describe('getWeekOptions', () => {
@@ -332,6 +398,66 @@ describe('formatJournalTitle (#1448 — display-only journal date format)', () =
     expect(formatJournalTitle('My Page', 'MMMM d, yyyy')).toBe('My Page')
     expect(formatJournalTitle('2026-13-40', 'MMMM d, yyyy')).toBe('2026-13-40')
     expect(formatJournalTitle('2026-02-30', 'MMMM d, yyyy')).toBe('2026-02-30')
+  })
+
+  it('does not treat a string with trailing characters as ISO (Regex end-anchor guard)', () => {
+    expect(formatJournalTitle('2026-06-17X', 'MMMM d, yyyy')).toBe('2026-06-17X')
+  })
+
+  it('does not treat a string with leading characters as ISO (Regex start-anchor guard)', () => {
+    expect(formatJournalTitle('X2026-06-17', 'MMMM d, yyyy')).toBe('X2026-06-17')
+  })
+
+  it('does not treat a single-digit month/day as ISO (Regex digit-count guard)', () => {
+    expect(formatJournalTitle('2026-6-17', 'MMMM d, yyyy')).toBe('2026-6-17')
+  })
+
+  it('does not treat a 2-digit year as ISO (Regex digit-count guard)', () => {
+    expect(formatJournalTitle('26-06-17', 'MMMM d, yyyy')).toBe('26-06-17')
+  })
+
+  it('rejects a year below 1000 via the round-trip fallback path', () => {
+    // Year 999 parses into a *valid* Date with no month/day overflow, so
+    // only the explicit `year < 1000` guard — not the getMonth/getDate
+    // round-trip check below it — can reject it. This also kills the
+    // LogicalOperator (||→&&) and BlockStatement mutants on that guard:
+    // either mutant would fall through and format the date instead of
+    // echoing the raw ISO string.
+    expect(formatJournalTitle('0999-06-15', 'MMMM d, yyyy')).toBe('0999-06-15')
+  })
+
+  it('accepts the year lower bound of 1000', () => {
+    expect(formatJournalTitle('1000-01-01', 'MMMM d, yyyy')).toBe('January 1, 1000')
+  })
+
+  it('accepts the year upper bound of 9999', () => {
+    expect(formatJournalTitle('9999-12-31', 'MMMM d, yyyy')).toBe('December 31, 9999')
+  })
+
+  it('rejects month 00', () => {
+    expect(formatJournalTitle('2026-00-15', 'MMMM d, yyyy')).toBe('2026-00-15')
+  })
+
+  it('accepts month 12 (upper bound)', () => {
+    expect(formatJournalTitle('2026-12-25', 'MMMM d, yyyy')).toBe('December 25, 2026')
+  })
+
+  it('rejects day 00', () => {
+    expect(formatJournalTitle('2026-01-00', 'MMMM d, yyyy')).toBe('2026-01-00')
+  })
+
+  it('accepts day 31 (upper bound, valid in a 31-day month)', () => {
+    expect(formatJournalTitle('2026-01-31', 'MMMM d, yyyy')).toBe('January 31, 2026')
+  })
+
+  it('rejects day 45 (above the day upper bound)', () => {
+    expect(formatJournalTitle('2026-01-45', 'MMMM d, yyyy')).toBe('2026-01-45')
+  })
+
+  it('rejects an overflowing day-of-month even in a 30-day month (round-trip check)', () => {
+    // April has 30 days, so day 31 rolls over to May 1 — the
+    // getMonth/getDate round-trip check must catch this.
+    expect(formatJournalTitle('2026-04-31', 'MMMM d, yyyy')).toBe('2026-04-31')
   })
 
   // Regression: the LOOKUP/identity key is the raw ISO content, and it must be

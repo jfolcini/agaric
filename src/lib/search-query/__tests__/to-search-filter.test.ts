@@ -74,6 +74,21 @@ describe('astToFilterProjection —  (tag / path)', () => {
     const p = project('not-path:{Journal,Archive}/*,Notes/*')
     expect(p.excludePageGlobs).toEqual(['{Journal,Archive}/*', 'Notes/*'])
   })
+
+  it('trims whitespace around comma-separated path globs', () => {
+    // to-search-filter.ts:157 — `splitCommas`'s `.map((s) => s.trim())`.
+    // A quoted value is required to carry the space after the comma
+    // through tokenize (an unquoted path: value splits at the first
+    // space) — the projection must still trim it off each entry.
+    const p = project('path:"Journal/*, Notes/*"')
+    expect(p.includePageGlobs).toEqual(['Journal/*', 'Notes/*'])
+  })
+
+  it('drops empty entries from a trailing comma in comma-separated path globs', () => {
+    // to-search-filter.ts:156/158 — `splitTopLevelCommas` .. `.filter((s) => s.length > 0)`.
+    const p = project('path:"Journal/*,"')
+    expect(p.includePageGlobs).toEqual(['Journal/*'])
+  })
 })
 
 describe('astToFilterProjection —  (metadata)', () => {
@@ -161,6 +176,20 @@ describe('astToFilterProjection —  (metadata)', () => {
     expect(p.stateFilter).toEqual(['TODO'])
     expect(p.dueFilter).toBeNull()
     expect(p.propertyFilters).toEqual([])
+  })
+
+  it('dedups priority values', () => {
+    // to-search-filter.ts:102 — `if (!priorityFilter.includes(f.value)) priorityFilter.push(f.value)`.
+    // The only existing priority test uses distinct values; this pins the
+    // dedup guard itself.
+    const p = project('priority:1 priority:1 priority:2')
+    expect(p.priorityFilter).toEqual(['1', '2'])
+  })
+
+  it('dedups excluded priority values', () => {
+    // to-search-filter.ts:107 — the symmetric `excludedPriorityFilter` dedup guard.
+    const p = project('not-priority:1 not-priority:1 not-priority:2')
+    expect(p.excludedPriorityFilter).toEqual(['1', '2'])
   })
 
   it('compound query — every metadata field populated', () => {

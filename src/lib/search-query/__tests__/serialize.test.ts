@@ -2,7 +2,13 @@ import fc from 'fast-check'
 import { describe, expect, it } from 'vitest'
 
 import { parse } from '@/lib/search-query/classify'
-import { addFilter, removeFilterAt, serialize, tokenSource } from '@/lib/search-query/serialize'
+import {
+  addFilter,
+  quoteValueIfNeeded,
+  removeFilterAt,
+  serialize,
+  tokenSource,
+} from '@/lib/search-query/serialize'
 
 describe('serialize round-trip', () => {
   const canonicalInputs = [
@@ -134,6 +140,29 @@ describe('serialize round-trip', () => {
     expect(round.filters[0]).toMatchObject({ kind: 'pathInclude', value: '"a"' })
     const twice = parse(serialize(round))
     expect(twice.filters[0]).toMatchObject({ kind: 'pathInclude', value: '"a"' })
+  })
+
+  it('quoteValueIfNeeded: a single `"` is too short to count as quote-surrounded', () => {
+    // length 1 both "starts with" and "ends with" `"`, but the >= 2 length
+    // guard must reject it — a bare `"` has no whitespace either, so it
+    // must round-trip bare, not become `""`.
+    expect(quoteValueIfNeeded('"')).toBe('"')
+  })
+
+  it('quoteValueIfNeeded: starting with a quote is not enough on its own', () => {
+    expect(quoteValueIfNeeded('"ab')).toBe('"ab')
+  })
+
+  it('quoteValueIfNeeded: ending with a quote is not enough on its own', () => {
+    expect(quoteValueIfNeeded('ab"')).toBe('ab"')
+  })
+
+  it('quoteValueIfNeeded: a plain whitespace-free value is left bare', () => {
+    expect(quoteValueIfNeeded('ab')).toBe('ab')
+  })
+
+  it('quoteValueIfNeeded: a value quote-surrounded on both ends is re-quoted even without whitespace', () => {
+    expect(quoteValueIfNeeded('"ab"')).toBe('""ab""')
   })
 
   it('#718 — a pathInclude token with spaces survives serialize → parse', () => {
