@@ -3869,3 +3869,256 @@ async fn post_commit_inherited_tags_rebuild_failure_is_non_fatal() {
             .expect("count direct tag edges");
     assert_eq!(direct, 1, "the direct tag edge must be committed");
 }
+
+// ---------------------------------------------------------------------------
+// #3162 adversarial review — SQL-level guards for the `rank_only` skip.
+//
+// `import_and_project` skips Pass A-properties, Pass B (tags) and Pass C
+// (soft-delete) for every block the engine reports as `rank_only`. A
+// mis-classification there produces no error and no red test — SQL simply
+// stops matching the CRDT. These two tests assert the outcome in SQL rather
+// than the resolver's own bookkeeping.
+// ---------------------------------------------------------------------------
+
+const R_P: &str = "01HZ00000000000000000000P0";
+const R_G: &str = "01HZ00000000000000000000G0";
+const R_T: &str = "01HZ00000000000000000000T0";
+const R_N: &str = "01HZ00000000000000000000N0";
+const R_C0: &str = "01HZ0000000000000000000C00";
+const R_C1: &str = "01HZ0000000000000000000C11";
+const R_C2: &str = "01HZ0000000000000000000C22";
+const R_C3: &str = "01HZ0000000000000000000C33";
+
+/// Ship every op `registry_a` accumulated since `registry_b`'s vv to B through
+/// the production inbound path.
+async fn ship_update(
+    pool: &SqlitePool,
+    registry_a: &LoroEngineRegistry,
+    registry_b: &LoroEngineRegistry,
+    space: &SpaceId,
+) {
+    let vv = registry_b.loro_vv(space).expect("b vv");
+    let msg = prepare_outgoing_for_pool(pool, registry_a, space, "device-A", Some(&vv))
+        .await
+        .expect("prepare update")
+        .expect("freshness gate must not refuse");
+    let outcome = apply_remote(pool, registry_b, "device-B", msg)
+        .await
+        .expect("apply update");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "update apply must report Imported, got {outcome:?}"
+    );
+}
+
+/// #3162 — a sibling whose rank shifted AND which also changed for another
+/// reason in the SAME import must keep its full projection. One sibling per
+/// excluded channel (property / tag / soft-delete) plus one genuinely
+/// rank-only sibling, all shifted by a single insert at index 0.
+#[tokio::test]
+async fn apply_remote_rank_shifted_sibling_with_a_real_change_still_projects_3162() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_create_block_at(R_P, "content", "p", None, 0)
+            .expect("create P");
+        e.apply_create_block_at(R_T, "tag", "tag-x", None, 1)
+            .expect("create TAG");
+        for (i, id) in [R_C0, R_C1, R_C2, R_C3].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "c", Some(R_P), i)
+                .expect("create child");
+        }
+    }
+    let snap = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", None)
+        .await
+        .expect("prepare snapshot")
+        .expect("freshness gate must not refuse");
+    let registry_b = LoroEngineRegistry::new();
+    apply_remote(&pool, &registry_b, "device-B", snap)
+        .await
+        .expect("apply snapshot");
+
+    // ONE update: an insert at index 0 (shifting C0..C3) plus a real change on
+    // three of the four shifted siblings.
+    const TS: &str = "1777593600000";
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_create_block_at(R_N, "content", "n", Some(R_P), 0)
+            .expect("insert at 0");
+        e.apply_add_tag(R_C1, R_T).expect("tag C1");
+        e.apply_set_property(R_C2, "effort", Some("5"))
+            .expect("prop C2");
+        e.apply_delete_block(R_C3, TS).expect("soft-delete C3");
+    }
+    ship_update(&pool, &registry_a, &registry_b, &space).await;
+
+    // Every shifted sibling got its new dense rank (the rank-only path's own
+    // job) — C0 is the genuinely rank-only one.
+    for (id, want) in [(R_N, 1_i64), (R_C0, 2), (R_C1, 3), (R_C2, 4), (R_C3, 5)] {
+        let pos: i64 = sqlx::query_scalar("SELECT position FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("position");
+        assert_eq!(pos, want, "{id} must carry its refreshed dense rank");
+    }
+    // Pass B must NOT have been skipped for C1.
+    let tags: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_tags WHERE block_id = ? AND tag_id = ?")
+            .bind(R_C1)
+            .bind(R_T)
+            .fetch_one(&pool)
+            .await
+            .expect("count tags");
+    assert_eq!(
+        tags, 1,
+        "C1's rank shifted but its tags ALSO changed; Pass B must still run \
+         for it (#3162)",
+    );
+    // Pass A-properties must NOT have been skipped for C2.
+    let props: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM block_properties WHERE block_id = ? AND key = ?")
+            .bind(R_C2)
+            .bind("effort")
+            .fetch_one(&pool)
+            .await
+            .expect("count props");
+    assert_eq!(
+        props, 1,
+        "C2's rank shifted but its properties ALSO changed; Pass A-properties \
+         must still run for it (#3162)",
+    );
+    // Pass C must NOT have been skipped for C3.
+    let del: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(R_C3)
+        .fetch_one(&pool)
+        .await
+        .expect("deleted_at");
+    assert_eq!(
+        del,
+        Some(TS.parse::<i64>().unwrap()),
+        "C3's rank shifted but it was ALSO soft-deleted; Pass C must still run \
+         for it (#3162)",
+    );
+    // ...and the purely rank-only sibling stayed live.
+    let c0_del: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+        .bind(R_C0)
+        .fetch_one(&pool)
+        .await
+        .expect("deleted_at C0");
+    assert_eq!(c0_del, None, "C0 only shifted rank; it must stay live");
+}
+
+/// #3162 claim 5 — Pass C is skipped for rank-only blocks on the argument that
+/// its two jobs are always driven by an ANCESTOR whose own state changed, and
+/// that ancestor's cascade covers the whole subtree. This is that exact shape:
+/// grandparent G is soft-deleted in the same import that rank-shifts C0..C3
+/// (which are therefore rank-only and get NO Pass C call of their own). Their
+/// SQL `deleted_at` must still be stamped, by G's cascade.
+#[tokio::test]
+async fn apply_remote_ancestor_delete_cascades_to_rank_only_descendants_3162() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let registry_a = LoroEngineRegistry::new();
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        e.apply_create_block_at(R_G, "content", "g", None, 0)
+            .expect("create G");
+        e.apply_create_block_at(R_P, "content", "p", Some(R_G), 0)
+            .expect("create P");
+        for (i, id) in [R_C0, R_C1, R_C2, R_C3].iter().enumerate() {
+            e.apply_create_block_at(id, "content", "c", Some(R_P), i)
+                .expect("create child");
+        }
+    }
+    let snap = prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", None)
+        .await
+        .expect("prepare snapshot")
+        .expect("freshness gate must not refuse");
+    let snap_bytes = match &snap {
+        LoroSyncMessage::Snapshot { bytes, .. } => bytes.clone(),
+        other => panic!("expected Snapshot, got {other:?}"),
+    };
+    let registry_b = LoroEngineRegistry::new();
+    apply_remote(&pool, &registry_b, "device-B", snap)
+        .await
+        .expect("apply snapshot");
+
+    const TS: &str = "1777593600000";
+    {
+        let mut g = registry_a.for_space(&space, "device-A").expect("for_space");
+        let e = g.engine_mut();
+        // The ancestor's own state changes...
+        e.apply_delete_block(R_G, TS).expect("soft-delete G");
+        // ...while, in the SAME import, C0..C3 are shifted by an insert. P is
+        // not in the changed set at all (its own sibling group is untouched),
+        // so the cascade has to come from G.
+        e.apply_create_block_at(R_N, "content", "n", Some(R_P), 0)
+            .expect("insert at 0");
+    }
+
+    // Pin the PRECONDITION, or this test is vacuous: replay the very same
+    // update into a probe engine and confirm the resolver really does class
+    // C0..C3 as rank-only (⇒ the consumer gives them NO Pass C call of their
+    // own) while G is a full-projection member.
+    {
+        let vv = registry_b.loro_vv(&space).expect("b vv");
+        let upd = match prepare_outgoing_for_pool(&pool, &registry_a, &space, "device-A", Some(&vv))
+            .await
+            .expect("prepare probe update")
+            .expect("freshness gate")
+        {
+            LoroSyncMessage::Update { bytes, .. } => bytes,
+            other => panic!("expected Update, got {other:?}"),
+        };
+        let mut probe = LoroEngine::new();
+        probe.import(&snap_bytes).expect("probe snapshot");
+        let delta = probe
+            .import_with_changed_purged_tagscope(&upd)
+            .expect("probe update");
+        let rank_only: Vec<&str> = delta
+            .rank_only
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        let changed: Vec<&str> = delta
+            .changed
+            .iter()
+            .map(agaric_core::ulid::BlockId::as_str)
+            .collect();
+        for id in [R_C0, R_C1, R_C2, R_C3] {
+            assert!(
+                rank_only.contains(&id),
+                "precondition: {id} must be rank-only in this import, \
+                 got rank_only={rank_only:?}",
+            );
+        }
+        assert!(
+            changed.contains(&R_G) && !rank_only.contains(&R_G),
+            "precondition: G must be a full-projection member, got \
+             changed={changed:?} rank_only={rank_only:?}",
+        );
+    }
+
+    ship_update(&pool, &registry_a, &registry_b, &space).await;
+
+    let want = TS.parse::<i64>().unwrap();
+    for id in [R_G, R_P, R_C0, R_C1, R_C2, R_C3, R_N] {
+        let del: Option<i64> = sqlx::query_scalar("SELECT deleted_at FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("deleted_at");
+        assert_eq!(
+            del,
+            Some(want),
+            "{id} must be swept into G's trash cohort even though Pass C was \
+             skipped for the rank-only siblings (#3162)",
+        );
+    }
+}
