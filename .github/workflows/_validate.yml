@@ -29,10 +29,12 @@ name: Validate (prek-equivalent)
 #                        sharded 2 ways; gated on backend changes.
 #   - cargo-coverage  — merges the cargo-tests shard coverage into one
 #                        report; gated on backend changes like cargo-tests
-#                        (`validate-all` requires success/allowed-skip), but
-#                        its own steps are glob-guarded and its coverage
-#                        ratchet is explicitly non-blocking, so it practically
-#                        only fails on a genuine merge/upload breakage.
+#                        (`validate-all` requires success/allowed-skip). Its
+#                        merge/upload steps can fail on a genuine
+#                        merge/upload breakage, and (since #648 wired
+#                        `--gate` into the rust ratchet call below) on a real
+#                        coverage drop beyond tolerance — this job gates the
+#                        merge like its siblings.
 #   - mcp-tests       — `agaric-mcp` sidecar release build + UDS smoke +
 #                        externalBin verify; gated on backend changes.
 #   - validate-all    — a trivial aggregate so branch-protection rules have
@@ -1215,7 +1217,8 @@ jobs:
     # compiles the instrumented tree once — the compile isn't halved, but the
     # test+coverage execution is — so expect ~9-11 min/cell). Each shard emits
     # a PARTIAL lcov + json summary; the `cargo-coverage` job below merges
-    # them. Coverage stays informational (not gated) — see that job.
+    # them and gates the merge on the result (since #648's `--gate`) — see
+    # that job.
     # PEND-41 R1 — pre-split observed wall-clock 22.6 min (run 25966040732).
     # Per-shard is roughly half the test work on the same compile; keep a
     # generous 35-min budget until we have instrumented per-shard samples.
@@ -1378,10 +1381,11 @@ jobs:
   # ---------------------------------------------------------------------------
   # cargo-coverage — union-merge the two cargo-tests shards' partial lcov
   # reports into the canonical `rust-coverage-lcov` artifact + a step-summary.
-  # INFORMATIONAL: deliberately NOT in `validate-all`'s needs, so a merge
-  # hiccup (or an lcov-tool quirk) never gates a push — exactly like the
-  # vitest coverage was non-gating. `if: !cancelled()` so partial coverage
-  # still publishes if a shard went red.
+  # GATING: this job IS in `validate-all`'s needs (`check_job cargo-coverage`
+  # requires success, allowed-skip only when backend is absent from the
+  # diff) — a merge hiccup, an lcov-tool quirk, or (since #648 wired `--gate`
+  # into the rust ratchet call below) a real coverage drop all fail the push.
+  # `if: !cancelled()` so partial coverage still publishes if a shard went red.
   # ---------------------------------------------------------------------------
   cargo-coverage:
     runs-on: ubuntu-24.04
@@ -1484,15 +1488,18 @@ jobs:
         with:
           node-version: 24
 
-      - name: Coverage ratchet (#648, non-blocking)
+      - name: Coverage ratchet (#648, gated via --gate)
         if: hashFiles('coverage.lcov') != ''
-        # Non-blocking: compares total Rust line coverage (summed LF/LH from
-        # the merged lcov) against the checked-in baseline and surfaces a
-        # drop in the step summary. ALWAYS exits 0 — this job is already
-        # informational/non-gating, and #648 deliberately does not gate
-        # coverage. The `rust` baseline key is seeded from the first main
-        # run via `--update` (no cargo-llvm-cov is available off-CI to
-        # measure it locally).
+        # HARD GATE: compares total Rust line coverage (summed LF/LH from the
+        # merged lcov) against the checked-in baseline and surfaces a drop in
+        # the step summary. `--gate` below makes coverage-ratchet.mjs exit 1
+        # when coverage dropped beyond tolerance, which fails this step and
+        # (via validate-all's `check_job cargo-coverage`) the merge gate.
+        # This became gating with #648, superseding the original
+        # non-blocking-signal design — the vitest call (above, no `--gate`)
+        # is still exit-0/non-blocking by contrast. The `rust` baseline key
+        # is seeded from the first main run via `--update` (no cargo-llvm-cov
+        # is available off-CI to measure it locally).
         run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 
       - name: Upload merged rust coverage artifact
