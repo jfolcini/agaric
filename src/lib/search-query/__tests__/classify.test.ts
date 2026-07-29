@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 
-import { parse } from '@/lib/search-query/classify'
+import { classify, parse } from '@/lib/search-query/classify'
+import { ensureRegistered } from '@/lib/search-query/register'
+import type { RawToken } from '@/lib/search-query/tokenize'
 
 describe('classify / parse', () => {
   it('parses an empty string', () => {
@@ -528,5 +530,114 @@ describe('classify / parse', () => {
       // recognised in isolation.
       expect(ast.filters[0]?.kind).not.toBe('invalid')
     }
+  })
+
+  // -------------------------------------------------------------------
+  // Mutation-survivor coverage (GH #3142)
+  // -------------------------------------------------------------------
+
+  it('does not treat a lone "#" as the tag alias (requires text after it)', () => {
+    // classify.ts:58 — `tok.text.startsWith('#') && tok.text.length > 1`.
+    // A bare `#` has length 1 and must fall through to free text instead of
+    // becoming a tag chip with an empty value.
+    const ast = parse('#')
+    expect(ast.filters).toEqual([])
+    expect(ast.freeText).toBe('#')
+  })
+
+  it('shadows all but the last due:/scheduled: token even with other filters interleaved', () => {
+    // classify.ts:87/90/91/93 — the shadowing loop must iterate every
+    // filter (not stop early), only enter its branch once there are truly
+    // 2+ occurrences of the SAME kind, drop exactly all-but-the-last via
+    // `indices.slice(0, -1)` (three due: tokens here, so the slice bound
+    // matters — not just "keep only the first"), and never touch a
+    // differently-kinded filter sitting in between.
+    const ast = parse(
+      'due:today tag:#x due:this-week due:overdue scheduled:none scheduled:>=2026-01-01',
+    )
+    expect(ast.filters).toHaveLength(6)
+    expect(ast.filters[0]).toMatchObject({ kind: 'invalid', source: 'due:today' })
+    expect(ast.filters[1]).toMatchObject({ kind: 'tag', value: 'x' })
+    expect(ast.filters[2]).toMatchObject({ kind: 'invalid', source: 'due:this-week' })
+    expect(ast.filters[3]).toMatchObject({
+      kind: 'due',
+      value: { kind: 'named', name: 'overdue' },
+    })
+    expect(ast.filters[4]).toMatchObject({ kind: 'invalid', source: 'scheduled:none' })
+    expect(ast.filters[5]).toMatchObject({
+      kind: 'scheduled',
+      value: { kind: 'op', op: '>=', date: '2026-01-01' },
+    })
+  })
+
+  it('sorts consumed filter spans defensively even when fed out of order', () => {
+    // classify.ts:125 — `consumedOrdered = [...consumed].toSorted((a, b) => a[0] - b[0])`.
+    // `classify()` is the documented lower-level entry that accepts a
+    // pre-tokenised stream directly, so feed it tokens whose spans are NOT
+    // in left-to-right order (the tokeniser always emits ascending spans,
+    // but this call proves the "don't rely on it" defensive sort).
+    ensureRegistered()
+    const input = 'tag:#a tag:#b'
+    const tokens: RawToken[] = [
+      { kind: 'word', text: 'tag:#b', span: [7, 13] },
+      { kind: 'word', text: 'tag:#a', span: [0, 6] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.filters).toHaveLength(2)
+    // If the sort were broken (or a no-op), the stripping pass would treat
+    // the spans as already-ascending and produce leaked/garbled free text
+    // instead of consuming both filters cleanly.
+    expect(ast.freeText).toBe('')
+  })
+
+  it('sorts quoted phrase spans defensively even when fed out of order', () => {
+    // classify.ts:126 — same defensive sort for `quotedOrdered`.
+    ensureRegistered()
+    const input = '"aa  bb" "cc  dd"'
+    const tokens: RawToken[] = [
+      { kind: 'quoted', text: '"cc  dd"', span: [9, 17] },
+      { kind: 'quoted', text: '"aa  bb"', span: [0, 8] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.filters).toEqual([])
+    // A broken sort corrupts the quoted-range bookkeeping and either
+    // collapses the internal double-spaces it should preserve, or garbles
+    // the output outright.
+    expect(ast.freeText).toBe('"aa  bb" "cc  dd"')
+  })
+
+  it('skips a stale quoted span that was already inside a consumed filter span', () => {
+    // classify.ts:139 — the `while (qi < quotedOrdered.length && (quotedOrdered[qi]?.[1] ?? 0) <= from)`
+    // skip-loop must advance `qi` past a quoted span that a later append()
+    // call never actually visited. Feed classify() a quoted token whose
+    // span is entirely swallowed by a filter's consumed span (never
+    // reachable from real tokenize() output, but the defensive contract
+    // classify() documents for a hand-built token stream) followed by a
+    // real trailing quoted phrase, and confirm only the real one survives.
+    ensureRegistered()
+    const input = 'lead tag:#covers "BB"'
+    const tokens: RawToken[] = [
+      { kind: 'word', text: 'lead', span: [0, 4] },
+      { kind: 'quoted', text: '"AA"', span: [5, 9] },
+      { kind: 'word', text: 'tag:#covers', span: [5, 16] },
+      { kind: 'quoted', text: '"BB"', span: [17, 21] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.filters).toHaveLength(1)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'covers' })
+    expect(ast.freeText).toBe('lead "BB"')
+  })
+
+  it('reconstructs free text around multiple quoted phrases interleaved with multiple filters', () => {
+    // classify.ts:143/148/159/162/169/173 — buildFreeText's stripping +
+    // whitespace-collapse passes, exercised together: one quoted phrase
+    // before the first filter, one between the two filters, one after the
+    // last filter — each preserving its internal double space, while the
+    // whitespace between filters/phrases collapses to a single space.
+    const ast = parse('"lead  in" tag:#x "middle  gap" not-path:Arch/** "trail  ing"')
+    expect(ast.filters).toHaveLength(2)
+    expect(ast.filters[0]).toMatchObject({ kind: 'tag', value: 'x' })
+    expect(ast.filters[1]).toMatchObject({ kind: 'pathExclude', value: 'Arch/**' })
+    expect(ast.freeText).toBe('"lead  in" "middle  gap" "trail  ing"')
   })
 })

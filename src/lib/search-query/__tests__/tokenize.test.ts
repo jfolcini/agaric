@@ -125,4 +125,52 @@ describe('tokenize', () => {
     if (!t0) throw new Error('expected one token')
     expect(t0.text).toBe('prop:k="a"b')
   })
+
+  // -------------------------------------------------------------------
+  // Mutation-survivor coverage (GH #3142)
+  // -------------------------------------------------------------------
+
+  it('treats tab, newline, and carriage-return as token-separating whitespace, leading and internal', () => {
+    // tokenize.ts:50 (outer skip) and :80 (inner word-scan terminator) —
+    // each of the four whitespace chars is checked individually at both
+    // sites; the existing empty-input test only exercises plain spaces.
+    expect(tokenize('\t\n\r')).toEqual([])
+    expect(tokenize(' \t\n\r ')).toEqual([])
+    const tokens = tokenize('foo\tbar\nbaz\rqux')
+    expect(tokens.map((t) => t.text)).toEqual(['foo', 'bar', 'baz', 'qux'])
+    expect(tokens.every((t) => t.kind === 'word')).toBe(true)
+  })
+
+  it('resumes scanning exactly at the boundary after a closed mid-word phrase, not past it', () => {
+    // tokenize.ts:84 — `i = close + 1` must land exactly on the whitespace
+    // that follows the closing quote, so the word loop's whitespace check
+    // (line 80) sees it and stops there. An off-by-one that skips past
+    // that whitespace (e.g. `close + 2`) would wrongly glue the next word
+    // onto this one instead of starting a fresh token for it.
+    const tokens = tokenize('prop:key="ab cd" ef')
+    expect(tokens).toHaveLength(2)
+    expect(tokens[0]).toMatchObject({ kind: 'word', text: 'prop:key="ab cd"', span: [0, 16] })
+    expect(tokens[1]).toMatchObject({ kind: 'word', text: 'ef', span: [17, 19] })
+  })
+
+  it('finds the closing quote strictly after the opening one (#152 helper)', () => {
+    // tokenize.ts:101 — `input.indexOf('"', open + 1)`. Searching from
+    // `open` itself (or blanking the needle) would report the opening
+    // quote (or the very next character) as its own close.
+    const tokens = tokenize('"ab" cd')
+    expect(tokens).toHaveLength(2)
+    expect(tokens[0]).toMatchObject({ kind: 'quoted', text: '"ab"', span: [0, 4] })
+    expect(tokens[1]).toMatchObject({ kind: 'word', text: 'cd', span: [5, 7] })
+  })
+
+  it('accepts a closing quote followed by any whitespace type as a valid boundary', () => {
+    // tokenize.ts:107/108/109 — `after === '\t' / '\n' / '\r'` inside
+    // `findCloseAtBoundary`; only ' ' was exercised elsewhere.
+    for (const ws of ['\t', '\n', '\r', ' ']) {
+      const tokens = tokenize(`"phrase"${ws}rest`)
+      expect(tokens).toHaveLength(2)
+      expect(tokens[0]).toMatchObject({ kind: 'quoted', text: '"phrase"' })
+      expect(tokens[1]).toMatchObject({ kind: 'word', text: 'rest' })
+    }
+  })
 })

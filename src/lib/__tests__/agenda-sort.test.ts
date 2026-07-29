@@ -666,3 +666,405 @@ describe('custom priority levels', () => {
     expect(groups.map((g) => g.label)).toEqual(['PA', 'PB'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// Mutation-testing regression coverage (GitHub #3142 StrykerJS survivors).
+// These pin behaviour the specs above exercised but never asserted precisely
+// enough to fail under an equivalent-looking mutant: full tie-break chains
+// (not just one differentiating pair) and className strings that were
+// previously never asserted at all.
+// ---------------------------------------------------------------------------
+
+describe('mutation coverage: stateRank ordering', () => {
+  it('sorts a fully-reversed input back to DOING > TODO > DONE > CANCELLED > null (same date)', () => {
+    // Input is the exact reverse of the correct order so any stateRank mutant
+    // that collapses two distinct ranks to the same value (e.g. forcing the
+    // DONE or CANCELLED `if` to always/never match) leaves a detectable
+    // ordering artifact instead of accidentally reproducing the right answer.
+    const blocks = [
+      makeBlock({ id: 'none', due_date: '2025-06-15', todo_state: null }),
+      makeBlock({ id: 'cancelled', due_date: '2025-06-15', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
+      makeBlock({ id: 'todo', due_date: '2025-06-15', todo_state: 'TODO' }),
+      makeBlock({ id: 'doing', due_date: '2025-06-15', todo_state: 'DOING' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['doing', 'todo', 'done', 'cancelled', 'none'])
+  })
+
+  it('ranks an unrecognised (empty-string) todo_state like null, distinct from CANCELLED', () => {
+    const blocks = [
+      makeBlock({ id: 'cancelled', due_date: '2025-06-15', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'empty', due_date: '2025-06-15', todo_state: '' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    // CANCELLED (rank 3) must still sort before an unrecognised state (rank 4).
+    // A StringLiteral mutant on the 'CANCELLED' literal ('' instead) would
+    // make '' match the CANCELLED check and tie/invert this pair.
+    expect(sorted.map((b) => b.id)).toEqual(['cancelled', 'empty'])
+  })
+})
+
+describe('mutation coverage: sortAgendaBlocks date/state tiebreak', () => {
+  it('keeps an already-correctly-ordered, same-date pair in place (no spurious tiebreak swap)', () => {
+    // Same date: only the state tiebreak may reorder these two. If the
+    // date-equality check were forced to always fire it would return a
+    // constant sign and could flip this already-correct pair.
+    const blocks = [
+      makeBlock({ id: 'doing', due_date: '2025-06-15', todo_state: 'DOING' }),
+      makeBlock({ id: 'done', due_date: '2025-06-15', todo_state: 'DONE' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['doing', 'done'])
+  })
+
+  it('lets an earlier date win even when its state ranks worse (date must not be skipped)', () => {
+    // 'earlyButCancelled' has the worse state but the earlier date;
+    // 'lateButDoing' has the best state but a later date. Input order matches
+    // what a (buggy) state-only comparison would already produce, so a
+    // mutant that disables the date check would leave the array unchanged.
+    const blocks = [
+      makeBlock({ id: 'lateButDoing', due_date: '2025-06-20', todo_state: 'DOING' }),
+      makeBlock({ id: 'earlyButCancelled', due_date: '2025-06-10', todo_state: 'CANCELLED' }),
+    ]
+    const sorted = sortAgendaBlocks(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['earlyButCancelled', 'lateButDoing'])
+  })
+})
+
+describe('mutation coverage: groupByDate zero-padded Today/Tomorrow keys', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    // Single-digit month AND day so an un-padded (or blanked) todayStr /
+    // tomorrowStr no longer string-equals the zero-padded due_date below.
+    vi.setSystemTime(new Date('2025-06-05T12:00:00'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('buckets a single-digit-month/day due date as Today (zero-padding intact)', () => {
+    const blocks = [makeBlock({ id: 'today', due_date: '2025-06-05' })]
+    const groups = groupByDate(blocks)
+    expect(groups.find((g) => g.label === 'Today')?.blocks.map((b) => b.id)).toEqual(['today'])
+  })
+
+  it('buckets a single-digit-month/day due date as Tomorrow (zero-padding intact)', () => {
+    const blocks = [makeBlock({ id: 'tomorrow', due_date: '2025-06-06' })]
+    const groups = groupByDate(blocks)
+    expect(groups.find((g) => g.label === 'Tomorrow')?.blocks.map((b) => b.id)).toEqual([
+      'tomorrow',
+    ])
+  })
+})
+
+describe('mutation coverage: groupByDate className', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-01-15T12:00:00'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('assigns the destructive class to Overdue, muted class to No date, and none to a plain date group', () => {
+    const blocks = [
+      makeBlock({ id: 'overdue', due_date: '2020-01-01', todo_state: 'TODO' }),
+      makeBlock({ id: 'future', due_date: '2025-06-20', todo_state: 'TODO' }),
+      makeBlock({ id: 'nodate' }),
+    ]
+    const groups = groupByDate(blocks)
+    const overdue = groups.find((g) => g.label === 'Overdue')
+    const noDate = groups.find((g) => g.label === 'No date')
+    const future = groups.find((g) => g.blocks.some((b) => b.id === 'future'))
+    expect(overdue?.className).toBe('text-destructive')
+    expect(noDate?.className).toBe('text-muted-foreground')
+    expect(future?.className).toBeUndefined()
+  })
+})
+
+describe('mutation coverage: groupByPriority routing and className', () => {
+  it('routes null and unrecognised priority values into "No priority", never a phantom bucket', () => {
+    const blocks = [
+      makeBlock({ id: 'valid', priority: '1' }),
+      makeBlock({ id: 'nullPrio', priority: null }),
+      makeBlock({ id: 'unknownPrio', priority: 'not-a-real-level' }),
+    ]
+    const groups = groupByPriority(blocks)
+    const noPriority = groups.find((g) => g.label === 'No priority')
+    expect(noPriority?.blocks.map((b) => b.id).toSorted()).toEqual(['nullPrio', 'unknownPrio'])
+    const p1 = groups.find((g) => g.label === 'P1')
+    expect(p1?.blocks.map((b) => b.id)).toEqual(['valid'])
+  })
+
+  it('assigns the destructive/pending/active classes by level index, and muted for No priority', () => {
+    const blocks = [
+      makeBlock({ id: 'p1', priority: '1' }),
+      makeBlock({ id: 'p2', priority: '2' }),
+      makeBlock({ id: 'p3', priority: '3' }),
+      makeBlock({ id: 'pn', priority: null }),
+    ]
+    const groups = groupByPriority(blocks)
+    expect(groups.map((g) => g.className)).toEqual([
+      'text-destructive',
+      'text-status-pending-foreground',
+      'text-status-active-foreground',
+      'text-muted-foreground',
+    ])
+  })
+
+  it('clamps level 4+ to the same "active" class as level 3 (index out of range)', () => {
+    setPriorityLevels(['1', '2', '3', '4'])
+    const blocks = [makeBlock({ id: 'p4', priority: '4' })]
+    const groups = groupByPriority(blocks)
+    expect(groups[0]?.className).toBe('text-status-active-foreground')
+  })
+})
+
+describe('mutation coverage: groupByPriority sortWithin date/state tiebreak', () => {
+  it('keeps an already-correctly-ordered, same-date pair in place within a priority group', () => {
+    const blocks = [
+      makeBlock({ id: 'doing', priority: '1', due_date: '2025-06-15', todo_state: 'DOING' }),
+      makeBlock({ id: 'done', priority: '1', due_date: '2025-06-15', todo_state: 'DONE' }),
+    ]
+    const groups = groupByPriority(blocks)
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['doing', 'done'])
+  })
+
+  it('lets an earlier date win over a better state within a priority group', () => {
+    const blocks = [
+      makeBlock({
+        id: 'lateButDoing',
+        priority: '1',
+        due_date: '2025-06-20',
+        todo_state: 'DOING',
+      }),
+      makeBlock({
+        id: 'earlyButCancelled',
+        priority: '1',
+        due_date: '2025-06-10',
+        todo_state: 'CANCELLED',
+      }),
+    ]
+    const groups = groupByPriority(blocks)
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['earlyButCancelled', 'lateButDoing'])
+  })
+})
+
+describe('mutation coverage: groupByState className', () => {
+  it('assigns the per-state classes, and undefined for CANCELLED (no dedicated token)', () => {
+    const blocks = [
+      makeBlock({ id: 'doing', todo_state: 'DOING' }),
+      makeBlock({ id: 'todo', todo_state: 'TODO' }),
+      makeBlock({ id: 'done', todo_state: 'DONE' }),
+      makeBlock({ id: 'cancelled', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'none', todo_state: null }),
+    ]
+    const groups = groupByState(blocks)
+    expect(groups.map((g) => g.className)).toEqual([
+      'text-status-pending-foreground', // DOING
+      'text-status-active-foreground', // TODO
+      'text-status-done-foreground', // DONE
+      undefined, // CANCELLED — CLASS_MAP has no entry for it
+      'text-muted-foreground', // No state
+    ])
+  })
+})
+
+describe('mutation coverage: groupByState sortWithin date/priority tiebreak', () => {
+  it('keeps an already-correctly-ordered, same-date pair in place within a state group', () => {
+    const blocks = [
+      makeBlock({ id: 'p1', todo_state: 'TODO', due_date: '2025-06-15', priority: '1' }),
+      makeBlock({ id: 'p3', todo_state: 'TODO', due_date: '2025-06-15', priority: '3' }),
+    ]
+    const groups = groupByState(blocks)
+    const todoGroup = groups.find((g) => g.label === 'TODO')
+    expect(todoGroup?.blocks.map((b) => b.id)).toEqual(['p1', 'p3'])
+  })
+
+  it('lets an earlier date win over a better priority within a state group', () => {
+    const blocks = [
+      makeBlock({ id: 'lateButP1', todo_state: 'TODO', due_date: '2025-06-20', priority: '1' }),
+      makeBlock({ id: 'earlyButP3', todo_state: 'TODO', due_date: '2025-06-10', priority: '3' }),
+    ]
+    const groups = groupByState(blocks)
+    const todoGroup = groups.find((g) => g.label === 'TODO')
+    expect(todoGroup?.blocks.map((b) => b.id)).toEqual(['earlyButP3', 'lateButP1'])
+  })
+})
+
+describe('mutation coverage: sortByPriority date/state tiebreak', () => {
+  it('lets an earlier date win over a better state when priority ties', () => {
+    const blocks = [
+      makeBlock({
+        id: 'lateButDoing',
+        priority: '1',
+        due_date: '2025-06-20',
+        todo_state: 'DOING',
+      }),
+      makeBlock({
+        id: 'earlyButCancelled',
+        priority: '1',
+        due_date: '2025-06-10',
+        todo_state: 'CANCELLED',
+      }),
+    ]
+    const sorted = sortByPriority(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['earlyButCancelled', 'lateButDoing'])
+  })
+
+  it('treats equal states as a true tie (state - state, not state + state)', () => {
+    // Both blocks share priority, date, and state — the comparator must
+    // return 0 (a genuine tie, preserving input order). A `stateA + stateB`
+    // ArithmeticOperator mutant would return a non-zero positive value here
+    // (1 + 1) and force an unwarranted reorder of tied elements.
+    const blocks = [
+      makeBlock({ id: 'second', priority: '1', due_date: '2025-06-15', todo_state: 'TODO' }),
+      makeBlock({ id: 'first', priority: '1', due_date: '2025-06-15', todo_state: 'TODO' }),
+    ]
+    const sorted = sortByPriority(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['second', 'first'])
+  })
+})
+
+describe('mutation coverage: sortByState date/priority tiebreak', () => {
+  it('keeps an already-correctly-ordered, same-date pair in place when state ties', () => {
+    const blocks = [
+      makeBlock({ id: 'p1', todo_state: 'TODO', due_date: '2025-06-15', priority: '1' }),
+      makeBlock({ id: 'p3', todo_state: 'TODO', due_date: '2025-06-15', priority: '3' }),
+    ]
+    const sorted = sortByState(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['p1', 'p3'])
+  })
+
+  it('lets an earlier date win over a better priority when state ties', () => {
+    const blocks = [
+      makeBlock({ id: 'lateButP1', todo_state: 'TODO', due_date: '2025-06-20', priority: '1' }),
+      makeBlock({ id: 'earlyButP3', todo_state: 'TODO', due_date: '2025-06-10', priority: '3' }),
+    ]
+    const sorted = sortByState(blocks)
+    expect(sorted.map((b) => b.id)).toEqual(['earlyButP3', 'lateButP1'])
+  })
+})
+
+describe('mutation coverage: groupByPage sortWithin priority tiebreak', () => {
+  it('lets a better priority win over an earlier date when state ties', () => {
+    const blocks = [
+      makeBlock({
+        id: 'lateButP1',
+        page_id: 'pg',
+        todo_state: 'TODO',
+        priority: '1',
+        due_date: '2025-06-20',
+      }),
+      makeBlock({
+        id: 'earlyButP3',
+        page_id: 'pg',
+        todo_state: 'TODO',
+        priority: '3',
+        due_date: '2025-06-10',
+      }),
+    ]
+    const pageTitles = new Map([['pg', 'Page']])
+    const groups = groupByPage(blocks, pageTitles)
+    // priority (2nd tiebreak) dominates date (3rd tiebreak) here.
+    expect(groups[0]?.blocks.map((b) => b.id)).toEqual(['lateButP1', 'earlyButP3'])
+  })
+})
+
+describe('mutation coverage: groupByPage "No page" guard', () => {
+  it('adds no "No page" group when every block has a page_id', () => {
+    const blocks = [makeBlock({ id: 'b1', page_id: 'pg', todo_state: 'TODO' })]
+    const pageTitles = new Map([['pg', 'Page']])
+    const groups = groupByPage(blocks, pageTitles)
+    expect(groups.map((g) => g.label)).toEqual(['Page'])
+  })
+})
+
+describe('mutation coverage: sortByPage no-page-id routing', () => {
+  it('sorts a no-page-id block after a paged block regardless of input order or state', () => {
+    const pageTitles = new Map([['pg', 'Page']])
+
+    // Exercises the `titleA === null && titleB !== null` branch.
+    const a = [
+      makeBlock({ id: 'noPage', page_id: null }),
+      makeBlock({ id: 'paged', page_id: 'pg' }),
+    ]
+    expect(sortByPage(a, pageTitles).map((b) => b.id)).toEqual(['paged', 'noPage'])
+
+    // Exercises the `titleA !== null && titleB === null` branch. States are
+    // set up so the (buggy) state/priority/date fallthrough would rank the
+    // no-page block first — only the hardcoded `return -1` gives the right
+    // (page-always-before-no-page) answer here.
+    const b = [
+      makeBlock({ id: 'paged', page_id: 'pg', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'noPage', page_id: null, todo_state: 'DOING' }),
+    ]
+    expect(sortByPage(b, pageTitles).map((x) => x.id)).toEqual(['paged', 'noPage'])
+  })
+
+  it('falls through to state/priority/date when two blocks share the same page title', () => {
+    const pageTitles = new Map([['pg', 'Same Page']])
+    const blocks = [
+      makeBlock({ id: 'worse', page_id: 'pg', todo_state: 'CANCELLED' }),
+      makeBlock({ id: 'better', page_id: 'pg', todo_state: 'DOING' }),
+    ]
+    const sorted = sortByPage(blocks, pageTitles)
+    expect(sorted.map((b) => b.id)).toEqual(['better', 'worse'])
+  })
+})
+
+describe('mutation coverage: sortAgendaBlocksBy dispatch', () => {
+  it('dispatches "priority" to a genuinely priority-first order (not date-first)', () => {
+    const blocks = [
+      makeBlock({ id: 'p1-late', priority: '1', due_date: '2025-06-20' }),
+      makeBlock({ id: 'p3-early', priority: '3', due_date: '2025-06-10' }),
+    ]
+    const sorted = sortAgendaBlocksBy(blocks, 'priority')
+    expect(sorted.map((b) => b.id)).toEqual(['p1-late', 'p3-early'])
+  })
+
+  it('case "state" dispatches to sortByState and does not fall through to the page-sort branch', () => {
+    // A BlockStatement mutant emptying the 'state' case body would fall
+    // through to 'page', which resolves titles via the (empty) pageTitles
+    // map and sorts alphabetically by raw page_id — the opposite order from
+    // a genuine state-first sort for these two blocks.
+    const blocks = [
+      makeBlock({ id: 'doing-lowpage', todo_state: 'DOING', page_id: 'zzz-page' }),
+      makeBlock({ id: 'todo-highpage', todo_state: 'TODO', page_id: 'aaa-page' }),
+    ]
+    const sorted = sortAgendaBlocksBy(blocks, 'state')
+    expect(sorted.map((b) => b.id)).toEqual(['doing-lowpage', 'todo-highpage'])
+  })
+
+  it('falls back to an empty pageTitles map (raw page_id as title) when omitted for "page"', () => {
+    const blocks = [
+      makeBlock({ id: 'b1', page_id: 'zzz' }),
+      makeBlock({ id: 'b2', page_id: 'aaa' }),
+    ]
+    const sorted = sortAgendaBlocksBy(blocks, 'page')
+    expect(sorted.map((b) => b.id)).toEqual(['b2', 'b1'])
+  })
+})
+
+describe('mutation coverage: formatGroupDate malformed input fallback', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2025-01-15T12:00:00'))
+  })
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('falls back to the raw string when the date has the wrong number of parts', () => {
+    const blocks = [makeBlock({ id: 'weird', due_date: '2025-06' })]
+    const groups = groupByDate(blocks)
+    expect(groups[0]?.label).toBe('2025-06')
+  })
+
+  it('falls back to the raw string when a date segment is non-numeric', () => {
+    const blocks = [makeBlock({ id: 'weird', due_date: '2025-XX-15' })]
+    const groups = groupByDate(blocks)
+    expect(groups[0]?.label).toBe('2025-XX-15')
+  })
+})
