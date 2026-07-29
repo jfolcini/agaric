@@ -41,9 +41,14 @@ rules:
       - ci.yml:448
       - release.yml:132
       - release.yml:177
-      - release.yml:992
-      - release.yml:1024
-      - release.yml:1273
+      # Re-anchored 2026-07-29 (#2737): the secretless "Install Tauri CLI for
+      # signing" step added 47 lines above these, shifting each by +47
+      # (992→1039, 1024→1071, 1273→1320). Re-derived with an empty
+      # cache-poisoning ignore list per the note above, not by editing blind:
+      # the same 9 cache steps fire and none are left over.
+      - release.yml:1039
+      - release.yml:1071
+      - release.yml:1320
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
