@@ -566,7 +566,7 @@ mod tests {
             .expect("count inbox");
         assert_eq!(
             remaining,
-            blobs.len() as i64,
+            i64::try_from(blobs.len()).expect("blob count fits i64"),
             "a rolled-back projection must leave EVERY slot of the batch behind"
         );
         let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
