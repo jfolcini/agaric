@@ -36,6 +36,10 @@ After bootstrap, every `git commit` runs the fast subset (lint + format + static
 
 If you'd rather wire just the git hooks by hand (e.g. you already have the toolchain): `cargo install --locked prek && prek install` (add `-f` to overwrite stale shims). **If you cannot install prek at all** (e.g. no Rust toolchain): your patch is welcome anyway; CI runs the same gate on the PR.
 
+### Working in a `git worktree`
+
+`scripts/setup.sh` is for a fresh clone; a `git worktree add` checkout needs different seeding (its own `node_modules`, the gitignored `.env` beside [`src-tauri/.env.example`](src-tauri/.env.example), a migrated dev DB, and upstream tracking). Run `bash scripts/seed-worktree.sh` right after creating the worktree — it's idempotent, so re-running it is always safe. See the script's header comment for the gaps it closes (issue #3171) and `--mcp` for the opt-in MCP sidecar build.
+
 ### Optional: `just` task runner
 
 A [`justfile`](justfile) at the repo root provides short, discoverable aliases for the everyday commands (`just dev`, `just test`, `just check`, `just fmt`, …). It is a thin façade — every recipe shells out to the canonical entry point (`npm` script, `cargo`, `prek`, or a `scripts/*` helper), so `package.json` and `prek.toml` stay the source of truth and the justfile cannot silently drift from them. It is **entirely optional**: nothing in the build, CI, or git hooks depends on it, so you can keep calling the underlying commands directly.

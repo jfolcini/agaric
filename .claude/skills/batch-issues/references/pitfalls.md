@@ -100,12 +100,18 @@ even when the diff is Rust-only (session: SQL-review batch):
   re-symlinking, or `ln` nests the link inside it.
 - **`src-tauri/.env` + `src-tauri/dev.db`** — Phase E `cargo sqlx prepare --check -- --tests`
   CONNECTS to `DATABASE_URL` (read from `src-tauri/.env`, = `sqlite:dev.db`); both are
-  gitignored. Missing → `--database-url or DATABASE_URL must be set`. Copy both from main:
-  `cp src-tauri/.env src-tauri/dev.db <wt>/src-tauri/`. dev.db must match the branch's
-  schema (fine when no migrations were added; else recreate per the next pitfall).
+  gitignored. Missing → `--database-url or DATABASE_URL must be set`. Copy `.env` from
+  main's **`src-tauri/`** (there is no `.env` at the repo root — that wrong instruction is
+  what makes this failure so confusing), and *migrate* a fresh `dev.db` rather than copying
+  one: a copied snapshot goes stale the moment a migration lands on `main` mid-build (see
+  the next pitfall).
 
-Do all three once, right after `git worktree add`, before the first commit/push. Or just
-push the branch from the MAIN checkout (which already has them).
+**Just run `bash scripts/seed-worktree.sh` from inside the new worktree** — it does all
+three idempotently, in the right order, and also fixes the upstream that
+`git worktree add -b <branch> origin/main` leaves pointing at `main` (which otherwise makes
+`scripts/push.sh` take its bare-`git push` path and fail on a ref-name mismatch). Pass
+`--mcp` only when the diff touches `src/mcp/`. Or just push the branch from the MAIN
+checkout (which already has everything).
 
 ### The shared `src-tauri/dev.db` must match the CURRENT branch's migrations
 

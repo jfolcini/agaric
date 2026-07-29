@@ -184,11 +184,14 @@ oversight; don't exceed 5.
 - Run it in an **isolated `git worktree`** on its own branch (`git worktree add ../wt-x -b
   branch origin/main`); each Rust worktree gets its own `target/`. **Immediately seed the
   gitignored artifacts the pre-push hook needs, or the push fails even for a Rust-only diff
-  (see pitfalls):** `ln -sfn <main>/node_modules node_modules` (Phase A `prek --all-files`
-  lints JS regardless of your diff; without it oxfmt's native binding is "not found") and
-  `cp src-tauri/.env src-tauri/dev.db <wt>/src-tauri/` (Phase E `sqlx prepare --check`
-  connects to `DATABASE_URL=sqlite:dev.db`) **followed immediately by
-  `(cd <wt>/src-tauri && sqlx migrate run)`**. The copied `dev.db` is a snapshot as of
+  (see pitfalls) — run `bash scripts/seed-worktree.sh` from inside the new worktree**, which
+  does all of it idempotently: symlinks `node_modules` (Phase A `prek --all-files` lints JS
+  regardless of your diff; without it oxfmt's native binding is "not found"), copies
+  `src-tauri/.env` (Phase E `sqlx prepare --check` connects to `DATABASE_URL=sqlite:dev.db`),
+  MIGRATES a fresh `dev.db` rather than copying one, and fixes the upstream that
+  `git worktree add -b <branch> origin/main` leaves pointing at `main`. Pass `--mcp` only
+  when your diff touches `src/mcp/` (it triggers a release build of the sidecar).
+  Do NOT hand-copy `dev.db` from the main checkout: that snapshot is taken as of
   worktree creation; in a long parallel run a later migration merges to `main` while your
   worktree builds, so its `dev.db` goes stale and the pre-commit clippy (online sqlx) fails
   with `no such column: …` even though `.sqlx` offline and nextest are green. Migrating at
