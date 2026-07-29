@@ -575,7 +575,7 @@ mod snapshot;
 /// #2036: how the caller should refresh the inherited-tag cache after an import.
 /// `pub` (not `pub(crate)`) so the app-crate sync/materializer callers reach it
 /// as `crate::loro::engine::TagScope` across the crate boundary (#2621, E1).
-pub use snapshot::TagScope;
+pub use snapshot::{ImportDelta, TagScope};
 
 /// Sync-update generation + inbound-blob inspection (#792 / #1054).
 mod sync;

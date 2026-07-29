@@ -793,11 +793,16 @@ pub(crate) async fn import_and_project(
     // (live) blocks, the purged set, and a `TagScope` describing how to refresh
     // the inherited-tag cache — falling back to a whole-tree enumeration +
     // global rebuild on any diff shape it cannot resolve.
-    let (changed_blocks, purged_blocks, tag_scope): (
-        Vec<agaric_core::ulid::BlockId>,
-        Vec<agaric_core::ulid::BlockId>,
-        agaric_engine::loro::engine::TagScope,
-    ) = {
+    let agaric_engine::loro::engine::ImportDelta {
+        changed: changed_blocks,
+        // #3162: the subset of `changed_blocks` whose ONLY altered projected
+        // column is the dense sibling `position`. Passes A(properties)/B/C are
+        // skipped for these below; ignoring this hint would simply restore the
+        // pre-#3162 (fully correct, just slower) behaviour.
+        rank_only: rank_only_blocks,
+        purged: purged_blocks,
+        tag_scope,
+    } = {
         // #2188: the CRDT import (decode + diff resolution) is CPU-bound and
         // runs while holding this space's engine mutex (#2205 — per-space).
         // `cpu_block_in_place` lets the multi-thread reactor drive other tasks
@@ -899,7 +904,7 @@ pub(crate) async fn import_and_project(
     let noop_diff = changed_blocks.is_empty()
         && purged_blocks.is_empty()
         && matches!(&tag_scope, agaric_engine::loro::engine::TagScope::Subtrees(roots) if roots.is_empty());
-    let (changed_blocks, tag_scope) = if noop_diff {
+    let (changed_blocks, rank_only_blocks, tag_scope) = if noop_diff {
         let trusted = match delivery {
             // The replayed slot itself proves the projection never committed.
             InboundDeliveryKind::RecoveryReplay => false,
@@ -936,9 +941,18 @@ pub(crate) async fn import_and_project(
             let mut guard = registry.for_space(space_id, device_id)?;
             guard.engine_mut().live_blocks_preorder()
         };
-        (full, agaric_engine::loro::engine::TagScope::Global)
+        // No rank-only hint on the healing fallback: it exists because we do
+        // NOT know what SQL is missing, so every block gets the full treatment
+        // (#3162). `rank_only_blocks` is already empty here — it is a subset of
+        // the empty `changed_blocks` that got us into this branch — but say so
+        // explicitly rather than leaning on that.
+        (
+            full,
+            Vec::new(),
+            agaric_engine::loro::engine::TagScope::Global,
+        )
     } else {
-        (changed_blocks, tag_scope)
+        (changed_blocks, rank_only_blocks, tag_scope)
     };
 
     // Phase 2 — project each changed block to SQL in a single tx.
@@ -951,6 +965,13 @@ pub(crate) async fn import_and_project(
     // so the SQL writes never contend with — or hold — the engine mutex.
     // Reads stay consistent (one atomic view of the engine); the three SQL
     // passes below still run A→B→C for the FK ordering documented on each.
+
+    // #3162 lookup set for the per-block skip decisions below. A strict subset
+    // of `changed_blocks`, so every block is still visited by Pass A.
+    let rank_only: std::collections::HashSet<&str> = rank_only_blocks
+        .iter()
+        .map(agaric_core::ulid::BlockId::as_str)
+        .collect();
     let block_states: Vec<_> = {
         let mut guard = registry.for_space(space_id, device_id)?;
         let engine = guard.engine_mut();
@@ -966,10 +987,25 @@ pub(crate) async fn import_and_project(
         let snapshots = engine.read_blocks_bulk(&block_id_refs)?;
         let mut states = Vec::with_capacity(changed_blocks.len());
         for (block_id, snapshot) in changed_blocks.iter().zip(snapshots) {
-            let props = engine.read_all_properties_typed(block_id.as_str())?;
-            let tag_ids = engine.read_tags(block_id.as_str())?;
-            let deleted_at = engine.read_deleted_at(block_id.as_str())?;
-            states.push((snapshot, props, tag_ids, deleted_at));
+            // #3162: a rank-only sibling is in this set solely because a
+            // create / move / delete elsewhere in its sibling group shifted
+            // its dense `position` — which `snapshot` already carries. The
+            // import brought no property, tag, content or soft-delete change
+            // for it (the resolver excludes anything it saw through another
+            // channel), so skip the three per-block engine reads AND their
+            // Pass-A-properties / B / C SQL below. That drops the recursive-CTE
+            // `reproject_block_deleted_at_from_engine` for exactly the blocks
+            // that provably cannot need it.
+            let full_state = if rank_only.contains(block_id.as_str()) {
+                None
+            } else {
+                Some((
+                    engine.read_all_properties_typed(block_id.as_str())?,
+                    engine.read_tags(block_id.as_str())?,
+                    engine.read_deleted_at(block_id.as_str())?,
+                ))
+            };
+            states.push((snapshot, full_state));
         }
         states
     };
@@ -995,11 +1031,19 @@ pub(crate) async fn import_and_project(
             .map(|r| (r.key, r.value_type))
             .collect()
     };
-    for (block_id, (snapshot_opt, props, _, _)) in changed_blocks.iter().zip(&block_states) {
+    for (block_id, (snapshot_opt, full_state)) in changed_blocks.iter().zip(&block_states) {
+        // Runs for EVERY changed block, rank-only ones included: this is the
+        // upsert that writes the refreshed dense `position` (and it is a full
+        // core-column upsert, so it correctly creates the row if SQL somehow
+        // never had one — #3162 never turns a missing row into a silent no-op).
         project_block_full_to_sql(&mut tx, space_id, block_id, snapshot_opt.as_ref()).await?;
         // Re-project the block's properties: mirrors remote
         // SetProperty / DeleteProperty changes into `block_properties`.
-        reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
+        // Skipped for rank-only siblings (#3162) — this import carried no
+        // property change for them.
+        if let Some((props, _, _)) = full_state {
+            reproject_block_properties_from_engine(&mut tx, block_id, props, &value_types).await?;
+        }
     }
 
     // Pass B — tags. Mirrors remote AddTag / RemoveTag
@@ -1007,8 +1051,13 @@ pub(crate) async fn import_and_project(
     // tag block already has its `blocks` row (FK ordering, see above).
     // Read the tag list under the guard, then write in the tx — same
     // read-under-guard-then-write-in-tx discipline as the property pass.
-    for (block_id, (_, _, tag_ids, _)) in changed_blocks.iter().zip(&block_states) {
-        reproject_block_tags_from_engine(&mut tx, block_id, tag_ids).await?;
+    // Rank-only siblings are skipped (#3162): a sibling that appears solely
+    // because its rank shifted had no `block_tags` change in this import — any
+    // tag edit would have put it in the set through the tags root instead.
+    for (block_id, (_, full_state)) in changed_blocks.iter().zip(&block_states) {
+        if let Some((_, tag_ids, _)) = full_state {
+            reproject_block_tags_from_engine(&mut tx, block_id, tag_ids).await?;
+        }
     }
 
     // Pass C — soft-delete state (Phase 2). Mirrors remote
@@ -1025,7 +1074,19 @@ pub(crate) async fn import_and_project(
     // pair the pass stamps is collected for the post-commit engine
     // fan-out below.
     let mut swept_tombstones: Vec<(String, i64)> = Vec::new();
-    for (block_id, (_, _, _, engine_deleted_at)) in changed_blocks.iter().zip(&block_states) {
+    // Rank-only siblings are skipped (#3162). Their own engine `deleted_at`
+    // seed is unchanged by this import (a delete / restore is a meta change,
+    // which would have put them in the set through `node_ids`), and their
+    // ancestor chain is unchanged (they did not move — a move makes a block a
+    // `struct_root`, never rank-only). So the two cases this helper exists for
+    // cannot apply to them: the descendant cascade and the R9 sweep are both
+    // driven by an ANCESTOR whose own state changed, and that ancestor is a
+    // full-projection member of `changed_blocks` whose call here cascades over
+    // its whole subtree — these siblings included.
+    for (block_id, (_, full_state)) in changed_blocks.iter().zip(&block_states) {
+        let Some((_, _, engine_deleted_at)) = full_state else {
+            continue;
+        };
         let stamped =
             reproject_block_deleted_at_from_engine(&mut tx, block_id, engine_deleted_at.as_deref())
                 .await?;
