@@ -47,6 +47,15 @@ name: Scheduled deep checks
 #                    link-metadata parse). Smoke-length here (the per-target
 #                    time budget is small); a real fuzzing campaign runs longer
 #                    out-of-band.
+#   file-fuzz-findings — #3169: the same push-based triage loop as
+#                    `file-mutation-survivors`, for the `fuzz` lane. Turns the
+#                    lane's per-target status files into findings (build
+#                    failure, crash reproducer, timeout, target that never
+#                    ran), diffs them against a single tracking issue's
+#                    last-known set and files/updates that ONE issue only on
+#                    genuinely NEW findings (see
+#                    `scripts/file-fuzz-findings.mjs`). Scheduled-event-only;
+#                    needs `issues: write`.
 #   prek-all-files — #3058: `prek run --all-files` (pre-commit stage, whole
 #                    tree), HARD-FAILING — unlike every other lane above,
 #                    this one gates. No cargo build/clippy/test (the
@@ -1018,13 +1027,42 @@ jobs:
           # below is ASan-compatible.
           RUSTFLAGS: "-C target-feature=-crt-static"
         run: |
+          # RUN-ALL-THEN-FAIL, not fail-fast (#3169). `set -e` stays on for the
+          # script as a whole, but each target's `cargo fuzz run` is invoked in
+          # a SUBSHELL whose non-zero exit is captured (`|| rc=$?`) instead of
+          # propagating. Before this, the first failing target aborted the loop
+          # outright: `snapshot_decode` failed to COMPILE and, being first,
+          # silently cost `deeplink_parse` and `import_parse` their runs too —
+          # three targets' worth of coverage lost to one error, with nothing in
+          # the output saying so. Every target is now attempted independently;
+          # the step still exits non-zero at the end if ANY target failed
+          # (`overall`), so the lane stays red exactly as before.
           set -euo pipefail
+          # Per-target machine-readable results for the `file-fuzz-findings`
+          # triage job below (uploaded as the `fuzz-status` artifact). Statuses
+          # are pre-seeded to `not_run`, which stays meaningful even now that
+          # the loop runs to completion: a job cancelled or killed (job-level
+          # timeout, runner death) mid-loop leaves the targets it never reached
+          # marked `not_run` rather than absent — and an absent file would read
+          # as "fine".
+          RESULT_DIR="${GITHUB_WORKSPACE}/fuzz-status"
+          mkdir -p "$RESULT_DIR"
           # Keep this list in sync with the `[[bin]]` targets in
           # src-tauri/fuzz/Cargo.toml — #2945 added `fts_strip`/`html_parse`
           # there but not here, so for three months they were built and never
           # fuzzed. All five are smoke-verified to build and run crash-free.
-          for target in snapshot_decode deeplink_parse import_parse fts_strip html_parse; do
+          targets=(snapshot_decode deeplink_parse import_parse fts_strip html_parse)
+          printf '%s\n' "${targets[@]}" > "$RESULT_DIR/targets.txt"
+          for target in "${targets[@]}"; do
+            echo not_run > "$RESULT_DIR/$target.status"
+          done
+          overall=0
+          for target in "${targets[@]}"; do
             echo "::group::fuzz $target"
+            # Per-target log (stdout+stderr), never a shared blob — the triage
+            # job attributes each error to the target that produced it.
+            log="$RESULT_DIR/$target.full.log"
+            rc=0
             # `--target x86_64-unknown-linux-gnu` pins the gnu HOST target.
             # Recent cargo-fuzz defaults `--target` to
             # x86_64-unknown-linux-musl (for a statically-linked fuzzer), but
@@ -1033,11 +1071,39 @@ jobs:
             # `error[E0463]: can't find crate for std` (#2123). Pinning the
             # host target builds against the installed std and keeps the
             # dynamic-libc that ASan requires.
-            cargo +nightly fuzz run "$target" \
-              --target x86_64-unknown-linux-gnu -- \
-              -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=4096
+            (
+              cargo +nightly fuzz run "$target" \
+                --target x86_64-unknown-linux-gnu -- \
+                -max_total_time="$FUZZ_SECONDS" -rss_limit_mb=4096
+            ) > "$log" 2>&1 || rc=$?
+            cat "$log"
+            if [ "$rc" -eq 0 ]; then
+              status=ok
+            elif grep -q 'libFuzzer: timeout' "$log"; then
+              status=timed_out
+            elif grep -qE 'Test unit written to|deadly signal|AddressSanitizer|LeakSanitizer' "$log"; then
+              status=crashed
+            elif grep -qE '^error(\[E[0-9]+\])?:|could not compile|failed to build fuzz' "$log"; then
+              status=build_failed
+            else
+              status=failed
+            fi
+            echo "$status" > "$RESULT_DIR/$target.status"
+            # Bounded tail is what rides in the artifact: a libFuzzer log can be
+            # thousands of lines. The full log stays on the runner only.
+            tail -n 500 "$log" > "$RESULT_DIR/$target.log"
+            rm -f "$log"
+            ls -1 "artifacts/$target" > "$RESULT_DIR/$target.artifacts" 2>/dev/null || true
+            echo "fuzz $target: $status (exit $rc)"
+            [ "$status" = ok ] || overall=1
             echo "::endgroup::"
           done
+          echo "--- fuzz lane summary ---"
+          for target in "${targets[@]}"; do
+            echo "  $target: $(cat "$RESULT_DIR/$target.status")"
+          done
+          # Aggregate: any non-ok target fails the job. Never silently green.
+          exit "$overall"
 
       - name: Upload fuzz artifacts (crashes / corpus)
         if: always()
@@ -1049,6 +1115,82 @@ jobs:
             src-tauri/fuzz/corpus/
           if-no-files-found: ignore
           retention-days: 30
+
+      - name: Upload per-target fuzz status (#3169)
+        # Separate from `fuzz-artifacts` above on purpose: adding a workspace-
+        # root path to that multi-path upload would move its least-common-
+        # ancestor and reshuffle the existing artifact's layout.
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: fuzz-status
+          path: fuzz-status/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  # ---------------------------------------------------------------------------
+  # file-fuzz-findings (#3169) — the same push-based triage loop
+  # `file-mutation-survivors` above runs for the mutants lanes, applied to
+  # `fuzz`. The fuzz lane's only signal was a red job in a weekly workflow,
+  # which is easy to miss: the #3163 compile break landed 2026-07-24 and
+  # survived five days. This job downloads the lane's per-target status files,
+  # turns them into findings (build failure with the compiler error, crash
+  # reproducer with the target + input hash, per-input timeout, target that
+  # never ran), diffs them against the SINGLE tracking issue's last-known set
+  # (via `scripts/file-fuzz-findings.mjs`), and files/updates that ONE issue
+  # only when a genuinely NEW finding appears — a no-op otherwise, so a
+  # persistent failure never spams a weekly issue or comment. State lives in
+  # the tracking issue's body (a marked, machine-readable block), not a
+  # committed baseline file, so this job needs `issues: write` only — never
+  # `contents: write`.
+  #
+  # `if: always()`: runs even when `fuzz` failed outright — which is the whole
+  # point, since the real-world failure was a COMPILE error, not a crash
+  # artifact. A missing artifact contributes zero per-target findings rather
+  # than failing triage (`continue-on-error` download); `needs.fuzz.result` is
+  # passed in so a lane that died before it could upload anything still gets
+  # reported. Scheduled-event-only per #2947: a `workflow_dispatch` smoke run
+  # (e.g. testing a `fuzz_seconds` tweak) must never file/update the real
+  # tracking issue.
+  # ---------------------------------------------------------------------------
+  file-fuzz-findings:
+    needs: [fuzz]
+    if: always() && github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Download per-target fuzz status
+        # Best-effort: if the `fuzz` job never uploaded (e.g. it errored during
+        # setup, before the fuzz step existed), this contributes zero per-target
+        # findings below and the `--job-status` fallback reports the lane
+        # failure instead of failing the triage step.
+        continue-on-error: true
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: fuzz-status
+          path: fuzz-status-artifact
+
+      - name: File or update the single fuzz-findings tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
+          FUZZ_JOB_RESULT: ${{ needs.fuzz.result }}
+        run: |
+          node scripts/file-fuzz-findings.mjs \
+            --result-dir fuzz-status-artifact \
+            --job-status "$FUZZ_JOB_RESULT"
 
   # ---------------------------------------------------------------------------
   # prek-all-files (#3058) — the whole-tree pre-commit-stage prek backstop.
