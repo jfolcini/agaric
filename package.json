@@ -142,7 +142,7 @@
     "emojibase-data": "^17.0.0",
     "esbuild": "^0.28.0",
     "fast-check": "^4.9.0",
-    "happy-dom": "^20.11.0",
+    "happy-dom": "^20.11.1",
     "istanbul-lib-coverage": "^3.2.2",
     "jsdom": "^29.1.1",
     "knip": "^6.27.0",
