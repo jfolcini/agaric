@@ -55,8 +55,8 @@
 # A bare truthy flag (`SKIP_CI_VERIFY=1`) is REJECTED — the escape hatch
 # exists for genuine one-offs, and forcing a reason keeps it from quietly
 # becoming the default push path. Range override:
-# `PRE_PUSH_RANGE=origin/main..HEAD git push` for branches without a
-# tracking upstream.
+# `PRE_PUSH_RANGE=origin/main...HEAD git push` for branches without a
+# tracking upstream (three dots — see the range block below).
 # ─────────────────────────────────────────────────────────────────────
 
 set -uo pipefail
@@ -97,14 +97,25 @@ cd "$REPO_ROOT" || exit 1
 # ── Determine the commit range being pushed ────────────────────────
 # Default: commits ahead of the tracking upstream. Override via
 # PRE_PUSH_RANGE for branches without an upstream (e.g. fresh feature
-# branches that haven't been pushed yet — set PRE_PUSH_RANGE=origin/main..HEAD).
+# branches that haven't been pushed yet — set PRE_PUSH_RANGE=origin/main...HEAD).
+#
+# Three dots, not two. `git diff A..B` compares the two TIPS, so anything
+# present on A but not on B reads as a deletion — a branch cut before a
+# migration merged to main gets that migration reported as a *removed*
+# shipped migration by check-migrations-immutable.sh, failing the push for
+# a change it never made. `A...B` diffs from the merge-base, i.e. only what
+# this branch actually did, which is what the guard means to police (and
+# what check-migrations-immutable.sh's own --range docs specify).
+#
+# Three dots loses nothing: a migration edited by this branch is still in
+# the merge-base diff, including one introduced by a history rewrite.
 
 RANGE="${PRE_PUSH_RANGE:-}"
 if [ -z "$RANGE" ]; then
     if git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' >/dev/null 2>&1; then
-        RANGE="@{upstream}..HEAD"
+        RANGE="@{upstream}...HEAD"
     elif git rev-parse --verify origin/main >/dev/null 2>&1; then
-        RANGE="origin/main..HEAD"
+        RANGE="origin/main...HEAD"
         echo "→ No tracking upstream; falling back to range '$RANGE'"
     else
         echo "✗ Cannot determine push range (no upstream, no origin/main)."
@@ -118,7 +129,12 @@ if ! git rev-list --count "$RANGE" >/dev/null 2>&1; then
     exit 1
 fi
 
-RANGE_COUNT="$(git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
+# Display count only. `rev-list --count A...B` counts the SYMMETRIC
+# difference, so a branch sitting behind main would report main's commits
+# as its own; --right-only narrows it to this branch's. Falls back for a
+# two-dot PRE_PUSH_RANGE, where --right-only is not meaningful.
+RANGE_COUNT="$(git rev-list --count --right-only "$RANGE" 2>/dev/null \
+    || git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
 echo "→ Pre-push verifier: range '$RANGE' ($RANGE_COUNT commit(s))"
 
 # Fail-closed change detection: keep the git-diff exit status so we can tell a

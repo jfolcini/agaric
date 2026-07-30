@@ -16,22 +16,28 @@
 #                      DELETION still triggers this script (prek's
 #                      changed-file set excludes deletions, so a
 #                      `files`-filtered hook would silently skip).
-#   --range REVSPEC  — CI / pre-push backstop: inspect a commit range
-#                      (e.g. `base...HEAD` for a PR, `@{upstream}..HEAD`
-#                      for a push). Catches a one-time `--no-verify`
+#   --range REVSPEC  — CI / pre-push backstop: inspect a commit range.
+#                      Pass a THREE-DOT revspec (`base...HEAD`): two dots
+#                      compares the two tips, so a migration that landed
+#                      on base after this branch was cut reads as a
+#                      deletion and fails a branch that never touched it.
+#                      Three dots diffs from the merge-base — only what
+#                      this branch did. Catches a one-time `--no-verify`
 #                      bypass that the staged-index mode can never see
 #                      retroactively.
+#   --self-test      — run the fixture suite below and exit.
 #
 # Allows additions (A); rejects modifications (M), deletions (D),
 # renames (R*), copies (C*), and type changes (T).
 #
-# Usage: scripts/check-migrations-immutable.sh [--range REVSPEC]
+# Usage: scripts/check-migrations-immutable.sh [--range REVSPEC | --self-test]
 # Exit:  0 = clean, 1 = at least one shipped migration was changed,
 #        2 = usage error.
 # ─────────────────────────────────────────────────────────────────────
 set -euo pipefail
 
 RANGE=""
+SELF_TEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --range)
@@ -39,12 +45,106 @@ while [ $# -gt 0 ]; do
       shift 2 || true
       [ -z "$RANGE" ] && { echo "ERROR: --range requires a revspec" >&2; exit 2; }
       ;;
+    --self-test)
+      SELF_TEST=1
+      shift
+      ;;
     *)
       echo "ERROR: unknown arg: $1" >&2
       exit 2
       ;;
   esac
 done
+
+# ── Self-test ──────────────────────────────────────────────────────
+# Builds a throwaway repo and asserts the guard's verdict on each
+# shape. The stale-base case is the regression that motivated this:
+# a two-dot range failed every branch cut before a migration merged.
+if [ "$SELF_TEST" -eq 1 ]; then
+  SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+  fails=0
+
+  assert() { # <label> <expected-exit> <actual-exit>
+    if [ "$2" -eq "$3" ]; then
+      echo "  ✓ $1"
+    else
+      echo "  ✗ $1 (expected exit $2, got $3)" >&2
+      fails=$((fails + 1))
+    fi
+  }
+
+  cd "$tmp"
+  git init -q -b main .
+  git config user.email t@t.t
+  git config user.name t
+  mkdir -p src-tauri/migrations
+  echo "CREATE TABLE a(x);" > src-tauri/migrations/0001_a.sql
+  git add -A && git commit -qm shipped
+  base="$(git rev-parse HEAD)"
+
+  # main advances with a new migration the branch will never see.
+  echo "CREATE TABLE b(x);" > src-tauri/migrations/0002_b.sql
+  git add -A && git commit -qm "main adds 0002"
+
+  # (1) stale base, branch untouched — the regression case.
+  git checkout -q "$base"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "stale base, no migration change -> pass" 0 "$rc"
+
+  set +e; bash "$SELF" --range "main..HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "same base with two dots -> fails (why three dots is required)" 1 "$rc"
+
+  # (2) branch edits a shipped migration — must still be caught.
+  git checkout -q -b edits "$base"
+  echo "CREATE TABLE a(x, y);" > src-tauri/migrations/0001_a.sql
+  git add -A && git commit -qm "edit shipped"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "branch modifies a shipped migration -> fail" 1 "$rc"
+
+  # (3) branch deletes a shipped migration.
+  git checkout -q -b deletes "$base"
+  git rm -q src-tauri/migrations/0001_a.sql
+  git commit -qm "delete shipped"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "branch deletes a shipped migration -> fail" 1 "$rc"
+
+  # (4) branch adds a new migration — the legitimate shape.
+  git checkout -q -b adds "$base"
+  echo "CREATE TABLE c(x);" > src-tauri/migrations/0003_c.sql
+  git add -A && git commit -qm "add new"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "branch adds a new migration -> pass" 0 "$rc"
+
+  # (5) an edit still caught when the branch is ALSO behind main —
+  #     three dots must not become a blanket amnesty.
+  git checkout -q -b stale-and-edits "$base"
+  echo "CREATE TABLE a(x, z);" > src-tauri/migrations/0001_a.sql
+  git add -A && git commit -qm "edit shipped from stale base"
+  set +e; bash "$SELF" --range "main...HEAD" >/dev/null 2>&1; rc=$?; set -e
+  assert "stale base AND a real edit -> still fail" 1 "$rc"
+
+  # (6) staged-index mode still works.
+  git checkout -q -b staged "$base"
+  echo "CREATE TABLE a(x, w);" > src-tauri/migrations/0001_a.sql
+  git add -A
+  set +e; bash "$SELF" >/dev/null 2>&1; rc=$?; set -e
+  assert "staged modification -> fail" 1 "$rc"
+
+  # (7) usage errors.
+  set +e; bash "$SELF" --bogus >/dev/null 2>&1; rc=$?; set -e
+  assert "unknown arg -> exit 2" 2 "$rc"
+  set +e; bash "$SELF" --range >/dev/null 2>&1; rc=$?; set -e
+  assert "--range with no revspec -> exit 2" 2 "$rc"
+
+  if [ "$fails" -ne 0 ]; then
+    echo "self-test: $fails assertion(s) failed" >&2
+    exit 1
+  fi
+  echo "self-test: all assertions passed"
+  exit 0
+fi
 
 # git diff status letters:
 #   A = added,     M = modified, D = deleted,
