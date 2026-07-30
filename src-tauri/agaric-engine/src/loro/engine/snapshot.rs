@@ -5,6 +5,8 @@
 
 use super::*;
 
+use loro::Counter;
+
 impl LoroEngine {
     /// A reference-clone of the engine's underlying `LoroDoc`.
     ///
@@ -343,17 +345,40 @@ impl LoroEngine {
         };
 
         let import_result = match payload {
-            ImportPayload::Single(bytes) => self.doc.import(bytes).map(|_status| ()),
+            ImportPayload::Single(bytes) => self.doc.import(bytes),
             // #3164: one detached append per blob, ONE re-attach ⇒ ONE diff
             // event for the whole batch (see the fn docs for the citation).
-            ImportPayload::Batch(blobs) => self.doc.import_batch(blobs).map(|_status| ()),
+            ImportPayload::Batch(blobs) => self.doc.import_batch(blobs),
         };
         // Flush so the import diff is delivered to the subscriber, then
         // unsubscribe before any local migration ops below.
         self.doc.commit();
         drop(subscription);
-        import_result
+        let status = import_result
             .map_err(|e| AppError::validation(format!("loro: import_with_changed_blocks: {e}")))?;
+        // #3194: loro reports changes it could not apply (missing deps) in
+        // `ImportStatus::pending` and returns `Ok` regardless. This wrapper used
+        // to discard the status, so a caller could not tell a fully-committed
+        // import from one whose payload is still buffered outside the op-log.
+        // Carry it on every return path below.
+        let pending: Vec<(PeerID, Counter, Counter)> = status
+            .pending
+            .as_ref()
+            .map(|range| {
+                range
+                    .iter()
+                    .map(|(peer, (start, end))| (*peer, *start, *end))
+                    .collect()
+            })
+            .unwrap_or_default();
+        if !pending.is_empty() {
+            tracing::warn!(
+                pending = ?pending,
+                "loro: import left changes buffered in pending_changes (deps not \
+                 satisfied by this payload); they are NOT in the op-log and were \
+                 NOT projected (#3194)"
+            );
+        }
         self.reject_legacy_v1_snapshot()?;
         // #1584: same forward-version gate as `import` on the sync-pull path.
         self.reject_unknown_format_version()?;
@@ -366,6 +391,7 @@ impl LoroEngine {
                 rank_only: Vec::new(),
                 purged: Vec::new(),
                 tag_scope: TagScope::Subtrees(Vec::new()),
+                pending,
             });
         }
         let after_import_frontiers = self.doc.oplog_frontiers();
@@ -395,6 +421,7 @@ impl LoroEngine {
                 rank_only,
                 purged: Vec::new(),
                 tag_scope,
+                pending,
             });
         }
 
@@ -419,6 +446,7 @@ impl LoroEngine {
                 rank_only: Vec::new(),
                 purged,
                 tag_scope: TagScope::Global,
+                pending,
             });
         }
 
@@ -432,6 +460,7 @@ impl LoroEngine {
             rank_only,
             purged,
             tag_scope,
+            pending,
         })
     }
 
@@ -704,6 +733,18 @@ pub struct ImportDelta {
     pub purged: Vec<agaric_core::ulid::BlockId>,
     /// How to refresh the derived inherited-tag cache.
     pub tag_scope: TagScope,
+    /// #3194 — changes loro could NOT apply and parked in `pending_changes`
+    /// because their dependencies are missing, as `(peer, start, end)` counter
+    /// ranges (`ImportStatus::pending`, `loro-internal-1.13.6/src/encoding.rs:228-231`).
+    ///
+    /// Empty on the overwhelmingly common fully-applied import. A non-empty
+    /// value means `import` / `import_batch` returned `Ok` while part of the
+    /// payload is buffered and NOT in the op-log — so it was not diffed, not
+    /// resolved into `changed`, and not projected. Previously discarded by this
+    /// wrapper (`.map(|_status| ())`), which let a caller read `Ok` as "the
+    /// whole payload committed" and delete the durable record that was its only
+    /// copy — the #535 invariant, inverted. Surfaced so callers can refuse.
+    pub pending: Vec<(PeerID, Counter, Counter)>,
 }
 
 /// How the caller must refresh the derived `block_tag_inherited` cache after an

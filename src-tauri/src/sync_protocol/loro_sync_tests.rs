@@ -4122,3 +4122,215 @@ async fn apply_remote_ancestor_delete_cascades_to_rank_only_descendants_3162() {
         );
     }
 }
+
+/// #3194 (#535) — a batched boot replay must NOT delete a slot whose blob the
+/// import never actually reached.
+///
+/// `gate_replay_blobs` admits a blob on the strength of its declared
+/// `partial_end_vv` and advances its cumulative reachability base by the same
+/// value. `LoroDoc::import_batch` then returns `Ok` even when it could not apply
+/// part of the payload — such changes are parked in `pending_changes`
+/// (`ImportStatus { pending: Some(..) }`), which never enter the op-log, are
+/// never diffed and are never projected. Before this fix the caller deleted the
+/// durable inbox row anyway: the slot was that content's ONLY copy, so it was
+/// gone with nothing in SQL to show for it — the #535 invariant inverted.
+///
+/// The fixture reaches that state with well-formed loro blobs:
+///
+/// * a SHALLOW snapshot of peer A's history — snapshot-shaped, so the gate's
+///   carve-out admits it unconditionally, and it declares A's FULL end frontier
+///   while carrying only the changes after its truncation point;
+/// * an update from peer B whose change depends on an early op of A — the gate
+///   accepts it because the snapshot's declared frontier covers that dep.
+///
+/// Neither settles on import, so the op-log stays behind both declared
+/// frontiers and both rows must survive for a later boot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_batch_keeps_slots_whose_end_frontier_the_import_never_reached_3194() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+
+    // Peer A mints a root, then a second block; peer B imports only the root
+    // and adds a child of it, so B's blob DEPENDS on A's first op without
+    // carrying it.
+    let mut a = LoroEngine::with_peer_id("device-A").expect("A");
+    let since_a = a.version_vector();
+    a.apply_create_block(BLOCK_A, "content", "root", None, 0)
+        .expect("a root");
+    let blob_a = a.export_update_since(&since_a).expect("blob a");
+
+    let mut b = LoroEngine::with_peer_id("device-B").expect("B");
+    b.import(&blob_a).expect("b imports a");
+    let since_b = b.version_vector();
+    b.apply_create_block(BLOCK_B, "content", "child", Some(BLOCK_A), 0)
+        .expect("b child");
+    let blob_b = b.export_update_since(&since_b).expect("blob b");
+
+    // A shallow snapshot of A taken at its own tip: it declares A's full end
+    // frontier but truncates the history the frontier covers.
+    a.apply_create_block(BLOCK_C, "content", "second", None, 1)
+        .expect("a second");
+    let shallow = {
+        let doc = a.doc_handle();
+        let tip = doc.oplog_frontiers();
+        doc.export(loro::ExportMode::ShallowSnapshot(std::borrow::Cow::Owned(
+            tip,
+        )))
+        .expect("shallow snapshot")
+    };
+
+    let registry = LoroEngineRegistry::new();
+    // Precondition: the gate ADMITS both blobs — this test is about the delete
+    // condition, not the admission rule.
+    {
+        let mut g = registry.for_space(&space, "device-R").expect("for_space");
+        let gates = g
+            .engine_mut()
+            .gate_replay_blobs(&[shallow.as_slice(), blob_b.as_slice()]);
+        assert!(
+            gates.iter().all(|gate| matches!(
+                gate,
+                agaric_engine::loro::engine::ReplayBlobGate::Accept { .. }
+            )),
+            "precondition: both slots must be admitted, so both would have been \
+             deleted pre-#3194; got {gates:?}"
+        );
+    }
+
+    let slots = vec![
+        InboxSlot {
+            id: seed_slot(&pool, space.as_str(), &shallow).await,
+            bytes: shallow.clone(),
+            tombstone_purged: Vec::new(),
+        },
+        InboxSlot {
+            id: seed_slot(&pool, space.as_str(), &blob_b).await,
+            bytes: blob_b.clone(),
+            tombstone_purged: Vec::new(),
+        },
+    ];
+
+    let outcome = replay_inbox_batch(&pool, &registry, "device-R", space.as_str(), slots)
+        .await
+        .expect("batch replay must not fail");
+
+    // Precondition for the assertion below: the import really did leave the
+    // op-log short — otherwise this would be asserting nothing.
+    {
+        let mut g = registry.for_space(&space, "device-R").expect("for_space");
+        assert!(
+            g.engine_mut().read_block(BLOCK_B).expect("read").is_none(),
+            "precondition: the child never settled, so nothing could have been \
+             projected for its slot"
+        );
+    }
+
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .expect("count inbox");
+    assert_eq!(
+        remaining, 2,
+        "a slot whose blob the op-log never reached must survive for a later \
+         boot — deleting it destroys the only copy of unprojected content (#535)"
+    );
+    assert_eq!(
+        outcome.replayed, 0,
+        "no slot was cleared, so none may be counted as replayed"
+    );
+    assert_eq!(
+        outcome.errors.len(),
+        2,
+        "each kept slot must be reported so the boot walk can log it, got {:?}",
+        outcome.errors
+    );
+
+    let projected: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
+        .fetch_one(&pool)
+        .await
+        .expect("count blocks");
+    assert_eq!(
+        projected, 0,
+        "nothing settled, so nothing may be projected either"
+    );
+}
+
+/// #3194 control — the delete condition must not become a blanket refusal.
+///
+/// The ordinary boot-replay batch (a cross-peer dep supplied by another slot in
+/// the SAME batch, the #3188/#3189 shape) settles fully: the op-log reaches
+/// every blob's declared end frontier, so every slot is still cleared in the
+/// projection tx and every block lands in SQL. Without this, the test above
+/// would pass just as well with a `require_covered` check that always fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_batch_still_clears_slots_the_import_did_reach_3194() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+
+    let mut a = LoroEngine::with_peer_id("device-A").expect("A");
+    let since_a = a.version_vector();
+    a.apply_create_block(BLOCK_A, "content", "root", None, 0)
+        .expect("a root");
+    let blob_a = a.export_update_since(&since_a).expect("blob a");
+
+    let mut b = LoroEngine::with_peer_id("device-B").expect("B");
+    b.import(&blob_a).expect("b imports a");
+    let since_b = b.version_vector();
+    b.apply_create_block(BLOCK_B, "content", "child", Some(BLOCK_A), 0)
+        .expect("b child");
+    let blob_b = b.export_update_since(&since_b).expect("blob b");
+
+    // Reverse causal order, so the dependency arrives in the LAST slot — the
+    // #3188 fixpoint admits it and `import_batch` settles it.
+    let slots = vec![
+        InboxSlot {
+            id: seed_slot(&pool, space.as_str(), &blob_b).await,
+            bytes: blob_b.clone(),
+            tombstone_purged: Vec::new(),
+        },
+        InboxSlot {
+            id: seed_slot(&pool, space.as_str(), &blob_a).await,
+            bytes: blob_a.clone(),
+            tombstone_purged: Vec::new(),
+        },
+    ];
+
+    let registry = LoroEngineRegistry::new();
+    let outcome = replay_inbox_batch(&pool, &registry, "device-R", space.as_str(), slots)
+        .await
+        .expect("batch replay");
+
+    assert_eq!(outcome.replayed, 2, "both slots must be cleared");
+    assert!(
+        outcome.errors.is_empty(),
+        "a fully-settled batch must report no kept slots, got {:?}",
+        outcome.errors
+    );
+    let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(&pool)
+        .await
+        .expect("count inbox");
+    assert_eq!(remaining, 0, "the whole batch was projected and cleared");
+    for id in [BLOCK_A, BLOCK_B] {
+        let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("count block");
+        assert_eq!(n, 1, "{id} must be projected to SQL");
+    }
+}
+
+/// Insert one write-ahead inbox slot and return its id.
+async fn seed_slot(pool: &SqlitePool, space_id: &str, bytes: &[u8]) -> i64 {
+    sqlx::query_scalar(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, created_at) \
+         VALUES (?, ?, ?) RETURNING id",
+    )
+    .bind(space_id)
+    .bind(bytes)
+    .bind(crate::db::now_ms())
+    .fetch_one(pool)
+    .await
+    .expect("seed inbox slot")
+}
