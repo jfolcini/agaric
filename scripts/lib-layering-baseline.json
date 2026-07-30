@@ -18,7 +18,5 @@
   "src/lib/paste-internalize.ts",
   "src/lib/pinned-search-scope.ts",
   "src/lib/preferences.ts",
-  "src/lib/render-keyboard-shortcut.tsx",
-  "src/stores/advancedQuery.ts",
-  "src/stores/pageBrowserFilters.ts"
+  "src/lib/render-keyboard-shortcut.tsx"
 ]

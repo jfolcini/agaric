@@ -32,13 +32,11 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  type PageFilterWithKey,
-  pageFilterSummary,
-} from '@/components/PageBrowser/PageBrowserFilterRow'
+import { pageFilterSummary } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { unwrap } from '@/lib/app-error'
 import type { FilterPrimitive } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
+import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 import { logger } from '@/lib/logger'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageFiltersForSpace, usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'

@@ -23,8 +23,8 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
 import type { FilterPrimitive } from '@/lib/bindings'
+import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 import { safePersistStorage } from '@/lib/safe-persist-storage'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 

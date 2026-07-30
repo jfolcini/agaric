@@ -18,8 +18,8 @@
 
 import { create } from 'zustand'
 
-import type { PageFilterWithKey } from '@/components/PageBrowser/PageBrowserFilterRow'
 import type { AggregateSpec, FilterExpr, FilterPrimitive, GroupSpec, SortKey } from '@/lib/bindings'
+import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 import { LEGACY_SPACE_KEY } from '@/stores/space'
 
 /**
