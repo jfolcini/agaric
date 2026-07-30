@@ -61,6 +61,7 @@
   "src/hooks/useUnlinkedReferences.ts",
   "src/lib/agenda-filters.ts",
   "src/lib/export-graph.ts",
+  "src/lib/list-style.ts",
   "src/lib/palette-commands.ts",
   "src/lib/paste-internalize.ts",
   "src/lib/query-result-columns.ts",
