@@ -76,7 +76,7 @@ uvx code-review-graph serve
 ```bash
 cargo tauri dev              # Dev mode with hot reload
 npm run test                 # Vitest (frontend)
-cd src-tauri && cargo nextest run   # Rust tests
+cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
 prek run --all-files         # Full local gate (mirror of CI's `validate` job)
 ```
 

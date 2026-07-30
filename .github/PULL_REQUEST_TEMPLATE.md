@@ -28,7 +28,7 @@ AGENTS.md. Paste the relevant command output if it's short.
 -->
 
 - [ ] `prek run --all-files` is green locally (all 25+ hooks)
-- [ ] New / changed Rust functions have happy-path **and** error-path tests (`cd src-tauri && cargo nextest run`)
+- [ ] New / changed Rust functions have happy-path **and** error-path tests (`cd src-tauri && cargo nextest run --workspace` — the bare form without `--workspace` is package-scoped to `agaric` only and misses `agaric-engine`/`agaric-store`/`agaric-sync`/etc., #3212)
 - [ ] New / changed React components have render + interaction + `axe(container)` tests (`npm test`)
 - [ ] If the change affects desktop bundling, `cargo tauri build` was run on at least one platform
 - [ ] If the change affects Android, `cargo tauri android build --target aarch64 --debug` was run

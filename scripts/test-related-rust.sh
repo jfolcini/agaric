@@ -71,10 +71,14 @@ for pat in $FALLBACK_PATTERNS; do
   if echo "$STAGED_RS" | grep -qx "$pat"; then
     echo "Foundational file in $LABEL set ($pat) — running full test suite"
     if [ "$DRY" = "1" ]; then
-      echo "  → cargo nextest run (full)"
+      echo "  → cargo nextest run --workspace (full)"
       exit 0
     fi
-    cd src-tauri && exec cargo nextest run
+    # --workspace (#3212): the bare form is package-scoped to `agaric` only and
+    # silently skips agaric-core/store/engine/sync/observability/diagnostics —
+    # exactly the workspace members a foundational-file change (error.rs lives
+    # in agaric-core) needs to re-verify.
+    cd src-tauri && exec cargo nextest run --workspace
   fi
 done
 

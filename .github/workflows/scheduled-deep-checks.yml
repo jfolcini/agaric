@@ -561,8 +561,13 @@ jobs:
         # a create is a soft-delete, so a strict identity round-trip cannot hold
         # — a deliberate design choice, not a bug). Those must NOT red this gate,
         # so exclude them via `-E`. Add any future such failing oracle here too.
+        # `--workspace` (#3212): bare form is package-scoped to `agaric` only. No
+        # #[ignore]d test currently lives outside that package (verified via
+        # `cargo nextest list --workspace`), so this is a no-op today, but it
+        # keeps a future ignored perf gate added to agaric-engine/store/etc.
+        # from being silently skipped by this sweep.
         run: >-
-          cargo nextest run --run-ignored=only --no-fail-fast
+          cargo nextest run --workspace --run-ignored=only --no-fail-fast
           -E 'not test(create_block_apply_then_reverse_round_trip_i_lifecycle_3)'
 
   # ---------------------------------------------------------------------------
@@ -1584,6 +1589,12 @@ jobs:
         working-directory: src-tauri
         # nextest does NOT run doc-tests (they compile as their own per-example
         # binaries), so run both to keep executable doc examples honest (#2555).
+        #
+        # `--workspace` (#3212): without it, both commands are package-scoped to
+        # `agaric` only — this "full suite" step was silently skipping every
+        # agaric-core/store/engine/sync/observability/diagnostics test (and their
+        # doc-tests), the same class of gap #2817/#2951 already fixed for the
+        # PR-gating `cargo-tests` job and the pre-push Phase D2 doc-test step.
         run: |
-          cargo nextest run --profile ci
-          cargo test --doc
+          cargo nextest run --workspace --profile ci
+          cargo test --doc --workspace

@@ -64,10 +64,14 @@ test: test-fe test-be
 test-fe:
     npm run test
 
+# `--workspace` (#3212): bare `cargo nextest run` from `src-tauri/` (a workspace
+# ROOT that is also the `agaric` root package) resolves to the `agaric` package
+# ONLY — it silently skips agaric-core/store/engine/sync/observability/diagnostics
+# entirely (measured: 3359 vs 5446 tests, zero agaric-engine tests without this flag).
 # Backend tests (cargo nextest). Needs the sqlx dev DB — run `just setup-db` first.
 [group('test')]
 test-be:
-    cd src-tauri && cargo nextest run
+    cd src-tauri && cargo nextest run --workspace
 
 # Re-run frontend tests on change.
 [group('test')]

@@ -13,7 +13,7 @@ prek run --all-files                     # run every CI gate locally (or: just c
 
 **`scripts/setup.sh` is the single canonical dev-environment setup — run it and it handles everything.** `npm run setup` and `just setup` are exact aliases for it (use whichever you have; `just` is optional). It is idempotent, so re-run it any time. It provisions the Node version pinned in [`.nvmrc`](../.nvmrc) via `nvm` when your active `node` is older than the `engines` floor (`>=24`), runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step. On Claude's cloud VMs it runs automatically — see [Claude Code on the web](#claude-code-on-the-web).
 
-Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run` (backend), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
+Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run --workspace` (backend — bare form omits `agaric-core`/`store`/`engine`/`sync`/`observability`/`diagnostics`, #3212), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
 
 ## After-clone setup
 
@@ -142,7 +142,7 @@ The active `.cargo/config.toml` is gitignored, so it never leaks into the tree �
 
 ```bash
 npx vitest run                                   # frontend
-cd src-tauri && cargo nextest run                # backend
+cd src-tauri && cargo nextest run --workspace    # backend (bare form is package-scoped only, #3212)
 npx playwright test                              # e2e (chromium)
 cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
 ```
@@ -194,7 +194,7 @@ Pre-push (every `git push`): one chokepoint hook — `verify-ci-equivalent` — 
 | F | `agaric-mcp` release build + MCP UDS smoke + externalBin verify | Only if MCP paths changed |
 | G | `cargo audit` + `npm audit signatures` (warn-only, never blocks) | Always |
 
-**Playwright is deliberately skipped locally** — CI still runs the full e2e suite on every PR; run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
+**Playwright is deliberately skipped locally** — CI still runs the full e2e suite on every PR; run `npx playwright test` by hand first if you've touched anything interaction-heavy. The full (non-range-scoped) `vitest run` / `cargo nextest run --workspace --profile ci`, and the desktop bundle build, are likewise CI/manual-only — see [Release pre-flight](#release-pre-flight) for the bundle build.
 
 **Push with `just push` (or [`scripts/push.sh`](../scripts/push.sh)), not raw `git push`, for anything that changes `.rs`.** Because the verify runs *inside* the pre-push hook — which fires only after `git push` has already opened and is holding the SSH connection — a several-minute verify leaves that connection idle long enough for GitHub to close it, and the pack upload then fails (`Connection to github.com closed by remote host` / `failed to push some refs`) even though the gate passed in full. `just push` / `scripts/push.sh` runs the verifier *first*, then invokes `git push` with the hook short-circuited, so the freshly opened connection uploads immediately. It forwards all `git push` args (`just push -- -u origin my-branch`, `just push -- --force-with-lease`).
 

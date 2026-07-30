@@ -50,7 +50,9 @@ The `## Session N — …` heading is the first line of the file; do not add a s
 - ...
 
 **Verification:**
-- `cd src-tauri && cargo nextest run` — N tests run, N passed.
+- `cd src-tauri && cargo nextest run --workspace` — N tests run, N passed. (Bare form
+  without `--workspace` is package-scoped to `agaric` only and silently skips every
+  `agaric-engine`/`agaric-store`/`agaric-sync`/etc. test — #3212.)
 - pre-commit hook — all staged-file checks pass.
 - pre-push hook — full clippy + push-staged checks pass.
 

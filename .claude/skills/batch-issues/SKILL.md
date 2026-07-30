@@ -166,7 +166,10 @@ subdivisions (split a Rust agent by module, or frontend by component vs. store).
 
 Each subagent prompt must include: working directory; `. "$HOME/.cargo/env"` (Rust only);
 exact files to create/modify and what to implement; what NOT to modify; the verification
-command (`cd src-tauri && cargo nextest run` for Rust, `npx vitest run` for frontend); and
+command (targeted: `cd src-tauri && cargo nextest run --workspace -E '<filter>'` for Rust —
+`--workspace` matters even for a targeted filter, since the touched crate may be
+agaric-core/store/engine/sync/observability/diagnostics, not just `agaric` (#3212) —
+`npx vitest run` for frontend); and
 **"do NOT run any git command (stash/reset/checkout/add/commit); only edit files"**. Keep
 prompts minimal — reference paths, never paste file contents or long docs.
 
@@ -235,8 +238,10 @@ still pending."
 **NEVER use background execution or monitors** — run every command in the foreground,
 read the test output before your final message, and do not end your run while anything
 is still pending.
-**Verification (targeted only):** Rust `cd src-tauri && cargo nextest run -E '<filter>'`;
-Frontend `npx vitest run <paths>`. The full suite is run once later by the reviewer.
+**Verification (targeted only):** Rust `cd src-tauri && cargo nextest run --workspace -E '<filter>'`
+(`--workspace` still matters for a targeted filter — the touched crate may not be `agaric`, #3212);
+Frontend `npx vitest run <paths>`. The full suite is run once later by the reviewer, using
+`cargo nextest run --workspace` (the bare form is package-scoped and misses most of the workspace).
 **Success criteria:** targeted tests pass; follows AGENTS.md patterns; no new warnings.
 ```
 
