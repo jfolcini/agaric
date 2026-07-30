@@ -429,28 +429,3 @@ export async function moveBlock(
 ): Promise<WithOps<MoveResponse>> {
   return unwrap(await commands.moveBlock(blockId, newParentId, newIndex))
 }
-
-/**
- * #2274 — batched multi-select drag reparent/reorder. Moves the given block
- * ids, IN ORDER, under `newParentId` (a real block id, or `null` for the page
- * root) at consecutive slots starting at the 0-based `newIndex`. The whole
- * batch runs in ONE backend IMMEDIATE transaction (N `MoveBlock` ops), so it
- * replaces the old per-root `moveBlock` IPC loop + full page reload with a
- * single IPC returning the authoritative per-root parent/position.
- *
- * `block_ids` MUST already be sorted by current document position (the store's
- * `moveBlocks` does this) so the moved run preserves relative order at the
- * destination.
- *
- *
- * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
- * wrapper for `commands.moveBlocksBatch` that `check-tauri-bindings-parity` requires;
- * tagged so knip does not report it as dead code (#3202).
- */
-export async function moveBlocksBatch(
-  blockIds: string[],
-  newParentId: string | null,
-  newIndex: number,
-): Promise<MoveResponse[]> {
-  return unwrap(await commands.moveBlocksBatch(blockIds, newParentId, newIndex))
-}

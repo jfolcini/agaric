@@ -185,38 +185,6 @@ export async function computeEditDiff(params: {
   return unwrap(await commands.computeEditDiff(params.deviceId, params.seq))
 }
 
-/**
- * Compute a word-level diff between a block's historical content (as of
- * `historicalSeq`) and its current live content. Powers the "Compared to
- * Current" mode in the per-block history panel (Part B).
- *
- * Direction is `historical → current`, so `Insert` spans = text added
- * since the historical version (would be REMOVED on restore) and
- * `Delete` spans = text removed since the historical version (would be
- * RESTORED). Returns an empty array (or all-Equal spans) when the two
- * snapshots are byte-identical.
- *
- * Throws on a soft-deleted / purged block — the in-panel preview is
- * meaningless for trashed blocks.
- *
- * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
- * wrapper for `commands.computeBlockVsCurrentDiff` that `check-tauri-bindings-parity` requires;
- * tagged so knip does not report it as dead code (#3202).
- */
-export async function computeBlockVsCurrentDiff(params: {
-  blockId: string
-  historicalCreatedAt: number
-  historicalSeq: number
-}): Promise<DiffSpan[]> {
-  return unwrap(
-    await commands.computeBlockVsCurrentDiff(
-      params.blockId,
-      params.historicalCreatedAt,
-      params.historicalSeq,
-    ),
-  )
-}
-
 // ---------------------------------------------------------------------------
 // Filtered backlink query commands
 // ---------------------------------------------------------------------------

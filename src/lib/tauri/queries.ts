@@ -119,25 +119,6 @@ export async function countBacklinksBatch(params: {
   return unwrap(await commands.countBacklinksBatch(params.pageIds, toSpaceScope(params.spaceId)))
 }
 
-/** Count soft-deleted blocks in a space. Used by the sidebar trash badge.
- *
- * The badge fetches the count via a `SELECT COUNT(*)` IPC so it stays
- * accurate regardless of trash size (limit-clamp follow-up).
- *
- * #2248 — the IPC takes the canonical `SpaceScope`; `spaceId` is a required
- * non-empty ULID wrapped into `{ kind: 'active', space_id }`. There is no
- * cross-space (`global`) trash count. In the pre-bootstrap window (no active
- * space) callers must short-circuit to `0` locally rather than pass `''`
- * (which now reaches the backend as a malformed `Active('')` and is rejected).
- *
- * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
- * wrapper for `commands.countTrash` that `check-tauri-bindings-parity` requires;
- * tagged so knip does not report it as dead code (#3202).
- */
-export async function countTrash(spaceId: string): Promise<number> {
-  return unwrap(await commands.countTrash(toSpaceScope(spaceId)))
-}
-
 // ---------------------------------------------------------------------------
 // Block fixed-field commands (thin wrappers for reserved properties)
 // ---------------------------------------------------------------------------

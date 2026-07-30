@@ -123,6 +123,58 @@ const KNOWN_UNWRAPPED = new Set([
   // unscoped command by accident.
   'restoreAllDeleted',
   'purgeAllDeleted',
+  // (e) #3209 — 13 `@/lib/tauri` wrappers had zero callers (knip, once a
+  // barrel-importing test helper stopped masking the unused-export check;
+  // see #3202/#3211). Each command already has a real production caller,
+  // but the caller reaches `commands.*` directly and re-implements the
+  // wrapper's own param-shaping (`toSpaceScope`/`requireActiveScope`) inline
+  // instead of importing the wrapper. So the commands are alive, just not
+  // via this facade — the redundant wrappers were deleted rather than
+  // re-adopted. Direct call sites:
+  //   - `renameAttachment`          → useBlockAttachments.ts
+  //   - `moveBlocksBatch`           → page-blocks-reducers.ts (`moveBlocks`)
+  //   - `computeBlockVsCurrentDiff` → BlockHistoryItem.tsx
+  //   - `importBibliography`        → BibliographySection.tsx
+  //   - `countTrash`                → ViewDispatcher.tsx
+  //   - `getRecoveryStatus`         → useRecoveryStatus.ts
+  //   - `getMdnsStatus`             → useMdnsStatus.ts
+  //   - `queryByTagExpr`            → TagFilterPanel.tsx
+  //   - `listInheritedTagsForBlock` → useBlockTags.ts
+  //   - `getJournalPageByDate`      → useJournalAutoCreate.ts
+  //   - `listJournalPagesInRange`   → useCalendarPageDates.ts / useStreamDates.ts
+  //   - `listPagesWithMetadata`     → usePageBrowserData.ts
+  //   - `listPageAliasesByPrefix`   → use-block-resolve.ts
+  // Two caveats on "re-implements the marshalling", recorded so a future
+  // reader does not read this entry as "byte-identical":
+  //   - the three journal call sites inline the `{ kind: 'active', space_id }`
+  //     literal after their own `spaceId == null` short-circuit rather than
+  //     calling `requireActiveScope`, so they drop its empty-string tripwire.
+  //     Unreachable today (`useSpaceStore.currentSpaceId` is `string | null`
+  //     and only ever holds a real ULID), but it is a guard, not a no-op.
+  //   - the paginated commands (`queryByTagExpr`, `listPagesWithMetadata`,
+  //     `listPageAliasesByPrefix`) took a branded `SafeLimit` at the wrapper;
+  //     the generated binding takes a plain `number | null`. All three call
+  //     sites pass `PAGINATION_LIMIT` (a real `SafeLimit`), but the
+  //     compile-time clamp from `@/lib/safe-limit` no longer applies at these
+  //     seams. This is an accepted cost of the `tauri-import-baseline`
+  //     migration off the wrapper layer, not an oversight.
+  // (`sync_protocol::DeviceHead`, the 14th `@public` tag, was not a command
+  // at all — a hand-written TS mirror of an internal Rust wire type that
+  // never crosses the Tauri IPC boundary, so it had no bindings.ts entry
+  // and needed no allowlisting here; it was deleted outright.)
+  'renameAttachment',
+  'moveBlocksBatch',
+  'computeBlockVsCurrentDiff',
+  'importBibliography',
+  'countTrash',
+  'getRecoveryStatus',
+  'getMdnsStatus',
+  'queryByTagExpr',
+  'listInheritedTagsForBlock',
+  'getJournalPageByDate',
+  'listJournalPagesInRange',
+  'listPagesWithMetadata',
+  'listPageAliasesByPrefix',
 ])
 
 const bindingsSrc = fs.readFileSync(BINDINGS, 'utf8')

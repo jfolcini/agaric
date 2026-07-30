@@ -1,6 +1,6 @@
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { Draft, FlushAllDraftsResult, MdnsStatus, RecoveryStatus } from '@/lib/bindings'
+import type { Draft, FlushAllDraftsResult } from '@/lib/bindings'
 
 /** Save (upsert) a draft for a block. Called every ~2s during active typing. */
 export async function saveDraft(blockId: string, content: string): Promise<void> {
@@ -21,38 +21,6 @@ export async function flushDraft(blockId: string): Promise<void> {
  */
 export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
   return unwrap(await commands.flushAllDrafts())
-}
-
-/**
- * #1255: read the boot-recovery status. Used by `useRecoveryStatus` to
- * backfill the degraded-boot signal on mount — boot runs (and emits
- * `recovery:degraded`) before the webview registers its listener, so the
- * live event can be missed. `degraded === true` means the C-2b op-log
- * replay failed and the materialized view may be incomplete/stale (the op
- * log is canonical — nothing is lost). Mirrors the `useDeepLinkRouter` +
- * `getCurrentDeepLink()` "emit + query-on-mount backfill" shape.
- *
- * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
- * wrapper for `commands.getRecoveryStatus` that `check-tauri-bindings-parity` requires;
- * tagged so knip does not report it as dead code (#3202).
- */
-export async function getRecoveryStatus(): Promise<RecoveryStatus> {
-  return unwrap(await commands.getRecoveryStatus())
-}
-
-/**
- * #2506: read the current mDNS peer-discovery status. Used by
- * `useMdnsStatus` to backfill the "discovery unavailable" signal on
- * mount — the sync daemon can emit `sync:mdns_disabled` before the
- * webview registers its listener (same boot race `getRecoveryStatus`
- * covers for `recovery:degraded`), so the live event can be missed.
- *
- * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
- * wrapper for `commands.getMdnsStatus` that `check-tauri-bindings-parity` requires;
- * tagged so knip does not report it as dead code (#3202).
- */
-export async function getMdnsStatus(): Promise<MdnsStatus> {
-  return unwrap(await commands.getMdnsStatus())
 }
 
 /** Delete a draft for a block (e.g. after a successful normal save). */
