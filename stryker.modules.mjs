@@ -74,6 +74,13 @@ export const MODULES = {
     tests: [
       'src/lib/__tests__/tree-utils.test.ts',
       'src/lib/__tests__/tree-utils.property.test.ts',
+      // #3142 — these four were added to kill specific surviving mutants but
+      // never wired into this scoping list, so the Stryker-scoped run never
+      // saw them and kept reporting already-fixed mutants as survivors.
+      'src/lib/__tests__/tree-utils.mutants-build.test.ts',
+      'src/lib/__tests__/tree-utils.mutants-depth.test.ts',
+      'src/lib/__tests__/tree-utils.mutants-drop.test.ts',
+      'src/lib/__tests__/tree-utils.mutants-simulate.test.ts',
     ],
   },
 }

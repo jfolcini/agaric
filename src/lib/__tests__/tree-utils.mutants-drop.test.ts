@@ -60,8 +60,52 @@ describe('computeDropIndex mutants (#3142)', () => {
     // to 0, matching no item → slot 0.
     expect(computeDropIndex(items, 'P', 'C2', 'dragged')).toBe(1)
   })
-  // This same test also kills line 543 [ConditionalExpression]: slot 1 is
-  // strictly between "always true" (3, = insertAt) and "always false" (0).
+  // NOTE: the comment this replaces claimed the test above also kills line 543
+  // [ConditionalExpression]. It doesn't — `insertAt` there stops the loop
+  // before it ever reaches an item whose depth-check outcome would change.
+  // See the dedicated test below.
+
+  // Line 538 [UnaryOperator]: `find(...)?.depth ?? -1` → `?? +1`. The literal
+  // fallback only fires when the parent id has no matching item at all, so a
+  // parent with a real (found) depth can't distinguish it — need a *missing*
+  // parentId, plus a decoy item recorded under that same missing id, so the
+  // resulting childDepth actually changes which items get counted.
+  it('falls back to -1 (not +1) when parentId matches no item, changing which siblings count', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 0),
+      // No item has id 'GHOST' — parentDepth must come from the `?? -1`
+      // fallback, not from a found item.
+      mkFlat('ghostChild', 'GHOST', 0), // real: childDepth=-1+1=0 → matches, counts
+      mkFlat('dragged', 'GHOST', 0),
+    ]
+    // Real: parentDepth = find('GHOST')?.depth ?? -1 = -1 → childDepth = 0.
+    // 'ghostChild' (parent_id='GHOST', depth=0) matches → slot 1.
+    // Mutant (?? +1): parentDepth = 1 → childDepth = 2. 'ghostChild' has
+    // depth 0 ≠ 2 → doesn't match → slot 0.
+    expect(computeDropIndex(items, 'GHOST', SENTINEL_ID, 'dragged')).toBe(1)
+  })
+
+  // Line 543 [ConditionalExpression]: `item.depth === childDepth` forced to
+  // `true` drops the depth half of the sibling predicate, so an item whose
+  // `parent_id` matches but whose recorded `depth` is stale/inconsistent
+  // would wrongly count as a sibling. Needs a decoy positioned *before*
+  // `insertAt` so the flip is actually observed (the existing "excludes the
+  // item exactly at insertAt" test never puts a depth-mismatched item inside
+  // the counted range).
+  it('excludes an item whose parent_id matches but whose depth does not', () => {
+    const items: FlatBlock[] = [
+      mkFlat('A', null, 0),
+      mkFlat('P', 'A', 1),
+      // Same parent as C1, but a depth that couldn't really occur under P
+      // (stale/inconsistent) — must NOT count as a depth-2 sibling of P.
+      mkFlat('stale', 'P', 5),
+      mkFlat('C1', 'P', 2),
+      mkFlat('dragged', 'P', 2),
+    ]
+    // Real: childDepth = 2. Only C1 (parent_id='P', depth=2) counts → slot 1.
+    // Mutant (depth check forced true): both 'stale' and C1 count → slot 2.
+    expect(computeDropIndex(items, 'P', SENTINEL_ID, 'dragged')).toBe(1)
+  })
 
   // Line 538 [OptionalChaining]: removing `?.` from `find(...)?.depth` throws
   // when the parent id isn't found, instead of falling back via `?? -1`.
