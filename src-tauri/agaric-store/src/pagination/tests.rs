@@ -178,6 +178,47 @@ fn cursor_encode_decode_with_deleted_at() {
 }
 
 #[test]
+fn cursor_projected_agenda_key_roundtrips_block_id_and_source() {
+    // #3206 — `list_projected_agenda`'s keyset is the three-String triple
+    // `(projected_date, block_id, source)`, one more String than `Cursor`
+    // has slots, so `block_id` and `source` share the `id` slot. The pair
+    // must come back out intact across an encode/decode round trip.
+    let cursor = Cursor::for_projected_agenda(
+        "01HZ0000000000000000000001",
+        "2050-04-10".into(),
+        "scheduled_date",
+    );
+    assert_eq!(
+        cursor.deleted_at.as_deref(),
+        Some("2050-04-10"),
+        "the date belongs in the H-8 date-carrier slot"
+    );
+    let decoded = Cursor::decode(&cursor.encode().unwrap()).unwrap();
+    assert_eq!(cursor, decoded);
+    assert_eq!(
+        decoded.projected_agenda_key(),
+        ("01HZ0000000000000000000001", Some("scheduled_date"))
+    );
+}
+
+#[test]
+fn cursor_projected_agenda_key_of_pre_3206_cursor_has_no_source() {
+    // A cursor minted before #3206 carries a bare `block_id` with no
+    // separator. It must decode to "no source" so the caller can degrade to
+    // the old two-term predicate rather than reject an in-flight cursor —
+    // and, critically, must not mistake part of the id for a source.
+    let legacy = Cursor::for_id_and_deleted_at(
+        "01HZ0000000000000000000001".into(),
+        Some("2050-04-10".into()),
+    );
+    let decoded = Cursor::decode(&legacy.encode().unwrap()).unwrap();
+    assert_eq!(
+        decoded.projected_agenda_key(),
+        ("01HZ0000000000000000000001", None)
+    );
+}
+
+#[test]
 fn cursor_encode_decode_with_seq() {
     let cursor = Cursor {
         id: String::new(),

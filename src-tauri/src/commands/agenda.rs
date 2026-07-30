@@ -158,11 +158,21 @@ pub async fn count_agenda_batch_by_source_inner(
 /// `has_more` is `true` — pass `next_cursor` back as the `cursor` arg to
 /// Fetch the next page (AGENTS.md invariant #3).
 ///
-/// **Cursor encoding** (matches `list_agenda_range`'s H-8 convention):
-/// the cursor is keyed on `(projected_date, block_id)` — the same
-/// composite that the SQL `ORDER BY` uses — packed into
-/// `Cursor::deleted_at` (date) + `Cursor::id` (block_id) and
-/// base64-encoded JSON.
+/// **Cursor encoding** (extends `list_agenda_range`'s H-8 convention):
+/// the cursor is keyed on `(projected_date, block_id, source)` — the same
+/// composite that the SQL `ORDER BY` uses, and the same triple migration
+/// 0104's covering index sorts on — packed by
+/// [`Cursor::for_projected_agenda`] into `Cursor::deleted_at` (date) +
+/// `Cursor::id` (block_id + source) and base64-encoded JSON.
+///
+/// `source` is part of the key because `(projected_date, block_id)` is
+/// **not** unique (#3206): `projected_agenda_cache`'s primary key is
+/// `(block_id, projected_date, source)`, so a block carrying both a
+/// `due_date` and a `scheduled_date` that land on the same day produces two
+/// rows differing only in `source`. A strictly-greater keyset on the
+/// non-unique pair skipped the second of those rows whenever a page boundary
+/// fell between them — silently, since the page still returned a full
+/// `limit` of entries.
 ///
 /// The on-the-fly fallback's `dot_plus` (`.+`) / `plus_plus` (`++`)
 /// repeat-mode projection is anchored to `today`. We capture `today` once
@@ -324,13 +334,34 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
     }
 
     // Cursor parts for SQL bind. ?cursor_flag NULL → no cursor filter.
-    let (cursor_flag, cursor_date, cursor_id): (Option<i64>, &str, &str) = match after.as_ref() {
-        Some(c) => (
-            Some(1),
-            c.deleted_at.as_deref().unwrap_or(""),
-            c.id.as_str(),
-        ),
-        None => (None, "", ""),
+    //
+    // #3206 — three parts, not two. `(projected_date, block_id)` is not a
+    // unique key over `projected_agenda_cache` (its PK is
+    // `(block_id, projected_date, source)`), so a strictly-greater keyset on
+    // that pair skips the second of any two rows a page boundary lands
+    // between — silently, because the page still comes back full. `source`
+    // completes the key; `Cursor::projected_agenda_key` unpacks it.
+    //
+    // `cursor_source` is `None` for a cursor minted before #3206, which binds
+    // SQL NULL and disarms the third disjunct below — that page behaves
+    // exactly as it did before this change instead of erroring out an
+    // in-flight cursor, and the cursor it emits carries the full triple.
+    let (cursor_flag, cursor_date, cursor_id, cursor_source): (
+        Option<i64>,
+        &str,
+        &str,
+        Option<&str>,
+    ) = match after.as_ref() {
+        Some(c) => {
+            let (block_id, source) = c.projected_agenda_key();
+            (
+                Some(1),
+                c.deleted_at.as_deref().unwrap_or(""),
+                block_id,
+                source,
+            )
+        }
+        None => (None, "", "", None),
     };
 
     // Fetch limit + 1 to detect `has_more`.
@@ -374,9 +405,11 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
                WHERE tp.block_id = b.page_id AND tp.key = 'template'
            )
            AND (?3 IS NULL OR (pac.projected_date > ?4
-               OR (pac.projected_date = ?4 AND pac.block_id > ?5)))
+               OR (pac.projected_date = ?4 AND pac.block_id > ?5)
+               OR (pac.projected_date = ?4 AND pac.block_id = ?5
+                   AND ?8 IS NOT NULL AND pac.source > ?8)))
            AND (?7 IS NULL OR b.space_id = ?7)
-         ORDER BY pac.projected_date ASC, pac.block_id ASC
+         ORDER BY pac.projected_date ASC, pac.block_id ASC, pac.source ASC
          LIMIT ?6",
     )
     .bind(&start_date)
@@ -386,6 +419,7 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
     .bind(cursor_id)
     .bind(fetch_limit)
     .bind(scope.as_filter_param())
+    .bind(cursor_source)
     .fetch_all(pool)
     .await?;
 
@@ -473,9 +507,10 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
     let next_cursor = if has_more {
         let last = entries.last().expect("has_more implies non-empty");
         Some(
-            Cursor::for_id_and_deleted_at(
-                last.block.id.clone().into(),
-                Some(last.projected_date.clone()),
+            Cursor::for_projected_agenda(
+                last.block.id.as_str(),
+                last.projected_date.clone(),
+                &last.source,
             )
             .encode()?,
         )
@@ -505,10 +540,12 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
 /// read from `chrono::Local::now()` so tests can pin a fixed today.
 ///
 /// `after` is the optional decoded cursor. When supplied, entries
-/// whose `(projected_date, block_id)` are `<= cursor` are filtered out
-/// before the page is built. The same `(date, id)` keyset that the cache
-/// path uses is honoured here so the two branches stay swappable mid-
-/// pagination if the materializer populates the cache between calls.
+/// whose `(projected_date, block_id, source)` are `<= cursor` are filtered
+/// out before the page is built. The same `(date, id, source)` keyset that
+/// the cache path uses is honoured here so the two branches stay swappable
+/// mid-pagination if the materializer populates the cache between calls
+/// (#3206 — `(date, id)` alone is not unique, see
+/// [`list_projected_agenda_inner`]).
 ///
 /// `pub(crate)` so the regression test in
 /// `commands::tests::agenda_cmd_tests` can call this path directly,
@@ -635,12 +672,14 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
 
     // M1 (Batch 2): build the projected-entry set in a `BTreeMap` keyed by
     // `(projected_date, block_id, source)` so the container itself enforces
-    // the `ORDER BY projected_date ASC, block_id ASC` invariant the cache
-    // path applies in SQL. Source is included in the key as a deterministic
-    // tie-breaker for the (rare) (block × source) collision case — the
-    // cache table's primary key `(block_id, projected_date, source)` admits
-    // both rows, and the cache path's ORDER BY is sort-stable across them,
-    // so threading `source` through the key preserves observable behaviour.
+    // the `ORDER BY projected_date ASC, block_id ASC, source ASC` invariant
+    // the cache path applies in SQL. Source is part of the key because
+    // `(projected_date, block_id)` is not unique — the cache table's primary
+    // key `(block_id, projected_date, source)` admits both a `due_date` and a
+    // `scheduled_date` row for one block on one day, and since #3206 that
+    // third term is load-bearing rather than merely deterministic: it is the
+    // term that makes the keyset cursor total, so a page boundary falling
+    // between the pair no longer drops the second row.
     //
     // The previous post-hoc `entries.sort_by(...)` and `entries.retain(...)`
     // are eliminated: ordering happens at insertion time, and the cursor
@@ -657,9 +696,20 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     // and what this rewrite does — is enforce the same ordering + cursor
     // + limit invariants at the generation stage instead of as Rust
     // post-processing on a fully-materialised vector.
-    let cursor_key: Option<(&str, &str)> = after
-        .as_ref()
-        .map(|c| (c.deleted_at.as_deref().unwrap_or(""), c.id.as_str()));
+    //
+    // #3206 — the cursor keyset is the full `(projected_date, block_id,
+    // source)` triple, matching the BTreeMap key below and the cache path's
+    // `ORDER BY`. Keying on `(projected_date, block_id)` alone dropped the
+    // second of any two same-day/same-block rows (one `due_date`, one
+    // `scheduled_date`) that a page boundary fell between.
+    //
+    // A pre-#3206 cursor carries no `source`; that page falls back to the old
+    // two-term test, matching what the cache path's SQL does when it binds a
+    // NULL `?8`, so the two branches stay swappable mid-pagination.
+    let cursor_key: Option<(&str, &str, Option<&str>)> = after.as_ref().map(|c| {
+        let (block_id, source) = c.projected_agenda_key();
+        (c.deleted_at.as_deref().unwrap_or(""), block_id, source)
+    });
 
     // safe: `limit` is the [1, 500]-clamped per-page cap (i64 → usize on
     // 64-bit). Captured once here so the inline cursor / cap checks below
@@ -698,12 +748,17 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
          build: &dyn Fn() -> ActiveProjectedAgendaEntry|
          -> bool {
             // Cursor predicate: keep only entries strictly AFTER the
-            // cursor's (date, id). Mirrors the cache path's
-            // `?cursor_date < projected_date OR (= AND ?cursor_id < block_id)`.
-            if let Some((cd, ci)) = cursor_key
-                && (projected_date.as_str(), block_id) <= (cd, ci)
-            {
-                return false;
+            // cursor's `(date, id, source)`. Mirrors the cache path's
+            // three-disjunct keyset `WHERE`, including its NULL-`source`
+            // (pre-#3206 cursor) degradation to the two-term test.
+            if let Some((cd, ci, cs)) = cursor_key {
+                let at_or_before = match cs {
+                    Some(cs) => (projected_date.as_str(), block_id, source) <= (cd, ci, cs),
+                    None => (projected_date.as_str(), block_id) <= (cd, ci),
+                };
+                if at_or_before {
+                    return false;
+                }
             }
             let key = (projected_date, block_id.to_string(), source.to_string());
             // Size-cap: if we're at capacity, only accept the new entry
@@ -852,9 +907,10 @@ pub(crate) async fn list_projected_agenda_on_the_fly(
     let next_cursor = if has_more {
         let last = entries.last().expect("has_more implies non-empty");
         Some(
-            Cursor::for_id_and_deleted_at(
-                last.block.id.clone().into(),
-                Some(last.projected_date.clone()),
+            Cursor::for_projected_agenda(
+                last.block.id.as_str(),
+                last.projected_date.clone(),
+                &last.source,
             )
             .encode()?,
         )

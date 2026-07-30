@@ -113,6 +113,36 @@ pub fn ensure_batch_within_cap(subject: &str, len: usize) -> Result<(), AppError
 /// JSON) decode as version 1 — see [`Cursor::decode`].
 const CURRENT_CURSOR_VERSION: u8 = 1;
 
+/// Separator used when a keyset needs to pack two String components into the
+/// single [`Cursor::id`] slot — currently only `list_projected_agenda`'s
+/// `(block_id, source)` tiebreaker pair (#3206; see
+/// [`Cursor::for_projected_agenda`]).
+///
+/// ASCII UNIT SEPARATOR (0x1F) is a control character, so it occurs in
+/// neither component in practice: block ids are Crockford-base32 ULIDs and
+/// the only `source` values the recurrence projector emits are `due_date`
+/// and `scheduled_date` (`recurrence_math.rs`), the only two the
+/// `projected_agenda_cache` writer inserts.
+///
+/// The split is on the FIRST separator, so the round trip is *exact*
+/// whenever `block_id` is separator-free — a `source` that itself contained
+/// a separator would still come back whole, because everything past the
+/// first one is the source. That is the useful direction: `source` is the
+/// component whose vocabulary could plausibly grow (its sibling
+/// `agenda_cache` already uses `property:<key>` / `tag:<id>` forms built
+/// from user-chosen names), whereas `block_id`'s shape is fixed.
+///
+/// Nothing in the codebase validates a block id's shape, so this is an
+/// assumption rather than an enforced invariant. It is not a safety one:
+/// [`Cursor::projected_agenda_key`] cannot panic on any input, and a cursor
+/// is opaque client state, so the worst a separator-bearing block id could
+/// do is mis-page that one block for the client that supplied the cursor.
+///
+/// Note the packing is purely a transport detail of the opaque cursor — the
+/// SQL keyset predicate binds the parts separately and compares them
+/// column-by-column, so index usage and row order are unaffected.
+const CURSOR_PART_SEP: char = '\u{1f}';
+
 // ---------------------------------------------------------------------------
 // Phase 2 — shared space-filter SQL fragment.
 // ---------------------------------------------------------------------------
@@ -762,6 +792,54 @@ impl Cursor {
             deleted_at: None,
             seq: None,
             rank: Some(rank),
+        }
+    }
+
+    /// Cursor keyed on `(projected_date, block_id, source)` — used by
+    /// `list_projected_agenda` (#3206).
+    ///
+    /// `projected_agenda_cache`'s primary key is
+    /// `(block_id, projected_date, source)`, so `(projected_date, block_id)`
+    /// alone is **not** unique: a block carrying both a `due_date` and a
+    /// `scheduled_date` that project onto the same day yields two rows
+    /// differing only in `source`. A keyset cursor whose predicate is
+    /// strictly-greater on a non-unique key silently drops every duplicate
+    /// past the first whenever a page boundary lands between them, so the
+    /// `source` term is part of the key — the same triple migration 0104's
+    /// covering index already sorts on.
+    ///
+    /// The triple is three *strings* and `Cursor` has only two String slots,
+    /// so — per this type's "reuse the existing slots rather than adding new
+    /// fields" convention — `deleted_at` carries `projected_date` (the H-8
+    /// date-carrier convention `list_agenda_range` already uses) and `id`
+    /// carries `block_id` and `source` joined by [`CURSOR_PART_SEP`]. The
+    /// packing is transport-only: [`Cursor::projected_agenda_key`] splits the
+    /// pair back out and the SQL binds the three parts separately, so the
+    /// `ORDER BY` — and therefore the query plan — is untouched.
+    #[must_use]
+    pub fn for_projected_agenda(block_id: &str, projected_date: String, source: &str) -> Self {
+        Self {
+            id: format!("{block_id}{CURSOR_PART_SEP}{source}"),
+            position: None,
+            deleted_at: Some(projected_date),
+            seq: None,
+            rank: None,
+        }
+    }
+
+    /// Split the `id` slot of a [`Cursor::for_projected_agenda`] cursor back
+    /// into `(block_id, source)`.
+    ///
+    /// A cursor minted before #3206 has no separator and therefore no
+    /// `source`; it decodes to `(block_id, None)` and the caller degrades to
+    /// the pre-#3206 two-term predicate for that one page rather than
+    /// rejecting an in-flight cursor. The next page it emits carries the full
+    /// triple.
+    #[must_use]
+    pub fn projected_agenda_key(&self) -> (&str, Option<&str>) {
+        match self.id.split_once(CURSOR_PART_SEP) {
+            Some((block_id, source)) => (block_id, Some(source)),
+            None => (self.id.as_str(), None),
         }
     }
 }

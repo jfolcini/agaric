@@ -4816,3 +4816,671 @@ async fn list_projected_agenda_fallback_respects_cursor() {
         );
     }
 }
+
+// =====================================================================
+// #3206 — the projected-agenda keyset cursor must be TOTAL.
+//
+// `projected_agenda_cache`'s primary key is
+// `(block_id, projected_date, source)`, so `(projected_date, block_id)` —
+// the pair the cursor used to key on — is NOT unique: a block carrying
+// both a `due_date` and a `scheduled_date` that project onto the same day
+// produces two rows differing only in `source`. Verified against the live
+// schema rather than assumed: `PRAGMA index_list` reports
+// `sqlite_autoindex_projected_agenda_cache_1` (the PK) as the table's only
+// UNIQUE index and `PRAGMA index_info` gives its columns as
+// `(block_id, projected_date, source)`; migration 0104's
+// `idx_projected_agenda_date_block` is a NON-unique index over the same
+// three columns in the query's `ORDER BY` order.
+//
+// A strictly-greater keyset predicate over a non-unique key skips every
+// duplicate past the first whenever a page boundary lands between them,
+// and does so silently — the page still comes back holding a full `limit`
+// rows, so nothing upstream can notice. The tests below page through a
+// window that contains such pairs at every page size that can straddle
+// one, and assert the concatenation of the pages equals the unpaginated
+// result exactly (no drop, no duplicate).
+// =====================================================================
+
+/// Seed a non-DONE repeating block whose `due_date` and `scheduled_date`
+/// are the SAME day, so the projector emits two occurrences — one per
+/// source — for every projected date. This is the ordinary "task both due
+/// and scheduled on the same day" case from #3206, not a contrived one.
+async fn insert_dual_source_repeater(pool: &SqlitePool, id: &str, base: &str) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, todo_state, due_date, scheduled_date)
+         VALUES (?, 'content', 'due and scheduled together', 'TODO', ?, ?)",
+    )
+    .bind(id)
+    .bind(base)
+    .bind(base)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// `(projected_date, block_id, source)` triple of an entry — the full
+/// keyset key, and the identity the pagination assertions compare on.
+fn entry_key(
+    entry: &agaric_store::pagination::ActiveProjectedAgendaEntry,
+) -> (String, String, String) {
+    (
+        entry.projected_date.clone(),
+        entry.block.id.as_str().to_string(),
+        entry.source.clone(),
+    )
+}
+
+/// The three blocks the #3206 tests seed, in `block_id` order.
+const PA3206_IDS: [&str; 3] = [
+    "PA3206A0000000000000000000",
+    "PA3206B0000000000000000000",
+    "PA3206C0000000000000000000",
+];
+
+/// Cache path: page a one-day window through `list_projected_agenda_inner_with_today`
+/// at every page size, and assert the pages concatenate to the whole window.
+///
+/// The window holds six rows — three blocks × two sources — so page sizes
+/// 1, 3 and 5 each put a boundary between a `(date, block)` duplicate pair
+/// (after row 1, row 3 and row 5 respectively). Before #3206 those page
+/// sizes each lost exactly the `scheduled_date` row of the straddled pair.
+#[tokio::test]
+async fn projected_agenda_cursor_keeps_duplicate_source_rows_3206() {
+    let (pool, _dir) = test_pool().await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    let base_str = base.format("%Y-%m-%d").to_string();
+    for id in PA3206_IDS {
+        insert_dual_source_repeater(&pool, id, &base_str).await;
+    }
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+
+    // A single day well inside [pinned_today, pinned_today + HORIZON_DAYS],
+    // so the horizon guard routes the read to the cache and not to the
+    // on-the-fly projector.
+    let day = (pinned_today + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    // Fixture guard: the rebuild must actually have written the duplicate
+    // pairs. Without this a regression in the materializer would make the
+    // pagination assertions below vacuously pass.
+    let cache_rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT block_id, source FROM projected_agenda_cache WHERE projected_date = ? ORDER BY block_id, source")
+            .bind(&day)
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        cache_rows,
+        vec![
+            (PA3206_IDS[0].to_string(), "due_date".to_string()),
+            (PA3206_IDS[0].to_string(), "scheduled_date".to_string()),
+            (PA3206_IDS[1].to_string(), "due_date".to_string()),
+            (PA3206_IDS[1].to_string(), "scheduled_date".to_string()),
+            (PA3206_IDS[2].to_string(), "due_date".to_string()),
+            (PA3206_IDS[2].to_string(), "scheduled_date".to_string()),
+        ],
+        "fixture: each block must project BOTH sources onto {day}, giving \
+         three (projected_date, block_id) duplicate pairs"
+    );
+
+    // Reference: the whole window in one page (limit 200 > 6 rows, so no
+    // cursor is involved and the keyset predicate never runs).
+    let full = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+    let expected: Vec<(String, String, String)> = full.items.iter().map(entry_key).collect();
+    assert_eq!(
+        expected.len(),
+        6,
+        "fixture: the unpaginated window must hold all six rows: {expected:?}"
+    );
+    assert!(!full.has_more);
+    assert!(
+        full.next_cursor.is_none(),
+        "a page that exhausts the window must not hand out a cursor"
+    );
+
+    for page_size in 1..=6i64 {
+        let mut collected: Vec<(String, String, String)> = Vec::new();
+        let mut cursor: Option<String> = None;
+        let mut pages = 0usize;
+        loop {
+            let page = list_projected_agenda_inner_with_today(
+                &pool,
+                day.clone(),
+                day.clone(),
+                cursor.clone(),
+                Some(page_size),
+                &SpaceScope::Global,
+                pinned_today,
+            )
+            .await
+            .unwrap();
+            assert!(
+                page.items.len() <= usize::try_from(page_size).unwrap(),
+                "page size {page_size}: a page must never exceed its limit"
+            );
+            assert_eq!(
+                page.next_cursor.is_some(),
+                page.has_more,
+                "page size {page_size}: `next_cursor` and `has_more` must agree"
+            );
+            collected.extend(page.items.iter().map(entry_key));
+            pages += 1;
+            assert!(
+                pages <= 10,
+                "page size {page_size}: pagination failed to terminate"
+            );
+            match page.next_cursor {
+                Some(c) => cursor = Some(c),
+                None => break,
+            }
+        }
+
+        // The load-bearing assertion: paging must be a partition of the
+        // window. Before #3206 `collected` was SHORT by one entry for every
+        // boundary that fell between a duplicate pair — page size 1 lost
+        // three rows, page sizes 3 and 5 lost one each — while every page
+        // still came back full, which is why the bug was silent.
+        assert_eq!(
+            collected, expected,
+            "page size {page_size}: paging must yield the window exactly \
+             once, in order — no dropped row (#3206) and no duplicate"
+        );
+
+        // Last-page boundary: paging one step PAST the final row must give
+        // an empty page that terminates, not a fallback re-expansion.
+        let last = expected.last().unwrap();
+        let past_end = agaric_store::pagination::Cursor::for_projected_agenda(
+            last.1.as_str(),
+            last.0.clone(),
+            last.2.as_str(),
+        )
+        .encode()
+        .unwrap();
+        let empty = list_projected_agenda_inner_with_today(
+            &pool,
+            day.clone(),
+            day.clone(),
+            Some(past_end),
+            Some(page_size),
+            &SpaceScope::Global,
+            pinned_today,
+        )
+        .await
+        .unwrap();
+        assert!(
+            empty.items.is_empty(),
+            "page size {page_size}: a cursor at the last row must yield an \
+             empty page; got {:?}",
+            empty.items.iter().map(entry_key).collect::<Vec<_>>()
+        );
+        assert!(!empty.has_more);
+        assert!(empty.next_cursor.is_none());
+    }
+}
+
+/// On-the-fly path: the same partition property, for the projector branch.
+///
+/// The two branches are swappable mid-pagination (the materializer may
+/// populate the cache between two page requests), so they must agree on the
+/// keyset. This test never rebuilds the cache, so `list_projected_agenda_inner`
+/// would route here anyway; it calls the projector directly to pin `today`
+/// and keep the assertion off the wall clock.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_fallback_cursor_keeps_duplicate_source_rows_3206() {
+    let (pool, _dir) = test_pool().await;
+
+    for id in PA3206_IDS {
+        insert_dual_source_repeater(&pool, id, "2026-07-01").await;
+    }
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2026, 6, 30).unwrap();
+    // One day: three blocks × two sources = six occurrences.
+    let range_start = chrono::NaiveDate::from_ymd_opt(2026, 7, 3).unwrap();
+    let range_end = range_start;
+
+    let full = list_projected_agenda_on_the_fly(
+        &pool,
+        range_start,
+        range_end,
+        200,
+        pinned_today,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let expected: Vec<(String, String, String)> = full.items.iter().map(entry_key).collect();
+    assert_eq!(
+        expected.len(),
+        6,
+        "fixture: the projector must emit both sources per block: {expected:?}"
+    );
+    assert!(!full.has_more);
+    assert!(full.next_cursor.is_none());
+
+    for page_size in 1..=6i64 {
+        let mut collected: Vec<(String, String, String)> = Vec::new();
+        let mut cursor: Option<agaric_store::pagination::Cursor> = None;
+        let mut pages = 0usize;
+        loop {
+            let page = list_projected_agenda_on_the_fly(
+                &pool,
+                range_start,
+                range_end,
+                page_size,
+                pinned_today,
+                cursor.as_ref(),
+                None,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                page.next_cursor.is_some(),
+                page.has_more,
+                "page size {page_size}: `next_cursor` and `has_more` must agree"
+            );
+            collected.extend(page.items.iter().map(entry_key));
+            pages += 1;
+            assert!(
+                pages <= 10,
+                "page size {page_size}: pagination failed to terminate"
+            );
+            match page.next_cursor {
+                Some(c) => {
+                    cursor = Some(agaric_store::pagination::Cursor::decode(&c).unwrap());
+                }
+                None => break,
+            }
+        }
+        assert_eq!(
+            collected, expected,
+            "page size {page_size}: the on-the-fly branch must partition the \
+             window exactly as the cache branch does (#3206)"
+        );
+
+        // Last-page boundary on this branch too.
+        let last = expected.last().unwrap();
+        let past_end = agaric_store::pagination::Cursor::for_projected_agenda(
+            last.1.as_str(),
+            last.0.clone(),
+            last.2.as_str(),
+        );
+        let empty = list_projected_agenda_on_the_fly(
+            &pool,
+            range_start,
+            range_end,
+            page_size,
+            pinned_today,
+            Some(&past_end),
+            None,
+        )
+        .await
+        .unwrap();
+        assert!(
+            empty.items.is_empty(),
+            "page size {page_size}: a cursor at the last row must yield an empty page"
+        );
+        assert!(!empty.has_more);
+        assert!(empty.next_cursor.is_none());
+    }
+}
+
+/// A cursor minted before #3206 carries no `source` in its `id` slot. Both
+/// branches must still accept it — degrading to the old two-term predicate
+/// for that one page rather than erroring out an in-flight cursor — and the
+/// cursor they hand back must carry the full triple.
+#[tokio::test]
+async fn projected_agenda_pre_3206_cursor_still_decodes() {
+    let (pool, _dir) = test_pool().await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    let base_str = base.format("%Y-%m-%d").to_string();
+    for id in PA3206_IDS {
+        insert_dual_source_repeater(&pool, id, &base_str).await;
+    }
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+    let day = (pinned_today + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    // The pre-#3206 shape: `deleted_at` = date, `id` = bare block_id.
+    let legacy = agaric_store::pagination::Cursor::for_id_and_deleted_at(
+        PA3206_IDS[0].to_string(),
+        Some(day.clone()),
+    )
+    .encode()
+    .unwrap();
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        Some(legacy),
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    // Old semantics for the legacy page: both of block A's rows are behind
+    // the cursor, so the page resumes at block B.
+    let keys: Vec<(String, String, String)> = page.items.iter().map(entry_key).collect();
+    assert_eq!(
+        keys,
+        vec![
+            (
+                day.clone(),
+                PA3206_IDS[1].to_string(),
+                "due_date".to_string()
+            ),
+            (
+                day.clone(),
+                PA3206_IDS[1].to_string(),
+                "scheduled_date".to_string()
+            ),
+            (
+                day.clone(),
+                PA3206_IDS[2].to_string(),
+                "due_date".to_string()
+            ),
+            (
+                day.clone(),
+                PA3206_IDS[2].to_string(),
+                "scheduled_date".to_string()
+            ),
+        ],
+        "a pre-#3206 cursor must be honoured with its original two-term \
+         semantics, not rejected"
+    );
+
+    // And the cursor this query hands out carries the full triple.
+    let page1 = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(1),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+    let issued = agaric_store::pagination::Cursor::decode(
+        page1
+            .next_cursor
+            .as_deref()
+            .expect("has_more implies cursor"),
+    )
+    .unwrap();
+    assert_eq!(
+        issued.projected_agenda_key(),
+        (PA3206_IDS[0], Some("due_date")),
+        "an issued cursor must round-trip the (block_id, source) pair"
+    );
+}
+
+/// The cache branch and the on-the-fly projector are swappable *mid*
+/// pagination: the materializer can populate (or a snapshot restore can
+/// wipe) `projected_agenda_cache` between two page requests, and the
+/// horizon guard then routes the next page to the other branch. A cursor
+/// minted by either branch must therefore be consumed correctly by BOTH.
+///
+/// This alternates branches on every page — starting from each branch in
+/// turn, at every page size that can straddle a `(date, block)` duplicate
+/// pair — and asserts the concatenation is still an exact partition of the
+/// window. Keying on `(date, block_id)` alone, or disagreeing about the
+/// third term's meaning across the two branches, drops rows here.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_cursor_is_portable_across_both_branches_3206() {
+    let (pool, _dir) = test_pool().await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base_str = chrono::NaiveDate::from_ymd_opt(2050, 3, 30)
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    for id in PA3206_IDS {
+        insert_dual_source_repeater(&pool, id, &base_str).await;
+    }
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+
+    let day_date = pinned_today + chrono::Duration::days(4);
+    let day = day_date.format("%Y-%m-%d").to_string();
+
+    // Both branches must agree on the unpaginated window before the
+    // cross-branch paging assertion means anything.
+    let cache_full = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+    let fly_full =
+        list_projected_agenda_on_the_fly(&pool, day_date, day_date, 200, pinned_today, None, None)
+            .await
+            .unwrap();
+    let expected: Vec<(String, String, String)> = cache_full.items.iter().map(entry_key).collect();
+    assert_eq!(
+        expected,
+        fly_full.items.iter().map(entry_key).collect::<Vec<_>>(),
+        "fixture: the cache branch and the projector must see the same window"
+    );
+    assert_eq!(
+        expected.len(),
+        6,
+        "fixture: six rows, three duplicate pairs"
+    );
+
+    for page_size in 1..=5i64 {
+        for start_on_cache in [true, false] {
+            let mut collected: Vec<(String, String, String)> = Vec::new();
+            let mut cursor: Option<String> = None;
+            let mut on_cache = start_on_cache;
+            let mut pages = 0usize;
+            loop {
+                let page = if on_cache {
+                    list_projected_agenda_inner_with_today(
+                        &pool,
+                        day.clone(),
+                        day.clone(),
+                        cursor.clone(),
+                        Some(page_size),
+                        &SpaceScope::Global,
+                        pinned_today,
+                    )
+                    .await
+                    .unwrap()
+                } else {
+                    let decoded = cursor
+                        .as_deref()
+                        .map(|c| agaric_store::pagination::Cursor::decode(c).unwrap());
+                    list_projected_agenda_on_the_fly(
+                        &pool,
+                        day_date,
+                        day_date,
+                        page_size,
+                        pinned_today,
+                        decoded.as_ref(),
+                        None,
+                    )
+                    .await
+                    .unwrap()
+                };
+                collected.extend(page.items.iter().map(entry_key));
+                pages += 1;
+                assert!(
+                    pages <= 10,
+                    "page size {page_size} (start_on_cache={start_on_cache}): \
+                     cross-branch pagination failed to terminate"
+                );
+                match page.next_cursor {
+                    Some(c) => {
+                        cursor = Some(c);
+                        // Swap branches for the next page — the whole point.
+                        on_cache = !on_cache;
+                    }
+                    None => break,
+                }
+            }
+            assert_eq!(
+                collected, expected,
+                "page size {page_size} (start_on_cache={start_on_cache}): \
+                 alternating the two branches must still partition the window \
+                 exactly once (#3206)"
+            );
+        }
+    }
+}
+
+/// `cursor` crosses the IPC boundary, so a client can hand
+/// `list_projected_agenda` any string at all. #3206 packs two components
+/// into the single `id` slot with a `\u{1f}` separator, which adds a
+/// parsing step to that untrusted path. It must never panic: a structurally
+/// invalid cursor has to surface `AppError::Validation`, and a
+/// structurally VALID cursor carrying nonsense in the packed slot has to
+/// page harmlessly (a client can only mis-page itself).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn projected_agenda_rejects_or_survives_hostile_cursors_3206() {
+    let (pool, _dir) = test_pool().await;
+
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base_str = chrono::NaiveDate::from_ymd_opt(2050, 3, 30)
+        .unwrap()
+        .format("%Y-%m-%d")
+        .to_string();
+    for id in PA3206_IDS {
+        insert_dual_source_repeater(&pool, id, &base_str).await;
+    }
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(&pool, pinned_today)
+        .await
+        .unwrap();
+    let day = (pinned_today + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+
+    let run = |cursor: Option<String>| {
+        let pool = pool.clone();
+        let day = day.clone();
+        async move {
+            list_projected_agenda_inner_with_today(
+                &pool,
+                day.clone(),
+                day,
+                cursor,
+                Some(2),
+                &SpaceScope::Global,
+                pinned_today,
+            )
+            .await
+        }
+    };
+
+    // 1. Structurally invalid cursors — must be a clean validation error.
+    for (label, raw) in [
+        ("not base64", "not base64!!"),
+        // URL_SAFE_NO_PAD("\xff\xfe") — decodes to bytes that are not UTF-8.
+        ("invalid UTF-8", "__g"),
+        // Valid base64 + valid UTF-8, but not JSON.
+        ("not JSON", "bm90LWpzb24"),
+        // Valid JSON object, but `Cursor::id` is a required field.
+        ("JSON without id", "e30"),
+    ] {
+        let err = run(Some(raw.to_string()))
+            .await
+            .err()
+            .unwrap_or_else(|| panic!("hostile cursor `{label}` must be rejected"));
+        assert!(
+            matches!(err, AppError::Validation { .. }),
+            "hostile cursor `{label}` must surface a validation error, got {err:?}"
+        );
+    }
+
+    // 2. Structurally VALID cursors whose packed `id` slot is abusive. None
+    //    of these may panic; each must return a page and terminate.
+    let sep = '\u{1f}';
+    for (label, id) in [
+        (
+            "leading separator (empty block_id)",
+            format!("{sep}due_date"),
+        ),
+        (
+            "trailing separator (empty source)",
+            format!("{}{sep}", PA3206_IDS[0]),
+        ),
+        ("separator only", sep.to_string()),
+        (
+            "several separators",
+            format!("{}{sep}due_date{sep}extra{sep}", PA3206_IDS[0]),
+        ),
+        ("empty id", String::new()),
+        // A source that sorts after every real source value.
+        (
+            "out-of-range source",
+            format!("{}{sep}\u{10ffff}", PA3206_IDS[2]),
+        ),
+    ] {
+        let cursor = agaric_store::pagination::Cursor {
+            id,
+            position: None,
+            deleted_at: Some(day.clone()),
+            seq: None,
+            rank: None,
+        }
+        .encode()
+        .unwrap();
+        let page = run(Some(cursor))
+            .await
+            .unwrap_or_else(|e| panic!("hostile cursor `{label}` must not error: {e:?}"));
+        assert!(
+            page.items.len() <= 2,
+            "hostile cursor `{label}`: a page must never exceed its limit"
+        );
+        assert_eq!(
+            page.next_cursor.is_some(),
+            page.has_more,
+            "hostile cursor `{label}`: `next_cursor` and `has_more` must agree"
+        );
+        // Whatever it returns must still be a suffix of the real window in
+        // key order — never a duplicate or an out-of-order row.
+        let keys: Vec<(String, String, String)> = page.items.iter().map(entry_key).collect();
+        let mut sorted = keys.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            keys, sorted,
+            "hostile cursor `{label}`: rows must stay in key order without duplicates"
+        );
+    }
+}
