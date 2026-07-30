@@ -91,6 +91,12 @@ const suggestionPluginKeys = [
 // existing `use-roving-editor.test.ts` suite keeps importing them from this
 // module unchanged.
 export { computeContentDelta, shouldSplitOnBlur }
+/**
+ * @public Re-exported so this module's surface stays unchanged; no in-repo
+ * caller names this type directly today (call sites consume
+ * `computeContentDelta`'s return value structurally), but removing it would
+ * silently narrow the facade this file's own comment above promises to keep.
+ */
 export type { ContentDelta }
 
 // Share the curated lowlight instance with `RichContentRenderer` so bundlers

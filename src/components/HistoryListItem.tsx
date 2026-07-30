@@ -26,14 +26,32 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import type { DiffSpan, HistoryEntry } from '@/lib/bindings'
 import { cn } from '@/lib/utils'
 
-export type {
-  BlockHistoryDiffMode,
-  BlockHistoryItemProps,
-} from '@/components/HistoryListItem/BlockHistoryItem'
+export type { BlockHistoryItemProps } from '@/components/HistoryListItem/BlockHistoryItem'
+/**
+ * @public Re-exported from the sibling module so this barrel stays a drop-in
+ * import path; no in-repo caller uses this specific `./HistoryListItem`
+ * specifier today (consumers import the row type straight from
+ * `BlockHistoryItem`), but removing it would silently narrow the facade.
+ */
+export type { BlockHistoryDiffMode } from '@/components/HistoryListItem/BlockHistoryItem'
 export { BlockHistoryItem } from '@/components/HistoryListItem/BlockHistoryItem'
+/**
+ * @public Re-exported from the sibling module so this barrel stays a drop-in
+ * import path; no in-repo caller uses this specific `./HistoryListItem`
+ * specifier today (consumers import the props type straight from
+ * `HistoryItemCore`), but removing it would silently narrow the facade.
+ */
 export type { HistoryItemCoreProps } from '@/components/HistoryListItem/HistoryItemCore'
 // Re-export public surface from the extracted siblings so consumers can
 // keep importing from `./HistoryListItem`.
+/**
+ * @public Re-exported from the sibling module so this barrel stays a drop-in
+ * import path. `opIcon` IS used via this exact `./HistoryListItem` specifier
+ * (see `HistoryListItem.test.tsx`'s "opIcon helper" suite); `HistoryItemCore`
+ * itself has no in-repo caller through this barrel (consumers import it
+ * straight from its own module), but removing either export would silently
+ * narrow the facade.
+ */
 export { HistoryItemCore, opIcon } from '@/components/HistoryListItem/HistoryItemCore'
 
 // ---------------------------------------------------------------------------

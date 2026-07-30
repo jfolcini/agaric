@@ -43,6 +43,12 @@ import { useJournalStore } from '@/stores/journal'
 import { useSpaceStore } from '@/stores/space'
 import { useInPageFindStore } from '@/stores/useInPageFindStore'
 
+/**
+ * @public Re-exported from `date-utils` for backward compatibility; no
+ * in-repo caller uses this specific `JournalPage` specifier today
+ * (consumers import `DayEntry` straight from `date-utils`), but removing it
+ * would silently narrow the facade.
+ */
 export type { DayEntry } from '@/lib/date-utils'
 // Re-export for backward compatibility
 export { getMaxJournalDate, MIN_JOURNAL_DATE } from '@/lib/date-utils'

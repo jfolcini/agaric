@@ -72,6 +72,13 @@ import { useSpaceStore } from '@/stores/space'
 // Re-export so existing call sites (Settings → ResetOnboardingRow,
 // tests, future white-label keep) keep working without churn. The
 // implementations now live alongside their respective sub-components.
+/**
+ * @public Re-exported from `SpaceAccentPicker` so this barrel stays a
+ * drop-in import path; no in-repo caller uses this specific
+ * `SpaceManageDialog` specifier today (consumers import the swatch list
+ * straight from `SpaceAccentPicker`), but removing it would silently
+ * narrow the facade.
+ */
 export { ACCENT_SWATCHES } from '@/components/SpaceManageDialog/SpaceAccentPicker'
 export { resetOnboardingSeen } from '@/components/SpaceManageDialog/SpaceOnboardingHint'
 
