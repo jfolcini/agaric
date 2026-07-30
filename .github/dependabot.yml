@@ -241,6 +241,24 @@ updates:
           - 'version-update:semver-patch'
           - 'version-update:semver-minor'
           - 'version-update:semver-major'
+      # loro is held at 1.13.6 (#3161). 1.13.7 makes find_common_ancestor
+      # (loro-internal/src/dag.rs) quadratic in document history once the
+      # frontier is wider than one: measured 215x at 1000 rounds, with a
+      # diverging growth curve — 1.13.6 is linear, 1.13.7 is not. That is the
+      # ordinary one-user-two-devices shape, so it is reachable in production.
+      #
+      # This ignore exists because the hold was otherwise ONLY the lockfile:
+      # Cargo.toml carries a caret `loro = "1.12"`, which 1.13.7 satisfies, so
+      # any `cargo update` would lift it silently. Worse, our own regression
+      # test can no longer catch it — #3187 narrowed the frontier to width 1,
+      # which hits dag.rs's `left.len() <= 1 && right.len() == 1` fast path
+      # and measures at parity. The detector is gone; the defect is not.
+      #
+      # Do not remove without a width-2 measurement showing 1.13.6 parity.
+      # 1.13.7 is still the newest on crates.io and the suspect commit is
+      # untouched upstream, so there is nothing newer to move to.
+      - dependency-name: 'loro'
+      - dependency-name: 'loro-*'
 
   # Fuzz crate (#2734). `src-tauri/fuzz` is its OWN workspace (excluded from
   # `src-tauri/Cargo.toml` members = [".", "agaric-core", "agaric-store",
