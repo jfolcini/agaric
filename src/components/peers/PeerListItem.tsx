@@ -16,12 +16,13 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
+import { unwrap } from '@/lib/app-error'
+import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { PeerRefRow } from '@/lib/tauri'
-import { setPeerAddress } from '@/lib/tauri'
 
 export interface PeerListItemProps {
   peer: PeerRefRow
@@ -64,7 +65,9 @@ export function PeerListItem({
   const handleSaveAddress = useCallback(() => {
     const addr = addrInput.trim()
     if (!addr) return
-    setPeerAddress(peer.peer_id, addr)
+    commands
+      .setPeerAddress(peer.peer_id, addr)
+      .then((result) => unwrap(result))
       .then(() => {
         notify.success(t('status.addressUpdated'))
         onAddressUpdated()

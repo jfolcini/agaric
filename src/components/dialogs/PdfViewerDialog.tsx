@@ -35,9 +35,10 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { addAttachmentWithBytes, deleteAttachment } from '@/lib/tauri'
 
 // Set worker path — served from public/
 pdfjsLib.GlobalWorkerOptions.workerSrc = '/pdf.worker.min.mjs'
@@ -342,17 +343,19 @@ export function PdfViewerDialog({
     try {
       // Bake annotations into the PDF bytes.
       const bytes = await pdfDoc.saveDocument()
-      const row = await addAttachmentWithBytes({
-        blockId,
-        filename: annotatedFilename(filename),
-        mimeType: 'application/pdf',
-        bytes: new Uint8Array(bytes),
-      })
+      const row = unwrap(
+        await commands.addAttachmentWithBytes(
+          blockId,
+          annotatedFilename(filename),
+          'application/pdf',
+          Array.from(new Uint8Array(bytes)),
+        ),
+      )
       // Repoint the block: drop the original now that the annotated copy
       // exists. If this fails the worst case is two copies on the block —
       // never data loss — so we still report success for the new copy.
       try {
-        await deleteAttachment(attachmentId)
+        unwrap(await commands.deleteAttachment(attachmentId))
       } catch (delErr) {
         logger.warn(
           'PdfViewerDialog',

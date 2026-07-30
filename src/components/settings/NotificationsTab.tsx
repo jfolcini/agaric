@@ -32,9 +32,11 @@ import { Label } from '@/components/ui/label'
 import { Spinner } from '@/components/ui/spinner'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { useLocalStoragePreference } from '@/hooks/useLocalStoragePreference'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { ensureNotificationPermission, notifyTask } from '@/lib/tauri'
+import { ensureNotificationPermission } from '@/lib/tauri'
 
 const ENABLED_KEY = 'agaric-notifications-enabled'
 
@@ -71,10 +73,12 @@ export function NotificationsTab(): React.ReactElement {
         notify.error(t('notifications.permissionDenied'))
         return
       }
-      await notifyTask({
-        title: t('notifications.testTitle'),
-        body: t('notifications.testBody'),
-      })
+      unwrap(
+        await commands.notifyTask({
+          title: t('notifications.testTitle'),
+          body: t('notifications.testBody'),
+        }),
+      )
       notify.success(t('notifications.testSent'))
     } catch (err) {
       logger.warn('NotificationsTab', 'test notification failed', undefined, err)

@@ -32,17 +32,12 @@ import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { PeerRefRow } from '@/lib/tauri'
-import {
-  cancelPairing,
-  confirmPairing,
-  deletePeerRef,
-  listPeerRefs,
-  startPairing,
-} from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
 
 interface PairingDialogProps {
@@ -117,7 +112,11 @@ export function PairingDialog({
     void,
     [{ passphrase: string; qr_svg: string }, PeerRefRow[]]
   >({
-    call: () => Promise.all([startPairing(), listPeerRefs()]),
+    call: () =>
+      Promise.all([
+        commands.startPairing().then((r) => unwrap(r)),
+        commands.listPeerRefs().then((r) => unwrap(r)),
+      ]),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to initialize pairing',
     onSuccess: ([info, peerList]) => {
@@ -150,7 +149,10 @@ export function PairingDialog({
   // shape (handleCancel uses a different logger.error-only flavor that
   // stays inline because it has no toast).
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
-    call: () => cancelPairing(),
+    call: () =>
+      commands.cancelPairing().then((r) => {
+        unwrap(r)
+      }),
     module: 'PairingDialog',
     errorLogMessage: 'cancelPairing on close/unmount failed',
     logLevel: 'warn',
@@ -306,10 +308,10 @@ export function PairingDialog({
   const { execute: executePair } = useIpcCommand<{ passphrase: string }, void>({
     call: async ({ passphrase }) => {
       // remoteDeviceId is derived from the passphrase in the pairing protocol
-      await confirmPairing(passphrase, '')
+      unwrap(await commands.confirmPairing(passphrase, ''))
       syncSetState('idle')
       // Refresh peer list
-      const peerList = await listPeerRefs()
+      const peerList = unwrap(await commands.listPeerRefs())
       setPeers(peerList)
       // #1076: a freshly paired device must show up in the sidebar dot /
       // StatusPanel immediately, not only after the next sync cycle.
@@ -384,9 +386,10 @@ export function PairingDialog({
 
   const handleCancel = useCallback(() => {
     // Cancel any in-progress pairing session
-    cancelPairing().catch((err) =>
-      logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err),
-    )
+    commands
+      .cancelPairing()
+      .then((r) => unwrap(r))
+      .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setError(null)
@@ -403,7 +406,10 @@ export function PairingDialog({
   // Unpair a peer device. Same template-literal error format
   // as `handlePair` / `init` so the existing inline banner is preserved.
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
-    call: ({ peerId }) => deletePeerRef(peerId),
+    call: ({ peerId }) =>
+      commands.deletePeerRef(peerId).then((r) => {
+        unwrap(r)
+      }),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to unpair device',
     onSuccess: (_result, { peerId }) => {

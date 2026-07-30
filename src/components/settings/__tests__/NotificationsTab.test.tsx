@@ -21,11 +21,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
-import { ensureNotificationPermission, notifyTask } from '@/lib/tauri'
+import { ensureNotificationPermission } from '@/lib/tauri'
 
 vi.mock('@/lib/tauri', () => ({
   ensureNotificationPermission: vi.fn(),
-  notifyTask: vi.fn(),
+}))
+
+const mockNotifyTask = vi.fn()
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    notifyTask: (...args: unknown[]) => mockNotifyTask(...args),
+  },
 }))
 
 vi.mock('sonner', () => ({
@@ -37,15 +43,18 @@ vi.mock('sonner', () => ({
   },
 }))
 
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T,>(data: T) => ({ status: 'ok' as const, data })
+
 const mockEnsure = vi.mocked(ensureNotificationPermission)
-const mockNotify = vi.mocked(notifyTask)
+const mockNotify = mockNotifyTask
 const ENABLED_KEY = 'agaric-notifications-enabled'
 
 beforeEach(() => {
   vi.clearAllMocks()
   localStorage.clear()
   mockEnsure.mockResolvedValue(true)
-  mockNotify.mockResolvedValue(undefined)
+  mockNotify.mockResolvedValue(ok(null))
 })
 
 afterEach(() => {

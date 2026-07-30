@@ -11,20 +11,23 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@/lib/tauri', () => ({
-  cancelSync: vi.fn(),
+const mockCancelSync = vi.fn()
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    cancelSync: (...args: unknown[]) => mockCancelSync(...args),
+  },
 }))
 
-import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
-import { cancelSync } from '@/lib/tauri'
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T>(data: T) => ({ status: 'ok' as const, data })
 
-const mockCancelSync = vi.mocked(cancelSync)
+import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 
 describe('useSyncWithTimeout', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.clearAllMocks()
-    mockCancelSync.mockResolvedValue(undefined)
+    mockCancelSync.mockResolvedValue(ok(null))
   })
 
   afterEach(() => {

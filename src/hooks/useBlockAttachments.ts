@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { useBatchAttachments, useBatchAttachmentsLoading } from '@/hooks/useBatchAttachments'
+import { unwrap } from '@/lib/app-error'
+import type { AttachmentRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import type { AttachmentRow } from '@/lib/tauri'
-import { addAttachment, deleteAttachment, listAttachments, renameAttachment } from '@/lib/tauri'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
@@ -65,7 +66,9 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
       return
     }
     setLoading(true)
-    listAttachments(blockId)
+    commands
+      .listAttachments(blockId)
+      .then((result) => unwrap(result))
       .then(setAttachments)
       .catch((err) => {
         logger.warn('useBlockAttachments', 'list attachments failed', { blockId }, err)
@@ -78,7 +81,9 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     async (filename: string, mimeType: string, sizeBytes: number, fsPath: string) => {
       if (!blockId) return
       try {
-        const row = await addAttachment({ blockId, filename, mimeType, sizeBytes, fsPath })
+        const row = unwrap(
+          await commands.addAttachment(blockId, filename, mimeType, sizeBytes, fsPath),
+        )
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => [...prev, row])
@@ -97,7 +102,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     async (attachmentId: string) => {
       if (!blockId) return
       try {
-        await deleteAttachment(attachmentId)
+        unwrap(await commands.deleteAttachment(attachmentId))
         const { rootParentId } = pageStore.getState()
         if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
         setAttachments((prev) => prev.filter((a) => a.id !== attachmentId))
@@ -120,7 +125,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     async (attachmentId: string, newFilename: string) => {
       if (!blockId) return
       try {
-        await renameAttachment({ attachmentId, newFilename })
+        unwrap(await commands.renameAttachment(attachmentId, newFilename))
         setAttachments((prev) =>
           prev.map((a) => (a.id === attachmentId ? { ...a, filename: newFilename } : a)),
         )
