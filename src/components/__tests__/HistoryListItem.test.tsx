@@ -41,6 +41,7 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import type { BlockHistoryItemProps, HistoryListItemProps } from '@/components/HistoryListItem'
 import { BlockHistoryItem, HistoryListItem, opIcon } from '@/components/HistoryListItem'
 
@@ -796,6 +797,19 @@ describe('HistoryListItem', () => {
 //   - In-panel Restore is dialog-free; the parent's toast-with-Undo
 //     is the safety net.
 describe('BlockHistoryItem', () => {
+  // #3225 — an expanded panel defaults to the "Compared to current" diff
+  // mode, which fires `compute_block_vs_current_diff` on mount. Every
+  // `isExpanded: true` case below therefore issues that IPC; it used to
+  // fall through to a mock resolving `undefined`, which `unwrap` reports as
+  // a SUCCESSFUL diff of no spans. Stub it here with an empty span list so
+  // the default is stated rather than inferred; the cases that assert on
+  // diff content install their own implementation, which replaces this one.
+  beforeEach(() => {
+    vi.mocked(invoke).mockImplementation(
+      mockInvokeCommands({ compute_block_vs_current_diff: () => [] }),
+    )
+  })
+
   function makeBlockEntry(
     seq: number,
     opType: string,

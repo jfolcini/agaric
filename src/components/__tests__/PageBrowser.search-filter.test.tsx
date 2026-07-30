@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makePage } from '@/__tests__/fixtures'
+import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -90,7 +91,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -334,7 +335,7 @@ describe('PageBrowser', () => {
           }
           return Promise.resolve(null)
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -534,7 +535,7 @@ describe('PageBrowser', () => {
             total_count: items.length,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -591,7 +592,7 @@ describe('PageBrowser', () => {
             total_count: items.length,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const { container } = render(<PageBrowser />)
@@ -637,7 +638,7 @@ describe('PageBrowser', () => {
             total_count: items.length,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)

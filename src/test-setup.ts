@@ -1,15 +1,55 @@
 import { cleanup, configure } from '@testing-library/react'
 import type * as React from 'react'
-import { afterEach, expect, vi } from 'vitest'
+import { afterEach, beforeEach, expect, vi } from 'vitest'
 import '@testing-library/jest-dom/vitest'
 import 'vitest-axe/extend-expect'
 import * as matchers from 'vitest-axe/matchers'
 
+import { takeUnstubbedInvokes } from '@/__tests__/helpers/invoke'
 import '@/lib/i18n'
 import { setLogLevel } from '@/lib/logger'
 import { queryClient } from '@/lib/query-client'
 
 expect.extend(matchers)
+
+// #3225 — fail the test if it called a Tauri command nobody stubbed.
+//
+// The strict base implementation of the `invoke` mock (installed further
+// down) already rejects, but a rejection alone is not reliably loud: plenty
+// of call sites are fire-and-forget, or `.catch` into a logger/toast/error
+// boundary, so the test would still pass while exercising a path nobody
+// modelled. Recording the command and asserting here makes it fail by name.
+//
+// REGISTRATION ORDER IS LOAD-BEARING, and this block must stay the FIRST
+// `afterEach` registered in this file. Vitest's default `sequence.hooks:
+// 'stack'` runs a suite's `afterEach` hooks in REVERSE registration order,
+// and a hook that THROWS aborts the rest of the chain — every hook that
+// would have run after it is skipped. Registering first therefore means
+// running last, which is the only position from which this throw cannot
+// pre-empt another teardown: not RTL `cleanup()` (a skipped `cleanup()`
+// leaks the rendered tree into the next test), not the query-cache clear,
+// and not the Radix accessible-description guard below — that one captures
+// warnings in a module-level array it drains inside its own hook, so
+// skipping it would blame the *next* test for the previous test's warning.
+// (Its `beforeEach` drain below closes that hole from the other side too.)
+beforeEach(() => {
+  // Drop anything recorded outside a test body (module-scope work at import
+  // time) so it isn't blamed on the first test to run.
+  takeUnstubbedInvokes()
+})
+afterEach(() => {
+  const unstubbed = takeUnstubbedInvokes()
+  if (unstubbed.length > 0) {
+    throw new Error(
+      `This test called ${unstubbed.length === 1 ? 'a Tauri command' : 'Tauri commands'} ` +
+        `with no mock registered: ${unstubbed.map((c) => `"${c}"`).join(', ')}.\n` +
+        'An unstubbed command used to resolve `undefined`, which `unwrap()` reports ' +
+        'as SUCCESS (#3225) — so the test was exercising an unmodelled path. Stub each ' +
+        'command explicitly; use `mockInvokeCommands` (src/__tests__/helpers/invoke.ts) ' +
+        'to key stubs on the command name instead of call position.',
+    )
+  }
+})
 
 // Quiet the app logger in tests. It defaults to `debug` under
 // `import.meta.env.DEV` (which vitest sets), so every `logger.debug`/`info`
@@ -37,6 +77,14 @@ console.warn = (...args: unknown[]): void => {
   if (RADIX_MISSING_DESCRIPTION.test(message)) capturedDialogA11yWarnings.push(message)
   originalConsoleWarn(...args)
 }
+// #3225 — drain before each test as well as after. This hook is not the last
+// `afterEach` to run (see the strict-IPC block above: a throwing hook aborts
+// the rest of the chain), so a test that fails elsewhere in teardown can skip
+// the drain below and leave a warning behind. Clearing on entry means such a
+// leftover can never be attributed to the following test.
+beforeEach(() => {
+  capturedDialogA11yWarnings.length = 0
+})
 afterEach(() => {
   if (capturedDialogA11yWarnings.length > 0) {
     const messages = [...new Set(capturedDialogA11yWarnings)].join('\n')
@@ -257,8 +305,23 @@ class MockChannel<T> {
     if (this.onmessage) this.onmessage(msg)
   }
 }
-vi.mock('@tauri-apps/api/core', () => ({
-  invoke: vi.fn(),
+//
+// #3225 — the mock's BASE implementation is deliberately strict: a command
+// no test stubbed rejects (and is recorded, see the `afterEach` above) rather
+// than resolving `undefined`. `typedError` in the generated bindings turns any
+// resolved value into `{ status: 'ok', data }`, so the old `vi.fn()` default
+// made a missing mock read as "the command succeeded with no payload" — the
+// quietest possible failure, and the mechanism behind #3217's silent
+// behaviour inversion. Stubbing (`mockResolvedValue`, `mockResolvedValueOnce`,
+// `mockImplementation`, `mockInvokeCommands`) replaces this base
+// implementation, so a command that legitimately returns nothing still works
+// once it is stubbed explicitly.
+//
+// The factory is async so it can `await import` the helper: `vi.mock` calls
+// are hoisted above the file's imports, and a lazily-awaited import inside
+// the factory is the supported way to reach module code from one.
+vi.mock('@tauri-apps/api/core', async () => ({
+  invoke: vi.fn((await import('@/__tests__/helpers/invoke')).strictInvokeFallback),
   Channel: MockChannel,
   // #716: `useAndroidBackButton` imports `addPluginListener` (Android
   // back-button plugin event). The hook never calls it under tests (the

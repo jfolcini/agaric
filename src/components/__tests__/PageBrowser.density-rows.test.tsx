@@ -8,6 +8,7 @@ import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -88,7 +89,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -142,7 +143,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -168,7 +169,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const { container } = render(<PageBrowser />)
@@ -194,7 +195,7 @@ describe('PageBrowser', () => {
             total_count: 2,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const { container } = render(<PageBrowser />)
@@ -224,7 +225,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const first = render(<PageBrowser />)
@@ -274,7 +275,7 @@ describe('PageBrowser', () => {
             total_count: 3,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -311,7 +312,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -340,7 +341,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       // Seed a non-alphabetical default so we can observe the change
@@ -379,7 +380,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -445,7 +446,7 @@ describe('PageBrowser', () => {
             total_count: 2,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -476,7 +477,7 @@ describe('PageBrowser', () => {
             total_count: 2,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const user = userEvent.setup()

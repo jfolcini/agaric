@@ -6,6 +6,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { _resetPrefetchPageSubtreeForTest } from '@/lib/prefetch-page-subtree'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
@@ -321,17 +322,45 @@ describe('PageBlockStore', () => {
       it('resolves false when a createBelow fails mid-split', async () => {
         const block = makeBlock({ id: 'A', position: 0, content: 'original' })
         store.setState({ blocks: [block] })
-        mockedInvoke.mockResolvedValueOnce({
-          id: 'A',
-          block_type: 'text',
-          content: 'line1',
-          parent_id: null,
-          position: 0,
-          deleted_at: null,
-        })
-        mockedInvoke.mockRejectedValueOnce(new Error('create failed'))
+        // #3225 — keyed on the command, not on call position, because this
+        // path issues THREE IPCs, not two: the first-line `edit_block`, the
+        // failing `create_block`, and then the COMPENSATING `edit_block`
+        // that restores `previousContent` (the rollback the first-iteration
+        // branch above performs so the visible block doesn't keep only
+        // `plan.first`).
+        //
+        // The positional `…Once` pair covered only the first two, so the
+        // compensating write fell through to the old base implementation.
+        // Here that `undefined` did NOT read as a success: `edit()` returned
+        // falsy, which sent the reducer down its
+        // `if (!(await get().edit(blockId, previousContent))) await get().load()`
+        // reconcile branch (page-blocks-reducers.ts) and issued a FOURTH,
+        // equally unstubbed IPC — `load_page_subtree`. So the test passed
+        // while exercising the full-reload recovery path instead of the
+        // compensating write that production actually takes. Modelling both
+        // commands puts it back on the production path; the assertions below
+        // pin that distinction.
+        mockedInvoke.mockImplementation(
+          mockInvokeCommands({
+            edit_block: (args) => ({
+              id: 'A',
+              block_type: 'text',
+              content: args['toText'],
+              parent_id: null,
+              position: 0,
+              deleted_at: null,
+            }),
+            create_block: () => Promise.reject(new Error('create failed')),
+          }),
+        )
 
         await expect(store.getState().splitBlock('A', 'line1\nline2')).resolves.toBe(false)
+        // The compensating edit ran and restored the pre-split content, so
+        // the store never had to fall back to a full `load()`.
+        const editCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'edit_block')
+        expect(editCalls).toHaveLength(2)
+        expect(editCalls[1]?.[1]).toMatchObject({ toText: 'original' })
+        expect(mockedInvoke.mock.calls.some(([cmd]) => cmd === 'load_page_subtree')).toBe(false)
       })
 
       it('resolves false when the edit-only plan save fails', async () => {

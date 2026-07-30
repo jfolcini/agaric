@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -91,7 +92,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -135,13 +136,13 @@ describe('PageBrowser', () => {
               total_count: 50,
             })
           }
-          return Promise.resolve(undefined)
+          return pageRowInvokeFallback(cmd)
         })
         .mockImplementation((cmd: string) => {
           if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
           // Cursor page never resolves → hasMore stays true.
           if (cmd === 'list_pages_with_metadata') return new Promise(() => undefined)
-          return Promise.resolve(undefined)
+          return pageRowInvokeFallback(cmd)
         })
 
       const { container } = render(<PageBrowser />)
@@ -179,12 +180,12 @@ describe('PageBrowser', () => {
               total_count: 50,
             })
           }
-          return Promise.resolve(undefined)
+          return pageRowInvokeFallback(cmd)
         })
         .mockImplementation((cmd: string) => {
           if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
           if (cmd === 'list_pages_with_metadata') return new Promise(() => undefined)
-          return Promise.resolve(undefined)
+          return pageRowInvokeFallback(cmd)
         })
 
       const { container } = render(<PageBrowser />)
@@ -222,7 +223,7 @@ describe('PageBrowser', () => {
             total_count: hasStub ? 1 : 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -275,7 +276,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -320,7 +321,7 @@ describe('PageBrowser', () => {
             total_count: hasStub ? 1 : 2,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -358,7 +359,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -430,7 +431,7 @@ describe('PageBrowser', () => {
             message: 'cursor sort mismatch',
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)

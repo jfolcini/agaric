@@ -19,6 +19,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockProperties } from '@/components/block-tree/use-block-properties'
 import { announce } from '@/lib/announcer'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
@@ -858,8 +859,15 @@ describe('useBlockProperties #2922 rapid toggle race', () => {
     })
     mockedInvoke.mockImplementation((cmd: string, args: unknown) => {
       const blockId = (args as { blockId?: string } | undefined)?.blockId
-      if (cmd === 'set_todo_state' && blockId === 'BLOCK_1') return block1Ipc
-      return Promise.resolve(undefined)
+      if (cmd === 'set_todo_state') {
+        // BLOCK_1's write stays in flight; BLOCK_2's settles immediately —
+        // that contrast is the whole point of the test. BLOCK_2's arm used to
+        // be served by the silent `undefined` fallback (#3225), i.e. the
+        // "independent queue" half of the assertion rested on an unstubbed
+        // command reading as success.
+        return blockId === 'BLOCK_1' ? block1Ipc : Promise.resolve(undefined)
+      }
+      return strictInvokeFallback(cmd)
     })
 
     const { result } = renderHook(() => useBlockProperties(), { wrapper })

@@ -34,6 +34,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import {
   BatchAttachmentsProvider,
   useBatchAttachments,
@@ -421,7 +422,7 @@ describe('useBatchAttachments', () => {
             resolveB = res
           })
         }
-        return Promise.resolve(undefined)
+        return strictInvokeFallback(cmd)
       })
       rerender(
         <BatchAttachmentsProvider blockIds={['A', 'B']}>

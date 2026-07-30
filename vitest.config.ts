@@ -17,6 +17,17 @@ export default defineConfig({
     // raises only the ceiling for slow paths; fast tests are unaffected.
     testTimeout: 20000,
     hookTimeout: 20000,
+    // #3225 — pinned, not incidental. `'stack'` runs a suite's `afterEach`
+    // hooks in REVERSE registration order, and a hook that throws aborts the
+    // rest of the chain. `src/test-setup.ts` relies on that to keep its
+    // strict-IPC assertion registered FIRST (so it runs LAST) and therefore
+    // unable to pre-empt RTL `cleanup()`, the query-cache clear, or the Radix
+    // description guard. Under `'list'` the same hook would run FIRST and its
+    // throw would skip `cleanup()`, leaking the rendered tree into the next
+    // test and turning one honest failure into a cascade. This is vitest's
+    // default today; stating it means a future default change cannot silently
+    // invert the ordering that guard depends on.
+    sequence: { hooks: 'stack' },
     coverage: {
       provider: 'v8',
       // `json-summary` writes `coverage/coverage-summary.json` (aggregated

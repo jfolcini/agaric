@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -92,7 +93,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -140,7 +141,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -176,7 +177,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -210,7 +211,7 @@ describe('PageBrowser', () => {
             total_count: 3,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -239,7 +240,7 @@ describe('PageBrowser', () => {
             total_count: 3,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -279,7 +280,7 @@ describe('PageBrowser', () => {
             total_count: 10,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -313,8 +314,17 @@ describe('PageBrowser', () => {
             total_count: 2,
           })
         }
-        if (cmd === 'delete_block') return Promise.resolve(undefined)
-        return Promise.resolve(undefined)
+        // #3225 — this arm used to resolve `undefined`, which is
+        // indistinguishable from "no mock registered". Model the real
+        // `delete_block` response instead.
+        if (cmd === 'delete_block') {
+          return Promise.resolve({
+            block_id: 'P1',
+            deleted_at: '2025-01-15T00:00:00Z',
+            descendants_affected: 0,
+          })
+        }
+        return pageRowInvokeFallback(cmd)
       })
 
       const { container } = render(<PageBrowser />)
@@ -354,7 +364,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -408,7 +418,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -442,7 +452,7 @@ describe('PageBrowser', () => {
             total_count: 1,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       const { container } = render(<PageBrowser />)
