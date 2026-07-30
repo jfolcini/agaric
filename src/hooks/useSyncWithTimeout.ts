@@ -8,8 +8,9 @@
 
 import { useCallback, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { cancelSync } from '@/lib/tauri'
 
 export function useSyncWithTimeout(timeoutMs = 60_000) {
   const [loading, setLoading] = useState(false)
@@ -40,7 +41,7 @@ export function useSyncWithTimeout(timeoutMs = 60_000) {
           // failing cancelSync() (backend down / IPC error — the same
           // conditions that cause the timeout) would otherwise replace `err`.
           try {
-            await cancelSync()
+            unwrap(await commands.cancelSync())
           } catch (cancelErr) {
             logger.warn(
               'useSyncWithTimeout',

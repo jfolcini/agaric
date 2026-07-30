@@ -33,10 +33,15 @@ const mockedUseIsMobile = vi.mocked(useIsMobile)
 // Mock the attachment IPC so the save path can be asserted without a backend.
 const mockAddAttachmentWithBytes = vi.fn()
 const mockDeleteAttachment = vi.fn()
-vi.mock('@/lib/tauri', () => ({
-  addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
-  deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    addAttachmentWithBytes: (...args: unknown[]) => mockAddAttachmentWithBytes(...args),
+    deleteAttachment: (...args: unknown[]) => mockDeleteAttachment(...args),
+  },
 }))
+
+/** Wrap a value in the `Result`-shaped IPC envelope `commands.*` returns. */
+const ok = <T,>(data: T) => ({ status: 'ok' as const, data })
 
 const mockNotify = {
   loading: vi.fn(() => 'toast-id'),
@@ -115,8 +120,8 @@ beforeEach(() => {
     destroy: vi.fn(),
   })
   mockSaveDocument.mockResolvedValue(new Uint8Array([1, 2, 3]).buffer)
-  mockAddAttachmentWithBytes.mockResolvedValue({ id: 'new-att-id' })
-  mockDeleteAttachment.mockResolvedValue(undefined)
+  mockAddAttachmentWithBytes.mockResolvedValue(ok({ id: 'new-att-id' }))
+  mockDeleteAttachment.mockResolvedValue(ok(null))
   mockNotify.loading.mockReturnValue('toast-id')
   mockedUseIsMobile.mockReturnValue(false)
 })
@@ -322,11 +327,10 @@ describe('PdfViewerDialog', () => {
         expect(mockSaveDocument).toHaveBeenCalled()
       })
       expect(mockAddAttachmentWithBytes).toHaveBeenCalledWith(
-        expect.objectContaining({
-          blockId: 'block-1',
-          filename: 'report (annotated).pdf',
-          mimeType: 'application/pdf',
-        }),
+        'block-1',
+        'report (annotated).pdf',
+        'application/pdf',
+        expect.any(Array),
       )
       expect(mockDeleteAttachment).toHaveBeenCalledWith('att-1')
       await waitFor(() => {

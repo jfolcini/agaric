@@ -29,14 +29,16 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMdnsStatus } from '@/hooks/useMdnsStatus'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
+import { unwrap } from '@/lib/app-error'
+import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { truncateId } from '@/lib/format'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { reportIpcError } from '@/lib/report-ipc-error'
-import type { PeerRefRow } from '@/lib/tauri'
-import { deletePeerRef, getDeviceId, listPeerRefs, startSync, updatePeerName } from '@/lib/tauri'
+import { startSync } from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
 
 /**
@@ -109,7 +111,11 @@ export function DeviceManagement(): React.ReactElement {
   // useIpcCommand hook. Inline error display via `setError` (no toast —
   // matches existing behavior).
   const { execute: executeLoadData } = useIpcCommand<void, [string, PeerRefRow[]]>({
-    call: () => Promise.all([getDeviceId(), listPeerRefs()]),
+    call: () =>
+      Promise.all([
+        commands.getDeviceId().then((r) => unwrap(r)),
+        commands.listPeerRefs().then((r) => unwrap(r)),
+      ]),
     module: 'DeviceManagement',
     errorLogMessage: 'Failed to load device info',
     onSuccess: ([id, peerList]) => {
@@ -144,7 +150,10 @@ export function DeviceManagement(): React.ReactElement {
   // out of the local list and closes the confirm dialog; on error we
   // surface an inline error banner (no toast — matches existing flow).
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
-    call: ({ peerId }) => deletePeerRef(peerId),
+    call: ({ peerId }) =>
+      commands.deletePeerRef(peerId).then((r) => {
+        unwrap(r)
+      }),
     module: 'DeviceManagement',
     errorLogMessage: 'Failed to unpair device',
     onSuccess: (_result, { peerId }) => {
@@ -226,7 +235,7 @@ export function DeviceManagement(): React.ReactElement {
       if (!renamePeerId) return
       setRenamingPeerId(renamePeerId)
       try {
-        await updatePeerName(renamePeerId, name || null)
+        unwrap(await commands.updatePeerName(renamePeerId, name || null))
         await loadData()
       } catch (e) {
         setError(formatErrorForDisplay(e, { fallback: t('device.renameFailed') }))

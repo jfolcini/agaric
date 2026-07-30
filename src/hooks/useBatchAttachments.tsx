@@ -23,7 +23,7 @@
  * membership changes on almost every scroll settle even though ~90% of the
  * ids were already resolved a moment earlier. A persistent `cacheRef` (keyed
  * by block id, never cleared on window membership changes — only on
- * `invalidate()`) lets the fetch effect issue `getBatchAttachments` for only
+ * `invalidate()`) lets the fetch effect issue `commands.listAttachmentsBatch` for only
  * the ids NOT already cached. A block that scrolls out of the window and
  * back in is served from the cache with no refetch; a block scrolled out
  * permanently just isn't part of the next id set — its cache entry lingers
@@ -45,9 +45,10 @@
 import type { ReactElement, ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import type { AttachmentRow } from '@/lib/bindings'
+import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import type { AttachmentRow } from '@/lib/tauri'
-import { getBatchAttachments } from '@/lib/tauri'
 
 interface BatchAttachmentsValue {
   /**
@@ -210,7 +211,9 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
 
     let stale = false
     setLoading(true)
-    getBatchAttachments(idsToFetch)
+    commands
+      .listAttachmentsBatch(idsToFetch)
+      .then((result) => unwrap(result))
       .then((record) => {
         if (stale) return
         const { map, changed } = mergeFetchedIntoCache(cacheRef.current, idsToFetch, record)

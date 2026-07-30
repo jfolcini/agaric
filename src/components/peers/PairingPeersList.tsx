@@ -16,8 +16,8 @@ import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
+import type { PeerRef as PeerRefRow } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
-import type { PeerRefRow } from '@/lib/tauri'
 
 export interface PairingPeersListProps {
   peers: PeerRefRow[]

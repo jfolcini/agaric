@@ -17,9 +17,9 @@ import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { MimeIcon } from '@/components/rendering/MimeIcon'
 import { useBlockAttachments } from '@/hooks/useBlockAttachments'
 import { formatSize } from '@/lib/attachment-utils'
+import type { AttachmentRow } from '@/lib/bindings'
 import { formatRelativeTime } from '@/lib/format-relative-time'
 import { notify } from '@/lib/notify'
-import type { AttachmentRow } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 
 // Re-exported for back-compat with tests / consumers that imported it from here.
