@@ -228,6 +228,41 @@ describe('globToRegExp', () => {
     expect(re.test('x')).toBe(false)
   })
 
+  // #3142 — the leading `^` must be *consumed* as the negation marker, not
+  // merely left in place to double as JS's own negation character. The two are
+  // byte-identical for `[^abc]`, but they diverge the moment the very next
+  // character is `]`: only a consumed `^` lets the `]` be recognised as the
+  // literal first member of the class (SQLite `patternCompare` reads `^` then
+  // a leading `]` in exactly that order).
+  it('negates a class whose first literal member is ] (leading ^ is consumed)', () => {
+    const re = globToRegExp('[^]]')
+    // Class is `] only`, negated: any single character other than `]`.
+    expect(re.test('a')).toBe(true)
+    expect(re.test('^')).toBe(true)
+    expect(re.test(']')).toBe(false)
+    // A `^` left unconsumed would close the class early, leaving a trailing
+    // literal `]` that demands a second character.
+    expect(re.test('a]')).toBe(false)
+  })
+
+  it('keeps ] as a literal member after ^ when other members follow', () => {
+    const re = globToRegExp('[^]a]')
+    expect(re.test('b')).toBe(true)
+    expect(re.test(']')).toBe(false)
+    expect(re.test('a')).toBe(false)
+    expect(re.test('ba]')).toBe(false)
+  })
+
+  it('treats [^] as an unterminated class, so the [ stays literal', () => {
+    // The `]` is the class's first literal member, so nothing closes the
+    // class: `compileCharClass` bails and `[` falls through as a literal.
+    const re = globToRegExp('a[^]')
+    expect(re.test('a[^]')).toBe(true)
+    // Not "a followed by any one character".
+    expect(re.test('ab')).toBe(false)
+    expect(re.test('a]')).toBe(false)
+  })
+
   it('preserves a literal backslash inside a character class', () => {
     const re = globToRegExp('[a\\b]')
     expect(re.test('a')).toBe(true)
