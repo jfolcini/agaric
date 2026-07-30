@@ -147,9 +147,11 @@ pub async fn count_agenda_batch_by_source_inner(
 /// Compute projected future agenda entries for repeating tasks.
 ///
 /// First tries the `projected_agenda_cache` table (populated by the background
-/// materializer). If the cache is empty AND no `cursor` was supplied (i.e.
-/// this is the first page of a fresh request), falls back to the original
-/// on-the-fly computation for first-run or pre-cache scenarios.
+/// materializer). If the cache cannot answer the range — no rebuild has run,
+/// or the range reaches outside the span the last rebuild guarantees complete
+/// — falls back to the original on-the-fly computation. Inside that guaranteed
+/// span the cache is authoritative, so an empty result is returned as an empty
+/// page rather than triggering a full recurrence expansion (#3160).
 ///
 /// Returns a [`PageResponse`] of at most `limit` entries (default 200,
 /// max 500). When more pages remain, `next_cursor` is populated and
@@ -257,15 +259,57 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
     //
     // `horizon_date` and `end_date` are both zero-padded `YYYY-MM-DD`, so the
     // lexical string comparison is a valid calendar-date comparison.
-    // dynamic-sql: reads projected_agenda_horizon (table added this PR, migration 0102), dynamic so the crate builds without it in the .sqlx cache
-    let horizon_date: Option<String> = sqlx::query_scalar::<_, String>(
-        "SELECT horizon_date FROM projected_agenda_horizon WHERE id = 0",
-    )
-    .fetch_optional(pool)
-    .await?;
+    // dynamic-sql: reads projected_agenda_horizon (table added this PR, migration 0102; rebuild_today column added by migration 0105), dynamic so the crate builds without it in the .sqlx cache
+    let horizon_row: Option<(String, Option<String>)> =
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT horizon_date, rebuild_today FROM projected_agenda_horizon WHERE id = 0",
+        )
+        .fetch_optional(pool)
+        .await?;
+    let horizon_date = horizon_row.as_ref().map(|(h, _)| h.clone());
     let cache_covers_range = horizon_date
         .as_deref()
         .is_some_and(|h| end_date.as_str() <= h);
+
+    // #3160 — the *lower* end of the same guarantee, plus its freshness.
+    //
+    // Lower end: the rebuild projects with `range_start = today`
+    // (`cache::projected_agenda::project_block_into`), so occurrences BEFORE
+    // the rebuild's reference date are never materialized. The
+    // guaranteed-complete span is the closed interval
+    // `[rebuild_today, horizon_date]`, and `rebuild_today` is read straight
+    // off the row the rebuild wrote (migration 0105) — NOT derived as
+    // `horizon_date - HORIZON_DAYS`, which would decode stale rows to the
+    // wrong date the moment that constant is retuned, with nothing
+    // invalidating the row on upgrade.
+    //
+    // Freshness: `rebuild_today` must still BE today. Default-mode rules
+    // (`daily` / `+1w` / `monthly` / …) project from the block's own base
+    // date and so do not move as the day advances, but `.+` rules are
+    // anchored to the reference date by definition — a cache rebuilt
+    // yesterday holds a `.+1w` occurrence at `yesterday + 7`, where the
+    // projector run today would place it at `today + 7`. Trusting a
+    // stale-by-a-day cache to prove "this window is genuinely empty" would
+    // therefore hide such a task on the day it is actually due. A rebuild is
+    // enqueued at boot, on every date/repeat/todo property mutation, and by
+    // the `projected_agenda_midnight` maintenance job, so this holds for the
+    // ordinary read; when it does not, the empty-window read falls through to
+    // the projector exactly as it did before this change. (That job fires on
+    // the UTC day boundary while the rebuild anchors on the LOCAL date, so
+    // west-of-UTC installs left running overnight sit on a stale reference
+    // date — and therefore on the pre-#3160 cost — until the next UTC
+    // rollover. Aligning the job to the local day is tracked separately; it
+    // is a latency question, not a correctness one, because of this check.)
+    //
+    // A row written by a pre-0105 binary has `rebuild_today = NULL` and is
+    // likewise treated as unproven until the next rebuild fills it in.
+    let rebuild_today = horizon_row
+        .as_ref()
+        .and_then(|(_, t)| t.as_deref())
+        .and_then(|t| chrono::NaiveDate::parse_from_str(t, "%Y-%m-%d").ok());
+    let cache_complete_for_range =
+        cache_covers_range && rebuild_today == Some(today) && range_start >= today;
+
     if !cache_covers_range {
         return list_projected_agenda_on_the_fly(
             pool,
@@ -349,7 +393,42 @@ pub(crate) async fn list_projected_agenda_inner_with_today(
     // Once any cursor has been issued, the materializer must be honoured —
     // an empty cache result with a cursor means the caller paged past the
     // last entry, NOT that the cache is unpopulated.
-    if cached.is_empty() && after.is_none() {
+    //
+    // #3160 — …and only when the cache is NOT known to be complete for this
+    // range. This probe answers "is the cache unpopulated?", and it answers
+    // it by proxy: *this window* came back empty. That proxy is wrong for
+    // the very common case of a populated cache whose window genuinely holds
+    // no occurrences — a repeating task due next month projects nothing into
+    // this week — and the price of being wrong is the whole point of the
+    // cache: an O(repeating blocks × horizon) recurrence expansion over the
+    // entire vault, run to produce an empty page. At the 100K tier that
+    // measured 217 ms against a 200 ms SLO (#3160), and it was the *only*
+    // thing the SLO probe was measuring.
+    //
+    // Since #2601 there is a direct signal, so the proxy is no longer
+    // needed: `cache_complete_for_range` means a rebuild has run (the
+    // horizon row exists) and this range lies inside the span that rebuild
+    // guarantees complete. An empty result over a complete range is a true
+    // empty, and the projector — which is exhaustive over the same range —
+    // would return exactly the same empty page, just slowly.
+    //
+    // The cold-cache case the probe was written for is untouched: a device
+    // that has never rebuilt has no horizon row, so `cache_covers_range` is
+    // false and the guard above already routed it to the projector. The same
+    // holds for the one path that empties the cache outside a rebuild — a
+    // snapshot RESET, whose `CACHE_TABLES` wipe includes
+    // `projected_agenda_horizon` precisely so that the advertised span can
+    // never outlive the rows backing it (#2601's atomicity invariant, which
+    // this branch now depends on for correctness and not merely for speed).
+    //
+    // Freshness: a repeating block created since the last rebuild is not in
+    // the cache, so it is not in this page. That is the same staleness every
+    // materializer-backed read carries (the mutation enqueues
+    // `RebuildProjectedAgendaCache` on the same drain), and the old shape did
+    // not actually avoid it — it surfaced such a block only when no OTHER
+    // block projected into the window, which is inconsistent rather than
+    // fresh.
+    if cached.is_empty() && after.is_none() && !cache_complete_for_range {
         return list_projected_agenda_on_the_fly(
             pool,
             range_start,

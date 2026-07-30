@@ -277,16 +277,31 @@ async fn seed_agenda_blocks(pool: &SqlitePool, n: usize) {
 /// Seed `n` repeating-task blocks. Mirrors
 /// `agenda_bench.rs::seed_repeating_blocks`.
 async fn seed_repeating_blocks(pool: &SqlitePool, n: usize) {
-    // Anchor base dates around the device `today` so that the projected-agenda
-    // cache rebuild (which projects forward from `today`) actually materializes
-    // occurrences inside the near-term query window the bench measures — the
-    // warm-cache index-scan path (#2601). Dates spread across the next 30 days
-    // so a 7-day query window still selects a realistic slice.
+    // Anchor base dates in the PAST so the projected-agenda cache rebuild
+    // actually materializes occurrences inside the near-term query window the
+    // bench measures — the warm-cache index-scan path (#2601).
+    //
+    // #3160: this seeder previously spread base dates over the next 30 days,
+    // which materialized NOTHING inside the measured `[today, today+6]` window
+    // and so measured the exact opposite of what the bench documents.
+    // `project_block_into` projects the occurrences AFTER the base date (the
+    // base occurrence itself is the block's own `due_date`, served by
+    // `agenda_cache`, not by the projection), so a weekly rule based at
+    // `today + k` first projects at `today + k + 7` — past the end of a 7-day
+    // window for every k ≥ 0. The fixture reported 9.1M cache rows and 0 of
+    // them in range, so every iteration hit the empty-cache fallback and
+    // measured the O(vault) on-the-fly projector (217 ms at 100K locally)
+    // instead of the cache read.
+    //
+    // Basing at `today - (i % 30 + 1)` puts each block's first projected
+    // occurrence inside `[today, today+6]` and spreads the 30 offsets evenly
+    // over the 7 days of the window, which is what a real vault of
+    // long-running weekly tasks looks like.
     let base_date = chrono::Local::now().date_naive();
     let mut tx = pool.begin().await.unwrap();
     for i in 0..n {
         let id = format!("RPT{i:021}");
-        let date = base_date + chrono::Duration::days((i % 30) as i64);
+        let date = base_date - chrono::Duration::days((i % 30) as i64 + 1);
         let date_str = date.format("%Y-%m-%d").to_string();
         sqlx::query(
             "INSERT INTO blocks (id, block_type, content, position, due_date, todo_state) \
@@ -1532,13 +1547,28 @@ fn bench_list_page_links(c: &mut Criterion) {
 ///
 /// **#2601.** Production keeps the cache warm via the materializer, so the
 /// real interactive read is a bounded index scan over the near-term window —
-/// NOT recurrence expansion. This bench now measures that path: it rebuilds
+/// NOT recurrence expansion. This bench measures that path: it rebuilds
 /// the cache once (expansion happens here, off the interactive path), then
 /// times a 7-day query anchored at `today` that sits inside the guaranteed
 /// materialization horizon, so it is served purely from the cache. Because
 /// the read is O(window) rather than O(repeating_blocks × horizon), it clears
 /// the budget with margin at every fixture size — hence the graduation to the
 /// green tier (hard `assert_under_budget`, ungated).
+///
+/// **#3160.** …except it did not, until this issue. The fixture seeded base
+/// dates in the FUTURE, and a base-anchored rule projects only the
+/// occurrences AFTER its base, so the 9.1M-row cache held 0 rows inside the
+/// measured window. Every iteration fell through the empty-cache probe to the
+/// on-the-fly projector, and the "O(window) cache read" was in fact the
+/// O(vault) expansion — hence a measurement that scaled perfectly linearly
+/// with fixture size (0.20 / 1.68 / 12.99 / 133.75 ms) and sat over budget on
+/// CI runners. Two things changed: `seed_repeating_blocks` now bases in the
+/// past so the window really is served from the cache, and
+/// `list_projected_agenda_inner` no longer answers an empty-but-complete
+/// window with a full expansion. The remaining cost is the cache read itself,
+/// which migration 0104's `(projected_date, block_id, source)` index turns
+/// from a sort of every row sharing the window's first date into an
+/// index-ordered scan of one page.
 ///
 /// The recurrence grammar itself (sticky monthly clamp, `.+`/`++`
 /// today-anchored catch-up, 10K safety bound) is still stateful Rust and thus
@@ -1567,6 +1597,35 @@ fn bench_list_projected_agenda(c: &mut Criterion) {
         // path — so the timed loop below is a pure index scan.
         rt.block_on(async {
             rebuild_projected_agenda_cache(&pool).await.unwrap();
+        });
+
+        // #3160 — assert the fixture actually feeds the path under test.
+        // This bench used to measure an empty window: the cache held 9.1M
+        // rows and not one of them was in range, so the timed call was really
+        // the on-the-fly fallback returning nothing. A read that returns no
+        // rows is fast for the wrong reason, and neither the budget assertion
+        // nor the `--test` smoke gate could tell. Each seeded block projects
+        // exactly one occurrence into the 7-day window, so the page must hold
+        // `min(size, limit)` rows — which pins the fixture to the warm-cache
+        // read this bench claims to measure.
+        rt.block_on(async {
+            let page = list_projected_agenda_inner(
+                &pool,
+                start_str.clone(),
+                end_str.clone(),
+                None,
+                Some(200),
+                &SpaceScope::Global,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                page.items.len(),
+                size.min(200),
+                "list_projected_agenda @ {size}: fixture must fill the page from \
+                 projected_agenda_cache — an empty/short window measures the \
+                 wrong path (#3160)"
+            );
         });
 
         let mut group = c.benchmark_group("interactive_slo");

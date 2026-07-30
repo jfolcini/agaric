@@ -5366,6 +5366,58 @@ async fn apply_snapshot_rebuilds_page_link_cache_617() {
 }
 
 // ===========================================================================
+// #3160 — RESET must clear the projected-agenda horizon with its rows
+// ===========================================================================
+
+/// #3160 regression: `apply_snapshot` wipes `projected_agenda_cache` but the
+/// horizon row that advertises what that cache covers was NOT in
+/// `CACHE_TABLES`, so it survived the RESET.
+///
+/// That row is not a second cache — it is the claim "every occurrence in
+/// `[rebuild_today, horizon_date]` is materialized", written in the rebuild's
+/// own transaction precisely so a reader can never see a span wider than the
+/// rows backing it (#2601). Left behind over an emptied table it becomes a
+/// false claim, and since #3160 `list_projected_agenda_inner` acts on it: it
+/// reads the (now empty) window, sees the span covering it, and returns a
+/// blank agenda instead of falling back to the projector — for the whole
+/// asynchronous gap between the RESET commit and the rebuild enqueued after
+/// it.
+///
+/// Pre-fix the row survives with its stale dates and this assertion fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_snapshot_clears_projected_agenda_horizon_3160() {
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+
+    // A horizon row from the pre-RESET vault, claiming a span that the RESET
+    // is about to empty out from under it.
+    sqlx::query(
+        "INSERT INTO projected_agenda_horizon (id, horizon_date, rebuild_today) \
+         VALUES (0, '2050-07-05', '2050-04-06')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let encoded = encode_snapshot(&sample_snapshot_data()).unwrap();
+    apply_snapshot(&pool, &mat, &encoded[..]).await.unwrap();
+
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM projected_agenda_horizon")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        rows, 0,
+        "#3160: the RESET empties projected_agenda_cache, so the horizon row \
+         advertising its contents must go with it — an absent row means \
+         \"unproven, always fall back on-the-fly\", which is what a freshly \
+         restored device must do until its rebuild lands"
+    );
+
+    mat.shutdown();
+}
+
+// ===========================================================================
 // #793 — RESET must clear stale local snapshots in the same tx
 // ===========================================================================
 

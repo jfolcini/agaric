@@ -209,7 +209,7 @@ async fn rebuild_projected_agenda_cache_impl(
     // Advertise the guaranteed-complete horizon in the SAME transaction as
     // the cache contents so the read path can never observe a horizon that
     // disagrees with the rows (#2601).
-    write_horizon(&mut tx, horizon_date).await?;
+    write_horizon(&mut tx, today, horizon_date).await?;
 
     tx.commit().await?;
     Ok(written)
@@ -292,29 +292,44 @@ async fn flush_projection_chunk(
     Ok(())
 }
 
-/// Persist the guaranteed-complete materialization horizon (#2601).
+/// Persist the guaranteed-complete materialization span (#2601, #3160).
 ///
-/// Writes the single-row `projected_agenda_horizon(id = 0, horizon_date)`
-/// via UPSERT on the caller-owned connection. Both rebuild paths call this
-/// inside the same transaction as the cache DELETE + INSERTs so the
-/// advertised horizon and the materialized rows commit atomically — the
-/// read path can never see a horizon newer than the rows backing it.
+/// Writes the single-row
+/// `projected_agenda_horizon(id = 0, horizon_date, rebuild_today)` via UPSERT
+/// on the caller-owned connection. Both rebuild paths call this inside the
+/// same transaction as the cache DELETE + INSERTs so the advertised span and
+/// the materialized rows commit atomically — the read path can never see a
+/// span newer than the rows backing it.
+///
+/// `rebuild_today` (migration 0105) is the reference date this rebuild
+/// projected from — the *lower* end of the span, since
+/// [`project_block_into`] passes `range_start = today`. It is stored rather
+/// than left to the reader to derive as `horizon_date - HORIZON_DAYS`: that
+/// inverse silently decodes stale rows to the wrong date the moment
+/// `HORIZON_OCCURRENCES` is retuned, and nothing invalidates the row on
+/// upgrade. It also tells the reader whether the reference date is still
+/// current, which the today-anchored (`.+`) rules need.
 ///
 /// Uses the dynamic `sqlx::query` (not the compile-time-checked `query!`)
 /// so the crate builds without the `projected_agenda_horizon` table in the
 /// sqlx metadata / dev DB, mirroring [`flush_projection_chunk`].
 async fn write_horizon(
     conn: &mut sqlx::SqliteConnection,
+    today: chrono::NaiveDate,
     horizon_date: chrono::NaiveDate,
 ) -> Result<(), AppError> {
     let horizon_str = horizon_date.format("%Y-%m-%d").to_string();
-    // dynamic-sql: UPSERT into projected_agenda_horizon (table added this PR, migration 0102), kept dynamic like the sibling chunked INSERT above
+    let today_str = today.format("%Y-%m-%d").to_string();
+    // dynamic-sql: UPSERT into projected_agenda_horizon (migration 0102, rebuild_today column added by migration 0105), kept dynamic like the sibling chunked INSERT above
     sqlx::query(
-        "INSERT INTO projected_agenda_horizon (id, horizon_date) VALUES (?1, ?2) \
-         ON CONFLICT(id) DO UPDATE SET horizon_date = excluded.horizon_date",
+        "INSERT INTO projected_agenda_horizon (id, horizon_date, rebuild_today) \
+         VALUES (?1, ?2, ?3) \
+         ON CONFLICT(id) DO UPDATE SET horizon_date = excluded.horizon_date, \
+         rebuild_today = excluded.rebuild_today",
     )
     .bind(0_i64)
     .bind(&horizon_str)
+    .bind(&today_str)
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -494,7 +509,7 @@ async fn rebuild_projected_agenda_cache_split_impl(
     let written = project_and_write_chunked(&mut tx, today, &rows).await?;
 
     // Same-transaction horizon advertisement as the single-pool path.
-    write_horizon(&mut tx, horizon_date).await?;
+    write_horizon(&mut tx, today, horizon_date).await?;
 
     tx.commit().await?;
     Ok(written)
