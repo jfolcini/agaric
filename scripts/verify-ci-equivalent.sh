@@ -129,7 +129,12 @@ if ! git rev-list --count "$RANGE" >/dev/null 2>&1; then
     exit 1
 fi
 
-RANGE_COUNT="$(git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
+# Display count only. `rev-list --count A...B` counts the SYMMETRIC
+# difference, so a branch sitting behind main would report main's commits
+# as its own; --right-only narrows it to this branch's. Falls back for a
+# two-dot PRE_PUSH_RANGE, where --right-only is not meaningful.
+RANGE_COUNT="$(git rev-list --count --right-only "$RANGE" 2>/dev/null \
+    || git rev-list --count "$RANGE" 2>/dev/null || echo 0)"
 echo "→ Pre-push verifier: range '$RANGE' ($RANGE_COUNT commit(s))"
 
 # Fail-closed change detection: keep the git-diff exit status so we can tell a
