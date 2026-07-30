@@ -426,6 +426,39 @@ pass_filenames = false
 files = "^src/stores/.*\\.(ts|tsx)$"
 stages = ["pre-commit"]
 
+# lib-layering ratchet (#3121): names four frontend tiers —
+# lib < stores < hooks < components (arrow = "is depended on by") — and
+# forbids a lower tier importing a higher one. Distinct from both hooks
+# above: `import-cycles` only proves acyclicity (a pure util importing a
+# store is acyclic and still a layering break); `store-layering` only
+# covers store-to-store edges. This is step 1 of #3121 (name the tiers +
+# ratchet the baseline); it moves no files. Keyed to
+# scripts/lib-layering-baseline.json, fails on a NEW upward import (count
+# went up) AND a STALE baseline entry (count must ratchet down as
+# violations are fixed). pass_filenames=false — the script does its own
+# scoped walk of the four tier directories.
+[[repos.hooks]]
+id = "lib-layering"
+name = "frontend tier layering (lib < stores < hooks < components, ratchet)"
+entry = "node scripts/check-lib-layering.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src/(lib|stores|hooks|components)/.*\\.(ts|tsx)|scripts/lib-layering-baseline\\.json)$"
+stages = ["pre-commit"]
+
+# Self-test the lib-layering ratchet's own exit behavior (legal downward
+# import PASSES, new upward import FAILS, baselined upward import PASSES,
+# stale baseline entry FAILS) whenever the guard script itself changes, so
+# a regression that defangs it can't land.
+[[repos.hooks]]
+id = "lib-layering-selftest"
+name = "lib-layering ratchet self-test"
+entry = "node scripts/check-lib-layering.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-lib-layering\\.mjs$"
+stages = ["pre-commit"]
+
 # axe-presence: every `src/components/__tests__/*.test.tsx` must include
 # at least one axe(...) audit, per src/__tests__/AGENTS.md:227. Without
 # this, accessibility regressions slip through component additions
