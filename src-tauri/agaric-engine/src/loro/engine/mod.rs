@@ -1444,7 +1444,7 @@ mod tests {
         let batch_verdicts: Vec<bool> = fresh
             .gate_replay_blobs(&shuffled)
             .iter()
-            .map(|g| matches!(g, ReplayBlobGate::Accept))
+            .map(|g| matches!(g, ReplayBlobGate::Accept { .. }))
             .collect();
 
         assert_eq!(
@@ -1502,7 +1502,9 @@ mod tests {
         let gates = fresh.gate_replay_blobs(&refs);
         assert_eq!(gates.len(), blobs.len(), "one verdict per blob");
         assert!(
-            gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+            gates
+                .iter()
+                .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
             "the whole dep chain must be accepted by the cumulative-base gate, got {gates:?}"
         );
     }
@@ -1532,7 +1534,7 @@ mod tests {
         let refs: Vec<&[u8]> = vec![&blob0, &orphan];
         let gates = fresh.gate_replay_blobs(&refs);
         assert!(
-            matches!(gates[0], ReplayBlobGate::Accept),
+            matches!(gates[0], ReplayBlobGate::Accept { .. }),
             "the chain head must be accepted, got {:?}",
             gates[0]
         );
@@ -1580,7 +1582,9 @@ mod tests {
         let gates = fresh.gate_replay_blobs(&reversed);
         assert_eq!(gates.len(), 2, "one verdict per blob, positionally");
         assert!(
-            gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+            gates
+                .iter()
+                .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
             "a dep that arrives LATER in the same batch must not cost the \
              dependent blob its slot (#3188), got {gates:?}"
         );
@@ -1633,7 +1637,9 @@ mod tests {
             let refs: Vec<&[u8]> = batch.iter().map(Vec::as_slice).collect();
             let gates = fresh.gate_replay_blobs(&refs);
             assert!(
-                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                gates
+                    .iter()
+                    .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
                 "{label}: precondition — the #3188 fixpoint admits the whole \
                  batch, so every slot below will be DELETED; got {gates:?}"
             );
@@ -1694,7 +1700,9 @@ mod tests {
             let refs: Vec<&[u8]> = batch.iter().map(Vec::as_slice).collect();
             let gates = fresh.gate_replay_blobs(&refs);
             assert!(
-                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                gates
+                    .iter()
+                    .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
                 "{label}: precondition — the gate admits both slots; got {gates:?}"
             );
 
@@ -1799,7 +1807,9 @@ mod tests {
             let gates = fresh.gate_replay_blobs(&batch);
             assert_eq!(gates.len(), 2, "{label}: one verdict per blob");
             assert!(
-                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                gates
+                    .iter()
+                    .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
                 "{label}: a cross-peer dep supplied by the batch itself must be \
                  accepted, got {gates:?}"
             );
@@ -1858,7 +1868,7 @@ mod tests {
         let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
         let refs: Vec<&[u8]> = vec![&shallow];
         match &fresh.gate_replay_blobs(&refs)[0] {
-            ReplayBlobGate::Accept => {}
+            ReplayBlobGate::Accept { .. } => {}
             other => panic!(
                 "a snapshot's start_frontiers is its shallow-since TRUNCATION \
                  point, not a dependency — it must never be reachability-checked \
@@ -1887,6 +1897,362 @@ mod tests {
         assert!(
             a.unreachable_update_in_blob(&flipped).is_none(),
             "checksum-corrupt blob must not trip or panic the guard"
+        );
+    }
+
+    /// #3190 — the hole the batch gate had: on an EMPTY / freshly-reset doc the
+    /// per-blob #792 guard short-circuits (`local_counter == 0`) and
+    /// `gate_replay_blobs` never mutates the doc, so before this fix EVERY blob
+    /// in the batch was fork-accepted — including two slots carrying DIVERGENT
+    /// lineages of our own peer id, which loro then imports by skipping the
+    /// overlapping counters and applying the rest against the wrong causal
+    /// prefix (#792: silent op drop outbound, loro-internal panic inbound).
+    ///
+    /// The fixture is the real double-RESET shape: two engines built with the
+    /// SAME `device_id` (so `with_peer_id` hands them the SAME deterministic
+    /// `PeerID` — that reuse IS #792) mint UNRELATED histories, and both land in
+    /// one boot-replay batch aimed at a doc that has minted nothing.
+    ///
+    /// Asserted in BOTH slot orders: the old per-row loop caught this in one
+    /// order only (it imported blob *i* first, raising the counter that gated
+    /// blob *i+1*), and order-freedom is the whole point of #3190.
+    #[test]
+    fn gate_replay_blobs_catches_divergent_own_lineages_on_empty_doc_3190() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+
+        // Lineage 1 — this device's pre-reset history, as some peer still holds it.
+        let mut l1 = LoroEngine::with_peer_id("DEV-OWN").expect("lineage 1");
+        for i in 0..2i64 {
+            l1.apply_create_block(&format!("L1-{i}"), "content", "one", None, i)
+                .expect("create");
+        }
+        let blob1 = l1.export_snapshot().expect("lineage 1 export");
+
+        // Lineage 2 — UNRELATED ops minted under the SAME peer id after a reset.
+        let mut l2 = LoroEngine::with_peer_id("DEV-OWN").expect("lineage 2");
+        for i in 0..3i64 {
+            l2.apply_create_block(&format!("L2-{i}"), "content", "two", None, i)
+                .expect("create");
+        }
+        let blob2 = l2.export_snapshot().expect("lineage 2 export");
+
+        // Preconditions: same peer id, genuinely overlapping own-peer ranges,
+        // and a receiver that has minted nothing (the #3190 short-circuit).
+        let fresh = LoroEngine::with_peer_id("DEV-OWN").expect("freshly reset");
+        let own = fresh.doc.peer_id();
+        assert_eq!(own, l1.doc.peer_id(), "precondition: peer id is reused");
+        assert_eq!(
+            fresh.doc.oplog_vv().get(&own).copied().unwrap_or(0),
+            0,
+            "precondition: the receiver is freshly reset — zero own ops"
+        );
+        let end_of = |bytes: &[u8]| {
+            LoroDoc::decode_import_blob_meta(bytes, true)
+                .expect("meta")
+                .partial_end_vv
+                .get(&own)
+                .copied()
+                .unwrap_or(0)
+        };
+        assert!(
+            end_of(&blob1) > 0 && end_of(&blob2) > 0,
+            "precondition: both blobs must carry ops credited to OUR peer id"
+        );
+        // Both start at counter 0, so the ranges necessarily overlap.
+        assert!(
+            end_of(&blob1).min(end_of(&blob2)) > 0,
+            "precondition: the own-peer ranges must overlap"
+        );
+
+        for (label, batch) in [
+            ("l1 first", vec![blob1.as_slice(), blob2.as_slice()]),
+            ("l2 first", vec![blob2.as_slice(), blob1.as_slice()]),
+        ] {
+            let gates = fresh.gate_replay_blobs(&batch);
+            assert_eq!(gates.len(), 2, "{label}: one verdict per blob");
+            assert!(
+                matches!(gates[0], ReplayBlobGate::Accept { .. }),
+                "{label}: the first lineage the batch sees is adoptable — #792 \
+                 calls a peer re-sending our pre-reset history into a reset doc \
+                 the CLEAN resync path; got {:?}",
+                gates[0]
+            );
+            match &gates[1] {
+                ReplayBlobGate::Fork(reason) => {
+                    assert!(
+                        reason.contains("#3190"),
+                        "{label}: the reason must name the batch-lineage check, \
+                         got: {reason}"
+                    );
+                    assert!(
+                        reason.contains("#792"),
+                        "{label}: the reason must stay self-diagnosing for the \
+                         #792 audit trail, got: {reason}"
+                    );
+                }
+                other => panic!(
+                    "{label}: a second, divergent lineage of our own peer id must \
+                     be forked in EITHER slot order (#3190), got {other:?}"
+                ),
+            }
+        }
+    }
+
+    /// #3190 regression guard, and the reason the fix is NOT "make the batch
+    /// gate match the per-row loop".
+    ///
+    /// A single lineage split across two slots — `own@0..k` then `own@k..m` — is
+    /// a legitimate CONTINUATION. The per-row loop drops the second slot (it
+    /// imports the first, then compares the second's `partial_end_vv[own]`
+    /// against the counter it just raised), which is the false positive #3190
+    /// explicitly forbids re-introducing. Disjoint counter ranges cannot
+    /// disagree about any `(own, counter)` id, so the batch gate must accept
+    /// both. The per-row verdict is computed here as a precondition so this can
+    /// never go vacuous.
+    #[test]
+    fn gate_replay_blobs_accepts_own_peer_continuation_on_empty_doc_3190() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        // One lineage, exported in two consecutive chunks — the ordinary shape
+        // of a peer echoing our pre-reset history back at us in two deliveries.
+        let mut own_history = LoroEngine::with_peer_id("DEV-OWN").expect("history");
+        let since0 = own_history.version_vector();
+        own_history
+            .apply_create_block("OWN-0", "content", "first", None, 0)
+            .expect("own-0");
+        let head = own_history.export_update_since(&since0).expect("head");
+        let since1 = own_history.version_vector();
+        own_history
+            .apply_create_block("OWN-1", "content", "second", None, 1)
+            .expect("own-1");
+        let tail = own_history.export_update_since(&since1).expect("tail");
+
+        // Precondition: the per-row #792 guard DOES drop the tail once the head
+        // has been imported — the lossy behaviour the batch gate must not copy.
+        let mut per_row = LoroEngine::with_peer_id("DEV-OWN").expect("per-row");
+        assert!(
+            per_row.own_peer_fork_in_blob(&head).is_none(),
+            "precondition: the head is adoptable into a doc with zero own ops"
+        );
+        per_row
+            .import_with_changed_purged_tagscope(&head)
+            .expect("per-row imports the head");
+        assert!(
+            per_row.own_peer_fork_in_blob(&tail).is_some(),
+            "precondition: the per-row loop false-positives on the continuation \
+             — this is the regression #3190 must not re-introduce"
+        );
+
+        let fresh = LoroEngine::with_peer_id("DEV-OWN").expect("freshly reset");
+        let batch: Vec<&[u8]> = vec![&head, &tail];
+        let gates = fresh.gate_replay_blobs(&batch);
+        assert_eq!(gates.len(), 2, "one verdict per blob");
+        assert!(
+            gates
+                .iter()
+                .all(|g| matches!(g, ReplayBlobGate::Accept { .. })),
+            "a single own-peer lineage split across two slots is a CONTINUATION, \
+             not a fork — dropping the tail is the lossy direction #3190 forbids; \
+             got {gates:?}"
+        );
+    }
+
+    /// #3190 order-freedom, the property the issue was filed about — pinned on
+    /// the smallest batch that can actually break it: THREE own-peer blobs in a
+    /// partial-overlap chain, `A=[0,a)`, `B=[s,b)`, `C=[a,c)` with `0 < s < a`.
+    /// `B` straddles both `A` and `C`; `A` and `C` are adjacent, so they are a
+    /// legitimate continuation of each other.
+    ///
+    /// Two things make this the regression test rather than the two-blob case:
+    ///
+    /// * The overlap predicate being symmetric does NOT make a greedy sweep
+    ///   order-free once three blobs are in play — whichever blob is compared
+    ///   first claims the counter space the others are then measured against.
+    /// * `B`'s own-peer range starts at `s > 0`, so on a doc with zero own ops
+    ///   `B` is only reachable AFTER `A` has been accepted. Deciding the fork
+    ///   verdict in the first sweep (before reachability) let `B` claim
+    ///   `[s,b)` and fork BOTH `A` and `C` — and then be dropped as
+    ///   `Unreachable` itself, so the batch lost all three slots while a
+    ///   different slot order kept two. A blob that is never imported must not
+    ///   consume our `(peer,counter)` space.
+    ///
+    /// Every permutation must therefore agree, and must agree on the answer
+    /// that keeps the continuation: `A` and `C` accepted, `B` forked.
+    #[test]
+    fn gate_replay_blobs_own_lineage_verdicts_are_order_free_3190() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+
+        // One engine, three overlapping export windows of its own peer's ops.
+        // Content is irrelevant to the gate — only the counter ranges are.
+        let mut e = LoroEngine::with_peer_id("DEV-OWN").expect("engine");
+        let own = e.doc.peer_id();
+        let counter = |e: &LoroEngine| e.doc.oplog_vv().get(&own).copied().unwrap_or(0);
+        let mut n = 0i64;
+        let grow_to = |e: &mut LoroEngine, target: i32, n: &mut i64| {
+            while counter(e) < target {
+                e.apply_create_block(&format!("X{n}"), "content", "x", None, *n)
+                    .expect("create");
+                *n += 1;
+            }
+        };
+
+        let vv_0 = e.version_vector();
+        grow_to(&mut e, 50, &mut n);
+        let vv_s = e.version_vector();
+        grow_to(&mut e, 100, &mut n);
+        let vv_a = e.version_vector();
+        let blob_a = e.export_update_since(&vv_0).expect("A"); // [0, a)
+        grow_to(&mut e, 150, &mut n);
+        let blob_b = e.export_update_since(&vv_s).expect("B"); // [s, b)
+        grow_to(&mut e, 200, &mut n);
+        let blob_c = e.export_update_since(&vv_a).expect("C"); // [a, c)
+
+        let range = |bytes: &[u8]| {
+            let m = LoroDoc::decode_import_blob_meta(bytes, true).expect("meta");
+            (
+                m.partial_start_vv.get(&own).copied().unwrap_or(0),
+                m.partial_end_vv.get(&own).copied().unwrap_or(0),
+            )
+        };
+        let (a_start, a_end) = range(&blob_a);
+        let (b_start, b_end) = range(&blob_b);
+        let (c_start, c_end) = range(&blob_c);
+        // Preconditions — without these the permutations below prove nothing.
+        assert_eq!(a_start, 0, "A must start our peer's history");
+        assert_eq!(
+            c_start, a_end,
+            "A and C must be ADJACENT (a continuation), not overlapping"
+        );
+        assert!(
+            a_start < b_start && b_start < a_end && a_end < b_end && b_end < c_end,
+            "B must straddle A and C: got A=[{a_start},{a_end}) B=[{b_start},{b_end}) \
+             C=[{c_start},{c_end})"
+        );
+
+        let named: [(&str, &[u8]); 3] = [("A", &blob_a), ("B", &blob_b), ("C", &blob_c)];
+        let permutations = [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ];
+        for order in permutations {
+            let fresh = LoroEngine::with_peer_id("DEV-OWN").expect("freshly reset");
+            let refs: Vec<&[u8]> = order.iter().map(|&k| named[k].1).collect();
+            let gates = fresh.gate_replay_blobs(&refs);
+            let label: Vec<&str> = order.iter().map(|&k| named[k].0).collect();
+            for (slot, &k) in order.iter().enumerate() {
+                let (name, _) = named[k];
+                let forked = matches!(gates[slot], ReplayBlobGate::Fork(_));
+                assert_eq!(
+                    forked,
+                    name == "B",
+                    "order {label:?}: {name} must be {} in EVERY slot order (#3190) — \
+                     the straddling blob is the fork, and the adjacent pair is a \
+                     continuation that must survive; got {gates:?}",
+                    if name == "B" { "FORKED" } else { "ACCEPTED" }
+                );
+            }
+        }
+    }
+
+    /// #3194 — the gate accepts a blob on the strength of its declared
+    /// `partial_end_vv`, and the caller deletes that blob's durable inbox slot
+    /// on the strength of the accept. Nothing in between checks that the import
+    /// actually REACHED the declared frontier — and `LoroDoc::import*` returns
+    /// `Ok` when it could not: changes whose dependencies are missing are parked
+    /// in `pending_changes` (`ImportStatus { pending: Some(..) }`,
+    /// `loro-internal-1.13.6/src/loro.rs:1480-1487`) and never enter the op-log,
+    /// so they are never diffed, never projected — and the slot that was their
+    /// only durable copy would be deleted anyway. That is the #535 invariant
+    /// inverted.
+    ///
+    /// This pins the two facts the caller needs to refuse that delete:
+    ///
+    /// * [`ImportDelta::pending`] surfaces the buffered ranges the engine
+    ///   wrapper used to discard (`.map(|_status| ())`), and
+    /// * [`LoroEngine::oplog_shortfall`] reports the `Accept`-declared end
+    ///   frontier as unmet against the POST-import `oplog_vv()`.
+    ///
+    /// Both directions are asserted, so neither check can rot into a constant.
+    #[test]
+    fn pending_changes_leave_the_oplog_short_of_the_declared_end_frontier_3194() {
+        use super::{LoroDoc, LoroEngine};
+
+        // A creates a root; B imports it and adds a child — so B's blob depends
+        // on A's op but does NOT carry it (the ordinary cross-peer shape).
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since_a = a.version_vector();
+        a.apply_create_block("A-1", "content", "root", None, 0)
+            .expect("a-1");
+        let blob_a = a.export_update_since(&since_a).expect("blob a");
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import_with_changed_purged_tagscope(&blob_a)
+            .expect("b imports a");
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "child", Some("A-1"), 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("blob b");
+
+        let peer_b = b.doc.peer_id();
+        let claimed = LoroDoc::decode_import_blob_meta(&blob_b, true)
+            .expect("meta")
+            .partial_end_vv
+            .get(&peer_b)
+            .copied()
+            .expect("blob b credits peer B");
+        assert!(claimed > 0, "precondition: blob b carries B's ops");
+
+        // Import blob B alone, WITHOUT its dependency: loro returns Ok and parks
+        // the whole change.
+        let mut orphaned = LoroEngine::with_peer_id("DEV-C").expect("orphaned");
+        let delta = orphaned
+            .import_with_changed_purged_tagscope(&blob_b)
+            .expect("import must still return Ok — that is the whole problem");
+        assert!(
+            !delta.pending.is_empty(),
+            "loro reports the unapplied changes in ImportStatus::pending; \
+             discarding that status is what let a caller read Ok as committed"
+        );
+        assert!(
+            delta.changed.is_empty() && orphaned.read_block("B-1").expect("read").is_none(),
+            "precondition: a pending change is not in the projection either"
+        );
+        assert!(
+            orphaned.doc.oplog_vv().get(&peer_b).copied().unwrap_or(0) < claimed,
+            "precondition: pending changes never enter the op-log, so oplog_vv \
+             must fall SHORT of the frontier the blob declared"
+        );
+        let shortfall = orphaned
+            .oplog_shortfall(&[(peer_b, claimed)])
+            .expect("the unmet claim must be reported");
+        assert!(
+            shortfall.contains("#3194"),
+            "the shortfall must be self-diagnosing, got: {shortfall}"
+        );
+
+        // Converse: with the dependency present the same blob settles, the
+        // op-log reaches the declared frontier and nothing is withheld.
+        let mut settled = LoroEngine::with_peer_id("DEV-D").expect("settled");
+        let delta = settled
+            .import_batch_with_changed_purged_tagscope(&[blob_a, blob_b])
+            .expect("batch import");
+        assert!(
+            delta.pending.is_empty(),
+            "a batch that supplies its own deps must leave nothing buffered, \
+             got {:?}",
+            delta.pending
+        );
+        assert!(
+            settled.oplog_shortfall(&[(peer_b, claimed)]).is_none(),
+            "a fully-applied payload must satisfy its declared end frontier"
+        );
+        assert!(
+            settled.read_block("B-1").expect("read").is_some(),
+            "control: the block really is projected in the settled case"
         );
     }
 }

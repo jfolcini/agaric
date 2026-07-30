@@ -53,7 +53,7 @@ use crate::sync_protocol::loro_sync_types::{LORO_SYNC_PROTOCOL_VERSION, LoroSync
 use agaric_core::error::AppError;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_store::space::SpaceId;
-use loro::VersionVector;
+use loro::{Counter, PeerID, VersionVector};
 
 /// #2188 — run a CPU-bound CRDT encode/decode closure so it does not stall the
 /// async reactor while holding the per-space engine mutex (#2205 sharded the
@@ -566,6 +566,17 @@ pub async fn apply_remote(
         // tombstone is threaded in here (it is WRITTEN by import_and_project,
         // #2292). Only the recovery replay path supplies a recovered set.
         &[],
+        // #3194: no delete condition on the live path — this blob was never run
+        // through the batch replay gate, so there is no declared end frontier to
+        // hold it to, and `apply_remote` already owns the snapshot-fallback
+        // route for anything it cannot import (an Update's `from_vv` is
+        // reachability-checked above, BEFORE the inbox insert, so the parked-
+        // changes shape this condition exists to catch needs a sender that
+        // declares a base it did not actually supply). Residual gap, same as the
+        // per-row replay path: if such a payload did park in `pending_changes`,
+        // its slot is still cleared. `pending` is surfaced and warned about in
+        // `import_and_project` so the condition is at least observable.
+        &[],
         InboundDeliveryKind::Live,
     )
     .await?;
@@ -780,6 +791,15 @@ pub(crate) async fn import_and_project(
     // SQL. Empty on the live apply path (the engine delta carries the set).
     // #3164: on a batch this is the UNION of the batch's recovered tombstones.
     tombstone_purged: &[agaric_core::ulid::BlockId],
+    // #3194: per-slot delete CONDITION — `(inbox_id, end_vv)` pairs, where
+    // `end_vv` is the `(peer, exclusive-end-counter)` frontier that slot's blob
+    // declared at gate time (`ReplayBlobGate::Accept`). A listed slot is cleared
+    // only once the POST-import `oplog_vv()` demonstrably reaches its frontier;
+    // an unmet one keeps its durable row for a later boot. An EMPTY slice means
+    // "no condition" — the live apply path and the per-row replay pass `&[]`
+    // and behave exactly as before. Slots absent from the slice are
+    // unconditional too, so a partial list is safe.
+    require_covered: &[(i64, Vec<(PeerID, Counter)>)],
     delivery: InboundDeliveryKind,
 ) -> Result<
     (
@@ -812,6 +832,12 @@ pub(crate) async fn import_and_project(
         rank_only: rank_only_blocks,
         purged: purged_blocks,
         tag_scope,
+        // #3194: changes loro parked in `pending_changes` for missing deps. They
+        // are NOT in the op-log and were NOT projected, yet the import returned
+        // `Ok`. Logged here for diagnosis; the delete condition itself is
+        // enforced against `oplog_vv()` below, which is the stronger statement
+        // (a pending change is exactly one the op-log did not advance over).
+        pending: pending_changes,
     } = {
         // #2188: the CRDT import (decode + diff resolution) is CPU-bound and
         // runs while holding this space's engine mutex (#2205 — per-space).
@@ -841,6 +867,70 @@ pub(crate) async fn import_and_project(
                 }
             }
         })?
+    };
+
+    // #3194 (#535) — decide, BEFORE anything is deleted, which slots this import
+    // has actually earned the right to clear.
+    //
+    // The replay gate admits a blob on the strength of its declared
+    // `partial_end_vv` and advances its cumulative base by the same value, which
+    // assumes every blob's per-peer counter range is contiguous. Blobs loro's
+    // `export(updates)` produces are — but a merged, truncated or hand-crafted
+    // one need not be, and `LoroDoc::import*` returns `Ok` even when it parked
+    // part of the payload in `pending_changes` for missing deps. Either way the
+    // ops are not in the op-log, so they were not diffed, not projected, and the
+    // slot that holds their only durable copy must survive. Requiring the
+    // post-import `oplog_vv()` to actually reach the declared frontier closes
+    // both without touching the gate's admission logic.
+    //
+    // Counter semantics: both sides are `VersionVector` counters (EXCLUSIVE
+    // ends), so "covered" is `local >= declared` — see `LoroEngine::oplog_shortfall`.
+    if !pending_changes.is_empty() {
+        tracing::warn!(
+            space_id = space_id.as_str(),
+            slots = inbox_ids.len(),
+            pending = ?pending_changes,
+            "#3194: the import left changes buffered in loro's pending_changes — \
+             they are not in the op-log and were not projected; any slot whose \
+             frontier they cover is kept for a later boot"
+        );
+    }
+    // NOTE: only the DELETE sites below switch to this narrowed set. The #2292
+    // `purged_ids` tombstone stamp and the #2264 no-op probe keep using the full
+    // `inbox_ids`, because a slot that is KEPT still needs its durable tombstone
+    // for the boot that finally clears it.
+    let clearable_ids: Vec<i64> = if require_covered.is_empty() {
+        inbox_ids.to_vec()
+    } else {
+        let shortfalls: Vec<(i64, Option<String>)> = {
+            let mut guard = registry.for_space(space_id, device_id)?;
+            let engine = guard.engine_mut();
+            inbox_ids
+                .iter()
+                .map(|id| {
+                    let shortfall = require_covered
+                        .iter()
+                        .find(|(slot, _)| slot == id)
+                        .and_then(|(_, end_vv)| engine.oplog_shortfall(end_vv));
+                    (*id, shortfall)
+                })
+                .collect()
+        };
+        let mut clearable = Vec::with_capacity(shortfalls.len());
+        for (id, shortfall) in shortfalls {
+            match shortfall {
+                None => clearable.push(id),
+                Some(reason) => tracing::warn!(
+                    space_id = space_id.as_str(),
+                    inbox_id = id,
+                    reason = %reason,
+                    "#3194: the import did not reach this slot's declared end \
+                     frontier, so its content is not in the projection — keeping \
+                     the durable slot for a later boot (#535)"
+                ),
+            }
+        }
+        clearable
     };
 
     // #2292: durable tombstone of the purged id set on the write-ahead inbox
@@ -973,7 +1063,10 @@ pub(crate) async fn import_and_project(
             }
         };
         if trusted {
-            for id in inbox_ids {
+            // #3194: `clearable_ids` == `inbox_ids` on every path that can reach
+            // here (the trust rule already refuses the recovery replay, the only
+            // caller that supplies a delete condition).
+            for id in &clearable_ids {
                 sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
                     .execute(pool)
                     .await?;
@@ -1194,7 +1287,11 @@ pub(crate) async fn import_and_project(
     // that batching genuinely widens is the ENGINE import (outside any tx), and
     // that is handled upstream by importing before this tx and returning early
     // on error.
-    for id in inbox_ids {
+    // #3194: `clearable_ids`, not `inbox_ids` — a slot whose blob's declared end
+    // frontier the op-log never reached keeps its row (its content is in neither
+    // the op-log nor this projection), which is the same #535 rule the tx
+    // coupling enforces for everything else.
+    for id in &clearable_ids {
         sqlx::query!("DELETE FROM loro_sync_inbox WHERE id = ?", id)
             .execute(&mut *tx)
             .await?;
@@ -1427,6 +1524,18 @@ pub async fn replay_inbox_row(
         agaric_engine::loro::engine::ImportPayload::Single(bytes),
         &[inbox_id],
         tombstone_purged,
+        // #3194: unconditional, because the per-row path runs the single-blob
+        // guards rather than the batch gate and therefore holds no declared end
+        // frontier for this blob — `require_covered` has nothing to carry. Note
+        // what that costs, rather than dressing it up as a design choice: this
+        // path is also the poison-isolation fallback for a failed batch, where a
+        // blob whose dependency came from a SIBLING slot is retried alone, parks
+        // in `pending_changes` and is not projected — and its slot is still
+        // deleted here. Keeping it would be the #535-correct outcome. Closing
+        // that needs the blob's own `partial_end_vv` decoded on this path; it is
+        // deliberately out of #3194's scope (which is the batch gate's declared
+        // frontier) and is left as a known residual gap, unchanged from before.
+        &[],
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
@@ -1504,9 +1613,17 @@ pub async fn replay_inbox_batch(
     };
 
     let mut accepted: Vec<InboxSlot> = Vec::with_capacity(slots.len());
+    // #3194: the end frontier each accepted blob DECLARED, keyed by slot id. The
+    // gate advanced its cumulative base by exactly these, so they are also the
+    // condition under which deleting the slot is honest — see the
+    // `require_covered` parameter of `import_and_project`.
+    let mut declared_end_vv: Vec<(i64, Vec<(PeerID, Counter)>)> = Vec::with_capacity(slots.len());
     for (slot, gate) in slots.into_iter().zip(gates) {
         match gate {
-            agaric_engine::loro::engine::ReplayBlobGate::Accept => accepted.push(slot),
+            agaric_engine::loro::engine::ReplayBlobGate::Accept { end_vv } => {
+                declared_end_vv.push((slot.id, end_vv));
+                accepted.push(slot);
+            }
             agaric_engine::loro::engine::ReplayBlobGate::Fork(reason) => {
                 tracing::warn!(
                     space_id,
@@ -1571,14 +1688,37 @@ pub async fn replay_inbox_batch(
         agaric_engine::loro::engine::ImportPayload::Batch(&blobs),
         &inbox_ids,
         &tombstone_union,
+        &declared_end_vv,
         InboundDeliveryKind::RecoveryReplay,
     )
     .await
     {
         Ok((changed, purged)) => {
-            // The tx committed ⇒ every accepted slot's projection landed AND
-            // every accepted slot is gone. Both halves of #535, together.
-            out.replayed += u64::try_from(inbox_ids.len()).unwrap_or(u64::MAX);
+            // The tx committed ⇒ every projection landed AND every slot whose
+            // blob the op-log demonstrably reached is gone. Both halves of #535,
+            // together.
+            //
+            // #3194: "every accepted slot" is no longer the same as "every slot
+            // deleted" — a blob whose declared end frontier the import never
+            // reached kept its row on purpose. Count what actually went, rather
+            // than assuming, so the boot walk's `replayed` total stays truthful
+            // and each survivor is reported for a later boot.
+            for id in &inbox_ids {
+                let still_there: Option<i64> = sqlx::query_scalar!(
+                    r#"SELECT 1 as "exists!: i64" FROM loro_sync_inbox WHERE id = ?"#,
+                    id,
+                )
+                .fetch_optional(pool)
+                .await?;
+                match still_there {
+                    None => out.replayed += 1,
+                    Some(_) => out.errors.push(format!(
+                        "inbox {id}: kept — the post-import oplog did not reach the \
+                         blob's declared end frontier, so its content is not in the \
+                         projection (#3194/#535)"
+                    )),
+                }
+            }
             out.changed.extend(changed);
             out.purged.extend(purged);
             Ok(out)
