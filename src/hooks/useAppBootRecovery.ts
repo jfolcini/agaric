@@ -20,11 +20,12 @@
 
 import { useEffect } from 'react'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { setPriorityLevels } from '@/lib/priority-levels'
-import { flushAllDrafts, getPropertyDef } from '@/lib/tauri'
 
 export function useAppBootRecovery(): void {
   // ── Boot recovery: flush orphaned drafts from previous crash ──────
@@ -32,7 +33,9 @@ export function useAppBootRecovery(): void {
   // orphan draft. Was: `listDrafts` → N fire-and-forget `flushDraft`
   // calls (each opening its own tx that serialised on the writer lock).
   useEffect(() => {
-    flushAllDrafts()
+    commands
+      .flushAllDrafts()
+      .then(unwrap)
       .then(({ flushed }) => {
         if (flushed > 0) {
           logger.info('boot', `Recovered ${flushed} unsaved draft(s)`)
@@ -55,7 +58,9 @@ export function useAppBootRecovery(): void {
   useEffect(() => {
     // Single-key PK lookup instead of paginating the
     // entire property-definition vocabulary just to read one row.
-    getPropertyDef('priority')
+    commands
+      .getPropertyDef('priority')
+      .then(unwrap)
       .then((priorityDef) => {
         if (!priorityDef) return
         if (priorityDef.options == null) return

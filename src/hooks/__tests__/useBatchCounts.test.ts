@@ -3,20 +3,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { DayEntry } from '@/lib/date-utils'
 
-vi.mock('@/lib/tauri', () => ({
-  countAgendaBatchBySource: vi.fn(),
-  countBacklinksBatch: vi.fn(),
+const { mockCountAgendaBatchBySource, mockCountBacklinksBatch } = vi.hoisted(() => ({
+  mockCountAgendaBatchBySource: vi.fn(),
+  mockCountBacklinksBatch: vi.fn(),
+}))
+
+vi.mock('@/lib/bindings', () => ({
+  commands: {
+    countAgendaBatchBySource: (...args: unknown[]) => mockCountAgendaBatchBySource(...args),
+    countBacklinksBatch: (...args: unknown[]) => mockCountBacklinksBatch(...args),
+  },
 }))
 
 import { toast } from 'sonner'
 
 import { useBatchCounts } from '@/hooks/useBatchCounts'
-import { countAgendaBatchBySource, countBacklinksBatch } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
-const mockedCountAgendaBatchBySource = vi.mocked(countAgendaBatchBySource)
-const mockedCountBacklinksBatch = vi.mocked(countBacklinksBatch)
+const mockedCountAgendaBatchBySource = mockCountAgendaBatchBySource
+const mockedCountBacklinksBatch = mockCountBacklinksBatch
 const mockedToastError = vi.mocked(toast.error)
+
+/** Wrap a resolved value in the bindings `{ status: 'ok', data }` envelope. */
+function ok<T>(data: T): { status: 'ok'; data: T } {
+  return { status: 'ok', data }
+}
 
 function makeDayEntry(dateStr: string, pageId: string | null = null): DayEntry {
   // TEST-FE-5: `displayDate` is intentionally rendered to a HUMAN-FACING format
@@ -58,11 +70,13 @@ describe('useBatchCounts', () => {
   it('fetches and returns agenda + backlink counts', async () => {
     const entries = [makeDayEntry('2025-01-06', 'page-1'), makeDayEntry('2025-01-07', 'page-2')]
 
-    mockedCountAgendaBatchBySource.mockResolvedValue({
-      '2025-01-06': { 'column:due_date': 2, 'column:scheduled_date': 1 },
-      '2025-01-07': { 'column:due_date': 1 },
-    })
-    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 5, 'page-2': 2 })
+    mockedCountAgendaBatchBySource.mockResolvedValue(
+      ok({
+        '2025-01-06': { 'column:due_date': 2, 'column:scheduled_date': 1 },
+        '2025-01-07': { 'column:due_date': 1 },
+      }),
+    )
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 5, 'page-2': 2 }))
 
     const { result } = renderHook(() => useBatchCounts(entries))
 
@@ -80,25 +94,22 @@ describe('useBatchCounts', () => {
       '2025-01-07': { 'column:due_date': 1 },
     })
     expect(result.current.backlinkCounts).toEqual({ 'page-1': 5, 'page-2': 2 })
-    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({
-      dates: ['2025-01-06', '2025-01-07'],
-      spaceId: null,
-    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith(
+      ['2025-01-06', '2025-01-07'],
+      toSpaceScope(null),
+    )
     // SpaceId must be forwarded so badge counts
     // exclude source blocks the user can't see (cross-space).
-    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
-      pageIds: ['page-1', 'page-2'],
-      spaceId: null,
-    })
+    expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1', 'page-2'], toSpaceScope(null))
   })
 
   it('handles empty entries array', async () => {
-    mockedCountAgendaBatchBySource.mockResolvedValue({})
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({}))
 
     const { result } = renderHook(() => useBatchCounts([]))
 
     await waitFor(() => {
-      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({ dates: [], spaceId: null })
+      expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith([], toSpaceScope(null))
     })
 
     expect(result.current.agendaCounts).toEqual({})
@@ -110,9 +121,11 @@ describe('useBatchCounts', () => {
   it('handles entries with no pageIds (skips backlink fetch)', async () => {
     const entries = [makeDayEntry('2025-01-06'), makeDayEntry('2025-01-07')]
 
-    mockedCountAgendaBatchBySource.mockResolvedValue({
-      '2025-01-06': { 'column:due_date': 1 },
-    })
+    mockedCountAgendaBatchBySource.mockResolvedValue(
+      ok({
+        '2025-01-06': { 'column:due_date': 1 },
+      }),
+    )
 
     const { result } = renderHook(() => useBatchCounts(entries))
 
@@ -150,12 +163,15 @@ describe('useBatchCounts', () => {
     // unmounted components (no console warning), so a console-spy approach
     // would also be vacuous; the sibling pattern is the strongest non-invasive
     // signal available.
-    let resolveAgenda!: (v: Record<string, Record<string, number>>) => void
-    const sharedPromise = new Promise<Record<string, Record<string, number>>>((resolve) => {
+    let resolveAgenda!: (v: { status: 'ok'; data: Record<string, Record<string, number>> }) => void
+    const sharedPromise = new Promise<{
+      status: 'ok'
+      data: Record<string, Record<string, number>>
+    }>((resolve) => {
       resolveAgenda = resolve
     })
     mockedCountAgendaBatchBySource.mockImplementation(() => sharedPromise)
-    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 7 })
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 7 }))
 
     const entries = [makeDayEntry('2025-01-06', 'page-1')]
     const hookA = renderHook(() => useBatchCounts(entries))
@@ -171,7 +187,7 @@ describe('useBatchCounts', () => {
     // Resolve the shared promise — both hooks' `.then` callbacks run, but only
     // the still-mounted sibling should observably update.
     await act(async () => {
-      resolveAgenda({ '2025-01-06': { 'column:due_date': 99 } })
+      resolveAgenda(ok({ '2025-01-06': { 'column:due_date': 99 } }))
     })
 
     await waitFor(() => {
@@ -193,22 +209,19 @@ describe('useBatchCounts', () => {
   it('forwards the active spaceId to countBacklinksBatch', async () => {
     useSpaceStore.setState({ currentSpaceId: 'SPACE_ABC' })
 
-    mockedCountAgendaBatchBySource.mockResolvedValue({})
-    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 3 })
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({}))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 3 }))
 
     const entries = [makeDayEntry('2025-01-06', 'page-1')]
     renderHook(() => useBatchCounts(entries))
 
     await waitFor(() => {
-      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
-        pageIds: ['page-1'],
-        spaceId: 'SPACE_ABC',
-      })
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1'], toSpaceScope('SPACE_ABC'))
     })
-    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith({
-      dates: ['2025-01-06'],
-      spaceId: 'SPACE_ABC',
-    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenCalledWith(
+      ['2025-01-06'],
+      toSpaceScope('SPACE_ABC'),
+    )
   })
 
   // PERF #1632 — the parent recreates the `entries` array on unrelated
@@ -217,8 +230,8 @@ describe('useBatchCounts', () => {
   // not the array reference, so a new-but-equivalent `entries` array does NOT
   // re-fire the batch-count IPC — but a genuinely changed date range does.
   it('does not re-fire the IPC when entries is a new array with identical dates/pageIds', async () => {
-    mockedCountAgendaBatchBySource.mockResolvedValue({})
-    mockedCountBacklinksBatch.mockResolvedValue({})
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({}))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({}))
 
     // Fresh DayEntry objects each render → new array identity, same values.
     const { rerender } = renderHook(() => useBatchCounts([makeDayEntry('2025-01-06', 'page-1')]))
@@ -239,8 +252,8 @@ describe('useBatchCounts', () => {
   })
 
   it('re-fires the IPC when the date range actually changes', async () => {
-    mockedCountAgendaBatchBySource.mockResolvedValue({})
-    mockedCountBacklinksBatch.mockResolvedValue({})
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({}))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({}))
 
     let dateStr = '2025-01-06'
     const { rerender } = renderHook(() => useBatchCounts([makeDayEntry(dateStr)]))
@@ -256,15 +269,15 @@ describe('useBatchCounts', () => {
     await waitFor(() => {
       expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
     })
-    expect(mockedCountAgendaBatchBySource).toHaveBeenLastCalledWith({
-      dates: ['2025-02-06'],
-      spaceId: null,
-    })
+    expect(mockedCountAgendaBatchBySource).toHaveBeenLastCalledWith(
+      ['2025-02-06'],
+      toSpaceScope(null),
+    )
   })
 
   it('re-fires the IPC when a new pageId surfaces (page creation)', async () => {
-    mockedCountAgendaBatchBySource.mockResolvedValue({})
-    mockedCountBacklinksBatch.mockResolvedValue({ 'page-1': 4 })
+    mockedCountAgendaBatchBySource.mockResolvedValue(ok({}))
+    mockedCountBacklinksBatch.mockResolvedValue(ok({ 'page-1': 4 }))
 
     // Start with a date that has no page yet, then have one created for it —
     // the backlink fetch must run for the newly-surfaced pageId.
@@ -281,10 +294,7 @@ describe('useBatchCounts', () => {
     rerender()
 
     await waitFor(() => {
-      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith({
-        pageIds: ['page-1'],
-        spaceId: null,
-      })
+      expect(mockedCountBacklinksBatch).toHaveBeenCalledWith(['page-1'], toSpaceScope(null))
     })
     expect(mockedCountAgendaBatchBySource).toHaveBeenCalledTimes(2)
   })

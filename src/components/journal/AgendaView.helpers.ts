@@ -7,8 +7,8 @@
  */
 
 import type { ExecuteFiltersResult } from '@/lib/agenda-filters'
+import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
 import { t } from '@/lib/i18n'
-import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
 
 /**
  * Fallback title used when batch-resolve returns a null title. Resolved

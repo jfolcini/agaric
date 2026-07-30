@@ -46,11 +46,11 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Label } from '@/components/ui/label'
 import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { useMcpActivityFeed } from '@/hooks/useMcpActivityFeed'
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { unwrap } from '@/lib/tauri'
 
 export function AgentAccessTab(): React.ReactElement {
   const { t } = useTranslation()

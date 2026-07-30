@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import type { DayEntry } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { countAgendaBatchBySource, countBacklinksBatch } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useSpaceStore } from '@/stores/space'
 
 export function useBatchCounts(entries: DayEntry[]) {
@@ -37,12 +39,12 @@ export function useBatchCounts(entries: DayEntry[]) {
     let cancelled = false
     async function fetchCounts() {
       const [bySource, backlinks] = await Promise.all([
-        countAgendaBatchBySource({ dates, spaceId: currentSpaceId }),
+        commands.countAgendaBatchBySource(dates, toSpaceScope(currentSpaceId)).then(unwrap),
         // Thread the active space into
         // `count_backlinks_batch` so badge counts on cross-linked pages
         // exclude source blocks the user can't see.
         pageIds.length > 0
-          ? countBacklinksBatch({ pageIds, spaceId: currentSpaceId })
+          ? commands.countBacklinksBatch(pageIds, toSpaceScope(currentSpaceId)).then(unwrap)
           : Promise.resolve({} as Record<string, number>),
       ])
       if (!cancelled) {
