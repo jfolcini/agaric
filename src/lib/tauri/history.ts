@@ -198,6 +198,10 @@ export async function computeEditDiff(params: {
  *
  * Throws on a soft-deleted / purged block — the in-panel preview is
  * meaningless for trashed blocks.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.computeBlockVsCurrentDiff` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function computeBlockVsCurrentDiff(params: {
   blockId: string

@@ -11,19 +11,15 @@ import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
-import { setWindowTitle } from '@/lib/tauri'
+import { setWindowTitle } from '@/lib/platform/window'
 import { useNavigationStore } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 import { useTabsStore } from '@/stores/tabs'
 
-vi.mock('@/lib/tauri', async () => {
-  const actual = await vi.importActual<typeof import('@/lib/tauri')>('@/lib/tauri')
-  return {
-    ...actual,
-    setWindowTitle: vi.fn().mockResolvedValue(undefined),
-  }
-})
+vi.mock('@/lib/platform/window', () => ({
+  setWindowTitle: vi.fn().mockResolvedValue(undefined),
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()

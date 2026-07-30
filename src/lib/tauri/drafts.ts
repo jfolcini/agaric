@@ -31,6 +31,10 @@ export async function flushAllDrafts(): Promise<FlushAllDraftsResult> {
  * replay failed and the materialized view may be incomplete/stale (the op
  * log is canonical — nothing is lost). Mirrors the `useDeepLinkRouter` +
  * `getCurrentDeepLink()` "emit + query-on-mount backfill" shape.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.getRecoveryStatus` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function getRecoveryStatus(): Promise<RecoveryStatus> {
   return unwrap(await commands.getRecoveryStatus())
@@ -42,6 +46,10 @@ export async function getRecoveryStatus(): Promise<RecoveryStatus> {
  * mount — the sync daemon can emit `sync:mdns_disabled` before the
  * webview registers its listener (same boot race `getRecoveryStatus`
  * covers for `recovery:degraded`), so the live event can be missed.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.getMdnsStatus` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function getMdnsStatus(): Promise<MdnsStatus> {
   return unwrap(await commands.getMdnsStatus())

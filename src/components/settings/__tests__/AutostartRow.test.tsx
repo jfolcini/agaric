@@ -15,9 +15,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { AutostartRow } from '@/components/settings/AutostartRow'
 import { notify } from '@/lib/notify'
-import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/tauri'
+import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/platform/autostart'
 
-vi.mock('@/lib/tauri', () => ({
+vi.mock('@/lib/platform/autostart', () => ({
   isAutostartEnabled: vi.fn(),
   enableAutostart: vi.fn(),
   disableAutostart: vi.fn(),

@@ -51,6 +51,15 @@
 // A component is considered to call IPC if its source contains either:
 //   - `from '@/lib/tauri'` (or double-quoted equivalent), AND the
 //     import is NOT `import type` (i.e. brings in a runtime function);
+//   - `from '@/lib/platform/<domain>'` — the plugin-shim layer split out
+//     of the IPC wrappers in #3202. These wrappers (autostart,
+//     global-shortcut, deep-link, window, notifications) do exactly the
+//     rejecting async plugin round-trips this guard exists for, so a
+//     component calling them needs the same error-path coverage as one
+//     calling `@/lib/tauri`. The bare `@/lib/platform` barrel is
+//     deliberately NOT matched — it exports only synchronous capability
+//     detection (`isMac`, `modKey`, `isMobilePlatform`), which cannot
+//     reject;
 //   - `import { invoke } from '@tauri-apps/api/core'` — direct IPC
 //     bypass of the typed wrapper layer.
 //
@@ -195,6 +204,12 @@ function callsIpc(src) {
 
   // Match `from '@/lib/tauri'` (single or double quotes).
   if (/from\s+['"]@\/lib\/tauri['"]/.test(withoutTypeImports)) return true
+
+  // Match a plugin-shim submodule import (`from '@/lib/platform/<domain>'`),
+  // the layer split out of `@/lib/tauri/{system,notifications}` in #3202.
+  // The `/<domain>` segment is REQUIRED so the bare `@/lib/platform` barrel
+  // — synchronous capability detection that cannot reject — is not matched.
+  if (/from\s+['"]@\/lib\/platform\/[\w-]+['"]/.test(withoutTypeImports)) return true
 
   // Match a runtime `commands` import from the generated tauri-specta
   // bindings (`import { commands } from '@/lib/bindings'`). The #2927
@@ -400,6 +415,14 @@ function runSelfTest() {
       "import type { Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
     const BINDINGS_INLINE_TYPE_SRC =
       "import { type Block } from '@/lib/bindings'\nexport const C = (b: Block) => b\n"
+    // #3202: a plugin-shim submodule import (`@/lib/platform/<domain>`) is a
+    // rejecting async plugin round-trip and must be treated like
+    // `@/lib/tauri`; the bare `@/lib/platform` barrel (synchronous capability
+    // detection — `isMac`, `modKey`, `isMobilePlatform`) must NOT be.
+    const PLATFORM_SHIM_SRC =
+      "import { enableAutostart } from '@/lib/platform/autostart'\nexport const C = () => enableAutostart()\n"
+    const PLATFORM_BARREL_SRC =
+      "import { isMac } from '@/lib/platform'\nexport const C = () => (isMac() ? 'a' : 'b')\n"
     const COVERED_TEST = "it('rejects', () => { foo.mockRejectedValueOnce(new Error('x')) })\n"
     const NO_REJECT_TEST = "it('renders', () => { render(<C />) })\n"
 
@@ -422,6 +445,11 @@ function runSelfTest() {
     fs.writeFileSync(path.join(componentsDir, 'BindingsType.tsx'), BINDINGS_TYPE_SRC)
     // 8. Inline-type bindings import, no test → NOT an IPC caller, ignored.
     fs.writeFileSync(path.join(componentsDir, 'BindingsInlineType.tsx'), BINDINGS_INLINE_TYPE_SRC)
+    // 9. Plugin-shim submodule import, covered test → checked (#3202).
+    fs.writeFileSync(path.join(componentsDir, 'PlatformShim.tsx'), PLATFORM_SHIM_SRC)
+    fs.writeFileSync(path.join(testsDir, 'PlatformShim.test.tsx'), COVERED_TEST)
+    // 10. Bare platform barrel (sync capability detection), no test → ignored.
+    fs.writeFileSync(path.join(componentsDir, 'PlatformBarrel.tsx'), PLATFORM_BARREL_SRC)
 
     const allowlist = { 'src/components/sub/Allowed.tsx': 'covered via Parent.test.tsx' }
 
@@ -454,6 +482,13 @@ function runSelfTest() {
     if (!r.missingTest.includes('src/components/BindingsInlineType.tsx'))
       ok('inline-type bindings import is ignored')
     else fail('inline-type bindings import is ignored', 'BindingsInlineType.tsx was flagged')
+
+    if (r.checked.includes('PlatformShim.tsx')) ok('platform plugin-shim import is IPC')
+    else fail('platform plugin-shim import is IPC', `checked=${JSON.stringify(r.checked)}`)
+
+    if (!r.missingTest.includes('src/components/PlatformBarrel.tsx'))
+      ok('bare platform barrel import is ignored')
+    else fail('bare platform barrel import is ignored', 'PlatformBarrel.tsx was flagged')
 
     if (r.staleAllowlist.length === 0) ok('matched allowlist entry is not stale')
     else fail('matched allowlist entry is not stale', JSON.stringify(r.staleAllowlist))

@@ -21,9 +21,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { NotificationsTab } from '@/components/settings/NotificationsTab'
-import { ensureNotificationPermission } from '@/lib/tauri'
+import { ensureNotificationPermission } from '@/lib/platform/notifications'
 
-vi.mock('@/lib/tauri', () => ({
+vi.mock('@/lib/platform/notifications', () => ({
   ensureNotificationPermission: vi.fn(),
 }))
 

@@ -12,10 +12,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useQuickCaptureShortcut } from '@/hooks/useQuickCaptureShortcut'
 import { logger } from '@/lib/logger'
+import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/platform/global-shortcut'
 import { QUICK_CAPTURE_SHORTCUT_STORAGE_KEY } from '@/lib/quick-capture-shortcut'
-import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
 
-vi.mock('@/lib/tauri', () => ({
+vi.mock('@/lib/platform/global-shortcut', () => ({
   registerGlobalShortcut: vi.fn(),
   unregisterGlobalShortcut: vi.fn(),
 }))
