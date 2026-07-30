@@ -17,6 +17,23 @@
 // makes the incremental migration monotonic: the set of non-test files
 // depending on the wrapper layer may only SHRINK, never grow.
 //
+// (#3218) This is now the ONLY guard on the wrapper layer. A sibling
+// `check-tauri-bindings-parity.mjs` guard used to require one wrapper per
+// `commands.*` binding — the opposite direction from this ratchet (adopting
+// a wrapper satisfies parity but fails this ratchet; migrating a call site
+// off its wrapper satisfies this ratchet but orphans the wrapper, failing
+// parity, unless the wrapper is deleted and the command allowlisted). It
+// was retired rather than reconciled because "every command has a wrapper"
+// was never the real target: the end state has a small, permanently
+// sanctioned residual (see "Sanctioned symbols" below), and this guard's
+// own completion criterion — baseline `[]`, modulo the sanctioned list —
+// already tells you when the migration is done. Its Phase-2 ambition
+// (real Rust-signature parity) was never implemented and, for anything
+// routed through `commands.*`, is subsumed by `tsc` typechecking the
+// generated call; it only had bite for the couple of raw-`invoke` seams
+// that bypass `commands.*` entirely, which the sanctioned-symbols list
+// already tracks by name.
+//
 // ─── How it works ───────────────────────────────────────────────────
 //
 // `scripts/tauri-import-baseline.json` is a committed, sorted allowlist

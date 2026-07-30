@@ -128,7 +128,7 @@ pub use journal::{
 pub use link_metadata::{
     fetch_link_metadata, fetch_link_metadata_inner, get_link_metadata, get_link_metadata_inner,
 };
-pub use logging::{get_log_dir, log_frontend};
+pub use logging::log_frontend;
 pub use mcp::{
     McpRwStatus, McpRwToggleGate, McpStatus, McpToggleGate, get_mcp_rw_socket_path,
     get_mcp_rw_socket_path_inner, get_mcp_rw_status, get_mcp_rw_status_inner, get_mcp_socket_path,

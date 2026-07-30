@@ -1,6 +1,5 @@
 //! Frontend logging command handlers (F-19).
 
-use super::sanitize_internal_error;
 use agaric_core::error::AppError;
 
 /// Per-field byte ceiling applied at the IPC boundary. The
@@ -106,33 +105,6 @@ pub async fn log_frontend(
         data.as_deref(),
     );
     Ok(())
-}
-
-/// Testable helper for `get_log_dir`. Mirrors what the outer
-/// `#[tauri::command]` does after resolving `app_data_dir` from Tauri:
-/// route through [`crate::log_dir_for_app_data`] so the path returned
-/// to the frontend matches the directory the tracing-appender writes
-/// To.
-pub(crate) fn get_log_dir_inner(app_data_dir: &std::path::Path) -> String {
-    crate::log_dir_for_app_data(app_data_dir)
-        .to_string_lossy()
-        .into_owned()
-}
-
-/// Return the path to the logs directory.
-///
-/// Uses [`crate::log_dir_for_app_data`] so the path returned to the
-/// frontend ("Open logs folder") is guaranteed to match the directory
-/// The tracing-appender writes to — on every platform.
-#[tauri::command]
-#[specta::specta]
-pub async fn get_log_dir(app: tauri::AppHandle) -> Result<String, AppError> {
-    use tauri::Manager;
-    app.path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))
-        .map(|data_dir| get_log_dir_inner(&data_dir))
-        .map_err(sanitize_internal_error)
 }
 
 #[cfg(test)]
@@ -293,29 +265,5 @@ mod tests {
         // an `unreachable!()` and breaking the documented "unknown level
         // ⇒ info" contract.
         log_frontend_inner("bogus", "M40Test", "mystery", None, None, None);
-    }
-
-    // -- get_log_dir_inner ---------------------------------------
-
-    #[test]
-    fn get_log_dir_inner_returns_logs_subdir() {
-        // Mirror the suffix used by `lib.rs::run` (around line 442) and
-        // by `crate::log_dir_for_app_data` — the helper appends a `logs`
-        // subdirectory to the supplied app-data dir. Both call sites
-        // Must agree.
-        let app_data = std::path::Path::new("/tmp/agaric-m40-test-data");
-        let out = get_log_dir_inner(app_data);
-        let expected = std::path::Path::new("/tmp/agaric-m40-test-data")
-            .join("logs")
-            .to_string_lossy()
-            .into_owned();
-        assert_eq!(
-            out, expected,
-            "get_log_dir_inner must append `logs` to the app data dir"
-        );
-        assert!(
-            out.ends_with("logs") || out.ends_with("logs/") || out.ends_with("logs\\"),
-            "returned path must end with the `logs` suffix used by lib.rs::run, got {out:?}"
-        );
     }
 }

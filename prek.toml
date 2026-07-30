@@ -317,22 +317,6 @@ pass_filenames = false
 files = "^src/lib/(bindings\\.ts|tauri-mock/handlers\\.ts)$"
 stages = ["pre-commit"]
 
-# Tauri bindings ↔ wrapper parity: ensures every `commands.*` export from
-# `src/lib/bindings.ts` (auto-generated tauri-specta surface) has either a
-# matching ergonomics wrapper in `src/lib/tauri.ts` or sits on an explicit
-# allowlist. Catches the drift class where a Rust command signature changes,
-# `bindings.ts` regenerates, but the hand-written wrapper is missed.
-[[repos]]
-repo = "local"
-[[repos.hooks]]
-id = "tauri-bindings-parity"
-name = "tauri bindings ↔ wrapper parity"
-entry = "node scripts/check-tauri-bindings-parity.mjs"
-language = "system"
-pass_filenames = false
-files = "^src/lib/(bindings\\.ts|tauri\\.ts)$"
-stages = ["pre-commit"]
-
 # Tracked-file Markdown link integrity. Verifies that every relative
 # `](path.md)` link in tracked Markdown files points to a file that's
 # also tracked by git. Lychee can't catch this locally because an
@@ -558,6 +542,17 @@ stages = ["pre-commit"]
 # baseline entry, so the importer count can only shrink as call sites are
 # migrated. pass_filenames=false — the script does its own scoped walk of
 # src/. Triggers on any src .ts/.tsx change or a baseline edit.
+#
+# (#3218) This is now the ONLY guard governing the wrapper layer. The
+# sibling `tauri-bindings-parity` hook (one wrapper per command) was
+# retired: it pulled in the opposite direction from this ratchet (adopting
+# a wrapper satisfies parity but fails the ratchet; migrating off one
+# satisfies the ratchet but orphans the wrapper) and, per #2927's own end
+# state, "every command has a wrapper" was never the target — a small,
+# permanently-sanctioned residual (see tauri-sanctioned-symbols.json) is.
+# This guard's own completion criterion (baseline == [], mod sanctioned
+# symbols) already IS the "are we done yet" check the other guard was
+# trying to become.
 [[repos.hooks]]
 id = "tauri-import-baseline"
 name = "No new @/lib/tauri importers (ratchet)"

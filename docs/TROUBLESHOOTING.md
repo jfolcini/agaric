@@ -101,7 +101,7 @@ The `specta_tests::ts_bindings_up_to_date` test fails:
 TypeScript bindings are stale — regenerate with: cd src-tauri && cargo test -- specta_tests --ignored
 ```
 
-CI fails on the same drift via the `tauri-bindings-parity` prek hook.
+CI fails on the same drift via the `ts_bindings_up_to_date` Rust test itself, run as part of the `cargo nextest run` suite (not a standalone prek hook).
 
 ### Cause
 

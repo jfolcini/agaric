@@ -655,14 +655,6 @@ export const commands = {
 	 */
 	logFrontend: (level: string, module: string, message: string, stack: string | null, context: string | null, data: string | null) => typedError<null, AppError>(__TAURI_INVOKE("log_frontend", { level, module, message, stack, context, data })),
 	/**
-	 *  Return the path to the logs directory.
-	 * 
-	 *  Uses [`crate::log_dir_for_app_data`] so the path returned to the
-	 *  frontend ("Open logs folder") is guaranteed to match the directory
-	 *  The tracing-appender writes to — on every platform.
-	 */
-	getLogDir: () => typedError<string, AppError>(__TAURI_INVOKE("get_log_dir")),
-	/**
 	 *  Ingest a batch of frontend-produced spans into the local trace sink.
 	 * 
 	 *  Writes each [`FrontendSpan`] as one line into `<log_dir>/traces/`'s
@@ -2047,9 +2039,10 @@ export type FrontendSpan = {
 /**
  *  One frontend span attribute. A named key/value struct rather than a
  *  `(String, String)` tuple so the generated TS type is `FrontendSpanAttr[]`
- *  (not `([string, string])[]`); the tuple form's leading `(` confused the
- *  `check-tauri-bindings-parity` command-name parser, and a named struct is the
- *  clearer wire shape anyway.
+ *  (not `([string, string])[]`); the tuple form's leading `(` confused a
+ *  hand-rolled command-name parser this codebase used to run (the
+ *  `check-tauri-bindings-parity` guard, retired in #3218), and a named
+ *  struct is the clearer wire shape anyway.
  */
 export type FrontendSpanAttr = {
 	/**  Attribute key (an opaque label — never content). */
