@@ -70,7 +70,7 @@ tracing = { version = "0.1.44", features = ["attributes"] }
 blake3 = "1.8.5"
 zstd = "0.13"
 ciborium = "0.2"
-base64 = "0.22.1"
+base64 = "0.23.0"
 # Crypto-quality random for pairing tokens + key material.
 rand = "0.10"
 # SHA-256 for sync_scheduler digest paths + pairing token derivation.

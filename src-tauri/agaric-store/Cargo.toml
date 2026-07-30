@@ -48,7 +48,7 @@ ulid = "3.0.0"
 tracing = { version = "0.1.44", features = ["attributes"] }
 # `pagination`'s keyset cursor codec (`Cursor`) base64-encodes the opaque
 # cursor payload. Version mirrors the app crate exactly (#2621, wave S4b).
-base64 = "0.22.1"
+base64 = "0.23.0"
 # `tag_query` uses `FxHashSet` for tag-leaf de-duplication. Version mirrors
 # the app crate's `rustc-hash` dep (#2621, wave S4b).
 rustc-hash = "2.1.2"
