@@ -21,12 +21,15 @@ import { AddFilterPopover } from '@/components/PageBrowser/AddFilterPopover'
 import { Button } from '@/components/ui/button'
 import { FilterPill } from '@/components/ui/filter-pill'
 import type { DatePredicate, FilterPrimitive } from '@/lib/bindings'
+import type { PageFilterWithKey } from '@/lib/filters/page-filter-with-key'
 
 /** Soft cap above which the Add-Filter affordance warns about query cost. */
 export const MAX_PAGE_FILTERS = 8
 
-/** A filter primitive stamped with a stable per-chip React key. */
-export type PageFilterWithKey = FilterPrimitive & { _addId: number }
+// Re-exported for existing importers (e.g. `PageBrowserFilterRow.test.tsx`) —
+// the type is now OWNED by `lib/filters/page-filter-with-key.ts` (#3121 step
+// 2: a `stores/` consumer must not reach into `components/` for it).
+export type { PageFilterWithKey }
 
 export interface PageBrowserFilterRowProps {
   filters: PageFilterWithKey[]
