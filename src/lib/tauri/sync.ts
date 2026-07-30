@@ -53,19 +53,14 @@ export async function getDeviceId(): Promise<string> {
 // ---------------------------------------------------------------------------
 // Sync protocol commands
 // ---------------------------------------------------------------------------
-
-/**
- * Frontend mirror of the Rust `sync_protocol::DeviceHead` wire type.
- *
- * @public No in-repo consumer today — kept alongside `SyncSessionInfo` so
- * the sync-protocol shapes stay described on the TS side; tagged so knip
- * does not report it as dead code (#3202).
- */
-export interface DeviceHead {
-  device_id: string
-  seq: number
-  hash: string
-}
+//
+// Note: Rust `sync_protocol::DeviceHead` (device_id/seq/hash) never crosses
+// the Tauri IPC boundary — it's an internal wire type used between the sync
+// daemons over their own TCP protocol (see `agaric-sync/src/sync_protocol`),
+// not a `#[tauri::command]` parameter or return type, so it has no
+// `bindings.ts` entry and no frontend consumer. #3209 removed the unused TS
+// mirror that used to live here; re-add it only if a command starts
+// returning device-head data to the frontend.
 
 export interface SyncSessionInfo {
   state: string

@@ -4,8 +4,9 @@
  * The backend `eval_tag_query` engine evaluates an arbitrary nested `TagExpr`
  * tree (`Tag` / `Prefix` leaves, `And` / `Or` / `Not` nodes — see
  * `src-tauri/agaric-store/src/tag_query/mod.rs`). Since #1472 that tree crosses the IPC
- * boundary: the `query_by_tag_expr` command (wrapped as `queryByTagExpr` in
- * `@/lib/tauri`) accepts the adjacently-tagged wire shape
+ * boundary: the `query_by_tag_expr` command (consumed directly via
+ * `commands.queryByTagExpr` — see `TagFilterPanel.tsx`; #3209 removed the
+ * unused `@/lib/tauri` wrapper) accepts the adjacently-tagged wire shape
  * (`{ type: "Tag" | "Prefix" | "And" | "Or" | "Not"; value }`) and resolves it
  * with full nesting + per-node negation.
  *
