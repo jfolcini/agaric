@@ -1175,6 +1175,26 @@ pass_filenames = false
 types = ["rust"]
 stages = ["pre-push"]
 
+# #3220: the related-test selector's own fixture suite. Until #3220 the
+# per-file loop only matched `src-tauri/src/**`, so a commit confined to
+# agaric-store/engine/sync/core/observability/diagnostics produced an empty
+# filter list and the gate ran ZERO tests while reporting success — 2087 of
+# ~5452 workspace tests had no local gate at all. This companion hook pins
+# the shapes that regression is made of: a crate-only change must yield a
+# non-empty filter, a package filter must force `--workspace` (without it
+# `package(agaric-engine)` matches nothing — #3212), an unmappable .rs file
+# must be reported loudly, and the pre-existing `src-tauri/src/**` module
+# mapping (plus the #818 specta pull-in) must stay byte-identical. Runs in
+# ~1s against a throwaway workspace in a temp dir. No file args.
+[[repos.hooks]]
+id = "test-related-rust-self-test"
+name = "related-test selector self-test (#3220 crate-mapping fixtures)"
+entry = "bash scripts/test-related-rust.sh --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # Rust: cargo-deny (advisories + licenses + bans + sources)
 [[repos]]
 repo = "local"
