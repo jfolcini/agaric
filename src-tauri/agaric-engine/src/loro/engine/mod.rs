@@ -581,7 +581,7 @@ pub use snapshot::{ImportDelta, ImportPayload, TagScope};
 mod sync;
 /// #3164: batched boot-replay blob gate verdict — `pub` for the same
 /// cross-crate reason as `TagScope` (the sync crate drives the batch).
-pub use sync::ReplayBlobGate;
+pub use sync::{InboundBlobScreen, ReplayBlobGate};
 
 /// #2604 — rollback-safe engine-apply staging primitives (`fork_staging`).
 mod staging;

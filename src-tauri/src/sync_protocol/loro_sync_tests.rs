@@ -4321,6 +4321,348 @@ async fn replay_batch_still_clears_slots_the_import_did_reach_3194() {
     }
 }
 
+/// Build the #3213 fixture: `(blob_a, blob_b)` where `blob_b` carries peer B's
+/// child of peer A's root but does NOT carry A's op it depends on.
+///
+/// Importing `blob_b` alone makes `LoroDoc::import` return `Ok` while parking
+/// the whole change in `pending_changes`: it never enters the op-log, is never
+/// diffed and is never projected — so the op-log falls SHORT of the
+/// `partial_end_vv` the blob declared, which is exactly the condition
+/// `LoroEngine::oplog_shortfall` reports. Importing both settles it.
+fn orphaned_child_blob_pair_3213() -> (Vec<u8>, Vec<u8>) {
+    let mut a = LoroEngine::with_peer_id("device-A").expect("A");
+    let since_a = a.version_vector();
+    a.apply_create_block(BLOCK_A, "content", "root", None, 0)
+        .expect("a root");
+    let blob_a = a.export_update_since(&since_a).expect("blob a");
+
+    let mut b = LoroEngine::with_peer_id("device-B").expect("B");
+    b.import(&blob_a).expect("b imports a");
+    let since_b = b.version_vector();
+    b.apply_create_block(BLOCK_B, "content", "child", Some(BLOCK_A), 0)
+        .expect("b child");
+    let blob_b = b.export_update_since(&since_b).expect("blob b");
+
+    (blob_a, blob_b)
+}
+
+/// An encoded EMPTY version vector — a `from_vv` reachable from any doc.
+fn empty_from_vv_3213() -> Vec<u8> {
+    LoroEngine::with_peer_id("device-EMPTY")
+        .expect("engine")
+        .version_vector()
+}
+
+fn update_msg_3213(space: &SpaceId, from_vv: Vec<u8>, bytes: Vec<u8>) -> LoroSyncMessage {
+    LoroSyncMessage::Update {
+        protocol_version: LORO_SYNC_PROTOCOL_VERSION,
+        space_id: space.clone(),
+        from_vv,
+        bytes,
+    }
+}
+
+async fn inbox_count_3213(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_inbox")
+        .fetch_one(pool)
+        .await
+        .expect("count inbox")
+}
+
+async fn block_count_3213(pool: &SqlitePool, id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = ?")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("count block")
+}
+
+/// #3213 (#3194 / #535) — the LIVE inbound path must not delete a write-ahead
+/// inbox slot whose payload the import never actually reached.
+///
+/// `apply_remote` writes the raw bytes into `loro_sync_inbox` BEFORE importing,
+/// precisely so a crash between import and projection cannot lose them. But
+/// `LoroDoc::import` returns `Ok` even when it parked part of the payload in
+/// `pending_changes` for missing deps — those ops are in neither the op-log nor
+/// SQL, and the slot was their only durable copy. #3194 fixed this for the
+/// batch replay path only, because that path had a gate-declared frontier to
+/// check against; the live path had none and deleted unconditionally.
+///
+/// The blob is delivered as an `Update` declaring an EMPTY `from_vv`, which is
+/// reachable from any doc, so the #1054 live gate admits it — the realistic
+/// shape, a sender declaring a base it did not actually supply. The payload
+/// then parks, and the slot must survive for a boot replay.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_keeps_the_slot_whose_end_frontier_the_import_never_reached_3213() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (_blob_a, blob_b) = orphaned_child_blob_pair_3213();
+
+    let registry = LoroEngineRegistry::new();
+    let outcome = apply_remote(
+        &pool,
+        &registry,
+        "device-R",
+        update_msg_3213(&space, empty_from_vv_3213(), blob_b),
+    )
+    .await
+    .expect("apply_remote must still return Ok — the import itself did not fail");
+    assert!(
+        matches!(outcome, ApplyOutcome::Imported { .. }),
+        "precondition: the live gates must ADMIT this blob, so pre-#3213 its \
+         slot would have been deleted; got {outcome:?}"
+    );
+
+    // Precondition for the assertion below: the change really did park, so
+    // nothing about it reached the engine or SQL.
+    {
+        let mut g = registry.for_space(&space, "device-R").expect("for_space");
+        assert!(
+            g.engine_mut().read_block(BLOCK_B).expect("read").is_none(),
+            "precondition: the orphaned child never settled into the op-log"
+        );
+    }
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_B).await,
+        0,
+        "precondition: nothing settled, so nothing could be projected"
+    );
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "the write-ahead slot is the ONLY copy of content that reached neither \
+         the op-log nor SQL — deleting it is the #535 invariant inverted"
+    );
+}
+
+/// #3213 control — the live delete condition must not become a blanket refusal.
+///
+/// The ordinary shape (a dependency that really is present, here supplied by a
+/// preceding live delivery) settles fully: the op-log reaches each blob's
+/// declared end frontier, every slot is cleared in its projection tx, and both
+/// blocks land in SQL. Without this, the test above would pass just as well
+/// with a condition that always fails.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn apply_remote_still_clears_the_slot_the_import_did_reach_3213() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (blob_a, blob_b) = orphaned_child_blob_pair_3213();
+
+    let registry = LoroEngineRegistry::new();
+    for blob in [blob_a, blob_b] {
+        let outcome = apply_remote(
+            &pool,
+            &registry,
+            "device-R",
+            update_msg_3213(&space, empty_from_vv_3213(), blob),
+        )
+        .await
+        .expect("apply_remote");
+        assert!(
+            matches!(outcome, ApplyOutcome::Imported { .. }),
+            "got {outcome:?}"
+        );
+    }
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "both payloads settled and projected, so both slots must be cleared"
+    );
+    for id in [BLOCK_A, BLOCK_B] {
+        assert_eq!(
+            block_count_3213(&pool, id).await,
+            1,
+            "{id} must be projected to SQL"
+        );
+    }
+}
+
+/// #3213 (#3194 / #535) — the PER-ROW boot-replay path must not delete a slot
+/// whose payload the import never actually reached.
+///
+/// `replay_inbox_row` is `replay_inbox_batch`'s poison-isolation fallback: when
+/// a batch import fails, each accepted blob is retried ALONE. A blob whose
+/// dependency lived in a sibling slot then parks in `pending_changes` and is
+/// not projected — and pre-#3213 its slot was deleted anyway, which is the
+/// worst case of the gap, because the isolation retry is exactly where a blob
+/// gets separated from its dependency.
+///
+/// Isolation itself is preserved: keeping the slot still returns `Ok`, so the
+/// caller's per-slot walk moves on, and the boot walk advances its
+/// `id > last_seen` cursor past every row BEFORE attempting it — a kept slot is
+/// retried once per boot, never re-fetched inside one.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_inbox_row_keeps_the_slot_whose_end_frontier_the_import_never_reached_3213() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (_blob_a, blob_b) = orphaned_child_blob_pair_3213();
+
+    let slot_id = seed_slot(&pool, space.as_str(), &blob_b).await;
+    let registry = LoroEngineRegistry::new();
+
+    let (changed, purged) = replay_inbox_row(
+        &pool,
+        &registry,
+        "device-R",
+        space.as_str(),
+        &blob_b,
+        slot_id,
+        &[],
+    )
+    .await
+    .expect("the per-row replay must not fail — poison isolation depends on it");
+    assert!(
+        changed.is_empty() && purged.is_empty(),
+        "precondition: the orphaned child never settled, so the replay projected \
+         nothing; got changed={changed:?} purged={purged:?}"
+    );
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_B).await,
+        0,
+        "precondition: nothing settled, so nothing could be projected"
+    );
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "the retried-alone slot holds the only copy of content that reached \
+         neither the op-log nor SQL — it must survive for a later boot (#535)"
+    );
+}
+
+/// #3213 control — the per-row delete condition must not become a blanket
+/// refusal.
+///
+/// Replaying the dependency's slot first, then the child's, settles both: each
+/// import reaches the frontier its blob declared, so each slot is cleared in
+/// its projection tx and both blocks land in SQL. The second replay is the
+/// load-bearing half — it clears against a NON-empty declared frontier met by a
+/// non-trivially advanced op-log, so a condition that merely happened to be
+/// vacuous would not pass it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn replay_inbox_row_still_clears_the_slot_the_import_did_reach_3213() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (blob_a, blob_b) = orphaned_child_blob_pair_3213();
+
+    let registry = LoroEngineRegistry::new();
+    for blob in [blob_a, blob_b] {
+        let slot_id = seed_slot(&pool, space.as_str(), &blob).await;
+        replay_inbox_row(
+            &pool,
+            &registry,
+            "device-R",
+            space.as_str(),
+            &blob,
+            slot_id,
+            &[],
+        )
+        .await
+        .expect("per-row replay");
+    }
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "both payloads settled and projected, so both slots must be cleared"
+    );
+    for id in [BLOCK_A, BLOCK_B] {
+        assert_eq!(
+            block_count_3213(&pool, id).await,
+            1,
+            "{id} must be projected to SQL"
+        );
+    }
+}
+
+/// #3213 — a kept slot is TRANSIENT in the common case: it clears itself at the
+/// next boot once the dependency it was waiting on has landed.
+///
+/// This is the claim that makes the unbounded-retention trade acceptable, so it
+/// is pinned rather than reasoned about. The full round trip is exercised, not a
+/// shortcut: the dependency arrives in a LATER live message, the engines are
+/// persisted to `loro_doc_state` and a FRESH registry is rehydrated from them —
+/// so the heal cannot be coming from loro's in-memory `pending_changes`, which
+/// do not survive a process boundary. Only then does the boot walk run.
+///
+/// Pre-#3213 this test would be vacuous: `apply_remote` deleted the slot on
+/// delivery, and its content — never in the op-log, never in SQL — would simply
+/// be gone. Here BLOCK_B is absent from SQL until the boot replay puts it there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn kept_slot_self_heals_at_the_next_boot_once_the_dependency_lands_3213() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (blob_a, blob_b) = orphaned_child_blob_pair_3213();
+
+    let registry = LoroEngineRegistry::new();
+
+    // 1. The orphaned child arrives FIRST and parks — its slot is kept (#3213).
+    apply_remote(
+        &pool,
+        &registry,
+        "device-R",
+        update_msg_3213(&space, empty_from_vv_3213(), blob_b),
+    )
+    .await
+    .expect("apply_remote (orphan)");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "precondition: the orphan's slot must be KEPT, not deleted"
+    );
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_B).await,
+        0,
+        "precondition: the orphan projected nothing"
+    );
+
+    // 2. The dependency arrives in a LATER live message. It clears its own slot;
+    //    the orphan's slot is not in that call's id set, so it stays behind.
+    apply_remote(
+        &pool,
+        &registry,
+        "device-R",
+        update_msg_3213(&space, empty_from_vv_3213(), blob_a),
+    )
+    .await
+    .expect("apply_remote (dependency)");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "the dependency's own slot clears; the earlier orphan's slot remains"
+    );
+
+    // 3. Process boundary: persist the engines and rehydrate a FRESH registry
+    //    from `loro_doc_state`, exactly as boot does. In-memory
+    //    `pending_changes` do not cross this line.
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &registry).await;
+    let booted = LoroEngineRegistry::new();
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R").await;
+
+    // 4. The boot walk retries the kept slot. Its declared frontier is now
+    //    covered, so it projects and the slot is finally cleared.
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &booted, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+    assert_eq!(
+        replayed, 1,
+        "the kept slot must count as replayed once cleared"
+    );
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "the kept slot must self-heal — retention is transient, not a leak"
+    );
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_B).await,
+        1,
+        "and its content must finally reach SQL — the whole point of keeping it"
+    );
+}
+
 /// Insert one write-ahead inbox slot and return its id.
 async fn seed_slot(pool: &SqlitePool, space_id: &str, bytes: &[u8]) -> i64 {
     sqlx::query_scalar(
