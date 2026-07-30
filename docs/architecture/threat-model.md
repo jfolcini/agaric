@@ -178,16 +178,17 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 ### Claim 1 — User data stays on the user's device
 
-**Argument.** Agaric is a local-first application. There is no server-side store, no cloud copy, no telemetry endpoint, and no third-party data flow. The only off-device data flow is opt-in LAN sync to the user's own paired devices.
+**Argument.** Agaric is a local-first application. There is no server-side store, no maintainer-operated cloud copy, and no telemetry that phones home by default. The off-device data flows are opt-in LAN sync to the user's own paired devices and, only if explicitly enabled, an opt-in OpenTelemetry exporter that is code-constrained to a loopback collector the user runs themselves.
 
 **Evidence.**
 
 - [§Trust boundaries](#trust-boundaries) lists two boundaries that touch off-device surfaces (B3 LAN sync, B4 updater); both are either self-paired (B3) or read-only (B4).
-- [`SECURITY.md`](../../SECURITY.md#out-of-scope) restates "no server-side store, no telemetry" as the contract; this row treats violations as security findings.
+- [`SECURITY.md`](../../SECURITY.md#in-scope) treats "an outbound network call to a server the maintainer doesn't operate" as an in-scope finding, carving out one documented, bounded exception.
+- [`SECURITY.md`](../../SECURITY.md#observability-telemetry-egress-opt-in-loopback-only) — the OTel exporter is off by default, byte-identical to the file-only pipeline when unset, and enforced in code (`observability::config::validate_loopback_endpoint`) to reject any non-loopback endpoint host. A report that the opt-in exporter exists is not a finding; a report that its loopback enforcement can be bypassed is.
 
 ### Claim 2 — The Tauri IPC boundary is capability-gated
 
-**Argument.** Every call from the JS frontend into the Rust backend traverses `tauri::Builder::invoke_handler!`. Capabilities for those handlers live in `src-tauri/capabilities/default.json` and are reviewed in CI. Frontend code cannot escalate to OS-level APIs (filesystem, network, shell) outside the allowlist.
+**Argument.** Every call from the JS frontend into the Rust backend traverses `tauri::Builder::invoke_handler!`. Capabilities for those handlers live in `src-tauri/capabilities/default.json`, and Tauri enforces the allowlist at build/runtime — an unregistered or unpermitted command cannot be invoked from the frontend. Frontend code cannot escalate to OS-level APIs (filesystem, network, shell) outside the allowlist.
 
 **Evidence.**
 
@@ -209,11 +210,11 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 ### Claim 4 — Vulnerabilities can reach the maintainer privately
 
-**Argument.** [`SECURITY.md`](../../SECURITY.md) names the maintainer's GitHub Security Advisories private-disclosure path and a fallback email. Both are stable for the lifetime of the repository. The 90-day public-disclosure clock matches the OSSF norm and is published, not invented per-report.
+**Argument.** [`SECURITY.md`](../../SECURITY.md) names the maintainer's GitHub Security Advisories private-disclosure path and a fallback email. Both are stable for the lifetime of the repository. The response timeline (acknowledgement, triage, fix-or-plan) is a published, fixed commitment rather than something negotiated per-report.
 
 **Evidence.**
 
-- [`SECURITY.md`](../../SECURITY.md#how-to-report) — the private-disclosure path and fallback email; the response timeline is in [§ What to expect](../../SECURITY.md#what-to-expect).
+- [`SECURITY.md`](../../SECURITY.md#how-to-report) — the private-disclosure path and fallback email; the response timeline (acknowledgement within 7 days, triage within 14 days, fix-or-mitigation plan within 30 days where feasible) is in [§ What to expect](../../SECURITY.md#what-to-expect). Public disclosure happens via a tagged release plus a published GitHub Security Advisory; there is no fixed public-disclosure day-count, only the ack/triage/fix cadence above.
 - The disclosure path is wired to the project's GitHub Security Advisories tab; reports there reach the maintainer's notification settings.
 - The OpenSSF Best Practices form's [`vulnerability_report_process`](https://www.bestpractices.dev/en/criteria/0#0.vulnerability_report_process) criterion is Met (verified 2026-05-17) and points at the same document.
 
@@ -225,7 +226,7 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 - [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
 - `cargo-deny` runs on every PR via the prek hook suite in `_validate.yml`'s `lint` job; `cargo audit` runs in the same job.
-- `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale and an upstream tracking link.
+- `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale; two of the 23 (the `quick-xml` pins) also cite a specific tracking issue (`#2310`), and the GTK3 bindings batch documents its own revisit trigger ("a Tauri release announces the GTK4 migration complete") in the comment above the list.
 - The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
 
 ### How this is maintained
