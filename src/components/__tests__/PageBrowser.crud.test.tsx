@@ -422,19 +422,43 @@ describe('PageBrowser', () => {
 
     it('shows toast on failed page deletion', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
+      // #3217 — route by COMMAND NAME rather than call order. A positional
+      // `mockResolvedValueOnce`/`mockRejectedValueOnce` pair is consumed by
+      // whichever IPC call lands next, regardless of which Tauri command it
+      // is for. `DensityRow`'s hover/focus-intent speculative prefetch
+      // (`prefetchPageSubtree`, `PAGE_PREFETCH_DWELL_MS` = 120ms — see
+      // `@/lib/prefetch-page-subtree`) fires a genuine `load_page_subtree`
+      // IPC call whenever the pointer dwells on a page row for >120ms, which
+      // `userEvent.click(trashBtn)` does as an ordinary side effect of
+      // synthesizing the pointer-enter/click sequence. When the interaction
+      // is slow enough for that debounce to fire (reliably so under CPU
+      // contention — reproduces 100% under load, ~0% idle, so it is a
+      // wall-clock THRESHOLD, not a coin-flip race), that call consumes the
+      // `mockRejectedValueOnce` meant for `delete_block`; `delete_block`
+      // then falls through to the file's `beforeEach` base
+      // `mockImplementation` (`Promise.resolve(undefined)`), which
+      // `typedError`/`unwrap` treat as a *successful* `{ status: 'ok', data:
+      // undefined }` — so the delete silently "succeeds" (row removed, a
+      // success toast fires) instead of surfacing the intended failure, and
+      // this assertion times out. Keying the mock on `cmd` makes the
+      // outcome invariant to any such incidental IPC call, in isolation or
+      // in the full file.
+      const page = {
         items: [makePage({ id: 'P1', content: 'Fail Delete' })],
         next_cursor: null,
         has_more: false,
         total_count: null,
+      }
+      mockedInvoke.mockImplementation((cmd: string) => {
+        if (cmd === 'list_pages_with_metadata') return Promise.resolve(page)
+        if (cmd === 'delete_block') return Promise.reject(new Error('Delete failed'))
+        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
+        return Promise.resolve(undefined)
       })
 
       render(<PageBrowser />)
 
       await screen.findByText('Fail Delete')
-
-      // Mock delete_block to fail
-      mockedInvoke.mockRejectedValueOnce(new Error('Delete failed'))
 
       // Open dialog and confirm
       const pageRow = screen.getByText('Fail Delete').closest('.group') as HTMLElement
