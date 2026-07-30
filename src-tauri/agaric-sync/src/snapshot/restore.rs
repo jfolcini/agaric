@@ -36,6 +36,18 @@ const CACHE_TABLES: &[&str] = &[
     "tags_cache",
     "block_tag_inherited",
     "projected_agenda_cache",
+    // #3160: the horizon row is not a second cache — it is the advertisement
+    // for `projected_agenda_cache`'s contents, written in the same
+    // transaction as the rows precisely so a reader can never see a span
+    // wider than the rows backing it (#2601). Wiping the rows without wiping
+    // the advertisement broke that invariant: the read path would find a span
+    // covering the requested window, find no rows in it, and — since #3160 —
+    // correctly conclude "genuinely empty" and return a blank agenda, for the
+    // whole asynchronous gap between this COMMIT and the
+    // `RebuildProjectedAgendaCache` enqueued after it. Absent row => "cache
+    // unproven => always fall back on-the-fly", which is what a freshly
+    // restored device should do until its rebuild lands.
+    "projected_agenda_horizon",
     "fts_blocks",
     "block_tag_refs",
     "page_link_cache",

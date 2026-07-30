@@ -1,0 +1,24 @@
+-- #3160 — record the rebuild's reference date alongside the horizon it
+-- advertises, instead of leaving the read path to derive it.
+--
+-- Migration 0102 stores only `horizon_date`, which the rebuild writes as
+-- `rebuild_today + HORIZON_DAYS`. The read path needs the *lower* end of the
+-- guaranteed-complete span too — `cache::projected_agenda::project_block_into`
+-- passes `range_start = today`, so occurrences before the rebuild's reference
+-- date are never materialized — and it needs to know whether that reference
+-- date is still current, because `.+` (completion-anchored) recurrence rules
+-- are projected FROM the reference date and therefore move every day.
+--
+-- Deriving the reference date as `horizon_date - HORIZON_DAYS` would work only
+-- for as long as `HORIZON_DAYS` never changes: a stored row written under the
+-- old constant decodes to the wrong date under a new one, and nothing
+-- invalidates the row on upgrade (no migration clears it; the boot rebuild is
+-- the de-facto invalidator and it is asynchronous). Storing the date the
+-- rebuild actually used removes the inverse, and the constant can then be
+-- retuned freely.
+--
+-- Nullable with no default so the column is additive: the row written by an
+-- older binary decodes to NULL, which the read path treats as "reference date
+-- unknown" and answers from the on-the-fly projector — the same conservative
+-- branch an absent horizon row takes. The next rebuild fills it in.
+ALTER TABLE projected_agenda_horizon ADD COLUMN rebuild_today TEXT;

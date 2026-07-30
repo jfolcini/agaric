@@ -3830,6 +3830,270 @@ async fn projected_agenda_beyond_horizon_falls_back_to_on_the_fly() {
 }
 
 // ======================================================================
+// #3160 — the empty-result probe is bounded by the guaranteed span
+// ======================================================================
+//
+// `list_projected_agenda_inner` used to answer ANY empty first page by
+// re-running the full on-the-fly recurrence expansion, on the theory that an
+// empty window means an unpopulated cache. That costs O(repeating blocks ×
+// horizon) — 217 ms at the 100K SLO fixture — every time a user's window
+// legitimately holds no projected occurrences. Since #2601 the horizon row
+// says exactly when the cache is authoritative, so the expansion is skipped
+// for ranges inside `[rebuild_today, rebuild_today + HORIZON_DAYS]` and kept
+// everywhere else.
+//
+// The two tests below pin both sides of that boundary. They deliberately
+// DELETE a materialized row so the cache disagrees with the projector: that
+// is the only way to observe which branch ran, since the two branches agree
+// by construction whenever the cache is intact.
+
+/// Seed one `daily` repeating block based `days_before` days ahead of
+/// `pinned_today`, rebuild the cache anchored at `pinned_today`, and return
+/// the block id. The rebuild advertises `pinned_today + HORIZON_DAYS`.
+async fn seed_daily_repeater_and_rebuild(
+    pool: &SqlitePool,
+    id: &str,
+    base: chrono::NaiveDate,
+    pinned_today: chrono::NaiveDate,
+) {
+    insert_block(pool, id, "content", "daily repeater", None, None).await;
+    sqlx::query("UPDATE blocks SET due_date = ?, todo_state = 'TODO' WHERE id = ?")
+        .bind(base.format("%Y-%m-%d").to_string())
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) VALUES (?, 'repeat', 'daily')",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    agaric_store::cache::rebuild_projected_agenda_cache_with_today(pool, pinned_today)
+        .await
+        .unwrap();
+}
+
+/// A range that lies wholly inside the span the last rebuild guarantees
+/// complete must be answered FROM THE CACHE even when the cache has nothing
+/// for it — no O(vault) expansion behind an empty page.
+///
+/// Observability trick: the single occurrence the window would contain is
+/// deleted from the cache first. The projector would still produce it (it
+/// recomputes from the repeat rule), so a non-empty page here proves the
+/// fallback ran.
+#[tokio::test]
+async fn projected_agenda_empty_window_inside_horizon_does_not_expand() {
+    let (pool, _dir) = test_pool().await;
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3160A0000000000000000000", base, pinned_today).await;
+
+    // A day inside [pinned_today, pinned_today + HORIZON_DAYS].
+    let day = (pinned_today + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+    let deleted = sqlx::query("DELETE FROM projected_agenda_cache WHERE projected_date = ?")
+        .bind(&day)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+    assert_eq!(
+        deleted, 1,
+        "fixture: the rebuild must have materialized {day}"
+    );
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    assert!(
+        page.items.is_empty(),
+        "a range inside the guaranteed span must be answered from the cache, \
+         not re-expanded on the fly (#3160); got {} item(s)",
+        page.items.len()
+    );
+    assert!(!page.has_more);
+    assert!(page.next_cursor.is_none());
+}
+
+/// The lower bound of the guarantee. The rebuild projects from its own
+/// `today` forward, so occurrences BEFORE that date were never materialized —
+/// an empty cache result there means "not covered", not "nothing to show",
+/// and the on-the-fly fallback must still run.
+#[tokio::test]
+async fn projected_agenda_empty_window_before_rebuild_today_still_expands() {
+    let (pool, _dir) = test_pool().await;
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3160B0000000000000000000", base, pinned_today).await;
+
+    // Wholly before the rebuild's reference date: the cache holds nothing
+    // here (`project_block_into` starts at `today`), but the daily rule does
+    // occur on each of these days.
+    let start = "2050-04-01".to_string();
+    let end = "2050-04-05".to_string();
+    let empty: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM projected_agenda_cache WHERE projected_date BETWEEN ? AND ?",
+    )
+    .bind(&start)
+    .bind(&end)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(empty, 0, "fixture: pre-rebuild-today dates are not cached");
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        start,
+        end,
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    let dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    assert_eq!(
+        dates,
+        vec![
+            "2050-04-01",
+            "2050-04-02",
+            "2050-04-03",
+            "2050-04-04",
+            "2050-04-05"
+        ],
+        "a range reaching before the rebuild's `today` is NOT covered by the \
+         cache, so the on-the-fly fallback must still answer it (#3160)"
+    );
+}
+
+/// The freshness half of the guarantee. A cache rebuilt on an EARLIER day
+/// still spans the requested range, but its `.+` (completion-anchored)
+/// occurrences were projected from that earlier reference date and have since
+/// moved. An empty window over a stale cache therefore proves nothing, and the
+/// on-the-fly fallback must still run.
+///
+/// Pinned to the same hole-punch trick as
+/// `projected_agenda_empty_window_inside_horizon_does_not_expand`: the two
+/// tests differ ONLY in whether the read's `today` matches the rebuild's, so
+/// together they pin the equality as the thing that decides the branch.
+#[tokio::test]
+async fn projected_agenda_empty_window_with_stale_rebuild_today_still_expands() {
+    let (pool, _dir) = test_pool().await;
+    let rebuilt_on = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3160C0000000000000000000", base, rebuilt_on).await;
+
+    // The read happens a day later — no rebuild has run since.
+    let read_today = rebuilt_on + chrono::Duration::days(1);
+    let day = (rebuilt_on + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+    let deleted = sqlx::query("DELETE FROM projected_agenda_cache WHERE projected_date = ?")
+        .bind(&day)
+        .execute(&pool)
+        .await
+        .unwrap()
+        .rows_affected();
+    assert_eq!(
+        deleted, 1,
+        "fixture: the rebuild must have materialized {day}"
+    );
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        read_today,
+    )
+    .await
+    .unwrap();
+
+    let dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    assert_eq!(
+        dates,
+        vec![day.as_str()],
+        "a cache whose reference date is no longer today cannot prove a window \
+         empty — the fallback must still answer it (#3160)"
+    );
+}
+
+/// A horizon row written before migration 0105 carries no `rebuild_today`.
+/// The lower bound is then unknown, so the cache must not be trusted to prove
+/// a window empty — the pre-#3160 fallback behaviour, until the next rebuild
+/// fills the column in.
+#[tokio::test]
+async fn projected_agenda_empty_window_with_null_rebuild_today_still_expands() {
+    let (pool, _dir) = test_pool().await;
+    let pinned_today = chrono::NaiveDate::from_ymd_opt(2050, 4, 6).unwrap();
+    let base = chrono::NaiveDate::from_ymd_opt(2050, 3, 30).unwrap();
+    seed_daily_repeater_and_rebuild(&pool, "PA3160D0000000000000000000", base, pinned_today).await;
+
+    // Simulate the row an older binary left behind.
+    sqlx::query("UPDATE projected_agenda_horizon SET rebuild_today = NULL WHERE id = 0")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let day = (pinned_today + chrono::Duration::days(4))
+        .format("%Y-%m-%d")
+        .to_string();
+    sqlx::query("DELETE FROM projected_agenda_cache WHERE projected_date = ?")
+        .bind(&day)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let page = list_projected_agenda_inner_with_today(
+        &pool,
+        day.clone(),
+        day.clone(),
+        None,
+        Some(200),
+        &SpaceScope::Global,
+        pinned_today,
+    )
+    .await
+    .unwrap();
+
+    let dates: Vec<&str> = page
+        .items
+        .iter()
+        .map(|e| e.projected_date.as_str())
+        .collect();
+    assert_eq!(
+        dates,
+        vec![day.as_str()],
+        "a pre-0105 horizon row has no proven lower bound, so the fallback must \
+         still answer the window (#3160)"
+    );
+}
+
+// ======================================================================
 // #2069 — on-the-fly prefilter superset parity
 // ======================================================================
 //
