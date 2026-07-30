@@ -1,16 +1,23 @@
 /**
  * PageBrowserBatchToolbar — batch-action toolbar for the Pages view
- * (#81 / CORE scope).
+ * (#81 / CORE scope; #2003 items 2 + 3).
  *
  * Sibling component of `PageBrowser`, mirroring the Trash/History batch
  * toolbars: it renders a shared `BatchActionToolbar` with the selection
- * count plus three bulk actions when ≥1 page is selected:
+ * count plus bulk actions when ≥1 page is selected:
  *
  *  - **Trash** — bulk soft-delete via `deleteBlocksByIds`.
  *  - **Star / Unstar** — toggle the whole selection's starred state (a pure
  *    localStorage feature via `useStarredPages().setMany`; no backend call).
+ *    Mixed selections (some starred, some not) are treated as "not fully
+ *    starred": the control shows Star (not Unstar) and stars the whole
+ *    selection — the least-surprising reading of a toggle, and idempotent
+ *    for the pages already starred.
  *  - **Add tag** — pick a tag from the active space, then `addTagsByIds`.
  *  - **Move to space** — pick a target space, then `moveBlocksToSpace`.
+ *  - **Set property** — pick one of `todo_state` / `priority` / `due_date` /
+ *    `scheduled_date`, then a value (or Clear), and confirm via
+ *    `setPropertyBatch`.
  *
  * After a successful op it clears the selection and calls `onMutated`
  * (the parent's list-refresh path); success / error surface via
@@ -19,8 +26,10 @@
  * `useSpaceStore` `availableSpaces` snapshot (the same list the sidebar
  * `SpaceSwitcher` renders), filtering out the current space.
  *
- * Saved views and bulk set-property are intentionally out of scope for this
- * issue and are NOT implemented here.
+ * Saved views (#2003 item 1) are a separate piece — persisted
+ * `{sort, density, filters}` view snapshots — implemented in
+ * `src/lib/saved-pages-views.ts` / `SavedViewsDropdown` / `SaveViewDialog`,
+ * not in this toolbar.
  */
 
 import { SlidersHorizontal, Star, StarOff, Tag, Trash2 } from 'lucide-react'

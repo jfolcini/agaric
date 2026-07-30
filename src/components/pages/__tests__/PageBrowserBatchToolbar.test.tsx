@@ -339,6 +339,26 @@ describe('PageBrowserBatchToolbar', () => {
     expect(onClearSelection).toHaveBeenCalledTimes(1)
   })
 
+  it('mixed selection (some starred, some not) renders Star (not Unstar) and stars the whole selection on click', async () => {
+    const user = userEvent.setup()
+    // Only P1 is starred going in; P2/P3 are not — the selection is NOT
+    // fully starred, so the toggle must read as "Star", never "Unstar".
+    localStorage.setItem('starred-pages', JSON.stringify(['P1']))
+    const { onClearSelection } = renderToolbar()
+
+    const starBtn = screen.getByTestId('page-batch-star-btn')
+    expect(starBtn).toBeInTheDocument()
+    expect(screen.queryByTestId('page-batch-unstar-btn')).not.toBeInTheDocument()
+
+    await user.click(starBtn)
+
+    // Clicking "Star" on a mixed selection stars the WHOLE selection
+    // (least-surprising toggle reading), leaving the already-starred page
+    // starred (idempotent) and adding the rest.
+    expect(getStarredPages().toSorted()).toEqual(SELECTED.toSorted())
+    expect(onClearSelection).toHaveBeenCalledTimes(1)
+  })
+
   it('the star toggle control has no a11y violations', async () => {
     const { container } = renderToolbar()
     const starBtn = screen.getByTestId('page-batch-star-btn')
