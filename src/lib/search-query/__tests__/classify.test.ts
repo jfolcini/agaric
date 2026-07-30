@@ -628,6 +628,70 @@ describe('classify / parse', () => {
     expect(ast.freeText).toBe('lead "BB"')
   })
 
+  it('does not re-emit a quoted span that exactly coincides with a consumed filter span', () => {
+    // classify.ts:139 — `(quotedOrdered[qi]?.[1] ?? 0) <= from`. When a quoted
+    // span's end exactly equals the `from` of the NEXT append() call (here
+    // both the quote and the filter cover the same [10, 14) range), the
+    // skip-loop must advance `qi` PAST it (`<=`) rather than leaving it
+    // pointing at the already-consumed span (`<`). If it doesn't advance,
+    // the stale span gets re-recorded as a zero-width `quotedOut` entry
+    // sitting in the middle of the surrounding whitespace, which splits the
+    // whitespace-collapse into two independent passes and leaves a double
+    // space behind instead of collapsing to one.
+    ensureRegistered()
+    const input = 'freeword  XXXX trailing'
+    const tokens: RawToken[] = [
+      { kind: 'quoted', text: '"AA"', span: [10, 14] },
+      { kind: 'word', text: '#XXX', span: [10, 14] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.freeText).toBe('freeword trailing')
+  })
+
+  it('does not duplicate the overlap when two quoted spans nest inside one append() range', () => {
+    // classify.ts:148 — `if (q[1] <= to) { qi++; ... } else { break }`. When
+    // a quoted span's end falls beyond the current append() range (`to`),
+    // the loop must `break` and leave `q` (and `qi`) pointing at that same
+    // span so the NEXT append() call resumes handling it, instead of
+    // advancing `qi` unconditionally and treating it as fully consumed here.
+    // Two overlapping quotes — [0, 10) and [3, 6), the second nested wholly
+    // inside the first but with an end past the append() boundary carved
+    // out by the [8, 12) filter — force the loop to take the `else break`
+    // path; mutating the guard to `true` makes it advance `qi` regardless,
+    // so on the FOLLOWING append() call the first quote's tail gets
+    // re-recorded a second time as its own `quotedOut` entry, duplicating
+    // that substring in the reconstructed free text.
+    ensureRegistered()
+    const input = '0123456789ABCDEFGHIJ'
+    const tokens: RawToken[] = [
+      { kind: 'quoted', text: 'A', span: [0, 10] },
+      { kind: 'quoted', text: 'B', span: [3, 6] },
+      { kind: 'word', text: '#ZZZZ', span: [8, 12] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.freeText).toBe('01234567CDEFGHIJ')
+  })
+
+  it('collapses whitespace right up to (not past) the next quoted span boundary', () => {
+    // classify.ts:159 — `if (s > cursor) append(cursor, s)`. Between two
+    // adjacent filters that both sit inside the same quoted span's
+    // reach, this guard must fire only when there's a genuine gap to
+    // append; if it always ran (mutant `true`) or ran on an off-by-one
+    // boundary (mutant `s >= cursor`), a stale/zero-width slice of the
+    // quoted span would get appended and re-recorded, splitting the
+    // free-text whitespace collapse into two independent passes and
+    // leaving a double space where the real output collapses to one.
+    ensureRegistered()
+    const input = 'AB  CDEFGHIJ  XY'
+    const tokens: RawToken[] = [
+      { kind: 'quoted', text: 'Q', span: [4, 12] },
+      { kind: 'word', text: '#f1', span: [4, 8] },
+      { kind: 'word', text: '#f2', span: [8, 12] },
+    ]
+    const ast = classify(tokens, input)
+    expect(ast.freeText).toBe('AB XY')
+  })
+
   it('reconstructs free text around multiple quoted phrases interleaved with multiple filters', () => {
     // classify.ts:143/148/159/162/169/173 — buildFreeText's stripping +
     // whitespace-collapse passes, exercised together: one quoted phrase
