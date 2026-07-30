@@ -42,7 +42,7 @@ export function isMac(): boolean {
  * portable across devices.
  */
 export function modKey(): string {
-  return isMac() ? '\u2318' : 'Ctrl'
+  return isMac() ? '⌘' : 'Ctrl'
 }
 
 /**

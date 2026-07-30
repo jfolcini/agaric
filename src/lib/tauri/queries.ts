@@ -129,6 +129,10 @@ export async function countBacklinksBatch(params: {
  * cross-space (`global`) trash count. In the pre-bootstrap window (no active
  * space) callers must short-circuit to `0` locally rather than pass `''`
  * (which now reaches the backend as a malformed `Active('')` and is rejected).
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.countTrash` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function countTrash(spaceId: string): Promise<number> {
   return unwrap(await commands.countTrash(toSpaceScope(spaceId)))

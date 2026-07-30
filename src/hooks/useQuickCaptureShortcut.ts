@@ -26,11 +26,11 @@
 import { useEffect, useRef, useState } from 'react'
 
 import { logger } from '@/lib/logger'
+import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/platform/global-shortcut'
 import {
   loadQuickCaptureShortcut,
   QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
 } from '@/lib/quick-capture-shortcut'
-import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
 
 export function useQuickCaptureShortcut(setQuickCaptureOpen: (open: boolean) => void): void {
   // Lift the chord into state so the registration effect

@@ -25,11 +25,12 @@ import { axe } from 'vitest-axe'
 import { QuickCaptureRow } from '@/components/settings/QuickCaptureRow'
 import { t } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-import { registerGlobalShortcut } from '@/lib/tauri'
+import { registerGlobalShortcut } from '@/lib/platform/global-shortcut'
 
 // The row imports `registerGlobalShortcut`/`unregisterGlobalShortcut`
-// from `@/lib/tauri`; stub them so nothing reaches the real Tauri plugin.
-vi.mock('@/lib/tauri', () => ({
+// from `@/lib/platform/global-shortcut`; stub them so nothing reaches the
+// real Tauri plugin.
+vi.mock('@/lib/platform/global-shortcut', () => ({
   registerGlobalShortcut: vi.fn(async () => undefined),
   unregisterGlobalShortcut: vi.fn(async () => undefined),
 }))

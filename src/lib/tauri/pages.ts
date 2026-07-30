@@ -21,6 +21,10 @@ import { toSpaceScope, requireActiveScope } from '@/lib/tauri/_shared'
  * index `idx_blocks_journal_date` (migration 0047) so the lookup is O(index)
  * regardless of total block count. Returns `null` when no journal page exists
  * for `date` in `spaceId`.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.getJournalPageByDate` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function getJournalPageByDate(params: {
   date: string
@@ -41,6 +45,10 @@ export async function getJournalPageByDate(params: {
  * 6-week calendar grid for monthly views, or the visible week / day for
  * smaller views) so the response is bounded by what the UI actually
  * renders rather than every journal page ever created in the space.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.listJournalPagesInRange` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function listJournalPagesInRange(params: {
   startDate: string
@@ -68,6 +76,10 @@ export async function listJournalPagesInRange(params: {
  * `most-linked`, `biggest`) cursor-paginate via the new keysets. The
  * frontend-only `recent` (per-device visit history) and `created`
  * (ULID DESC) modes reuse the `ulid` SQL ordering and re-sort in JS.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.listPagesWithMetadata` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function listPagesWithMetadata(params: {
   sort?: PageSort | undefined
@@ -141,6 +153,10 @@ export async function resolvePageByAlias(params: {
  * `spaceId` — when set, restricts matches to aliases
  * pointing at pages whose `space` property equals `spaceId`. Pass
  * `null`/`undefined` to leave the result set unscoped (cross-space).
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.listPageAliasesByPrefix` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function listPageAliasesByPrefix(params: {
   prefix: string

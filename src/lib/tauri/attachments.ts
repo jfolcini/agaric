@@ -109,7 +109,13 @@ export async function deleteAttachment(attachmentId: string): Promise<void> {
   unwrap(await commands.deleteAttachment(attachmentId))
 }
 
-/** Rename an attachment by ID. */
+/**
+ * Rename an attachment by ID.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.renameAttachment` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
+ */
 export async function renameAttachment(params: {
   attachmentId: string
   newFilename: string

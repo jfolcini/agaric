@@ -37,8 +37,9 @@ import { useEffect } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
 import { logger } from '@/lib/logger'
+import { getCurrentDeepLink } from '@/lib/platform/deep-link'
 import { PREFERENCES, writePreference } from '@/lib/preferences'
-import { getBlock, getCurrentDeepLink } from '@/lib/tauri'
+import { getBlock } from '@/lib/tauri'
 import { useNavigationStore } from '@/stores/navigation'
 import { useTabsStore } from '@/stores/tabs'
 

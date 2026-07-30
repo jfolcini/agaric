@@ -92,6 +92,10 @@ export async function queryByTags(params: {
  * before resolution; an over-deep tree rejects with a validation error.
  * `spaceId` / `blockType` / `includeInherited` / pagination behave exactly as
  * in {@link queryByTags}.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.queryByTagExpr` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function queryByTagExpr(params: {
   expr: TagExpr
@@ -130,6 +134,10 @@ export async function listTagsForBlock(blockId: string): Promise<string[]> {
  * i.e. tags a strict ancestor applies directly that propagate down. Paired
  * with {@link listTagsForBlock} so the UI can render inherited (derived) tag
  * chips distinctly from directly-applied ones (#1423).
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.listInheritedTagsForBlock` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function listInheritedTagsForBlock(blockId: string): Promise<string[]> {
   return unwrap(await commands.listInheritedTagsForBlock(blockId))

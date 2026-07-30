@@ -22,8 +22,8 @@ import { announce } from '@/lib/announcer'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { CLOSE_ALL_OVERLAYS_EVENT } from '@/lib/overlay-events'
+import { setWindowTitle } from '@/lib/platform/window'
 import { __resetPriorityLevelsForTests, getPriorityLevels } from '@/lib/priority-levels'
-import { setWindowTitle } from '@/lib/tauri'
 import { useBootStore } from '@/stores/boot'
 import { useJournalStore } from '@/stores/journal'
 import { useNavigationStore } from '@/stores/navigation'
@@ -33,17 +33,11 @@ import { useSpaceStore } from '@/stores/space'
 import { useSyncStore } from '@/stores/sync'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
-// Partial mock: replace `setWindowTitle` with a vitest spy
-// so we can assert the App-level effect calls it with
-// `"<SpaceName> · Agaric"`. Every other lib/tauri export passes
-// through unchanged via `importActual`.
-vi.mock('@/lib/tauri', async (importActual) => {
-  const actual = await importActual<typeof import('@/lib/tauri')>()
-  return {
-    ...actual,
-    setWindowTitle: vi.fn().mockResolvedValue(undefined),
-  }
-})
+// Replace `setWindowTitle` with a vitest spy so we can assert the
+// App-level effect calls it with `"<SpaceName> · Agaric"`.
+vi.mock('@/lib/platform/window', () => ({
+  setWindowTitle: vi.fn().mockResolvedValue(undefined),
+}))
 
 // Controllable mobile mock so we can flip the breakpoint per-test
 // without fiddling with window.innerWidth + matchMedia polyfills.

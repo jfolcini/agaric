@@ -54,6 +54,13 @@ export async function getDeviceId(): Promise<string> {
 // Sync protocol commands
 // ---------------------------------------------------------------------------
 
+/**
+ * Frontend mirror of the Rust `sync_protocol::DeviceHead` wire type.
+ *
+ * @public No in-repo consumer today — kept alongside `SyncSessionInfo` so
+ * the sync-protocol shapes stay described on the TS side; tagged so knip
+ * does not report it as dead code (#3202).
+ */
 export interface DeviceHead {
   device_id: string
   seq: number

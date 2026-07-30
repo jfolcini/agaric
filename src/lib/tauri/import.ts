@@ -78,6 +78,10 @@ export type { ImportBibliographyResult } from '@/lib/bindings'
  * `spaceId` — required; like `importMarkdown`, the backend rejects empty /
  * unknown ULIDs with `AppError::Validation`, so the UI affordance must stay
  * disabled until the space store is bootstrapped.
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.importBibliography` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function importBibliography(
   content: string,

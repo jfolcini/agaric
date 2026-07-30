@@ -36,7 +36,7 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { ensureNotificationPermission } from '@/lib/tauri'
+import { ensureNotificationPermission } from '@/lib/platform/notifications'
 
 const ENABLED_KEY = 'agaric-notifications-enabled'
 

@@ -5,11 +5,6 @@
     "reason": "Raw invoke<ArrayBuffer> + Uint8Array marshalling; there is no commands.readAttachment because a raw-response command can't carry specta::Type. Confirmed un-migratable in the #2927 phase-9 review (#3196)."
   },
   {
-    "module": "@/lib/tauri/notifications",
-    "symbol": "ensureNotificationPermission",
-    "reason": "Not IPC at all — a plugin shim with a dynamic import and a false fallback. Out of scope for the #2927 migration (#3196)."
-  },
-  {
     "module": "@/lib/tauri/sync",
     "symbol": "startSync",
     "reason": "Constructs new Channel<SyncProgressUpdate>() and wires onmessage. Channel plumbing is scoped out of the #2927 migration by design (#3196)."

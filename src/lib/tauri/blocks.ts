@@ -442,6 +442,10 @@ export async function moveBlock(
  * `moveBlocks` does this) so the moved run preserves relative order at the
  * destination.
  *
+ *
+ * @public No in-repo caller today. Kept as the `@/lib/tauri` facade
+ * wrapper for `commands.moveBlocksBatch` that `check-tauri-bindings-parity` requires;
+ * tagged so knip does not report it as dead code (#3202).
  */
 export async function moveBlocksBatch(
   blockIds: string[],

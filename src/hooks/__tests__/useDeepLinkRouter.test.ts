@@ -66,8 +66,11 @@ vi.mock('@/stores/tabs', () => ({
 }))
 
 vi.mock('@/lib/tauri', () => ({
-  getCurrentDeepLink: (...args: unknown[]) => mockGetCurrentDeepLink(...args),
   getBlock: (...args: unknown[]) => mockGetBlock(...args),
+}))
+
+vi.mock('@/lib/platform/deep-link', () => ({
+  getCurrentDeepLink: (...args: unknown[]) => mockGetCurrentDeepLink(...args),
 }))
 
 // -- Fixtures -------------------------------------------------------------------

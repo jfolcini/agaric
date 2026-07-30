@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { ToggleRow } from '@/components/ui/toggle-row'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
-import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/tauri'
+import { disableAutostart, enableAutostart, isAutostartEnabled } from '@/lib/platform/autostart'
 
 export function AutostartRow(): React.ReactElement | null {
   const { t } = useTranslation()

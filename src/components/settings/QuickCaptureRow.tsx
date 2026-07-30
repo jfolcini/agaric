@@ -39,13 +39,13 @@ import { Label } from '@/components/ui/label'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isMobilePlatform } from '@/lib/platform'
+import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/platform/global-shortcut'
 import {
   defaultQuickCaptureShortcut,
   loadQuickCaptureShortcut,
   QUICK_CAPTURE_SHORTCUT_STORAGE_KEY,
   saveQuickCaptureShortcut,
 } from '@/lib/quick-capture-shortcut'
-import { registerGlobalShortcut, unregisterGlobalShortcut } from '@/lib/tauri'
 
 export function QuickCaptureRow(): React.ReactElement | null {
   const { t } = useTranslation()
