@@ -30,6 +30,12 @@ import type {
 
 // Canonical home moved to `markdown-common.ts` (the serializer needs it too);
 // re-exported here so the vocab surface is unchanged.
+/**
+ * @public Re-exported from `markdown-common` so this module's surface stays
+ * unchanged; no in-repo caller uses this specific `markdown-parse/vocab`
+ * specifier today (consumers import `ULID_RE` straight from
+ * `markdown-common`), but removing it would silently narrow the vocab API.
+ */
 export { ULID_RE } from '@/editor/markdown-common'
 export const MAX_LINK_SCAN = 10_000
 export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i

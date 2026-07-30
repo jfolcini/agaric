@@ -23,6 +23,12 @@ import { context, type Span, SpanStatusCode, trace } from '@opentelemetry/api'
 import { resolveEnabled, setSamplingRatio } from '@/lib/observability/config'
 import type { InteractionName } from '@/lib/observability/interactions'
 
+/**
+ * @public Re-exported from `./config` so this module's surface stays
+ * unchanged; no in-repo caller uses this specific `observability/index`
+ * specifier today (consumers import the sampling helpers straight from
+ * `./config`), but removing it would silently narrow the facade.
+ */
 export { getSamplingRatio, setSamplingRatio } from '@/lib/observability/config'
 export { INTERACTIONS, type InteractionName } from '@/lib/observability/interactions'
 

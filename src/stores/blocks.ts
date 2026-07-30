@@ -17,6 +17,12 @@ import type { FlatBlock } from '@/lib/tree-utils'
 import { useNavigationStore } from '@/stores/navigation'
 import { selectPageStack, useTabsStore } from '@/stores/tabs'
 
+/**
+ * @public Re-exported from `tree-utils` so this store's surface stays
+ * unchanged; no in-repo caller uses this specific `stores/blocks` specifier
+ * today (consumers import `FlatBlock` straight from `tree-utils`), but
+ * removing it would silently narrow the facade.
+ */
 export type { FlatBlock }
 
 /** Direction for keyboard range extension (#922). */

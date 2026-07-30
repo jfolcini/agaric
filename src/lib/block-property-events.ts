@@ -32,6 +32,13 @@ import {
 } from '@/lib/property-change-dispatch'
 
 export { EVENT_PROPERTY_CHANGED }
+/**
+ * @public Re-exported from `property-change-dispatch` so this module's
+ * surface stays unchanged; no in-repo caller uses this specific
+ * `block-property-events` specifier today (consumers import the payload
+ * type straight from `property-change-dispatch`), but removing it would
+ * silently narrow the facade.
+ */
 export type { PropertyChangedPayload }
 
 /** Debounce window: batch rapid consecutive property changes (matches the
