@@ -30,7 +30,9 @@ import { JournalPage } from '@/components/JournalPage'
 import { LoadingSkeleton } from '@/components/rendering/LoadingSkeleton'
 import { Button } from '@/components/ui/button'
 import { useItemCount } from '@/hooks/useItemCount'
-import { countTrash } from '@/lib/tauri'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
+import { toSpaceScope } from '@/lib/space-scope'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useSpaceStore } from '@/stores/space'
 import { type PageEntry, selectPageStack, useTabsStore } from '@/stores/tabs'
@@ -106,7 +108,9 @@ export function useTrashCount(): number {
       // space-scoped, so with no active space there is nothing to count:
       // short-circuit to `0` locally instead of passing an empty-string
       // sentinel to the backend (which would now reject a malformed scope).
-      currentSpaceId == null ? Promise.resolve(0) : countTrash(currentSpaceId),
+      currentSpaceId == null
+        ? Promise.resolve(0)
+        : commands.countTrash(toSpaceScope(currentSpaceId)).then(unwrap),
     // oxlint-disable-next-line react-hooks/exhaustive-deps -- re-poll when view or space changes (user may have restored items / switched spaces)
     [currentView, currentSpaceId],
   )

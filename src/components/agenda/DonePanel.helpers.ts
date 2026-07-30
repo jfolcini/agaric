@@ -6,7 +6,7 @@
  * independently unit-tested in `__tests__/DonePanel.helpers.test.ts`.
  */
 
-import type { BlockRow, ResolvedBlock } from '@/lib/tauri'
+import type { BlockRow, ResolvedBlock } from '@/lib/bindings'
 
 /** A single grouped-by-source-page bucket used by the DonePanel render. */
 export interface DoneBlockGroup {

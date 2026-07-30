@@ -24,9 +24,9 @@
 import { useEffect, useState } from 'react'
 
 import { useTauriEventListener } from '@/hooks/useTauriEventListener'
+import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
-import { unwrap } from '@/lib/tauri'
 
 /**
  * Mirrors the Rust `ActivityEntry` struct emitted on the `mcp:activity`

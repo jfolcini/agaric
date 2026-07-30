@@ -39,10 +39,11 @@ import { useUndoShortcuts } from '@/hooks/useUndoShortcuts'
 import { useUpdateCheck } from '@/hooks/useUpdateCheck'
 import { useViewChangeAnnouncer } from '@/hooks/useViewChangeAnnouncer'
 import { announce } from '@/lib/announcer'
+import { unwrap } from '@/lib/app-error'
+import { commands, type PeerRef } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { isOnboardingDone } from '@/lib/onboarding'
-import { createPageInSpace, listPeerRefs } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useNavigationStore, type View } from '@/stores/navigation'
 import { useResolveStore } from '@/stores/resolve'
@@ -306,7 +307,7 @@ function App() {
       return
     }
     try {
-      const newId = await createPageInSpace({ content: 'Untitled', spaceId: currentSpaceId })
+      const newId = unwrap(await commands.createPageInSpace(null, 'Untitled', currentSpaceId))
       useResolveStore.getState().set(newId, 'Untitled', false)
       navigateToPage(newId, 'Untitled')
       announce(t('announce.newPageCreated'))
@@ -338,9 +339,9 @@ function App() {
   // performs the same lookup itself and will surface a proper error
   // toast via its own try/catch, so we don't double-report here.
   const handleSyncClick = useCallback(async () => {
-    let peers: Awaited<ReturnType<typeof listPeerRefs>>
+    let peers: PeerRef[]
     try {
-      peers = await listPeerRefs()
+      peers = unwrap(await commands.listPeerRefs())
     } catch (err) {
       logger.warn(
         'App',

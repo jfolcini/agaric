@@ -7,9 +7,11 @@ import { useTranslation } from 'react-i18next'
 import { Calendar } from '@/components/ui/calendar'
 import { useBlockPropertyEvents } from '@/hooks/useBlockPropertyEvents'
 import { useWeekStart } from '@/hooks/useWeekStart'
+import { unwrap } from '@/lib/app-error'
+import { commands } from '@/lib/bindings'
 import { formatDate, getWeekOptions } from '@/lib/date-utils'
 import { logger } from '@/lib/logger'
-import { countAgendaBatchBySource } from '@/lib/tauri'
+import { toSpaceScope } from '@/lib/space-scope'
 import { cn } from '@/lib/utils'
 import { useSpaceStore } from '@/stores/space'
 
@@ -136,7 +138,9 @@ export function JournalCalendarDropdown({
     let cancelled = false
     setLoading(true)
     const dates = getCalendarDateRange(currentDate)
-    countAgendaBatchBySource({ dates, spaceId: currentSpaceId })
+    commands
+      .countAgendaBatchBySource(dates, toSpaceScope(currentSpaceId))
+      .then(unwrap)
       .then((data) => {
         if (!cancelled) {
           setAgendaBySource(data)
