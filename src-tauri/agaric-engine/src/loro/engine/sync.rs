@@ -119,17 +119,55 @@ impl LoroEngine {
                 return None;
             }
         };
-        let blob_counter = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
-        if blob_counter > local_counter {
-            return Some(format!(
-                "(peer,counter) fork detected for own peer id {own} (#792): inbound blob \
-                 carries our ops through counter {blob_counter} but this doc only holds \
-                 {local_counter} — a pre-epoch snapshot RESET reused the deterministic \
-                 peer id; importing would corrupt causal state. Snapshot catch-up required."
-            ));
-        }
-        None
+        own_peer_fork_in_meta(own, local_counter, &meta)
     }
+
+    /// #3213 — the #792 fork verdict AND the blob's declared end frontier from
+    /// ONE metadata decode.
+    ///
+    /// The live (`apply_remote`) and per-row boot-replay (`replay_inbox_row`)
+    /// paths need both facts about the same blob: the fork verdict decides
+    /// whether to import it at all, and the declared end frontier is the
+    /// condition under which its durable inbox slot may be deleted afterwards
+    /// (#3194/#535 — see [`Self::oplog_shortfall`]). Neither path runs
+    /// [`Self::gate_replay_blobs`], so neither has a gate-declared frontier to
+    /// thread through; the frontier has to come from the blob itself.
+    ///
+    /// Asking for the two separately would decode `ImportBlobMetadata` twice,
+    /// and that decode rebuilds the blob's whole change store — the expensive
+    /// part of every pre-import guard, on the hot inbound path. This decodes
+    /// once and answers both.
+    ///
+    /// The fork verdict is bit-for-bit [`Self::own_peer_fork_in_blob`]'s
+    /// (same helper, same `local own-counter == 0` carve-out); the ONLY
+    /// difference is that this form cannot take that carve-out's decode
+    /// short-circuit, because the end frontier is wanted either way.
+    ///
+    /// Decode failure is tolerated exactly as in the other guards: no fork
+    /// (never block an import the real import would accept) and an EMPTY
+    /// declared frontier, which imposes no delete condition — the pre-#3213
+    /// behaviour, so an undecodable blob is no worse off than before.
+    pub fn screen_inbound_blob(&self, bytes: &[u8]) -> InboundBlobScreen {
+        let own = self.doc.peer_id();
+        let local_counter = self.doc.oplog_vv().get(&own).copied().unwrap_or(0);
+        let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
+            Ok(m) => m,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    "loro: screen_inbound_blob: blob meta decode failed; skipping the \
+                     fork guard and imposing no slot-delete condition (import will \
+                     surface the real error)"
+                );
+                return InboundBlobScreen::default();
+            }
+        };
+        InboundBlobScreen {
+            fork: own_peer_fork_in_meta(own, local_counter, &meta),
+            declared_end_vv: declared_end_vv(&meta),
+        }
+    }
+
     /// #1054 — detect an *update*-shaped blob whose causal base is NOT
     /// reachable from this doc's current `oplog_vv()`, BEFORE importing it.
     ///
@@ -526,13 +564,13 @@ impl LoroEngine {
                 // settles, so advance the cumulative base by its end frontier.
                 // #3194: hand that same frontier back to the caller — it is the
                 // condition the post-import oplog must meet before the blob's
-                // durable inbox slot may be deleted. Zero-counter entries carry
-                // no ops and are dropped (nothing to demand).
-                let mut end_vv: Vec<(PeerID, Counter)> = Vec::new();
+                // durable inbox slot may be deleted. #3213: built by the shared
+                // `declared_end_vv` (zero-counter entries dropped — nothing to
+                // demand), so the batch gate and the live/per-row
+                // `screen_inbound_blob` cannot disagree about what a blob
+                // declared.
+                let end_vv = declared_end_vv(&meta);
                 for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
-                    if end_counter > 0 {
-                        end_vv.push((*peer_id, end_counter));
-                    }
                     base.entry(*peer_id)
                         .and_modify(|c| {
                             if end_counter > *c {
@@ -742,6 +780,71 @@ fn replay_base_miss(
     }
 
     None
+}
+
+/// #792 — the fork rule, applied to ALREADY-DECODED blob metadata.
+///
+/// Split out so [`LoroEngine::own_peer_fork_in_blob`] and
+/// [`LoroEngine::screen_inbound_blob`] cannot drift: there is exactly one
+/// statement of what a fork is, and the two public forms differ only in how
+/// many facts they recover from the one decode. See
+/// [`LoroEngine::own_peer_fork_in_blob`] for the full rationale.
+///
+/// `local_counter` is the doc's own-peer `oplog_vv()` entry (`0` when this doc
+/// never minted an op under `own`, which is the "nothing to collide with"
+/// carve-out).
+fn own_peer_fork_in_meta(
+    own: PeerID,
+    local_counter: Counter,
+    meta: &ImportBlobMetadata,
+) -> Option<String> {
+    if local_counter == 0 {
+        return None;
+    }
+    let blob_counter = meta.partial_end_vv.get(&own).copied().unwrap_or(0);
+    if blob_counter > local_counter {
+        return Some(format!(
+            "(peer,counter) fork detected for own peer id {own} (#792): inbound blob \
+             carries our ops through counter {blob_counter} but this doc only holds \
+             {local_counter} — a pre-epoch snapshot RESET reused the deterministic \
+             peer id; importing would corrupt causal state. Snapshot catch-up required."
+        ));
+    }
+    None
+}
+
+/// #3194 / #3213 — the end frontier a decoded blob DECLARES, in the
+/// `(peer, EXCLUSIVE-end-counter)` form [`LoroEngine::oplog_shortfall`] compares
+/// against.
+///
+/// `ImportBlobMetadata::partial_end_vv` is a `VersionVector`, so its counters
+/// are already exclusive ends — no `+1` conversion belongs here (that asymmetry
+/// is `Frontiers`-only; see `replay_base_miss`). Zero-counter entries carry no
+/// ops and are dropped: there is nothing to demand of the op-log for them.
+///
+/// Single definition shared by [`LoroEngine::gate_replay_blobs`] (batch,
+/// via [`ReplayBlobGate::Accept`]) and [`LoroEngine::screen_inbound_blob`]
+/// (live + per-row), so the two paths cannot come to mean different things by
+/// "the frontier this blob declared".
+fn declared_end_vv(meta: &ImportBlobMetadata) -> Vec<(PeerID, Counter)> {
+    meta.partial_end_vv
+        .iter()
+        .filter_map(|(peer, &counter)| (counter > 0).then_some((*peer, counter)))
+        .collect()
+}
+
+/// #3213 — what [`LoroEngine::screen_inbound_blob`] recovers from one blob-meta
+/// decode: the #792 fork verdict plus the blob's declared end frontier.
+#[derive(Debug, Clone, Default)]
+pub struct InboundBlobScreen {
+    /// `Some(reason)` iff the blob forks our own `(peer, counter)` history and
+    /// must NOT be imported — identical to
+    /// [`LoroEngine::own_peer_fork_in_blob`]'s verdict.
+    pub fork: Option<String>,
+    /// The `(peer, exclusive-end-counter)` frontier the blob declared, for
+    /// [`LoroEngine::oplog_shortfall`]. EMPTY means "no condition" — either the
+    /// blob declares nothing (no ops) or its metadata would not decode.
+    pub declared_end_vv: Vec<(PeerID, Counter)>,
 }
 
 /// #3164 — per-blob verdict from [`LoroEngine::gate_replay_blobs`].
