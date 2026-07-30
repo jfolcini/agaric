@@ -852,7 +852,7 @@ describe('mutation coverage: groupByPriority sortWithin date/state tiebreak', ()
 })
 
 describe('mutation coverage: groupByState className', () => {
-  it('assigns the per-state classes, and undefined for CANCELLED (no dedicated token)', () => {
+  it('assigns the per-state classes, including the CANCELLED token', () => {
     const blocks = [
       makeBlock({ id: 'doing', todo_state: 'DOING' }),
       makeBlock({ id: 'todo', todo_state: 'TODO' }),
@@ -865,7 +865,7 @@ describe('mutation coverage: groupByState className', () => {
       'text-status-pending-foreground', // DOING
       'text-status-active-foreground', // TODO
       'text-status-done-foreground', // DONE
-      undefined, // CANCELLED — CLASS_MAP has no entry for it
+      'text-task-cancelled', // CANCELLED
       'text-muted-foreground', // No state
     ])
   })

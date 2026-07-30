@@ -228,6 +228,7 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
     DOING: 'text-status-pending-foreground',
     TODO: 'text-status-active-foreground',
     DONE: 'text-status-done-foreground',
+    CANCELLED: 'text-task-cancelled',
     'No state': 'text-muted-foreground',
   }
 
