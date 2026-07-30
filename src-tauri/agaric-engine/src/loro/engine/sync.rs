@@ -6,6 +6,8 @@
 
 use super::*;
 
+use loro::{Counter, ImportBlobMetadata};
+
 impl LoroEngine {
     /// Encode the doc's current op-log version vector for transport
     /// over the wire.
@@ -147,6 +149,13 @@ impl LoroEngine {
     ///   `Snapshot`) variants. Returns `None`.
     /// * A `0`-counter entry in `partial_start_vv` carries no ops and is
     ///   trivially reachable (mirrors the live classifier's no-op skip).
+    /// * **Cross-peer dependencies** (`ImportBlobMetadata::start_frontiers`).
+    ///   This single-blob guard reads `partial_start_vv` ONLY, exactly like the
+    ///   live `apply_remote` gate it mirrors, so a blob with unmet cross-peer
+    ///   deps returns `None` here (#3189). The batch gate
+    ///   [`Self::gate_replay_blobs`] — the production boot-replay path — closes
+    ///   that hole; see `replay_base_miss`. This function is retained as the
+    ///   single-row/diagnostic form and deliberately keeps live-gate parity.
     ///
     /// Decode failures are deliberately tolerated (`None` + a warn), identical
     /// to [`Self::own_peer_fork_in_blob`]: the guard must never block an import
@@ -211,15 +220,69 @@ impl LoroEngine {
     /// would report blobs 2..N unreachable and DROP their slots — silent data
     /// loss, and a direct regression of the #1574 / #3165 multi-chunk case.
     ///
-    /// This walks the batch in order against a *cumulative* base: the local
+    /// This gates the batch against a *cumulative* base: the local
     /// `oplog_vv()`, advanced by the `partial_end_vv` of every blob that was
-    /// accepted so far. That is exactly the vv the per-row loop would have held
-    /// when it reached blob *i* — an accepted import always advances the oplog
-    /// to at least that blob's end frontier, and a REJECTED blob is not
-    /// imported, so it must not advance the base either.
+    /// accepted so far. An accepted import always advances the oplog to at
+    /// least that blob's end frontier, and a REJECTED blob is not imported, so
+    /// it must not advance the base either.
+    ///
+    /// ## #3188 — the base is grown to a FIXPOINT, not in one forward pass
+    ///
+    /// The original #3164 implementation was a single forward pass in slot
+    /// order, which made a blob's verdict depend on where its dependency sat in
+    /// the batch: a blob whose causal dependency arrives LATER in the same
+    /// batch was reported unreachable and its slot dropped, even though
+    /// `import_batch` would have resolved it (loro buffers changes with unmet
+    /// deps in `pending_changes` and settles them when the deps land, in the
+    /// same single re-attach). The per-row loop dropped those blobs too, for
+    /// the same reason, so this is data BOTH paths discarded.
+    ///
+    /// Instead, repeat passes over the still-undecided blobs, advancing the
+    /// cumulative base with every newly accepted blob's `partial_end_vv`, until
+    /// a whole pass accepts nothing new. Whatever is still undecided is then
+    /// marked [`ReplayBlobGate::Unreachable`] with its last-computed reason.
+    ///
+    /// The fixpoint can only ever accept a SUPERSET of what the single pass
+    /// accepted (the base only grows, and growing it never turns an accept into
+    /// a reject), which is the safe direction to move on the #535 crash-recovery
+    /// path: fewer slots dropped, none accepted whose deps the batch never
+    /// supplies. A blob whose base appears nowhere in the batch is still
+    /// refused — the base stops growing and the blob is still short. Cost is
+    /// O(passes × blobs); each pass but the last accepts at least one blob, so
+    /// it is O(N²) metadata comparisons on a batch of N, over metadata decoded
+    /// exactly ONCE (the decode, which rebuilds the blob's change store, is the
+    /// expensive part and is hoisted out of the loop).
+    ///
+    /// ## #3189 — cross-peer dependencies are checked too
+    ///
+    /// Reachability is decided by [`replay_base_miss`], which checks BOTH
+    /// halves of an update blob's causal base: `partial_start_vv` (its own-peer
+    /// counter range) and `ImportBlobMetadata::start_frontiers` (its cross-peer
+    /// dependencies). Before #3189 only the first half was read, so a blob with
+    /// unmet cross-peer deps passed this gate, landed in loro's
+    /// `pending_changes`, never advanced the oplog, was never projected — and
+    /// had its inbox slot deleted anyway: a #535 violation in the silent
+    /// direction. Such a blob is now `Unreachable`, which the caller routes into
+    /// snapshot catch-up.
+    ///
+    /// Note the two halves move in OPPOSITE directions, and the #3188 superset
+    /// property above is scoped to the fixpoint alone (same predicate, more
+    /// passes) — it is NOT a claim that this gate accepts everything the
+    /// per-row [`Self::unreachable_update_in_blob`] accepts. #3189 makes this
+    /// gate strictly STRICTER than the per-row guard on unmet cross-peer deps,
+    /// which is the other #535-safe direction: a blob the per-row guard waved
+    /// through would have had its slot deleted with its blocks never projected.
+    /// The narrowing is well targeted — `decode_updates_blob_meta` only records
+    /// a dep in `start_frontiers` when the dep's peer either starts LATER in
+    /// this blob (in which case `partial_start_vv` already demands strictly
+    /// more, so half 2 adds nothing) or is absent from the blob entirely
+    /// (`fast_snapshot.rs:456-467`). Only that second, genuinely cross-peer
+    /// case is newly rejected, and it is exactly the #3189 hole.
     ///
     /// The #792 fork guard is run per blob against the PRE-batch own-peer
-    /// counter, which is order-free **whenever that counter is non-zero**: the
+    /// counter, and is decided immediately (it does not consult the cumulative
+    /// base, so the fixpoint cannot change its verdict). It is order-free
+    /// **whenever that counter is non-zero**: the
     /// guard only accepts a blob whose `partial_end_vv[own]` is `<=` what we
     /// already hold, so importing an accepted blob cannot move it.
     ///
@@ -242,17 +305,27 @@ impl LoroEngine {
     /// the next live sync session route into snapshot catch-up.
     pub fn gate_replay_blobs(&self, blobs: &[&[u8]]) -> Vec<ReplayBlobGate> {
         // Cumulative reachability base — see fn docs.
-        let mut base: std::collections::HashMap<_, _> = self
+        let mut base: std::collections::HashMap<PeerID, Counter> = self
             .doc
             .oplog_vv()
             .iter()
             .map(|(peer, counter)| (*peer, *counter))
             .collect();
 
-        let mut out = Vec::with_capacity(blobs.len());
-        for bytes in blobs {
+        // One decision per blob, filled POSITIONALLY (the caller zips these
+        // against its slots). `None` = not yet decided by the fixpoint.
+        let mut out: Vec<Option<ReplayBlobGate>> = (0..blobs.len()).map(|_| None).collect();
+        // Blobs whose reachability is still open, carrying their decoded
+        // metadata so the fixpoint never re-decodes: `decode_import_blob_meta`
+        // rebuilds the blob's whole change store and is by far the expensive
+        // part of this gate.
+        let mut pending: Vec<(usize, ImportBlobMetadata)> = Vec::with_capacity(blobs.len());
+
+        for (i, bytes) in blobs.iter().enumerate() {
+            // #792 does not consult the cumulative base, so it is decided in
+            // this first sweep and never revisited.
             if let Some(reason) = self.own_peer_fork_in_blob(bytes) {
-                out.push(ReplayBlobGate::Fork(reason));
+                out[i] = Some(ReplayBlobGate::Fork(reason));
                 continue;
             }
             // Decode failures are tolerated exactly as in the single-blob
@@ -260,68 +333,212 @@ impl LoroEngine {
             // base cannot be advanced for such a blob (no metadata), which is
             // conservative — a later blob may then be reported unreachable and
             // dropped rather than silently mis-imported.
-            let meta = match LoroDoc::decode_import_blob_meta(bytes, true) {
-                Ok(m) => m,
+            match LoroDoc::decode_import_blob_meta(bytes, true) {
+                Ok(meta) => pending.push((i, meta)),
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
                         "loro: gate_replay_blobs: blob meta decode failed; accepting \
                          the blob ungated (import will surface the real error)"
                     );
-                    out.push(ReplayBlobGate::Accept);
+                    out[i] = Some(ReplayBlobGate::Accept);
+                }
+            }
+        }
+
+        // #3188 fixpoint: keep re-testing the undecided blobs against the
+        // growing base until a whole pass accepts nothing new. Each pass but
+        // the last strictly shrinks `pending`, so this terminates in at most
+        // `pending.len() + 1` passes.
+        let mut reasons: std::collections::HashMap<usize, String> =
+            std::collections::HashMap::new();
+        while !pending.is_empty() {
+            let mut still_pending: Vec<(usize, ImportBlobMetadata)> =
+                Vec::with_capacity(pending.len());
+            let mut accepted_any = false;
+            for (i, meta) in pending {
+                if let Some(reason) = replay_base_miss(&base, &meta) {
+                    // Keep only the LAST reason: it is the one computed against
+                    // the widest base, i.e. the gap that actually survived.
+                    reasons.insert(i, reason);
+                    still_pending.push((i, meta));
                     continue;
                 }
-            };
-
-            // Snapshot-shaped blobs are self-contained (same carve-out as the
-            // single-blob gate); only update-shaped blobs are reachability-checked.
-            let mut reject: Option<String> = None;
-            if !meta.mode.is_snapshot() {
-                for (peer_id, &base_counter) in meta.partial_start_vv.iter() {
-                    if base_counter == 0 {
-                        continue;
-                    }
-                    match base.get(peer_id) {
-                        Some(&have) if have >= base_counter => continue,
-                        Some(&have) => {
-                            reject = Some(format!(
-                                "boot-replay update base unreachable (#1054): requires \
-                                 peer={peer_id} counter>={base_counter}, batch base has \
-                                 counter={have}"
-                            ));
-                            break;
-                        }
-                        None => {
-                            reject = Some(format!(
-                                "boot-replay update base unreachable (#1054): requires \
-                                 peer={peer_id} counter>={base_counter}, batch base has no \
-                                 entry for that peer"
-                            ));
-                            break;
-                        }
-                    }
+                // Accepted ⇒ its ops will be in the oplog once the batch import
+                // settles, so advance the cumulative base by its end frontier.
+                for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
+                    base.entry(*peer_id)
+                        .and_modify(|c| {
+                            if end_counter > *c {
+                                *c = end_counter;
+                            }
+                        })
+                        .or_insert(end_counter);
                 }
+                out[i] = Some(ReplayBlobGate::Accept);
+                accepted_any = true;
             }
-            if let Some(reason) = reject {
-                out.push(ReplayBlobGate::Unreachable(reason));
-                continue;
+            pending = still_pending;
+            if !accepted_any {
+                break;
             }
-
-            // Accepted ⇒ its ops will be in the oplog before the next blob is
-            // considered, so advance the cumulative base by its end frontier.
-            for (peer_id, &end_counter) in meta.partial_end_vv.iter() {
-                base.entry(*peer_id)
-                    .and_modify(|c| {
-                        if end_counter > *c {
-                            *c = end_counter;
-                        }
-                    })
-                    .or_insert(end_counter);
-            }
-            out.push(ReplayBlobGate::Accept);
         }
-        out
+
+        // Fixpoint reached: nothing left in `pending` can ever become reachable
+        // from this batch.
+        for (i, _) in pending {
+            let reason = reasons.remove(&i).unwrap_or_else(|| {
+                "boot-replay update base unreachable (#1054): no reason recorded".to_string()
+            });
+            out[i] = Some(ReplayBlobGate::Unreachable(reason));
+        }
+
+        out.into_iter()
+            .map(|decision| {
+                // Unreachable in practice — every index is decided above. Fall
+                // back to the conservative verdict (drop the slot, let the next
+                // sync session snapshot-catch-up) rather than panicking on the
+                // crash-recovery path.
+                decision.unwrap_or_else(|| {
+                    ReplayBlobGate::Unreachable(
+                        "boot-replay gate reached no verdict for this blob (#3188 bug)".to_string(),
+                    )
+                })
+            })
+            .collect()
     }
+}
+
+/// #1054 / #3189 — is `meta`'s causal base missing from the cumulative `base`?
+///
+/// Returns `Some(reason)` iff the blob is update-shaped and some part of its
+/// causal base is not covered. Snapshot-shaped blobs (`meta.mode.is_snapshot()`,
+/// which covers `Snapshot`, `ShallowSnapshot` and `OutdatedSnapshot` —
+/// `loro-internal-1.13.6/src/encoding.rs:507-517`) are self-contained: they
+/// carry their own causal base, and are never reachability-checked — the same
+/// carve-out [`LoroEngine::unreachable_update_in_blob`] and the live
+/// `apply_remote` gate make.
+///
+/// ## The snapshot carve-out must come FIRST, before either half below
+///
+/// Not merely an optimisation: for a snapshot blob `start_frontiers` does not
+/// mean "dependencies" at all. `decode_snapshot_blob_meta` sets it to the
+/// snapshot's `shallow_since_frontiers`
+/// (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:404-419`) — the point
+/// its history was TRUNCATED at, ops the receiver by definition does not hold.
+/// Running the half-2 check on it would report every shallow snapshot
+/// unreachable and drop its slot. Pinned by
+/// `gate_replay_blobs_accepts_shallow_snapshot_despite_start_frontiers_3189`.
+/// (Only `Snapshot` / `ShallowSnapshot` / `Updates` can actually reach here:
+/// `decode_import_blob_meta` returns `ImportUnsupportedEncodingMode` for the
+/// two `Outdated*` modes — `encoding.rs:546-553` — which the caller treats as
+/// a decode failure and accepts ungated.)
+///
+/// Two INDEPENDENT halves of an update blob's base are checked:
+///
+/// * `partial_start_vv` — the blob's OWN-peer counter ranges. Entry
+///   `(peer, c)` means "this blob's first change for `peer` starts at counter
+///   `c`", so the base must already hold `>= c`. A `0`-counter entry carries no
+///   ops and is trivially reachable.
+/// * `start_frontiers` (#3189) — the blob's CROSS-peer dependencies: the op ids
+///   its changes depend on that the blob does NOT itself carry. loro builds this
+///   in `decode_updates_blob_meta`
+///   (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:456-467`) by pushing
+///   every change dep whose peer either starts later in this blob than the dep,
+///   or does not appear in the blob at all. `partial_start_vv` never sees the
+///   second (genuinely cross-peer) case, which is exactly the #3189 hole.
+///
+/// ## Counter semantics — CONFIRMED against the pinned loro source, not assumed
+///
+/// A `Frontiers` entry is an `ID { peer, counter }` whose counter is the LAST
+/// op's counter (INCLUSIVE); a `VersionVector` counter is an EXCLUSIVE end.
+/// Verified in `loro-internal` 1.13.6 (the version pinned in `Cargo.lock`):
+///
+/// * `version.rs:171-173` — `last_id_to_vv_end(id) = id.counter + 1`, the sole
+///   conversion used by `VersionVector::set_last` /
+///   `extend_to_include_last_id` (`version.rs:265-289`) when folding a frontier
+///   id into a vv.
+/// * `version.rs:290-296` — `VersionVector::includes_id(id)` is
+///   `vv[id.peer] > id.counter`, i.e. an id is covered only once the vv end has
+///   passed it.
+/// * `oplog/loro_dag.rs:1228-1250` — `vv_to_frontiers` round-trips the other
+///   way as `ID::new(peer, vv_counter - 1)`.
+///
+/// So a dep `ID { peer, counter }` is covered iff `base[peer] >= counter + 1`.
+/// Requiring `>= counter` instead would let a blob through whose last needed op
+/// we do not hold (silent #535 gap); requiring `>= counter + 2` would drop good
+/// data.
+fn replay_base_miss(
+    base: &std::collections::HashMap<PeerID, Counter>,
+    meta: &ImportBlobMetadata,
+) -> Option<String> {
+    if meta.mode.is_snapshot() {
+        return None;
+    }
+
+    // Half 1 — own-peer counter ranges (vv counters are exclusive ends, so the
+    // base must hold at least `base_counter`).
+    for (peer_id, &base_counter) in meta.partial_start_vv.iter() {
+        if base_counter == 0 {
+            continue;
+        }
+        match base.get(peer_id) {
+            Some(&have) if have >= base_counter => continue,
+            Some(&have) => {
+                return Some(format!(
+                    "boot-replay update base unreachable (#1054): requires \
+                     peer={peer_id} counter>={base_counter}, batch base has \
+                     counter={have}"
+                ));
+            }
+            None => {
+                return Some(format!(
+                    "boot-replay update base unreachable (#1054): requires \
+                     peer={peer_id} counter>={base_counter}, batch base has no \
+                     entry for that peer"
+                ));
+            }
+        }
+    }
+
+    // Half 2 (#3189) — cross-peer deps. Frontier counters are INCLUSIVE last-op
+    // ids, so the required vv end is `counter + 1` (see the doc comment).
+    for dep in meta.start_frontiers.iter() {
+        if dep.counter < 0 {
+            // Defensive only — NOT reachable from any blob loro can encode: a
+            // change dep is a real op id, and even loro's `ID::NONE_ID`
+            // sentinel uses counter `0` (`loro-common-1.13.1/src/id.rs:117`).
+            // Note this SKIPS (treats as covered), which is the opposite of
+            // loro's `VersionVector::includes_id` (`version.rs:290-296`), where
+            // a negative counter is never included. Skipping is chosen
+            // deliberately: on the #535 crash-recovery path a bogus
+            // `counter + 1` requirement derived from an impossible input would
+            // drop a real slot, and dropping data on unreachable input is the
+            // worse failure.
+            continue;
+        }
+        let need = dep.counter.saturating_add(1);
+        let peer_id = dep.peer;
+        match base.get(&peer_id) {
+            Some(&have) if have >= need => continue,
+            Some(&have) => {
+                return Some(format!(
+                    "boot-replay update cross-peer dep unreachable (#1054/#3189): \
+                     requires peer={peer_id} counter>={need}, batch base has \
+                     counter={have}"
+                ));
+            }
+            None => {
+                return Some(format!(
+                    "boot-replay update cross-peer dep unreachable (#1054/#3189): \
+                     requires peer={peer_id} counter>={need}, batch base has no \
+                     entry for that peer"
+                ));
+            }
+        }
+    }
+
+    None
 }
 
 /// #3164 — per-blob verdict from [`LoroEngine::gate_replay_blobs`].

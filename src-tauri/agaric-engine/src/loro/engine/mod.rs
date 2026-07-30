@@ -1366,17 +1366,49 @@ mod tests {
         }
     }
 
-    /// ADVERSARIAL (#3164 review) — a batch whose blobs arrive OUT of causal
-    /// order must not be gated more harshly than the per-row loop would gate
-    /// the same sequence.
+    /// #3188 — a batch whose blobs arrive OUT of causal order must be gated
+    /// STRICTLY MORE PERMISSIVELY than the per-row loop, in the one direction
+    /// that is safe.
     ///
-    /// The cumulative-base walk is one pass in slot order, so a blob whose
-    /// dependency appears LATER in the batch is reported unreachable. That is
-    /// the per-row loop's verdict too (it had not imported the later blob
-    /// either), so the gate must not diverge — this pins the equivalence
-    /// rather than assuming it.
+    /// History: #3164 originally pinned this case as an *equivalence* — the
+    /// cumulative-base walk was a single forward pass in slot order, so a blob
+    /// whose dependency appeared LATER in the batch was reported unreachable,
+    /// which is what the per-row loop said too (it had not imported the later
+    /// blob when it reached this one). #3188 replaced the single pass with a
+    /// fixpoint, so the batch gate now **deliberately diverges** here: it
+    /// accepts the middle slot the per-row loop dropped.
+    ///
+    /// Why the divergence is the safe direction, and why this test was rewritten
+    /// rather than deleted:
+    ///
+    /// * The per-row verdict was never *correct*, only *conservative*.
+    ///   `import_batch` hands loro all three blobs at once; loro buffers the
+    ///   out-of-order one in `pending_changes` and settles it when its dep
+    ///   lands. Dropping the slot discarded data the CRDT would have accepted.
+    /// * The fixpoint can only ever accept a SUPERSET of what the single
+    ///   forward pass accepted **under the same predicate**: pass 1 of the
+    ///   fixpoint IS that forward pass (same order, same base advancement), and
+    ///   every later pass only ever adds. It still cannot accept a blob whose
+    ///   deps the batch never supplies (pinned by
+    ///   `gate_replay_blobs_rejects_genuinely_unreachable_update_3164`).
+    /// * Accepting more is the #535-safe direction: a dropped slot is a slot
+    ///   deleted without its blocks ever being projected.
+    ///
+    /// ADVERSARIAL NOTE — that superset property is scoped to the *predicate*,
+    /// NOT to the per-row loop. #3189 gave the batch gate a `start_frontiers`
+    /// cross-peer check that the per-row guard
+    /// (`unreachable_update_in_blob`) deliberately does not have, so the batch
+    /// gate is strictly STRICTER on unmet cross-peer deps — see
+    /// `gate_replay_blobs_rejects_unmet_cross_peer_dep_3189`, where the per-row
+    /// guard accepts and the batch gate rejects. "batch ⊇ per-row" is therefore
+    /// FALSE in general and is not asserted here; what is asserted is the exact
+    /// verdict vector on both sides of this fixture.
+    ///
+    /// The per-row loop is still run below to pin the PRECONDITION — that this
+    /// fixture really is a case the per-row loop drops — so the batch assertion
+    /// cannot silently become vacuous if the fixture stops being out-of-order.
     #[test]
-    fn gate_replay_blobs_matches_per_row_on_out_of_order_batch_3164_review() {
+    fn gate_replay_blobs_beats_per_row_on_out_of_order_batch_3188() {
         use super::{LoroEngine, ReplayBlobGate};
 
         let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
@@ -1416,14 +1448,17 @@ mod tests {
             .collect();
 
         assert_eq!(
-            batch_verdicts, per_row_verdicts,
-            "the cumulative gate must reach the SAME accept/reject verdicts as \
-             the per-row loop on an out-of-causal-order batch"
+            per_row_verdicts,
+            vec![true, false, true],
+            "precondition: the per-row loop drops the middle slot, whose dep \
+             only lands in the LAST slot — this is the data #3188 recovers"
         );
         assert_eq!(
             batch_verdicts,
-            vec![true, false, true],
-            "sanity: the middle slot (dep arrives later) is the rejected one"
+            vec![true, true, true],
+            "the #3188 fixpoint must accept the whole out-of-order batch: blob \
+             2's dep is supplied by blob 1, later in the same batch, and \
+             import_batch resolves it via pending_changes"
         );
     }
 
@@ -1509,6 +1544,326 @@ mod tests {
             other => {
                 panic!("a blob whose base the batch never supplies must be flagged: {other:?}")
             }
+        }
+    }
+
+    /// #3188 — the minimal shape the fixpoint exists for: a two-blob batch in
+    /// REVERSE causal order. Blob B depends on blob A, and A sits AFTER B in
+    /// the batch. A single forward pass rejects B (its dep has not been seen
+    /// yet) and deletes its inbox slot; the fixpoint re-tests B once A has
+    /// advanced the base and accepts both — which is what `import_batch` would
+    /// have done anyway, buffering B in loro's `pending_changes` until A lands.
+    #[test]
+    fn gate_replay_blobs_accepts_dep_that_arrives_later_in_batch_3188() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since0 = a.version_vector();
+        a.apply_create_block("A-1", "content", "one", None, 0)
+            .expect("a-1");
+        let head = a.export_update_since(&since0).expect("head delta");
+        let since1 = a.version_vector();
+        a.apply_create_block("A-2", "content", "two", None, 1)
+            .expect("a-2");
+        let tail = a.export_update_since(&since1).expect("tail delta");
+
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
+        // Precondition: the tail is genuinely unreachable on its own — the
+        // acceptance below comes from the fixpoint, not from a weakened gate.
+        assert!(
+            fresh.unreachable_update_in_blob(&tail).is_some(),
+            "precondition: the tail blob's base is not in the pre-batch oplog_vv"
+        );
+
+        // Deliberately reversed: the dependency (head) is the LAST slot.
+        let reversed: Vec<&[u8]> = vec![&tail, &head];
+        let gates = fresh.gate_replay_blobs(&reversed);
+        assert_eq!(gates.len(), 2, "one verdict per blob, positionally");
+        assert!(
+            gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+            "a dep that arrives LATER in the same batch must not cost the \
+             dependent blob its slot (#3188), got {gates:?}"
+        );
+    }
+
+    /// ADVERSARIAL (#3188 review) — END-TO-END: the whole #3188 fix rests on
+    /// the claim that `import_batch` actually RESOLVES a blob whose dependency
+    /// arrives later in the same batch, via loro's `pending_changes`. Every
+    /// other #3188 test stops at the gate's verdict, so the gate could happily
+    /// admit blobs the import then leaves unprojected — slots deleted, blocks
+    /// missing, the exact #535 shape the gate exists to prevent. This drives
+    /// the real batched import in out-of-causal-order and asserts the blocks
+    /// land.
+    ///
+    /// Two things make the assertion non-trivial:
+    ///
+    /// * It reads the blocks BACK rather than trusting `Ok(())`.
+    ///   `LoroDoc::import_batch` returns `Ok(ImportStatus { pending: Some(..) })`
+    ///   when changes are still buffered for missing deps
+    ///   (`loro-internal-1.13.6/src/loro.rs:1480-1487`) and the engine wrapper
+    ///   discards that status, so `Ok` alone proves nothing.
+    /// * The reversal genuinely survives into loro. `import_batch` reorders the
+    ///   batch by `(mode, descending change_num)` using the STABLE
+    ///   `slice::sort_by` (`loro.rs:1411-1415`); every blob here is `Updates`
+    ///   with one change, so the keys tie and the input order is preserved.
+    #[test]
+    fn import_batch_projects_reversed_batch_the_fixpoint_admits_3188() {
+        use super::{LoroEngine, ReplayBlobGate};
+        use std::collections::BTreeSet;
+
+        // One producer, a three-long linear dep chain, each blob the delta
+        // since the previous vv — the #3165 inbox-leftover shape.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let mut since = a.version_vector();
+        let mut blobs: Vec<Vec<u8>> = Vec::new();
+        for i in 0..3i64 {
+            a.apply_create_block(&format!("A-{i}"), "content", "x", None, i)
+                .expect("create");
+            blobs.push(a.export_update_since(&since).expect("delta"));
+            since = a.version_vector();
+        }
+        let ids = ["A-0", "A-1", "A-2"];
+
+        // Fully reversed, and the 0/2/1 shuffle the gate test uses — both are
+        // orders a single forward pass would have gated harshly.
+        for (label, order) in [("reversed", [2usize, 1, 0]), ("shuffled", [0, 2, 1])] {
+            let batch: Vec<Vec<u8>> = order.iter().map(|&i| blobs[i].clone()).collect();
+
+            let mut fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+            let refs: Vec<&[u8]> = batch.iter().map(Vec::as_slice).collect();
+            let gates = fresh.gate_replay_blobs(&refs);
+            assert!(
+                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                "{label}: precondition — the #3188 fixpoint admits the whole \
+                 batch, so every slot below will be DELETED; got {gates:?}"
+            );
+
+            let delta = fresh
+                .import_batch_with_changed_purged_tagscope(&batch)
+                .expect("batch import");
+            let changed: BTreeSet<String> = delta
+                .changed
+                .iter()
+                .map(|id| id.as_str().to_string())
+                .collect();
+
+            for bid in ids {
+                assert!(
+                    changed.contains(bid),
+                    "{label}: import_batch must PROJECT {bid} that the gate \
+                     admitted — a slot deleted without its block projected is \
+                     the #535 violation #3188 must not create; got {changed:?}"
+                );
+                assert!(
+                    fresh.read_block(bid).expect("read").is_some(),
+                    "{label}: the engine must actually hold {bid} after the \
+                     batched import (nothing left stranded in pending_changes)"
+                );
+            }
+        }
+    }
+
+    /// ADVERSARIAL (#3189 review) — END-TO-END sibling of the test above for the
+    /// CROSS-peer shape: `gate_replay_blobs_accepts_cross_peer_dep_supplied_by_batch_3189`
+    /// only pins the verdict, so it would still pass if `import_batch` left B's
+    /// change stranded in `pending_changes` while the caller deleted both slots.
+    /// Drive the real import in BOTH orders and assert both blocks project.
+    #[test]
+    fn import_batch_projects_reversed_cross_peer_batch_3189() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since_a = a.version_vector();
+        a.apply_create_block("A-1", "content", "root", None, 0)
+            .expect("a-1");
+        let blob_a = a.export_update_since(&since_a).expect("delta a");
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import_with_changed_purged_tagscope(&blob_a)
+            .expect("b imports a");
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "child", Some("A-1"), 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("delta b");
+
+        for (label, batch) in [
+            ("causal order", vec![blob_a.clone(), blob_b.clone()]),
+            ("reverse order", vec![blob_b.clone(), blob_a.clone()]),
+        ] {
+            let mut fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+            let refs: Vec<&[u8]> = batch.iter().map(Vec::as_slice).collect();
+            let gates = fresh.gate_replay_blobs(&refs);
+            assert!(
+                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                "{label}: precondition — the gate admits both slots; got {gates:?}"
+            );
+
+            fresh
+                .import_batch_with_changed_purged_tagscope(&batch)
+                .expect("batch import");
+            for bid in ["A-1", "B-1"] {
+                assert!(
+                    fresh.read_block(bid).expect("read").is_some(),
+                    "{label}: {bid} must be projected — the cross-peer dep is \
+                     supplied by the batch itself, so nothing may stay in \
+                     pending_changes once import_batch returns"
+                );
+            }
+        }
+    }
+
+    /// #3189 — a blob whose CROSS-peer dependency the batch never supplies must
+    /// be `Unreachable`, not silently accepted.
+    ///
+    /// `partial_start_vv` only records the blob's OWN-peer counter ranges, so a
+    /// blob carrying just DEV-B's ops reports `{B: 0}` — trivially reachable —
+    /// even though its changes depend on DEV-A ops the receiver has never seen.
+    /// Before #3189 that blob passed the gate, landed in loro's
+    /// `pending_changes`, never advanced the oplog, was never projected — and
+    /// had its inbox slot deleted anyway (a silent #535 gap). The gate now reads
+    /// `ImportBlobMetadata::start_frontiers` and flags it, which the caller
+    /// routes into snapshot catch-up.
+    #[test]
+    fn gate_replay_blobs_rejects_unmet_cross_peer_dep_3189() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        // A creates a root; B imports it and creates a CHILD of it, so B's
+        // change depends causally on A's op.
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since_a = a.version_vector();
+        a.apply_create_block("A-1", "content", "root", None, 0)
+            .expect("a-1");
+        let blob_a = a.export_update_since(&since_a).expect("delta a");
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import_with_changed_purged_tagscope(&blob_a)
+            .expect("b imports a");
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "child", Some("A-1"), 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("delta b");
+
+        let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+        // Precondition — this is exactly the hole #3189 names: the own-peer-only
+        // check (the live-gate-parity single-blob guard) waves this blob through.
+        assert!(
+            fresh.unreachable_update_in_blob(&blob_b).is_none(),
+            "precondition: partial_start_vv alone cannot see the cross-peer dep"
+        );
+
+        let only_b: Vec<&[u8]> = vec![&blob_b];
+        match &fresh.gate_replay_blobs(&only_b)[0] {
+            ReplayBlobGate::Unreachable(reason) => {
+                assert!(
+                    reason.contains("#3189"),
+                    "reason must name the cross-peer dep check, got: {reason}"
+                );
+                assert!(
+                    reason.contains("#1054"),
+                    "reason must stay self-diagnosing for the #1054 audit trail, \
+                     got: {reason}"
+                );
+            }
+            other => panic!("an unmet cross-peer dep must be flagged, got {other:?}"),
+        }
+    }
+
+    /// #3189 + #3188 — the SAME cross-peer dep, satisfied by another blob in the
+    /// batch, must be accepted. This is the half that keeps #3189 from becoming
+    /// a data-dropping over-correction: the new `start_frontiers` check is
+    /// evaluated against the cumulative base, so a dep supplied elsewhere in the
+    /// batch counts — in EITHER slot order, thanks to the #3188 fixpoint.
+    #[test]
+    fn gate_replay_blobs_accepts_cross_peer_dep_supplied_by_batch_3189() {
+        use super::{LoroEngine, ReplayBlobGate};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        let since_a = a.version_vector();
+        a.apply_create_block("A-1", "content", "root", None, 0)
+            .expect("a-1");
+        let blob_a = a.export_update_since(&since_a).expect("delta a");
+
+        let mut b = LoroEngine::with_peer_id("DEV-B").expect("B");
+        b.import_with_changed_purged_tagscope(&blob_a)
+            .expect("b imports a");
+        let since_b = b.version_vector();
+        b.apply_create_block("B-1", "content", "child", Some("A-1"), 0)
+            .expect("b-1");
+        let blob_b = b.export_update_since(&since_b).expect("delta b");
+
+        for (label, batch) in [
+            ("causal order", vec![blob_a.as_slice(), blob_b.as_slice()]),
+            ("reverse order", vec![blob_b.as_slice(), blob_a.as_slice()]),
+        ] {
+            let fresh = LoroEngine::with_peer_id("DEV-C").expect("fresh");
+            let gates = fresh.gate_replay_blobs(&batch);
+            assert_eq!(gates.len(), 2, "{label}: one verdict per blob");
+            assert!(
+                gates.iter().all(|g| matches!(g, ReplayBlobGate::Accept)),
+                "{label}: a cross-peer dep supplied by the batch itself must be \
+                 accepted, got {gates:?}"
+            );
+        }
+    }
+
+    /// ADVERSARIAL (#3189 review) — the snapshot carve-out MUST be evaluated
+    /// before the new `start_frontiers` check, and this pins the ordering.
+    ///
+    /// For an UPDATE blob, loro builds `start_frontiers` from the changes' deps
+    /// that the blob does not itself carry
+    /// (`loro-internal-1.13.6/src/encoding/fast_snapshot.rs:456-467`) — genuine
+    /// dependencies, which is what #3189 checks. For a SNAPSHOT blob it means
+    /// something entirely different: loro sets it to the snapshot's
+    /// `shallow_since_frontiers` (`fast_snapshot.rs:404-419`), i.e. the point
+    /// the history was TRUNCATED at — ops the receiver by definition does NOT
+    /// hold. Reading that as a dependency would report every shallow snapshot
+    /// unreachable and drop its slot, turning #3189 into the data-loss bug it
+    /// was written to close. `replay_base_miss` therefore returns early on
+    /// `is_snapshot()` before either half runs.
+    ///
+    /// (Only `Snapshot`, `ShallowSnapshot` and `Updates` can reach the gate at
+    /// all: `decode_import_blob_meta` returns `ImportUnsupportedEncodingMode`
+    /// for the two `Outdated*` modes — `encoding.rs:546-553` — which the gate
+    /// treats as a decode failure and accepts ungated.)
+    #[test]
+    fn gate_replay_blobs_accepts_shallow_snapshot_despite_start_frontiers_3189() {
+        use super::{LoroDoc, LoroEngine, ReplayBlobGate};
+        use loro::{ExportMode, ID};
+
+        let mut a = LoroEngine::with_peer_id("DEV-A").expect("A");
+        for i in 0..3i64 {
+            a.apply_create_block(&format!("A-{i}"), "content", "x", None, i)
+                .expect("create");
+        }
+        let peer = a.doc.peer_id();
+        // Truncate the history so the blob's `start_frontiers` names an op that
+        // no receiver of this snapshot can possibly hold.
+        let shallow = a
+            .doc
+            .export(ExportMode::shallow_snapshot_since(ID::new(peer, 1)))
+            .expect("shallow snapshot");
+
+        let meta = LoroDoc::decode_import_blob_meta(&shallow, true).expect("meta");
+        assert!(
+            meta.mode.is_snapshot(),
+            "precondition: the blob must decode as snapshot-shaped, got {:?}",
+            meta.mode
+        );
+        assert!(
+            !meta.start_frontiers.is_empty(),
+            "precondition: the shallow snapshot must carry a NON-EMPTY \
+             start_frontiers — an empty one would make this test vacuous"
+        );
+
+        let fresh = LoroEngine::with_peer_id("DEV-B").expect("fresh");
+        let refs: Vec<&[u8]> = vec![&shallow];
+        match &fresh.gate_replay_blobs(&refs)[0] {
+            ReplayBlobGate::Accept => {}
+            other => panic!(
+                "a snapshot's start_frontiers is its shallow-since TRUNCATION \
+                 point, not a dependency — it must never be reachability-checked \
+                 (#3189); got {other:?}"
+            ),
         }
     }
 
