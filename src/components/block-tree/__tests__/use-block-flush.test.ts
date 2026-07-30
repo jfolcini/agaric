@@ -28,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { dispatch } from '@/lib/tauri-mock/handlers'
@@ -99,7 +100,7 @@ describe('useBlockFlush — checkbox markdown', () => {
       if (cmd === 'edit_block') {
         return Promise.resolve({ ...block, content: 'task', todo_state: 'TODO' })
       }
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
 
     const handle = makeHandle('BLK', '- [ ] task')
@@ -142,7 +143,7 @@ describe('useBlockFlush — checkbox markdown', () => {
       if (cmd === 'edit_block') {
         return Promise.resolve({ ...block, content: '- [ ] task' })
       }
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
 
     const handle = makeHandle('BLK', '- [ ] task')
@@ -195,7 +196,7 @@ describe('useBlockFlush — checkbox markdown', () => {
         // Echo whatever cleaned text it was sent.
         return Promise.resolve({ ...block })
       }
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
 
     // A SINGLE hook instance (one shared sequence-token map) whose roving
@@ -250,7 +251,7 @@ describe('useBlockFlush — checkbox markdown', () => {
 
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'edit_block') return Promise.resolve({ ...block, content: 'plain text' })
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
 
     const handle = makeHandle('BLK', 'plain text')

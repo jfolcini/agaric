@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 
 import { makeBlock } from '@/__tests__/fixtures'
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { useBlockMultiSelect } from '@/components/block-tree/use-block-multi-select'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
@@ -49,7 +50,7 @@ beforeEach(() => {
       const ids = (a['blockIds'] as string[]) ?? []
       return Promise.resolve(ids.length)
     }
-    return Promise.resolve(undefined)
+    return strictInvokeFallback(cmd)
   })
   pageStore = createPageBlockStore('PAGE_1')
   pageStore.setState({
@@ -135,7 +136,7 @@ describe('useBlockMultiSelect handleBatchSetTodo', () => {
     // failure so the user sees an honest summary.
     mockedInvoke.mockImplementationOnce((cmd: string) => {
       if (cmd === 'set_todo_state_batch') return Promise.resolve(1) // 1 of 2
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockMultiSelect(params), { wrapper })

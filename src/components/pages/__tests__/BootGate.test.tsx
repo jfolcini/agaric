@@ -2,22 +2,27 @@
  * Tests for BootGate component.
  *
  * startup-latency-backend Phase 2: the boot store's `invoke('list_blocks')`
- * handshake was removed; `boot()` now transitions `booting → ready`
- * synchronously. The `error` state surface is preserved (it can be
- * driven externally via `useBootStore.setState({ state: 'error', ... })`)
- * but no production path produces it today. Tests below split into:
+ * handshake was removed; `boot()` transitions `booting → ready` as soon as
+ * the space store has hydrated (`refreshAvailableSpaces()`, i.e. a
+ * `list_spaces` IPC — stubbed in `beforeEach`). The `error` state is
+ * reached when that hydration reports a hard failure, and can also be
+ * driven externally via `useBootStore.setState({ state: 'error', ... })`,
+ * which is how the render-only cases below arrange it. Tests split into:
  *  - happy path (mount → ready render)
  *  - externally-driven error render (Failed-to-start UI + a11y + retry +
  *    diagnostics)
  *
- * The old invoke-rejection error-path block was dropped because there is
- * no longer any async work inside `boot()` that could reject.
+ * `boot()` never rejects (the space store records its hard failure rather
+ * than throwing), so there is no invoke-rejection error-path block here.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 
 // Mock lucide-react icons so we don't pull in the full icon library in tests.
 vi.mock('lucide-react', () => ({
@@ -41,6 +46,12 @@ const noopBoot = vi.fn(async () => {})
 beforeEach(() => {
   vi.clearAllMocks()
   useBootStore.setState({ state: 'booting', error: null })
+  // #3225 — the real `boot()` awaits the space store's
+  // `refreshAvailableSpaces()`, i.e. a `list_spaces` IPC. Only the
+  // mount-and-transition test below runs the real `boot()` (the rest swap
+  // in a no-op), but leaving that call unstubbed used to resolve
+  // `undefined` and read as success; now it must be modelled explicitly.
+  vi.mocked(invoke).mockImplementation(mockInvokeCommands({ list_spaces: () => [] }))
 })
 
 describe('BootGate', () => {
@@ -51,8 +62,8 @@ describe('BootGate', () => {
       </BootGate>,
     )
 
-    // Phase-2 invariant: boot() is synchronous (no IPC). On mount the
-    // effect fires, state goes booting → ready, children render.
+    // On mount the effect fires `boot()`, which awaits the stubbed
+    // `list_spaces` hydration, state goes booting → ready, children render.
     await waitFor(() => {
       expect(screen.getByText('App content')).toBeInTheDocument()
     })

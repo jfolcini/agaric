@@ -7,9 +7,11 @@
  * wiring stays in `App.test.tsx`.
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { setWindowTitle } from '@/lib/platform/window'
 import { useNavigationStore } from '@/stores/navigation'
@@ -24,6 +26,20 @@ vi.mock('@/lib/platform/window', () => ({
 beforeEach(() => {
   vi.clearAllMocks()
   document.documentElement.style.removeProperty('--accent-current')
+
+  // #3225 — the hook's mount effect runs the resolve store's real
+  // `preload(spaceId)`, which pages through `list_blocks` and then fetches
+  // `list_all_tags_in_space`. Both used to be unstubbed: they resolved
+  // `undefined`, `unwrap` reported success, and reading `.items` off it
+  // threw into `preload`'s "preload failed, using fallback" catch — so
+  // every test here silently exercised the failure path. Stub the pair
+  // with empty results so the effect completes the way production does.
+  vi.mocked(invoke).mockImplementation(
+    mockInvokeCommands({
+      list_blocks: () => ({ items: [], has_more: false, next_cursor: null }),
+      list_all_tags_in_space: () => [],
+    }),
+  )
 
   useSpaceStore.setState({
     currentSpaceId: 'SPACE_PERSONAL',

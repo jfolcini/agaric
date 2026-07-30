@@ -25,6 +25,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
+import {
+  type InvokeHandler,
+  mockInvokeCommands,
+  pageRowInvokeFallback,
+} from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -46,20 +51,31 @@ const PAGES = [
   makePage({ id: 'P4', content: 'Delta' }),
 ]
 
-/** Seed the page list (the metadata path consumes the first invoke). */
-function mockPageList() {
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    if (cmd === 'list_pages_with_metadata') {
-      return Promise.resolve({
-        items: PAGES,
-        next_cursor: null,
-        has_more: false,
-        total_count: PAGES.length,
-      })
-    }
-    return Promise.resolve(undefined)
-  })
+/**
+ * Seed the page list, plus any per-test command handlers.
+ *
+ * #3225 — a bulk action invalidates the page query, so `list_pages_with_metadata`
+ * is fetched AGAIN after the mutation. A test that swapped in its own
+ * implementation mid-flight therefore has to keep serving it; it used to be
+ * covered by a fallback resolving `undefined`, which `unwrap` reports as a
+ * successful (empty) response.
+ */
+function mockPageList(handlers: Readonly<Record<string, InvokeHandler>> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        resolve_page_by_alias: () => null,
+        list_pages_with_metadata: () => ({
+          items: PAGES,
+          next_cursor: null,
+          has_more: false,
+          total_count: PAGES.length,
+        }),
+        ...handlers,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
 }
 
 /** The selection checkbox for a given page id. */
@@ -163,13 +179,11 @@ describe('PageBrowser multi-select', () => {
     await user.click(selectCheckbox('P2'))
 
     // Open the tag picker; the toolbar lazily loads the space tags.
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'list_all_tags_in_space')
-        return Promise.resolve([
-          { tag_id: 'TAG_A', name: 'alpha', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
-        ])
-      if (cmd === 'add_tags_by_ids') return Promise.resolve(1)
-      return Promise.resolve(undefined)
+    mockPageList({
+      list_all_tags_in_space: () => [
+        { tag_id: 'TAG_A', name: 'alpha', usage_count: 1, updated_at: '2025-01-01T00:00:00Z' },
+      ],
+      add_tags_by_ids: () => 1,
     })
 
     await user.click(screen.getByTestId('page-batch-add-tag-btn'))
@@ -200,10 +214,7 @@ describe('PageBrowser multi-select', () => {
 
     await user.click(selectCheckbox('P1'))
 
-    mockedInvoke.mockImplementation((cmd: string) => {
-      if (cmd === 'move_blocks_to_space') return Promise.resolve(1)
-      return Promise.resolve(undefined)
-    })
+    mockPageList({ move_blocks_to_space: () => 1 })
 
     await user.click(screen.getByTestId('page-batch-move-btn'))
     const select = await screen.findByRole('combobox', {

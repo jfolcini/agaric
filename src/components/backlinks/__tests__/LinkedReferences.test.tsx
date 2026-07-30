@@ -27,6 +27,7 @@ import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import type { LinkedReferencesProps } from '@/components/backlinks/LinkedReferences'
 import { LinkedReferences } from '@/components/backlinks/LinkedReferences'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -1805,7 +1806,7 @@ describe('LinkedReferences', () => {
       if (cmd === 'list_backlinks_grouped') return Promise.resolve(emptyGrouped)
       if (cmd === 'batch_resolve') return Promise.resolve([])
       if (cmd === 'list_property_keys') return Promise.resolve([])
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
 
     const { unmount } = renderLinkedReferences({ pageId: 'PAGE1' })

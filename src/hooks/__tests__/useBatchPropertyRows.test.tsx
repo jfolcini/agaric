@@ -33,6 +33,7 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import {
   BatchPropertiesProvider,
   useBatchPropertyRows,
@@ -385,7 +386,7 @@ describe('useBatchPropertyRows', () => {
             resolveB = res
           })
         }
-        return Promise.resolve(undefined)
+        return strictInvokeFallback(cmd)
       })
       rerender(
         <BatchPropertiesProvider blockIds={['A', 'B']}>

@@ -9,6 +9,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makePage } from '@/__tests__/fixtures'
+import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -64,6 +65,33 @@ const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
 
 const mockedInvoke = vi.mocked(invoke)
 
+/**
+ * Serve `list_pages_with_metadata` for EVERY fetch a test triggers, keyed on
+ * the command name.
+ *
+ * #3225 — switching the sort re-runs the page query, so a positional
+ * `mockResolvedValueOnce` only covers the first fetch; the second used to
+ * fall through to a fallback resolving `undefined`, which `unwrap` reports as
+ * a successful (empty) response. The grouped-ordering assertions below then
+ * ran against rows the component had already been told, silently, were gone.
+ */
+function stubPageList(items: ReturnType<typeof makePage>[]) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        list_pages_with_metadata: () => ({
+          items,
+          next_cursor: null,
+          has_more: false,
+          total_count: null,
+        }),
+        resolve_page_by_alias: () => null,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -93,7 +121,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -232,17 +260,12 @@ describe('PageBrowser', () => {
     it('created-DESC sort applies inside each group independently', async () => {
       const user = userEvent.setup()
       localStorage.setItem('starred-pages', JSON.stringify(['01AAA', '01CCC']))
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: '01AAA', content: 'OldStar' }),
-          makePage({ id: '01BBB', content: 'MidUnstar' }),
-          makePage({ id: '01CCC', content: 'NewStar' }),
-          makePage({ id: '01DDD', content: 'NewestUnstar' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: '01AAA', content: 'OldStar' }),
+        makePage({ id: '01BBB', content: 'MidUnstar' }),
+        makePage({ id: '01CCC', content: 'NewStar' }),
+        makePage({ id: '01DDD', content: 'NewestUnstar' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('OldStar')
@@ -266,17 +289,12 @@ describe('PageBrowser', () => {
         { id: 'P3', title: 'Cherry', visitedAt: '2025-01-15T12:00:00Z' },
         { id: 'P1', title: 'Apple', visitedAt: '2025-01-14T12:00:00Z' },
       ])
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-          makePage({ id: 'P4', content: 'Durian' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+        makePage({ id: 'P4', content: 'Durian' }),
+      ])
 
       render(<PageBrowser />)
       await screen.findByText('Apple')

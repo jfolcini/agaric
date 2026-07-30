@@ -20,6 +20,7 @@ import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
+import { strictInvokeFallback } from '@/__tests__/helpers/invoke'
 import { PageBrowserBatchToolbar } from '@/components/pages/PageBrowserBatchToolbar'
 import { t } from '@/lib/i18n'
 import { getStarredPages } from '@/lib/starred-pages'
@@ -127,7 +128,7 @@ describe('PageBrowserBatchToolbar', () => {
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'list_all_tags_in_space') return Promise.resolve(tagRows)
       if (cmd === 'add_tags_by_ids') return Promise.resolve(2)
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
     const { onClearSelection, onMutated } = renderToolbar()
 
@@ -162,7 +163,7 @@ describe('PageBrowserBatchToolbar', () => {
     const user = userEvent.setup()
     mockedInvoke.mockImplementation((cmd: string) => {
       if (cmd === 'move_blocks_to_space') return Promise.resolve(3)
-      return Promise.resolve(undefined)
+      return strictInvokeFallback(cmd)
     })
     const { onClearSelection, onMutated } = renderToolbar()
 

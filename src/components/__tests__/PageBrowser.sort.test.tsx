@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { makePage } from '@/__tests__/fixtures'
+import { mockInvokeCommands, pageRowInvokeFallback } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
@@ -64,6 +65,34 @@ const mockedGetRecentPages = vi.mocked(getRecentPagesForSpace)
 
 const mockedInvoke = vi.mocked(invoke)
 
+/**
+ * Serve `list_pages_with_metadata` for EVERY fetch a test triggers, keyed on
+ * the command name.
+ *
+ * #3225 — changing the sort re-runs the page query, so a positional
+ * `mockResolvedValueOnce` covers only the first fetch; the second used to
+ * fall through to a fallback resolving `undefined`, which `unwrap` reports as
+ * a successful (empty) response. The rendered rows survived that on stale
+ * data, so the ordering assertions below were checking a list the component
+ * had already been told, silently, no longer existed.
+ */
+function stubPageList(items: ReturnType<typeof makePage>[], totalCount: number | null = null) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands(
+      {
+        list_pages_with_metadata: () => ({
+          items,
+          next_cursor: null,
+          has_more: false,
+          total_count: totalCount,
+        }),
+        resolve_page_by_alias: () => null,
+      },
+      { fallback: pageRowInvokeFallback },
+    ),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -93,7 +122,7 @@ beforeEach(() => {
   // Default fallback: resolve_page_by_alias returns null (no alias match)
   mockedInvoke.mockImplementation((cmd: string) => {
     if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
+    return pageRowInvokeFallback(cmd)
   })
 })
 
@@ -170,16 +199,11 @@ describe('PageBrowser', () => {
 
     it('switching to Created sort orders pages by ULID descending (newest first)', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: '01AAA', content: 'Oldest' }),
-          makePage({ id: '01CCC', content: 'Newest' }),
-          makePage({ id: '01BBB', content: 'Middle' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: '01AAA', content: 'Oldest' }),
+        makePage({ id: '01CCC', content: 'Newest' }),
+        makePage({ id: '01BBB', content: 'Middle' }),
+      ])
 
       render(<PageBrowser />)
 
@@ -203,16 +227,11 @@ describe('PageBrowser', () => {
         { id: 'P2', title: 'Banana', visitedAt: '2025-01-15T12:00:00Z' },
         { id: 'P3', title: 'Cherry', visitedAt: '2025-01-14T12:00:00Z' },
       ])
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'Apple' }),
-          makePage({ id: 'P2', content: 'Banana' }),
-          makePage({ id: 'P3', content: 'Cherry' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([
+        makePage({ id: 'P1', content: 'Apple' }),
+        makePage({ id: 'P2', content: 'Banana' }),
+        makePage({ id: 'P3', content: 'Cherry' }),
+      ])
 
       render(<PageBrowser />)
 
@@ -233,12 +252,7 @@ describe('PageBrowser', () => {
 
     it('persists sort preference to localStorage', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'A Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      })
+      stubPageList([makePage({ id: 'P1', content: 'A Page' })])
 
       render(<PageBrowser />)
 
@@ -346,7 +360,7 @@ describe('PageBrowser', () => {
             total_count: 4,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -378,7 +392,7 @@ describe('PageBrowser', () => {
             total_count: 4,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)
@@ -427,7 +441,7 @@ describe('PageBrowser', () => {
             total_count: 4,
           })
         }
-        return Promise.resolve(undefined)
+        return pageRowInvokeFallback(cmd)
       })
 
       render(<PageBrowser />)

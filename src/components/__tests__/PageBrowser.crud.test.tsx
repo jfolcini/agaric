@@ -10,6 +10,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { emptyPage, makePage } from '@/__tests__/fixtures'
+import { type InvokeHandler, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
@@ -68,6 +69,49 @@ function findTrashButton(row: HTMLElement): HTMLButtonElement {
   return within(row).getByRole('button', { name: /delete page/i })
 }
 
+/** The `list_pages_with_metadata` response shape for a set of pages. */
+function pageList(...items: ReturnType<typeof makePage>[]) {
+  return { items, next_cursor: null, has_more: false, total_count: null }
+}
+
+/**
+ * Install a COMMAND-KEYED `invoke` implementation for one test.
+ *
+ * #3217 / #3225 — this file used to arrange its IPC with positional
+ * `mockResolvedValueOnce` / `mockRejectedValueOnce` over a base
+ * implementation that resolved `undefined` for everything else. Both halves
+ * of that were hazardous:
+ *
+ *  - the queue is consumed in CALL order regardless of command, and
+ *    `DensityRow`'s hover/focus-intent prefetch (`prefetchPageSubtree`,
+ *    `PAGE_PREFETCH_DWELL_MS` = 120ms) fires a genuine `load_page_subtree`
+ *    whenever a pointer dwells on a row — which `userEvent.click` does as an
+ *    ordinary side effect — stealing the slot meant for the command under
+ *    test whenever the machine is slow enough to cross that threshold;
+ *  - the `undefined` fallback then made the robbed command look like it had
+ *    SUCCEEDED with no payload (`typedError` wraps any resolved value as
+ *    `{ status: 'ok' }`), so the failed-delete test silently exercised a
+ *    successful delete.
+ *
+ * Keying on the command name makes the arrangement invariant to incidental
+ * calls, and unlisted commands hit the strict fallback and fail the test by
+ * name instead of resolving to a phantom success.
+ */
+function stubInvoke(overrides: Readonly<Record<string, InvokeHandler>> = {}) {
+  mockedInvoke.mockImplementation(
+    mockInvokeCommands({
+      // Every PageBrowser render issues the page query.
+      list_pages_with_metadata: () => emptyPage,
+      // Alias resolution: no alias match unless a test says otherwise.
+      resolve_page_by_alias: () => null,
+      // Speculative row prefetch — fires on pointer dwell, not on any
+      // assertion; modelled here so it can never stand in for a real call.
+      load_page_subtree: () => ({ blocks: [], truncated: false, total: 0 }),
+      ...overrides,
+    }),
+  )
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   capturedEstimateSizes.length = 0
@@ -94,22 +138,15 @@ beforeEach(() => {
     ],
     isReady: true,
   })
-  // Default fallback: resolve_page_by_alias returns null (no alias match)
-  mockedInvoke.mockImplementation((cmd: string) => {
-    if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-    return Promise.resolve(undefined)
-  })
+  // Command-keyed defaults; each test narrows them via `stubInvoke`.
+  stubInvoke()
 })
 
 describe('PageBrowser', () => {
   it('has no a11y violations', async () => {
-    const page = {
-      items: [makePage({ id: 'P1', content: 'Accessible page' })],
-      next_cursor: null,
-      has_more: false,
-      total_count: null,
-    }
-    mockedInvoke.mockResolvedValueOnce(page)
+    stubInvoke({
+      list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'Accessible page' })),
+    })
 
     const { container } = render(<PageBrowser />)
 
@@ -122,11 +159,8 @@ describe('PageBrowser', () => {
   })
   describe('page deletion', () => {
     it('shows trash icon on page item hover area', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'My Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'My Page' })),
       })
 
       render(<PageBrowser />)
@@ -146,11 +180,8 @@ describe('PageBrowser', () => {
 
     it('shows AlertDialog when trash icon is clicked', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Deletable Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'Deletable Page' })),
       })
 
       render(<PageBrowser />)
@@ -172,11 +203,8 @@ describe('PageBrowser', () => {
 
     it('cancelling the dialog keeps the page', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'Keep This Page' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'Keep This Page' })),
       })
 
       render(<PageBrowser />)
@@ -199,23 +227,18 @@ describe('PageBrowser', () => {
 
     it('confirming the dialog deletes the page', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'To Be Deleted' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'To Be Deleted' })),
+        delete_block: () => ({
+          block_id: 'P1',
+          deleted_at: '2025-01-15T00:00:00Z',
+          descendants_affected: 0,
+        }),
       })
 
       render(<PageBrowser />)
 
       await screen.findByText('To Be Deleted')
-
-      // Mock delete_block response
-      mockedInvoke.mockResolvedValueOnce({
-        block_id: 'P1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      })
 
       // Open dialog
       const pageRow = screen.getByText('To Be Deleted').closest('.group') as HTMLElement
@@ -237,7 +260,7 @@ describe('PageBrowser', () => {
   })
   describe('page creation form', () => {
     it('renders an input field and submit button', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
 
       render(<PageBrowser />)
 
@@ -249,7 +272,7 @@ describe('PageBrowser', () => {
 
     // Input has accessible name via Label htmlFor
     it('new page input has accessible name via sr-only label', async () => {
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
 
       render(<PageBrowser />)
 
@@ -262,16 +285,14 @@ describe('PageBrowser', () => {
 
     it('creates page with the typed name on form submit', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      // The atomic create wrapper returns the new page's ULID.
+      stubInvoke({ create_page_in_space: () => 'P_NEW' })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      // Mock create_page_in_space response — atomic wrapper returns the new page's ULID
-      mockedInvoke.mockResolvedValueOnce('P_NEW')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'My Custom Page')
@@ -291,15 +312,13 @@ describe('PageBrowser', () => {
 
     it('clears input after successful creation', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ create_page_in_space: () => 'P_NEW' })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      mockedInvoke.mockResolvedValueOnce('P_NEW')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Temp Name')
@@ -312,7 +331,7 @@ describe('PageBrowser', () => {
 
     it('disables "New Page" button when input is empty or whitespace', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke()
 
       render(<PageBrowser />)
 
@@ -334,15 +353,13 @@ describe('PageBrowser', () => {
 
     it('submits via Enter key in the input', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ create_page_in_space: () => 'P_ENTER' })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      mockedInvoke.mockResolvedValueOnce('P_ENTER')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Enter Page{Enter}')
@@ -359,15 +376,13 @@ describe('PageBrowser', () => {
     it('navigates to the new page after creation via onPageSelect', async () => {
       const user = userEvent.setup()
       const onPageSelect = vi.fn()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ create_page_in_space: () => 'P_NAV' })
 
       render(<PageBrowser onPageSelect={onPageSelect} />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      mockedInvoke.mockResolvedValueOnce('P_NAV')
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Navigate Here')
@@ -380,7 +395,9 @@ describe('PageBrowser', () => {
   })
   describe('error feedback', () => {
     it('shows toast on failed page load', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('Network error'))
+      stubInvoke({
+        list_pages_with_metadata: () => Promise.reject(new Error('Network error')),
+      })
 
       render(<PageBrowser />)
 
@@ -393,16 +410,13 @@ describe('PageBrowser', () => {
 
     it('shows toast on failed page creation', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce(emptyPage)
+      stubInvoke({ create_page_in_space: () => Promise.reject(new Error('Create failed')) })
 
       render(<PageBrowser />)
 
       await waitFor(() => {
         expect(screen.getByText(/No pages yet/)).toBeInTheDocument()
       })
-
-      // Mock create_page_in_space to fail
-      mockedInvoke.mockRejectedValueOnce(new Error('Create failed'))
 
       const input = screen.getByPlaceholderText('New page name...')
       await user.type(input, 'Failing Page')
@@ -435,25 +449,17 @@ describe('PageBrowser', () => {
       // contention — reproduces 100% under load, ~0% idle, so it is a
       // wall-clock THRESHOLD, not a coin-flip race), that call consumes the
       // `mockRejectedValueOnce` meant for `delete_block`; `delete_block`
-      // then falls through to the file's `beforeEach` base
-      // `mockImplementation` (`Promise.resolve(undefined)`), which
-      // `typedError`/`unwrap` treat as a *successful* `{ status: 'ok', data:
-      // undefined }` — so the delete silently "succeeds" (row removed, a
-      // success toast fires) instead of surfacing the intended failure, and
-      // this assertion times out. Keying the mock on `cmd` makes the
-      // outcome invariant to any such incidental IPC call, in isolation or
-      // in the full file.
-      const page = {
-        items: [makePage({ id: 'P1', content: 'Fail Delete' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
-      }
-      mockedInvoke.mockImplementation((cmd: string) => {
-        if (cmd === 'list_pages_with_metadata') return Promise.resolve(page)
-        if (cmd === 'delete_block') return Promise.reject(new Error('Delete failed'))
-        if (cmd === 'resolve_page_by_alias') return Promise.resolve(null)
-        return Promise.resolve(undefined)
+      // then falls through to the base implementation. #3225 made that
+      // fallback loud, but before it did, the base resolved `undefined`,
+      // which `typedError`/`unwrap` treat as a *successful* `{ status: 'ok',
+      // data: undefined }` — so the delete silently "succeeded" (row
+      // removed, a success toast fired) instead of surfacing the intended
+      // failure, and this assertion timed out. Keying on the command name
+      // makes the outcome invariant to any such incidental IPC call, in
+      // isolation or in the full file.
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'Fail Delete' })),
+        delete_block: () => Promise.reject(new Error('Delete failed')),
       })
 
       render(<PageBrowser />)
@@ -479,11 +485,8 @@ describe('PageBrowser', () => {
   })
   describe('create page under namespace', () => {
     it('namespace folder shows + button', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'work/project-a' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'work/project-a' })),
       })
 
       render(<PageBrowser />)
@@ -496,11 +499,8 @@ describe('PageBrowser', () => {
 
     it('clicking + on namespace prefills input', async () => {
       const user = userEvent.setup()
-      mockedInvoke.mockResolvedValueOnce({
-        items: [makePage({ id: 'P1', content: 'work/project-a' })],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () => pageList(makePage({ id: 'P1', content: 'work/project-a' })),
       })
 
       render(<PageBrowser />)
@@ -515,14 +515,12 @@ describe('PageBrowser', () => {
     })
 
     it('a11y: + button has proper aria-label with namespace path', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/dev/task-1' }),
-          makePage({ id: 'P2', content: 'work/dev/task-2' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            makePage({ id: 'P1', content: 'work/dev/task-1' }),
+            makePage({ id: 'P2', content: 'work/dev/task-2' }),
+          ),
       })
 
       render(<PageBrowser />)
@@ -536,14 +534,12 @@ describe('PageBrowser', () => {
   })
   describe('handleCreateUnder setTimeout cleanup (#)', () => {
     it('does not throw if unmounted between handleCreateUnder setTimeout and fire', async () => {
-      mockedInvoke.mockResolvedValueOnce({
-        items: [
-          makePage({ id: 'P1', content: 'work/project-a' }),
-          makePage({ id: 'P2', content: 'work' }),
-        ],
-        next_cursor: null,
-        has_more: false,
-        total_count: null,
+      stubInvoke({
+        list_pages_with_metadata: () =>
+          pageList(
+            makePage({ id: 'P1', content: 'work/project-a' }),
+            makePage({ id: 'P2', content: 'work' }),
+          ),
       })
 
       const { unmount } = render(<PageBrowser />)
