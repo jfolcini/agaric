@@ -181,6 +181,21 @@ pub async fn recover_at_boot(
     // and a hard error here is swallowed so boot still completes (same
     // "log + continue" philosophy as the op-log replay above).
     // -----------------------------------------------------------------
+    // #3226: bracket the walk with the quarantine census so the report can say
+    // BOTH "n slots gave up this boot" and "n blobs are stuck right now".
+    // Boot recovery holds exclusive write access (see the module contract), so
+    // nothing else can move rows in or out between these two reads and the
+    // delta is exactly what this walk quarantined. A failed census is not worth
+    // failing boot over — but it must not INVENT a delta either: a failed
+    // "before" read defaulting to 0 would make every pre-existing quarantined
+    // blob look like it was quarantined by THIS boot. So the failure is kept as
+    // `None` and the delta is reported as 0 (unknown), while the walk's own
+    // per-move `tracing::error!` still carries the signal.
+    let quarantined_before =
+        agaric_sync::sync_protocol::loro_sync_quarantine::count_quarantined_slots(pool)
+            .await
+            .ok();
+
     let sync_inbox_replayed =
         match super::sync_inbox::replay_sync_inbox(pool, registry, device_id, materializer).await {
             Ok(n) => n,
@@ -189,6 +204,46 @@ pub async fn recover_at_boot(
                 0
             }
         };
+
+    let sync_inbox_quarantine_pending =
+        agaric_sync::sync_protocol::loro_sync_quarantine::count_quarantined_slots(pool)
+            .await
+            .unwrap_or(quarantined_before.unwrap_or(0));
+    let sync_inbox_quarantined = match quarantined_before {
+        Some(before) => sync_inbox_quarantine_pending.saturating_sub(before),
+        // The "before" census failed, so no honest delta exists. Report 0
+        // rather than attributing the whole standing backlog to this boot.
+        None => 0,
+    };
+    if sync_inbox_quarantine_pending > 0 {
+        // Mentioned once per boot, because a blob that stopped being retried
+        // must not also stop being mentioned — but at a level that matches what
+        // happened. #3226 exists to end "an error every boot forever"; emitting
+        // an ERROR for an unchanged, already-reported backlog would reinstate
+        // exactly that at a coarser grain and train the reader to ignore it.
+        // So: ERROR on the boot that MOVED something (a state change, and the
+        // moment a human could still act on it), WARN for the standing backlog
+        // afterwards. The per-slot move is separately logged at ERROR by
+        // `replay_inbox_batch::account_unresolved_slot`.
+        if sync_inbox_quarantined > 0 {
+            tracing::error!(
+                quarantined_this_boot = sync_inbox_quarantined,
+                pending = sync_inbox_quarantine_pending,
+                "#3226: inbound sync blobs were MOVED to durable quarantine this \
+                 boot — their bytes are preserved (#535) but their content never \
+                 reached the projection and they are no longer retried; inspect \
+                 with loro_sync_quarantine::list_quarantined_slots"
+            );
+        } else {
+            tracing::warn!(
+                pending = sync_inbox_quarantine_pending,
+                "#3226: inbound sync blobs remain in durable quarantine — their \
+                 bytes are preserved (#535) but their content never reached the \
+                 projection and they are no longer retried; inspect with \
+                 loro_sync_quarantine::list_quarantined_slots"
+            );
+        }
+    }
 
     // -----------------------------------------------------------------
     // Step 2: Walk block_drafts and recover unflushed drafts
@@ -369,5 +424,7 @@ pub async fn recover_at_boot(
         ops_skipped_idempotent: replay_report.ops_skipped_idempotent,
         replay_errors: replay_report.replay_errors,
         sync_inbox_replayed,
+        sync_inbox_quarantined,
+        sync_inbox_quarantine_pending,
     })
 }

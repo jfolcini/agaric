@@ -750,7 +750,23 @@ pub enum InboundDeliveryKind {
 /// #2264: both are surfaced so callers can tell a complete no-op import
 /// apart from a purge-only one and skip downstream work accordingly.
 ///
-/// ## Kept slots are retained without bound — deliberately (#3213 / #3194 / #535)
+/// ## Kept slots are retained, and now terminate in quarantine (#3226)
+///
+/// **This section's original claim — "there is no retry cap and no quarantine" —
+/// is no longer true, and the paragraphs below are kept because the reasoning
+/// that made retention unbounded is exactly the reasoning quarantine had to
+/// respect.** What #3226 added is the missing third option: a slot that stays
+/// unresolved across
+/// [`QUARANTINE_AFTER_BOOTS`](super::loro_sync_quarantine::QUARANTINE_AFTER_BOOTS)
+/// boot replays is MOVED — in one transaction, never dropped — into
+/// `loro_sync_quarantine`. That is not the cap this section rejects: no content
+/// is deleted, the durable record survives byte-for-byte, and the blob becomes
+/// queryable (`loro_sync_quarantine::list_quarantined_slots`) instead of
+/// re-erroring every boot. Only the *retrying* is bounded. The accounting lives
+/// in `replay_inbox_batch` (the boot path); the live path below is unchanged and
+/// never charges a boot against a slot it just inserted.
+///
+/// The original reasoning, unedited:
 ///
 /// A slot whose `require_covered` frontier the post-import op-log did not reach
 /// is KEPT: nothing was projected for it, so its row is the only surviving copy
@@ -799,11 +815,13 @@ pub enum InboundDeliveryKind {
 /// of the trade against silently dropping unprojected content — but they are why
 /// the quarantine follow-up below is worth doing rather than optional polish.
 ///
-/// The genuinely missing piece is a resolution path for the permanent case:
+/// The genuinely missing piece was a resolution path for the permanent case:
 /// durable QUARANTINE (move the bytes to a side table, stop retrying, surface it
-/// to the user) rather than a cap that deletes. That needs a schema change and
-/// user-facing surface, so it is out of scope here and left as follow-up work —
-/// see the closing section of #3213.
+/// to the user) rather than a cap that deletes. That is what #3226 built — see
+/// [`super::loro_sync_quarantine`]. Both costs above are now bounded by the boot
+/// budget rather than by "how long the shortfall lasts": once a slot is
+/// quarantined it stops holding an inbox row, so it stops making later Live
+/// no-op imports in its space untrusted.
 ///
 /// ## #2264 — no-op short-circuit (and when it must NOT fire)
 ///
@@ -1526,13 +1544,15 @@ pub(crate) async fn import_and_project(
 /// `replay_inbox_batch`).
 ///
 /// That keeps poison ISOLATION intact — a kept slot still returns `Ok`, so the
-/// caller's walk moves on to the next blob — but it does convert a
-/// permanently-unsatisfiable blob into a row retried once per boot, forever.
-/// Bounded, not looping: `recovery::sync_inbox::replay_sync_inbox` advances its
-/// `id > last_seen` cursor past every row BEFORE attempting it, so nothing is
-/// re-fetched within a boot. Unbounded retention is the deliberate #535 trade —
-/// see the "Kept slots are retained without bound" section on
-/// [`import_and_project`].
+/// caller's walk moves on to the next blob. `recovery::sync_inbox::replay_sync_inbox`
+/// advances its `id > last_seen` cursor past every row BEFORE attempting it, so
+/// nothing is re-fetched within a boot.
+///
+/// #3226: "retried once per boot, forever" is now "retried once per boot until
+/// the boot budget runs out". This function does NOT do that accounting — its
+/// caller [`replay_inbox_batch`] does, once per slot per boot, because only the
+/// caller can tell a kept slot apart from a cleared one after the fact. See
+/// [`super::loro_sync_quarantine`].
 pub async fn replay_inbox_row(
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
@@ -1719,6 +1739,17 @@ pub struct InboxSlot {
 /// condition as the batch, so a blob whose dependency lived in a sibling slot
 /// keeps its row instead of being deleted unprojected. Isolation is unchanged —
 /// a kept slot still returns `Ok` and the walk proceeds to the next blob — but
+/// #3226: this function is where the boot budget is charged. Every slot that
+/// did NOT clear — kept by the frontier condition, or left behind because its
+/// blob could not be imported at all — goes through [`account_unresolved_slot`],
+/// which is the SINGLE accounting point for both arms. Exactly one charge per
+/// slot per boot: a slot reaches either the batch-success probe or the per-row
+/// fallback, never both, because the fallback runs only after the batch returned
+/// `Err`, and an `Err` means the projection tx never committed and no slot was
+/// cleared. Once the budget is spent the slot is MOVED to `loro_sync_quarantine`
+/// and stops being fetched by the walk at all — see
+/// [`super::loro_sync_quarantine`].
+///
 /// `Ok` no longer means "cleared", so both the batch arm and the per-row
 /// fallback arm below probe `loro_sync_inbox` before counting a slot as
 /// `replayed`.
@@ -1845,11 +1876,29 @@ pub async fn replay_inbox_batch(
                 .await?;
                 match still_there {
                     None => out.replayed += 1,
-                    Some(_) => out.errors.push(format!(
-                        "inbox {id}: kept — the post-import oplog did not reach the \
-                         blob's declared end frontier, so its content is not in the \
-                         projection (#3194/#535)"
-                    )),
+                    Some(_) => {
+                        // #3226: the slot did not clear. Charge it one boot
+                        // against the quarantine budget; once spent, its bytes
+                        // MOVE to `loro_sync_quarantine` and the retry loop for
+                        // this blob ends — without ever deleting an unprojected
+                        // payload (#535).
+                        let declared: Vec<(PeerID, Counter)> = declared_end_vv
+                            .iter()
+                            .find(|(slot, _)| slot == id)
+                            .map(|(_, vv)| vv.clone())
+                            .unwrap_or_default();
+                        let reason = {
+                            let mut guard = registry.for_space(&space, device_id)?;
+                            guard.engine_mut().oplog_shortfall(&declared)
+                        }
+                        .unwrap_or_else(|| {
+                            "kept after a committed projection although the op-log \
+                             reports no shortfall (#3194/#535)"
+                                .to_string()
+                        });
+                        account_unresolved_slot(pool, space_id, *id, &declared, &reason, &mut out)
+                            .await?;
+                    }
                 }
             }
             out.changed.extend(changed);
@@ -1894,12 +1943,37 @@ pub async fn replay_inbox_batch(
                         .await?;
                         match still_there {
                             None => out.replayed += 1,
-                            Some(_) => out.errors.push(format!(
-                                "inbox {}: kept — the post-import oplog did not reach the \
-                                 blob's declared end frontier, so its content is not in \
-                                 the projection (#3213/#535)",
-                                slot.id
-                            )),
+                            Some(_) => {
+                                // #3226 — same accounting as the batch arm. The
+                                // declared frontier is re-derived from the blob
+                                // here (`replay_inbox_row` does not return it),
+                                // which costs one extra metadata decode on a
+                                // path that is already the cold poison-isolation
+                                // fallback and only for slots that did not
+                                // clear.
+                                let screen = {
+                                    let mut guard = registry.for_space(&space, device_id)?;
+                                    guard.engine_mut().screen_inbound_blob(bytes)
+                                };
+                                let reason = {
+                                    let mut guard = registry.for_space(&space, device_id)?;
+                                    guard.engine_mut().oplog_shortfall(&screen.declared_end_vv)
+                                }
+                                .unwrap_or_else(|| {
+                                    "kept after a committed projection although the op-log \
+                                     reports no shortfall (#3213/#535)"
+                                        .to_string()
+                                });
+                                account_unresolved_slot(
+                                    pool,
+                                    space_id,
+                                    slot.id,
+                                    &screen.declared_end_vv,
+                                    &reason,
+                                    &mut out,
+                                )
+                                .await?;
+                            }
                         }
                         out.changed.extend(changed);
                         out.purged.extend(purged);
@@ -1908,13 +1982,91 @@ pub async fn replay_inbox_batch(
                         // Poison slot: left in place by `replay_inbox_row`, so
                         // a later boot retries it. Reported, never fatal —
                         // the per-row walk's "log + continue" contract.
-                        out.errors.push(format!("inbox {}: {e}", slot.id));
+                        //
+                        // #3226: this is the population the issue names as
+                        // "truncated blob, corrupt payload" — a blob that cannot
+                        // be imported AT ALL never reaches the frontier check
+                        // above, it errors out of `import_and_project`. It is
+                        // just as permanently stuck as an unmet frontier, so it
+                        // is charged against the same boot budget and lands in
+                        // the same quarantine. The blob's declared frontier is
+                        // whatever its metadata says (empty when the metadata
+                        // itself will not decode, which is the usual case here).
+                        let screen = {
+                            let mut guard = registry.for_space(&space, device_id)?;
+                            guard.engine_mut().screen_inbound_blob(bytes)
+                        };
+                        let reason = format!("replay failed: {e}");
+                        account_unresolved_slot(
+                            pool,
+                            space_id,
+                            slot.id,
+                            &screen.declared_end_vv,
+                            &reason,
+                            &mut out,
+                        )
+                        .await?;
                     }
                 }
             }
             Ok(out)
         }
     }
+}
+
+/// #3226 — charge one unresolved boot against a slot that did not clear, and
+/// record what happened to it in `out`.
+///
+/// The single accounting point for both of [`replay_inbox_batch`]'s survivor
+/// arms (the batched projection kept it; the per-row fallback kept it or could
+/// not import it at all), so the two cannot drift on when a slot is quarantined
+/// or on what the report says. See
+/// [`loro_sync_quarantine::note_unresolved_slot`] for the move's atomicity
+/// argument and [`loro_sync_quarantine::QUARANTINE_AFTER_BOOTS`] for the budget.
+///
+/// A quarantined slot is NOT counted as `replayed`: nothing of it was projected.
+/// It leaves the `errors` list — the "still stuck, will retry" channel — for the
+/// dedicated `quarantined` counter, because the retrying has stopped and the
+/// blob has moved to a surface a user can actually query.
+async fn account_unresolved_slot(
+    pool: &SqlitePool,
+    space_id: &str,
+    inbox_id: i64,
+    declared_end_vv: &[(PeerID, Counter)],
+    reason: &str,
+    out: &mut BatchReplayOutcome,
+) -> Result<(), AppError> {
+    use super::loro_sync_quarantine::{
+        QUARANTINE_AFTER_BOOTS, SlotDisposition, note_unresolved_slot,
+    };
+
+    match note_unresolved_slot(pool, inbox_id, declared_end_vv, reason).await? {
+        SlotDisposition::Kept { unresolved_boots } => {
+            out.errors.push(format!(
+                "inbox {inbox_id}: kept — {reason} (unresolved boot \
+                 {unresolved_boots} of {QUARANTINE_AFTER_BOOTS}; quarantined once \
+                 the {QUARANTINE_AFTER_BOOTS}th is reached)"
+            ));
+        }
+        SlotDisposition::Quarantined { unresolved_boots } => {
+            out.quarantined += 1;
+            tracing::error!(
+                space_id,
+                inbox_id,
+                unresolved_boots,
+                reason,
+                "#3226: sync-inbox slot stayed unresolved across \
+                 {QUARANTINE_AFTER_BOOTS} boot replays — MOVED to \
+                 loro_sync_quarantine. Its bytes are preserved verbatim (#535) \
+                 and it will not be retried again; inspect it with \
+                 loro_sync_quarantine::list_quarantined_slots"
+            );
+        }
+        // The row vanished under us (a concurrent replay cleared it). Nothing
+        // was kept, so there is nothing to report.
+        SlotDisposition::Gone => {}
+    }
+    Ok(())
 }
 
 /// #3164 — what one [`replay_inbox_batch`] call achieved.
@@ -1934,6 +2086,10 @@ pub struct BatchReplayOutcome {
     pub purged: Vec<agaric_core::ulid::BlockId>,
     /// One message per slot left in place for a later boot.
     pub errors: Vec<String>,
+    /// #3226: slots this call MOVED to `loro_sync_quarantine` after exhausting
+    /// their boot budget. Disjoint from `replayed` (nothing was projected) and
+    /// from `errors` (they will not be retried again).
+    pub quarantined: u64,
 }
 
 // ---------------------------------------------------------------------------

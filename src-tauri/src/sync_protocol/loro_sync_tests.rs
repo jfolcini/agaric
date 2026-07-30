@@ -4676,3 +4676,543 @@ async fn seed_slot(pool: &SqlitePool, space_id: &str, bytes: &[u8]) -> i64 {
     .await
     .expect("seed inbox slot")
 }
+
+// ---------------------------------------------------------------------------
+// #3226 — durable quarantine for permanently-stuck inbox slots
+// ---------------------------------------------------------------------------
+//
+// #3194 / #3213 made a slot whose declared end frontier the op-log never reached
+// SURVIVE, because deleting it would destroy the only durable copy of content
+// that reached neither the op-log nor SQL (#535). The residue was that a
+// PERMANENTLY unsatisfiable slot was retried — and logged as an error — once per
+// boot forever. #3226 bounds the retrying without deleting anything: after
+// `QUARANTINE_AFTER_BOOTS` unresolved boots the row MOVES to
+// `loro_sync_quarantine` in one transaction.
+//
+// Three obligations, one test each way:
+//   1. the transient population that self-heals must NEVER be quarantined,
+//   2. the permanent population must stop being retried, and
+//   3. nothing may be lost — the bytes stay recoverable AND still usable.
+//
+// ## Which fixture drives which arm
+//
+// The boot walk keeps a slot for two different reasons, and they are reachable
+// by different fixtures:
+//
+// * **The blob cannot be imported at all** (truncated / corrupt payload — named
+//   explicitly in #3226). It errors out of `import_and_project` and lands in
+//   `replay_inbox_batch`'s per-row `Err` arm. Pre-#3226 this is the shape
+//   `replay_batch_partial_failure_preserves_535_invariant_3164` leaves behind
+//   forever. Constructible: any non-Loro byte string.
+// * **The import succeeded but the op-log fell short of the declared frontier**
+//   (#3194/#3213). Reaching this from a *boot* fixture is deliberately hard,
+//   because the batch gate closes the door in front of it: an orphaned child
+//   whose cross-peer dep is missing is rejected by `replay_base_miss`'s
+//   `start_frontiers` half (#3189) and DROPPED, not kept — verified below in
+//   `orphan_dropped_by_the_boot_gate_is_never_quarantined_3226`. It survives to
+//   the keep only via a sibling-slot dependency in a batch that failed for some
+//   other reason. Those tests therefore drive the accounting through
+//   `note_unresolved_slot` — the single function BOTH arms of
+//   `replay_inbox_batch` call — rather than through a contrived blob.
+
+use agaric_sync::sync_protocol::loro_sync_quarantine as quarantine;
+
+async fn quarantine_count_3226(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_quarantine")
+        .fetch_one(pool)
+        .await
+        .expect("count quarantine")
+}
+
+/// The highest `unresolved_boots` among the remaining inbox rows (0 if none).
+async fn unresolved_boots_3226(pool: &SqlitePool) -> i64 {
+    sqlx::query_scalar("SELECT COALESCE(MAX(unresolved_boots), 0) FROM loro_sync_inbox")
+        .fetch_one(pool)
+        .await
+        .expect("max unresolved_boots")
+}
+
+/// #3226 HAPPY PATH (a) — the transient case the issue warns against catching.
+///
+/// A blob whose dependency arrives in a LATER live message is kept by
+/// `apply_remote` (#3213) and heals at the very next boot. It must never be
+/// charged a single unresolved boot, let alone quarantined: the whole design
+/// constraint is that quarantine "only engages well after that window".
+///
+/// The heal is proven across a real persist + rehydrate boundary, so it cannot
+/// be coming from loro's in-memory `pending_changes`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn transient_kept_slot_self_heals_without_ever_being_charged_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (blob_a, blob_b) = orphaned_child_blob_pair_3213();
+    let registry = LoroEngineRegistry::new();
+
+    apply_remote(
+        &pool,
+        &registry,
+        "device-R",
+        update_msg_3213(&space, empty_from_vv_3213(), blob_b),
+    )
+    .await
+    .expect("apply_remote (orphan)");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "precondition: the orphan's slot must be KEPT, not deleted (#3213)"
+    );
+    assert_eq!(
+        unresolved_boots_3226(&pool).await,
+        0,
+        "#3226: a LIVE keep must charge NOTHING — the row was just inserted, no \
+         boot has retried it. Charging here would let three redeliveries of one \
+         blob spend most of the budget before a single retry ran."
+    );
+
+    apply_remote(
+        &pool,
+        &registry,
+        "device-R",
+        update_msg_3213(&space, empty_from_vv_3213(), blob_a),
+    )
+    .await
+    .expect("apply_remote (dependency)");
+
+    agaric_engine::loro::snapshot::save_all_engines(&pool, &registry).await;
+    let booted = LoroEngineRegistry::new();
+    agaric_engine::loro::snapshot::rehydrate_registry(&pool, &booted, "device-R").await;
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &booted, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+    assert_eq!(replayed, 1, "the kept slot must replay and clear");
+    assert_eq!(inbox_count_3213(&pool).await, 0, "…and leave the inbox");
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        0,
+        "#3226: the self-healing population must NEVER reach quarantine"
+    );
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_B).await,
+        1,
+        "and its content must reach SQL — the point of keeping the slot"
+    );
+    mat.shutdown();
+}
+
+/// #3226 HAPPY PATH (b) — an orphan the boot gate DROPS is not quarantined.
+///
+/// If the dependency never arrives, the batch gate's `start_frontiers` half
+/// (#3189) rejects the blob as unreachable and drops the slot outright, leaving
+/// the next live sync session to fall back to snapshot catch-up (#1054). That is
+/// a pre-existing resolution path, and quarantine must not shadow it: the slot
+/// is cleared on its FIRST boot, so it can never accumulate a boot budget.
+///
+/// This also documents, mechanically, why the quarantine tests below use a
+/// corrupt payload rather than an orphan: on the boot path the orphan does not
+/// survive to be kept.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn orphan_dropped_by_the_boot_gate_is_never_quarantined_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (_blob_a, blob_b) = orphaned_child_blob_pair_3213();
+    seed_slot(&pool, space.as_str(), &blob_b).await;
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "the #1054/#3189 gate drops an unreachable orphan on its first boot"
+    );
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        0,
+        "#3226: a gate DROP is a resolution, not a stuck slot — quarantine must \
+         not shadow the snapshot-catch-up path"
+    );
+    assert_eq!(
+        unresolved_boots_3226(&pool).await,
+        0,
+        "nothing remains to have been charged"
+    );
+    mat.shutdown();
+}
+
+/// #3226 HAPPY PATH (c) — a slot one boot short of the budget that then
+/// RESOLVES must clear normally and never be quarantined.
+///
+/// The budget must be a bound on retrying, not a countdown to disposal. This
+/// spends `QUARANTINE_AFTER_BOOTS - 1` unresolved boots through
+/// [`quarantine::note_unresolved_slot`] — the single accounting function BOTH of
+/// `replay_inbox_batch`'s survivor arms call, so this is the same charging the
+/// boot walk performs — and then lets the REAL boot walk replay a blob that can
+/// settle. It clears through the ordinary path with an empty quarantine table.
+///
+/// Driving the charges directly is what makes the off-by-one testable at the
+/// exact boundary: a threshold that fired at N-1 instead of N would quarantine
+/// this blob before the resolving boot ever ran.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn slot_that_resolves_one_boot_short_of_the_budget_is_never_quarantined_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    // `blob_a` is self-contained (peer A's root create), so a boot replay can
+    // always settle and project it.
+    let (blob_a, _blob_b) = orphaned_child_blob_pair_3213();
+    let slot_id = seed_slot(&pool, space.as_str(), &blob_a).await;
+
+    for boot in 1..quarantine::QUARANTINE_AFTER_BOOTS {
+        let disposition = quarantine::note_unresolved_slot(&pool, slot_id, &[], "test: unresolved")
+            .await
+            .expect("note_unresolved_slot");
+        assert_eq!(
+            disposition,
+            quarantine::SlotDisposition::Kept {
+                unresolved_boots: boot
+            },
+            "boot {boot} is inside the budget — the slot must be KEPT"
+        );
+        assert_eq!(
+            quarantine_count_3226(&pool).await,
+            0,
+            "boot {boot}: nothing may be quarantined yet"
+        );
+    }
+    assert_eq!(
+        unresolved_boots_3226(&pool).await,
+        quarantine::QUARANTINE_AFTER_BOOTS - 1,
+        "precondition: exactly one boot of budget left"
+    );
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+
+    assert_eq!(
+        replayed, 1,
+        "the slot must replay on its last budgeted boot"
+    );
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "and be cleared by its projection tx, not quarantined"
+    );
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        0,
+        "#3226: a shortfall that resolves — even on the very last budgeted boot \
+         — must NEVER reach quarantine"
+    );
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_A).await,
+        1,
+        "its content must reach SQL"
+    );
+    mat.shutdown();
+}
+
+/// #3226 QUARANTINE PATH — a permanently unsatisfiable slot moves to quarantine
+/// after `QUARANTINE_AFTER_BOOTS` boots and stops being retried.
+///
+/// The fixture is the corrupt-payload population #3226 names: bytes that are not
+/// a Loro blob at all, so neither the batch import nor the per-row fallback can
+/// ever project them. Pre-#3226 this row stayed in `loro_sync_inbox` and
+/// re-errored at EVERY boot forever (that is exactly what
+/// `replay_batch_partial_failure_preserves_535_invariant_3164` asserts about the
+/// old behaviour). Both halves of the fix are pinned: the move happens at the
+/// budget and not before, and the boot after it does no work at all.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn permanently_stuck_slot_is_quarantined_and_stops_being_retried_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let poison: Vec<u8> = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01];
+    seed_slot(&pool, space.as_str(), &poison).await;
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    for boot in 1..=quarantine::QUARANTINE_AFTER_BOOTS {
+        crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+            .await
+            .expect("a stuck slot must never fail the boot walk");
+        let expected = i64::from(boot == quarantine::QUARANTINE_AFTER_BOOTS);
+        assert_eq!(
+            quarantine_count_3226(&pool).await,
+            expected,
+            "boot {boot}: the move must happen at boot {} and NOT before",
+            quarantine::QUARANTINE_AFTER_BOOTS
+        );
+        if expected == 0 {
+            assert_eq!(
+                unresolved_boots_3226(&pool).await,
+                boot,
+                "boot {boot}: each boot must charge EXACTLY one unresolved boot"
+            );
+        }
+    }
+
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "the quarantined slot must have LEFT the inbox — that is what ends the \
+         once-per-boot retry"
+    );
+
+    // The boot after the move does nothing: the walk has no row to fetch, and
+    // nothing re-admits the quarantined blob.
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+    assert_eq!(replayed, 0, "there is nothing left to replay");
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        1,
+        "quarantine is TERMINAL — nothing re-admits automatically (#3226)"
+    );
+
+    // …and the stuck blob is discoverable without reading logs.
+    let listed = quarantine::list_quarantined_slots(&pool)
+        .await
+        .expect("list_quarantined_slots");
+    assert_eq!(listed.len(), 1, "the stuck blob must be listed");
+    let row = &listed[0];
+    assert_eq!(row.space_id, space.as_str(), "listed under its own space");
+    assert_eq!(
+        row.byte_len,
+        i64::try_from(poison.len()).expect("len fits i64"),
+        "the listing must report the real payload size"
+    );
+    assert_eq!(
+        row.unresolved_boots,
+        quarantine::QUARANTINE_AFTER_BOOTS,
+        "the listing must report how many boots it survived"
+    );
+    assert_eq!(
+        row.declared_end_vv, "[]",
+        "an undecodable blob declares no frontier — recorded as an empty JSON \
+         array, not omitted"
+    );
+    assert!(
+        row.last_reason.contains("replay failed"),
+        "the listing must say WHY it is stuck, got {:?}",
+        row.last_reason
+    );
+    assert!(
+        row.first_seen_at_ms > 0 && row.quarantined_at_ms >= row.first_seen_at_ms,
+        "provenance timestamps must be sane: first_seen={} quarantined={}",
+        row.first_seen_at_ms,
+        row.quarantined_at_ms
+    );
+    mat.shutdown();
+}
+
+/// #3226 / #535 INVARIANT — quarantining must lose nothing.
+///
+/// The reason #3194 and #3213 both rejected a retry cap is that the inbox row is
+/// the only durable copy of content that reached neither the op-log nor SQL.
+/// Quarantine is only legitimate if that stays true after the move, so this
+/// asserts the preserved bytes are BYTE-IDENTICAL to what was admitted — not
+/// merely that "a row exists". #535 applies to corrupt payloads too: we do not
+/// get to delete bytes we merely failed to parse.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quarantining_preserves_the_blob_bytes_verbatim_535_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    // A payload with structure, so a truncating / re-encoding bug would show.
+    let payload: Vec<u8> = (0u8..=255).cycle().take(3_000).collect();
+    seed_slot(&pool, space.as_str(), &payload).await;
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    for _ in 0..quarantine::QUARANTINE_AFTER_BOOTS {
+        crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+            .await
+            .expect("replay_sync_inbox");
+    }
+
+    let listed = quarantine::list_quarantined_slots(&pool)
+        .await
+        .expect("list_quarantined_slots");
+    assert_eq!(listed.len(), 1, "precondition: the slot was quarantined");
+    // Pins the fixture's premise: 3 KB of `(0u8..=255).cycle()` is NOT a Loro
+    // blob, so it fails `decode_import_blob_meta` on EVERY boot and reaches the
+    // per-row `Err` arm each time — one charge per boot, five boots, one move.
+    // If the fixture ever became decodable it would take a different arm and
+    // this test would silently stop covering the corrupt-payload population.
+    assert!(
+        listed[0].last_reason.contains("replay failed"),
+        "the fixture must fail to import on every boot, got {:?}",
+        listed[0].last_reason
+    );
+    assert_eq!(
+        listed[0].byte_len,
+        i64::try_from(payload.len()).expect("len fits i64"),
+        "the recorded size must match the admitted payload"
+    );
+
+    let recovered = quarantine::read_quarantined_bytes(&pool, listed[0].id)
+        .await
+        .expect("read_quarantined_bytes")
+        .expect("the quarantined row must still hold its bytes");
+    assert_eq!(
+        recovered, payload,
+        "#535: the durable record must survive quarantining byte-for-byte — a \
+         quarantine that mangles the payload is just a slower deletion"
+    );
+    mat.shutdown();
+}
+
+/// #3226 — re-admission is MANUAL, and it genuinely works.
+///
+/// The documented decision is that nothing re-admits a quarantined blob
+/// automatically (see `readmit_quarantined_slot`'s docs for the three reasons).
+/// This pins the other half of that decision: the manual route exists, moves the
+/// row back, resets the budget, and the content is still PROJECTABLE afterwards.
+/// Together with the byte-identity test above that is the full meaning of
+/// "nothing was lost" — not just "the bytes are somewhere" but "the bytes still
+/// work".
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn readmitted_quarantined_blob_projects_on_the_next_boot_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    // Self-contained blob: it CAN settle, so a successful projection after
+    // re-admission proves the preserved bytes are still usable.
+    let (blob_a, _blob_b) = orphaned_child_blob_pair_3213();
+    let slot_id = seed_slot(&pool, space.as_str(), &blob_a).await;
+
+    // Spend the whole budget through the boot-walk's own accounting function.
+    for _ in 0..quarantine::QUARANTINE_AFTER_BOOTS {
+        quarantine::note_unresolved_slot(&pool, slot_id, &[], "test: unresolved")
+            .await
+            .expect("note_unresolved_slot");
+    }
+    let listed = quarantine::list_quarantined_slots(&pool)
+        .await
+        .expect("list");
+    assert_eq!(listed.len(), 1, "precondition: quarantined");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "precondition: the move emptied the inbox"
+    );
+
+    let inbox_id = quarantine::readmit_quarantined_slot(&pool, listed[0].id)
+        .await
+        .expect("readmit_quarantined_slot")
+        .expect("a known quarantine id must re-admit");
+    assert!(inbox_id > 0, "the new inbox id must be usable");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "re-admission must put the blob back in the write-ahead inbox"
+    );
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        0,
+        "the move back must be a MOVE — never a copy left in both tables"
+    );
+    assert_eq!(
+        unresolved_boots_3226(&pool).await,
+        0,
+        "a deliberate re-admission must grant a FRESH budget, else the very next \
+         unresolved boot would re-quarantine it and the action would look like a \
+         no-op"
+    );
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+    assert_eq!(replayed, 1, "the re-admitted slot must replay");
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_A).await,
+        1,
+        "#535: the quarantined content must still be projectable after the round \
+         trip — nothing was lost by quarantining it"
+    );
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "and it clears through the ordinary path"
+    );
+    mat.shutdown();
+}
+
+/// #3226 — an unknown quarantine id re-admits nothing and errors nothing.
+///
+/// `readmit_quarantined_slot` is the manual, human-driven route, so a stale id
+/// (already re-admitted, or typed wrong) must be a benign `None` rather than an
+/// error that a caller might paper over — and above all must not insert an empty
+/// inbox row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn readmitting_an_unknown_quarantine_id_is_a_benign_none_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let got = quarantine::readmit_quarantined_slot(&pool, 4_242)
+        .await
+        .expect("an unknown id must not be an error");
+    assert!(got.is_none(), "nothing to re-admit");
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        0,
+        "and nothing may be inserted into the inbox"
+    );
+}
+
+/// #3226 — one boot charges ONE unresolved boot, even when the batch fails and
+/// falls back to the per-row walk.
+///
+/// `replay_inbox_batch` accounts for a surviving slot in two different arms (the
+/// batch-success probe and the per-row fallback). A slot must never be charged
+/// by both in the same boot, or the budget silently halves and the transient
+/// population starts getting quarantined. Here the corrupt blob makes
+/// `import_batch` reject the whole batch up front, so the fallback arm is the
+/// one that runs — while the healthy blob still clears normally, which is also
+/// the proof that the fallback really executed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn per_row_fallback_charges_one_boot_not_two_3226() {
+    let (pool, _dir) = fresh_pool().await;
+    let space = SpaceId::from_trusted(SPACE_A);
+    let (blob_a, _blob_b) = orphaned_child_blob_pair_3213();
+    let poison: Vec<u8> = vec![0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x01];
+
+    seed_slot(&pool, space.as_str(), &blob_a).await;
+    seed_slot(&pool, space.as_str(), &poison).await;
+
+    let mat = crate::materializer::Materializer::new(pool.clone());
+    let registry = LoroEngineRegistry::new();
+    let replayed = crate::recovery::replay_sync_inbox(&pool, &registry, "device-R", &mat)
+        .await
+        .expect("replay_sync_inbox");
+
+    assert_eq!(replayed, 1, "the healthy slot must still clear");
+    assert_eq!(
+        block_count_3213(&pool, BLOCK_A).await,
+        1,
+        "precondition: the batch really did fall back per-row and project the \
+         healthy blob"
+    );
+    assert_eq!(
+        inbox_count_3213(&pool).await,
+        1,
+        "only the corrupt slot survives"
+    );
+    assert_eq!(
+        unresolved_boots_3226(&pool).await,
+        1,
+        "#3226: ONE boot must charge ONE unresolved boot — the batch-success and \
+         per-row-fallback arms must not both account for the same slot"
+    );
+    assert_eq!(
+        quarantine_count_3226(&pool).await,
+        0,
+        "one boot is far inside the budget"
+    );
+    mat.shutdown();
+}

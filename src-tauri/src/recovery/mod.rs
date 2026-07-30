@@ -88,6 +88,19 @@ pub struct RecoveryReport {
     /// (re-imported + re-projected, then cleared) at boot. Non-zero means a
     /// prior crash interrupted the apply-remote durability window.
     pub sync_inbox_replayed: u64,
+    /// #3226: leftover `loro_sync_inbox` slots this boot MOVED to
+    /// `loro_sync_quarantine` after they stayed unresolved across
+    /// [`QUARANTINE_AFTER_BOOTS`](agaric_sync::sync_protocol::loro_sync_quarantine::QUARANTINE_AFTER_BOOTS)
+    /// boot replays. Disjoint from `sync_inbox_replayed` — nothing of a
+    /// quarantined slot was projected. The bytes are preserved verbatim (#535);
+    /// only the retrying stopped.
+    pub sync_inbox_quarantined: u64,
+    /// #3226: how many blobs sit in `loro_sync_quarantine` after this boot —
+    /// i.e. the standing backlog of inbound content that never reached the
+    /// projection and is no longer being retried. Non-zero means a user-visible
+    /// diagnostic exists: see
+    /// [`list_quarantined_slots`](agaric_sync::sync_protocol::loro_sync_quarantine::list_quarantined_slots).
+    pub sync_inbox_quarantine_pending: u64,
 }
 
 impl RecoveryReport {

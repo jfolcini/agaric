@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO loro_sync_quarantine (inbox_id, space_id, bytes, purged_ids, declared_end_vv, last_reason, unresolved_boots, first_seen_at_ms, quarantined_at_ms) SELECT id, space_id, bytes, purged_ids, ?, ?, ?, created_at, ? FROM loro_sync_inbox WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 5
+    },
+    "nullable": []
+  },
+  "hash": "8388882cc3b2957ed1cd4a7628f40266d4b83fe51eb8b16728e8b3554b823511"
+}
