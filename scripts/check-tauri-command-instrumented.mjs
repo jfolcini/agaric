@@ -66,7 +66,6 @@ const COMMANDS_DIR = join(REPO_ROOT, 'src-tauri', 'src', 'commands')
  */
 const ALLOWLIST = new Map([
   // ── Trivial sync getters / fire-and-forget signals ──
-  ['logging.rs:get_log_dir', 'returns a path; no fallible work worth a span'],
   ['mcp.rs:get_mcp_socket_path', 'pure socket-path builder'],
   ['mcp.rs:get_mcp_rw_socket_path', 'pure socket-path builder'],
   ['mcp.rs:get_mcp_recent_activity', 'reads an in-memory ring buffer'],

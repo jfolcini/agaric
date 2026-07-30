@@ -334,7 +334,7 @@ Run after touching any `sqlx::query!` / `sqlx::query_as!` call. Commit the regen
 cd src-tauri && cargo test -- specta_tests --ignored
 ```
 
-Run after touching any `#[tauri::command]` signature or any `specta::Type` derive. Commit the regenerated `src/lib/bindings.ts` alongside the Rust change. CI fails on drift (`tauri-bindings-parity` prek hook).
+Run after touching any `#[tauri::command]` signature or any `specta::Type` derive. Commit the regenerated `src/lib/bindings.ts` alongside the Rust change. CI fails on drift via the `ts_bindings_up_to_date` Rust test, part of the `cargo nextest run` suite (not a standalone prek hook).
 
 ## Troubleshooting
 

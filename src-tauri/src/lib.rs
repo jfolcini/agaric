@@ -254,7 +254,6 @@ macro_rules! agaric_commands {
             $crate::commands::drafts::list_drafts,
             // Frontend logging (F-19)
             $crate::commands::logging::log_frontend,
-            $crate::commands::logging::get_log_dir,
             // #2110 M3b — ingest frontend-produced OTel spans into the local
             // trace sink (zero egress; no-op when observability is disabled).
             $crate::commands::observability::ingest_otel_spans,
@@ -443,9 +442,9 @@ pub struct LogGuard(pub tracing_appender::non_blocking::WorkerGuard);
 
 /// Return the logs directory given the application's data directory.
 ///
-/// Both [`crate::commands::get_log_dir`] and the tracing-appender setup
-/// in [`run`] must use this helper so the "Open logs folder" action and
-/// The on-disk log files cannot diverge across platforms. See.
+/// The tracing-appender setup in [`run`] must use this helper (rather than
+/// deriving the path some other way) so the on-disk log files cannot
+/// diverge from the OS-correct app-data location across platforms. See.
 pub fn log_dir_for_app_data(app_data_dir: &std::path::Path) -> std::path::PathBuf {
     app_data_dir.join("logs")
 }
@@ -571,9 +570,8 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
     use tracing_subscriber::util::SubscriberInitExt;
 
     // Initialize tracing-appender using the OS-correct
-    // `app_data_dir` so the "Open logs folder" action (get_log_dir)
-    // and the on-disk log files resolve to the same path on every
-    // platform (Linux, macOS, Windows, Android).
+    // `app_data_dir` so the on-disk log files resolve to the same path
+    // on every platform (Linux, macOS, Windows, Android).
     let log_dir = log_dir_for_app_data(app_data_dir);
 
     // Issue #157 sub-item A — size-bounded daily rotation with a
@@ -2669,12 +2667,12 @@ mod log_directives_tests {
 // Log_dir_for_app_data helper tests
 // ===========================================================================
 //
-// The same helper is used by the tracing-appender setup in `run()` and by
-// the `get_log_dir` Tauri command (via `src/commands/logging.rs`). These
-// tests pin down the invariant: both code paths MUST resolve to the same
-// Path — "<app_data_dir>/logs" — regardless of platform. Before was
-// fixed, `run()` hard-coded a Linux XDG path while `get_log_dir` used Tauri's
-// OS-correct resolver, so the two drifted on macOS / Windows.
+// This helper is used by the tracing-appender setup in `run()` (and by
+// `src/commands/bug_report.rs` when locating logs for a bug report). These
+// tests pin down the invariant: it MUST resolve to "<app_data_dir>/logs"
+// regardless of platform. Before this was fixed, `run()` hard-coded a Linux
+// XDG path instead of using Tauri's OS-correct resolver, so the on-disk log
+// location drifted from the app-data directory on macOS / Windows.
 
 #[cfg(test)]
 mod log_dir_tests {
@@ -2773,23 +2771,23 @@ mod log_dir_tests {
     /// Integration-style regression test for.
     ///
     /// Before the fix, `run()` computed the log directory from `HOME`
-    /// (Linux XDG layout) while `get_log_dir` used `app.path().app_data_dir()`,
-    /// so on macOS / Windows the two diverged. The fix routes both through
+    /// (Linux XDG layout) instead of `app.path().app_data_dir()`, so on
+    /// macOS / Windows the tracing-appender log location diverged from the
+    /// OS-correct app-data directory. The fix routes `run()` through
     /// `log_dir_for_app_data()`; this test verifies the helper's output
-    /// matches the same `<app_data_dir>/logs` shape `get_log_dir` returns.
+    /// matches the expected `<app_data_dir>/logs` shape.
     #[test]
-    fn log_dir_matches_get_log_dir_contract() {
-        // Simulate what `get_log_dir` does: take the Tauri-resolved
-        // `app_data_dir` and append "logs" via the helper.
+    fn log_dir_matches_app_data_dir_contract() {
+        // Take a Tauri-resolved `app_data_dir` and append "logs" via the
+        // helper, matching what any caller (e.g. `run()`) does.
         let simulated_app_data = std::env::temp_dir().join("agaric-bug34-test");
         let log_dir = log_dir_for_app_data(&simulated_app_data);
 
-        // `get_log_dir` does: `data_dir.join("logs").to_string_lossy()`.
-        // Our helper result must serialize to the same string.
+        // Expect `data_dir.join("logs")`.
         let expected = simulated_app_data.join("logs");
         assert_eq!(
             log_dir, expected,
-            "tracing-appender log dir must equal <app_data_dir>/logs (what get_log_dir returns)"
+            "tracing-appender log dir must equal <app_data_dir>/logs"
         );
     }
 }

@@ -29,11 +29,12 @@ export async function logFrontend(
 // `logger-transport.ts`.
 setLogBackendSink(logFrontend)
 
-// `getLogDir`, the op-log compaction wrappers (`getCompactionStatus`,
-// `compactOpLog`) and their `CompactionStatus` / `CompactionResult` types
-// were removed in #2927 — call `commands.getCompactionStatus()` /
-// `commands.compactOpLogCmd(...)` directly and unwrap with the helper from
-// `@/lib/app-error`. The types live in `@/lib/bindings`.
+// The op-log compaction wrappers (`getCompactionStatus`, `compactOpLog`)
+// and their `CompactionStatus` / `CompactionResult` types were removed in
+// #2927 — call `commands.getCompactionStatus()` / `commands.compactOpLogCmd(...)`
+// directly and unwrap with the helper from `@/lib/app-error`. The types
+// live in `@/lib/bindings`. (`getLogDir` itself — the dead `get_log_dir`
+// IPC command — was removed entirely in #3240.)
 
 // ---------------------------------------------------------------------------
 // Link metadata

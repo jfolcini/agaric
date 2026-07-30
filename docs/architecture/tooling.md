@@ -42,10 +42,9 @@ Pre-commit vs pre-push split is deliberate: fast hooks (oxlint, oxfmt, type-chec
 Notable hooks that enforce architectural contracts:
 
 - **`tauri-command-sanitize`** — see Security § Error sanitization below.
-- **`tauri-bindings-parity`** — fails on bindings drift.
 - **`tauri-mock-parity`** — fails if `src/lib/tauri-mock/handlers.ts` is missing a handler that the wrapper layer expects.
 - **`no-raw-invoke`** — no bare `invoke()` in app code.
-- **`tauri-import-baseline`** — ratchets the `@/lib/tauri` → `bindings.ts` migration (#2927); the importer allowlist may only shrink.
+- **`tauri-import-baseline`** — ratchets the `@/lib/tauri` → `bindings.ts` migration (#2927); the importer allowlist may only shrink. This is the sole guard on the wrapper layer's retirement — a former sibling hook (`tauri-bindings-parity`, one wrapper per command) was retired in #3218 for pulling in the opposite direction of this ratchet.
 - **`migrations-immutable`** — refuses changes to already-shipped migrations.
 - **`migrations-strict-tables`** — every new schema migration must use `STRICT` mode.
 - **`ipc-error-path-coverage`** — every Tauri command's error paths must be exercised by tests.

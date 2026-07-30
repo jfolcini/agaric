@@ -264,10 +264,10 @@ fi
 # binding-boundary / cross-cutting hook still runs if ANY adjacent category
 # changed.
 [ "$HAS_CI" = "0" ] && [ "$HAS_RS" = "0" ] && skip_items+=(taplo-fmt taplo-lint)
-# tauri-*-parity / snapshot-redaction / retired-pending guard the FE↔BE binding
-# boundary — they MUST run if frontend OR backend changed.
+# tauri-mock-parity / snapshot-redaction / retired-pending guard the FE↔BE
+# binding boundary — they MUST run if frontend OR backend changed.
 [ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
-    skip_items+=(tauri-mock-parity tauri-bindings-parity snapshot-redaction no-retired-pending-doc-refs)
+    skip_items+=(tauri-mock-parity snapshot-redaction no-retired-pending-doc-refs)
 [ "$HAS_DOCS" = "0" ] && [ "$HAS_TS" = "0" ] && [ "$HAS_RS" = "0" ] && \
     skip_items+=(architecture-citations)
 [ "$HAS_TS" = "0" ] && [ "$HAS_CI" = "0" ] && skip_items+=(check-json)

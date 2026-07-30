@@ -110,9 +110,10 @@ pub struct FrontendSpan {
 
 /// One frontend span attribute. A named key/value struct rather than a
 /// `(String, String)` tuple so the generated TS type is `FrontendSpanAttr[]`
-/// (not `([string, string])[]`); the tuple form's leading `(` confused the
-/// `check-tauri-bindings-parity` command-name parser, and a named struct is the
-/// clearer wire shape anyway.
+/// (not `([string, string])[]`); the tuple form's leading `(` confused a
+/// hand-rolled command-name parser this codebase used to run (the
+/// `check-tauri-bindings-parity` guard, retired in #3218), and a named
+/// struct is the clearer wire shape anyway.
 #[derive(Debug, Clone, serde::Deserialize, specta::Type)]
 pub struct FrontendSpanAttr {
     /// Attribute key (an opaque label — never content).

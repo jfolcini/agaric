@@ -58,7 +58,6 @@ export const systemHandlers = {
   // ---------------------------------------------------------------------------
 
   log_frontend: returnNull,
-  get_log_dir: () => '/mock/logs',
 
   // ---------------------------------------------------------------------------
   // Bug report
@@ -96,7 +95,6 @@ export const systemHandlers = {
   | 'is_flatpak'
   | 'get_recovery_status'
   | 'log_frontend'
-  | 'get_log_dir'
   | 'collect_bug_report_metadata'
   | 'read_logs_for_report'
   | 'save_draft'

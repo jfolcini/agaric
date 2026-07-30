@@ -329,7 +329,7 @@ jobs:
     # (typos, markdownlint, lychee) with no toolchain. Fail-closed: an
     # uncertain classification ⇒ docs_only=false ⇒ this full job runs.
     #
-    # This is the CROSS-CUTTING guard: clippy / oxfmt / bindings-parity / zizmor
+    # This is the CROSS-CUTTING guard: clippy / oxfmt / import-baseline / zizmor
     # all live here and must run on ANY non-docs change, so it stays gated on
     # `docs_only != 'true'` (NOT on a single category) — the prek hooks
     # self-filter by file type, so it is cheap-ish on a small diff.
@@ -643,7 +643,7 @@ jobs:
             skips+=(taplo-fmt taplo-lint)
           fi
           if [ "$fe" != true ] && [ "$be" != true ]; then
-            skips+=(tauri-mock-parity tauri-bindings-parity snapshot-redaction \
+            skips+=(tauri-mock-parity snapshot-redaction \
               no-retired-pending-doc-refs)
           fi
           if [ "$docs" != true ] && [ "$fe" != true ] && [ "$be" != true ]; then
