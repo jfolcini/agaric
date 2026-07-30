@@ -43,7 +43,7 @@
 #     skip trades a delayed safety signal for a much faster push (Playwright
 #     dominated the prior pre-push wall clock). If you've touched anything
 #     interaction-heavy, run `npx playwright test` manually before pushing.
-#   * **Full `vitest run` / `cargo nextest run --profile ci`.** Scoped to
+#   * **Full `vitest run` / `cargo nextest run --workspace --profile ci`.** Scoped to
 #     the push range above; CI still runs the full suites.
 #   * **Desktop bundle build / cross-OS / SLSA attestations.** Same as
 #     before — run `scripts/verify-release-build.sh` manually for the

@@ -175,7 +175,7 @@ just push                    # verify-then-push (use instead of raw `git push`)
 
 ```bash
 npm test                     # Frontend tests (Vitest)
-cd src-tauri && cargo nextest run   # Rust tests
+cd src-tauri && cargo nextest run --workspace   # Rust tests (bare form is package-scoped only, #3212)
 npx playwright test          # E2E tests (Playwright + Chromium)
 ```
 

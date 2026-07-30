@@ -20,8 +20,11 @@ Plus `src/lib.rs` carries `specta_tests` for TypeScript binding verification.
 ```bash
 . "$HOME/.cargo/env"             # required once per shell on this machine
 
-cargo nextest run                 # all tests (parallel, retries)
-cargo test                        # all tests + doctests (nextest skips doctests)
+cargo nextest run --workspace      # all tests (parallel, retries) — bare `cargo nextest run`
+                                   # is package-scoped to `agaric` ONLY and silently skips
+                                   # agaric-core/store/engine/sync/observability/diagnostics
+                                   # (measured: 3359 vs 5446 tests, #3212)
+cargo test --workspace             # all tests + doctests (nextest skips doctests)
 
 cargo nextest run -p agaric create_block_returns           # by name substring
 cargo nextest run -p agaric -E 'test(op_log::)'            # by module

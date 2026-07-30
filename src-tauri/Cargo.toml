@@ -10,6 +10,18 @@
 # (`op_log_histogram`, `audit_cross_space_refs`) carved out of this app
 # crate so `tauri-bundler` no longer scans them as app `[[bin]]` targets.
 members = [".", "agaric-core", "agaric-store", "agaric-engine", "agaric-sync", "agaric-observability", "diagnostics"]
+# No `default-members` key (#3212): this root manifest is both the
+# workspace root AND a package (`agaric`), so with no `default-members`
+# cargo already defaults every bare invocation without `-p`/`--workspace`
+# — `build`/`check`/`clippy`/`test`/`nextest run` alike — to this one
+# package (confirmed via `cargo metadata` → `workspace_default_members`).
+# Setting `default-members` to all 7 members would fix that uniformly,
+# but was deliberately rejected: it would silently slow every everyday
+# ad hoc `cargo check`/`cargo build` in this directory to a full-workspace
+# compile, for every developer, forever. The established convention here
+# is instead to fix each call site explicitly (`cargo fmt --all`, `cargo
+# clippy --workspace --all-targets` — see prek.toml) — #3212 follows the
+# same pattern for `cargo nextest run --workspace` in justfile/scripts/CI.
 
 [package]
 name = "agaric"
