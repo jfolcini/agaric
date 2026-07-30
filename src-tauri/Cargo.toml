@@ -200,7 +200,7 @@ aho-corasick = "1"
 # `unicode-normalization` moved with `tag_norm` + `nfc_normalise` into
 # `agaric-core` (#2621); `agaric` no longer uses it directly (the FTS/tag
 # NFC boundary now calls `agaric_core::text_utils::nfc_normalise`).
-base64 = "0.22.1"
+base64 = "0.23.0"
 # #695 — "chrono" lets `ActivityEntry.timestamp: DateTime<Utc>` derive
 # `specta::Type` for the `get_mcp_recent_activity` command bindings.
 specta = { version = "=2.0.0-rc.25", features = ["derive", "chrono"] }
