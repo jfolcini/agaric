@@ -1299,6 +1299,15 @@ pass_filenames = false
 always_run = true
 stages = ["pre-commit"]
 
+[[repos.hooks]]
+id = "migrations-immutable-self-test"
+name = "migrations append-only self-test (#806 range fixtures)"
+entry = "bash scripts/check-migrations-immutable.sh --self-test"
+language = "system"
+pass_filenames = false
+always_run = true
+stages = ["pre-commit", "pre-push"]
+
 # STRICT tables policy. Every new `CREATE TABLE` in a
 # SQLite migration must use STRICT mode (SQLite 3.37+) so silent
 # type coercion fails at insert time instead of corrupting reads
