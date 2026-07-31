@@ -741,6 +741,57 @@ pass_filenames = false
 files = "^scripts/check-main-module-detection\\.mjs$"
 stages = ["pre-commit"]
 
+# persist-hooks (#3352, split out of #3323): `pageBrowserFilters.ts` shipped
+# a `persist()` of a non-scalar shape (a `Record<string, PageFilterWithKey[]>`
+# plus a counter) with neither a `migrate` nor a `merge` hook. A malformed
+# `localStorage` blob threw the page browser into its error boundary and
+# permanently broke the counter via string concatenation. #3323 fixed that
+# one store; safe-persist-storage.ts:12-13 states "the read path
+# (migrate/merge) is already hardened per-store" as an invariant enforced
+# only by convention — this project has paid for exactly this bug class
+# five times (#753, #823, #1578, #1609, #3323). Both hooks are required,
+# not just `migrate`: per search-history.ts (see the "zustand skips
+# `migrate`" comment there), zustand only invokes `migrate` when the
+# persisted blob's version differs from `options.version` — a same-version
+# corrupt blob bypasses `migrate` entirely and reaches `merge` (or the
+# unvalidated default shallow merge) directly. This guard derives
+# "non-scalar" STRUCTURALLY from each store's state interface (every
+# `partialize`d field's declared type), not from a hardcoded filename
+# allowlist — an unresolvable type (a bare alias, a helper-delegated
+# partialize) is conservatively treated as non-scalar. `space.ts` and
+# `useDebugStore.ts` need no exemption entry: their single persisted field
+# is a plain `string | null` / `boolean`, which the interface alone proves
+# scalar. A per-site `// persist-hooks-allow: <reason>` marker (empty
+# reason does not suppress) is the escape hatch for a shape this guard
+# cannot see through; there is no baseline file because the live tree
+# currently has zero pre-existing violations.
+# pass_filenames=false — the script does its own scoped walk of src/stores/.
+[[repos.hooks]]
+id = "persist-hooks"
+name = "Non-scalar persist() must declare migrate AND merge (#3352)"
+entry = "node scripts/check-persist-hooks.mjs"
+language = "system"
+pass_filenames = false
+files = "^src/stores/.*\\.(ts|tsx)$"
+stages = ["pre-commit"]
+
+# Self-test the persist-hooks guard's own exit behavior whenever it changes:
+# a non-scalar persist() missing migrate, missing merge, or missing both all
+# FAIL (including the search-history.ts shape — merge present, migrate
+# absent); two scalar-only stores (mirroring space.ts and useDebugStore.ts)
+# with neither hook PASS via the interface, not a filename; a reasoned
+# persist-hooks-allow marker suppresses, an empty-reason marker does not;
+# and the guard is proven to scan only its synthetic src/stores/ fixture
+# tree (or the real repo's), never its own scripts/ source.
+[[repos.hooks]]
+id = "persist-hooks-selftest"
+name = "Persist-hooks guard self-test"
+entry = "node scripts/check-persist-hooks.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-persist-hooks\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a
