@@ -31,7 +31,7 @@
  * specifiers shaped that way are treated as store-to-store edges; anything
  * else (component/hook/lib imports) is out of scope for this hook.
  */
-import { readdirSync, readFileSync, statSync } from 'node:fs'
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 
 import { detectImports } from './check-import-cycles.mjs'
@@ -171,6 +171,11 @@ function main() {
 }
 
 // Run the scan only when invoked directly as a script, not when imported.
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+if (isMainModule) {
   main()
 }

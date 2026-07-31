@@ -32,7 +32,7 @@
 // Exit: 0 = every path resolves, 1 = at least one dangling path,
 //       2 = bad usage / self-test failure.
 
-import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import process from 'node:process'
@@ -188,7 +188,11 @@ function runSelfTest() {
 // Only run the CLI when invoked directly. Tests import this module for
 // `analyzeModulePaths`, and a bare top-level dispatch would `process.exit()`
 // out of the importer.
-const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   const argv = process.argv.slice(2)
   if (argv.includes('--self-test')) {

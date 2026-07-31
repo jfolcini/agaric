@@ -75,6 +75,7 @@ import {
   mkdtempSync,
   readdirSync,
   readFileSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -850,7 +851,11 @@ function runSelfTest() {
   console.log('self-test: all assertions passed')
 }
 
-const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
     runSelfTest()

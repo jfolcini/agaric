@@ -23,7 +23,7 @@
  * violation.
  */
 
-import { readFileSync, readdirSync } from 'node:fs'
+import { readFileSync, readdirSync, realpathSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 /**
@@ -134,7 +134,11 @@ export function scanTree(root) {
 }
 
 // CLI: only run the filesystem scan when invoked directly (not on import).
-const isDirectRun = process.argv[1] === import.meta.filename
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isDirectRun =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isDirectRun) {
   const here = import.meta.dirname
   const srcRoot = join(here, '..', 'src')

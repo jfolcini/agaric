@@ -763,8 +763,11 @@ function writeBaseline(entries) {
 
 // ─── entry point ─────────────────────────────────────────────────────
 
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
 const isMain =
-  process.argv[1] && path.resolve(process.argv[1]) === path.resolve(import.meta.filename)
+  !!process.argv[1] && fs.realpathSync(import.meta.filename) === fs.realpathSync(process.argv[1])
 
 if (isMain) {
   if (process.argv.includes('--self-test')) runSelfTest()

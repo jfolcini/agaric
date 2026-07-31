@@ -15,7 +15,7 @@
  * ignored. Both value and `import type` edges count: a type-only cycle still
  * confuses bundlers and humans, and the graph is clean enough to forbid them.
  */
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readFileSync, readdirSync, realpathSync, statSync } from 'node:fs'
 import { dirname, join, relative, resolve } from 'node:path'
 
 const __dirname = import.meta.dirname
@@ -376,6 +376,11 @@ function main() {
 }
 
 // Run the scan only when invoked directly as a script, not when imported.
-if (process.argv[1] && resolve(process.argv[1]) === import.meta.filename) {
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+if (isMainModule) {
   main()
 }
