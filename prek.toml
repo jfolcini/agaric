@@ -1886,6 +1886,28 @@ pass_filenames = false
 files = '^scripts/verify-ci-equivalent\.sh$'
 stages = ["pre-commit"]
 
+# push-sh-selftest (#3380): push.sh used to exit 0 when the final `git
+# push` itself failed (a connection drop mid-push reported "Connection
+# closed by remote host" yet the script still reported success — the
+# remote ref never moved). The fixture suite below exercises
+# push_with_retry (propagates git push's real exit status; bounded retry
+# ONLY on a known-transient connection-drop signature, never on a hard
+# failure) and verify_landed (the actual guarantee: compares local HEAD
+# against `git ls-remote` after a "successful" push and fails loudly on
+# any mismatch or unreadable remote) against a stubbed `git` — no
+# network, no repo mutation. Fast: runs before any real work in the
+# script.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "push-sh-selftest"
+name = "push.sh self-test (push-failure propagation + postcondition)"
+entry = "bash scripts/push.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/push\.sh$'
+stages = ["pre-commit"]
+
 # print-coverage-thresholds-selftest (#3258): this script derives the
 # coverage-threshold clause live from `vitest.config.ts` instead of a
 # hardcoded copy. Its own fixture suite (missing-metric rejection, absent-
