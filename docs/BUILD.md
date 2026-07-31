@@ -165,6 +165,8 @@ Each module runs in its own Stryker invocation, scoped to run ONLY that module's
 
 This is a **nightly-only, non-gating** lane (`mutants-frontend` job in `.github/workflows/scheduled-deep-checks.yml`) — surviving mutants are triage signal for occasional audits, not a merge gate. See issue #886 for the full evaluation and rationale.
 
+Non-gating on *score* is not the same as unable to fail. `#3330` — the lane runs `npm run mutation || true`, so a total Stryker crash or a module that silently dropped out used to be indistinguishable from a perfect run. The `Lane-liveness guard` step (`scripts/check-mutation-reports.mjs`, deliberately outside the `|| true`, mirroring the Rust lane's `Zero-coverage guard`) now fails the job when the reports directory is missing, when any module in `stryker.modules.mjs` produced no/invalid `mutation.json`, or when the total mutant count is zero. Complementing it, `scripts/check-stryker-modules.mjs` (pre-commit hook `stryker-modules-paths`, plus `src/__tests__/check-stryker-modules.test.ts` in the gating suite) fails when a path declared in `stryker.modules.mjs` no longer exists — a moved source file used to quietly turn a module into a `_no report_` row, and a test file that was never wired into `tests[]` made the lane re-report already-killed mutants as survivors (#3142: 78 reported, 22 real).
+
 ## Pre-commit & CI
 
 ```bash

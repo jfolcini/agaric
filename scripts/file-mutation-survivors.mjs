@@ -37,7 +37,19 @@
 // from that lane (a lane that crashed before writing output should not be
 // misread as "zero survivors", but that failure is already visible via the
 // lane's own job status / step summary — this script only tracks the
-// survivor *content*, not lane health).
+// survivor *content*, not lane health). #3330 note: that premise was true
+// for the `mutants` (Rust) lane, which has a zero-coverage guard outside its
+// `|| true`, but was FALSE for `mutants-frontend`, which had no such guard
+// and could not go red at all. It now has one
+// (`scripts/check-mutation-reports.mjs`, wired as the lane's
+// `Lane-liveness guard` step), so the premise holds for both lanes again.
+//
+// Issue-body shape (#3245/#3257): the body carries exactly ONE deduped
+// survivor list — the machine-readable marker block. Per-run deltas ("new
+// this run") go in the per-run comment, not the persistent body, so no
+// survivor is ever listed twice and no stale snapshot masquerades as "new".
+// The rendered body is clamped to MAX_BODY_CHARS so a large survivor batch
+// cannot 422 `gh issue edit` and wedge this weekly job red indefinitely.
 //
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
 // (bad args, a `gh` call failing).
@@ -62,6 +74,14 @@ export const TRACKING_ISSUE_LABELS = ['testing', 'github-actions']
 
 const MARKER_START = '<!-- mutation-survivors:begin -->'
 const MARKER_END = '<!-- mutation-survivors:end -->'
+
+// #3257 — a GitHub issue body maxes out at 65536 characters; past that
+// `gh issue edit` 422s, node exits non-zero, and this weekly non-gating job
+// goes red and STAYS red, because the following week recomputes the same
+// oversized body from the same unchanged `known` set. Same cap and same
+// "never cut the marker block mid-way" rule as the sibling
+// `scripts/file-fuzz-findings.mjs`.
+export const MAX_BODY_CHARS = 60_000
 
 // ---------------------------------------------------------------------------
 // Parsing survivor sources
@@ -176,44 +196,91 @@ export function diffSurvivors(current, known) {
 // Issue body / comment rendering
 // ---------------------------------------------------------------------------
 
-export function buildIssueBody({ all, newOnes, resolvedOnes, runUrl }) {
-  const lines = []
-  lines.push(
+/**
+ * Renders the tracking issue's body.
+ *
+ * #3245 — there used to be a `### New this run (N)` section here as well.
+ * It listed exactly the same survivor lines as the machine-readable "all
+ * currently-known" block below, so on the run that first populates the issue
+ * (and on any run where most survivors are new) EVERY survivor appeared
+ * twice and every per-module count a triager grepped out of the body read
+ * 2x the truth — the reported 114 `glob-validate` survivors were 57. Worse,
+ * the section is a per-RUN snapshot baked into a PERSISTENT body: a week
+ * later it no longer means "new", so a survivor that was triaged and removed
+ * became indistinguishable from one nobody had ever looked at, which is
+ * precisely the distinction the issue's triage convention depends on.
+ *
+ * The body is now ONE deduped list — the state block — and cannot drift.
+ * "New this run" lives where a per-run snapshot belongs: in the per-run
+ * comment (`buildNewSurvivorComment`), which is timestamped by its own
+ * position in the thread and carries the run URL.
+ *
+ * `resolvedOnes` is NOT part of `all` (it is the complement), so it
+ * duplicates nothing; it stays as the one presentational section, and is the
+ * section dropped first when the #3257 length clamp bites.
+ */
+export function buildIssueBody({ all, resolvedOnes, runUrl }) {
+  const head = []
+  head.push(
     'This issue tracks mutation-testing survivors (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
   )
-  lines.push('')
-  lines.push(
+  head.push('')
+  head.push(
     'Triage each survivor below: either (a) add/strengthen a test that kills it and remove its line here, or (b) leave a comment explaining why it is an accepted gap and remove its line here anyway — once a line is gone, the next run that sees that survivor again will re-add it as "new".',
   )
-  lines.push('')
-  if (newOnes.length > 0) {
-    lines.push(`### New this run (${newOnes.length})`)
-    lines.push('```')
-    lines.push(...newOnes)
-    lines.push('```')
-    lines.push('')
-  }
+  head.push('')
+  head.push(
+    "The list below is the single deduped source of truth (#3245): survivors that are NEW in a given run are reported in that run's comment on this issue, never re-listed here.",
+  )
+  head.push('')
+
+  const resolvedSection = []
   if (resolvedOnes.length > 0) {
-    lines.push(`### Resolved since last run (${resolvedOnes.length})`)
-    lines.push('```')
-    lines.push(...resolvedOnes)
-    lines.push('```')
-    lines.push('')
+    resolvedSection.push(`### Resolved since last run (${resolvedOnes.length})`)
+    resolvedSection.push('```')
+    resolvedSection.push(...resolvedOnes)
+    resolvedSection.push('```')
+    resolvedSection.push('')
   }
-  lines.push('### All currently-known survivors')
-  lines.push(
+
+  const state = []
+  state.push('### All currently-known survivors')
+  state.push(
     '_Machine-readable — do not hand-edit the marker lines below. Remove a survivor line once it is triaged; leave the rest untouched._',
   )
-  lines.push(MARKER_START)
-  lines.push('```')
-  lines.push(...all)
-  lines.push('```')
-  lines.push(MARKER_END)
+  state.push(MARKER_START)
+  state.push('```')
+  state.push(...all)
+  state.push('```')
+  state.push(MARKER_END)
+
+  const tail = []
   if (runUrl) {
-    lines.push('')
-    lines.push(`_Last updated by [this run](${runUrl})._`)
+    tail.push('')
+    tail.push(`_Last updated by [this run](${runUrl})._`)
   }
-  return lines.join('\n')
+
+  const render = (middle) => [...head, ...middle, ...state, ...tail].join('\n')
+
+  const full = render(resolvedSection)
+  if (full.length <= MAX_BODY_CHARS) return full
+
+  // #3257 — clamp by dropping the presentational section WHOLESALE rather
+  // than truncating: the marker block is state and must never be cut
+  // mid-way (a half-written block would silently shrink the known set and
+  // re-report the dropped survivors as "new" forever after).
+  const omitted = [
+    `_${resolvedOnes.length} resolved-since-last-run entr${resolvedOnes.length === 1 ? 'y was' : 'ies were'} omitted to keep this body under GitHub's ${MAX_BODY_CHARS}-character working limit — see ${runUrl ? `[this run](${runUrl})` : 'the workflow run'}._`,
+    '',
+  ]
+  const clamped = render(omitted)
+  if (clamped.length <= MAX_BODY_CHARS) return clamped
+
+  // The state block alone does not fit. Fail with a diagnosis rather than
+  // letting `gh issue edit` return a bare 422 nobody can act on.
+  throw new Error(
+    `the survivor set outgrew a single issue body: ${all.length} survivor(s) render to ${clamped.length} chars, over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536). The machine-readable state block cannot be truncated without corrupting the tracked set. Triage the tracking issue down, or split the lanes into separate tracking issues.`,
+  )
 }
 
 export function buildNewSurvivorComment({ newOnes, runUrl }) {
@@ -223,7 +290,16 @@ export function buildNewSurvivorComment({ newOnes, runUrl }) {
   lines.push(...newOnes)
   lines.push('```')
   if (runUrl) lines.push('', `Run: ${runUrl}`)
-  return lines.join('\n')
+  const text = lines.join('\n')
+  // #3257 — a comment body hits the same 65536 limit as an issue body, and
+  // this is the call the SAME large-batch run makes right after the edit, so
+  // capping only the body would just move the 422 one line down. A comment
+  // carries no state, so a plain truncation is safe here.
+  if (text.length <= MAX_BODY_CHARS) return text
+  const footer = runUrl
+    ? `\n…(truncated — see the full list in the issue body, and [this run](${runUrl}))`
+    : '\n…(truncated — see the full list in the issue body)'
+  return text.slice(0, MAX_BODY_CHARS - footer.length) + footer
 }
 
 // ---------------------------------------------------------------------------
@@ -358,7 +434,7 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
-  const body = buildIssueBody({ all, newOnes, resolvedOnes, runUrl })
+  const body = buildIssueBody({ all, resolvedOnes, runUrl })
   const comment = buildNewSurvivorComment({ newOnes, runUrl })
 
   if (args.dryRun) {
@@ -441,12 +517,169 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// self-test
+// ---------------------------------------------------------------------------
+//
+// Fixture suite for the two rendering invariants this script has already
+// broken once:
+//   #3245 — no survivor may appear twice in the issue body (the old
+//           `### New this run` section re-listed the whole known set, so
+//           every count a triager grepped out of the body read 2x).
+//   #3257 — the rendered body must never exceed MAX_BODY_CHARS, and the
+//           machine-readable marker block must never be cut mid-way (a
+//           truncated block silently shrinks the tracked set).
+// Wired as the `mutation-survivors-filer-selftest` prek hook.
+function runSelfTest() {
+  const failures = []
+  const ok = (name) => console.log(`  ok   - ${name}`)
+  const fail = (name, detail) => {
+    failures.push(name)
+    console.error(`  FAIL - ${name}: ${detail}`)
+  }
+
+  const survivor = (i) =>
+    `[frontend] glob-validate: src/lib/search-query/glob-validate.ts:${i} [ConditionalExpression]`
+
+  // 1. #3245 — the first-fill case: an empty `known` set means EVERY
+  //    survivor is "new". The old body listed them under `New this run` AND
+  //    under the marker block; the deduped body must list each exactly once.
+  {
+    const current = [survivor(1), survivor(2), survivor(3)]
+    const { newOnes, resolvedOnes, all } = diffSurvivors(current, new Set())
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: 'https://example/run' })
+    const counts = current.map((s) => body.split(s).length - 1)
+    if (newOnes.length === 3 && counts.every((c) => c === 1))
+      ok('first fill lists each survivor exactly once (#3245)')
+    else
+      fail(
+        'first fill lists each survivor exactly once (#3245)',
+        `newOnes=${newOnes.length} per-survivor occurrences=${JSON.stringify(counts)}`,
+      )
+
+    // …and the marker block round-trips to exactly the same set, so the
+    // dedupe did not cost the script its state.
+    const reparsed = parseKnownSurvivors(body)
+    if (reparsed.size === 3 && current.every((s) => reparsed.has(s)))
+      ok('deduped body round-trips through parseKnownSurvivors')
+    else fail('deduped body round-trips through parseKnownSurvivors', `size=${reparsed.size}`)
+
+    // The per-run comment is where "new this run" lives now.
+    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
+    if (current.every((s) => comment.includes(s)))
+      ok('per-run comment still carries the new survivors')
+    else fail('per-run comment still carries the new survivors', comment)
+  }
+
+  // 2. #3245 — the incremental case: a genuinely new survivor must not
+  //    duplicate the already-known ones either.
+  {
+    const known = new Set([survivor(1), survivor(2)])
+    const current = [survivor(1), survivor(2), survivor(9)]
+    const { resolvedOnes, all } = diffSurvivors(current, known)
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: undefined })
+    const counts = current.map((s) => body.split(s).length - 1)
+    if (counts.every((c) => c === 1)) ok('incremental run lists each survivor exactly once (#3245)')
+    else fail('incremental run lists each survivor exactly once (#3245)', JSON.stringify(counts))
+  }
+
+  // 3. Resolved entries are the complement of `all`, so they duplicate
+  //    nothing and stay visible.
+  {
+    const known = new Set([survivor(1), survivor(2)])
+    const { resolvedOnes, all } = diffSurvivors([survivor(1)], known)
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: undefined })
+    if (
+      resolvedOnes.length === 1 &&
+      body.includes('Resolved since last run (1)') &&
+      body.split(survivor(1)).length - 1 === 1
+    )
+      ok('resolved section renders and duplicates nothing')
+    else fail('resolved section renders and duplicates nothing', JSON.stringify(resolvedOnes))
+  }
+
+  // 4. #3257 — a large batch must not exceed MAX_BODY_CHARS. These fixture
+  //    lines are ~90 chars, so 800 survivors render to ~72K: past both the
+  //    60K working cap and GitHub's 65536 hard limit. That is the batch
+  //    which used to 422 `gh issue edit` and wedge the weekly job red
+  //    forever (the same body is recomputed from the same unchanged `known`
+  //    set the following week, so it never self-heals).
+  {
+    const all = Array.from({ length: 800 }, (_, i) => survivor(i))
+    let threw = null
+    let body = null
+    try {
+      body = buildIssueBody({ all, resolvedOnes: [], runUrl: 'https://example/run' })
+    } catch (err) {
+      threw = err
+    }
+    if (threw && /outgrew a single issue body/.test(threw.message))
+      ok('oversized state block fails with an actionable error, not a raw 422 (#3257)')
+    else
+      fail(
+        'oversized state block fails with an actionable error, not a raw 422 (#3257)',
+        threw ? threw.message : `no throw; body=${body.length} chars`,
+      )
+  }
+
+  // 5. #3257 — a body that only overflows because of the presentational
+  //    `Resolved` section must CLAMP (drop that section) rather than throw,
+  //    and the marker block must survive intact.
+  {
+    const all = Array.from({ length: 200 }, (_, i) => survivor(i))
+    const resolvedOnes = Array.from({ length: 600 }, (_, i) => survivor(10_000 + i))
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: 'https://example/run' })
+    const reparsed = parseKnownSurvivors(body)
+    if (
+      body.length <= MAX_BODY_CHARS &&
+      body.includes(MARKER_START) &&
+      body.includes(MARKER_END) &&
+      reparsed.size === 200 &&
+      !body.includes(resolvedOnes[0])
+    )
+      ok('clamp drops the presentational section and keeps the state block whole (#3257)')
+    else
+      fail(
+        'clamp drops the presentational section and keeps the state block whole (#3257)',
+        `len=${body.length} markers=${body.includes(MARKER_START)}/${body.includes(MARKER_END)} reparsed=${reparsed.size}`,
+      )
+  }
+
+  // 6. #3257 — the comment is the very next `gh` call the same oversized run
+  //    makes, so capping only the body would move the 422 one line down.
+  {
+    const newOnes = Array.from({ length: 800 }, (_, i) => survivor(i))
+    const comment = buildNewSurvivorComment({ newOnes, runUrl: 'https://example/run' })
+    if (comment.length <= MAX_BODY_CHARS && comment.includes('truncated'))
+      ok('oversized new-survivor comment is truncated (#3257)')
+    else fail('oversized new-survivor comment is truncated (#3257)', `len=${comment.length}`)
+  }
+
+  // 7. A body that comfortably fits is left completely alone.
+  {
+    const all = [survivor(1), survivor(2)]
+    const body = buildIssueBody({ all, resolvedOnes: [], runUrl: 'https://example/run' })
+    if (!body.includes('omitted') && !body.includes('truncated')) ok('a small body is not clamped')
+    else fail('a small body is not clamped', body)
+  }
+
+  if (failures.length > 0) {
+    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
+    process.exit(2)
+  }
+  console.log('self-test: all assertions passed')
+}
+
 const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
 if (isMainModule) {
-  try {
-    main()
-  } catch (err) {
-    console.error(`file-mutation-survivors: ${err.message}`)
-    process.exit(1)
+  if (process.argv.slice(2).includes('--self-test')) {
+    runSelfTest()
+  } else {
+    try {
+      main()
+    } catch (err) {
+      console.error(`file-mutation-survivors: ${err.message}`)
+      process.exit(1)
+    }
   }
 }

@@ -277,6 +277,19 @@ jobs:
         # added to Cargo.toml automatically lands in some shard — no matrix edit
         # needed, so the #978 coverage guarantee can't silently regress.
         #
+        # #3330: that guarantee used to be asserted by a comment only. The list
+        # came from a text-shape heuristic — `grep -A1 '^\[\[bench\]\]'
+        # Cargo.toml | sed -n 's/^name = "\(.*\)"/\1/p'` — which sees ONLY the
+        # single line following the header, so a `[[bench]]` block whose first
+        # key is `required-features` (or `harness`, or a comment) contributed
+        # NOTHING and the bench vanished from every shard. Because the pipeline
+        # runs inside a process substitution, `mapfile` never observes its exit
+        # status, and the per-shard "no benches — nothing to do" early exit
+        # below turned that into a green shard: a check that cannot fail. Now
+        # the list is parsed STRUCTURALLY out of `cargo metadata` and
+        # cross-checked against the number of `[[bench]]` blocks declared in
+        # the manifest, so a dropped bench is a hard, loud failure.
+        #
         # The slice compiles in a SINGLE `cargo bench --no-run --bench a
         # --bench b …` invocation. That is still ONE cohesive build: the cargo
         # #6313 libagaric_lib link race only bites SEPARATE per-bench cargo
@@ -284,9 +297,47 @@ jobs:
         # the smoke step relies on stays race-free.
         run: |
           set -euo pipefail
-          mapfile -t all < <(grep -A1 '^\[\[bench\]\]' Cargo.toml \
-            | sed -n 's/^name = "\(.*\)"/\1/p' \
-            | grep -vx interactive_slo | sort)
+          # Structural bench list — cargo parses the manifest, we don't.
+          mapfile -t declared_targets < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "agaric") | .targets[]
+                     | select(.kind[] == "bench") | .name' \
+            | sort)
+          # Independent cross-check against the raw manifest. Deliberately
+          # ONE-directional: every `[[bench]]` block must produce a target, so
+          # FEWER targets than blocks means the extraction is broken and
+          # benches are dropping out — hard fail. MORE targets than blocks is
+          # benign (autobenches is on, so `benches/foo.rs` without a block is
+          # auto-discovered and still lands in a shard) — note it, don't fail,
+          # because a check that goes red when nothing is wrong gets ignored.
+          declared_count="$(grep -c '^\[\[bench\]\]' Cargo.toml || true)"
+          # The cross-check is only as live as this count. On a missing or
+          # renamed manifest `grep -c` prints NOTHING, the `|| true` swallows
+          # its exit status, and an empty string evaluates as 0 in arithmetic
+          # context — so the `<` comparison below would silently pass no
+          # matter how many benches went missing. Same class of bug as the
+          # heuristic this step replaced, so assert the count is real first.
+          if ! [[ "$declared_count" =~ ^[0-9]+$ ]] || (( declared_count == 0 )); then
+            echo "::error::could not count [[bench]] blocks in src-tauri/Cargo.toml (got '$declared_count') — the manifest cross-check below would then silently pass regardless of how many benches dropped out of the shard union (#3330). Check that the manifest is still there and still declares its benches as \`[[bench]]\` blocks."
+            exit 1
+          fi
+          if (( ${#declared_targets[@]} == 0 )); then
+            echo "::error::bench discovery produced ZERO bench targets from cargo metadata — the shard union would cover nothing and every shard would report success (#3330). Check that the \`agaric\` package still exists and jq is available."
+            exit 1
+          fi
+          if (( ${#declared_targets[@]} < declared_count )); then
+            echo "::error::bench discovery found only ${#declared_targets[@]} bench target(s) but src-tauri/Cargo.toml declares $declared_count [[bench]] block(s): ${declared_targets[*]}. At least one declared bench is missing from the shard union, so it would never be compiled or smoke-run (#3330/#978)."
+            exit 1
+          fi
+          if (( ${#declared_targets[@]} > declared_count )); then
+            echo "::notice::${#declared_targets[@]} bench target(s) vs $declared_count [[bench]] block(s) — the extra one(s) are cargo-autodiscovered from src-tauri/benches/ and are sharded normally."
+          fi
+          mapfile -t all < <(printf '%s\n' "${declared_targets[@]}" \
+            | grep -vx interactive_slo || true)
+          if (( ${#all[@]} == 0 )); then
+            echo "::error::no shardable benches after excluding interactive_slo — nothing would ever be compiled or smoke-run in ANY shard (#3330)."
+            exit 1
+          fi
+          echo "bench universe (${#all[@]} shardable of $declared_count declared): ${all[*]}"
           mine=()
           for i in "${!all[@]}"; do
             if (( i % SHARD_TOTAL == SHARD_INDEX )); then mine+=("${all[i]}"); fi
@@ -336,6 +387,16 @@ jobs:
             printf '%s' "$newest"
           }
           # The exact slice this shard compiled (written by the step above).
+          # #3330: an ABSENT slice file means the compile step never reached
+          # its `printf` — that is a broken step, not an empty shard, and must
+          # not be swallowed by the empty-slice early exit below. The compile
+          # step has already proven the GLOBAL bench list non-empty, so an
+          # empty file here really does mean "this shard's modulo slice is
+          # empty" and is a legitimate skip.
+          if [ ! -f "$RUNNER_TEMP/shard-benches.txt" ]; then
+            echo "::error::shard slice file $RUNNER_TEMP/shard-benches.txt is missing — the compile step did not run to completion; refusing to report this shard as smoked (#3330)."
+            exit 1
+          fi
           mapfile -t benches < "$RUNNER_TEMP/shard-benches.txt"
           if (( ${#benches[@]} == 0 )); then
             echo "no benches for this shard — skipping smoke"
@@ -802,7 +863,33 @@ jobs:
         # `thresholds.break` is configured).
         run: npm run mutation || true
 
+      - name: Lane-liveness guard (#3330) — the load-bearing acceptance item
+        # Deliberately OUTSIDE the `|| true` above, and the exact frontend
+        # analogue of the Rust lane's `Zero-coverage guard (#3057)` step.
+        # Before this step existed, `mutants-frontend` was STRUCTURALLY
+        # INCAPABLE of failing: `|| true` ate a total StrykerJS crash, the
+        # `Mutation summary` step below `process.exit(0)`s on a missing
+        # `reports/mutation` and renders `| <mod> | _no report_ | … |` for a
+        # module that silently dropped out, and the artifact upload uses
+        # `if-no-files-found: ignore`. Nothing read a mutant count, so a
+        # crashed run and a perfect run were the same green tick — and the
+        # downstream `file-mutation-survivors` job then read the empty
+        # artifact as "zero survivors" on the (thereby false) premise that
+        # lane failure is visible via this job's own status.
+        #
+        # This step fails ONLY on lane liveness — a missing reports root, a
+        # module that produced no/invalid `mutation.json`, or a zero total
+        # mutant count — never on mutation SCORE, which stays pure triage
+        # signal per the lane's whole design. Its own fixture suite runs as
+        # the `mutation-reports-guard-selftest` prek hook.
+        if: always()
+        run: node scripts/check-mutation-reports.mjs --reports-dir reports/mutation
+
       - name: Mutation summary
+        # Presentational only — it never fails, by design (same as the Rust
+        # lane's `Mutants summary`). The liveness guard above is the single
+        # place this job goes red; if it did, the `_no report_` rows below
+        # are the diagnosis, not a silent pass.
         if: always()
         run: |
           node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"

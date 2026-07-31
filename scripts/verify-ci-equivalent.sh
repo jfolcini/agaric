@@ -61,6 +61,115 @@
 
 set -uo pipefail
 
+# ── sqlx probe-DB allocation (#3257) ───────────────────────────────
+# Phase E needs a throwaway SQLite database per crate to run
+# `cargo sqlx prepare --check` against. These used to live at a
+# MACHINE-GLOBAL fixed path (`${TMPDIR:-/tmp}/$crate-sqlx-prepare.db`)
+# even though every sibling log file on the adjacent lines already used
+# `mktemp`. Two concurrent pushes from different worktrees — this
+# project's standard parallel-batch workflow, which
+# `scripts/seed-worktree.sh` exists to support — would therefore `rm -f`
+# each other's probe database: worktree B's `rm -f` lands while worktree
+# A is mid-`prepare --check`, A's queries stop resolving against the now
+# empty file, and A reports `✗ sqlx prepare check failed` with advice
+# steering the developer at the checked-in `.sqlx/` caches to chase a
+# phantom failure.
+#
+# Allocate a fresh DIRECTORY per invocation instead and remove it
+# wholesale, so SQLite's `-wal` / `-shm` siblings go with it rather than
+# being left behind (the old `rm -f "$db"` cleanup leaked both).
+# Defined up here so `--self-test` below can drive them directly.
+sqlx_probe_dir_new() {
+    mktemp -d -t pre-push-sqlx.XXXXXX
+}
+
+sqlx_probe_dir_cleanup() {
+    [ -n "${1:-}" ] && rm -rf "$1"
+    return 0
+}
+
+# ── self-test ──────────────────────────────────────────────────────
+# Fixture suite for the probe-DB isolation above (#3257), wired as the
+# `verify-ci-equivalent-selftest` prek hook so a regression back to a
+# fixed /tmp path is caught at commit time rather than as a
+# non-deterministic Phase E failure that blames sqlx. Runs BEFORE the
+# bypass guard and the multi-minute verifier body, so it is fast and
+# side-effect free.
+if [ "${1:-}" = "--self-test" ]; then
+    st_fail=0
+    st_ok() { printf '  ok   - %s\n' "$1"; }
+    st_bad() { printf '  FAIL - %s: %s\n' "$1" "$2" >&2; st_fail=1; }
+
+    # 1. Two invocations (the two concurrent pushes) must not collide.
+    d1="$(sqlx_probe_dir_new)"
+    d2="$(sqlx_probe_dir_new)"
+    if [ "$d1" != "$d2" ]; then
+        st_ok "two invocations get distinct probe dirs"
+    else
+        st_bad "two invocations get distinct probe dirs" "both got $d1"
+    fi
+
+    # 2. Each is a real, private directory.
+    if [ -d "$d1" ] && [ -d "$d2" ]; then
+        st_ok "probe dirs are created as directories"
+    else
+        st_bad "probe dirs are created as directories" "d1=$d1 d2=$d2"
+    fi
+
+    # 3. Worktree B's cleanup must NOT touch worktree A's database — the
+    #    literal cross-process collision this fix is about.
+    : > "$d1/agaric-store.db"
+    sqlx_probe_dir_cleanup "$d2"
+    if [ -f "$d1/agaric-store.db" ]; then
+        st_ok "one invocation's cleanup leaves the other's probe DB intact"
+    else
+        st_bad "one invocation's cleanup leaves the other's probe DB intact" \
+            "$d1/agaric-store.db was deleted by cleanup of $d2"
+    fi
+
+    # 4. Cleanup takes the SQLite -wal / -shm siblings with it.
+    : > "$d1/agaric-store.db-wal"
+    : > "$d1/agaric-store.db-shm"
+    sqlx_probe_dir_cleanup "$d1"
+    if [ ! -e "$d1" ]; then
+        st_ok "cleanup removes the probe dir including -wal/-shm siblings"
+    else
+        st_bad "cleanup removes the probe dir including -wal/-shm siblings" \
+            "$(ls -A "$d1" 2>/dev/null | tr '\n' ' ')"
+    fi
+
+    # 5. Ratchet: the fixed machine-global path must not come back. Guards
+    #    against a future edit quietly reintroducing the collision while
+    #    the assertions above keep passing against dead helpers. Every
+    #    `db=` assignment in this script must be the per-invocation form.
+    if grep -nE '^[[:space:]]*db=' "${BASH_SOURCE[0]}" \
+        | grep -vq 'db="\$probe_dir/\$crate\.db"'; then
+        st_bad "every probe-DB assignment is the per-invocation form" \
+            "$(grep -nE '^[[:space:]]*db=' "${BASH_SOURCE[0]}" \
+                | grep -v 'db="\$probe_dir/\$crate\.db"' | tr '\n' ' ')"
+    else
+        st_ok "every probe-DB assignment is the per-invocation form"
+    fi
+
+    # 6. Ratchet: Phase E must actually USE the per-invocation dir. Anchored
+    #    at line start so this cannot match the grep patterns and messages
+    #    inside this self-test itself (an unanchored match would make the
+    #    assertion tautological — a check that cannot fail).
+    if grep -qE '^[[:space:]]*db="\$probe_dir/\$crate\.db"$' "${BASH_SOURCE[0]}"; then
+        st_ok "Phase E allocates its probe DBs under the per-invocation dir"
+    else
+        st_bad "Phase E allocates its probe DBs under the per-invocation dir" \
+            'no `db="$probe_dir/$crate.db"` assignment found'
+    fi
+
+    if [ "$st_fail" != 0 ]; then
+        echo "verify-ci-equivalent self-test FAILED" >&2
+        exit 2
+    fi
+    echo "verify-ci-equivalent self-test passed"
+    exit 0
+fi
+
 # ── Bypass guard (CI-R16) ──────────────────────────────────────────
 # Reject a bare truthy flag; require an explicit, self-documenting reason
 # of at least 8 characters. The reason is echoed so the skip leaves a
@@ -401,9 +510,14 @@ if [ "$HAS_RS" = "1" ]; then
     fi
     rm -f "$sqlx_log"
 
+    # #3257 — per-invocation probe dir (see sqlx_probe_dir_new above). The
+    # trap covers the `exit 1` path at the end of this phase too; no other
+    # EXIT trap exists in this script, so it is safe to install here.
+    probe_dir="$(sqlx_probe_dir_new)"
+    trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
+
     for crate in agaric-store agaric-engine agaric-sync; do
-        db="${TMPDIR:-/tmp}/$crate-sqlx-prepare.db"
-        rm -f "$db"
+        db="$probe_dir/$crate.db"
         sqlx_log="$(mktemp -t "pre-push-sqlx-$crate.XXXXXX")"
         if ! ( cd "src-tauri/$crate" \
                 && DATABASE_URL="sqlite:$db" cargo sqlx database create \
@@ -416,7 +530,7 @@ if [ "$HAS_RS" = "1" ]; then
         else
             echo "  ✓ sqlx prepare check ($crate)"
         fi
-        rm -f "$sqlx_log" "$db"
+        rm -f "$sqlx_log"
     done
 
     if [ "$sqlx_check_failed" = "1" ]; then
