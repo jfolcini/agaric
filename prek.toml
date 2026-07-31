@@ -1419,6 +1419,82 @@ language = "system"
 types = ["toml"]
 stages = ["pre-commit"]
 
+# ─── mutation-testing machinery (#3330 / #3245 / #3257) ───────────
+#
+# The StrykerJS mutation lane is weekly, non-gating and — until #3330 —
+# structurally incapable of failing, which made every silent breakage in
+# its config or its triage loop invisible for as long as nobody happened
+# to open a step summary. These four hooks move the detectable parts of
+# that breakage forward to commit time.
+
+# stryker-modules-paths: `stryker.modules.mjs` names the file each module
+# mutates and the exact test files that scope the run. Nothing verified
+# those strings still resolve, so a file move turned a module into a
+# `| <mod> | _no report_ |` row and a never-wired test file made the lane
+# re-report already-killed mutants as survivors for weeks (#3142: 78
+# reported, 22 real). Cheap — ~27 existsSync calls. Runs on any change to
+# the config or to the frontend libs it points at.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "stryker-modules-paths"
+name = "stryker.modules.mjs paths resolve"
+entry = "node scripts/check-stryker-modules.mjs"
+language = "system"
+pass_filenames = false
+files = '^(stryker\.modules\.mjs|src/lib/.*\.ts)$'
+stages = ["pre-commit"]
+
+# Self-test the guard's own exit behavior (dangling src FAILS, dangling
+# test file FAILS, empty test list FAILS, all-present PASSES) whenever the
+# guard script itself changes, so a regression that defangs it can't land.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "stryker-modules-paths-selftest"
+name = "stryker.modules.mjs path guard self-test"
+entry = "node scripts/check-stryker-modules.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/check-stryker-modules\.mjs$'
+stages = ["pre-commit"]
+
+# mutation-reports-guard-selftest (#3330): the `mutants-frontend` lane's
+# liveness guard is the ONLY thing that can turn that job red — its own
+# `npm run mutation || true`, its `_no report_` summary rows and its
+# `if-no-files-found: ignore` upload cannot. Re-run its fixture suite
+# (missing reports root FAILS, dropped module FAILS, invalid JSON FAILS,
+# zero mutants FAILS, healthy PASSES) whenever the guard or the module
+# list it reads changes.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutation-reports-guard-selftest"
+name = "mutation lane liveness guard self-test"
+entry = "node scripts/check-mutation-reports.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/check-mutation-reports\.mjs|stryker\.modules\.mjs)$'
+stages = ["pre-commit"]
+
+# mutation-survivors-filer-selftest (#3245/#3257): the survivor tracking
+# issue's body has already broken twice — once by listing every survivor
+# under both "New this run" and the machine-readable block (doubling every
+# count a triager reads), once by rendering an unbounded body that 422s
+# `gh issue edit` and wedges the weekly job red with no self-healing path.
+# The fixture suite pins both invariants: exactly one occurrence per
+# survivor, and a clamped body whose marker block is never cut mid-way.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutation-survivors-filer-selftest"
+name = "mutation-survivor filer self-test"
+entry = "node scripts/file-mutation-survivors.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/file-mutation-survivors\.mjs$'
+stages = ["pre-commit"]
+
 # ─── pre-push only ────────────────────────────────────────────────
 #
 # A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`. It is
@@ -1465,6 +1541,24 @@ entry = "bash scripts/test-skip-ci-verify-guard.sh"
 language = "system"
 pass_filenames = false
 files = '^scripts/(verify-ci-equivalent|push|test-skip-ci-verify-guard)\.sh$'
+stages = ["pre-commit"]
+
+# verify-ci-equivalent-selftest (#3257): Phase E's sqlx probe databases
+# used a machine-global fixed /tmp path, so two concurrent pushes from
+# different worktrees — this project's standard parallel-batch workflow —
+# deleted each other's database mid-`prepare --check` and produced a
+# spurious Phase E failure blaming sqlx. The fixture suite asserts the
+# per-invocation allocation and cleanup, plus a ratchet that fails if the
+# fixed path ever comes back. Fast: exercised before the verifier body.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "verify-ci-equivalent-selftest"
+name = "pre-push verifier self-test (sqlx probe isolation)"
+entry = "bash scripts/verify-ci-equivalent.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/verify-ci-equivalent\.sh$'
 stages = ["pre-commit"]
 
 [[repos]]
