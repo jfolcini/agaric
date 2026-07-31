@@ -991,8 +991,7 @@ jobs:
 
       - name: Vitest (full suite, with coverage)
         # #749: `vitest.config.ts` is the SINGLE source of truth for the
-        # coverage thresholds (lines 90 / functions 89 / branches 80 /
-        # statements 89). This step no longer overrides them to 0 — the
+        # coverage thresholds. This step no longer overrides them to 0 — the
         # config thresholds now actually gate here, at zero marginal cost
         # (the suite already runs with coverage). Measured full-suite
         # coverage clears all four with headroom (lines 91.6 / functions
@@ -1000,9 +999,14 @@ jobs:
         # does not red an otherwise-green PR; it stops a new untested module
         # from silently dropping below the OSPS-Silver line. The old three
         # contradictory versions (config 90/89/80/89, the `=0` override
-        # here, and a `>=80%/>=75%` step-summary string) are reconciled to
-        # this one. Writes the json summary to `coverage-merged/` for the
-        # summary step + artifact.
+        # here, and a `>=80%/>=75%` step-summary string) were reconciled to
+        # this one by #749 — then drifted apart again (#3258) when a later
+        # PR changed the config thresholds without updating the two prose
+        # copies below. Do not restate the numbers in a comment here; the
+        # "Coverage summary" step derives them from `vitest.config.ts` at
+        # run time via `scripts/print-coverage-thresholds.mjs` so this
+        # comment can't go stale again. Writes the json summary to
+        # `coverage-merged/` for the summary step + artifact.
         run: |
           npx vitest run \
             --coverage \
@@ -1045,7 +1049,8 @@ jobs:
               "| Branches   | \(.branches.pct)% | \(.branches.covered) / \(.branches.total) |"
             ' coverage-merged/coverage-summary.json
             echo
-            echo "_Gated against \`vitest.config.ts\` thresholds (#749, single source of truth): lines >= 90%, functions >= 89%, branches >= 80%, statements >= 88%. The vitest step above fails the job if any metric drops below its threshold._"
+            thresholds="$(node scripts/print-coverage-thresholds.mjs)"
+            echo "_Gated against \`vitest.config.ts\` thresholds (#749, single source of truth): ${thresholds}. The vitest step above fails the job if any metric drops below its threshold._"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Coverage ratchet (#648, non-blocking)

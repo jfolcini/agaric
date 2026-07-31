@@ -162,6 +162,44 @@ if [ "${1:-}" = "--self-test" ]; then
             'no `db="$probe_dir/$crate.db"` assignment found'
     fi
 
+    # 7. Ratchet (#3361): the root lane's OLD vulnerable form must not come
+    #    back — root's sqlx subcommands run with NO DATABASE_URL override,
+    #    which falls through to whatever `src-tauri/.env`'s DATABASE_URL
+    #    points at, i.e. the developer's real dev.db, not an isolated probe
+    #    DB. Excludes comment lines (incl. this one) so the assertion can't
+    #    match its own description of the pattern it guards against.
+    bad_root_lines="$(grep -vE '^[[:space:]]*#' "${BASH_SOURCE[0]}" \
+        | grep -nE 'cd src-tauri.{0,40}cargo sqlx (migrate run|prepare)')"
+    if [ -n "$bad_root_lines" ]; then
+        st_bad "root sqlx lane never runs cargo sqlx without a DATABASE_URL override" \
+            "$(printf '%s' "$bad_root_lines" | tr '\n' ' ')"
+    else
+        st_ok "root sqlx lane never runs cargo sqlx without a DATABASE_URL override"
+    fi
+
+    # 8. Ratchet (#3361): Phase E's root lane must actually allocate its
+    #    probe DB under the per-invocation dir. Anchored at line start,
+    #    exact form, so a `root_db=` pointing anywhere else fails this.
+    if grep -qE '^[[:space:]]*root_db="\$probe_dir/root\.db"$' "${BASH_SOURCE[0]}"; then
+        st_ok "Phase E allocates the root lane's probe DB under the per-invocation dir"
+    else
+        st_bad "Phase E allocates the root lane's probe DB under the per-invocation dir" \
+            'no `root_db="$probe_dir/root.db"` assignment found'
+    fi
+
+    # 9. Ratchet (#3361): the root lane's `cargo sqlx migrate run` — the
+    #    command that actually WRITES schema — must be prefixed with the
+    #    per-invocation DATABASE_URL override. A partial fix that isolated
+    #    `database create`/`prepare --check` but left `migrate run`
+    #    pointed at the real DB would still migrate the developer's dev.db
+    #    to whatever schema is on the pushed branch.
+    if grep -qE '^[[:space:]]*&& DATABASE_URL="sqlite:\$root_db" cargo sqlx migrate run \\$' "${BASH_SOURCE[0]}"; then
+        st_ok "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL"
+    else
+        st_bad "root lane's cargo sqlx migrate run uses the per-invocation DATABASE_URL" \
+            'no `&& DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \` line found'
+    fi
+
     if [ "$st_fail" != 0 ]; then
         echo "verify-ci-equivalent self-test FAILED" >&2
         exit 2
@@ -483,16 +521,24 @@ fi
 # (e.g. #2849) slip past local verification and land only visible on CI —
 # the exact gap this phase now closes.
 #
-# The root lane reuses `src-tauri/.env`'s `DATABASE_URL=sqlite:dev.db`
-# (relative — fine because the app crate IS the workspace root) and runs
-# `cargo sqlx migrate run` first so a freshly-pulled `dev.db` with pending
-# migrations doesn't masquerade as query drift. Each member lane needs its
-# own ABSOLUTE-path throwaway DB: `query!` resolves a *relative* sqlite path
-# at compile time from rustc's CWD — the WORKSPACE ROOT, not the crate dir —
-# so a relative URL there creates the DB under the crate but looks for it
-# under `src-tauri/`, failing every query ("unable to open database file").
-# Each member's `migrations -> ../migrations` symlink lets `migrate run`
-# resolve the shared workspace migrations against that throwaway DB.
+# All four lanes get their own ABSOLUTE-path throwaway DB under the shared
+# per-invocation probe dir (#3257 / #3361) — none of them ever touch the
+# developer's real `src-tauri/dev.db`. The root lane used to reuse
+# `src-tauri/.env`'s `DATABASE_URL=sqlite:dev.db` directly. That both
+# collided across concurrent worktree pushes sharing that file (the same
+# class of bug #3257 already fixed for the sub-crates, just on the one path
+# that fix left alone) and meant a failed/interrupted run could leave the
+# developer's dev.db migrated to a branch's schema they aren't on. Each
+# member lane needs its own absolute-path throwaway DB for a second,
+# independent reason: `query!` resolves a *relative* sqlite path at compile
+# time from rustc's CWD — the WORKSPACE ROOT, not the crate dir — so a
+# relative URL there creates the DB under the crate but looks for it under
+# `src-tauri/`, failing every query ("unable to open database file"). (The
+# root crate IS the workspace root, so that particular hazard never applied
+# to it — it gets an absolute-path DB anyway, for the isolation reason
+# above.) Each member's `migrations -> ../migrations` symlink lets
+# `migrate run` resolve the shared workspace migrations against that
+# throwaway DB; the root lane already sits next to `migrations/` directly.
 
 if [ "$HAS_RS" = "1" ]; then
     echo ""
@@ -500,8 +546,21 @@ if [ "$HAS_RS" = "1" ]; then
 
     sqlx_check_failed=0
 
+    # #3257 / #3361 — per-invocation probe dir, shared by ALL FOUR lanes
+    # below (root + the three sub-crates) so none of them touch the real
+    # dev database. The trap also covers the `exit 1` path at the end of
+    # this phase; no other EXIT trap exists in this script, so it is safe
+    # to install here.
+    probe_dir="$(sqlx_probe_dir_new)"
+    trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
+
+    root_db="$probe_dir/root.db"
     sqlx_log="$(mktemp -t pre-push-sqlx-root.XXXXXX)"
-    if ! ( cd src-tauri && cargo sqlx migrate run && cargo sqlx prepare --check -- --tests ) > "$sqlx_log" 2>&1; then
+    if ! ( cd src-tauri \
+            && DATABASE_URL="sqlite:$root_db" cargo sqlx database create \
+            && DATABASE_URL="sqlite:$root_db" cargo sqlx migrate run \
+            && DATABASE_URL="sqlite:$root_db" cargo sqlx prepare --check -- --tests \
+         ) > "$sqlx_log" 2>&1; then
         echo "  ✗ sqlx prepare check failed (root: src-tauri)"
         tail -100 "$sqlx_log" | sed 's/^/      /'
         sqlx_check_failed=1
@@ -509,12 +568,6 @@ if [ "$HAS_RS" = "1" ]; then
         echo "  ✓ sqlx prepare check (root: src-tauri)"
     fi
     rm -f "$sqlx_log"
-
-    # #3257 — per-invocation probe dir (see sqlx_probe_dir_new above). The
-    # trap covers the `exit 1` path at the end of this phase too; no other
-    # EXIT trap exists in this script, so it is safe to install here.
-    probe_dir="$(sqlx_probe_dir_new)"
-    trap 'sqlx_probe_dir_cleanup "$probe_dir"' EXIT
 
     for crate in agaric-store agaric-engine agaric-sync; do
         db="$probe_dir/$crate.db"

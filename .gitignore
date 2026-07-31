@@ -51,10 +51,12 @@ src-tauri/agaric-store/dev.db
 src-tauri/agaric-store/dev.db-*
 src-tauri/.env
 coverage/
-# Per-shard vitest coverage dirs + the merged output produced by
-# scripts/merge-vitest-coverage.mjs (CI consumes them as artifacts;
-# local runs leave them in the tree).
-coverage-shard-*/
+# vitest json-summary/json coverage output (CI's "Vitest (full suite, with
+# coverage)" step writes here via --coverage.reportsDirectory; consumed as
+# an artifact + by the "Coverage summary" step; local runs leave it in the
+# tree). Was per-shard output merged by the now-deleted
+# scripts/merge-vitest-coverage.mjs before the 3-shard vitest split was
+# consolidated into one full-suite run (#3258).
 coverage-merged/
 # Rust llvm-cov outputs (cargo llvm-cov writes them under src-tauri/).
 src-tauri/coverage.lcov
