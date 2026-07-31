@@ -1638,6 +1638,65 @@ entry = "node scripts/check-workflow-liveness.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^(scripts/check-workflow-liveness\.mjs|\.github/workflows/.*\.ya?ml)$'
+# fuzz-findings-filer-selftest (#3360): the fuzz filer is the sibling of
+# `file-mutation-survivors.mjs` and the more complex of the two — libFuzzer log
+# excerpting, MAX_EXCERPT_LINES/CHARS bounds, marker-block state, the same
+# unguarded `execFileSync('gh', ...)` write path — and it was the one WITHOUT a
+# fixture suite. The suite pins what silently un-reports a fuzz failure: the
+# manifest-vs-glob target list (a partial artifact must not make a target
+# vanish), the excerpt/ID bounds, one finding per non-ok status, the `[lane]`
+# fallback firing on failure/cancelled only, a marker block that round-trips,
+# and the body clamp ladder that keeps `gh issue edit` from 422ing the weekly
+# job red forever.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "fuzz-findings-filer-selftest"
+name = "fuzz-findings filer self-test"
+entry = "node scripts/file-fuzz-findings.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/file-fuzz-findings\.mjs$'
+stages = ["pre-commit"]
+
+# ─── bench lane coverage (#3362) ──────────────────────────────────
+#
+# `bench-smoke` shards every bench EXCEPT the ones `bench-slo` warm-runs. That
+# exclusion used to be a hardcoded `grep -vx interactive_slo` with nothing
+# asserting `bench-slo` still covered it: rename the bench, rename the job, or
+# drift its list, and the project's only automated latency signal ran in
+# NEITHER lane while every shard still exited 0. The workflow now derives both
+# lanes from one `SLO_BENCHES` variable and asserts the union at run time; this
+# hook holds the half the workflow cannot check about itself — that both jobs
+# still exist and still read that variable outside comments — and re-checks
+# every name in it against `cargo metadata` (~30 ms, no compile) whenever the
+# workflow, the manifest or the guard changes.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "bench-lane-coverage"
+name = "bench lanes cover every bench target"
+entry = "node scripts/check-bench-lane-coverage.mjs"
+language = "system"
+pass_filenames = false
+files = '^(\.github/workflows/scheduled-deep-checks\.yml|src-tauri/Cargo\.toml|src-tauri/benches/.*\.rs|scripts/check-bench-lane-coverage\.mjs)$'
+stages = ["pre-commit"]
+
+# Self-test the guard's own exit behavior (deleted bench-slo job FAILS, renamed
+# bench FAILS, hardcoded exclusion FAILS, a comment-only mention of SLO_BENCHES
+# FAILS, empty universe FAILS, healthy PASSES) so a regression defang cannot
+# land. The comment-only case is the load-bearing one: the workflow explains
+# this wiring in prose right next to the code, so a reference check that
+# accepted any mention would be satisfied by its own documentation.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "bench-lane-coverage-selftest"
+name = "bench lane coverage guard self-test"
+entry = "node scripts/check-bench-lane-coverage.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/check-bench-lane-coverage\.mjs$'
 stages = ["pre-commit"]
 
 # ─── pre-push only ────────────────────────────────────────────────

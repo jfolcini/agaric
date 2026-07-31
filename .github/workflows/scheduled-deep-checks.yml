@@ -117,6 +117,26 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # #3362 — the SINGLE source of truth for which benches the `bench-slo` job
+  # warm-runs, and therefore which ones `bench-smoke` excludes from its shards.
+  # Space-separated.
+  #
+  # Both jobs read THIS value: `bench-slo` builds its `--bench` arguments from
+  # it, `bench-smoke` derives its exclusion from it, and each asserts every name
+  # in it is a real bench target in `cargo metadata` before using it. The union
+  # of the two lanes is then the whole bench universe by construction, and a
+  # bench that fell out of both would have to be missing from `cargo metadata`
+  # — which those assertions catch.
+  #
+  # Before this, `bench-smoke` excluded `interactive_slo` with a hardcoded
+  # `grep -vx` and NOTHING asserted `bench-slo` still covered it: rename the
+  # bench, rename the job, or drift its list, and the project's only automated
+  # latency signal ran in NEITHER lane while every shard still exited 0.
+  #
+  # `scripts/check-bench-lane-coverage.mjs` (prek hook `bench-lane-coverage`)
+  # holds the half the workflow cannot check about itself — that BOTH jobs
+  # still exist and still read this variable outside comments.
+  SLO_BENCHES: interactive_slo
 
 jobs:
   # ---------------------------------------------------------------------------
@@ -281,8 +301,9 @@ jobs:
       - name: Compile this shard's bench slice (no-run)
         working-directory: src-tauri
         shell: bash
-        # Deterministic sharding: list every `[[bench]]` (minus interactive_slo,
-        # which the bench-slo job warm-runs), sort for a stable order, and keep
+        # Deterministic sharding: list every `[[bench]]` (minus the benches the
+        # bench-slo job warm-runs, i.e. `$SLO_BENCHES`), sort for a stable
+        # order, and keep
         # the names where `index % SHARD_TOTAL == SHARD_INDEX`. A bench newly
         # added to Cargo.toml automatically lands in some shard — no matrix edit
         # needed, so the #978 coverage guarantee can't silently regress.
@@ -299,6 +320,16 @@ jobs:
         # the list is parsed STRUCTURALLY out of `cargo metadata` and
         # cross-checked against the number of `[[bench]]` blocks declared in
         # the manifest, so a dropped bench is a hard, loud failure.
+        #
+        # #3362: the EXCLUSION was the remaining hole. It was a hardcoded
+        # `grep -vx interactive_slo` justified by "bench-slo warm-runs it",
+        # with nothing checking that bench-slo still did. A rename or a drifted
+        # bench-slo list dropped that bench from BOTH lanes and every shard
+        # still exited 0, because from this step's point of view excluding it
+        # is correct behaviour. The exclusion is now DERIVED from the
+        # workflow-level `$SLO_BENCHES` that bench-slo runs, every excluded
+        # name must be a real bench target, and the union of the two lanes is
+        # asserted to equal the bench universe before anything is sharded.
         #
         # The slice compiles in a SINGLE `cargo bench --no-run --bench a
         # --bench b …` invocation. That is still ONE cohesive build: the cargo
@@ -341,12 +372,60 @@ jobs:
           if (( ${#declared_targets[@]} > declared_count )); then
             echo "::notice::${#declared_targets[@]} bench target(s) vs $declared_count [[bench]] block(s) — the extra one(s) are cargo-autodiscovered from src-tauri/benches/ and are sharded normally."
           fi
-          mapfile -t all < <(printf '%s\n' "${declared_targets[@]}" \
-            | grep -vx interactive_slo || true)
-          if (( ${#all[@]} == 0 )); then
-            echo "::error::no shardable benches after excluding interactive_slo — nothing would ever be compiled or smoke-run in ANY shard (#3330)."
+          # #3362 — the OTHER lane. `$SLO_BENCHES` is the workflow-level list
+          # the bench-slo job warm-runs; this step excludes exactly that list
+          # and nothing else. Every name in it must be a real bench target,
+          # because a stale name here means bench-slo runs nothing for it while
+          # this step still excludes it — the bench then runs in NEITHER lane.
+          read -r -a slo_lane <<< "${SLO_BENCHES:-}"
+          if (( ${#slo_lane[@]} == 0 )); then
+            echo "::error::SLO_BENCHES is empty or unset — the shards would then smoke-run the SLO gate cold (its budgets need the warm bench-slo run) and the two lanes would have no agreed split at all (#3362)."
             exit 1
           fi
+          for b in "${slo_lane[@]}"; do
+            if ! printf '%s\n' "${declared_targets[@]}" | grep -qxF -- "$b"; then
+              echo "::error::SLO_BENCHES names '$b', which is NOT a bench target in cargo metadata (universe: ${declared_targets[*]}). bench-slo would run nothing for it and this step excludes it, so it is in NEITHER lane and every shard would still exit 0 (#3362). If a bench was renamed, update SLO_BENCHES in this workflow's top-level env."
+              exit 1
+            fi
+          done
+          mapfile -t all < <(printf '%s\n' "${declared_targets[@]}" \
+            | grep -vxF -f <(printf '%s\n' "${slo_lane[@]}") || true)
+          if (( ${#all[@]} == 0 )); then
+            echo "::error::no shardable benches after excluding the SLO_BENCHES lane (${slo_lane[*]}) — nothing would ever be compiled or smoke-run in ANY shard (#3330)."
+            exit 1
+          fi
+          # The invariant #3362 is about, asserted rather than assumed: the two
+          # lanes must PARTITION the bench universe — cover all of it (union)
+          # and not overlap (disjoint). Both halves are needed, and each catches
+          # an edit the other does not:
+          #
+          #   UNION      — any future edit that filters the list for a second
+          #                reason (a skip list, a `required-features` bench)
+          #                drops a bench out of BOTH lanes; caught here instead
+          #                of going green.
+          #   DISJOINT   — weakening or deleting the `grep -vxF` exclusion above
+          #                puts the SLO bench back into the shards. The union
+          #                check alone CANNOT see that (the union is still the
+          #                whole universe), so it passed with every job green
+          #                while `interactive_slo` got cold `--test`-smoke-run
+          #                in a shard — exactly what the warm bench-slo lane
+          #                exists to prevent, and enough to trip the bench's own
+          #                ARCHITECTURE.md §25 budget `panic!`s on a cold run.
+          #                Added in review of #3362; the union check on its own
+          #                left this mutation alive.
+          lane_union="$(printf '%s\n' "${all[@]}" "${slo_lane[@]}" | sort -u)"
+          universe="$(printf '%s\n' "${declared_targets[@]}" | sort -u)"
+          if [ "$lane_union" != "$universe" ]; then
+            echo "::error::bench lane union does not equal the bench universe (#3362). shards=[${all[*]}] bench-slo=[${slo_lane[*]}] universe=[${declared_targets[*]}]. Benches in neither lane are never compiled, never smoke-run and never timed, with every job still green."
+            exit 1
+          fi
+          overlap="$(printf '%s\n' "${all[@]}" \
+            | grep -xF -f <(printf '%s\n' "${slo_lane[@]}") || true)"
+          if [ -n "$overlap" ]; then
+            echo "::error::bench lane overlap (#3362): ${overlap//$'\n'/ } is in BOTH lanes. The shard exclusion must remove exactly \$SLO_BENCHES; a bench the warm bench-slo lane runs must not also be cold-smoke-run in a shard, where its latency budgets have no warm-up and can panic. shards=[${all[*]}] bench-slo=[${slo_lane[*]}]."
+            exit 1
+          fi
+          echo "bench lanes partition ${#declared_targets[@]} target(s): ${#all[@]} sharded + ${#slo_lane[@]} warm-run — bench-slo: ${slo_lane[*]}"
           echo "bench universe (${#all[@]} shardable of $declared_count declared): ${all[*]}"
           mine=()
           for i in "${!all[@]}"; do
@@ -523,6 +602,13 @@ jobs:
         # The bench self-`panic!`s if any command's mean latency exceeds its
         # ARCHITECTURE.md §25 budget, so a non-zero exit IS the gate.
         #
+        # #3362: WHICH benches this lane runs is no longer a hardcoded name
+        # here. It is the workflow-level `$SLO_BENCHES` — the same list
+        # `bench-smoke` excludes from its shards — and every name in it is
+        # verified against `cargo metadata` before we run it. A bench renamed
+        # in Cargo.toml but not here used to be excluded from the shards AND
+        # absent from this lane, i.e. never run, with both jobs green.
+        #
         # By default the already-breaching `list_page_links` /
         # `list_projected_agenda` problem-tier probes stay gated OUT
         # (SLO_INCLUDE_PROBLEM unset) so the scheduled gate tracks only the
@@ -538,12 +624,37 @@ jobs:
         env:
           SLO_INCLUDE_PROBLEM_INPUT: ${{ github.event.inputs.slo_include_problem || 'false' }}
         run: |
-          set -o pipefail
+          set -euo pipefail
           if [ "$SLO_INCLUDE_PROBLEM_INPUT" = "true" ]; then
             echo "SLO_INCLUDE_PROBLEM=1 — problem-tier probes ENABLED via dispatch (#2178)"
             export SLO_INCLUDE_PROBLEM=1
           fi
-          cargo bench --bench interactive_slo 2>&1 | tee interactive_slo.log
+          # Same structural bench list `bench-smoke` derives its exclusion from.
+          mapfile -t declared_targets < <(cargo metadata --no-deps --format-version 1 \
+            | jq -r '.packages[] | select(.name == "agaric") | .targets[]
+                     | select(.kind[] == "bench") | .name' \
+            | sort)
+          if (( ${#declared_targets[@]} == 0 )); then
+            echo "::error::cargo metadata reported ZERO bench targets — this lane cannot verify it is running the benches bench-smoke excludes on its behalf (#3362)."
+            exit 1
+          fi
+          read -r -a slo_lane <<< "${SLO_BENCHES:-}"
+          if (( ${#slo_lane[@]} == 0 )); then
+            echo "::error::SLO_BENCHES is empty or unset — this lane would run NOTHING while bench-smoke still excludes its list, so those benches would run in neither lane (#3362)."
+            exit 1
+          fi
+          args=()
+          for b in "${slo_lane[@]}"; do
+            if ! printf '%s\n' "${declared_targets[@]}" | grep -qxF -- "$b"; then
+              echo "::error::SLO_BENCHES names '$b', which is NOT a bench target in cargo metadata (universe: ${declared_targets[*]}). bench-smoke excludes it on this lane's behalf, so it is in NEITHER lane (#3362). If a bench was renamed, update SLO_BENCHES in this workflow's top-level env."
+              exit 1
+            fi
+            args+=(--bench "$b")
+          done
+          echo "bench-slo lane runs: ${slo_lane[*]}"
+          # Log name is historical (`interactive_slo.log`) and is what the
+          # summary step below parses; it carries every bench in the lane.
+          cargo bench "${args[@]}" 2>&1 | tee interactive_slo.log
 
       - name: SLO summary + threshold flagging (#978)
         if: always()
@@ -900,6 +1011,16 @@ jobs:
         # lane's `Mutants summary`). The liveness guard above is the single
         # place this job goes red; if it did, the `_no report_` rows below
         # are the diagnosis, not a silent pass.
+        #
+        # #3360: "never fails" was aspirational. `JSON.parse` on a truncated
+        # `mutation.json` — precisely the state the liveness guard above exists
+        # to catch — threw, so the SUMMARY step failed too and the run showed
+        # a second stack trace on top of the guard's actionable error, with the
+        # whole table lost (nothing is written until the final `console.log`).
+        # The summary is meant to be the DIAGNOSIS of that failure, not another
+        # casualty of it. Each report is now parsed defensively and a bad one
+        # becomes a row plus a quoted parse error; an unexpected throw anywhere
+        # else still flushes whatever the table had. The step cannot fail.
         if: always()
         run: |
           node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
@@ -907,75 +1028,113 @@ jobs:
           const path = require('node:path')
 
           const root = 'reports/mutation'
-          let lines = ['## StrykerJS mutation testing (frontend, #886)', '']
-          if (!fs.existsSync(root)) {
-            lines.push('_No reports produced (Stryker crashed before writing JSON) — see job log._')
-            console.log(lines.join('\n'))
-            process.exit(0)
-          }
+          const lines = ['## StrykerJS mutation testing (frontend, #886)', '']
+          const unreadable = []
 
-          const modules = fs.readdirSync(root).sort()
-          // "Score" here is Stryker's "covered" mutation score — (killed +
-          // timeout) / (killed + timeout + survived) — i.e. excluding
-          // no-coverage mutants from the denominator, same as the "covered"
-          // column Stryker itself prints to the job log.
-          lines.push('| Module | Score (covered) | Killed | Timeout | Survived | No cov | Errors |')
-          lines.push('|---|--:|--:|--:|--:|--:|--:|')
-
-          let totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
-          const survivors = []
-
-          for (const mod of modules) {
-            const jsonPath = path.join(root, mod, 'mutation.json')
-            if (!fs.existsSync(jsonPath)) {
-              lines.push(`| ${mod} | _no report_ | | | | | |`)
-              continue
+          function render() {
+            if (!fs.existsSync(root)) {
+              lines.push('_No reports produced (Stryker crashed before writing JSON) — see job log._')
+              return
             }
-            const report = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
-            const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
-            for (const [file, entry] of Object.entries(report.files ?? {})) {
-              for (const mutant of entry.mutants ?? []) {
-                switch (mutant.status) {
-                  case 'Killed':
-                    counts.killed++
-                    break
-                  case 'Timeout':
-                    counts.timeout++
-                    break
-                  case 'Survived':
-                    counts.survived++
-                    survivors.push(`${mod}: ${file}:${mutant.location.start.line} [${mutant.mutatorName}]`)
-                    break
-                  case 'NoCoverage':
-                    counts.noCov++
-                    break
-                  case 'CompileError':
-                  case 'RuntimeError':
-                    counts.errors++
-                    break
-                  default:
-                    break
+
+            const modules = fs.readdirSync(root).sort()
+            // "Score" here is Stryker's "covered" mutation score — (killed +
+            // timeout) / (killed + timeout + survived) — i.e. excluding
+            // no-coverage mutants from the denominator, same as the "covered"
+            // column Stryker itself prints to the job log.
+            lines.push('| Module | Score (covered) | Killed | Timeout | Survived | No cov | Errors |')
+            lines.push('|---|--:|--:|--:|--:|--:|--:|')
+
+            const totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+            const survivors = []
+
+            for (const mod of modules) {
+              const jsonPath = path.join(root, mod, 'mutation.json')
+              if (!fs.existsSync(jsonPath)) {
+                lines.push(`| ${mod} | _no report_ | | | | | |`)
+                continue
+              }
+              let report
+              try {
+                report = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
+              } catch (err) {
+                // A truncated/half-written report is the liveness guard's
+                // business, not this step's. Record it as a row and move on so
+                // the remaining modules still render.
+                lines.push(`| ${mod} | _unreadable report_ | | | | | |`)
+                unreadable.push(`${mod}: ${err.message}`)
+                continue
+              }
+              const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
+              for (const [file, entry] of Object.entries(report.files ?? {})) {
+                for (const mutant of entry.mutants ?? []) {
+                  switch (mutant.status) {
+                    case 'Killed':
+                      counts.killed++
+                      break
+                    case 'Timeout':
+                      counts.timeout++
+                      break
+                    case 'Survived': {
+                      counts.survived++
+                      // Optional-chained: a report can be valid JSON and still
+                      // be missing `location`, which used to be a TypeError
+                      // that took the whole summary down.
+                      const line = mutant.location?.start?.line ?? '?'
+                      survivors.push(`${mod}: ${file}:${line} [${mutant.mutatorName}]`)
+                      break
+                    }
+                    case 'NoCoverage':
+                      counts.noCov++
+                      break
+                    case 'CompileError':
+                    case 'RuntimeError':
+                      counts.errors++
+                      break
+                    default:
+                      break
+                  }
                 }
               }
+              const scored = counts.killed + counts.timeout + counts.survived
+              const score = scored > 0 ? ((counts.killed + counts.timeout) / scored) * 100 : 0
+              lines.push(
+                `| ${mod} | ${score.toFixed(1)}% | ${counts.killed} | ${counts.timeout} | ${counts.survived} | ${counts.noCov} | ${counts.errors} |`,
+              )
+              for (const k of Object.keys(totals)) totals[k] += counts[k]
             }
-            const scored = counts.killed + counts.timeout + counts.survived
-            const score = scored > 0 ? ((counts.killed + counts.timeout) / scored) * 100 : 0
+
+            const totalScored = totals.killed + totals.timeout + totals.survived
+            const totalScore = totalScored > 0 ? ((totals.killed + totals.timeout) / totalScored) * 100 : 0
             lines.push(
-              `| ${mod} | ${score.toFixed(1)}% | ${counts.killed} | ${counts.timeout} | ${counts.survived} | ${counts.noCov} | ${counts.errors} |`,
+              `| **All modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
             )
-            for (const k of Object.keys(totals)) totals[k] += counts[k]
+
+            if (survivors.length > 0) {
+              lines.push('', '### Surviving mutants — triage into test gaps', '```')
+              lines.push(...survivors)
+              lines.push('```')
+            }
           }
 
-          const totalScored = totals.killed + totals.timeout + totals.survived
-          const totalScore = totalScored > 0 ? ((totals.killed + totals.timeout) / totalScored) * 100 : 0
-          lines.push(
-            `| **All modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
-          )
+          try {
+            render()
+          } catch (err) {
+            // Last resort: emit what the table already had rather than dying
+            // and leaving the run with no summary at all.
+            lines.push('', `_Summary rendering aborted: ${err && err.message}. The lane-liveness guard step above is the authoritative signal._`)
+          }
 
-          if (survivors.length > 0) {
-            lines.push('', '### Surviving mutants — triage into test gaps', '```')
-            lines.push(...survivors)
-            lines.push('```')
+          if (unreadable.length > 0) {
+            lines.push(
+              '',
+              `### ${unreadable.length} unreadable report(s)`,
+              '',
+              '_Invalid or truncated `mutation.json` — the lane-liveness guard step above fails the job for this; these are the details._',
+              '```',
+              ...unreadable,
+              '```',
+            )
           }
 
           console.log(lines.join('\n'))
@@ -1241,6 +1400,13 @@ jobs:
         # Separate from `fuzz-artifacts` above on purpose: adding a workspace-
         # root path to that multi-path upload would move its least-common-
         # ancestor and reshuffle the existing artifact's layout.
+        #
+        # `if-no-files-found: ignore` stays (#3360): a lane that died before it
+        # could write anything is already red, and turning that into a second
+        # red upload step adds noise, not signal. The ambiguity it creates for
+        # the CONSUMER — "no findings" vs "no data" — is closed on the consumer
+        # side instead, by the `--require-results` /
+        # `--require-targets-manifest` flags the `file-fuzz-findings` job passes.
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -1308,10 +1474,22 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
           FUZZ_JOB_RESULT: ${{ needs.fuzz.result }}
+        # `--require-results` / `--require-targets-manifest` (#3360): the
+        # `fuzz-status` upload is `if-no-files-found: ignore` and this job's
+        # download is `continue-on-error`, so a lost or partial artifact used to
+        # reach the filer as "zero findings" — a cheerful no-op indistinguishable
+        # from a clean week. The flags only fire where the script's own `[lane]`
+        # fallback does not (a lane that succeeded, or whose status is unknown,
+        # and a partial artifact with no `targets.txt`), so a lane that died
+        # outright still gets reported rather than erroring out first. The
+        # resulting red filer job is itself reported by #3359's
+        # `report-scheduled-failures`, which `needs:` this job.
         run: |
           node scripts/file-fuzz-findings.mjs \
             --result-dir fuzz-status-artifact \
-            --job-status "$FUZZ_JOB_RESULT"
+            --job-status "$FUZZ_JOB_RESULT" \
+            --require-results \
+            --require-targets-manifest
 
   # ---------------------------------------------------------------------------
   # prek-all-files (#3058) — the whole-tree pre-commit-stage prek backstop.
