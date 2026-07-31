@@ -117,19 +117,43 @@ const HOUR_MS = 3600 * 1000
  * quietly leaving it unobserved.
  *
  * How `maxAgeHours` was derived — the watchdog itself runs DAILY at 19:37 UTC,
- * and "age" is measured at a watchdog run against the newest scheduled run:
+ * and "age" is measured at a watchdog run against the newest scheduled run.
  *
- *   * `branch-protection-assert` (daily 12:00): healthy age is always ~7.6h.
- *     One skipped day reads 31.6h, two consecutive skips read 55.6h. 40h
- *     therefore tolerates up to ~32h of GitHub scheduler delay (delays of
- *     several hours are routine under load) and still fires on two skips.
+ * The numbers below are MEASURED, not inferred from the cron expressions.
+ * GitHub does not deliver a cron on time, and in this repo it is never even
+ * close; over the runs the API still holds (2026-07-31, `gh run list --event
+ * schedule`), delivery lag from the nominal minute was:
+ *
+ *     branch-protection-assert  n=20  min 1.00h  median 1.44h  MAX 2.30h
+ *     codeql                    n=11  min 1.85h  median 3.49h  MAX 4.99h
+ *     scorecard                 n=11  min 2.67h  median 3.93h  MAX 5.77h
+ *     scheduled-deep-checks     n= 7  min 3.15h  median 4.38h  MAX 6.25h
+ *     e2e-tauri-weekly          n= 1                           MAX 5.22h
+ *
+ * So a window must clear ~6.5h of lag on the WATCHED run and however much the
+ * watchdog's own tick is late (bounded by its own 44h self-watch below).
+ *
+ *   * `branch-protection-assert` (daily 12:00, observed 13:00–14:18): healthy
+ *     age at the 19:37 tick is 5.3–6.6h, and at most ~12.6h once the
+ *     watchdog's own lag is added. One skipped day reads 30.6–36.6h. 30h
+ *     therefore fires on a SINGLE skipped day while still leaving ~17h of
+ *     headroom over the worst healthy age — against a worst measured lag of
+ *     6.25h. It was 40h, which needed TWO consecutive skips: for the one
+ *     watched workflow that guards the ruleset keeping unreviewed code off
+ *     `main`, that made this the LEAST sensitive daily check in the set,
+ *     strictly less sensitive than the watchdog's own 44h self-watch (which
+ *     fires on one skip, because its baseline is the 24h-old PREVIOUS run
+ *     rather than a ~6h-old newest run). Tightened during review of #3374.
  *   * The weekly lanes (Mon 02:43 / Mon 04:17 / Mon 06:00 / Tue 06:00):
- *     healthy age peaks at ~161h on the day before the next run. One skipped
- *     week pushes it past 180h and it trips on the following day's watchdog
- *     run. 200h leaves ~39h of delay tolerance under that.
- *   * The watchdog itself (daily, self-excluded — see below): the PREVIOUS
- *     run is normally 24h old, 48h after one skipped day. 44h fires on a
- *     single skip with ~20h of delay tolerance.
+ *     healthy age peaks at ~161h on the Sunday tick before the next run, ~167h
+ *     with the watchdog's own lag. One skipped week reads ~185h at the Monday
+ *     tick and ~209h at the Tuesday one, so 200h trips one day after a missed
+ *     week and keeps ~33h of headroom. A day of extra latency on a weekly job
+ *     is worth more than the margin tightening to 180h would cost.
+ *   * The watchdog itself (daily, self-excluded — see below): the PREVIOUS run
+ *     is normally 24h old — measured lag DIFFERENCE between consecutive daily
+ *     runs is ≤1.3h, so 22.7–25.3h — and 48h after one skipped day. 44h fires
+ *     on a single skip with ~19h of headroom.
  *
  * The self-test pins the property that makes those numbers meaningful: every
  * window is strictly under two nominal periods, so a check that never fires
@@ -139,7 +163,8 @@ export const WATCHED = Object.freeze([
   Object.freeze({
     workflow: 'branch-protection-assert.yml',
     periodHours: 24,
-    maxAgeHours: 40,
+    // 30h, not 40h: fires on ONE skipped day. See the measured derivation above.
+    maxAgeHours: 30,
     why: 'daily 12:00 UTC; guards the ruleset that keeps unreviewed code off main',
   }),
   Object.freeze({
@@ -279,8 +304,8 @@ export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WA
 // ---------------------------------------------------------------------------
 
 /**
- * Whole-line comments removed — both YAML comments and, inside a `run:` block,
- * shell ones.
+ * Comments removed — both YAML comments and, inside a `run:` block, shell ones,
+ * whether they occupy the whole line or trail live content on it.
  *
  * Every text assertion below MUST scan through this. Found the hard way while
  * mutation-testing this file: `findWatchdogWiringProblems` originally searched
@@ -289,11 +314,24 @@ export function buildResults({ runsByWorkflow, nowMs, excludeRunId, watched = WA
  * comment EXPLAINS the flag by name. A guard satisfied by the prose describing
  * the thing it guards is exactly the vacuous check this whole work stream is
  * about.
+ *
+ * That first fix dropped only WHOLE-LINE comments, which left the identical
+ * hole one column over: `- name: Classify  # passes --exclude-run-id` does not
+ * start with `#`, so it survived stripping and satisfied the guard on its own.
+ * Found by desyncing this function during review of #3374 — the same class of
+ * textual-scanner desync this work stream keeps producing. So the cut is now at
+ * the first `#` on every line, not at the first column.
+ *
+ * Deliberately NOT a YAML/shell quoting parser: `#` inside a quoted string
+ * (this repo's workflow bodies say "(#3374)") is cut too. That loses nothing
+ * for the three assertions below — none of the things they look for can
+ * legitimately sit after a `#` — and it errs toward REPORTING a problem, which
+ * is the only safe direction for a guard.
  */
-export function stripCommentLines(text) {
+export function stripComments(text) {
   return text
     .split('\n')
-    .filter((l) => !/^\s*#/.test(l))
+    .map((l) => l.split('#')[0])
     .join('\n')
 }
 
@@ -304,7 +342,7 @@ export function stripCommentLines(text) {
  * a documented-but-disabled `# - cron:` does not read as a live schedule.
  */
 export function hasCronTrigger(workflowText) {
-  return stripCommentLines(workflowText)
+  return stripComments(workflowText)
     .split('\n')
     .some((l) => /^\s*-\s*cron:/.test(l))
 }
@@ -336,7 +374,7 @@ export function findUnwatchedWorkflows(files, watched = WATCHED) {
  *   * `--exclude-run-id`: without it the self-watch grades the run that is
  *     currently executing, which is by definition alive. Vacuous.
  *   * a DAILY cron: every window in WATCHED is derived from the watchdog
- *     ticking once a day. On a weekly cron the 40h/44h windows would report
+ *     ticking once a day. On a weekly cron the 30h/44h windows would report
  *     `stale` on every run, and the resulting permanently-open issue is the
  *     notification fatigue this work stream is trying to avoid.
  *   * `--profile workflow-watchdog`: without it the filer defaults to
@@ -347,9 +385,9 @@ export function findUnwatchedWorkflows(files, watched = WATCHED) {
  * `findUncoveredLanes` in the sibling filer.
  */
 export function findWatchdogWiringProblems(rawWorkflowText) {
-  // Comments stripped FIRST — see `stripCommentLines`. The header comment of
+  // Comments stripped FIRST — see `stripComments`. The header comment of
   // `workflow-watchdog.yml` names all three of these things.
-  const workflowText = stripCommentLines(rawWorkflowText)
+  const workflowText = stripComments(rawWorkflowText)
   const problems = []
   if (!workflowText.includes('--exclude-run-id')) {
     problems.push(
@@ -633,6 +671,33 @@ function selfTestClassification({ check }) {
     classify([run(0.2, 'queued', null, 9)]),
   )
 
+  // Order-independence. `gh run list` happens to return newest-first, but
+  // nothing here may DEPEND on that: `.toSorted()` is what makes
+  // `considered[0]` the newest, and reversing its comparator leaves every
+  // single-element assertion above green while measuring liveness from the
+  // OLDEST of the last ten runs — which reports a perfectly healthy weekly
+  // workflow as permanently stale. (Found by mutation-testing this file.)
+  for (const [label, runs] of [
+    ['newest-first', [run(1, 'completed', 'success', 2), run(200, 'completed', 'success', 1)]],
+    ['oldest-first', [run(200, 'completed', 'success', 1), run(1, 'completed', 'success', 2)]],
+  ]) {
+    check(
+      classify(runs) === 'success',
+      `liveness is measured from the NEWEST run, whatever order gh returns them (${label})`,
+      classify(runs),
+    )
+  }
+  for (const [label, runs] of [
+    ['newest-first', [run(1, 'completed', 'failure', 2), run(20, 'completed', 'success', 1)]],
+    ['oldest-first', [run(20, 'completed', 'success', 1), run(1, 'completed', 'failure', 2)]],
+  ]) {
+    check(
+      classify(runs).startsWith('failure ('),
+      `the conclusion comes from the NEWEST completed run, not the oldest (${label})`,
+      classify(runs),
+    )
+  }
+
   // Self-watch. Without the exclusion the watchdog would grade its own
   // in-flight run and could never fail — a check that cannot fail.
   {
@@ -736,6 +801,17 @@ function selfTestWiringGuard({ check, fail }) {
     'a commented-out cron is not a live schedule',
     '',
   )
+  check(
+    hasCronTrigger("name: X\non:\n  schedule:\n    - cron: '0 6 * * 1'  # weekly\njobs: {}"),
+    'a cron with a TRAILING comment is still a live schedule',
+    '',
+  )
+  check(
+    !stripComments('  - name: x  # --exclude-run-id').includes('--exclude-run-id') &&
+      !stripComments('    node x.mjs  # --profile workflow-watchdog').includes('--profile'),
+    'stripComments cuts TRAILING comments, not just whole-line ones',
+    JSON.stringify(stripComments('  - name: x  # --exclude-run-id')),
+  )
   {
     const clean = findUnwatchedWorkflows(
       [
@@ -781,10 +857,18 @@ function selfTestWiringGuard({ check, fail }) {
       '          node scripts/check-workflow-liveness.mjs --exclude-run-id "$CURRENT_RUN_ID" --out w.json',
       '          node scripts/file-scheduled-failures.mjs --profile workflow-watchdog',
     ].join('\n')
+    const gutted = good
+      .replace(' --exclude-run-id "$CURRENT_RUN_ID"', '')
+      .replace(' --profile workflow-watchdog', '')
     check(
       findWatchdogWiringProblems(good).length === 0,
       'watchdog wiring guard passes on a correctly wired workflow',
       JSON.stringify(findWatchdogWiringProblems(good)),
+    )
+    check(
+      findWatchdogWiringProblems(gutted).length === 2,
+      'the gutted fixture really is missing BOTH flags (else the cases below are vacuous)',
+      JSON.stringify(findWatchdogWiringProblems(gutted)),
     )
     for (const [label, broken] of [
       [
@@ -798,9 +882,22 @@ function selfTestWiringGuard({ check, fail }) {
       // green. Prose about a check must never stand in for the check.
       [
         'the flag survives only in a comment that explains it',
-        `# the watchdog passes --exclude-run-id and --profile workflow-watchdog\n${good
-          .replace(' --exclude-run-id "$CURRENT_RUN_ID"', '')
-          .replace(' --profile workflow-watchdog', '')}`,
+        `# the watchdog passes --exclude-run-id and --profile workflow-watchdog\n${gutted}`,
+      ],
+      // …and the same hole one column over. Dropping only WHOLE-LINE comments
+      // left a trailing comment — YAML or shell — able to satisfy the guard on
+      // its own, with neither flag present in any real invocation. Found by
+      // desyncing `stripComments` during review.
+      [
+        'the flags survive only in a TRAILING yaml comment on a live line',
+        `      - name: Classify  # passes --exclude-run-id and --profile workflow-watchdog\n${gutted}`,
+      ],
+      [
+        'the flags survive only in a TRAILING shell comment inside `run:`',
+        gutted.replace(
+          '--out w.json',
+          '--out w.json  # --exclude-run-id and --profile workflow-watchdog dropped for now',
+        ),
       ],
     ]) {
       const problems = findWatchdogWiringProblems(broken)
@@ -835,6 +932,116 @@ function selfTestWindows({ check }) {
     WATCHED.some((w) => w.selfExcluded === true),
     'the watchdog is in its own watched set',
     '',
+  )
+
+  // `period < window < 2×period` above is only the coarse sanity bound: it
+  // admits 47h for a daily workflow, which quietly needs TWO consecutive
+  // misses before it says anything. So the MEASURED derivation in the WATCHED
+  // docstring is pinned here too, per period class. (Widening
+  // `branch-protection-assert` from 30h to 47h was a live mutant that survived
+  // the coarse bound.)
+  const bp = WATCHED.find((w) => w.workflow === 'branch-protection-assert.yml')
+  check(
+    bp.maxAgeHours > 13 && bp.maxAgeHours < 30.6,
+    'branch-protection-assert fires on ONE skipped day (window between the 12.6h worst healthy age and the 30.6h one-skip age)',
+    `window=${bp.maxAgeHours}h`,
+  )
+  const self = WATCHED.find((w) => w.selfExcluded)
+  check(
+    // Upper bound is 46.7h, not 48h: the one-skip age is 48h MINUS the lag
+    // differential between the two surviving runs (measured ≤1.3h for a daily
+    // cron), so a 47h window would sit inside the noise and could miss a real
+    // skipped day.
+    self.maxAgeHours > 25.3 && self.maxAgeHours < 46.7,
+    'the self-watch fires on ONE skipped day (baseline is the 24h-old PREVIOUS run, so the one-skip age is 48h less ≤1.3h of lag jitter)',
+    `window=${self.maxAgeHours}h`,
+  )
+  for (const w of WATCHED.filter((e) => e.periodHours === 168)) {
+    check(
+      w.maxAgeHours > 167 && w.maxAgeHours < 209,
+      `${w.workflow}: the weekly window clears the 167h worst healthy age and still trips within a day of a missed week`,
+      `window=${w.maxAgeHours}h`,
+    )
+  }
+}
+
+/**
+ * The argv `fetchScheduleRuns` actually hands to `gh`.
+ *
+ * Every assertion in `selfTestClassification` feeds `classifyWorkflow` a run
+ * list directly, so nothing above pins the QUERY that produces that list — and
+ * four of its arguments are load-bearing in a way that fails SILENTLY. Each of
+ * these was a live mutant that survived the whole of the rest of this suite:
+ *
+ *   * `--event schedule`: without it a `push` run counts as liveness. On a repo
+ *     that merges to `main` all day, `codeql` and `scorecard` would then read
+ *     fresh forever while their crons were dead for months — the § Why
+ *     `--event schedule` only rationale at the top of this file, deleted, with
+ *     every assertion still green. That is a check that cannot fail.
+ *   * `--workflow <name>`: without it every watched entry is classified from
+ *     one repo-wide run list, so a single live workflow makes all six healthy.
+ *   * `databaseId` in `--json`: without it `r.databaseId` is `undefined`, the
+ *     `--exclude-run-id` filter matches nothing, and the self-watch is back to
+ *     grading its own in-flight run — vacuous, and invisible.
+ *   * `--limit` > 1: the conclusion question needs a COMPLETED run BEHIND a
+ *     possibly in-flight newest one. At `--limit 1` an overlapping watched run
+ *     reports `no-completed-run` every time, which is the false alarm that gets
+ *     a watchdog muted.
+ */
+function selfTestGhInvocation({ check }) {
+  const dir = mkdtempSync(join(tmpdir(), 'workflow-liveness-argv-'))
+  const argvFile = join(dir, 'argv.txt')
+  const stub = join(dir, 'gh')
+  writeFileSync(
+    stub,
+    `#!/bin/sh\nprintf '%s\\n' "$@" > ${JSON.stringify(argvFile)}\nprintf '[]'\n`,
+    'utf8',
+  )
+  chmodSync(stub, 0o755)
+
+  const prevPath = process.env.PATH
+  process.env.PATH = `${dir}:${prevPath}`
+  try {
+    fetchScheduleRuns('owner/repo', 'codeql.yml')
+  } finally {
+    process.env.PATH = prevPath
+  }
+
+  const argv = readFileSync(argvFile, 'utf8')
+    .split('\n')
+    .filter((s) => s.length > 0)
+  const seen = argv.join(' ')
+  const valueOf = (flag) => {
+    const i = argv.indexOf(flag)
+    return i === -1 ? undefined : argv[i + 1]
+  }
+  const fields = (valueOf('--json') ?? '').split(',')
+
+  check(
+    valueOf('--event') === 'schedule',
+    '`gh run list` asks for `schedule` runs ONLY — a push run must never prove liveness',
+    seen,
+  )
+  check(
+    valueOf('--workflow') === 'codeql.yml',
+    '`gh run list` is scoped to the ONE workflow being classified',
+    seen,
+  )
+  check(valueOf('--repo') === 'owner/repo', '`gh run list` is scoped to the repo asked about', seen)
+  check(
+    fields.includes('databaseId'),
+    '`--json` requests `databaseId`, without which `--exclude-run-id` silently matches nothing',
+    seen,
+  )
+  check(
+    ['status', 'conclusion', 'createdAt'].every((f) => fields.includes(f)),
+    '`--json` requests every field the classifier reads',
+    seen,
+  )
+  check(
+    Number(valueOf('--limit')) > 1,
+    '`--limit` fetches more than one run, so the conclusion can look BEHIND an in-flight newest run',
+    seen,
   )
 }
 
@@ -964,6 +1171,7 @@ function runSelfTest() {
   selfTestClassification({ check })
   selfTestWiringGuard({ check, fail })
   selfTestWindows({ check })
+  selfTestGhInvocation({ check })
   selfTestGhFailureModes({ check })
 
   if (failures.length > 0) {

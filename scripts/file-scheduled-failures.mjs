@@ -1194,10 +1194,11 @@ function runSelfTest() {
 }
 
 // Entry-point detection in the one sanctioned form (#3373): both sides
-// realpath'd. The banned `file://` template form was live here — verifying
-// #3374's watchdog against a checkout whose `scripts/` was a symlink made this
-// script exit 0 having filed nothing, silently, which is the exact bug class
-// the reporter exists to remove.
+// realpath'd. The banned `file://` template form was live here when #3374's
+// watchdog was verified against a checkout whose `scripts/` was a symlink —
+// this script exited 0 having filed nothing, silently, the exact bug class the
+// reporter exists to remove. #3376 landed the same fix on `main` first, so
+// this note is all that remains of it here.
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {

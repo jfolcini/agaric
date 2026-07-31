@@ -46,8 +46,9 @@ would be checking whether the run currently executing is alive.
 - **The old `file://`-template entry-point gate (#3373) was live in
   `file-scheduled-failures.mjs`.** Found by accident: the verification harness ran the
   workflow's `run:` bodies against a checkout whose `scripts/` was a symlink, and the filer
-  exited **0 having filed nothing**, silently. Fixed to the sanctioned realpath form. The
-  #3373 branch does not touch this file, so it would otherwise have landed as a violation.
+  exited **0 having filed nothing**, silently. #3376 landed the same fix on `main` before
+  this branch rebased, so only the explanatory comment survives here — the branch carries no
+  code change for it.
 - **The wiring guard matched its own documentation.** `findWatchdogWiringProblems` searched
   the raw workflow text for `--exclude-run-id`; deleting the flag from the actual `node …`
   invocation left the guard green, because the workflow's *header comment explains the flag
@@ -89,3 +90,41 @@ its write failures. Fourteen mutants covering every assertion in the new code we
 into a copy of the tree; all fourteen were killed. `actionlint`, `zizmor`, `oxlint`,
 `oxfmt`, `taplo fmt --check`. Not verifiable locally: the real cron firing, and the real
 Actions API's `--event schedule` filtering.
+
+## Review pass (adversarial, same session)
+
+Those fourteen mutants all targeted assertions that existed. Re-mutating against the parts
+of the file **no** assertion reached found five more survivors, four of them sharing one
+root cause — nothing pinned the argv `fetchScheduleRuns` hands to `gh`:
+
+- **`--event schedule` deleted** — a `push` run then proves liveness. On a repo that merges
+  to `main` all day, `codeql` and `scorecard` would read fresh forever with dead crons. The
+  header spends fifteen lines on why this flag exists; deleting it kept every assertion
+  green. A seventh cannot-fail check, and the worst one yet.
+- **`databaseId` dropped from `--json`** — `--exclude-run-id` then matches nothing and the
+  self-watch silently goes back to grading its own in-flight run.
+- **`--workflow` dropped** — all six entries classified from one repo-wide run list.
+- **`--limit 10` → `1`** — the conclusion can no longer look behind an in-flight run, so an
+  overlapping watched run false-alarms every time.
+- **the run sort reversed** — every classification assertion but two passes a single-element
+  array, and the two that do not give the same answer in both orders.
+
+Fixed by `selfTestGhInvocation` (asserts the real argv against a recording `gh` stub) and
+order-independence assertions. Eighteen mutants now, eighteen killed.
+
+**`stripCommentLines` was desynced**, exactly as its own docstring feared, one column over:
+it dropped only lines *starting* with `#`, so a **trailing** comment — `- name: Classify #
+passes --exclude-run-id`, or the same inside a `run:` block — satisfied the wiring guard
+with neither flag present anywhere real. Renamed `stripComments` and now cuts at the first
+`#` on every line; both trailing-comment forms are fixtures, and regressing it to the
+whole-line-only behaviour is a killed mutant.
+
+**The windows were derived from nominal cron times, and GitHub never delivers on them.**
+Measured over the run history the API still holds: lag is 1.0–2.3h for the daily job and
+1.9–6.25h for the weeklies. `branch-protection-assert`'s healthy age is therefore 5.3–6.6h,
+not the documented 7.6h — harmless in itself, but the 40h window it justified needed **two**
+consecutive skipped days to fire. That made the ruleset guard the least sensitive daily
+check in the set, less sensitive than the watchdog's own self-watch. Tightened to 30h: fires
+on one skip, ~17h of headroom over the worst healthy age against a 6.25h worst measured lag.
+The derivation in `WATCHED` now carries the measurements, and the per-period-class bounds
+are asserted, so widening it back is a killed mutant rather than a silent regression.
