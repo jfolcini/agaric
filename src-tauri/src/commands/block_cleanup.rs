@@ -49,9 +49,33 @@ use agaric_core::error::AppError;
 /// projected_agenda_cache → blocks). FK checks must already be deferred by
 /// the caller (`PRAGMA defer_foreign_keys = ON`) — the chain assumes it.
 ///
-/// Returns `(attachment_fs_paths, blocks_rows_affected)`: the attachment
-/// on-disk paths captured BEFORE their rows are deleted (so the caller can
-/// unlink them post-commit) and the row count of the final `blocks` DELETE.
+/// Returns a [`PurgeSubtreeCounts`]: how many `attachments` rows the chain
+/// deleted (a hint the caller uses to decide whether a byte-reclamation GC
+/// pass is worth enqueuing) and the row count of the final `blocks` DELETE.
+///
+/// # Byte reclamation is NOT done here (#3259)
+///
+/// This helper used to `SELECT fs_path FROM attachments WHERE block_id IN
+/// (<member>)` before the DELETE and hand those paths back for a post-commit
+/// `remove_file`. Since the #1993 content-hash dedup landed, N `attachments`
+/// rows legitimately SHARE one canonical file (`add_attachment_inner` reuses
+/// an existing `attachment_blobs.on_disk_path`, and
+/// `backfill_attachment_blobs` repoints duplicate-hash rows onto one canonical
+/// path at boot), so that unfiltered capture unlinked bytes surviving rows on
+/// non-purged blocks still referenced — a live data-loss bug.
+///
+/// Bytes are therefore reclaimed exactly the way `delete_attachment_inner` and
+/// the dedup branch of `add_attachment_inner` already reclaim them: by
+/// `cleanup_orphaned_attachments`, which unlinks a walked file only when NO
+/// `attachments` row references its path — its authoritative write-pool
+/// membership re-check sits immediately before the `remove_file`, so the
+/// decision cannot be invalidated across a commit boundary the way a
+/// capture-inside-the-tx / unlink-after-commit scheme is (there, ANY
+/// concurrent same-bytes ingest deduping onto the path in between silently
+/// turns the unlink into data loss) — and then prunes any
+/// `attachment_blobs` row whose `on_disk_path` is likewise unreferenced. The
+/// callers enqueue that GC pass post-commit when `attachment_rows > 0`, so
+/// reclamation stays prompt.
 ///
 /// All SQL here is genuinely dynamic — the same chain is emitted against
 /// three different membership shapes (single-root recursive CTE, multi-root
@@ -63,19 +87,7 @@ pub async fn purge_subtree_tables(
     cte_prefix: &str,
     member_subquery: &str,
     bind: Option<&str>,
-) -> Result<(Vec<String>, u64), AppError> {
-    // #85 F2: capture attachment file paths for the post-commit unlink
-    // BEFORE the rows are deleted, else the rows vanish and the files leak.
-    let attachment_paths = query_strings(
-        conn,
-        bind,
-        &format!(
-            "{cte_prefix}SELECT fs_path FROM attachments \
-             WHERE block_id IN ({member_subquery})"
-        ),
-    )
-    .await?;
-
+) -> Result<PurgeSubtreeCounts, AppError> {
     // #2895 slice 1: the store-owned satellite / derived-cache purge (block_tags,
     // block_tag_inherited, block_properties×2, block_links, agenda_cache,
     // tags_cache, pages_cache, fts_blocks, page_aliases, projected_agenda_cache)
@@ -86,9 +98,14 @@ pub async fn purge_subtree_tables(
     agaric_store::cache::purge_block_satellite_caches(conn, cte_prefix, member_subquery, bind)
         .await?;
 
-    // attachments (keyed on block_id) — app-owned, fs-backed satellite; the
-    // captured on-disk paths are unlinked post-commit by the caller.
-    exec(
+    // attachments (keyed on block_id) — app-owned, fs-backed satellite. Only
+    // the ROWS go here: the bytes they point at may be shared with rows on
+    // blocks outside the member set (#1993 dedup), so unlinking them is the
+    // GC's refcount-aware job (#3259 — see the doc comment above). The
+    // rows-affected count is returned purely as a "was any attachment
+    // involved?" hint so the caller can skip the GC enqueue on the common
+    // attachment-free purge.
+    let attachment_rows = exec(
         conn,
         bind,
         &format!(
@@ -117,7 +134,27 @@ pub async fn purge_subtree_tables(
         agaric_engine::block_ops::delete_blocks_in_subtree(conn, cte_prefix, member_subquery, bind)
             .await?;
 
-    Ok((attachment_paths, rows))
+    Ok(PurgeSubtreeCounts {
+        attachment_rows,
+        blocks: rows,
+    })
+}
+
+/// Row counts produced by one [`purge_subtree_tables`] run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PurgeSubtreeCounts {
+    /// `attachments` rows deleted for the member set. Non-zero means the
+    /// purge may have orphaned bytes on disk, so the caller enqueues a
+    /// `CleanupOrphanedAttachments` pass post-commit; zero means there is
+    /// nothing for the GC to reclaim and the enqueue is skipped.
+    ///
+    /// Deliberately a COUNT, not the list of `fs_path`s: a path list would
+    /// invite the caller to unlink it, which is exactly the #3259 data-loss
+    /// bug (those paths may be shared with surviving rows).
+    pub attachment_rows: u64,
+    /// Rows affected by the final `blocks` DELETE — the purge's headline
+    /// "how many blocks did this remove" count.
+    pub blocks: u64,
 }
 
 /// Execute one dynamic `DELETE`, optionally binding a single placeholder.
@@ -130,21 +167,6 @@ async fn exec(conn: &mut SqliteConnection, bind: Option<&str>, sql: &str) -> Res
         q = q.bind(b.to_string());
     }
     Ok(q.execute(conn).await?.rows_affected())
-}
-
-/// Run one dynamic `SELECT <text-col>` returning the column values,
-/// optionally binding a single placeholder.
-async fn query_strings(
-    conn: &mut SqliteConnection,
-    bind: Option<&str>,
-    sql: &str,
-) -> Result<Vec<String>, AppError> {
-    // dynamic-sql: #664 — see `exec` above; same runtime-shape rationale.
-    let mut q = sqlx::query_scalar::<_, String>(sqlx::AssertSqlSafe(sql.to_string()));
-    if let Some(b) = bind {
-        q = q.bind(b.to_string());
-    }
-    Ok(q.fetch_all(conn).await?)
 }
 
 // #2621 (THE INVERSION): `rederive_page_and_space_ids` is pure `blocks`-table

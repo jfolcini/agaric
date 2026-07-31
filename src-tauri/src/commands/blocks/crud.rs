@@ -1576,19 +1576,19 @@ pub async fn purge_block_inner(
     // PURGE: erase every row descended from the purged block. The
     // single-root `descendants_cte_purge!()` walks the subtree without
     // filters, bounded only by `depth < 100` against corrupted parent_id
-    // chains. #664: the satellite-table chain (block_tags … blocks, with
-    // the pre-DELETE attachment-path capture) lives in the shared
-    // `crate::commands::block_cleanup::purge_subtree_tables` helper — the
-    // single source of truth across all three purge variants. The
-    // materializer's `OpType::PurgeBlock` handler mirrors this sequence for
-    // remote ops.
-    let (purged_attachment_paths, count) = crate::commands::block_cleanup::purge_subtree_tables(
+    // chains. #664: the satellite-table chain (block_tags … blocks) lives in
+    // the shared `crate::commands::block_cleanup::purge_subtree_tables`
+    // helper — the single source of truth across all three purge variants.
+    // The materializer's `OpType::PurgeBlock` handler mirrors this sequence
+    // for remote ops.
+    let purge_counts = crate::commands::block_cleanup::purge_subtree_tables(
         &mut tx,
         agaric_store::descendants_cte_purge!(),
         "SELECT id FROM descendants",
         Some(&block_id),
     )
     .await?;
+    let count = purge_counts.blocks;
 
     // #2042: see the note above — surviving pages' counts are recomputed by the
     // background `RebuildPagesCacheCounts` task, not synchronously here.
@@ -1603,8 +1603,10 @@ pub async fn purge_block_inner(
     // per-space Loro engine (see `dispatch_purge_engine_fanout`).
     dispatch_purge_engine_fanout(materializer, &[(op_record, purge_cohort, purge_space_id)]);
 
-    // #85 F2: unlink the purged attachment files post-commit (best-effort).
-    spawn_purged_attachment_cleanup(materializer.app_data_dir(), purged_attachment_paths);
+    // #85 F2 / #3259: reclaim any bytes this purge orphaned via the
+    // refcount-aware GC pass — never by unlinking the purged rows' own
+    // `fs_path`s, which may be shared with surviving rows.
+    enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
 
     Ok(PurgeResponse {
         block_id,
@@ -1860,18 +1862,18 @@ pub async fn purge_all_deleted_inner(
     // carry `deleted_at IS NOT NULL`, the member set is the flat
     // `deleted_at IS NOT NULL` selection rather than a recursive CTE; there
     // is no seed-id placeholder, so `bind` is `None`. #664: the
-    // satellite-table chain (block_tags … blocks, with the pre-DELETE
-    // attachment-path capture) lives in the shared
+    // satellite-table chain (block_tags … blocks) lives in the shared
     // `crate::commands::block_cleanup::purge_subtree_tables` helper.
-    let (attachment_rows, count) = crate::commands::block_cleanup::purge_subtree_tables(
+    let purge_counts = crate::commands::block_cleanup::purge_subtree_tables(
         &mut tx,
         "",
         "SELECT id FROM blocks WHERE deleted_at IS NOT NULL",
         None,
     )
     .await?;
+    let count = purge_counts.blocks;
     // Commit + drain the queued PurgeBlock op records for background
-    // dispatch. Attachment-file unlink runs after dispatch (cache
+    // dispatch. The attachment-byte GC is enqueued after dispatch (cache
     // rebuilds are independent of the filesystem side effect).
     tx.commit_and_dispatch(materializer).await?;
 
@@ -1879,12 +1881,12 @@ pub async fn purge_all_deleted_inner(
     // per-space Loro engine (see `dispatch_purge_engine_fanout`).
     dispatch_purge_engine_fanout(materializer, &purge_fanout);
 
-    // + #85 F2: post-commit attachment-file unlink on a blocking thread
-    // (the per-file `unlink` syscalls must not hold up the IPC reply; the DB tx
-    // has committed, so failures are best-effort warn-logs). Resolves paths
-    // against the materializer's `app_data_dir` — no longer a CWD-relative
-    // `remove_file`.
-    spawn_purged_attachment_cleanup(materializer.app_data_dir(), attachment_rows);
+    // + #85 F2 / #3259: post-commit byte reclamation is delegated to the
+    // refcount-aware `CleanupOrphanedAttachments` GC pass. "Empty trash"
+    // typically strands the most bytes, so the enqueue matters most here —
+    // but the paths those rows held may still be referenced by surviving
+    // rows via the #1993 dedup, so only the GC may decide to unlink.
+    enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -2241,19 +2243,19 @@ pub async fn purge_blocks_by_ids_inner(
         .execute(&mut **tx)
         .await?;
 
-    // #664: the satellite-table chain (block_tags … blocks, with the
-    // pre-DELETE attachment-path capture) lives in the shared
-    // `crate::commands::block_cleanup::purge_subtree_tables` helper — the
-    // single source of truth across all three purge variants. Here the
+    // #664: the satellite-table chain (block_tags … blocks) lives in the
+    // shared `crate::commands::block_cleanup::purge_subtree_tables` helper —
+    // the single source of truth across all three purge variants. Here the
     // member set is the multi-root `json_each`-seeded `descendants` CTE
     // (the `cte` prefix built above), bound to the `?1` JSON id array.
-    let (attachment_rows, count) = crate::commands::block_cleanup::purge_subtree_tables(
+    let purge_counts = crate::commands::block_cleanup::purge_subtree_tables(
         &mut tx,
         cte,
         "SELECT id FROM descendants",
         Some(&ids_json),
     )
     .await?;
+    let count = purge_counts.blocks;
 
     // #2042: pages_cache counts for surviving pages that had inbound links from
     // the purged subtrees are recomputed by the background
@@ -2270,10 +2272,9 @@ pub async fn purge_blocks_by_ids_inner(
     // variants).
     dispatch_purge_engine_fanout(materializer, &purge_fanout);
 
-    // + #85 F2: post-commit attachment-file unlink (mirrors
-    // `purge_all_deleted_inner`), resolved against the materializer's
-    // `app_data_dir` rather than a CWD-relative `remove_file`.
-    spawn_purged_attachment_cleanup(materializer.app_data_dir(), attachment_rows);
+    // + #85 F2 / #3259: post-commit byte reclamation via the refcount-aware
+    // GC pass (mirrors `purge_all_deleted_inner`).
+    enqueue_purged_attachment_gc(materializer, purge_counts.attachment_rows);
 
     Ok(BulkTrashResponse {
         affected_count: count,
@@ -2689,110 +2690,70 @@ pub async fn create_blocks_batch(
         .map_err(sanitize_internal_error)
 }
 
-/// Render an attachment path for structured logs without leaking the raw
-/// filename.
-///
-/// Returns `(path_hash, extension)` where:
-/// * `path_hash` is a 16-hex-char truncation of `blake3(path.as_bytes())`,
-///   stable across runs so repeated failures for the same path correlate.
-/// * `extension` is the lowercase file extension (or `""` when there is
-///   none). The extension is retained because it's low-entropy and helps
-///   diagnose "is this a PDF vs an image" problems without exposing the
-///   user's chosen filename.
-///
-/// Used by the trash/purge paths (`purge_block_inner`,
-/// `purge_all_deleted_inner`) where the full path would otherwise be
-/// written to the log.
-pub(crate) fn anonymize_attachment_path(path: &str) -> (String, String) {
-    let hash = blake3::hash(path.as_bytes());
-    // First 8 bytes == 16 hex chars is enough for correlation without
-    // approaching brute-force reversibility concerns.
-    let short_hash: String = hash
-        .as_bytes()
-        .iter()
-        .take(8)
-        .map(|b| format!("{b:02x}"))
-        .collect();
-    let extension = std::path::Path::new(path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .map(str::to_ascii_lowercase)
-        .unwrap_or_default();
-    (short_hash, extension)
-}
+// #3259: `anonymize_attachment_path` lived here to render a purged
+// attachment's path into the unlink warn-logs without leaking the user's
+// filename. The purge paths no longer unlink anything (byte reclamation
+// belongs to the refcount-aware `cleanup_orphaned_attachments` GC pass — see
+// `enqueue_purged_attachment_gc`), so there is no longer a call site and the
+// helper is gone with the code it served.
 
-/// Remove the on-disk files for a set of just-purged attachments.
+/// Post-commit byte reclamation for a purge, delegated to the refcount-aware
+/// `CleanupOrphanedAttachments` GC pass.
 ///
-/// #85: attachment `fs_path`s are stored **app-data-relative**
-/// (e.g. `attachments/<ULID>`). This resolves each against `app_data_dir`
-/// (`app_data_dir.join(fs_path)`) — the proper absolute path — rather than the
-/// earlier bulk paths' bare relative `remove_file`, which only worked when the
-/// process CWD happened to equal the app-data dir. All three purge paths funnel
-/// through here so the single-block purge no longer leaks files and the bulk
-/// paths stop depending on CWD.
+/// # Why not unlink the purged rows' files directly (#3259)
 ///
-/// Defensive: an `fs_path` that is absolute or contains a `..` component is
-/// skipped (it cannot be a legitimate app-relative attachment path and joining
-/// it could escape the attachments dir). A missing file is a no-op — the
-/// `CleanupOrphanedAttachments` GC sweep is the backstop. Pure + synchronous so
-/// it is unit-testable; the spawn wrapper handles the off-thread, post-commit,
-/// best-effort execution.
-pub(crate) fn remove_purged_attachment_files(app_data_dir: &std::path::Path, fs_paths: &[String]) {
-    for fs_path in fs_paths {
-        let p = std::path::Path::new(fs_path.as_str());
-        if p.is_absolute()
-            || p.components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            let (path_hash, ext) = anonymize_attachment_path(fs_path);
-            tracing::warn!(
-                path_hash = %path_hash,
-                extension = %ext,
-                "skipping attachment deletion: unsafe path"
-            );
-            continue;
-        }
-        let full = app_data_dir.join(p);
-        match std::fs::remove_file(&full) {
-            Ok(()) => {}
-            // Already gone (double-purge, prior GC sweep) — not an error.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => {
-                let (path_hash, ext) = anonymize_attachment_path(fs_path);
-                tracing::warn!(
-                    path_hash = %path_hash,
-                    extension = %ext,
-                    error = %e,
-                    "failed to remove attachment file after purge"
-                );
-            }
-        }
-    }
-}
-
-/// Post-commit, best-effort unlink of purged attachment files on a blocking
-/// thread (per-file `unlink` syscalls must not hold up the IPC reply; the DB
-/// tx has already committed, so failures are warn-logged only). `app_data_dir`
-/// comes from the `Materializer` (`None` when unwired, e.g. in tests) — a
-/// `None` dir or empty path list skips the spawn entirely. The `JoinHandle` is
-/// intentionally dropped (fire-and-forget).
-fn spawn_purged_attachment_cleanup(
-    app_data_dir: Option<std::path::PathBuf>,
-    fs_paths: Vec<String>,
-) {
-    if fs_paths.is_empty() {
+/// All three purge paths used to capture
+/// `SELECT fs_path FROM attachments WHERE block_id IN (<member>)` before the
+/// DELETE and `remove_file` each captured path post-commit, checking only the
+/// path's SHAPE. Since #1993, N `attachments` rows legitimately share ONE
+/// canonical file — `add_attachment_inner` points a new row at an existing
+/// `attachment_blobs.on_disk_path` when the content hash matches, and
+/// `backfill_attachment_blobs` repoints every duplicate-hash row in the vault
+/// onto one canonical path at boot (markdown import makes this the norm: one
+/// banner embedded on 20 notes is 20 rows over 1 file). That unfiltered
+/// capture therefore deleted bytes surviving rows on non-purged blocks still
+/// referenced: broken images, `read_attachment_inner` failures, and sync
+/// `MissingAttachment` reports for a file the user never deleted.
+///
+/// Filtering the capture with an anti-join inside the tx would not fix it
+/// either: the unlink necessarily runs AFTER the commit, and between the
+/// commit and the `remove_file` a concurrent `add_attachment_inner` can dedup
+/// a fresh row onto that very path (the `attachment_blobs` row still maps the
+/// hash to it). That is precisely the race `delete_attachment_inner` and the
+/// dedup branch of `add_attachment_inner` already refuse to take: both defer
+/// byte reclamation to the GC, whose referenced-path membership test and
+/// unlink are colocated (and whose per-file re-check runs on the write pool).
+/// Purge now follows the same rule, so the invariant stated in migration
+/// `0094_attachment_blobs.sql` — "a shared blob survives until the last
+/// referencing row is gone" — holds on every path.
+///
+/// The GC pass also prunes `attachment_blobs` rows whose `on_disk_path` is no
+/// longer referenced by any `attachments` row, which is what keeps the blob
+/// store consistent after a purge (the purge chain itself never touches
+/// `attachment_blobs`).
+///
+/// `attachment_rows` is the count of `attachments` rows the purge deleted; a
+/// zero skips the enqueue entirely so the overwhelmingly common
+/// attachment-free purge costs no queue churn. Best-effort, as reclamation is
+/// a storage concern and not a correctness invariant: a closed background
+/// channel is warn-logged and a full one sheds the task onto `bg_dropped`
+/// (`CleanupOrphanedAttachments` is deliberately not retry-queue persisted),
+/// with the boot-time and periodic (24 h) `CleanupOrphanedAttachments`
+/// enqueues in `lib.rs` as the backstop in both cases.
+fn enqueue_purged_attachment_gc(materializer: &Materializer, attachment_rows: u64) {
+    if attachment_rows == 0 {
         return;
     }
-    let Some(app_data_dir) = app_data_dir else {
-        tracing::debug!(
-            count = fs_paths.len(),
-            "skipping purged-attachment unlink: app_data_dir not set (GC sweep is the backstop)"
+    if let Err(e) = materializer
+        .try_enqueue_background(crate::materializer::MaterializeTask::CleanupOrphanedAttachments)
+    {
+        tracing::warn!(
+            error = %e,
+            attachment_rows,
+            "failed to enqueue CleanupOrphanedAttachments after purge; \
+             the periodic GC sweep is the backstop"
         );
-        return;
-    };
-    tokio::task::spawn_blocking(move || {
-        remove_purged_attachment_files(&app_data_dir, &fs_paths);
-    });
+    }
 }
 
 #[cfg(test)]
