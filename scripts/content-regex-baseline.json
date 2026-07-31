@@ -1,11 +1,5 @@
 [
   {
-    "file": "src/components/backlinks/UnlinkedReferences.tsx",
-    "rule": "unanchored-surgery",
-    "count": 1,
-    "reason": "#3313 — the site this guard was written for: `new RegExp(escapeRegExp(term), 'i')` + `content.replace(...)` turned `Notebook shopping list` into `[[id]]book shopping list`. Already fixed on the #3313 branch (both-sided lookarounds with `\\p{L}\\p{N}\\p{M}_`), which is not merged at the base of this branch. DELETE this entry when #3313 lands — the stale-entry check fails until it is removed."
-  },
-  {
     "file": "src/editor/markdown-common.ts",
     "rule": "incomplete-boundary-class",
     "count": 1,
