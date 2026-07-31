@@ -1,0 +1,117 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT id as \"id!: i64\", inbox_id, space_id,\n                  LENGTH(bytes) as \"byte_len!: i64\",\n                  declared_end_vv, last_reason, unresolved_boots,\n                  first_seen_at_ms, quarantined_at_ms\n           FROM loro_sync_quarantine\n           ORDER BY quarantined_at_ms DESC, id DESC",
+  "describe": {
+    "columns": [
+      {
+        "name": "id!: i64",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "id"
+          }
+        }
+      },
+      {
+        "name": "inbox_id",
+        "ordinal": 1,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "inbox_id"
+          }
+        }
+      },
+      {
+        "name": "space_id",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "byte_len!: i64",
+        "ordinal": 3,
+        "type_info": "Null",
+        "origin": "Expression"
+      },
+      {
+        "name": "declared_end_vv",
+        "ordinal": 4,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "declared_end_vv"
+          }
+        }
+      },
+      {
+        "name": "last_reason",
+        "ordinal": 5,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "last_reason"
+          }
+        }
+      },
+      {
+        "name": "unresolved_boots",
+        "ordinal": 6,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "unresolved_boots"
+          }
+        }
+      },
+      {
+        "name": "first_seen_at_ms",
+        "ordinal": 7,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "first_seen_at_ms"
+          }
+        }
+      },
+      {
+        "name": "quarantined_at_ms",
+        "ordinal": 8,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "quarantined_at_ms"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 0
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "74534c831cef1d79600cc3435b86ec12bbf245eb480e1d5aabc0cc15faca0755"
+}

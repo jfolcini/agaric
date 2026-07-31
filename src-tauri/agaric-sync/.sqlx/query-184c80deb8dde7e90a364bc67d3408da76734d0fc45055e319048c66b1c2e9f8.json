@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "DELETE FROM loro_sync_quarantine WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": []
+  },
+  "hash": "184c80deb8dde7e90a364bc67d3408da76734d0fc45055e319048c66b1c2e9f8"
+}

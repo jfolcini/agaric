@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE loro_sync_inbox SET unresolved_boots = ? WHERE id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "8f53a269fd7754df320ddf919616a6f48e4a5c0f4f2f542af21d7234ab95066b"
+}

@@ -1,0 +1,50 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT space_id, bytes, purged_ids FROM loro_sync_quarantine WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "space_id",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "space_id"
+          }
+        }
+      },
+      {
+        "name": "bytes",
+        "ordinal": 1,
+        "type_info": "Blob",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "bytes"
+          }
+        }
+      },
+      {
+        "name": "purged_ids",
+        "ordinal": 2,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_quarantine",
+            "name": "purged_ids"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false,
+      false,
+      true
+    ]
+  },
+  "hash": "a7adb3b7ffd0c155b2dced240c3a9005dbabcf0f99591a59fc3dca9c33581df5"
+}

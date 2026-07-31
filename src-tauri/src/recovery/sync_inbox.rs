@@ -105,6 +105,8 @@ pub async fn replay_sync_inbox(
     use std::collections::HashSet;
 
     let mut replayed: u64 = 0;
+    // #3226: slots moved to durable quarantine during this walk.
+    let mut quarantined: u64 = 0;
     let mut errors: Vec<String> = Vec::new();
     // #2541: accumulate the per-row changed / tombstone-purged block ids so
     // the inbound cache/FTS fan-out fires exactly once after the walk (sets:
@@ -217,6 +219,12 @@ pub async fn replay_sync_inbox(
             {
                 Ok(outcome) => {
                     replayed += outcome.replayed;
+                    // #3226: slots this batch moved to `loro_sync_quarantine`.
+                    // Counted separately from `replayed` (nothing was projected)
+                    // and from `errors` (they are no longer retried). The boot
+                    // report gets the authoritative figure from the quarantine
+                    // census in `boot.rs`; this is the per-space log line.
+                    quarantined += outcome.quarantined;
                     changed_all.extend(outcome.changed);
                     purged_all.extend(outcome.purged);
                     for err in &outcome.errors {
@@ -268,9 +276,10 @@ pub async fn replay_sync_inbox(
         );
     }
 
-    if replayed > 0 || !errors.is_empty() {
+    if replayed > 0 || quarantined > 0 || !errors.is_empty() {
         tracing::info!(
             replayed,
+            quarantined,
             errors = errors.len(),
             "#535: replayed leftover Loro-sync inbox slots at boot"
         );

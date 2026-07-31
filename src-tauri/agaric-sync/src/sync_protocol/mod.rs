@@ -13,6 +13,10 @@ pub mod loro_sync_types;
 // the wire types.
 pub mod loro_sync;
 
+// #3226 durable quarantine for permanently-stuck write-ahead inbox slots
+// (the resolution path #3194 / #3213 deliberately left unbuilt).
+pub mod loro_sync_quarantine;
+
 // #1319 cross-session aggregate of snapshot-fallback occurrences,
 // surfaced through `StatusInfo`.
 pub mod snapshot_fallback_metrics;

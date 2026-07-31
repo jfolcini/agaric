@@ -1,0 +1,26 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT unresolved_boots FROM loro_sync_inbox WHERE id = ?",
+  "describe": {
+    "columns": [
+      {
+        "name": "unresolved_boots",
+        "ordinal": 0,
+        "type_info": "Integer",
+        "origin": {
+          "Table": {
+            "table": "loro_sync_inbox",
+            "name": "unresolved_boots"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 1
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "c0010570d9f947221eb8ccfbfe6f565690766f921a14cb53e1c081e85a6692cd"
+}

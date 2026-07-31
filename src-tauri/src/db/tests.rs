@@ -4465,3 +4465,90 @@ async fn agents_md_table_rebuild_recipe_preserves_satellites_606() {
         .unwrap();
     assert_eq!(blk, 1, "the parent block survives the synthetic rebuild");
 }
+
+// ----------------------------------------------------------------------
+// #3226 — migration 0106 against a POPULATED `loro_sync_inbox`.
+//
+// Every other test in this file reaches 0106 through `sqlx::migrate!` on an
+// EMPTY database, which only proves the DDL parses. The claim 0106 actually
+// makes is about existing data: `ADD COLUMN unresolved_boots INTEGER NOT NULL
+// DEFAULT 0` must backfill a live write-ahead slot as "never yet retried"
+// (the conservative direction — an already-stuck slot gets the FULL boot
+// budget from here, it does not start part-way through one), and it must not
+// disturb the blob bytes that are, by #535, that slot's only durable copy.
+// Uses the seed-then-migrate harness so the REAL migration SQL runs.
+// ----------------------------------------------------------------------
+
+/// #3226 / #535: a `loro_sync_inbox` row seeded before 0106 survives the
+/// migration byte-for-byte and backfills to `unresolved_boots = 0`.
+#[tokio::test]
+async fn loro_sync_inbox_rows_survive_0106_with_a_full_boot_budget_3226() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0105 is the last migration before the quarantine schema (0106).
+    apply_migrations_through(&pool, 0, 105).await;
+
+    // A payload with structure, so a truncating/re-encoding migration bug
+    // would show rather than passing a mere length check.
+    let payload: Vec<u8> = (0u8..=255).cycle().take(3_000).collect();
+    let created_at: i64 = 1_700_000_000_000;
+    sqlx::query(
+        "INSERT INTO loro_sync_inbox (space_id, bytes, purged_ids, created_at) \
+         VALUES ('01HZ00000000000000000000SP', ?, ?, ?)",
+    )
+    .bind(&payload[..])
+    .bind(Option::<String>::None)
+    .bind(created_at)
+    .execute(&pool)
+    .await
+    .expect("seed a pre-0106 write-ahead slot");
+
+    apply_migrations_to_head(&pool, 105).await;
+
+    let boots: i64 = sqlx::query_scalar(
+        "SELECT unresolved_boots FROM loro_sync_inbox \
+         WHERE space_id = '01HZ00000000000000000000SP'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the seeded slot must survive 0106");
+    let admitted: i64 = sqlx::query_scalar(
+        "SELECT created_at FROM loro_sync_inbox \
+         WHERE space_id = '01HZ00000000000000000000SP'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("created_at");
+    assert_eq!(
+        boots, 0,
+        "#3226: a pre-existing slot must backfill as 'never yet retried' (0), \
+         so it gets the FULL boot budget rather than starting part-way through it"
+    );
+    assert_eq!(
+        admitted, created_at,
+        "0106 must not disturb the slot's admission timestamp — it is copied \
+         verbatim into `loro_sync_quarantine.first_seen_at_ms` on a move"
+    );
+
+    let bytes: Vec<u8> = sqlx::query_scalar(
+        "SELECT bytes FROM loro_sync_inbox WHERE space_id = '01HZ00000000000000000000SP'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("bytes");
+    assert_eq!(
+        bytes, payload,
+        "#535: the slot's blob is its only durable copy — an ADD COLUMN must \
+         not touch a byte of it"
+    );
+
+    // …and the new side table exists and is empty: 0106 quarantines nothing on
+    // its own, it only creates the storage a later boot walk may use.
+    let quarantined: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM loro_sync_quarantine")
+        .fetch_one(&pool)
+        .await
+        .expect("loro_sync_quarantine must exist after 0106");
+    assert_eq!(
+        quarantined, 0,
+        "0106 must not migrate any existing slot into quarantine"
+    );
+}
