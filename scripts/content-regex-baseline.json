@@ -1,0 +1,26 @@
+[
+  {
+    "file": "src/editor/markdown-common.ts",
+    "rule": "incomplete-boundary-class",
+    "count": 1,
+    "reason": "REAL, UNFIXED. `WORD_CHAR_RE = /[\\p{L}\\p{N}]/u` drives CommonMark `_`-flanking; a combining mark is neither letter nor digit, so on NFD text the base letter of an accented cluster reads as a word edge and emphasis flanks in the wrong place. Adding `\\p{M}` changes markdown parse/serialize behaviour and needs round-trip + conformance coverage, so it is tracked as follow-up rather than slipped into a CI-guard PR."
+  },
+  {
+    "file": "src/lib/block-clipboard.ts",
+    "rule": "incomplete-boundary-class",
+    "count": 1,
+    "reason": "REAL, UNFIXED. `HUMAN_TAG_RE = /(^|[^\\p{L}\\p{N}_])#([\\p{L}\\p{N}_][\\p{L}\\p{N}_/-]*)/gu` rewrites pasted user content, and its boundary/name classes exclude combining marks, so `#café` in NFD form splits mid-grapheme. It must stay byte-identical to its Rust twins (HUMAN_TAG_RE in src-tauri/src/commands/pages/markdown.rs and the same literal in src-tauri/src/commands/pages/inline_query_md.rs), so the fix is a coordinated FE/BE change plus conformance vectors — tracked as follow-up."
+  },
+  {
+    "file": "src/lib/categorize-history-error.ts",
+    "rule": "error-message-substring",
+    "count": 13,
+    "reason": "Cited by #3348. `categorizeHistoryError` classifies a `listPageHistory` failure by substring-matching the lower-cased error message against English fragments (`fetch`, `timeout`, `internal server`, `sqlx`), which are locale- and version-dependent. The structured probes it tries first (`status` 5xx, `code` matching ^5xx) are the correct mechanism; removing the substring fallback requires the backend to return a stable machine-readable error code, which is out of scope for this guard PR."
+  },
+  {
+    "file": "src/lib/in-page-find/matcher.ts",
+    "rule": "incomplete-boundary-class",
+    "count": 1,
+    "reason": "REAL, UNFIXED, low severity. `WORD_RE = /[\\p{L}\\p{N}_]/u` backs the whole-word in-page find; on NFD text a trailing combining mark is read as a word boundary, so whole-word `cafe` matches inside `café`. This path only paints highlight ranges (visible, transient) — it never rewrites stored content — so it is tracked as follow-up rather than fixed here."
+  }
+]

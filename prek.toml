@@ -641,6 +641,57 @@ pass_filenames = false
 files = "^scripts/check-raw-local-storage\\.mjs$"
 stages = ["pre-commit"]
 
+# unanchored-content-regex (#3348, theme T4 "text treated as structure"):
+# Agaric's primary data is user prose with embedded `[[ULID]]` tokens, and
+# several paths rewrite that prose in place. #3313 showed what happens when
+# the matcher for such a rewrite is built from a runtime string with no
+# boundary: `new RegExp(escapeRegExp(term), 'i')` + `content.replace(...)`
+# turned `Notebook shopping list` into `[[id]]book shopping list` and
+# committed it, under a success toast. This guard bans three shapes in
+# `src/**` app code (tests, `scripts/`, and Rust are out of scope):
+#   - `unanchored-surgery` — a dynamic `new RegExp(...)` pattern with no
+#     explicit boundary on BOTH sides whose regex reaches a `.replace(` /
+#     `.replaceAll(`. Read-only matching (in-page find, glob validation) is
+#     deliberately untouched, and a pattern built purely from module-level
+#     string constants (the enex-import PUA sentinels) is static by
+#     construction, not a violation.
+#   - `error-message-substring` — `.includes('literal')` / `.indexOf(...)`
+#     on an error-message-derived value, i.e. control flow keyed to a
+#     locale-dependent string.
+#   - `incomplete-boundary-class` — a `\p{L}`/`\p{N}` character class that
+#     omits `\p{M}`, which is #3313's own near-miss: without combining
+#     marks the boundary lands mid-grapheme on NFD text (`café` =
+#     `caf`+`e`+U+0301).
+# Exemptions are explicit: a per-site `// content-regex-allow: <reason>`
+# marker (empty reason does not suppress), or an entry in
+# scripts/content-regex-baseline.json, which is a ratchet — counts may only
+# fall, a stale entry FAILS, and an entry with no `reason` is a hard error.
+# pass_filenames=false — the script does its own scoped walk of src/.
+[[repos.hooks]]
+id = "unanchored-content-regex"
+name = "No unanchored regex surgery on user content (#3348)"
+entry = "node scripts/check-unanchored-content-regex.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src/.*\\.(ts|tsx)|scripts/content-regex-baseline\\.json)$"
+stages = ["pre-commit"]
+
+# Self-test the unanchored-content-regex guard's own exit behavior (the
+# pre-#3313 shape, a half-anchored pattern, an inline `.replace(new
+# RegExp(...))`, an error-message substring branch and a `\p{M}`-less
+# boundary class all FAIL; the fixed #3313 shape, a read-only matcher, a
+# constant-built pattern, a commented-out shape, a reasoned allow marker
+# and test files all PASS) whenever the guard script itself changes, so a
+# regression that defangs it can't land.
+[[repos.hooks]]
+id = "unanchored-content-regex-selftest"
+name = "Unanchored-content-regex guard self-test"
+entry = "node scripts/check-unanchored-content-regex.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-unanchored-content-regex\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a

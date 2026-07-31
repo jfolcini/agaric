@@ -163,6 +163,12 @@ Consume via `usePreference` (which wraps `useLocalStoragePreference`) or the pur
 
 See `docs/UX.md § Accessibility` for the canonical rule. Frontend specifics: hooks that drive motion (`useScrollToFocus`, `useAutoScrollOnDrag`, `useKeyboardNavigableList`) check `prefers-reduced-motion` and skip the smooth path. Roving tabindex is used in `SearchablePopover`, `RecentPagesStrip`, `TabBar` — exactly one `tabindex=0` per group, arrows move it.
 
+## Rewriting user prose (matchers built from runtime strings)
+
+A block's content is user prose with embedded `[[ULID]]` tokens. Any feature that rewrites that prose in place — "Link it" on an unlinked reference, tag internalization on paste, import sentinel round-trips — needs a matcher, and building that matcher out of a runtime string (a page title, an alias, a search term) without an explicit boundary corrupts durable data: #3313 turned the block `Notebook shopping list` into `[[id]]book shopping list` because the page was titled `Note`, then reported success. The rule is: **operate on the parsed ProseMirror document, or anchor explicitly on both sides and test the substring-collision case.** A boundary character class must include `\p{M}` alongside `\p{L}\p{N}_` — combining marks are neither letters nor digits, so a class that omits them treats the base letter of an NFD grapheme cluster (`café` = `caf` + `e` + U+0301) as a word edge and splices mid-grapheme.
+
+`scripts/check-unanchored-content-regex.mjs` (prek hook `unanchored-content-regex`, #3348) enforces this over `src/**` non-test code: an unanchored dynamic `new RegExp(...)` that reaches a `.replace(`, control flow keyed to a substring of a locale-dependent error message, and a `\p{L}`/`\p{N}` class that omits `\p{M}`. Read-only matching (in-page find, glob validation) and patterns built purely from module-level string constants are deliberately out of scope. Exemptions are explicit: a per-site `// content-regex-allow: <reason>` marker, or a reasoned entry in `scripts/content-regex-baseline.json`, which is a ratchet — the counts may only fall.
+
 ## Tauri command wrappers (migrating to `bindings.ts`)
 
 `src/lib/bindings.ts` is the specta-generated, checked-in, CI-enforced binding surface — the destination. Around it sits a hand-written wrapper layer in the `src/lib/tauri/` directory (one module per domain: `blocks.ts`, `pages.ts`, `search.ts`, …), historically the only way the app called a command. `src/lib/tauri.ts` itself is now a thin re-export barrel.
