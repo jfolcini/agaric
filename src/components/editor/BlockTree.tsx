@@ -677,7 +677,18 @@ export function BlockTree({
     handleEscapeCancel,
   } = useBlockActionOrchestration({
     focusedBlockId,
-    collapsedVisible,
+    // #3251 — the hook's document-order neighbour lookups (focus-prev/next,
+    // delete's last-block guard + refocus, merge-with-prev's merge target)
+    // must stay within the RENDERED rows, same as `useBlockDnD` above
+    // (#712) and `visibleIds` below (#922) already do. Passing the
+    // un-zoomed `collapsedVisible` here let arrow keys and Backspace-merge
+    // step onto — and mount the roving editor on — a row outside the zoomed
+    // subtree that BlockListRenderer never rendered. `zoomedVisible` falls
+    // back to `collapsedVisible` verbatim when not zoomed, so this is a
+    // no-op outside zoom. `blocks` (below) stays the FULL flat tree — the
+    // merge handlers' `planChildReparent` needs it to see a collapsed
+    // source's hidden children.
+    collapsedVisible: zoomedVisible,
     blocks,
     rovingEditor,
     setFocused,

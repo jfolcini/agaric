@@ -7293,3 +7293,237 @@ describe('#2943: DnD screen-reader announcements resolve block text, not ULIDs',
     expect(message).toBe(t('dnd.dropped', { block: 'Buy milk', target: t('dnd.genericBlock') }))
   })
 })
+
+// =========================================================================
+// #3251 — arrow-key navigation must stay inside the zoomed subtree
+// =========================================================================
+//
+// `useBlockActionOrchestration`'s document-order neighbour lookups
+// (`handleFocusPrev`/`handleFocusNext`) previously received the page-wide
+// `collapsedVisible` list instead of the zoom-scoped `zoomedVisible` that
+// `useBlockDnD` (#712) and the keyboard range-select `visibleIds` (#922)
+// already use. Stepping off either end of the zoomed subtree therefore
+// landed focus (and mounted the roving editor) on a row `BlockListRenderer`
+// never renders: the zoom root itself on ArrowUp from the first zoomed
+// child, or the zoom root's next page-level sibling on ArrowDown from the
+// last one.
+//
+// These tests drive the REAL `useBlockActionOrchestration` (only
+// `use-block-keyboard` is mocked, purely to capture the handlers BlockTree
+// wires to it) and the REAL `useBlockZoom`, via the same zoom-in button the
+// production UI exposes — see the `BlockTree zoom-in` suite above.
+describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue({})
+  })
+
+  // #2246 — no axe assertion in this suite: SortableBlock is stubbed to a
+  // plain <div>/<button> shell (see the mock above), so an audit here would
+  // only ever check that shell, not real row markup. Row a11y is covered by
+  // the dedicated a11y suites (BlockTree.a11y.test.tsx).
+
+  it('ArrowUp at the first zoomed row does not focus the (unrendered) zoom root', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'Z', content: 'Zoom root Z' }),
+      makeBlock({ id: 'C1', parent_id: 'Z', depth: 1, content: 'Child C1' }),
+      makeBlock({ id: 'C2', parent_id: 'Z', depth: 1, content: 'Child C2' }),
+      makeBlock({ id: 'C3', parent_id: 'Z', depth: 1, content: 'Child C3' }),
+      // A page-level sibling of Z — outside the zoom scope either way, but
+      // needed so `collapsedVisible` (the un-zoomed list) actually differs
+      // from `zoomedVisible` (otherwise this test would pass vacuously).
+      makeBlock({ id: 'S', content: 'Sibling S' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('zoom-in-Z')).toBeInTheDocument()
+    })
+
+    // Zoom into Z: only C1/C2/C3 render; Z and S do not.
+    await user.click(screen.getByTestId('zoom-in-Z'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('sortable-block-Z')).not.toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-C1')).toBeInTheDocument()
+      expect(screen.queryByTestId('sortable-block-S')).not.toBeInTheDocument()
+    })
+
+    // Focus the FIRST rendered (zoomed) row, then press ArrowUp.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'C1' })
+    })
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusPrev).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusPrev?.()
+    })
+
+    // Pre-fix: `handleFocusPrev` indexed the un-zoomed list [Z, C1, C2, C3,
+    // S], found C1 at index 1, and focused `collapsedVisible[0]` — the
+    // zoom root Z, a row BlockListRenderer never mounts. Post-fix, C1 is
+    // index 0 of the zoomed list and the boundary guard (`idx > 0`) no-ops.
+    expect(useBlockStore.getState().focusedBlockId).toBe('C1')
+  })
+
+  it('ArrowDown at the last zoomed row does not focus the zoom root’s next sibling', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'Z', content: 'Zoom root Z' }),
+      makeBlock({ id: 'C1', parent_id: 'Z', depth: 1, content: 'Child C1' }),
+      makeBlock({ id: 'C2', parent_id: 'Z', depth: 1, content: 'Child C2' }),
+      makeBlock({ id: 'C3', parent_id: 'Z', depth: 1, content: 'Child C3' }),
+      makeBlock({ id: 'S', content: 'Sibling S' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('zoom-in-Z')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('zoom-in-Z'))
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-C3')).toBeInTheDocument()
+      expect(screen.queryByTestId('sortable-block-S')).not.toBeInTheDocument()
+    })
+
+    // Focus the LAST rendered (zoomed) row, then press ArrowDown.
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'C3' })
+    })
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onFocusNext).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onFocusNext?.()
+    })
+
+    // Pre-fix: `handleFocusNext` indexed the un-zoomed list [Z, C1, C2, C3,
+    // S], found C3 at index 3 (< length - 1 = 4), and focused
+    // `collapsedVisible[4]` — sibling S, a row outside the zoomed subtree
+    // that is never rendered while zoomed. Post-fix, C3 is the last index
+    // of the zoomed list and the boundary guard no-ops.
+    expect(useBlockStore.getState().focusedBlockId).toBe('C3')
+  })
+
+  // #3251 review — `handleDeleteBlock`'s last-block guard and post-delete
+  // refocus share the SAME `collapsedVisible` binding as the arrow-key
+  // handlers above, but were not independently asserted. Cover the delete
+  // path too, since a future refactor could regress it without tripping
+  // the arrow-key tests.
+  it('deleting the first zoomed row moves focus to the next zoomed row, not the (unrendered) zoom root', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'Z', content: 'Zoom root Z' }),
+      makeBlock({ id: 'C1', parent_id: 'Z', depth: 1, content: 'Child C1' }),
+      makeBlock({ id: 'C2', parent_id: 'Z', depth: 1, content: 'Child C2' }),
+      makeBlock({ id: 'C3', parent_id: 'Z', depth: 1, content: 'Child C3' }),
+      makeBlock({ id: 'S', content: 'Sibling S' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      return []
+    })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('zoom-in-Z')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('zoom-in-Z'))
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-C1')).toBeInTheDocument()
+    })
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'C1' })
+    })
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.onDeleteBlock).toBeDefined()
+    })
+
+    act(() => {
+      capturedBlockKeyboardOpts?.onDeleteBlock?.()
+    })
+
+    // Pre-fix: `collapsedVisible` was the un-zoomed [Z, C1, C2, C3, S]; C1
+    // sat at idx 1 (> 0), so the `idx > 0` branch focused
+    // `collapsedVisible[0]` — the zoom root Z, a row `BlockListRenderer`
+    // never mounts (empirically this leaves `focusedBlockId` stranded at
+    // `null` once the store's post-delete reload settles, since Z is never
+    // reprojected into a rendered row either). Post-fix, C1 is idx 0 of the
+    // zoomed list, so the `else` branch focuses the NEXT zoomed row, C2.
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('C2')
+    })
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'C1' })
+  })
+
+  // #3251 review — `handleMergeWithPrev`'s merge-target lookup shares the
+  // same binding. Cover the merge boundary guard: Backspace at the start of
+  // the first zoomed row must no-op, not merge into the unrendered zoom root.
+  it('Backspace-merge at the first zoomed row does not merge into the (unrendered) zoom root', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'Z', content: 'Zoom root Z' }),
+      makeBlock({ id: 'C1', parent_id: 'Z', depth: 1, content: 'Child C1' }),
+      makeBlock({ id: 'C2', parent_id: 'Z', depth: 1, content: 'Child C2' }),
+      makeBlock({ id: 'C3', parent_id: 'Z', depth: 1, content: 'Child C3' }),
+      makeBlock({ id: 'S', content: 'Sibling S' }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      return []
+    })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('zoom-in-Z')).toBeInTheDocument()
+    })
+
+    await user.click(screen.getByTestId('zoom-in-Z'))
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-C1')).toBeInTheDocument()
+    })
+
+    act(() => {
+      useBlockStore.setState({ focusedBlockId: 'C1' })
+    })
+
+    await waitFor(() => {
+      expect(capturedBlockKeyboardOpts?.['onMergeWithPrev']).toBeDefined()
+    })
+
+    act(() => {
+      ;(capturedBlockKeyboardOpts?.['onMergeWithPrev'] as () => void)?.()
+    })
+
+    // Pre-fix: `collapsedVisible` was the un-zoomed [Z, C1, C2, C3, S]; C1
+    // sat at idx 1 (> 0), so the merge target resolved to
+    // `collapsedVisible[0]` — the zoom root Z — and C1's text was appended
+    // to Z's content and C1 removed, though Z has no rendered row. Post-fix,
+    // C1 is idx 0 of the zoomed list, so the `idx <= 0` guard no-ops the
+    // merge entirely: no edit, no delete, focus unchanged.
+    await waitFor(() => {
+      expect(useBlockStore.getState().focusedBlockId).toBe('C1')
+    })
+    expect(mockedInvoke).not.toHaveBeenCalledWith('edit_block', expect.anything())
+    expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
+  })
+})
