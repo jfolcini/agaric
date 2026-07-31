@@ -1,0 +1,62 @@
+[
+  {
+    "metric": "QueueMetrics::bg_deduped",
+    "rule": "no-firing-test",
+    "reason": "PROVEN, but not textually. src-tauri/src/materializer/tests/idempotency.rs:133 binds `metrics().bg_deduped.load(..) > before` as `collapsed` and only records a dedup snapshot inside `if collapsed`; the `dedup_snap.expect(\"precondition: at least one drain must collapse duplicate tasks…\")` at :143 then fails the test if the counter never advanced within the retry budget. It cannot be asserted inline because the first non-collapsing attempt is legitimate (the two enqueues may land in separate drains). The guard credits only a literal `assert…!` with the metric on the high side, because the alternative — crediting any bound comparison that is later read — also credits `let rose = m.x.load(..) > before; tracing::debug!(rose);`, which cannot fail. This entry goes stale (and must be deleted) the moment a literal firing assertion is added there."
+  },
+  {
+    "metric": "QueueMetrics::bg_errors",
+    "rule": "no-firing-test",
+    "reason": "REAL, UNFIXED. Emitted at src-tauri/src/materializer/consumer.rs:757 on the background retry-exhaustion arm, and every assertion in the tree pins it to zero (`assert_eq!(s.bg_errors, 0, \"status bg_errors should start at zero\")`, fifo_status.rs:227; retry_metrics.rs:98 explicitly declines to assert on it). Its foreground twin `fg_errors` IS proven to rise, so this is a coverage gap in the background consumer, not a structural impossibility. Needs a test that fails a background task past its two in-memory retries and asserts the counter advanced."
+  },
+  {
+    "metric": "QueueMetrics::bg_full_waits",
+    "rule": "no-firing-test",
+    "reason": "REAL, UNFIXED. Emitted at src-tauri/src/materializer/coordinator.rs:900 on the `Full` arm of the blocking `enqueue_background` path. The only test that names it — `enqueue_background_does_not_bump_bg_full_waits_when_capacity_available` — asserts it stays ZERO, i.e. it tests the opposite of firing and would pass unchanged if the emit site were deleted. Proving it fires needs a saturated bounded channel, which the suite never constructs."
+  },
+  {
+    "metric": "QueueMetrics::bg_panics",
+    "rule": "no-firing-test",
+    "reason": "Cited by #3349. Emitted at src-tauri/src/materializer/consumer.rs:755 under `if panicked`. Every assertion pins it to zero (fifo_status.rs:216/229). See the `unreachable-under-panic-abort` entry for the same metric: no firing test exists because in a release build no firing is possible."
+  },
+  {
+    "metric": "QueueMetrics::bg_panics",
+    "rule": "unreachable-under-panic-abort",
+    "reason": "Cited by #3349, THE HEADLINE INSTANCE. `[profile.release]` sets `panic = \"abort\"` (src-tauri/Cargo.toml, deliberately and with a documented rationale). The sole emit site (consumer.rs:755) sits under `if panicked`, where `panicked` comes from `JoinError::is_panic` on a `tokio::spawn` join — an arm the runtime can only reach when a panic UNWINDS. In the shipped binary the process is already gone, so this counter reads zero forever and an operator auditing panic rates reads that zero as health. Left in place rather than deleted here because removing it is a cross-cutting change (QueueMetrics, StatusInfo, the specta-generated TS bindings, StatusPanel.tsx, the tauri-mock handler and ~10 test files) that belongs in its own PR, and because it still moves in debug/test builds, where `panic = \"unwind\"` applies."
+  },
+  {
+    "metric": "QueueMetrics::cached_op_log_count",
+    "rule": "no-firing-test",
+    "reason": "PROVEN, but not textually. #385's rate-limited `SELECT COUNT(*) FROM op_log` cache, written at src-tauri/src/materializer/coordinator.rs:744 and surfaced as `StatusInfo::total_ops_in_log`. `get_status_total_ops_in_log_is_rate_limited_cache` (src-tauri/src/commands/tests/status_cmd_tests.rs:184) drives it through the production refresh path and asserts `assert_eq!(i64::try_from(cached).unwrap(), actual)` against a live `SELECT COUNT(*)` of 5 — a real firing proof that fails if the refresh stops writing. The guard cannot credit it because the expected value is a runtime binding rather than a non-zero literal, so it cannot tell `assert_eq!(x, actual)` from `assert_eq!(x, zero_so_far)`. Clearing this entry means asserting a literal (`assert!(cached > 0)`) alongside the equality."
+  },
+  {
+    "metric": "QueueMetrics::cached_op_log_count_at_ms",
+    "rule": "no-firing-test",
+    "reason": "PROVEN, but not textually. Companion timestamp for `cached_op_log_count` (written at coordinator.rs:747) and the sole input to the TTL decision that gates the recompute. `get_status_total_ops_in_log_is_rate_limited_cache` (status_cmd_tests.rs:150-176) DOES prove production stamps it: the second status call must serve the stale cached 3, which only happens if the cold call wrote a fresh timestamp — were the stamp never written the value would stay 0, every call would look stale, and the assertion would see 5. The test then stores 0 into the atomic itself to force invalidation. The guard cannot credit this because the only assertions naming the metric are the test's own `.store(0, …)` setup and equality against runtime bindings, none of which is a literal above-zero assertion on this counter."
+  },
+  {
+    "metric": "QueueMetrics::fg_full_waits",
+    "rule": "no-firing-test",
+    "reason": "REAL, UNFIXED. Emitted at src-tauri/src/materializer/coordinator.rs:863 when `enqueue_foreground` awaits a full channel — the repo's only foreground-backpressure signal. The one test that names it, `enqueue_foreground_does_not_bump_fg_full_waits_when_capacity_available`, asserts it stays ZERO both before and after the enqueue. Nothing proves backpressure is observable at all."
+  },
+  {
+    "metric": "QueueMetrics::fg_panics",
+    "rule": "no-firing-test",
+    "reason": "Cited by #3349. Emitted at src-tauri/src/materializer/consumer.rs:534 under `if outcome.panicked`. All four assertions pin it to zero (apply_op.rs:394/443, fifo_status.rs:211/228). See the `unreachable-under-panic-abort` entry for the same metric."
+  },
+  {
+    "metric": "QueueMetrics::fg_panics",
+    "rule": "unreachable-under-panic-abort",
+    "reason": "Cited by #3349, THE HEADLINE INSTANCE. Same structure as `bg_panics`: `[profile.release]` sets `panic = \"abort\"`, while the sole emit site (consumer.rs:534) is guarded by `if outcome.panicked`, reachable only via an unwind that the release profile makes impossible. Kept rather than deleted for the reasons given on the `bg_panics` entry."
+  },
+  {
+    "metric": "QueueMetrics::fts_last_optimize_ms",
+    "rule": "no-firing-test",
+    "reason": "REAL, UNFIXED. Written at src-tauri/src/materializer/dispatch.rs:1202 after an FTS optimize, and seeded to `now_ms` in `Default` — so unlike a counter it is NON-ZERO from birth, and the guard's \"rises above zero\" question is really \"does it ever advance past its seed\". Three tests name it (src-tauri/src/materializer/tests/agenda_fts_misc.rs:425/484/518) but every one of them only `.store()`s a value into it as SETUP for an adaptive-threshold assertion; not one reads it back. So a silently-skipped optimize is invisible: the gauge keeps reporting the process start time as if an optimize had just run."
+  },
+  {
+    "metric": "QueueMetrics::last_materialize_ms",
+    "rule": "no-firing-test",
+    "reason": "REAL, UNFIXED, and the most consequential of this batch. Written by `record_last_materialize` (src-tauri/src/materializer/consumer.rs:340) after every successful foreground/background batch, and projected as `StatusInfo::last_materialize_at` + `time_since_last_materialize_secs` — the repo's stalled-consumer detector. The only assertions on the projected fields are `assert_eq!(status.last_materialize_at, None)` and `assert_eq!(status.time_since_last_materialize_secs, None)` (status_cmd_tests.rs:40/44), i.e. the NEVER-MATERIALIZED case. The one snapshot that samples a materialized status (src-tauri/src/commands/tests/snapshot_tests.rs:149) REDACTS the field to `\"[TIMESTAMP]\"`, so it pins the field's PRESENCE and nothing about its value; whether insta would still redact (rather than fail) if the field regressed to `None` is itself unverified, which is exactly why a redacted field is not a firing proof. Nothing proves the stamp is ever written, so a regression that stopped stamping it would make the detector report `None`/stale forever with no test failing."
+  }
+]

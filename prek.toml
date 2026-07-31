@@ -790,6 +790,76 @@ entry = "node scripts/check-persist-hooks.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = "^scripts/check-persist-hooks\\.mjs$"
+# metric-provable (#3349, theme T6 "accounting for conditions that cannot
+# occur, read as health"): every metric must have a test proving it can
+# fire. `[profile.release]` sets `panic = "abort"` — deliberately and with
+# a documented rationale — yet `materializer/consumer.rs` bumps `fg_panics`
+# / `bg_panics` on the `JoinError::is_panic` arm of a `tokio::spawn` join,
+# an arm that requires an unwind the release profile makes impossible. A
+# counter that cannot move is worse than dead code: an operator auditing
+# panic rates reads zero and concludes the system is healthy, exactly as a
+# check that cannot fail reads as a passing gate.
+#
+# The metric surface is enumerated structurally, not from a list: every
+# `<name>: Atomic…` field of `QueueMetrics`, plus every module that
+# pairs a `static NAME: Atomic…` with a `fn count()` (the repo's
+# process-global counter idiom — `sql_only_fallback`, `divergence`,
+# `cycle_rejected_metrics`, `snapshot_fallback_metrics`,
+# `descendant_fanout_dropped`). Three rules:
+#   - `no-firing-test` — no test asserts the metric ABOVE zero. A test that
+#     asserts it IS zero is not a proof; it is what `fg_panics`,
+#     `fg_full_waits` and `bg_full_waits` have today, and it would pass
+#     unchanged after the emit site was deleted. String literals are
+#     blanked before matching so an assertion MESSAGE naming the metric
+#     cannot launder a proof onto it.
+#   - `no-production-emit` — nothing outside test code can move it.
+#   - `unreachable-under-panic-abort` — every emit site is inside a
+#     panic-detection branch while the release profile aborts. Inert if
+#     `[profile.release]` stops saying `panic = "abort"`.
+# Exemptions are explicit: a per-declaration
+# `// metric-fire-exempt(<rule>): <reason>` marker (empty reason does not
+# suppress, and the marker is rule-scoped), or an entry in
+# scripts/metric-firing-baseline.json, which is a ratchet — a stale entry
+# FAILS and an entry with no `reason` is a hard error.
+# pass_filenames=false — the script does its own scoped walk of src-tauri/.
+# `files` includes the script itself: without it, a commit that touches only
+# the guard runs the self-test but never re-evaluates the LIVE tree, so a
+# change that made a real metric violate would land green.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "metric-provable"
+name = "Every metric must have a test proving it can fire (#3349)"
+entry = "node scripts/check-metric-provable.mjs"
+language = "system"
+pass_filenames = false
+files = "^(src-tauri/(src|[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
+stages = ["pre-commit"]
+
+# Self-test the metric-provable guard's own exit behavior whenever it
+# changes: a zero-only assertion, a test-only write, a panic-gated emit
+# under `panic = "abort"`, an empty-reason marker, a wrong-rule marker, a
+# stale baseline entry, two metrics colliding on one id, and a newly-added
+# counter all FAIL with a real non-zero exit from a real subprocess; a
+# firing assertion, a reasoned marker, a reasoned baseline entry, the same
+# panic-gated emit under `panic = "unwind"`, and a process-global config
+# atomic with no `count()` all PASS. A bound firing comparison
+# (`let rose = m.x > before;`) is NOT a proof however it is later read —
+# logged, tested by a no-op `if`, or rebound — because none of those can
+# fail. Enumeration is pinned against silent narrowing: the exact
+# `scanRoots` set, the exact set of metric-declaring files, and the
+# declaration variants Rust allows (`pub(crate)`, no trailing comma, a
+# path-qualified type, a non-U64 atomic, a static inside a `mod`). It also
+# asserts the guard reads nothing outside src-tauri/ (so it cannot match its
+# own source, fixtures or baseline) and that the live release profile really
+# is `panic = "abort"`, without which rule 3 would be silently inert.
+[[repos.hooks]]
+id = "metric-provable-selftest"
+name = "Metric-provability guard self-test"
+entry = "node scripts/check-metric-provable.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-metric-provable\\.mjs$"
 stages = ["pre-commit"]
 
 # snapshot-redaction: scan every `*.snap` file under `src/` and
