@@ -71,6 +71,16 @@ name: Scheduled deep checks
 #                    hook's Phase E equivalent, run directly (not via that
 #                    hook) to avoid the recursion `full-suite` documents
 #                    avoiding for the same reason.
+#   report-scheduled-failures — #3359: the NOTIFICATION path for this whole
+#                    workflow. Every lane above is non-blocking, so before
+#                    this job a red lane was visible only to whoever opened
+#                    the Actions tab (the #3163 fuzz break survived five days
+#                    that way). It reads every other job's `needs.*.result`
+#                    and keeps ONE rolling tracking issue that reopens on a
+#                    newly-failing lane and closes itself when all are green
+#                    (see `scripts/file-scheduled-failures.mjs`). Its own
+#                    `if: failure()` bash fallback covers the reporter
+#                    breaking. Needs `issues: write`.
 on:
   schedule:
     # Mondays 04:17 UTC — off-peak, odd minute to avoid the top-of-hour
@@ -1036,12 +1046,27 @@ jobs:
           path: mutation-artifact
 
       - name: File or update the single mutation-survivor tracking issue
+        # `--require-rust` / `--require-frontend` (#3364): a lane that produced
+        # NO data must not be read as "that lane has no survivors". Without
+        # them, a dead frontend lane contributes `[]`, and one new rust
+        # survivor is enough to rewrite the issue body from the rust half
+        # alone — DELETING every frontend survivor from the marker block,
+        # which is this filer's only cross-run memory, and re-reporting them
+        # as "new" the following week. #3330's liveness guard makes the LANE
+        # red but does not stop this job, which runs under `if: always()`.
+        #
+        # This deliberately turns a dead lane into a RED filer job rather than
+        # a skipped one (`needs.<lane>.result == 'success'` would skip it):
+        # `report-scheduled-failures` below `needs:` this job, so the failure
+        # is reported through the ordinary path instead of vanishing as a skip.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node scripts/file-mutation-survivors.mjs \
             --rust-missed mutants-artifact/missed.txt \
-            --frontend-dir mutation-artifact
+            --frontend-dir mutation-artifact \
+            --require-rust \
+            --require-frontend
 
   # ---------------------------------------------------------------------------
   # fuzz (#650/#2590) — short coverage-guided fuzz of the raw-input parsers. The
@@ -1685,3 +1710,152 @@ jobs:
         run: |
           cargo nextest run --workspace --profile ci
           cargo test --doc --workspace
+
+  # ---------------------------------------------------------------------------
+  # report-scheduled-failures (#3359) — the notification path for THIS
+  # workflow. Every lane above is non-blocking triage signal, and #3365 spent
+  # its whole diff making three of them capable of going red at all. But a
+  # guard that goes red into the void is barely better than the swallowed
+  # `|| true` it replaced: until this job existed, a failed weekly lane was
+  # visible only to whoever happened to open the Actions tab. The #3163 fuzz
+  # compile break survived five days that way.
+  #
+  # This is the same push-based triage loop as `file-mutation-survivors` and
+  # `file-fuzz-findings`, one level up: those two triage a lane's CONTENT,
+  # this one triages lane HEALTH. It keeps ONE rolling tracking issue that
+  # reopens on a newly-failing lane and closes itself once every lane is green
+  # (rationale for rolling-vs-per-lane is in the script's header). State lives
+  # in that issue's body, so this job needs `issues: write` only.
+  #
+  # The failure path must not depend on the thing that broke, so:
+  #   * it reads ONLY the `needs` context — GitHub's own job results — never a
+  #     lane's artifacts. A lane that dies during `apt-get`, before it could
+  #     upload anything, still reports `result: failure`.
+  #   * `needs:` lists EVERY other job in this workflow, including the two
+  #     content filers, so a filer that throws (which #3364/#3365 make
+  #     possible on purpose) is itself reported here. The
+  #     `scheduled-failure-reporter-selftest` prek hook fails if a job in this
+  #     file is missing from the list below.
+  #   * `if: always()` so a failed/cancelled/skipped upstream lane cannot skip
+  #     the reporter — which is the entire point.
+  #   * the last step is a deliberately minimal bash fallback that fires when
+  #     the Node reporter ITSELF failed, using nothing but `gh`.
+  # Irreducible remainder: if this job never starts at all (invalid workflow,
+  # runner-pool outage, whole-run cancellation) nothing reports. That needs an
+  # out-of-band watchdog; `actionlint` in prek covers the invalid-workflow half.
+  #
+  # Unlike the two content filers this job is NOT scheduled-event-only: on
+  # `workflow_dispatch` it runs in `--dry-run` (writes nothing, prints the
+  # issue body it would have written) so a manual dispatch smoke-tests the
+  # whole reporting path instead of leaving it exercised only by a real
+  # weekly failure. `--skipped-ok` rides along on that path because the two
+  # scheduled-only filers legitimately report `skipped` off the schedule.
+  # ---------------------------------------------------------------------------
+  report-scheduled-failures:
+    needs:
+      - clippy-clean
+      - bench-smoke
+      - bench-slo
+      - mutants
+      - mutants-frontend
+      - file-mutation-survivors
+      - fuzz
+      - file-fuzz-findings
+      - prek-all-files
+      - full-suite
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: File, update or close the single scheduled-failure tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Rides via `env:` (not inline `${{ }}`) per zizmor template-injection.
+          # `toJSON(needs)` carries every needed job's `result`; written to a
+          # file rather than passed as an argv string so a payload containing
+          # quotes can never be re-parsed by the shell.
+          NEEDS_JSON: ${{ toJSON(needs) }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$NEEDS_JSON" > needs.json
+          extra=()
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            # Dispatch/manual run: exercise the whole path, write nothing.
+            extra=(--dry-run --skipped-ok)
+          fi
+          node scripts/file-scheduled-failures.mjs \
+            --needs-json-file needs.json \
+            "${extra[@]}"
+
+      - name: Last-resort notice (the reporter itself broke)
+        # Fires only when a step ABOVE in this job failed — i.e. the Node
+        # reporter is the thing that broke, so the normal tracking issue was
+        # NOT updated and the week's lane failures went unreported.
+        #
+        # Deliberately minimal and Node-free: three `gh` calls, no parsing, no
+        # marker block, and a SEPARATE tracking issue so it cannot corrupt the
+        # primary issue's machine-readable state. This is the step that makes
+        # the failure path independent of the reporter it reports on; keep it
+        # boring. `|| true` on `issue reopen` because reopening an
+        # already-open issue exits non-zero.
+        #
+        # Scheduled-event-only: a dispatch run is being watched by the human
+        # who triggered it, and its `--dry-run` failure must not file an issue.
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title='Scheduled deep checks: the failure reporter is broken (auto-filed, do not rename)'
+          body="$(printf '%s\n' \
+            "The \`report-scheduled-failures\` job's own reporting step failed, so the rolling \"failing lanes\" tracking issue was **not** updated for this run — this week's lane results are unreported." \
+            "" \
+            "This notice is written by a deliberately minimal bash fallback (no Node, no parsing, no shared code with the reporter) so that a break in \`scripts/file-scheduled-failures.mjs\` cannot also swallow the report of itself (#3359)." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "Open that run and read the lane results directly, then fix the reporter.")"
+          number="$(gh issue list --repo "$TARGET_REPO" \
+            --search "in:title \"$title\"" --state all \
+            --json number,title,state --limit 20 \
+            --jq "[.[] | select(.title == \"$title\")] | sort_by(.state != \"OPEN\") | .[0].number // empty")"
+          # Every `gh` WRITE below is checked explicitly. `set -e` is
+          # deliberately NOT used — a failing `gh issue list` must still fall
+          # through to `gh issue create` rather than abort — but that also
+          # means a bare `gh ...` followed by `echo` would leave the step's
+          # exit status at the `echo`'s 0, i.e. this last-resort notice would
+          # report "filed" while having written NOTHING. That is the exact
+          # class of vacuous check (#3359) this job exists to eliminate, in
+          # the one layer that has no layer beneath it.
+          if [ -n "$number" ]; then
+            gh issue reopen "$number" --repo "$TARGET_REPO" || true
+            if gh issue comment "$number" --repo "$TARGET_REPO" --body "$body"; then
+              echo "commented on existing reporter-broken issue #$number"
+            else
+              echo "::error::could not comment on reporter-broken issue #$number — this run's lane results are UNREPORTED"
+              exit 1
+            fi
+          else
+            if gh issue create --repo "$TARGET_REPO" --title "$title" --body "$body" \
+              --label github-actions --label testing; then
+              echo "filed a new reporter-broken issue"
+            else
+              echo "::error::could not file the reporter-broken issue — this run's lane results are UNREPORTED"
+              exit 1
+            fi
+          fi

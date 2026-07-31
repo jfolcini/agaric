@@ -1546,6 +1546,27 @@ pass_filenames = false
 files = '^scripts/file-mutation-survivors\.mjs$'
 stages = ["pre-commit"]
 
+# scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is
+# the ONLY thing that tells anyone a weekly deep-check lane went red — before
+# it, the #3163 fuzz break survived five days unnoticed. Its fixture suite
+# pins the parts that would silently un-notify: an absent `needs` payload must
+# throw rather than read as "zero lanes failed" (the reporter's own
+# false-green), `cancelled`/`skipped` must count as failures, the open/close
+# state machine must not spam on an unchanged failure, and — keyed to the
+# workflow file too — every lane in `scheduled-deep-checks.yml` must appear in
+# the reporting job's `needs:`, so a newly added lane cannot go red into the
+# void again.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "scheduled-failure-reporter-selftest"
+name = "scheduled-failure reporter self-test"
+entry = "node scripts/file-scheduled-failures.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/file-scheduled-failures\.mjs|\.github/workflows/scheduled-deep-checks\.yml)$'
+stages = ["pre-commit"]
+
 # ─── pre-push only ────────────────────────────────────────────────
 #
 # A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`. It is

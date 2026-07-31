@@ -21,6 +21,9 @@
 //   node scripts/file-mutation-survivors.mjs \
 //     --rust-missed <path to cargo-mutants missed.txt> \
 //     --frontend-dir <dir to search recursively for Stryker mutation.json> \
+//     [--require-rust]              (#3364: FAIL if missed.txt is absent)
+//     [--require-frontend]          (#3364: FAIL if the frontend dir holds no
+//                                    mutation.json at all)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -44,6 +47,17 @@
 // (`scripts/check-mutation-reports.mjs`, wired as the lane's
 // `Lane-liveness guard` step), so the premise holds for both lanes again.
 //
+// #3364: visibility of a lane failure is NOT the same as integrity of this
+// script's state. The lane going red does not stop this job — it runs under
+// `if: always()` — so a dead lane still contributes `[]`, and if the other
+// lane contributes one new survivor the rewritten body DELETES the dead
+// lane's survivors from the marker block (the filer's only cross-run memory)
+// and re-reports them as "new" next week. `--require-rust` /
+// `--require-frontend`, which the workflow now passes, turn a MISSING lane
+// input into a hard error so it stays distinguishable from an EMPTY one. The
+// resulting red filer job is itself reported by #3359's
+// `report-scheduled-failures`, which `needs:` this job.
+//
 // Issue-body shape (#3245/#3257): the body carries exactly ONE deduped
 // survivor list — the machine-readable marker block. Per-run deltas ("new
 // this run") go in the per-run comment, not the persistent body, so no
@@ -57,6 +71,7 @@
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -134,6 +149,19 @@ export function parseFrontendSurvivors(dir) {
     }
   }
   return survivors
+}
+
+/**
+ * #3364 — how many Stryker `mutation.json` reports the frontend artifact
+ * actually contains. ZERO is the machine-checkable signature of "no data":
+ * a `mutants-frontend` lane that ran at all writes one report per module (the
+ * lane's own liveness guard, `check-mutation-reports.mjs`, fails on a module
+ * that produced none), so zero reports can only mean the artifact was never
+ * uploaded or arrived empty — never "the frontend has no survivors".
+ */
+export function frontendReportCount(dir) {
+  if (!existsSync(dir)) return 0
+  return findMutationJsonFiles(dir).length
 }
 
 function findMutationJsonFiles(dir) {
@@ -348,7 +376,7 @@ function withTempFile(content, fn) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { dryRun: false }
+  const args = { dryRun: false, requireRust: false, requireFrontend: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     switch (a) {
@@ -358,6 +386,14 @@ function parseArgs(argv) {
       }
       case '--frontend-dir': {
         args.frontendDir = argv[++i]
+        break
+      }
+      case '--require-rust': {
+        args.requireRust = true
+        break
+      }
+      case '--require-frontend': {
+        args.requireFrontend = true
         break
       }
       case '--repo': {
@@ -392,10 +428,51 @@ function defaultRunUrl() {
   return undefined
 }
 
+/**
+ * #3364 — a MISSING lane input must be distinguishable from an EMPTY one.
+ *
+ * Without these gates a dead lane contributes `[]`, which is identical to
+ * "that lane has no survivors": if the other lane then contributes even one
+ * NEW survivor, `main()` rewrites the issue body from `all`, and every
+ * survivor belonging to the dead lane is DELETED from the marker block — i.e.
+ * from the filer's only cross-run memory — then re-reported as "new" the
+ * following week. That is state corruption, not a display bug, and #3330's
+ * liveness guard does not prevent it: the guard makes the LANE go red, while
+ * this job keeps running under `if: always()` regardless.
+ *
+ * Throwing (rather than gating the whole job on `needs.<lane>.result`) is
+ * deliberate: a skipped job reports `skipped`, which #3359's
+ * `report-scheduled-failures` would then have to special-case away; a thrown
+ * filer reports `failure`, which is the truth and rides the ordinary path.
+ *
+ * An EMPTY-but-present `missed.txt` is real data (cargo-mutants writes one
+ * when nothing survived); only an ABSENT one is "no data". For the frontend,
+ * ZERO `mutation.json` files is the machine-checkable "no data" signature — a
+ * lane that ran writes one report per module, and its own liveness guard
+ * (`check-mutation-reports.mjs`) fails on a module that produced none.
+ */
+function assertLaneInputsPresent(args) {
+  if (args.requireRust && !existsSync(args.rustMissed ?? '')) {
+    throw new Error(
+      `--require-rust: no cargo-mutants missed.txt at ${args.rustMissed ?? '(unset)'} — the mutants lane produced no data, which is NOT the same as "no rust survivors". Refusing to rewrite the tracking issue, which would delete every rust survivor from its tracked set (#3364).`,
+    )
+  }
+  if (args.requireFrontend && frontendReportCount(args.frontendDir ?? '') === 0) {
+    throw new Error(
+      `--require-frontend: no Stryker mutation.json under ${args.frontendDir ?? '(unset)'} — the mutants-frontend lane produced no data, which is NOT the same as "no frontend survivors". Refusing to rewrite the tracking issue, which would delete every frontend survivor from its tracked set (#3364).`,
+    )
+  }
+}
+
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
+
+  // #3364 — a MISSING lane input is a hard error, not an empty one; see
+  // `assertLaneInputsPresent` above for why the alternative silently corrupts
+  // the tracking issue's state.
+  assertLaneInputsPresent(args)
 
   const rustSurvivors = args.rustMissed ? parseRustSurvivors(args.rustMissed) : []
   const frontendSurvivors = args.frontendDir ? parseFrontendSurvivors(args.frontendDir) : []
@@ -530,6 +607,105 @@ export function main(argv = process.argv.slice(2)) {
 //           machine-readable marker block must never be cut mid-way (a
 //           truncated block silently shrinks the tracked set).
 // Wired as the `mutation-survivors-filer-selftest` prek hook.
+// #3364 fixtures, split out of `runSelfTest` to keep its cyclomatic
+// complexity under the repo lint budget.
+function selfTestLaneInputGuards({ ok, fail, survivor }) {
+  // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
+  //    one. First, the damage the guards prevent, demonstrated on the pure
+  //    functions: a dead frontend lane contributes `[]`, and one new rust
+  //    survivor is enough to rewrite the body WITHOUT the frontend entries.
+  {
+    const frontendSurvivor = survivor(1)
+    const rustOld = '[rust] src/op.rs:10:5: replace foo with bar'
+    const rustNew = '[rust] src/op.rs:99:1: replace baz with qux'
+    const known = new Set([frontendSurvivor, rustOld])
+    // frontend lane dead -> contributes nothing; rust lane contributes a new one
+    const { newOnes, resolvedOnes, all } = diffSurvivors([rustOld, rustNew], known)
+    const body = buildIssueBody({ all, resolvedOnes, runUrl: undefined })
+    if (newOnes.length === 1 && !parseKnownSurvivors(body).has(frontendSurvivor))
+      ok('an unguarded dead lane really would delete its survivors from the tracked set (#3364)')
+    else
+      fail(
+        'an unguarded dead lane really would delete its survivors from the tracked set (#3364)',
+        `newOnes=${newOnes.length} stillTracked=${parseKnownSurvivors(body).has(frontendSurvivor)}`,
+      )
+  }
+
+  // …and the guards themselves. `main()` runs in dry-run + --known-body-file
+  // mode throughout, so no `gh` call is ever made.
+  {
+    const root = mkdtempSync(join(tmpdir(), 'survivor-require-'))
+    const emptyDir = join(root, 'empty')
+    mkdirSync(emptyDir)
+    const fullDir = join(root, 'full')
+    mkdirSync(join(fullDir, 'glob-validate'), { recursive: true })
+    writeFileSync(join(fullDir, 'glob-validate', 'mutation.json'), JSON.stringify({ files: {} }))
+    const missed = join(root, 'missed.txt')
+    writeFileSync(missed, '')
+    const absent = join(root, 'nope')
+
+    const runQuiet = (argv) => {
+      const realLog = console.log
+      console.log = () => {}
+      try {
+        main(argv)
+        return null
+      } catch (err) {
+        return err
+      } finally {
+        console.log = realLog
+      }
+    }
+    const base = ['--dry-run', '--known-body-file', join(root, 'no-such-body.md')]
+
+    const cases = [
+      [
+        'an ABSENT frontend dir fails --require-frontend (#3364)',
+        [...base, '--frontend-dir', absent, '--require-frontend'],
+        /no Stryker mutation\.json/,
+      ],
+      [
+        'an EMPTY frontend dir fails --require-frontend too — empty artifact is still no data (#3364)',
+        [...base, '--frontend-dir', emptyDir, '--require-frontend'],
+        /no Stryker mutation\.json/,
+      ],
+      [
+        'an absent missed.txt fails --require-rust (#3364)',
+        [...base, '--rust-missed', absent, '--require-rust'],
+        /no cargo-mutants missed\.txt/,
+      ],
+    ]
+    for (const [name, argv, pattern] of cases) {
+      const err = runQuiet(argv)
+      if (err && pattern.test(err.message)) ok(name)
+      else fail(name, err ? err.message : 'did not throw')
+    }
+
+    // The complement: real data must still pass, or the guard is just a
+    // permanent red lane. An EMPTY missed.txt is real data (cargo-mutants
+    // writes one when nothing survived) — only an ABSENT one is "no data".
+    const okCases = [
+      [
+        'a populated frontend dir passes --require-frontend',
+        [...base, '--frontend-dir', fullDir, '--require-frontend'],
+      ],
+      [
+        'an empty-but-present missed.txt passes --require-rust',
+        [...base, '--rust-missed', missed, '--require-rust'],
+      ],
+      [
+        'the guards are opt-in: an absent dir is still tolerated without the flag',
+        [...base, '--frontend-dir', absent, '--rust-missed', absent],
+      ],
+    ]
+    for (const [name, argv] of okCases) {
+      const err = runQuiet(argv)
+      if (err === null) ok(name)
+      else fail(name, err.message)
+    }
+  }
+}
+
 function runSelfTest() {
   const failures = []
   const ok = (name) => console.log(`  ok   - ${name}`)
@@ -662,6 +838,10 @@ function runSelfTest() {
     if (!body.includes('omitted') && !body.includes('truncated')) ok('a small body is not clamped')
     else fail('a small body is not clamped', body)
   }
+
+  // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
+  //    one. Fixtures live in `selfTestLaneInputGuards` above.
+  selfTestLaneInputGuards({ ok, fail, survivor })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
