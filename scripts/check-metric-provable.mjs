@@ -930,13 +930,26 @@ function enumerateMetrics(files, parsed) {
   return metrics.toSorted((a, b) => a.id.localeCompare(b.id))
 }
 
+/**
+ * Escape a value before interpolating it into a `RegExp` source string.
+ *
+ * Metric names and module basenames are Rust identifiers, so in practice this
+ * is a no-op — but they are derived from paths reachable via `--root`, i.e.
+ * from argv, and an unescaped interpolation of argv-derived text into a regex
+ * is a genuine injection shape regardless of what today's inputs happen to
+ * look like. Escaping costs nothing and removes the class rather than relying
+ * on an invariant nothing enforces.
+ */
+function escapeForRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
 /** Patterns that name `metric` in source text. */
 function metricTokens(metric) {
-  const tokens = [new RegExp(`\\b${metric.name}\\b`)]
+  const tokens = [new RegExp(`\\b${escapeForRegExp(metric.name)}\\b`)]
   if (metric.kind === 'global-static') {
-    tokens.push(
-      new RegExp(`\\b${path.posix.basename(metric.file, '.rs')}\\s*::\\s*(?:count|last)\\b`),
-    )
+    const modBase = escapeForRegExp(path.posix.basename(metric.file, '.rs'))
+    tokens.push(new RegExp(`\\b${modBase}\\s*::\\s*(?:count|last)\\b`))
   }
   return tokens
 }
@@ -952,7 +965,7 @@ function metricTokens(metric) {
 function externalMutatorCallers(metric, files, parsed) {
   const modBase = path.posix.basename(metric.file, '.rs')
   const mutSrc = `\\b(?:${GLOBAL_MUTATORS.join('|')})\\w*\\s*\\(`
-  const qualSrc = `\\b${modBase}\\s*::\\s*(?:${GLOBAL_MUTATORS.join('|')})\\w*\\s*\\(`
+  const qualSrc = `\\b${escapeForRegExp(modBase)}\\s*::\\s*(?:${GLOBAL_MUTATORS.join('|')})\\w*\\s*\\(`
   const out = []
   for (const rel of files) {
     if (rel === metric.file) continue
@@ -984,7 +997,10 @@ function externalMutatorCallers(metric, files, parsed) {
  */
 function gatherEvidence(metric, files, parsed) {
   const tokens = metricTokens(metric)
-  const writeRe = new RegExp(`\\b${metric.name}\\s*\\.\\s*(?:${WRITE_OPS})\\s*\\(`, 'g')
+  const writeRe = new RegExp(
+    `\\b${escapeForRegExp(metric.name)}\\s*\\.\\s*(?:${WRITE_OPS})\\s*\\(`,
+    'g',
+  )
   const productionWrites = []
   const firingTestFiles = []
   let firingTests = 0
