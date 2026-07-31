@@ -36,6 +36,7 @@
 import { create } from 'zustand'
 
 import { announce } from '@/lib/announcer'
+import { isValidation } from '@/lib/app-error'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -61,6 +62,32 @@ export const MAX_REDO_STACK = 100
  * cap bounds memory without shortening how far back Ctrl+Z can reach.
  */
 export const MAX_UNDO_STACK = 100
+
+/**
+ * Cap on the number of refs a single COALESCED undo entry may accumulate
+ * (#3323).
+ *
+ * `onNewAction`'s capture-time coalescing (`sameKeyGroup`, below) is
+ * deliberately TIME-UNBOUNDED — a block's mid-typing debounced commits can
+ * pause far longer than `UNDO_GROUP_WINDOW_MS` and still belong to the same
+ * edit session — so unlike `MAX_UNDO_STACK` (which bounds ENTRY count on the
+ * push branch), nothing bounded ref count on the merge branch. On Ctrl+Z the
+ * WHOLE entry submits in one `undoOps` IPC (`undoByRefs`), and the backend
+ * rejects a batch above `MAX_REVERT_OPS = 1000`
+ * (`src-tauri/src/commands/history.rs`) with a `Validation` error; on
+ * rejection the entry stays on top of the stack unchanged (see `undoByRefs`),
+ * so every subsequent Ctrl+Z on that page failed identically forever before
+ * this cap existed. Below that hard cliff it is a latency problem too: a
+ * large ref-set is one `BEGIN IMMEDIATE` transaction with in-tx Loro engine
+ * fanout holding the single writer lock, well past what `interactive_slo`
+ * budgets for a `revert_ops` call.
+ *
+ * Kept well under `MAX_REVERT_OPS`. Once a merge would cross this cap,
+ * `onNewAction` pushes a FRESH entry instead of extending the top one — the
+ * next Ctrl+Z reverts the newest chunk, and the press after that reverts the
+ * previous chunk: strictly better than a hard `undoOps` failure.
+ */
+export const MAX_COALESCED_UNDO_REFS = 200
 
 /**
  * Time window (ms) within which consecutive same-device ops are grouped for
@@ -464,12 +491,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
    * ONE atomic `undoOps` IPC for a coalesced ref-set (submitted newest-first;
    * the backend returns results newest-first either way).
    *
-   * On failure (e.g. a Validation rejection: foreign ref, already-reversed op)
-   * NO local state is mutated — the entry stays on the stack and redo/depth
-   * are untouched, so the stack stays internally consistent. The atomic-abort
-   * contract of `undoOps` guarantees the backend reverted nothing either. A
-   * permanently-dead ref (something else already reversed it) self-heals on
-   * the next `onNewAction` / `reanchorAfterRemoteOps` reset.
+   * On failure, redo/depth are always left untouched, and the atomic-abort
+   * contract of `undoOps` guarantees the backend reverted nothing either. For
+   * a TRANSIENT failure (`pool_busy`, a dropped IPC) the entry itself is also
+   * left on the stack so a later Ctrl+Z retries it. For a `Validation`
+   * rejection (#3323: oversized batch, duplicate ref, an already-reversed
+   * target) resubmitting would fail identically forever, so the entry is
+   * DROPPED from the stack here (see the `isValidation` branch below) instead
+   * of waiting for it to self-heal on the next `onNewAction` /
+   * `reanchorAfterRemoteOps` reset.
    */
   async function undoByRefs(pageId: string, entry: UndoStackEntry): Promise<UndoResult | null> {
     const refs = entry.refs as OpRef[]
@@ -487,6 +517,21 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
       notify.warning(t('undo.batchUnavailable'))
+      // #3323 — a VALIDATION failure (an oversized batch past the backend's
+      // `MAX_REVERT_OPS`, a duplicate ref, a target that's already reversed)
+      // can never succeed on retry: resubmitting the identical entry fails
+      // identically forever, wedging Ctrl+Z on this page permanently. Drop
+      // the dead entry so the stack can move on to the next one. Narrower
+      // than a blanket drop-on-any-error: a TRANSIENT failure (pool_busy, a
+      // dropped IPC) deserves a retry with the entry intact, so only the
+      // validation class is dropped here.
+      if (isValidation(err)) {
+        set((state) => ({
+          pages: setPageState(state.pages, pageId, (current) =>
+            current ? { ...current, undoStack: withoutEntry(current.undoStack, entry) } : current,
+          ),
+        }))
+      }
       return null
     }
 
@@ -785,8 +830,17 @@ export const useUndoStore = create<UndoStore>((set, get) => {
             top !== undefined &&
             now - top.at <= UNDO_GROUP_WINDOW_MS &&
             now >= top.at
+          // #3323 — see `MAX_COALESCED_UNDO_REFS` doc: only refs-carrying
+          // merges can grow unbounded (a ref-less merge degrades to the
+          // positional fallback and never accumulates a `refs` array), so the
+          // cap only needs to gate that case.
+          const withinCoalesceCap =
+            top === undefined ||
+            top.refs === null ||
+            opRefs === undefined ||
+            top.refs.length + opRefs.length <= MAX_COALESCED_UNDO_REFS
           let undoStack: UndoStackEntry[]
-          if (top !== undefined && (sameKeyGroup || withinWindow)) {
+          if (top !== undefined && (sameKeyGroup || withinWindow) && withinCoalesceCap) {
             // Capture-time coalescing: this action joins the top entry's group
             // (`at` advances to the newest action; the entry adopts this
             // action's `coalesceKey` so the session identity tracks the latest

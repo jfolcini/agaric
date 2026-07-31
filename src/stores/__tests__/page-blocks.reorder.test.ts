@@ -1192,5 +1192,104 @@ describe('PageBlockStore', () => {
       // Both ids appear in the batch, in document order. No filtering occurred.
       expect(batchCall()?.blockIds).toEqual(['A', 'A1'])
     })
+
+    // #3320 — `reconcileBatchMove` densely renumbers only the destination and
+    // vacated-source sibling groups; every OTHER group falls through with its
+    // stale, possibly duplicated/out-of-order `position` integers untouched,
+    // and `buildFlatTree`'s position-only sibling sort then re-derives that
+    // group's RENDERED order from those stale integers instead of reproducing
+    // it. A prior version of `reconcileBatchMove`'s doc comment argued sort
+    // STABILITY rescues this — wrong: stability only preserves relative order
+    // among EQUAL keys, not among keys that are already out of order.
+    it('#3320 — a batch move in a disjoint parent does not scramble an untouched sibling group left stale by prior optimistic reorders', async () => {
+      // GROUP_A and GROUP_B are two sibling containers under the page root,
+      // each with their own children — GROUP_B is wholly DISJOINT from
+      // GROUP_A (neither destination nor vacated source for the batch move
+      // below).
+      const groupA = makeBlock({ id: 'GROUP_A', position: 1, parent_id: 'PAGE_1', depth: 0 })
+      const groupB = makeBlock({ id: 'GROUP_B', position: 2, parent_id: 'PAGE_1', depth: 0 })
+      const blockA = makeBlock({ id: 'A', position: 1, parent_id: 'GROUP_A', depth: 1 })
+      const blockB = makeBlock({ id: 'B', position: 2, parent_id: 'GROUP_A', depth: 1 })
+      const blockC = makeBlock({ id: 'C', position: 3, parent_id: 'GROUP_A', depth: 1 })
+      const blockD = makeBlock({ id: 'D', position: 4, parent_id: 'GROUP_A', depth: 1 })
+      const blockP = makeBlock({ id: 'P', position: 1, parent_id: 'GROUP_B', depth: 1 })
+      const blockQ = makeBlock({ id: 'Q', position: 2, parent_id: 'GROUP_B', depth: 1 })
+      const blockR = makeBlock({ id: 'R', position: 3, parent_id: 'GROUP_B', depth: 1 })
+      store.setState({
+        blocks: [groupA, groupB, blockA, blockB, blockC, blockD, blockP, blockQ, blockR],
+      })
+
+      // Three stacked, legal, unrelated single-block reorders inside GROUP_A
+      // — the worked counterexample from the `reconcileBatchMove` doc
+      // comment: dense run A=1,B=2,C=3,D=4 → reorder(C,0) → reorder(D,0) →
+      // reorder(B,1) leaves array order [D,B,C,A] with STALE/duplicated
+      // stored positions D=1,B=2,C=1,A=1 (each reorder heals only the ONE
+      // moved block's `position`, per #404).
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'C',
+        new_parent_id: 'GROUP_A',
+        new_position: 1,
+      })
+      await store.getState().reorder('C', 0)
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'D',
+        new_parent_id: 'GROUP_A',
+        new_position: 1,
+      })
+      await store.getState().reorder('D', 0)
+
+      mockedInvoke.mockResolvedValueOnce({
+        block_id: 'B',
+        new_parent_id: 'GROUP_A',
+        new_position: 2,
+      })
+      await store.getState().reorder('B', 1)
+
+      // Sanity: GROUP_A is now exactly the corrupting pre-state the issue
+      // describes — rendered order [D,B,C,A] with stale/duplicate positions.
+      const beforeBatch = store.getState().blocks
+      expect(beforeBatch.filter((b) => b.parent_id === 'GROUP_A').map((b) => b.id)).toEqual([
+        'D',
+        'B',
+        'C',
+        'A',
+      ])
+      expect(
+        Object.fromEntries(
+          beforeBatch.filter((b) => b.parent_id === 'GROUP_A').map((b) => [b.id, b.position]),
+        ),
+      ).toEqual({ D: 1, B: 2, C: 1, A: 1 })
+
+      // A MULTI-SELECT batch move entirely inside GROUP_B — GROUP_A is
+      // neither the destination nor a vacated source.
+      mockedInvoke.mockResolvedValueOnce(batchResp(['R'], 'GROUP_B'))
+      await store.getState().moveBlocks(['R'], 'GROUP_B', 0)
+
+      const after = store.getState().blocks
+      // GROUP_B's own batch move landed correctly.
+      expect(after.filter((b) => b.parent_id === 'GROUP_B').map((b) => b.id)).toEqual([
+        'R',
+        'P',
+        'Q',
+      ])
+      // GROUP_A's RENDERED order must survive untouched. Pre-fix, buildFlatTree
+      // re-sorted GROUP_A by its stale (position, array-index) keys and
+      // produced [D,C,A,B] — a scramble of a group nobody in this move
+      // touched (the issue's exact worked-example result).
+      expect(after.filter((b) => b.parent_id === 'GROUP_A').map((b) => b.id)).toEqual([
+        'D',
+        'B',
+        'C',
+        'A',
+      ])
+      // The fix also heals GROUP_A's stale positions to a fresh dense rank
+      // matching that rendered order.
+      expect(
+        Object.fromEntries(
+          after.filter((b) => b.parent_id === 'GROUP_A').map((b) => [b.id, b.position]),
+        ),
+      ).toEqual({ D: 1, B: 2, C: 3, A: 4 })
+    })
   })
 })

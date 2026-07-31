@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   isWithinUndoGroup,
+  MAX_COALESCED_UNDO_REFS,
   MAX_REDO_STACK,
   UNDO_GROUP_WINDOW_MS,
   useUndoStore,
@@ -1367,6 +1368,110 @@ describe('useUndoStore', () => {
         const stack = useUndoStore.getState().pages.get('page1')?.undoStack
         expect(stack).toHaveLength(1)
         expect(stack?.[0]?.refs).toEqual([ref(1), ref(2)])
+      })
+    })
+
+    // #3323 — the coalesce branch had NO size bound on the merged `refs`
+    // array, unlike `MAX_UNDO_STACK`'s bound on entry COUNT (push branch).
+    // `sameKeyGroup` is deliberately time-unbounded (a mid-typing debounced
+    // commit session can run for minutes), so an unbounded merge could grow
+    // past the backend's `MAX_REVERT_OPS` (1000) and wedge Ctrl+Z on that
+    // page forever (see `MAX_COALESCED_UNDO_REFS` doc in `stores/undo.ts`).
+    describe('#3323 — coalesced ref cap (MAX_COALESCED_UNDO_REFS)', () => {
+      it('a merge that would cross the cap pushes a FRESH entry instead of growing the top one', () => {
+        const bulk = Array.from({ length: MAX_COALESCED_UNDO_REFS - 1 }, (_, i) => ref(i))
+        useUndoStore.getState().onNewAction('page1', bulk, 'edit:A')
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(1)
+
+        // Same coalesce key (would normally merge unconditionally), but 2
+        // more refs pushes the merged total 1 past the cap.
+        useUndoStore.getState().onNewAction('page1', [ref(9001), ref(9002)], 'edit:A')
+
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(2)
+        expect(stack?.[0]?.refs).toEqual([ref(9001), ref(9002)])
+        expect(stack?.[1]?.refs).toEqual(bulk)
+      })
+
+      it('a merge landing exactly AT the cap still coalesces into one entry', () => {
+        const bulk = Array.from({ length: MAX_COALESCED_UNDO_REFS - 1 }, (_, i) => ref(i))
+        useUndoStore.getState().onNewAction('page1', bulk, 'edit:A')
+        useUndoStore.getState().onNewAction('page1', [ref(9001)], 'edit:A')
+
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toHaveLength(MAX_COALESCED_UNDO_REFS)
+      })
+
+      it('a ref-less (positional-fallback) merge is never gated by the cap', () => {
+        useUndoStore.getState().onNewAction('page1', undefined, 'batch:x')
+        useUndoStore.getState().onNewAction('page1', undefined, 'batch:x')
+
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toBeNull()
+      })
+    })
+
+    // #3323 — a genuine `Validation` IPC rejection (oversized batch past the
+    // backend's `MAX_REVERT_OPS`, a duplicate/already-reversed ref) can never
+    // succeed on retry: resubmitting the identical entry fails identically
+    // forever. `undoByRefs` must drop that dead entry so Ctrl+Z isn't
+    // permanently wedged on the page — but a TRANSIENT failure (`pool_busy`,
+    // a dropped IPC) must keep the entry intact for a retry.
+    describe('#3323 — a genuine Validation rejection drops the dead entry', () => {
+      it('undoOp: a "validation" AppError drops the entry from the stack', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        mockedUndoOp.mockRejectedValueOnce({
+          kind: 'validation',
+          message: 'op (dev1, 5) is already reversed',
+        })
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+
+      it('undoOps: a "validation" AppError (oversized batch) drops the coalesced entry', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(1), ref(2)])
+
+        mockedUndoOps.mockRejectedValueOnce({
+          kind: 'validation',
+          message: 'cannot undo 2 ops in a single batch (maximum is 1000)',
+        })
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+
+      it('a TRANSIENT ("pool_busy") AppError does NOT drop the entry — it stays for retry', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        mockedUndoOp.mockRejectedValueOnce({ kind: 'pool_busy', message: 'pool exhausted' })
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toEqual([ref(5)])
+      })
+
+      it('a plain (non-AppError) rejection does NOT drop the entry — it stays for retry', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(5)])
+
+        mockedUndoOp.mockRejectedValueOnce(new Error('network blip'))
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        const stack = useUndoStore.getState().pages.get('page1')?.undoStack
+        expect(stack).toHaveLength(1)
+        expect(stack?.[0]?.refs).toEqual([ref(5)])
       })
     })
   })

@@ -1130,14 +1130,6 @@ export function createReducers({
         return []
       }
 
-      // Top-level pasted blocks become SIBLINGS of the anchor (same parent),
-      // landing right after the anchor among its siblings. `position` is 1-based
-      // on the wire (#400: position 1 → engine index 0), so the 0-based slot
-      // right after the anchor (`anchorSlot + 1`) maps to wire position
-      // `anchorSlot + 2`; subsequent top-level blocks step up from there.
-      const parentId = anchor.parent_id ?? null
-      const firstSiblingPosition = siblingSlot(blocks, anchor) + 2
-
       // Parse the outline. Empty / unrecognizable text → a single content block
       // from the raw markdown (paste must not be a silent no-op).
       const parsed = parseIndentedMarkdown(markdown)
@@ -1157,6 +1149,35 @@ export function createReducers({
           entry.content = await internalizeRefTokens(entry.content, internalizers)
         }
       }
+
+      // #3323 — the sibling slot MUST be captured from LIVE state right
+      // before the IPC, not from the pre-await `blocks`/`anchor` snapshot
+      // above: `buildImportRefInternalizers` builds lazy page/tag caches, so
+      // when the pasted text contains an unresolved `[[Name]]`/`#tag`, the
+      // `internalizeRefTokens` await above can open a real IPC window (a
+      // full paginated page fetch). A concurrent remote/MCP write inserting
+      // siblings above the anchor during that window would stale the
+      // pre-await slot, landing the pasted run at the wrong position with
+      // nothing to repair it (the reducer's own post-paste `load()` just
+      // reconciles the FE to that already-wrong backend order). Re-find the
+      // anchor and bail exactly like the pre-await check above if it vanished
+      // in the meantime.
+      const liveBlocks = get().blocks
+      const liveAnchor = liveBlocks.find((b) => b.id === anchorBlockId)
+      if (!liveAnchor) {
+        await get().load()
+        return []
+      }
+      // Top-level pasted blocks become SIBLINGS of the anchor (same parent),
+      // landing right after the anchor among its siblings. `position` is 1-based
+      // on the wire (#400: position 1 → engine index 0), so the 0-based slot
+      // right after the anchor (`anchorSlot + 1`) maps to wire position
+      // `anchorSlot + 2`; subsequent top-level blocks step up from there.
+      // Both `parentId` and the slot are read off `liveAnchor` (not the
+      // pre-await `anchor`) so they stay mutually consistent even if the
+      // anchor itself moved to a new parent during the internalization await.
+      const parentId = liveAnchor.parent_id ?? null
+      const firstSiblingPosition = siblingSlot(liveBlocks, liveAnchor) + 2
 
       // Compute each parsed block's depth so we can batch level-by-level
       // (children reference parents created in an earlier batch — the

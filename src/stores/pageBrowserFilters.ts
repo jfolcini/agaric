@@ -52,6 +52,62 @@ interface PageBrowserFiltersState {
 const EMPTY_FILTERS: readonly PageFilterWithKey[] = Object.freeze([])
 
 /**
+ * Light structural check — a full `FilterPrimitive` discriminant match isn't
+ * worth duplicating here (mirrors `isFilterPrimitiveLike` in `lib/preferences.ts`).
+ */
+function isPageFilterWithKeyLike(value: unknown): value is PageFilterWithKey {
+  if (value === null || typeof value !== 'object') return false
+  const v = value as Record<string, unknown>
+  return typeof v['type'] === 'string' && typeof v['_addId'] === 'number'
+}
+
+/**
+ * Coerce an arbitrary persisted value into a valid `filtersBySpace` shape,
+ * dropping non-array slices and any entry that doesn't look like a
+ * `PageFilterWithKey` (mirrors `coerceBySpace` in `stores/search-history.ts`).
+ */
+function coerceFiltersBySpace(raw: unknown): Record<string, PageFilterWithKey[]> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return {}
+  const out: Record<string, PageFilterWithKey[]> = {}
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(value)) continue
+    const cleaned = value.filter(isPageFilterWithKeyLike)
+    if (cleaned.length > 0) out[key] = cleaned
+  }
+  return out
+}
+
+/** Coerce an arbitrary persisted `nextAddId` into a non-negative integer, defaulting to 0. */
+function coerceNextAddId(raw: unknown): number {
+  const n = typeof raw === 'number' ? raw : Number(raw)
+  return Number.isFinite(n) && n >= 0 ? Math.trunc(n) : 0
+}
+
+/**
+ * CR-PERSIST — coerce an entire persisted page-browser-filters blob
+ * field-by-field. Shared by `migrate` (version-mismatched blobs) and `merge`
+ * (same-version blobs): zustand's persist middleware only calls `migrate`
+ * when the stored version DIFFERS from `options.version`, so a corrupt blob
+ * that still carries `version: 1` (or a non-numeric version) bypasses
+ * `migrate` entirely and reaches the default shallow `merge` raw — coercing
+ * in `merge` as well closes that path (mirrors `search-history.ts`). The
+ * coercion is idempotent, so the migrate→merge double pass on
+ * version-mismatched blobs is harmless.
+ */
+function coercePersistedPageBrowserFilters(
+  persisted: unknown,
+): Pick<PageBrowserFiltersState, 'filtersBySpace' | 'nextAddId'> {
+  const blob = (persisted != null && typeof persisted === 'object' ? persisted : {}) as Record<
+    string,
+    unknown
+  >
+  return {
+    filtersBySpace: coerceFiltersBySpace(blob['filtersBySpace']),
+    nextAddId: coerceNextAddId(blob['nextAddId']),
+  }
+}
+
+/**
  * Per-space chip selector. Pass `currentSpaceId` from `useSpaceStore`; `null`
  * (pre-bootstrap) maps to the `__legacy__` slot. Returns the stable frozen
  * empty array for an absent slice so the selector is referentially idempotent.
@@ -118,6 +174,18 @@ export const usePageBrowserFiltersStore = create<PageBrowserFiltersState>()(
       partialize: (state) => ({
         filtersBySpace: state.filtersBySpace,
         nextAddId: state.nextAddId,
+      }),
+      // #3323 — harden the read path: an unrecognized/corrupt blob (bad
+      // manual edit, future-shape downgrade) must not throw the PageBrowser
+      // via `.map`/`.length` on a non-array slice, or wedge `nextAddId` into
+      // string concatenation via a non-numeric persisted value. `migrate`
+      // covers version-mismatched blobs; `merge` covers same-version blobs,
+      // which zustand hands straight to the default shallow merge otherwise
+      // (mirrors `search-history.ts`).
+      migrate: (persisted, _version) => coercePersistedPageBrowserFilters(persisted),
+      merge: (persisted, current) => ({
+        ...current,
+        ...coercePersistedPageBrowserFilters(persisted),
       }),
     },
   ),
