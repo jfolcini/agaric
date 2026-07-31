@@ -641,7 +641,8 @@ pass_filenames = false
 files = "^scripts/check-raw-local-storage\\.mjs$"
 stages = ["pre-commit"]
 
-# unanchored-content-regex (#3348, theme T4 "text treated as structure"):
+# unanchored-content-regex (#3348, theme T4 "text treated as structure";
+# AST reachability in #3369):
 # Agaric's primary data is user prose with embedded `[[ULID]]` tokens, and
 # several paths rewrite that prose in place. #3313 showed what happens when
 # the matcher for such a rewrite is built from a runtime string with no
@@ -652,9 +653,17 @@ stages = ["pre-commit"]
 #   - `unanchored-surgery` — a dynamic `new RegExp(...)` pattern with no
 #     explicit boundary on BOTH sides whose regex reaches a `.replace(` /
 #     `.replaceAll(`. Read-only matching (in-page find, glob validation) is
-#     deliberately untouched, and a pattern built purely from module-level
-#     string constants (the enex-import PUA sentinels) is static by
+#     deliberately untouched, and a pattern built purely from string
+#     constants (the enex-import PUA sentinels) is static by
 #     construction, not a violation.
+#     Reachability is a value-flow fixpoint over the file's Babel AST with
+#     real binding resolution (#3369): the first, textual version followed
+#     only three spellings and a reviewer defeated it with four ordinary
+#     ones — a bare reassignment, a regex passed as a call argument, one
+#     stashed in an object property and one in an array element. Rules 1
+#     and 2 are AST-based; rule 3 is purely syntactic and stays textual,
+#     which is what lets the guard skip parsing the ~720 files that name
+#     neither `RegExp` nor `includes`/`indexOf`.
 #   - `error-message-substring` — `.includes('literal')` / `.indexOf(...)`
 #     on an error-message-derived value, i.e. control flow keyed to a
 #     locale-dependent string.
@@ -678,11 +687,17 @@ stages = ["pre-commit"]
 
 # Self-test the unanchored-content-regex guard's own exit behavior (the
 # pre-#3313 shape, a half-anchored pattern, an inline `.replace(new
-# RegExp(...))`, an error-message substring branch and a `\p{M}`-less
-# boundary class all FAIL; the fixed #3313 shape, a read-only matcher, a
+# RegExp(...))`, each of the four usage shapes that defeated the textual
+# version — reassignment, call argument, object property, array element —
+# an error-message substring branch and a `\p{M}`-less boundary class all
+# FAIL; the fixed #3313 shape, the same four shapes used read-only, a
 # constant-built pattern, a commented-out shape, a reasoned allow marker
 # and test files all PASS) whenever the guard script itself changes, so a
-# regression that defangs it can't land.
+# regression that defangs it can't land. It also asserts that the walk
+# never leaves `src/` (a copy of the guard itself is planted in a sibling
+# `scripts/` dir), that an unparseable file is a hard error rather than a
+# silent "clean", and that the four real sites #3348 confirmed safe are
+# still not flagged.
 [[repos.hooks]]
 id = "unanchored-content-regex-selftest"
 name = "Unanchored-content-regex guard self-test"

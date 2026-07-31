@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────
 // Unanchored-content-regex guard (#3348, theme T4 "text treated as
-// structure").
+// structure"; AST reachability added in #3369).
 //
 // Agaric's primary data is user prose with embedded `[[ULID]]` reference
 // tokens. Several code paths rewrite that prose in place. When the
@@ -28,22 +28,19 @@
 // ─── The three rules ────────────────────────────────────────────────
 //
 // 1. `unanchored-surgery`
-//    A `new RegExp(<pattern>, …)` where
-//      (a) `<pattern>` is DYNAMIC — after substituting module-level
-//          string constants (see "Static by construction" below), the
-//          pattern still depends on a runtime value (an identifier, a
-//          call, a template interpolation); AND
+//    A `new RegExp(<pattern>, …)` (or a bare `RegExp(<pattern>, …)`)
+//    where
+//      (a) `<pattern>` is DYNAMIC — after constant-folding every
+//          statically-known string binding (see "Static by construction"
+//          below), the pattern still depends on a runtime value (an
+//          unresolved identifier, a call, a template interpolation); AND
 //      (b) the pattern carries no explicit boundary on BOTH sides of the
 //          dynamic part — left: `^`, `\b`, `\B`, `(?<=`, `(?<!`;
 //          right: `$`, `\b`, `\B`, `(?=`, `(?!`. A half-anchored
 //          pattern (`\b${term}`) still splices on the other side, so
 //          both sides are required; AND
-//      (c) the compiled regex is used for SURGERY — it reaches a
-//          `.replace(` / `.replaceAll(` call. Three shapes are followed:
-//          the inline form `s.replace(new RegExp(…), …)`, the bound form
-//          (`const re = new RegExp(…)` … `s.replace(re, …)`), and the
-//          helper form (`function f(t) { return new RegExp(…) }` …
-//          `s.replace(f(x), …)`).
+//      (c) the compiled regex REACHES a `.replace(` / `.replaceAll(`
+//          first argument, i.e. it is used for SURGERY.
 //
 //    (c) is what keeps this guard usable. Read-only matching — in-page
 //    find, glob validation, highlight ranges — legitimately compiles
@@ -51,16 +48,23 @@
 //    there paints a wrong highlight (visible, transient), while a wrong
 //    replace corrupts durable data. Only the second is banned.
 //
+//    Reachability for (c) is a value-flow fixpoint over the file's AST
+//    with real lexical binding resolution (see "Why an AST" below), so
+//    it follows the regex through variable declarations, bare
+//    reassignments, call arguments into local functions, returns,
+//    object properties, destructuring and array elements — not just the
+//    three textual spellings the first version could see.
+//
 // 2. `error-message-substring`
 //    `X.includes('literal')` / `X.indexOf('literal')` where `X` is
-//    derived from an error MESSAGE (`err.message`, `String(err)`, or a
-//    local binding initialised from either). Platform and backend error
-//    strings are locale- and version-dependent, so branching on a
-//    hard-coded English fragment is a silently-decaying classifier —
-//    `src/lib/categorize-history-error.ts` is the cited case. Array
-//    membership (`OPTIONS.includes(value)`) is untouched: the receiver
-//    must be error-message-derived AND the argument must be a string
-//    literal.
+//    derived from an error MESSAGE (`.message`, `String(err)`, or a
+//    binding whose initialiser is either, resolved through the real
+//    scope chain). Platform and backend error strings are locale- and
+//    version-dependent, so branching on a hard-coded English fragment is
+//    a silently-decaying classifier — `src/lib/categorize-history-error.ts`
+//    is the cited case. Array membership (`OPTIONS.includes(value)`) is
+//    untouched: the receiver must be error-message-derived AND the
+//    argument must be a string literal.
 //
 // 3. `incomplete-boundary-class`
 //    A regex character class that mentions Unicode letters/numbers
@@ -71,13 +75,52 @@
 //    Applies to regex literals and to patterns written as strings
 //    (`\\p{L}` inside a template is normalised to `\p{L}` first).
 //
+// ─── Why an AST (#3369) ─────────────────────────────────────────────
+//
+// The first version (#3348) followed the regex textually and could only
+// see three spellings: inline, `const re = …` + `.replace(re, …)`, and
+// `return new RegExp(…)` + `.replace(build(x), …)`. A reviewer built
+// four genuinely-corrupting shapes it exits 0 on — a bare reassignment
+// (`let re; re = new RegExp(…)`), a regex passed as a call argument, one
+// stashed in an object property, and one stashed in an array element.
+// Sharing persist/regex option boilerplate is an ordinary refactor, so
+// the guard could be defeated with zero signal, which is worse than no
+// guard because it is trusted.
+//
+// Rules 1 and 2 are therefore evaluated on a real AST parsed with
+// `@babel/core` (a direct devDependency) and resolved with Babel's
+// scope/binding model. That closes all four shapes, removes the
+// unscoped whole-file `const`/`let`/`var` collection that both rules
+// used (a same-named local binding elsewhere in the file could feed the
+// wrong value into either rule), and makes `// content-regex-allow:`
+// markers come from real comment tokens rather than a textual sweep of
+// the source, so a marker-shaped substring inside a multi-line string
+// cannot suppress a violation.
+//
+// TypeScript's own compiler API is NOT used: as of TypeScript 7 (the
+// native port, which is what this repo pins) the JS package exports only
+// `version`, and the `typescript/unstable/*` entry points reach an
+// out-of-process `tsgo` server whose AST is exposed as IPC node handles
+// with no single-file parse entry point at all. Measured on this repo:
+// walking a program that way needs a loaded project (1559 files) and one
+// round trip per node, versus 137 ms to load `@babel/core` in-process
+// and ~0.5 ms to parse and analyse a file. Binding resolution WITHIN a
+// file needs no type checker, and the guard has never followed a regex
+// across module boundaries, so nothing is lost.
+//
+// Rule 3 stays a textual scan on purpose. It is purely syntactic — it
+// inspects the characters of a regex character class and has no
+// binding-resolution or reachability component — so an AST would look at
+// the same literal text for the same answer. Keeping it textual is also
+// what lets the guard skip parsing the ~730 files that contain no
+// `RegExp`, no `.includes(`/`.indexOf(` and no allow-marker.
+//
 // ─── Static by construction (why enex-import is not flagged) ────────
 //
-// Rule 1 resolves module-level `const NAME = '<literal>'` bindings
-// before deciding whether a pattern is dynamic. `src/lib/enex-import.ts`
-// replaces Private-Use-Area sentinels it injected itself
-// (`const CRYPT_SENTINEL = '\uE004'` …, then
-// `.replace(new RegExp(CRYPT_SENTINEL, 'g'), …)`). The pattern is a
+// Rule 1 constant-folds the pattern expression before deciding whether
+// it is dynamic. `src/lib/enex-import.ts` replaces Private-Use-Area
+// sentinels it injected itself (`const CRYPT_SENTINEL = '\uE004'` …,
+// then `.replace(new RegExp(CRYPT_SENTINEL, 'g'), …)`). The pattern is a
 // compile-time constant, collision-free by construction, and reviewable
 // in the diff — not a runtime string. It is therefore NOT a violation
 // and needs no exemption. Without this resolution step the guard would
@@ -105,7 +148,9 @@
 //
 //    on the violating line or the line immediately above. The reason
 //    text after the colon must be non-empty — a bare marker does not
-//    suppress anything.
+//    suppress anything. The marker is only honoured when it is a real
+//    `//` comment token, so the same text inside a string cannot
+//    suppress anything either.
 //
 // 2. `scripts/content-regex-baseline.json`, for pre-existing debt: a
 //    sorted array of `{ file, rule, count, reason }`. A file+rule pair
@@ -118,25 +163,38 @@
 //
 // ─── Known limits (documented, not accidental) ──────────────────────
 //
-//   - Rule 1 only follows the three usage shapes listed above. A regex
-//     handed to another module and replaced there is not tracked.
+//   - Analysis is per-file. A regex exported to another module and
+//     replaced there is not tracked; neither is one handed to an
+//     unresolved callee (an imported helper, a callback parameter).
+//   - Object-property and unresolved array-element slots are keyed by
+//     property name / "some array" rather than by object identity, so
+//     reachability through them is an OVER-approximation. That direction
+//     costs recall nothing and has been checked to add no findings
+//     across the scanned tree; if it ever misfires, the site marker is
+//     the escape hatch.
 //   - A pattern bounded by an ordinary literal character rather than an
 //     assertion (`${term}\\]\\]`) is reported; use the marker.
-//   - Comment stripping is textual (shared house style): a `//` inside a
-//     regex literal or string truncates the rest of that line, which can
-//     only cause a missed violation, never a false one.
+//   - Rule 3's comment stripping is textual: a `//` inside a regex
+//     literal or string truncates the rest of that line, which can only
+//     cause a missed violation, never a false one.
+//   - A file under `src/` that does not parse is a hard error (exit 2),
+//     never a silent skip.
 //
-// The guard scans `src/` only, and its own fixtures live in a temp
-// directory created by `--self-test`, so nothing here can match itself.
+// The guard walks `src/` only, and its own fixtures live in a temp
+// directory created by `--self-test`, so nothing here can match itself;
+// `--self-test` asserts both of those properties rather than assuming
+// them.
 //
 // Usage: node scripts/check-unanchored-content-regex.mjs
 //        node scripts/check-unanchored-content-regex.mjs --update-baseline
 //        node scripts/check-unanchored-content-regex.mjs --self-test
 // Exit:  0 = clean, 1 = new violation or stale baseline entry,
-//        2 = repo layout / malformed baseline / self-test failure.
+//        2 = repo layout / malformed baseline / unparseable source /
+//            self-test failure.
 // ─────────────────────────────────────────────────────────────────────
 
 import fs from 'node:fs'
+import { createRequire } from 'node:module'
 import os from 'node:os'
 import path from 'node:path'
 
@@ -151,7 +209,23 @@ const RULES = Object.freeze([
 ])
 
 /** Placeholder standing in for a runtime-dependent chunk of a pattern. */
-const DYN = '\u0000'
+const DYN = ' '
+
+// Cheap gates that decide whether a file is worth parsing, and whether an
+// AST is worth walking for a given rule. Each one is matched against the
+// RAW source (comments included) and keys on a BARE IDENTIFIER the rule
+// cannot fire without: rule 1 needs the global `RegExp` named, rule 2
+// needs `includes`/`indexOf` named, and an allow-marker needs its own
+// text. Nothing about spacing, punctuation or comments can hide those
+// tokens, so a gate can never skip a file that had something to say. Rule
+// 3 needs no AST and runs on every file. On this tree the gates take the
+// 818 walked files down to 99 parsed and 8 walked for rule 1.
+const SURGERY_GATE_RE = /\bRegExp\b/
+const SUBSTRING_GATE_RE = /\bincludes\b|\bindexOf\b/
+const MARKER_GATE_RE = /content-regex-allow/
+const NEEDS_AST_RE = new RegExp(
+  [SURGERY_GATE_RE, SUBSTRING_GATE_RE, MARKER_GATE_RE].map((r) => r.source).join('|'),
+)
 
 // ─── generic helpers ──────────────────────────────────────────────────
 
@@ -161,9 +235,10 @@ function toPosix(p) {
 
 /**
  * Walk `srcDir` for `*.ts` / `*.tsx`, excluding test files, `__tests__/`
- * and `tests/` directories, and `.d.ts` declarations.
+ * and `tests/` directories, and `.d.ts` declarations. Exported so the
+ * self-test can prove the walk never leaves `srcDir`.
  */
-function listSourceFiles(srcDir) {
+export function listSourceFiles(srcDir) {
   const out = []
   const visit = (dir) => {
     for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -190,6 +265,7 @@ function listSourceFiles(srcDir) {
  * Replace block comments (`/* … *\/`, incl. JSDoc) and line comments
  * (`// …`) with spaces, preserving newlines so line numbers stay exact.
  * A documented or commented-out bad shape is therefore not a violation.
+ * Used by rule 3 only; rules 1 and 2 see real comment tokens instead.
  */
 function stripComments(src) {
   let out = src.replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, ' '))
@@ -213,278 +289,131 @@ function makeLineLookup(src) {
   }
 }
 
-/**
- * Line numbers carrying a `// content-regex-allow: <reason>` marker with
- * a NON-EMPTY reason. Read from the ORIGINAL source (comments are
- * stripped before scanning, so the marker would otherwise be invisible).
- */
-function allowMarkerLines(src) {
-  const lines = src.split('\n')
-  const out = new Set()
-  for (let i = 0; i < lines.length; i++) {
-    const m = /\/\/\s*content-regex-allow\s*:\s*(.*)$/.exec(lines[i])
-    if (m && m[1].trim().length > 0) out.add(i + 1)
-  }
-  return out
-}
-
-/** Is a violation on `line` exempted by a marker on that line or the one above? */
-function isMarked(markers, line) {
-  return markers.has(line) || markers.has(line - 1)
-}
-
-// ─── a very small JS literal scanner ─────────────────────────────────
-//
-// Enough to find the end of a balanced `(`…`)`, to split top-level
-// arguments, and to walk string / template literals (including nested
-// `${…}`). It is NOT a JS parser: regex literals are not tracked, so a
-// `(` or `)` inside a regex literal passed as an argument could
-// mis-balance. That shape does not occur in the scanned tree and would
-// only cause a missed violation.
-
-/** Index just past the string literal starting at `i` (a quote char). */
-function skipQuoted(src, i) {
-  const q = src[i]
-  let j = i + 1
-  while (j < src.length) {
-    if (src[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (src[j] === q) return j + 1
-    j++
-  }
-  return j
-}
-
-/** Index just past the template literal starting at `i` (a backtick). */
-function skipTemplate(src, i) {
-  let j = i + 1
-  while (j < src.length) {
-    if (src[j] === '\\') {
-      j += 2
-      continue
-    }
-    if (src[j] === '`') return j + 1
-    if (src[j] === '$' && src[j + 1] === '{') {
-      j = skipBalanced(src, j + 1, '{', '}')
-      continue
-    }
-    j++
-  }
-  return j
-}
-
-/**
- * Index just past the balanced group starting at `i` (which must be
- * `open`). Skips over string and template literals.
- */
-function skipBalanced(src, i, open = '(', close = ')') {
-  let depth = 0
-  let j = i
-  while (j < src.length) {
-    const c = src[j]
-    if (c === "'" || c === '"') {
-      j = skipQuoted(src, j)
-      continue
-    }
-    if (c === '`') {
-      j = skipTemplate(src, j)
-      continue
-    }
-    if (c === open) depth++
-    else if (c === close) {
-      depth--
-      if (depth === 0) return j + 1
-    }
-    j++
-  }
-  return j
-}
-
-/**
- * Split the argument list of a call whose `(` is at `openIdx`. Returns
- * `{ end, args }` where `end` is the index of the closing `)` and `args`
- * are the raw top-level argument texts.
- */
-function readCallArgs(src, openIdx) {
-  const args = []
-  let depth = 0
-  let start = openIdx + 1
-  let j = openIdx
-  while (j < src.length) {
-    const c = src[j]
-    if (c === "'" || c === '"') {
-      j = skipQuoted(src, j)
-      continue
-    }
-    if (c === '`') {
-      j = skipTemplate(src, j)
-      continue
-    }
-    if (c === '(' || c === '[' || c === '{') {
-      depth++
-      j++
-      continue
-    }
-    if (c === ']' || c === '}') {
-      depth--
-      j++
-      continue
-    }
-    if (c === ')') {
-      depth--
-      if (depth === 0) {
-        args.push(src.slice(start, j))
-        return { end: j, args }
-      }
-      j++
-      continue
-    }
-    if (c === ',' && depth === 1) {
-      args.push(src.slice(start, j))
-      start = j + 1
-      j++
-      continue
-    }
-    j++
-  }
-  return { end: j, args }
-}
-
-// ─── pattern analysis ────────────────────────────────────────────────
-
-/**
- * Module-level `const NAME = '<string literal>'` bindings, as a
- * `Map<name, rawLiteralContents>`. Template literals containing `${` are
- * skipped (not compile-time constant). These are what makes a
- * sentinel-based `new RegExp(SENTINEL, 'g')` static rather than dynamic.
- */
-function collectStringConsts(stripped) {
-  const out = new Map()
-  // Anchored with NO leading `\s*`: only a truly column-0 (module-level)
-  // declaration counts. Without this, a same-named `const NAME = '<literal>'`
-  // declared inside an unrelated function anywhere else in the file (any
-  // indentation) would be collected into the same flat, unscoped map and
-  // wrongly inlined at a genuinely dynamic use site elsewhere in the file —
-  // e.g. a local `const term = 'x'` inside a helper silently defeats
-  // detection of `new RegExp(term, 'i')` in an unrelated exported function
-  // that takes `term` as a runtime parameter of the same name.
-  const re = /^(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*(['"`])/gm
-  let m
-  while ((m = re.exec(stripped))) {
-    const quoteIdx = m.index + m[0].length - 1
-    const end = m[2] === '`' ? skipTemplate(stripped, quoteIdx) : skipQuoted(stripped, quoteIdx)
-    const body = stripped.slice(quoteIdx + 1, end - 1)
-    const rest = stripped.slice(end).match(/^[^\n]*/)[0]
-    if (rest.trim().length > 0) continue // not a lone literal initialiser
-    if (m[2] === '`' && body.includes('${')) continue // interpolated => not constant
-    out.set(m[1], body)
-    re.lastIndex = end
-  }
-  return out
-}
-
-/**
- * Reduce a `new RegExp` pattern EXPRESSION to `{ text, dynamic }`, where
- * `text` is the regex source with every runtime-dependent chunk replaced
- * by `DYN`. Module-level string constants from `consts` are inlined, so
- * a pattern built purely from them comes back `dynamic: false`.
- */
-function patternInfo(expr, consts) {
-  let text = ''
-  let dynamic = false
-  let i = 0
-  const pushDyn = () => {
-    if (!text.endsWith(DYN)) text += DYN
-    dynamic = true
-  }
-  while (i < expr.length) {
-    const c = expr[i]
-    if (/\s/.test(c) || c === '+' || c === '(' || c === ')') {
-      i++
-      continue
-    }
-    if (c === "'" || c === '"') {
-      const end = skipQuoted(expr, i)
-      text += expr.slice(i + 1, end - 1)
-      i = end
-      continue
-    }
-    if (c === '`') {
-      const end = skipTemplate(expr, i)
-      const inner = expr.slice(i + 1, end - 1)
-      let k = 0
-      while (k < inner.length) {
-        if (inner[k] === '\\') {
-          text += inner.slice(k, k + 2)
-          k += 2
-          continue
-        }
-        if (inner[k] === '$' && inner[k + 1] === '{') {
-          const close = skipBalanced(inner, k + 1, '{', '}')
-          const sub = patternInfo(inner.slice(k + 2, close - 1), consts)
-          text += sub.text
-          if (sub.dynamic) dynamic = true
-          k = close
-          continue
-        }
-        text += inner[k]
-        k++
-      }
-      i = end
-      continue
-    }
-    const idm = /^[A-Za-z_$][\w$]*/.exec(expr.slice(i))
-    if (idm) {
-      const name = idm[0]
-      let j = i + name.length
-      while (j < expr.length && /\s/.test(expr[j])) j++
-      if (expr[j] === '(') {
-        // A call: always runtime-dependent (escapeRegExp(term), …).
-        i = skipBalanced(expr, j)
-        pushDyn()
-        continue
-      }
-      if (consts.has(name) && expr[j] !== '.' && expr[j] !== '[') {
-        text += consts.get(name)
-        i = j
-        continue
-      }
-      i = j
-      pushDyn()
-      continue
-    }
-    i++
-    pushDyn()
-  }
-  return { text, dynamic }
-}
-
 /** `\\p{L}` (as written inside a JS string) → `\p{L}`, `\\b` → `\b`, … */
 function unescapeSource(text) {
   return text.replace(/\\\\/g, '\\')
 }
 
+/** Is a violation on `line` exempted by a marker on it or the line above? */
+function isMarked(markers, line) {
+  return markers.has(line) || markers.has(line - 1)
+}
+
+/**
+ * Line numbers carrying a `// content-regex-allow: <reason>` marker with
+ * a NON-EMPTY reason, taken from real `//` comment tokens. A marker-shaped
+ * substring inside a string literal is not a comment and suppresses
+ * nothing.
+ */
+function markerLinesFromComments(ast) {
+  const out = new Set()
+  for (const comment of ast.comments ?? []) {
+    if (comment.type !== 'CommentLine') continue
+    const m = /^\s*content-regex-allow\s*:\s*(.*)$/.exec(comment.value)
+    if (m && m[1].trim().length > 0) out.add(comment.loc.start.line)
+  }
+  return out
+}
+
+// ─── AST layer ────────────────────────────────────────────────────────
+
+let babelCache = null
+
+/**
+ * `@babel/core` is loaded lazily and synchronously so that importing this
+ * module (for `validateBaseline`, or by the main-module-detection guard)
+ * does not pay ~140 ms, and so a tree with nothing to parse pays nothing.
+ */
+function loadBabel() {
+  if (babelCache === null) {
+    const require = createRequire(import.meta.url)
+    babelCache = require('@babel/core')
+  }
+  return babelCache
+}
+
+/**
+ * Parse one TS/TSX source. A parse failure THROWS: every file under
+ * `src/` compiles, so an unparseable one means the guard cannot do its
+ * job and must say so instead of silently reporting "clean".
+ */
+function parseSource(code, filename) {
+  const { parseSync } = loadBabel()
+  const isTsx = filename.endsWith('.tsx')
+  try {
+    return parseSync(code, {
+      filename,
+      babelrc: false,
+      configFile: false,
+      browserslistConfigFile: false,
+      cwd: ROOT,
+      sourceType: 'module',
+      parserOpts: {
+        plugins: isTsx ? ['typescript', 'jsx'] : ['typescript'],
+        errorRecovery: false,
+      },
+    })
+  } catch (err) {
+    throw new Error(`cannot parse ${filename}: ${err.message}`)
+  }
+}
+
+/** Property name of a non-computed member/property key, or null. */
+function keyName(node) {
+  if (!node) return null
+  if (node.type === 'Identifier') return node.name
+  if (node.type === 'StringLiteral') return node.value
+  return null
+}
+
+/** Stable per-file id for an AST node (used to key binding/function slots). */
+function makeUid() {
+  const ids = new Map()
+  let next = 0
+  return (node) => {
+    let id = ids.get(node)
+    if (id === undefined) {
+      next += 1
+      id = next
+      ids.set(node, id)
+    }
+    return id
+  }
+}
+
+/** The function NodePath a call's identifier callee resolves to, or null. */
+function resolveFunctionPath(calleePath) {
+  if (!calleePath.isIdentifier()) return null
+  const binding = calleePath.scope.getBinding(calleePath.node.name)
+  if (!binding) return null
+  const declared = binding.path
+  if (declared.isFunctionDeclaration()) return declared
+  if (declared.isVariableDeclarator()) {
+    const init = declared.get('init')
+    if (init.isArrowFunctionExpression() || init.isFunctionExpression()) return init
+  }
+  return null
+}
+
+// ─── rule 1: unanchored surgery ──────────────────────────────────────
+
 /** Does `seg` (regex source, left of the dynamic part) assert a left boundary? */
 function hasLeftAnchor(seg) {
-  const s = unescapeSource(seg)
-  if (/\(\?<[=!]/.test(s)) return true
-  if (/\\[bB]/.test(s)) return true
+  if (/\(\?<[=!]/.test(seg)) return true
+  if (/\\[bB]/.test(seg)) return true
   // `^` is an anchor unless it is the negation inside `[^…]`.
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '^' && s[i - 1] !== '[' && s[i - 1] !== '\\') return true
+  for (let i = 0; i < seg.length; i++) {
+    if (seg[i] === '^' && seg[i - 1] !== '[' && seg[i - 1] !== '\\') return true
   }
   return false
 }
 
 /** Does `seg` (regex source, right of the dynamic part) assert a right boundary? */
 function hasRightAnchor(seg) {
-  const s = unescapeSource(seg)
-  if (/\(\?[=!]/.test(s)) return true
-  if (/\\[bB]/.test(s)) return true
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === '$' && s[i - 1] !== '\\') return true
+  if (/\(\?[=!]/.test(seg)) return true
+  if (/\\[bB]/.test(seg)) return true
+  for (let i = 0; i < seg.length; i++) {
+    if (seg[i] === '$' && seg[i - 1] !== '\\') return true
   }
   return false
 }
@@ -497,133 +426,471 @@ function isAnchored(text) {
   return hasLeftAnchor(text.slice(0, first)) && hasRightAnchor(text.slice(last + 1))
 }
 
-// ─── rule 1: unanchored surgery ──────────────────────────────────────
-
 /**
- * Name of the function enclosing `idx`, looked up by scanning backwards
- * for the nearest `function NAME(` / `const NAME = (`/`async (`/`function`.
- * Used to follow the helper shape
- * `function build(t) { return new RegExp(…) }` … `s.replace(build(x), …)`.
+ * Reduce a `new RegExp` pattern EXPRESSION to `{ text, dynamic }`, where
+ * `text` is the resulting REGEX SOURCE with every runtime-dependent chunk
+ * replaced by `DYN`.
+ *
+ * Static folding runs through Babel's `evaluate()`, which resolves a
+ * binding only when it is provably constant in the scope of the USE site
+ * — the whole point of moving off the textual, whole-file, column-0
+ * `const` sweep the first version used. Because the folded value is the
+ * string's COOKED value, `text` is the real regex source: `'\\b'` folds
+ * to a backslash + `b` (a word-boundary assertion) while `'\b'` folds to
+ * U+0008 (a backspace character, correctly NOT an anchor).
  */
-function enclosingFunctionName(stripped, idx) {
-  const head = stripped.slice(0, idx)
-  const re =
-    /(?:function\s+([A-Za-z_$][\w$]*)\s*[(<]|(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]*)?=\s*(?:async\s*)?(?:function\b|\())/g
-  let last = null
-  let m
-  while ((m = re.exec(head))) last = m[1] ?? m[2]
-  return last
-}
-
-/** Every `.replace(`/`.replaceAll(` first-argument text in the file. */
-function replaceFirstArgs(stripped) {
-  const out = []
-  const re = /\.\s*(?:replace|replaceAll)\s*\(/g
-  let m
-  while ((m = re.exec(stripped))) {
-    const open = m.index + m[0].length - 1
-    const { args } = readCallArgs(stripped, open)
-    if (args.length > 0) out.push(args[0].trim())
+function patternInfo(exprPath) {
+  const evaluated = exprPath.evaluate()
+  if (evaluated.confident && typeof evaluated.value === 'string') {
+    return { text: evaluated.value, dynamic: false }
   }
-  return out
-}
-
-function scanUnanchoredSurgery(stripped, consts, lineOf) {
-  const found = []
-  const firstArgs = replaceFirstArgs(stripped)
-  const boundToReplace = new Set()
-  const calledInReplace = new Set()
-  for (const a of firstArgs) {
-    const ident = /^([A-Za-z_$][\w$]*)\s*(\(?)/.exec(a)
-    if (!ident) continue
-    if (ident[2] === '(') calledInReplace.add(ident[1])
-    else if (a === ident[1]) boundToReplace.add(ident[1])
+  if (exprPath.isRegExpLiteral()) {
+    return { text: exprPath.node.pattern, dynamic: false }
   }
-
-  const re = /\bnew\s+RegExp\s*\(/g
-  let m
-  while ((m = re.exec(stripped))) {
-    const open = m.index + m[0].length - 1
-    const { end, args } = readCallArgs(stripped, open)
-    re.lastIndex = end
-    if (args.length === 0) continue
-    const info = patternInfo(args[0], consts)
-    if (!info.dynamic) continue
-    if (isAnchored(info.text)) continue
-
-    // Is the compiled regex used to rewrite a string?
-    const before = stripped.slice(Math.max(0, m.index - 60), m.index)
-    const inlineReplace = /\.\s*(?:replace|replaceAll)\s*\(\s*$/.test(before)
-    const binding = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]*)?=\s*$/.exec(before)
-    const isReturned = /(?:return|=>)\s*$/.test(before)
-    let surgery = inlineReplace
-    let via = 'inline `.replace(new RegExp(…))`'
-    if (!surgery && binding && boundToReplace.has(binding[1])) {
-      surgery = true
-      via = `bound to \`${binding[1]}\`, used in \`.replace(${binding[1]}, …)\``
-    }
-    if (!surgery && isReturned) {
-      const fn = enclosingFunctionName(stripped, m.index)
-      if (fn && calledInReplace.has(fn)) {
-        surgery = true
-        via = `returned from \`${fn}()\`, used in \`.replace(${fn}(…), …)\``
+  if (exprPath.isTemplateLiteral()) {
+    const quasis = exprPath.node.quasis
+    const exprs = exprPath.get('expressions')
+    let text = ''
+    let dynamic = false
+    for (let i = 0; i < quasis.length; i++) {
+      text += quasis[i].value.cooked ?? quasis[i].value.raw
+      if (i < exprs.length) {
+        const sub = patternInfo(exprs[i])
+        text += sub.text
+        if (sub.dynamic) dynamic = true
       }
     }
-    if (!surgery) continue
+    return { text, dynamic }
+  }
+  if (exprPath.isBinaryExpression({ operator: '+' })) {
+    const left = patternInfo(exprPath.get('left'))
+    const right = patternInfo(exprPath.get('right'))
+    return { text: left.text + right.text, dynamic: left.dynamic || right.dynamic }
+  }
+  if (
+    exprPath.isTSAsExpression() ||
+    exprPath.isTSSatisfiesExpression() ||
+    exprPath.isTSNonNullExpression() ||
+    exprPath.isTSTypeAssertion()
+  ) {
+    return patternInfo(exprPath.get('expression'))
+  }
+  return { text: DYN, dynamic: true }
+}
 
-    found.push({
-      rule: 'unanchored-surgery',
-      line: lineOf(m.index),
-      detail: `unanchored dynamic pattern ${JSON.stringify(args[0].trim())} — ${via}`,
+/** Is this `new RegExp(…)` / `RegExp(…)` on the GLOBAL `RegExp`? */
+function isRegExpConstruction(callPath) {
+  const callee = callPath.get('callee')
+  if (!callee.isIdentifier({ name: 'RegExp' })) return false
+  // A local binding named `RegExp` is somebody else's function.
+  return !callPath.scope.getBinding('RegExp')
+}
+
+/**
+ * Value-flow slots. A slot is a place a regex value can come to rest and
+ * be read back out again:
+ *
+ *   `bind:<id>`  a resolved lexical binding (const/let/var/param/function)
+ *   `prop:<name>`  an object property with that name (name-keyed)
+ *   `elem:<id>`  elements of the array held by a resolved binding
+ *   `elem:*`     elements of an array whose holder could not be resolved
+ *   `ret:<id>`   the return value of a local function
+ *
+ * Taint (a set of regex-construction ids) is pushed into slots and pulled
+ * back out by every expression that reads them, to a fixpoint. A
+ * construction is SURGERY iff its id reaches the first argument of a
+ * `.replace(` / `.replaceAll(` call.
+ */
+function scanUnanchoredSurgery(ast, code) {
+  const { traverse } = loadBabel()
+  const uid = makeUid()
+
+  const constructions = [] // { id, path, line, argText }
+  const readers = new Map() // slot -> NodePath[] whose value is that slot
+  const edges = new Map() // slot -> Set<slot> (destructuring links)
+  const taint = new Map() // slot -> Set<constructionId>
+  const surgery = new Map() // constructionId -> { via }
+
+  const addReader = (slot, at) => {
+    let list = readers.get(slot)
+    if (!list) readers.set(slot, (list = []))
+    list.push(at)
+  }
+  const addEdge = (from, to) => {
+    let set = edges.get(from)
+    if (!set) edges.set(from, (set = new Set()))
+    set.add(to)
+  }
+
+  /** Slot for the binding an identifier declares or references, or null. */
+  const bindingSlot = (idPath) => {
+    if (!idPath || !idPath.isIdentifier()) return null
+    const binding = idPath.scope.getBinding(idPath.node.name)
+    return binding ? `bind:${uid(binding.identifier)}` : null
+  }
+
+  /** Slot for the array-element store of `arr` in `arr[i]` / `const arr = [...]`. */
+  const elementSlot = (holderPath) => {
+    const slot = bindingSlot(holderPath)
+    return slot ? `elem:${slot}` : 'elem:*'
+  }
+
+  /** Link every `{ p: local }` / `[local]` pattern binding to its source slot. */
+  const linkPattern = (patternPath) => {
+    if (patternPath.isObjectPattern()) {
+      for (const prop of patternPath.get('properties')) {
+        if (prop.isRestElement()) continue
+        const name = prop.node.computed ? null : keyName(prop.node.key)
+        if (!name) continue
+        linkPatternTarget(`prop:${name}`, prop.get('value'))
+      }
+      return
+    }
+    if (patternPath.isArrayPattern()) {
+      for (const el of patternPath.get('elements')) {
+        if (!el || !el.node) continue
+        linkPatternTarget('elem:*', el.isRestElement() ? el.get('argument') : el)
+      }
+    }
+  }
+  const linkPatternTarget = (fromSlot, targetPath) => {
+    if (!targetPath || !targetPath.node) return
+    const inner = targetPath.isAssignmentPattern() ? targetPath.get('left') : targetPath
+    if (inner.isIdentifier()) {
+      const slot = bindingSlot(inner)
+      if (slot) addEdge(fromSlot, slot)
+      return
+    }
+    linkPattern(inner)
+  }
+
+  /** Does the value of `child` pass through `parent` unchanged? */
+  const isTransparent = (parent, child) => {
+    if (
+      parent.isTSAsExpression() ||
+      parent.isTSSatisfiesExpression() ||
+      parent.isTSNonNullExpression() ||
+      parent.isTSTypeAssertion() ||
+      parent.isParenthesizedExpression() ||
+      parent.isAwaitExpression()
+    ) {
+      return true
+    }
+    if (parent.isConditionalExpression()) return child.key !== 'test'
+    if (parent.isLogicalExpression()) return child.key === 'right'
+    if (parent.isSequenceExpression()) return child.key === parent.node.expressions.length - 1
+    return false
+  }
+
+  /** Slots written by `x = <value>` / `x.p = <value>` / `x[i] = <value>`. */
+  const assignmentSlots = (left) => {
+    if (left.isIdentifier()) {
+      const slot = bindingSlot(left)
+      return slot ? [slot] : []
+    }
+    if (left.isMemberExpression()) {
+      if (left.node.computed) return [elementSlot(left.get('object'))]
+      const name = keyName(left.node.property)
+      return name ? [`prop:${name}`] : []
+    }
+    return []
+  }
+
+  /** Slots written by passing a value as argument #`index` of `call`. */
+  const argumentSlots = (call, index) => {
+    const callee = call.get('callee')
+    const isMember = callee.isMemberExpression() || callee.isOptionalMemberExpression()
+    const method = isMember && !callee.node.computed ? keyName(callee.node.property) : null
+    if ((method === 'replace' || method === 'replaceAll') && index === 0) {
+      const argNode = call.node.arguments[0]
+      return [
+        {
+          sink: true,
+          line: call.node.loc.start.line,
+          argText: code.slice(argNode.start, argNode.end),
+        },
+      ]
+    }
+    const fn = resolveFunctionPath(callee)
+    if (!fn) return []
+    const param = fn.get('params')[index]
+    if (!param?.node) return []
+    // Destructured parameters are wired up by the static pattern links.
+    const inner = param.isAssignmentPattern() ? param.get('left') : param
+    if (!inner.isIdentifier()) return []
+    const slot = bindingSlot(inner)
+    return slot ? [slot] : []
+  }
+
+  /**
+   * Where does the value produced at `from` flow? Returns slot keys, plus
+   * at most one `{ sink }` descriptor when it lands in a `.replace()` first
+   * argument.
+   */
+  const targetsOf = (from) => {
+    let cur = from
+    for (let hops = 0; hops < 64; hops++) {
+      const parent = cur.parentPath
+      if (!parent) return []
+      if (isTransparent(parent, cur)) {
+        cur = parent
+        continue
+      }
+      if (parent.isVariableDeclarator() && cur.key === 'init') {
+        const slot = bindingSlot(parent.get('id'))
+        return slot ? [slot] : []
+      }
+      if (parent.isAssignmentExpression() && cur.key === 'right' && parent.node.operator === '=') {
+        return assignmentSlots(parent.get('left'))
+      }
+      if (parent.isObjectProperty() && cur.key === 'value' && !parent.node.computed) {
+        const name = keyName(parent.node.key)
+        return name ? [`prop:${name}`] : []
+      }
+      if (parent.isArrayExpression() && cur.listKey === 'elements') {
+        const holder = parent.parentPath
+        if (holder?.isVariableDeclarator() && holder.node.init === parent.node) {
+          const slot = bindingSlot(holder.get('id'))
+          return [slot ? `elem:${slot}` : 'elem:*']
+        }
+        return ['elem:*']
+      }
+      if (
+        parent.isReturnStatement() ||
+        (parent.isArrowFunctionExpression() && cur.key === 'body')
+      ) {
+        const fn = parent.isArrowFunctionExpression() ? parent : parent.getFunctionParent()
+        return fn ? [`ret:${uid(fn.node)}`] : []
+      }
+      if (
+        (parent.isCallExpression() ||
+          parent.isNewExpression() ||
+          parent.isOptionalCallExpression()) &&
+        cur.listKey === 'arguments'
+      ) {
+        return argumentSlots(parent, cur.key)
+      }
+      return []
+    }
+    return []
+  }
+
+  // `new RegExp(p, f)` and a bare `RegExp(p, f)` build the same object, so
+  // both are candidate constructions.
+  const collectConstruction = (p) => {
+    if (!isRegExpConstruction(p)) return
+    if (p.node.arguments.length === 0) return
+    const argPath = p.get('arguments.0')
+    if (!argPath.isExpression()) return
+    const info = patternInfo(argPath)
+    if (!info.dynamic) return
+    if (isAnchored(info.text)) return
+    constructions.push({
+      id: constructions.length,
+      at: p,
+      line: p.node.loc.start.line,
+      argText: code.slice(argPath.node.start, argPath.node.end),
     })
   }
-  return found
+  const collectReturnReader = (p) => {
+    const fn = resolveFunctionPath(p.get('callee'))
+    if (fn) addReader(`ret:${uid(fn.node)}`, p)
+  }
+  const collectMemberReader = (p) => {
+    if (p.node.computed) {
+      addReader(elementSlot(p.get('object')), p)
+      return
+    }
+    const name = keyName(p.node.property)
+    if (name) addReader(`prop:${name}`, p)
+  }
+
+  // NOTE: every node type gets exactly ONE key here. Babel's visitor
+  // `explode()` expands an `'A|B'` key by ASSIGNING to `visitor.A` and
+  // `visitor.B` rather than merging, so two alias keys naming the same node
+  // type silently drop the first handler — which is how the bare
+  // `RegExp(...)` construction went unvisited while `new RegExp(...)` worked.
+  traverse(ast, {
+    NewExpression: collectConstruction,
+    CallExpression: (p) => {
+      collectConstruction(p)
+      collectReturnReader(p)
+    },
+    OptionalCallExpression: collectReturnReader,
+    MemberExpression: collectMemberReader,
+    OptionalMemberExpression: collectMemberReader,
+    Identifier: (p) => {
+      if (!p.isReferencedIdentifier()) return
+      const slot = bindingSlot(p)
+      if (slot) addReader(slot, p)
+    },
+    VariableDeclarator: (p) => {
+      const id = p.get('id')
+      if (id.isObjectPattern() || id.isArrayPattern()) linkPattern(id)
+    },
+    Function: (p) => {
+      for (const param of p.get('params')) {
+        const inner = param.isAssignmentPattern() ? param.get('left') : param
+        if (inner.isObjectPattern() || inner.isArrayPattern()) linkPattern(inner)
+      }
+    },
+  })
+
+  if (constructions.length === 0) return []
+
+  // Fixpoint: push each construction's id from where it is written, follow
+  // every reader of every slot it lands in, until nothing new is learned.
+  const queue = constructions.map((c) => ({ at: c.at, ids: new Set([c.id]), seed: true }))
+  const pushSlot = (slot, ids) => {
+    let held = taint.get(slot)
+    if (!held) taint.set(slot, (held = new Set()))
+    const added = new Set()
+    for (const id of ids) {
+      if (held.has(id)) continue
+      held.add(id)
+      added.add(id)
+    }
+    if (added.size === 0) return
+    for (const reader of readers.get(slot) ?? []) queue.push({ at: reader, ids: added })
+    for (const to of edges.get(slot) ?? []) pushSlot(to, added)
+  }
+
+  while (queue.length > 0) {
+    const item = queue.pop()
+    for (const target of targetsOf(item.at)) {
+      if (typeof target === 'object' && target.sink) {
+        for (const id of item.ids) {
+          if (surgery.has(id)) continue
+          surgery.set(id, {
+            via: item.seed
+              ? 'inline `.replace(new RegExp(…), …)`'
+              : `flows into \`.replace(${target.argText}, …)\` at line ${target.line}`,
+          })
+        }
+        continue
+      }
+      pushSlot(target, item.ids)
+    }
+  }
+
+  return constructions
+    .filter((c) => surgery.has(c.id))
+    .map((c) => ({
+      rule: 'unanchored-surgery',
+      line: c.line,
+      detail: `unanchored dynamic pattern ${JSON.stringify(c.argText)} — ${surgery.get(c.id).via}`,
+    }))
 }
 
 // ─── rule 2: error-message substring branching ───────────────────────
 
-/** Local bindings initialised from an error message (`err.message`, `String(err)`). */
-function errorDerivedNames(stripped) {
-  const out = new Set()
-  const re = /(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=\s*([^\n;]*)/g
-  let m
-  while ((m = re.exec(stripped))) {
-    const rhs = m[2]
-    if (/\.\s*message\b/.test(rhs) || /\bString\s*\(\s*[A-Za-z_$][\w$]*\s*\)/.test(rhs)) {
-      out.add(m[1])
-    }
-  }
-  return out
+const MESSAGE_PASSTHROUGH = new Set([
+  'toLowerCase',
+  'toUpperCase',
+  'trim',
+  'trimStart',
+  'trimEnd',
+  'toString',
+  'normalize',
+])
+
+/** Non-computed `<obj>.<name>` (optional chaining included), else null. */
+function memberName(expr) {
+  if (!expr.isMemberExpression() && !expr.isOptionalMemberExpression()) return null
+  if (expr.node.computed) return null
+  return keyName(expr.node.property)
 }
 
-function scanErrorMessageSubstring(stripped, lineOf) {
+/** `String(err)` or `<x>.toLowerCase()`-style passthrough on an error message. */
+function isErrorDerivedCall(expr, seen) {
+  const callee = expr.get('callee')
+  if (callee.isIdentifier({ name: 'String' })) return true
+  const name = memberName(callee)
+  if (name && MESSAGE_PASSTHROUGH.has(name)) return isErrorDerived(callee.get('object'), seen)
+  return false
+}
+
+/**
+ * Follow an identifier to its declaration and to any assignment made to
+ * it, through the REAL scope chain, so a same-named binding in a
+ * different function cannot contaminate the answer — the unscoped
+ * whole-file `const`/`let`/`var` sweep the first version used could, and
+ * that same shape caused a confirmed false negative in rule 1.
+ */
+function isErrorDerivedBinding(expr, seen) {
+  const binding = expr.scope.getBinding(expr.node.name)
+  if (!binding) return false
+  if (binding.path.isVariableDeclarator() && binding.path.node.init) {
+    if (isErrorDerived(binding.path.get('init'), seen)) return true
+  }
+  return binding.constantViolations.some(
+    (v) => v.isAssignmentExpression() && isErrorDerived(v.get('right'), seen),
+  )
+}
+
+/** Is `expr` an expression derived from an error MESSAGE? */
+function isErrorDerived(expr, seen = new Set()) {
+  if (!expr?.node || seen.has(expr.node)) return false
+  seen.add(expr.node)
+
+  if (memberName(expr) === 'message') return true
+  if (expr.isCallExpression() || expr.isOptionalCallExpression()) {
+    return isErrorDerivedCall(expr, seen)
+  }
+  if (expr.isConditionalExpression()) {
+    return (
+      isErrorDerived(expr.get('consequent'), seen) || isErrorDerived(expr.get('alternate'), seen)
+    )
+  }
+  if (expr.isLogicalExpression()) {
+    return isErrorDerived(expr.get('left'), seen) || isErrorDerived(expr.get('right'), seen)
+  }
+  if (
+    expr.isTSAsExpression() ||
+    expr.isTSSatisfiesExpression() ||
+    expr.isTSNonNullExpression() ||
+    expr.isTSTypeAssertion() ||
+    expr.isParenthesizedExpression()
+  ) {
+    return isErrorDerived(expr.get('expression'), seen)
+  }
+  if (expr.isTemplateLiteral()) {
+    return expr.get('expressions').some((e) => isErrorDerived(e, seen))
+  }
+  if (expr.isIdentifier()) return isErrorDerivedBinding(expr, seen)
+  return false
+}
+
+/** Is `arg` a plain string literal (no interpolation)? */
+function isStringLiteralArg(arg) {
+  if (arg.isStringLiteral()) return true
+  return arg.isTemplateLiteral() && arg.node.expressions.length === 0
+}
+
+function scanErrorMessageSubstring(ast) {
+  const { traverse } = loadBabel()
   const found = []
   const seen = new Set()
-  const push = (idx, detail) => {
-    const line = lineOf(idx)
-    const key = `${line}`
-    if (seen.has(key)) return
-    seen.add(key)
-    found.push({ rule: 'error-message-substring', line, detail })
+
+  // One key per node type — see the `explode()` note in scanUnanchoredSurgery.
+  const visit = (p) => {
+    const callee = p.get('callee')
+    const method = memberName(callee)
+    if (method !== 'includes' && method !== 'indexOf') return
+    if (p.node.arguments.length === 0) return
+    if (!isStringLiteralArg(p.get('arguments.0'))) return
+    if (!isErrorDerived(callee.get('object'))) return
+    const line = p.node.loc.start.line
+    if (seen.has(line)) return
+    seen.add(line)
+    found.push({
+      rule: 'error-message-substring',
+      line,
+      detail: `\`.${method}('…')\` branches on an error-message substring`,
+    })
   }
 
-  const derived = errorDerivedNames(stripped)
-  if (derived.size > 0) {
-    const names = [...derived].map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|')
-    const re = new RegExp(`\\b(${names})\\s*\\.\\s*(includes|indexOf)\\s*\\(\\s*(['"\`])`, 'g')
-    let m
-    while ((m = re.exec(stripped))) {
-      push(m.index, `\`${m[1]}.${m[2]}('…')\` branches on an error-message substring`)
-    }
-  }
-
-  // Direct forms with no intermediate binding.
-  const direct =
-    /(?:\.\s*message|String\s*\(\s*[A-Za-z_$][\w$]*\s*\))\s*(?:\.\s*toLowerCase\s*\(\s*\)\s*)?\.\s*(includes|indexOf)\s*\(\s*(['"`])/g
-  let d
-  while ((d = direct.exec(stripped))) {
-    push(d.index, `\`.${d[1]}('…')\` branches directly on an error-message substring`)
-  }
+  traverse(ast, { CallExpression: visit, OptionalCallExpression: visit })
   return found
 }
 
@@ -658,16 +925,19 @@ function scanIncompleteBoundaryClass(stripped, lineOf) {
 /**
  * Scan one file's source. Returns violations `{ rule, line, detail }`,
  * already filtered by `// content-regex-allow:` markers. Pure over a
- * string so the self-test can drive it directly.
+ * string so the self-test can drive it directly. `filename` selects the
+ * parser dialect (`.tsx` enables JSX) and names the file in parse errors.
  */
-export function scanSource(src) {
+export function scanSource(src, filename = 'source.tsx') {
+  const ast = NEEDS_AST_RE.test(src) ? parseSource(src, filename) : null
   const stripped = stripComments(src)
   const lineOf = makeLineLookup(stripped)
-  const consts = collectStringConsts(stripped)
-  const markers = allowMarkerLines(src)
+  // A file with no allow-marker text cannot carry a marker, and one that
+  // has the text was parsed above, so markers are always exact.
+  const markers = ast ? markerLinesFromComments(ast) : new Set()
   const all = [
-    ...scanUnanchoredSurgery(stripped, consts, lineOf),
-    ...scanErrorMessageSubstring(stripped, lineOf),
+    ...(ast && SURGERY_GATE_RE.test(src) ? scanUnanchoredSurgery(ast, src) : []),
+    ...(ast && SUBSTRING_GATE_RE.test(src) ? scanErrorMessageSubstring(ast) : []),
     ...scanIncompleteBoundaryClass(stripped, lineOf),
   ]
   return all.filter((v) => !isMarked(markers, v.line)).toSorted((a, b) => a.line - b.line)
@@ -686,7 +956,7 @@ export function analyze({ root, srcDir, baseline }) {
   for (const file of listSourceFiles(srcDir)) {
     scanned += 1
     const rel = toPosix(path.relative(root, file))
-    for (const v of scanSource(fs.readFileSync(file, 'utf8'))) {
+    for (const v of scanSource(fs.readFileSync(file, 'utf8'), file)) {
       sites.push({ file: rel, ...v })
       const key = `${rel}|${v.rule}`
       counts.set(key, (counts.get(key) ?? 0) + 1)
@@ -782,11 +1052,23 @@ function requireSrc() {
   }
 }
 
+function analyzeOrExit(baseline) {
+  try {
+    return analyze({ root: ROOT, srcDir: SRC_DIR, baseline })
+  } catch (err) {
+    console.error(`ERROR: ${err.message}`)
+    console.error('')
+    console.error('Every file under src/ must parse for this guard to mean anything; refusing to')
+    console.error('report "clean" over a file it could not read.')
+    process.exit(2)
+  }
+}
+
 function updateBaseline() {
   requireSrc()
   const previous = fs.existsSync(BASELINE_FILE) ? readBaseline() : []
   const reasons = new Map(previous.map((e) => [`${e.file}|${e.rule}`, e.reason ?? '']))
-  const { counts } = analyze({ root: ROOT, srcDir: SRC_DIR, baseline: [] })
+  const { counts } = analyzeOrExit([])
   const entries = [...counts.entries()]
     .map(([key, count]) => {
       const [file, rule] = key.split('|')
@@ -823,7 +1105,7 @@ function runGuard() {
     process.exit(2)
   }
 
-  const { sites, added, stale, scanned } = analyze({ root: ROOT, srcDir: SRC_DIR, baseline })
+  const { sites, added, stale, scanned } = analyzeOrExit(baseline)
   let failed = false
 
   if (added.length > 0) {
@@ -884,11 +1166,14 @@ function runGuard() {
 
 // ─── self-test ───────────────────────────────────────────────────────
 //
-// Drives analyze() and validateBaseline() against a synthetic src tree
-// written to a temp directory, so every rule is proved to FIRE on a
-// violating fixture and to STAY QUIET on the legitimate counterpart.
-// Nothing here reads the real repo, and the fixtures live outside the
-// scanned tree, so no assertion can be satisfied by this file itself.
+// Drives analyze(), scanSource() and validateBaseline() against a
+// synthetic src tree written to a temp directory, so every rule is proved
+// to FIRE on a violating fixture and to STAY QUIET on the legitimate
+// counterpart — including each of the four usage shapes that evaded the
+// pre-#3369 textual scanner. Two further blocks are not hermetic on
+// purpose: one proves the walk cannot reach this script or anything else
+// outside `src/`, and one pins the four real sites that #3348 confirmed
+// safe, so a future change that starts flagging them fails here.
 function runSelfTest() {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'content-regex-selftest-'))
   const failures = []
@@ -897,13 +1182,15 @@ function runSelfTest() {
     failures.push(name)
     console.error(`  FAIL - ${name}: ${detail}`)
   }
+  const expect = (name, cond, detail) => (cond ? ok(name) : fail(name, detail))
 
   try {
     const srcDir = path.join(tmp, 'src')
     const libDir = path.join(srcDir, 'lib')
     const compDir = path.join(srcDir, 'components')
     const testDir = path.join(compDir, '__tests__')
-    for (const d of [libDir, compDir, testDir]) fs.mkdirSync(d, { recursive: true })
+    const toolDir = path.join(tmp, 'scripts')
+    for (const d of [libDir, compDir, testDir, toolDir]) fs.mkdirSync(d, { recursive: true })
     const w = (dir, name, body) => fs.writeFileSync(path.join(dir, name), body)
 
     // ── rule 1: unanchored surgery ────────────────────────────────────
@@ -949,6 +1236,23 @@ function runSelfTest() {
         '}',
       ].join('\n'),
     )
+    // Anchored on the RIGHT only — still splices on the left → violation.
+    // (Symmetric counterpart to HalfAnchored.tsx above: without this fixture,
+    // a broken `hasLeftAnchor()` that unconditionally reported "anchored" —
+    // silently defeating half the boundary check — passed every assertion
+    // in this file, because nothing here exercised a pattern that is
+    // right-anchored but left-unanchored.)
+    w(
+      compDir,
+      'HalfAnchoredRight.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string) {',
+        "  const re = new RegExp(`${escapeRegExp(term)}\\\\b`, 'i')",
+        "  return content.replace(re, 'x')",
+        '}',
+      ].join('\n'),
+    )
     // Inline `.replace(new RegExp(…))` → violation.
     w(
       compDir,
@@ -959,6 +1263,155 @@ function runSelfTest() {
         "  text.replace(new RegExp(escapeRegExp(t), 'g'), '')",
       ].join('\n'),
     )
+
+    // ── the four shapes that evaded the textual scanner (#3369) ───────
+
+    // (1) Reassignment with no declaration keyword on the RegExp line.
+    w(
+      compDir,
+      'Reassigned.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string, id: string) {',
+        '  let re: RegExp',
+        "  re = new RegExp(escapeRegExp(term), 'i')",
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // (2) Regex passed as a call argument to a local helper that replaces.
+    w(
+      compDir,
+      'PassedAsArg.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, re: RegExp, id: string) {',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return applySurgery(content, new RegExp(escapeRegExp(term), 'i'), id)",
+        '}',
+      ].join('\n'),
+    )
+    // (3) Regex stashed in an object property, replaced through the property.
+    w(
+      compDir,
+      'InObjectProp.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, opts: { re: RegExp }, id: string) {',
+        '  return content.replace(opts.re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return applySurgery(content, { re: new RegExp(escapeRegExp(term), 'i') }, id)",
+        '}',
+      ].join('\n'),
+    )
+    // (4) Regex stashed in an array element, replaced through the index.
+    w(
+      compDir,
+      'InArrayElem.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  const res = [new RegExp(escapeRegExp(term), 'i')]",
+        '  return content.replace(res[0], `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // A bare `RegExp(…)` call builds the same object as `new RegExp(…)`.
+    // (Babel's visitor `explode()` overwrites rather than merges when two
+    // alias keys name the same node type, which once made this shape
+    // unvisited while `new RegExp` worked — hence a fixture for it.)
+    w(
+      compDir,
+      'BareCall.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  const re = RegExp(escapeRegExp(term), 'i')",
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // …but a LOCAL binding named `RegExp` is somebody else's function.
+    w(
+      libDir,
+      'shadowed-regexp.ts',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function makeMatcher(p: string, f: string) { return { p, f } }',
+        'export function linkIt(content: string, term: string) {',
+        '  const RegExp = makeMatcher',
+        "  const re = RegExp(escapeRegExp(term), 'i')",
+        '  return content.replace(re as never, term)',
+        '}',
+      ].join('\n'),
+    )
+    // Bonus shape the AST gets for free: destructured out of an options object.
+    w(
+      compDir,
+      'Destructured.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, opts: { re: RegExp }, id: string) {',
+        '  const { re } = opts',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return applySurgery(content, { re: new RegExp(escapeRegExp(term), 'i') }, id)",
+        '}',
+      ].join('\n'),
+    )
+
+    // ── the same four shapes used READ-ONLY → must stay clean ─────────
+
+    w(
+      libDir,
+      'reassigned-read-only.ts',
+      [
+        'export function findIt(haystack: string, query: string) {',
+        '  let re: RegExp',
+        "  re = new RegExp(query, 'i')",
+        '  return re.test(haystack)',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'arg-read-only.ts',
+      [
+        'function matches(haystack: string, re: RegExp) {',
+        '  return re.test(haystack)',
+        '}',
+        'export function findIt(haystack: string, query: string) {',
+        "  return matches(haystack, new RegExp(query, 'i'))",
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'prop-read-only.ts',
+      [
+        'function matches(haystack: string, opts: { re: RegExp }) {',
+        '  return opts.re.test(haystack)',
+        '}',
+        'export function findIt(haystack: string, query: string) {',
+        "  return matches(haystack, { re: new RegExp(query, 'i') })",
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'array-read-only.ts',
+      [
+        'export function findIt(haystack: string, query: string) {',
+        "  const res = [new RegExp(query, 'i')]",
+        '  return res[0].test(haystack)',
+        '}',
+      ].join('\n'),
+    )
+
     // Unanchored dynamic regex used only for MATCHING → clean (not surgery).
     w(
       libDir,
@@ -979,6 +1432,30 @@ function runSelfTest() {
         "const CRYPT_SENTINEL = '\\uE004'",
         'export function restore(md: string) {',
         "  return md.replace(new RegExp(CRYPT_SENTINEL, 'g'), '[encrypted]')",
+        '}',
+      ].join('\n'),
+    )
+    // A LOCAL const string is compile-time constant too, and the scope chain
+    // says so — the whole-file column-0 sweep could not.
+    w(
+      libDir,
+      'local-const.ts',
+      [
+        'export function restore(md: string) {',
+        "  const sentinel = '\\uE004'",
+        "  return md.replace(new RegExp(sentinel, 'g'), '[encrypted]')",
+        '}',
+      ].join('\n'),
+    )
+    // …and a same-named RUNTIME parameter elsewhere in the file must NOT be
+    // silently folded into that constant (the #3348 false negative).
+    w(
+      libDir,
+      'shadowed-const.ts',
+      [
+        "function helper() { const term = 'x'; return term }",
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return content.replace(new RegExp(term, 'i'), id) + helper()",
         '}',
       ].join('\n'),
     )
@@ -1011,6 +1488,21 @@ function runSelfTest() {
         'function escapeRegExp(s: string) { return s }',
         'export const strip = (text: string, t: string) =>',
         '  // content-regex-allow:',
+        "  text.replace(new RegExp(escapeRegExp(t), 'g'), '')",
+      ].join('\n'),
+    )
+    // Marker-shaped text inside a STRING is not a comment → does not suppress.
+    w(
+      compDir,
+      'FakeMarker.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export const HELP = `',
+        'to exempt a site write',
+        '  // content-regex-allow: some reason',
+        'above it',
+        '`',
+        'export const strip = (text: string, t: string) =>',
         "  text.replace(new RegExp(escapeRegExp(t), 'g'), '')",
       ].join('\n'),
     )
@@ -1061,6 +1553,22 @@ function runSelfTest() {
         '}',
       ].join('\n'),
     )
+    // A same-named binding in a DIFFERENT scope must not make this an
+    // error-message branch (the unscoped-collection false positive).
+    w(
+      libDir,
+      'scoped-msg.ts',
+      [
+        'export function describe(err: Error) {',
+        '  const msg = err.message',
+        '  return msg.length',
+        '}',
+        'export function isDraft(row: { msg: string }) {',
+        '  const msg = row.msg',
+        "  return msg.includes('draft')",
+        '}',
+      ].join('\n'),
+    )
 
     // ── rule 3: boundary class without combining marks ────────────────
 
@@ -1085,6 +1593,22 @@ function runSelfTest() {
     )
     w(libDir, 'fixed.ts', ['export const NOTHING = 1'].join('\n'))
 
+    // ── scope proof: a copy of THIS script, outside src/ ──────────────
+    //
+    // Placed where a tooling file lives. If the walk ever escaped srcDir,
+    // this file — which contains every banned shape as documentation and
+    // as fixture text — would light up like a christmas tree.
+    fs.copyFileSync(import.meta.filename, path.join(toolDir, path.basename(import.meta.filename)))
+    w(
+      toolDir,
+      'tooling-fixture.ts',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export const strip = (text: string, t: string) =>',
+        "  text.replace(new RegExp(escapeRegExp(t), 'g'), '')",
+      ].join('\n'),
+    )
+
     const baseline = [
       {
         file: 'src/components/Baselined.tsx',
@@ -1099,8 +1623,6 @@ function runSelfTest() {
     const R1 = 'unanchored-surgery'
     const R2 = 'error-message-substring'
     const R3 = 'incomplete-boundary-class'
-
-    const expect = (name, cond, detail) => (cond ? ok(name) : fail(name, detail))
 
     expect(
       'pre-#3313 shape (bound regex + content.replace) is flagged',
@@ -1118,10 +1640,67 @@ function runSelfTest() {
       JSON.stringify(sites),
     )
     expect(
+      'right-anchored-only pattern is flagged (both sides required)',
+      hit('components/HalfAnchoredRight.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
       'inline `.replace(new RegExp(…))` is flagged',
       hit('components/DirectReplace.tsx', R1),
       JSON.stringify(sites),
     )
+
+    // The four shapes from #3369, each of which the textual scanner missed.
+    expect(
+      'shape 1/4: bare reassignment (`let re; re = new RegExp(…)`) is flagged',
+      hit('components/Reassigned.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'shape 2/4: regex passed as a call argument is flagged',
+      hit('components/PassedAsArg.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'shape 3/4: regex stored in an object property is flagged',
+      hit('components/InObjectProp.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'shape 4/4: regex stored in an array element is flagged',
+      hit('components/InArrayElem.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'regex destructured out of an options object is flagged',
+      hit('components/Destructured.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'a bare `RegExp(…)` call (no `new`) is flagged',
+      hit('components/BareCall.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'a locally-bound `RegExp` is NOT treated as the global constructor',
+      !hit('lib/shadowed-regexp.ts', R1),
+      JSON.stringify(sites.filter((s) => s.file === 'src/lib/shadowed-regexp.ts')),
+    )
+
+    // …and the same four shapes used read-only must stay silent.
+    for (const f of [
+      'reassigned-read-only.ts',
+      'arg-read-only.ts',
+      'prop-read-only.ts',
+      'array-read-only.ts',
+    ]) {
+      expect(
+        `read-only counterpart ${f} is NOT flagged`,
+        !hit(`lib/${f}`, R1),
+        JSON.stringify(sites.filter((s) => s.file === `src/lib/${f}`)),
+      )
+    }
+
     expect(
       'unanchored dynamic regex used only for matching is NOT flagged',
       !hit('lib/read-only.ts', R1),
@@ -1131,6 +1710,16 @@ function runSelfTest() {
       'pattern built from a module-level string const is NOT flagged',
       !hit('lib/sentinels.ts', R1),
       'sentinels.ts flagged',
+    )
+    expect(
+      'pattern built from a LOCAL const string is NOT flagged',
+      !hit('lib/local-const.ts', R1),
+      'local-const.ts flagged',
+    )
+    expect(
+      'a same-named const in another scope does NOT mask a runtime pattern',
+      hit('lib/shadowed-const.ts', R1),
+      JSON.stringify(sites),
     )
     expect(
       'commented-out bad shape is NOT flagged',
@@ -1145,6 +1734,11 @@ function runSelfTest() {
     expect(
       'content-regex-allow marker with an empty reason does NOT suppress',
       hit('components/MarkedNoReason.tsx', R1),
+      JSON.stringify(sites),
+    )
+    expect(
+      'marker text inside a string literal does NOT suppress',
+      hit('components/FakeMarker.tsx', R1),
       JSON.stringify(sites),
     )
     expect(
@@ -1167,6 +1761,11 @@ function runSelfTest() {
       'array membership / non-literal argument is NOT flagged',
       !hit('lib/membership.ts', R2),
       'membership.ts flagged',
+    )
+    expect(
+      'same-named binding in another scope is NOT an error-message branch',
+      !hit('lib/scoped-msg.ts', R2),
+      JSON.stringify(sites.filter((s) => s.file === 'src/lib/scoped-msg.ts')),
     )
 
     expect(
@@ -1201,7 +1800,69 @@ function runSelfTest() {
       JSON.stringify(stale),
     )
 
-    // validateBaseline
+    // ── the guard cannot see itself or any other tooling ──────────────
+
+    expect(
+      'nothing outside src/ is reported (this script + a tooling fixture sit in scripts/)',
+      sites.every((s) => s.file.startsWith('src/')),
+      JSON.stringify(sites.filter((s) => !s.file.startsWith('src/'))),
+    )
+    expect(
+      'a copy of this script placed in scripts/ is not scanned',
+      !listSourceFiles(srcDir).some((f) => f.includes(path.basename(import.meta.filename))),
+      JSON.stringify(listSourceFiles(srcDir).filter((f) => f.includes('check-unanchored'))),
+    )
+    expect(
+      "this script is not in the real repo's scanned set",
+      !fs.existsSync(SRC_DIR) ||
+        !listSourceFiles(SRC_DIR).some(
+          (f) => path.resolve(f) === path.resolve(import.meta.filename),
+        ),
+      'guard script is inside the scanned tree',
+    )
+    expect(
+      'self-test fixtures live outside the real scanned tree',
+      !path.resolve(tmp).startsWith(`${path.resolve(SRC_DIR)}${path.sep}`),
+      `fixtures written inside ${SRC_DIR}`,
+    )
+
+    // ── an unparseable file is a hard error, never a silent pass ──────
+
+    let threw = false
+    try {
+      scanSource('const re = new RegExp(((((', 'broken.ts')
+    } catch {
+      threw = true
+    }
+    expect('an unparseable source throws instead of reporting clean', threw, 'no throw')
+
+    // ── real sites #3348 confirmed safe must stay unflagged ───────────
+
+    const safeSites = [
+      'src/lib/enex-import.ts',
+      'src/editor/markdown-parse/parser.ts',
+      'src/lib/in-page-find/matcher.ts',
+      'src/lib/search-query/glob-validate.ts',
+    ]
+    for (const rel of safeSites) {
+      const abs = path.join(ROOT, rel)
+      if (!fs.existsSync(abs)) {
+        fail(
+          `known-safe site ${rel} still exists`,
+          'file moved or renamed — re-confirm it is safe and update this list',
+        )
+        continue
+      }
+      const found = scanSource(fs.readFileSync(abs, 'utf8'), abs).filter((v) => v.rule === R1)
+      expect(
+        `known-safe real site ${rel} is NOT flagged as surgery`,
+        found.length === 0,
+        JSON.stringify(found),
+      )
+    }
+
+    // ── validateBaseline ──────────────────────────────────────────────
+
     const noReason = validateBaseline([{ file: 'a.ts', rule: R1, count: 1, reason: '   ' }])
     expect(
       'baseline entry without a reason is rejected',
