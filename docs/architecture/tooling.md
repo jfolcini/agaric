@@ -50,6 +50,7 @@ Notable hooks that enforce architectural contracts:
 - **`ipc-error-path-coverage`** — every Tauri command's error paths must be exercised by tests.
 - **`snapshot-redaction`** — insta snapshots must not contain ULIDs or timestamps.
 - **`axe-presence`** — every frontend component test must include an `axe(container)` audit.
+- **`main-module-detection`** — a guard script's "am I the process entry point?" check must realpath **both** sides. `import.meta.url` / `import.meta.filename` is the resolved real path while `process.argv[1]` is the path as invoked, so the naive comparison is false through a symlinked `scripts/` dir, repo root or checkout — and the guard then exits 0 having run nothing, which is indistinguishable from a clean pass (#3373). `import.meta.main` is deliberately not the answer: it is only `Added in: v24.2.0` while `engines.node` is `>=24`, so on a permitted 24.0/24.1 it is `undefined` and reproduces the same silent no-op.
 
 ## Security
 

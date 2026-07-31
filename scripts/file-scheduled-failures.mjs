@@ -79,7 +79,14 @@
 // (bad args, absent/unparseable `needs` payload, a `gh` call failing).
 
 import { execFileSync } from 'node:child_process'
-import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -1006,7 +1013,8 @@ function runSelfTest() {
   console.log('self-test: all assertions passed')
 }
 
-const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   if (process.argv.slice(2).includes('--self-test')) {
     runSelfTest()

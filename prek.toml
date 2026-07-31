@@ -692,6 +692,55 @@ pass_filenames = false
 files = "^scripts/check-unanchored-content-regex\\.mjs$"
 stages = ["pre-commit"]
 
+# main-module-detection (#3373): every guard/filer script in scripts/ gates
+# its `main()` on "am I the process entry point?", so that a vitest test can
+# import its pure helpers without the module `process.exit()`ing out of the
+# importer. Three different idioms had drifted in, and all three compare
+# `import.meta.url`/`import.meta.filename` — the RESOLVED REAL path, Node
+# realpaths the entry specifier — against `process.argv[1]`, the path AS
+# INVOKED. Reach the script through a symlinked scripts/ dir, a symlinked
+# repo root or a symlinked checkout and the two differ: the check is false,
+# `main()` never runs, and the guard EXITS 0 HAVING DONE NOTHING — which is
+# indistinguishable from a clean pass. The `file://` template form
+# additionally breaks on any path containing a space, because
+# `import.meta.url` percent-encodes it and the interpolation does not.
+# This guard bans both shapes across scripts/**.mjs plus the repo-root
+# *.mjs, and requires the one sanctioned form:
+#     !!process.argv[1] &&
+#       realpathSync(import.meta.filename) === realpathSync(process.argv[1])
+# (`fs.realpathSync` equally accepted). NOT `import.meta.main`, which is
+# only "Added in: v24.2.0" while engines.node is ">=24" — on a
+# permitted-but-older 24.0/24.1 it is `undefined`, reproducing this exact
+# silent no-op. The guard scans scripts/ INCLUDING ITSELF, with no
+# self-exemption; its own literal instances of the banned forms live in
+# comments (stripped) or are assembled from fragments at runtime.
+# pass_filenames=false — the script does its own scoped walk.
+[[repos.hooks]]
+id = "main-module-detection"
+name = "Symlink-safe entry-point detection in scripts (#3373)"
+entry = "node scripts/check-main-module-detection.mjs"
+language = "system"
+pass_filenames = false
+files = "^(scripts/.*\\.(mjs|js)|[^/]+\\.(mjs|js))$"
+stages = ["pre-commit"]
+
+# Self-test the main-module-detection guard's own exit behavior whenever it
+# changes: each banned shape FAILS, the sanctioned form and commented-out
+# shapes PASS, the CLI really exits 1 on a violating fixture and 2 on a
+# missing layout, the guard scans its own source (no self-exemption), and —
+# the #3373 regression test proper — a real script invoked through a
+# symlinked scripts/ dir, this guard invoked through that same symlink, and
+# a script whose path contains a space all actually RUN. Before the fix all
+# three of those produced empty output and exit 0.
+[[repos.hooks]]
+id = "main-module-detection-selftest"
+name = "Entry-point detection guard self-test"
+entry = "node scripts/check-main-module-detection.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-main-module-detection\\.mjs$"
+stages = ["pre-commit"]
+
 # snapshot-redaction: scan every `*.snap` file under `src/` and
 # `src-tauri/` for unredacted ULIDs (26-char Crockford base32),
 # blake3 hashes (64-char lowercase hex), ISO-8601 timestamps with a

@@ -69,7 +69,14 @@
 // (bad args, a `gh` call failing).
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 
@@ -625,7 +632,11 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
-const isMainModule = process.argv[1] && import.meta.url === `file://${process.argv[1]}`
+// Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
+// RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
+// comparison is false through a symlink and the script exits 0 having run nothing.
+const isMainModule =
+  !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
   try {
     main()
