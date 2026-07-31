@@ -198,20 +198,87 @@ function findMutationJsonFiles(dir) {
 // Diffing against the tracking issue's known state
 // ---------------------------------------------------------------------------
 
-/** Extracts the tracked survivor set from a tracking-issue body (or `''`/undefined for "no issue yet"). */
-export function parseKnownSurvivors(body) {
-  if (!body) return new Set()
+// #3350 — each state-block line may carry a `YYYY-MM-DD<TAB>` first-seen
+// prefix. Lines written before #3350 have no prefix and must keep parsing to
+// exactly the same survivor id, or the first run after this change would read
+// the whole tracked set as resolved-and-new-again. Hence: optional prefix,
+// stripped on read, never part of the id.
+const FIRST_SEEN_PREFIX = /^(\d{4}-\d{2}-\d{2})\t/
+
+function stateBlockLines(body) {
+  if (!body) return []
   const start = body.indexOf(MARKER_START)
   const end = body.indexOf(MARKER_END)
-  if (start === -1 || end === -1 || end < start) return new Set()
+  if (start === -1 || end === -1 || end < start) return []
   const block = body.slice(start + MARKER_START.length, end)
   // The block is a fenced code block; strip the ``` fences and blank lines.
-  return new Set(
-    block
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l.length > 0 && l !== '```'),
-  )
+  // Only the trailing whitespace is trimmed — a leading trim would eat the
+  // first-seen prefix's own separator on a malformed line and silently mint a
+  // different survivor id.
+  return block
+    .split('\n')
+    .map((l) => l.replace(/\s+$/, '').replace(/^ +/, ''))
+    .filter((l) => l.length > 0 && l !== '```')
+}
+
+/** Extracts the tracked survivor set from a tracking-issue body (or `''`/undefined for "no issue yet"). */
+export function parseKnownSurvivors(body) {
+  return new Set(stateBlockLines(body).map((l) => l.replace(FIRST_SEEN_PREFIX, '')))
+}
+
+/**
+ * #3350 — extracts survivor id -> first-seen date (`YYYY-MM-DD`) from the
+ * state block. Lines with no prefix (everything written before #3350, and
+ * anything a human hand-edits in) are simply absent from the map, which
+ * renders as "unknown" rather than as "seen today": claiming a survivor is
+ * new when we do not know is the exact failure #3245 was about.
+ */
+export function parseFirstSeen(body) {
+  const out = new Map()
+  for (const line of stateBlockLines(body)) {
+    const m = FIRST_SEEN_PREFIX.exec(line)
+    if (m) out.set(line.slice(m[0].length), m[1])
+  }
+  return out
+}
+
+/**
+ * #3350 — splits a survivor id into the area it belongs to, so the report can
+ * group and rank by area instead of rendering one flat wall of lines.
+ *
+ * The two lanes encode their ids differently and neither is going to change:
+ *   `[rust] agaric-store/src/op.rs:10:5: replace ... with ... in ...`
+ *   `[frontend] glob-validate: src/lib/search-query/glob-validate.ts:12 [X]`
+ * so rust groups by source FILE (cargo-mutants has no module concept the
+ * filer can see) and frontend groups by Stryker MODULE (which is exactly the
+ * unit `stryker.modules.mjs` enrols and a triager acts on).
+ *
+ * Anything unparseable falls back to the lane tag alone rather than being
+ * dropped — a survivor that does not fit the shape is still a survivor.
+ */
+export function survivorArea(id) {
+  const rust = /^\[rust\]\s+([^\s:]+):/.exec(id)
+  if (rust) return `rust: ${rust[1]}`
+  const frontend = /^\[frontend\]\s+([^:]+):/.exec(id)
+  if (frontend) return `frontend: ${frontend[1].trim()}`
+  const lane = /^\[([a-z]+)\]/.exec(id)
+  return lane ? `${lane[1]}: (unparsed)` : '(unparsed)'
+}
+
+/**
+ * Groups survivor ids by `survivorArea`, worst first (most survivors, ties
+ * broken by area name so the rendering is deterministic).
+ */
+export function groupByArea(ids) {
+  const byArea = new Map()
+  for (const id of ids) {
+    const area = survivorArea(id)
+    if (!byArea.has(area)) byArea.set(area, [])
+    byArea.get(area).push(id)
+  }
+  return [...byArea.entries()]
+    .map(([area, members]) => ({ area, members: members.toSorted() }))
+    .toSorted((a, b) => b.members.length - a.members.length || a.area.localeCompare(b.area))
 }
 
 export function diffSurvivors(current, known) {
@@ -248,7 +315,15 @@ export function diffSurvivors(current, known) {
  * duplicates nothing; it stays as the one presentational section, and is the
  * section dropped first when the #3257 length clamp bites.
  */
-export function buildIssueBody({ all, resolvedOnes, runUrl }) {
+export function buildIssueBody({
+  all,
+  resolvedOnes,
+  runUrl,
+  firstSeen = new Map(),
+  today,
+  newOnes = [],
+}) {
+  const newSet = new Set(newOnes)
   const head = []
   head.push(
     'This issue tracks mutation-testing survivors (cargo-mutants + StrykerJS) surfaced by the weekly `scheduled-deep-checks.yml` run (#2947). It is filed and updated automatically by `scripts/file-mutation-survivors.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
@@ -263,6 +338,37 @@ export function buildIssueBody({ all, resolvedOnes, runUrl }) {
   )
   head.push('')
 
+  // #3350 — "where should I look first?" answered above the wall of lines.
+  // Derived from `all` on every run, so it cannot drift out of sync with the
+  // state block the way a hand-maintained count would. `first seen` is the
+  // oldest date recorded for any survivor in the area: an area whose oldest
+  // entry is months back is a standing gap (or a nest of equivalent mutants,
+  // #3248), while one dated today is this run's news — and that distinction
+  // is the whole reason a non-zero survivor count means anything.
+  // ONE resolution rule, used by both the table and the state block below, so
+  // the age a maintainer reads is exactly the age that gets written back.
+  const dateOf = (id) => firstSeen.get(id) ?? (newSet.has(id) ? today : undefined)
+
+  const areaSection = []
+  const groups = groupByArea(all)
+  if (groups.length > 0) {
+    areaSection.push(`### Where the survivors are (${groups.length} area(s), worst first)`)
+    areaSection.push('')
+    areaSection.push('| Area | Survivors | Oldest first seen |')
+    areaSection.push('|---|--:|---|')
+    for (const g of groups) {
+      const dates = g.members.map(dateOf).filter(Boolean).toSorted()
+      // An UNDATED member is not a missing value to be skipped — it means the
+      // survivor predates first-seen tracking, i.e. it is older than any date
+      // we hold. Dropping it and reporting the oldest RECORDED date would
+      // print a recent date for an area whose real oldest entry is ancient,
+      // which is the opposite of the fact this column exists to carry.
+      const oldest = dates.length === g.members.length ? dates[0] : '_unknown_'
+      areaSection.push(`| ${g.area} | ${g.members.length} | ${oldest} |`)
+    }
+    areaSection.push('')
+  }
+
   const resolvedSection = []
   if (resolvedOnes.length > 0) {
     resolvedSection.push(`### Resolved since last run (${resolvedOnes.length})`)
@@ -275,11 +381,27 @@ export function buildIssueBody({ all, resolvedOnes, runUrl }) {
   const state = []
   state.push('### All currently-known survivors')
   state.push(
-    '_Machine-readable — do not hand-edit the marker lines below. Remove a survivor line once it is triaged; leave the rest untouched._',
+    '_Machine-readable — do not hand-edit the marker lines below. Remove a survivor line once it is triaged; leave the rest untouched. Each line is `<first-seen date><TAB><survivor>`; the date is bookkeeping and is ignored when the set is compared, so removing it by hand changes nothing except the age reported above._',
   )
   state.push(MARKER_START)
   state.push('```')
-  state.push(...all)
+  // Date-prefixed (#3350). Three cases, and the third is the one that matters:
+  //
+  //   already dated  -> keep the date. Restamping would make every standing
+  //                     gap read as new, which is the state this is fixing.
+  //   genuinely new  -> stamp `today`. Only ids in `newOnes` qualify.
+  //   known, undated -> leave undated. These are the entries the tracking
+  //                     issue carried before #3350; we do not know when they
+  //                     first appeared, and `_unknown_` is the truth. Dating
+  //                     them today would silently convert the entire existing
+  //                     backlog — including #3248's 21 permanent equivalent
+  //                     mutants — into "found this week".
+  state.push(
+    ...all.map((id) => {
+      const seen = dateOf(id)
+      return seen ? `${seen}\t${id}` : id
+    }),
+  )
   state.push('```')
   state.push(MARKER_END)
 
@@ -291,33 +413,78 @@ export function buildIssueBody({ all, resolvedOnes, runUrl }) {
 
   const render = (middle) => [...head, ...middle, ...state, ...tail].join('\n')
 
-  const full = render(resolvedSection)
+  const full = render([...areaSection, ...resolvedSection])
   if (full.length <= MAX_BODY_CHARS) return full
 
   // #3257 — clamp by dropping the presentational section WHOLESALE rather
   // than truncating: the marker block is state and must never be cut
   // mid-way (a half-written block would silently shrink the known set and
   // re-report the dropped survivors as "new" forever after).
-  const omitted = [
-    `_${resolvedOnes.length} resolved-since-last-run entr${resolvedOnes.length === 1 ? 'y was' : 'ies were'} omitted to keep this body under GitHub's ${MAX_BODY_CHARS}-character working limit — see ${runUrl ? `[this run](${runUrl})` : 'the workflow run'}._`,
+  //
+  // #3350 — the resolved list goes first because it is a per-run curiosity;
+  // the area table is the navigational aid and is worth more per character
+  // (one row per area, vs one line per resolved survivor), so it is only
+  // dropped if dropping the resolved list was not enough.
+  // The note names what was ACTUALLY dropped. A single fixed wording keyed on
+  // `resolvedOnes` used to be wrong in both directions on the second rung: it
+  // announced "0 resolved-since-last-run entries were omitted" (nothing was —
+  // there were none) while saying nothing about the area table, which is the
+  // section a maintainer notices missing. A clamp note that misdescribes the
+  // clamp is the same "the report lies" failure as #3245's double count.
+  const note = (parts) => [
+    `_Omitted to keep this body under GitHub's ${MAX_BODY_CHARS}-character working limit: ${parts.join('; ')} — see ${runUrl ? `[this run](${runUrl})` : 'the workflow run'}._`,
     '',
   ]
-  const clamped = render(omitted)
-  if (clamped.length <= MAX_BODY_CHARS) return clamped
+  const resolvedPart =
+    resolvedOnes.length === 1
+      ? 'the 1 resolved-since-last-run entry'
+      : `the ${resolvedOnes.length} resolved-since-last-run entries`
+
+  // Rung 2: drop the resolved list, keep the area table. Only reachable when
+  // there IS a resolved list — with none, this render is strictly LONGER than
+  // `full` (it adds the note and drops nothing) and can never fit.
+  if (resolvedOnes.length > 0) {
+    const clamped = render([...areaSection, ...note([resolvedPart])])
+    if (clamped.length <= MAX_BODY_CHARS) return clamped
+  }
+
+  // Rung 3: the area table goes too. One row per area and areas are unbounded
+  // (the rust lane groups by source FILE), so a wide-but-shallow survivor set
+  // can make the table outweigh the state block it sits above.
+  const droppedHere = []
+  if (groups.length > 0)
+    droppedHere.push(`the "where the survivors are" table (${groups.length} area(s))`)
+  if (resolvedOnes.length > 0) droppedHere.push(resolvedPart)
+  const clampedHarder = render(droppedHere.length > 0 ? note(droppedHere) : [])
+  if (clampedHarder.length <= MAX_BODY_CHARS) return clampedHarder
 
   // The state block alone does not fit. Fail with a diagnosis rather than
   // letting `gh issue edit` return a bare 422 nobody can act on.
   throw new Error(
-    `the survivor set outgrew a single issue body: ${all.length} survivor(s) render to ${clamped.length} chars, over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536). The machine-readable state block cannot be truncated without corrupting the tracked set. Triage the tracking issue down, or split the lanes into separate tracking issues.`,
+    `the survivor set outgrew a single issue body: ${all.length} survivor(s) render to ${clampedHarder.length} chars, over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536). The machine-readable state block cannot be truncated without corrupting the tracked set. Triage the tracking issue down, split the lanes into separate tracking issues, or un-enrol the noisiest module from stryker.modules.mjs — the deferred list there records this ceiling as the reason some modules are not enrolled yet (#3350).`,
   )
 }
 
 export function buildNewSurvivorComment({ newOnes, runUrl }) {
   const lines = []
-  lines.push(`${newOnes.length} new mutation survivor${newOnes.length === 1 ? '' : 's'} this run:`)
-  lines.push('```')
-  lines.push(...newOnes)
-  lines.push('```')
+  const groups = groupByArea(newOnes)
+  lines.push(
+    `${newOnes.length} new mutation survivor${newOnes.length === 1 ? '' : 's'} this run, in ${groups.length} area${groups.length === 1 ? '' : 's'}:`,
+  )
+  lines.push('')
+  // #3350 — grouped and ranked rather than one flat block. A 200-line
+  // undifferentiated paste is read as "the mutation thing is noisy again";
+  // "page-blocks-move: 40" is read as a place to go. The per-area counts also
+  // make an ENROLMENT spike (one brand-new area contributing everything)
+  // visually distinct from a REGRESSION (a handful of new lines spread across
+  // areas that were already being tracked), which is the difference between
+  // "expected" and "someone weakened a test".
+  for (const g of groups) {
+    lines.push(`**${g.area}** — ${g.members.length}`)
+    lines.push('```')
+    lines.push(...g.members)
+    lines.push('```')
+  }
   if (runUrl) lines.push('', `Run: ${runUrl}`)
   const text = lines.join('\n')
   // #3257 — a comment body hits the same 65536 limit as an issue body, and
@@ -500,6 +667,14 @@ export function main(argv = process.argv.slice(2)) {
   }
 
   const known = parseKnownSurvivors(existingIssue?.body)
+  // #3350 — carried forward from the existing body so a survivor's age is
+  // measured from when it FIRST appeared, not from the last time the body was
+  // rewritten. Entries with no recorded date (anything written before #3350)
+  // stay dateless until they resolve; back-dating them to today would make
+  // every standing gap look new, which is the state this whole issue exists
+  // to get out of.
+  const firstSeen = parseFirstSeen(existingIssue?.body)
+  const today = new Date().toISOString().slice(0, 10)
   const { newOnes, resolvedOnes, all } = diffSurvivors(current, known)
 
   if (newOnes.length === 0) {
@@ -512,7 +687,7 @@ export function main(argv = process.argv.slice(2)) {
     return
   }
 
-  const body = buildIssueBody({ all, resolvedOnes, runUrl })
+  const body = buildIssueBody({ all, resolvedOnes, runUrl, firstSeen, today, newOnes })
   const comment = buildNewSurvivorComment({ newOnes, runUrl })
 
   if (args.dryRun) {
@@ -610,6 +785,318 @@ export function main(argv = process.argv.slice(2)) {
 // Wired as the `mutation-survivors-filer-selftest` prek hook.
 // #3364 fixtures, split out of `runSelfTest` to keep its cyclomatic
 // complexity under the repo lint budget.
+// #3350 fixtures — survivor AGE, which is what makes "long-standing" and
+// "new" distinguishable at all, plus the ONE thing that half could plausibly break: the
+// state-block format changed to carry a first-seen date, and if that change
+// were not backward compatible, the first run after it would read every
+// pre-existing survivor as resolved-and-immediately-new — silently resetting
+// the very memory the filer exists to keep. Split out of `runSelfTest` to
+// keep its cyclomatic complexity under the repo lint budget.
+function selfTestSurvivorAges({ ok, fail, survivor }) {
+  const rust = (line) => `[rust] agaric-store/src/op.rs:${line}:5: replace foo with bar in x`
+
+  // 9a. MIGRATION. A body written by the PRE-#3350 code (no date prefixes)
+  //     must parse to exactly the same ids as the new format. If this ever
+  //     fails, the deploy of #3350 itself wipes the tracked set.
+  {
+    const legacy = [
+      MARKER_START,
+      '```',
+      survivor(1),
+      survivor(2),
+      rust(10),
+      '```',
+      MARKER_END,
+    ].join('\n')
+    const parsed = parseKnownSurvivors(legacy)
+    const ages = parseFirstSeen(legacy)
+    if (parsed.size === 3 && parsed.has(survivor(1)) && parsed.has(rust(10)) && ages.size === 0)
+      ok('an undated (pre-#3350) state block still parses to the same ids (#3350)')
+    else
+      fail(
+        'an undated (pre-#3350) state block still parses to the same ids (#3350)',
+        `size=${parsed.size} ages=${ages.size}`,
+      )
+  }
+
+  // 9b. ROUND TRIP. A dated body parses back to the same ids AND to the dates
+  //     it was written with — the property that makes "long-standing" mean
+  //     something on the next run.
+  {
+    const all = [survivor(1), survivor(2)]
+    const firstSeen = new Map([[survivor(1), '2026-01-15']])
+    const body = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      firstSeen,
+      today: '2026-07-31',
+      newOnes: [survivor(2)],
+    })
+    const reparsed = parseKnownSurvivors(body)
+    const reages = parseFirstSeen(body)
+    if (
+      reparsed.size === 2 &&
+      all.every((s) => reparsed.has(s)) &&
+      reages.get(survivor(1)) === '2026-01-15' &&
+      reages.get(survivor(2)) === '2026-07-31'
+    )
+      ok('a dated state block round-trips ids and preserves the older date (#3350)')
+    else
+      fail(
+        'a dated state block round-trips ids and preserves the older date (#3350)',
+        `ids=${reparsed.size} d1=${reages.get(survivor(1))} d2=${reages.get(survivor(2))}`,
+      )
+  }
+
+  // 9c. AGE IS NOT REWRITTEN. Re-rendering an existing set on a later day
+  //     must not restamp it — otherwise every survivor is permanently "seen
+  //     today" and the age column is decoration.
+  {
+    const all = [survivor(1)]
+    const day1 = buildIssueBody({ all, resolvedOnes: [], today: '2026-01-15', newOnes: all })
+    const day2 = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      firstSeen: parseFirstSeen(day1),
+      today: '2026-07-31',
+      newOnes: [],
+    })
+    if (parseFirstSeen(day2).get(survivor(1)) === '2026-01-15' && day2.includes('2026-01-15'))
+      ok('re-rendering a known survivor does not restamp its first-seen date (#3350)')
+    else
+      fail(
+        're-rendering a known survivor does not restamp its first-seen date (#3350)',
+        String(parseFirstSeen(day2).get(survivor(1))),
+      )
+  }
+
+  // 9c2. A survivor that is ALREADY TRACKED but carries no date (every entry
+  //     the tracking issue held before #3350, including #3248's 21 permanent
+  //     equivalent mutants) must stay undated rather than be stamped today.
+  //     Back-dating them would relabel the entire standing backlog as "found
+  //     this week" on the very first run after this change — the same class
+  //     of lie as #3245's double count, just in the other direction.
+  {
+    const legacyId = survivor(1)
+    const trulyNew = survivor(2)
+    const body = buildIssueBody({
+      all: [legacyId, trulyNew],
+      resolvedOnes: [],
+      firstSeen: new Map(),
+      today: '2026-07-31',
+      newOnes: [trulyNew],
+    })
+    const ages = parseFirstSeen(body)
+    if (
+      !ages.has(legacyId) &&
+      ages.get(trulyNew) === '2026-07-31' &&
+      parseKnownSurvivors(body).size === 2
+    )
+      ok('a known-but-undated survivor is not back-dated to today (#3350)')
+    else
+      fail(
+        'a known-but-undated survivor is not back-dated to today (#3350)',
+        `legacy=${ages.get(legacyId)} new=${ages.get(trulyNew)} ids=${parseKnownSurvivors(body).size}`,
+      )
+  }
+
+  // 9c3. The age the TABLE reports must equal the age the STATE BLOCK writes
+  //     back. Two independent resolutions of the same fact is how a report
+  //     starts lying: the table said `_unknown_` for a survivor the block had
+  //     just stamped with today's date, so a maintainer read "standing gap"
+  //     where the truth was "found this run".
+  {
+    const all = [survivor(1), survivor(2)]
+    const body = buildIssueBody({
+      all,
+      resolvedOnes: [],
+      firstSeen: new Map([[survivor(1), '2026-01-15']]),
+      today: '2026-07-31',
+      newOnes: [survivor(2)],
+    })
+    const table = body.slice(body.indexOf('| Area |'), body.indexOf('### All currently-known'))
+    const written = parseFirstSeen(body)
+    // One area (both fixtures are glob-validate), oldest = the January date.
+    if (table.includes('| 2026-01-15 |') && written.get(survivor(1)) === '2026-01-15')
+      ok('the area table reports the same age the state block writes back (#3350)')
+    else
+      fail(
+        'the area table reports the same age the state block writes back (#3350)',
+        `table=${table.trim()} written=${written.get(survivor(1))}`,
+      )
+
+    // An area MIXING a dated member with an undated one must report
+    //     `_unknown_`, not the dated one. The undated member predates
+    //     tracking, so it is OLDER than any date held; printing the recent
+    //     date as "oldest" would make an ancient standing gap read as fresh.
+    {
+      const mixed = buildIssueBody({
+        all: [survivor(1), survivor(2)],
+        resolvedOnes: [],
+        firstSeen: new Map(),
+        today: '2026-07-31',
+        newOnes: [survivor(2)],
+      })
+      const row = mixed.slice(mixed.indexOf('| frontend: glob-validate |'))
+      if (row.startsWith('| frontend: glob-validate | 2 | _unknown_ |'))
+        ok('an area mixing dated and undated members reports "unknown" (#3350)')
+      else
+        fail(
+          'an area mixing dated and undated members reports "unknown" (#3350)',
+          row.split('\n')[0],
+        )
+    }
+
+    // …and an all-new area reports today, not `_unknown_`.
+    const fresh = buildIssueBody({
+      all: [survivor(3)],
+      resolvedOnes: [],
+      today: '2026-07-31',
+      newOnes: [survivor(3)],
+    })
+    if (fresh.includes('| 2026-07-31 |') && !fresh.includes('_unknown_'))
+      ok('an all-new area reports today, not "unknown" (#3350)')
+    else
+      fail(
+        'an all-new area reports today, not "unknown" (#3350)',
+        fresh.slice(fresh.indexOf('| Area |'), fresh.indexOf('### All currently-known')),
+      )
+  }
+}
+
+// #3350 (second half) — grouping and ranking. Split from the age fixtures
+// above only to keep each function under the repo's cyclomatic-complexity
+// lint budget; the two halves are asserted together from `runSelfTest`.
+function selfTestGroupingAndRanking({ ok, fail, survivor }) {
+  const rust = (line) => `[rust] agaric-store/src/op.rs:${line}:5: replace foo with bar in x`
+
+  // 9d. AREA SPLITTING for both lanes' id shapes, and the unparseable
+  //     fallback (a survivor that does not fit the shape is still a survivor
+  //     and must not be dropped from the grouping).
+  {
+    const cases = [
+      [survivor(1), 'frontend: glob-validate'],
+      [rust(10), 'rust: agaric-store/src/op.rs'],
+      ['[frontend] not-a-survivor-line', 'frontend: (unparsed)'],
+      ['garbage', '(unparsed)'],
+    ]
+    const bad = cases.filter(([id, want]) => survivorArea(id) !== want)
+    if (bad.length === 0) ok('survivorArea splits both lanes and falls back safely (#3350)')
+    else fail('survivorArea splits both lanes and falls back safely (#3350)', JSON.stringify(bad))
+
+    const grouped = groupByArea(cases.map(([id]) => id))
+    const total = grouped.reduce((n, g) => n + g.members.length, 0)
+    if (total === cases.length) ok('groupByArea drops nothing (#3350)')
+    else fail('groupByArea drops nothing (#3350)', `${total} of ${cases.length}`)
+  }
+
+  // 9e. RANKING. The worst area must come first in both the body's table and
+  //     the per-run comment — that ordering is the entire readability claim.
+  {
+    const many = Array.from({ length: 5 }, (_, i) => rust(i + 1))
+    const few = [survivor(1)]
+    const ids = [...few, ...many]
+    const groups = groupByArea(ids)
+    const body = buildIssueBody({ all: ids, resolvedOnes: [], today: '2026-07-31' })
+    const comment = buildNewSurvivorComment({ newOnes: ids, runUrl: undefined })
+    const bodyRustFirst =
+      body.indexOf('| rust: agaric-store/src/op.rs |') < body.indexOf('| frontend: glob-validate |')
+    const commentRustFirst =
+      comment.indexOf('**rust: agaric-store/src/op.rs**') <
+      comment.indexOf('**frontend: glob-validate**')
+    if (groups[0].members.length === 5 && bodyRustFirst && commentRustFirst)
+      ok('the worst area is ranked first in both body and comment (#3350)')
+    else
+      fail(
+        'the worst area is ranked first in both body and comment (#3350)',
+        `first=${groups[0].area} body=${bodyRustFirst} comment=${commentRustFirst}`,
+      )
+  }
+
+  // 9f. The area table must still not duplicate any survivor line — the
+  //     #3245 double-count invariant, re-asserted against the section #3350
+  //     adds, because a "helpful" summary that lists members instead of
+  //     counts is exactly how that bug happened the first time.
+  {
+    const ids = [survivor(1), survivor(2), rust(10)]
+    const body = buildIssueBody({ all: ids, resolvedOnes: [], today: '2026-07-31' })
+    const counts = ids.map((s) => body.split(s).length - 1)
+    if (counts.every((c) => c === 1)) ok('the #3350 area table adds no duplicate lines (#3245)')
+    else fail('the #3350 area table adds no duplicate lines (#3245)', JSON.stringify(counts))
+  }
+
+  // 9g. CLAMP ORDER. When the body overflows, the resolved list goes before
+  //     the area table (worth more per character), and when even that is not
+  //     enough the area table goes too — but the state block survives both,
+  //     intact and re-parseable.
+  {
+    const all = Array.from({ length: 200 }, (_, i) => survivor(i))
+    const resolvedOnes = Array.from({ length: 600 }, (_, i) => survivor(10_000 + i))
+    const body = buildIssueBody({ all, resolvedOnes, today: '2026-07-31' })
+    if (
+      body.length <= MAX_BODY_CHARS &&
+      body.includes('Where the survivors are') &&
+      !body.includes(resolvedOnes[0]) &&
+      parseKnownSurvivors(body).size === 200
+    )
+      ok('the clamp drops the resolved list before the area table (#3350)')
+    else
+      fail(
+        'the clamp drops the resolved list before the area table (#3350)',
+        `len=${body.length} area=${body.includes('Where the survivors are')} state=${parseKnownSurvivors(body).size}`,
+      )
+  }
+
+  // 9h. THE LAST RUNG, which nothing else covers: 9g pins "resolved goes
+  //     before the table" and fixture 4 pins the throw, but the render in
+  //     between — area table dropped, body still valid — had no assertion at
+  //     all, and was where the note lied. Areas are unbounded (the rust lane
+  //     groups by source FILE), so a WIDE-but-shallow set reaches this rung
+  //     with an empty resolved list, and the note used to read "0
+  //     resolved-since-last-run entries were omitted" while silently dropping
+  //     the table it never mentioned.
+  {
+    const wide = Array.from(
+      { length: 430 },
+      (_, a) =>
+        `[frontend] module-${String(a).padStart(3, '0')}-with-a-long-descriptive-name: a.ts:1 [X]`,
+    )
+    const body = buildIssueBody({
+      all: wide,
+      resolvedOnes: [],
+      runUrl: 'https://example/run',
+      today: '2026-07-31',
+      newOnes: wide,
+    })
+    if (
+      body.length <= MAX_BODY_CHARS &&
+      !body.includes('Where the survivors are') &&
+      body.includes('"where the survivors are" table (430 area(s))') &&
+      !body.includes('0 resolved-since-last-run') &&
+      parseKnownSurvivors(body).size === 430
+    )
+      ok('dropping the area table says so, and never claims "0 resolved" (#3350)')
+    else
+      fail(
+        'dropping the area table says so, and never claims "0 resolved" (#3350)',
+        `len=${body.length} table=${body.includes('Where the survivors are')} state=${parseKnownSurvivors(body).size} note=${body.split('\n').find((l) => l.includes('Omitted to keep'))}`,
+      )
+
+    // …and when BOTH sections go, the note names both rather than one.
+    const both = buildIssueBody({
+      all: wide,
+      resolvedOnes: [survivor(1), survivor(2)],
+      runUrl: 'https://example/run',
+      today: '2026-07-31',
+      newOnes: wide,
+    })
+    const noteLine = both.split('\n').find((l) => l.includes('Omitted to keep')) ?? ''
+    if (noteLine.includes('table (430 area(s))') && noteLine.includes('2 resolved-since-last-run'))
+      ok('a two-section clamp names both dropped sections (#3350)')
+    else fail('a two-section clamp names both dropped sections (#3350)', noteLine)
+  }
+}
+
 function selfTestLaneInputGuards({ ok, fail, survivor }) {
   // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
   //    one. First, the damage the guards prevent, demonstrated on the pure
@@ -843,6 +1330,11 @@ function runSelfTest() {
   // 8. #3364 — a MISSING lane input must be distinguishable from an EMPTY
   //    one. Fixtures live in `selfTestLaneInputGuards` above.
   selfTestLaneInputGuards({ ok, fail, survivor })
+
+  // 9. #3350 — survivor age, then grouping and ranking. Fixtures live in
+  //    `selfTestSurvivorAges` / `selfTestGroupingAndRanking` above.
+  selfTestSurvivorAges({ ok, fail, survivor })
+  selfTestGroupingAndRanking({ ok, fail, survivor })
 
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)

@@ -25,6 +25,22 @@ describe('check-stryker-modules.mjs', () => {
     expect(out).toContain('self-test: all assertions passed')
     expect(out).toContain('dangling src path is flagged')
     expect(out).toContain('dangling test path is flagged')
+    // #3350 — the two assertions added when the module set widened. Named
+    // individually rather than trusting the "all assertions passed" line,
+    // which stays green if a fixture is deleted.
+    expect(out).toContain('a misspelled module key is flagged (#3350)')
+    expect(out).toContain("a module outside the PR lane's `paths:` filter is flagged (#3350)")
+  })
+
+  it('every enrolled module is reachable by the diff-scoped PR lane', () => {
+    // #3350 — `mutation-pr.yml` only starts when a PR touches a path in its
+    // `on.pull_request.paths` filter, which is a second encoding of the
+    // module set. Enrolling a module under a tree that filter does not name
+    // makes the lane silently never fire for it: no failing job, no empty
+    // report, no workflow run at all. Gating, because the drift lands in a
+    // PR and the consequence is invisible afterwards.
+    const out = execFileSync('node', [SCRIPT], { encoding: 'utf8' })
+    expect(out).toMatch(/covered by \.github\/workflows\/mutation-pr\.yml's \d+ path filter\(s\)/)
   })
 
   it('exits non-zero when the declared paths do not resolve', () => {
@@ -43,6 +59,6 @@ describe('check-stryker-modules.mjs', () => {
     }
     expect(status).toBe(1)
     expect(stderr).toContain('declares a src path that does not exist')
-    expect(stderr).toContain('dangling path(s) in stryker.modules.mjs')
+    expect(stderr).toContain('problem(s) in stryker.modules.mjs')
   })
 })

@@ -36,6 +36,22 @@ export default defineConfig({
     // rather than `node`.
     environment: 'happy-dom',
     include: mod.tests,
+
+    // #3350 — opt-in, per module. The original module set was pure libs
+    // whose tests touch nothing global, so the default here is still "no
+    // setup file": that keeps the cheap modules cheap. But the modules
+    // worth widening to (the ones where a survivor means a real defect —
+    // store reducers, IPC-shaped query builders, importers) are tested
+    // through `src/test-setup.ts`'s global `@tauri-apps/api/core` mock and
+    // fail at `mockedInvoke.mockResolvedValue is not a function` without
+    // it. `setup: true` in `stryker.modules.mjs` opts a module in; the
+    // `sequence.hooks: 'stack'` ordering below is copied verbatim from
+    // `vitest.config.ts` because `src/test-setup.ts` depends on it (its
+    // strict-IPC `afterEach` must run LAST, see #3225) and a setup file
+    // loaded under different hook ordering is a different setup file.
+    ...(mod.setup
+      ? { setupFiles: ['./src/test-setup.ts'], sequence: { hooks: 'stack' }, testTimeout: 20_000 }
+      : {}),
   },
   resolve: {
     alias: {

@@ -1007,138 +1007,20 @@ jobs:
         run: node scripts/check-mutation-reports.mjs --reports-dir reports/mutation
 
       - name: Mutation summary
-        # Presentational only — it never fails, by design (same as the Rust
+        # Presentational only — never fails, by design (same as the Rust
         # lane's `Mutants summary`). The liveness guard above is the single
-        # place this job goes red; if it did, the `_no report_` rows below
+        # place this job can go red; if it did, the `_no report_` rows below
         # are the diagnosis, not a silent pass.
         #
-        # #3360: "never fails" was aspirational. `JSON.parse` on a truncated
-        # `mutation.json` — precisely the state the liveness guard above exists
-        # to catch — threw, so the SUMMARY step failed too and the run showed
-        # a second stack trace on top of the guard's actionable error, with the
-        # whole table lost (nothing is written until the final `console.log`).
-        # The summary is meant to be the DIAGNOSIS of that failure, not another
-        # casualty of it. Each report is now parsed defensively and a bad one
-        # becomes a row plus a quoted parse error; an unexpected throw anywhere
-        # else still flushes whatever the table had. The step cannot fail.
+        # #3350: the renderer moved out of an inline heredoc into
+        # `scripts/render-mutation-summary.mjs`, because the per-PR
+        # diff-scoped lane (`mutation-pr.yml`) has to render the SAME shape
+        # and a heredoc can be neither imported nor unit-tested. Its ordering
+        # rules (worst module first, survivors grouped per module) and its
+        # "cannot fail" property are pinned by that script's own fixture
+        # suite, wired as the `mutation-summary-renderer-selftest` prek hook.
         if: always()
-        run: |
-          node - <<'NODE' >> "$GITHUB_STEP_SUMMARY"
-          const fs = require('node:fs')
-          const path = require('node:path')
-
-          const root = 'reports/mutation'
-          const lines = ['## StrykerJS mutation testing (frontend, #886)', '']
-          const unreadable = []
-
-          function render() {
-            if (!fs.existsSync(root)) {
-              lines.push('_No reports produced (Stryker crashed before writing JSON) — see job log._')
-              return
-            }
-
-            const modules = fs.readdirSync(root).sort()
-            // "Score" here is Stryker's "covered" mutation score — (killed +
-            // timeout) / (killed + timeout + survived) — i.e. excluding
-            // no-coverage mutants from the denominator, same as the "covered"
-            // column Stryker itself prints to the job log.
-            lines.push('| Module | Score (covered) | Killed | Timeout | Survived | No cov | Errors |')
-            lines.push('|---|--:|--:|--:|--:|--:|--:|')
-
-            const totals = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
-            const survivors = []
-
-            for (const mod of modules) {
-              const jsonPath = path.join(root, mod, 'mutation.json')
-              if (!fs.existsSync(jsonPath)) {
-                lines.push(`| ${mod} | _no report_ | | | | | |`)
-                continue
-              }
-              let report
-              try {
-                report = JSON.parse(fs.readFileSync(jsonPath, 'utf-8'))
-              } catch (err) {
-                // A truncated/half-written report is the liveness guard's
-                // business, not this step's. Record it as a row and move on so
-                // the remaining modules still render.
-                lines.push(`| ${mod} | _unreadable report_ | | | | | |`)
-                unreadable.push(`${mod}: ${err.message}`)
-                continue
-              }
-              const counts = { killed: 0, timeout: 0, survived: 0, noCov: 0, errors: 0 }
-              for (const [file, entry] of Object.entries(report.files ?? {})) {
-                for (const mutant of entry.mutants ?? []) {
-                  switch (mutant.status) {
-                    case 'Killed':
-                      counts.killed++
-                      break
-                    case 'Timeout':
-                      counts.timeout++
-                      break
-                    case 'Survived': {
-                      counts.survived++
-                      // Optional-chained: a report can be valid JSON and still
-                      // be missing `location`, which used to be a TypeError
-                      // that took the whole summary down.
-                      const line = mutant.location?.start?.line ?? '?'
-                      survivors.push(`${mod}: ${file}:${line} [${mutant.mutatorName}]`)
-                      break
-                    }
-                    case 'NoCoverage':
-                      counts.noCov++
-                      break
-                    case 'CompileError':
-                    case 'RuntimeError':
-                      counts.errors++
-                      break
-                    default:
-                      break
-                  }
-                }
-              }
-              const scored = counts.killed + counts.timeout + counts.survived
-              const score = scored > 0 ? ((counts.killed + counts.timeout) / scored) * 100 : 0
-              lines.push(
-                `| ${mod} | ${score.toFixed(1)}% | ${counts.killed} | ${counts.timeout} | ${counts.survived} | ${counts.noCov} | ${counts.errors} |`,
-              )
-              for (const k of Object.keys(totals)) totals[k] += counts[k]
-            }
-
-            const totalScored = totals.killed + totals.timeout + totals.survived
-            const totalScore = totalScored > 0 ? ((totals.killed + totals.timeout) / totalScored) * 100 : 0
-            lines.push(
-              `| **All modules** | **${totalScore.toFixed(1)}%** | ${totals.killed} | ${totals.timeout} | ${totals.survived} | ${totals.noCov} | ${totals.errors} |`,
-            )
-
-            if (survivors.length > 0) {
-              lines.push('', '### Surviving mutants — triage into test gaps', '```')
-              lines.push(...survivors)
-              lines.push('```')
-            }
-          }
-
-          try {
-            render()
-          } catch (err) {
-            // Last resort: emit what the table already had rather than dying
-            // and leaving the run with no summary at all.
-            lines.push('', `_Summary rendering aborted: ${err && err.message}. The lane-liveness guard step above is the authoritative signal._`)
-          }
-
-          if (unreadable.length > 0) {
-            lines.push(
-              '',
-              `### ${unreadable.length} unreadable report(s)`,
-              '',
-              '_Invalid or truncated `mutation.json` — the lane-liveness guard step above fails the job for this; these are the details._',
-              '```',
-              ...unreadable,
-              '```',
-            )
-          }
-
-          console.log(lines.join('\n'))
-          NODE
+        run: node scripts/render-mutation-summary.mjs --reports-dir reports/mutation >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload mutation reports
         if: always()

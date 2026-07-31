@@ -1653,8 +1653,12 @@ stages = ["pre-commit"]
 # those strings still resolve, so a file move turned a module into a
 # `| <mod> | _no report_ |` row and a never-wired test file made the lane
 # re-report already-killed mutants as survivors for weeks (#3142: 78
-# reported, 22 real). Cheap — ~27 existsSync calls. Runs on any change to
-# the config or to the frontend libs it points at.
+# reported, 22 real). Cheap — one existsSync per declared path. Runs on any
+# change to the config or to the source trees it points at. `src/stores/`
+# joined that list in #3350, when `page-blocks-move.ts` was enrolled: a
+# path-keyed hook only guards the paths its own regex matches, so widening
+# the module set without widening this pattern would have left the newest
+# and highest-value module the ONLY one no local guard covers.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -1663,7 +1667,7 @@ name = "stryker.modules.mjs paths resolve"
 entry = "node scripts/check-stryker-modules.mjs"
 language = "system"
 pass_filenames = false
-files = '^(stryker\.modules\.mjs|src/lib/.*\.ts)$'
+files = '^(stryker\.modules\.mjs|src/lib/.*\.ts|src/stores/.*\.ts|\.github/workflows/mutation-pr\.yml)$'
 stages = ["pre-commit"]
 
 # Self-test the guard's own exit behavior (dangling src FAILS, dangling
@@ -1714,6 +1718,42 @@ entry = "node scripts/file-mutation-survivors.mjs --self-test"
 language = "system"
 pass_filenames = false
 files = '^scripts/file-mutation-survivors\.mjs$'
+stages = ["pre-commit"]
+
+# mutation-summary-renderer-selftest (#3350): the summary renderer is what a
+# maintainer actually reads, and it has two properties that are easy to
+# regress and impossible to notice from a green run — it orders modules by
+# RISK rather than alphabetically (an alphabetical regression buries the one
+# module worth looking at), and it CANNOT throw (a truncated `mutation.json`
+# used to take the whole table down and leave a stack trace where the
+# diagnosis should be, #3360). Both are pinned by its fixture suite.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutation-summary-renderer-selftest"
+name = "mutation summary renderer self-test"
+entry = "node scripts/render-mutation-summary.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/render-mutation-summary\.mjs$'
+stages = ["pre-commit"]
+
+# mutation-module-selector-selftest (#3350): the diff-scoped PR lane decides
+# what to mutate from the PR's own diff. Two ways that goes wrong and neither
+# is visible in a green run: selecting nothing when it should have selected
+# something (the lane silently stops being a lane), or selecting everything
+# because a repo-wide rename touched every module (the per-PR lane becomes the
+# hours-long sweep #3350 refuses to put in front of a merge). The `--max` cap
+# and the empty-selection case are both pinned by the fixture suite.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutation-module-selector-selftest"
+name = "diff-scoped mutation module selector self-test"
+entry = "node scripts/select-mutation-modules.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/select-mutation-modules\.mjs|stryker\.modules\.mjs)$'
 stages = ["pre-commit"]
 
 # scheduled-failure-reporter-selftest (#3359): `report-scheduled-failures` is
