@@ -62,7 +62,18 @@ Vulnerability advisories filter through three rings of decreasing strictness. **
 
 ## Local↔CI parity — `verify-ci-equivalent.sh` as contract
 
-`scripts/verify-ci-equivalent.sh` is the pre-push hook that runs the same checks as `_validate.yml`, in parallel where independent, with the same scoping. Vitest job corresponds to the full Vitest run; Playwright job to the full Playwright run; cargo-tests job to nextest plus the `agaric-mcp` build, UDS smoke, and externalBin staging verification. Warn-only steps (cargo audit, npm audit signatures) are mirrored in Phase 4. The script is the contract: if CI diverges from local pre-push, fix the script. Deliberately **not** in the script: full Tauri bundle build, cross-OS builds, SLSA attestation — those are CI-only, with `scripts/verify-release-build.sh` available for a pre-tag smoke. Escape hatch: `SKIP_CI_VERIFY='<reason>'` short-circuits the hook. The CI-R16 guard rejects a bare truthy flag (`SKIP_CI_VERIFY=1`) — the value must be a self-documenting reason of at least 8 characters, which is echoed into the push output so the skip leaves a trace on top of the git-history audit trail.
+`scripts/verify-ci-equivalent.sh` is the pre-push hook — but since commit a898373a5 (2026-05-27) it is **not** a full CI mirror; it was deliberately rescoped to fast-feedback, and this doc previously described the pre-rescope shape. The script's own header comment is the canonical description of what it does — prefer reading it (`scripts/verify-ci-equivalent.sh:1-59`) over this paragraph, since a paraphrase here is exactly what drifted last time (#3258). Summarized:
+
+- **Phases run strictly sequentially**, not "in parallel where independent" — each phase is a plain `if ! …; then exit 1; fi` gate, no `&`/`wait`/`xargs -P` anywhere in the script.
+- **Phase A** — `prek run --all-files --hook-stage pre-commit`, category-aware: it skips whole hook groups (frontend/backend/CI/docs) whose category didn't change in the push, falling back to running everything when the changed-file set can't be classified. The weekly `full-suite` job in `scheduled-deep-checks.yml` re-runs the unskipped suite over the whole tree as the backstop for the categories a given push skips.
+- **Phases C/D** (vitest, cargo nextest) are **scoped to the push's commit range** (`scripts/test-related-{ts,rust}.sh --range`), not full-suite runs — CI still runs the full suites on every PR.
+- **Playwright is not run locally at all.** The script prints "(Playwright skipped — runs in CI on every PR; run `npx playwright test` locally if needed)" on every successful push.
+- **Phase E** mirrors every `sqlx-offline-check` lane in `_validate.yml` (workspace root + the three sub-crates). **Phase F** (gated on MCP-path changes) covers the `agaric-mcp` release build, UDS smoke, and externalBin verification.
+- Warn-only steps (`cargo audit`, `npm audit signatures`) are **Phase G**, not "Phase 4" — the script has no numbered phases, only lettered ones.
+- Deliberately **not** in the script: full Tauri bundle build, cross-OS builds, SLSA attestation — those are CI-only, with `scripts/verify-release-build.sh` available for a pre-tag smoke.
+- Escape hatch: `SKIP_CI_VERIFY='<reason>'` short-circuits the hook. The CI-R16 guard rejects a bare truthy flag (`SKIP_CI_VERIFY=1`) — the value must be a self-documenting reason of at least 8 characters, which is echoed into the push output so the skip leaves a trace on top of the git-history audit trail.
+
+Because CI still runs the full suites (vitest, nextest, and all Playwright shards) on every PR regardless of what pre-push scoped locally, this rescoping trades local wall-clock time for a narrower local signal — it does not weaken what actually gates a merge. "If CI diverges from local pre-push, fix the script" still applies to the phases the script does run; it is not a claim that the script's coverage equals CI's.
 
 ## JNI / Android `unsafe_code` reconciliation
 

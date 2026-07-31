@@ -1706,6 +1706,23 @@ pass_filenames = false
 files = '^scripts/verify-ci-equivalent\.sh$'
 stages = ["pre-commit"]
 
+# print-coverage-thresholds-selftest (#3258): this script derives the
+# coverage-threshold clause live from `vitest.config.ts` instead of a
+# hardcoded copy. Its own fixture suite (missing-metric rejection, absent-
+# block rejection, fractional-value preservation, and a live anchor against
+# the real on-disk config) must re-run whenever the script changes, so a
+# regression that defangs the extraction can't land silently.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "print-coverage-thresholds-selftest"
+name = "coverage-thresholds derivation self-test (#3258 fixtures)"
+entry = "node scripts/print-coverage-thresholds.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/print-coverage-thresholds\.mjs$'
+stages = ["pre-commit"]
+
 [[repos]]
 repo = "local"
 [[repos.hooks]]

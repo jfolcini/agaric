@@ -50,19 +50,23 @@ export default defineConfig({
       // these values actually gate there; the prior contradictory `=0`
       // override and the `>=80%/>=75%` step-summary string were removed.
       //
-      // Measurement-derived headroom: latest full-suite CI-equivalent run
-      // measured lines 91.58% / functions 90.83% / branches 82.11% /
-      // statements 89.75%. Gates sit ~1.5-2pp below observed so an unrelated
-      // PR that adds a moderately-sized lightly-tested file cannot flip a
-      // green gate red (the whole point of a non-flaky gate). Statements is
-      // the binding metric: observed 89.75% is itself just under 90%, so it
-      // is gated at 88 (not 89) to keep the same ~1.5-2pp headroom the other
-      // three metrics have — a 0.75pp margin is a tripwire, not a gate.
-      // 88% statements is still a strong OSPS-Silver-class floor. Raise the
-      // suite's statement coverage past 90% before raising this gate.
-      // Branches (>=80%) is the explicit OSPS Silver claim. Raise gates as
-      // observed coverage rises; do not lower them without surfacing a
-      // deliberate decision.
+      // Design principle: gates sit a deliberate margin below the last
+      // full-suite measurement so an unrelated PR that adds a moderately
+      // sized, lightly tested file cannot flip a green gate red (the whole
+      // point of a non-flaky gate) — but they're not so far below observed
+      // coverage that a real regression goes unnoticed. Raise a gate as
+      // observed coverage rises; do not lower one without surfacing a
+      // deliberate decision. Branches (>=80% is the explicit OSPS Silver
+      // floor; this repo currently gates it higher, at 82%).
+      //
+      // #3258: this comment previously hardcoded a specific measured
+      // snapshot (exact percentages, "statements gated at 88") that drifted
+      // from the `thresholds` block below it once the numbers changed and
+      // nobody updated the prose copy. Don't reintroduce that: for current
+      // measured-vs-gated numbers, read the "Coverage summary" step's
+      // output on a recent CI run (`.github/workflows/_validate.yml`,
+      // derived from this file via `scripts/print-coverage-thresholds.mjs`
+      // so it can't go stale the same way) rather than a comment here.
       thresholds: {
         lines: 91,
         functions: 90,
