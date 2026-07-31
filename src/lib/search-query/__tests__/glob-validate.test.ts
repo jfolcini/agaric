@@ -129,6 +129,23 @@ describe('expandBraces', () => {
     expect(out.every((p) => typeof p === 'string')).toBe(true)
   })
 
+  it('continues applying a literal segment that trails an alts group landing EXACTLY on the cap', () => {
+    // `{a,b,c,d}` repeated 3x is 4^3 = 64 alternatives — landing EXACTLY on
+    // EXPANSION_CAP after the 3rd group, followed by a trailing literal `X`.
+    // Mirrors the Rust expander's `results = next; if results.len() >
+    // EXPANSION_CAP { truncate; break }` — the boundary is `>`, not `>=`, so
+    // landing exactly at the cap must NOT stop the loop early: the trailing
+    // literal segment still has to be applied to all 64 results. A prior TS
+    // bug broke one iteration too early on `results.length >= EXPANSION_CAP`,
+    // silently dropping the `X` suffix from every result.
+    const pattern = `${'{a,b,c,d}'.repeat(3)}X`
+    const out = expandBraces(pattern)
+    expect(out.length).toBe(EXPANSION_CAP)
+    for (const p of out) {
+      expect(p.endsWith('X')).toBe(true)
+    }
+  })
+
   it('truncates mid-expansion at the exact cap, and stops applying further groups once capped', () => {
     // `{a,b,c}` repeated 5x: group sizes 3, 9, 27, then group 4 overflows
     // (27*3=81 > 64) and must be clamped to exactly 64 entries composed of

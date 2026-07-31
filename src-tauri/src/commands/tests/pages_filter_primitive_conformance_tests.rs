@@ -15,7 +15,20 @@
 //! `Stub`, `HasNoInboundLinks`, `Priority`, `LastEdited`(`Range`) — plus
 //! AND-composition. `Rolling`/`OlderThan` are excluded (clock-relative, so a
 //! golden fixture cannot pin them); `Orphan` and `Tag`/`HasProperty` are
-//! separate #1908 increments.
+//! separate #1908 increments. `State` and `DueDate`/`Scheduled` are OUT of
+//! scope for this harness: `PagesProjection::allowed_keys` (`PAGES_ALLOWED_KEYS`
+//! in `agaric-store/src/filters/primitive.rs`) does not include `state` /
+//! `due-date` / `scheduled`, so `list_pages_with_metadata_inner` rejects them
+//! with `AppError::Validation` before ever reaching the primitive matcher —
+//! confirmed empirically (#3314 finding 1 investigation). Their Rust-side
+//! semantics (the #2019 EXCLUDE+is_null AND-join, and inclusive `Between`
+//! bounds) are pinned directly against `PagesProjection::compile` by
+//! `pages_state_exclude_keeps_null_outside_the_in_list` and
+//! `pages_due_date_matches_legacy_date_predicate_oracle` in that file; the
+//! mock-side counterparts are pinned directly against `metaRowMatchesFilter`
+//! in `filter-primitive-conformance.test.ts`'s "State exclude/is_null" and
+//! "Between inclusive bounds" describe blocks (mirrored assertions, not a
+//! shared JSON fixture, since this harness can't drive them).
 
 #![cfg(test)]
 

@@ -158,8 +158,11 @@ export function expandBraces(pattern: string): string[] {
         }
       }
     }
-    results = next.length > EXPANSION_CAP ? next.slice(0, EXPANSION_CAP) : next
-    if (results.length >= EXPANSION_CAP) break
+    results = next
+    if (results.length > EXPANSION_CAP) {
+      results = results.slice(0, EXPANSION_CAP)
+      break
+    }
   }
   return results
 }

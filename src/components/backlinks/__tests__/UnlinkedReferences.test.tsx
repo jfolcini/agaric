@@ -1611,4 +1611,160 @@ describe('UnlinkedReferences', () => {
     })
     expect(mockedGetPageAliases).toHaveBeenCalledTimes(2)
   })
+
+  // ── #3313: unanchored substring corruption ──────────────────────────
+  //
+  // The old `handleLinkIt` regex was `new RegExp(escapeRegExp(term), 'i')`
+  // with no word-boundary check, so a page titled `Note` corrupted
+  // `Notebook shopping list` into `[[pageId]]book shopping list` — and
+  // the optimistic cache-strip meant the user never saw the damage. These
+  // pin the boundary-aware fix (`buildBoundaryRegex`).
+
+  it('"Link it" does NOT corrupt a substring match and surfaces the failure toast', async () => {
+    const { toast } = await import('sonner')
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue([])
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'Notebook shopping list' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'Note' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('Notebook shopping list')
+
+    await user.click(screen.getByRole('button', { name: /link it/i }))
+
+    // Must NOT rewrite/corrupt the word — no edit op is ever written.
+    expect(mockedEditBlock).not.toHaveBeenCalled()
+    // Block stays visible — no optimistic removal of an un-linked block.
+    expect(screen.getByText('Notebook shopping list')).toBeInTheDocument()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'UnlinkedReferences',
+      'No title/alias match found for Link it',
+      expect.objectContaining({ blockId: 'B1', pageId: 'PAGE1' }),
+    )
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalledWith('Failed to link reference')
+    })
+  })
+
+  it('"Link it" rewrites a genuine standalone title mention', async () => {
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue([])
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: 'A standalone Note here' }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'Note' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText('A standalone Note here')
+
+    await user.click(screen.getByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'A standalone [[PAGE1]] here')
+  })
+
+  it.each([
+    ['This is a Note.', 'This is a [[PAGE1]].'],
+    ['See (Note) here', 'See ([[PAGE1]]) here'],
+    ["Note's content", "[[PAGE1]]'s content"],
+  ])('"Link it" still rewrites boundary-adjacent punctuation: %s', async (content, expected) => {
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue([])
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'Note' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText(content)
+
+    await user.click(screen.getByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', expected)
+  })
+
+  it('"Link it" falls through to an alias when the title only matches as a substring', async () => {
+    // Title `Note` is embedded inside `Notebook` (no boundary match
+    // anywhere in the content), but the alias `Reminder` appears
+    // standalone — the fallback loop must keep trying candidates rather
+    // than giving up after the title fails to match with boundaries.
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue(['Reminder'])
+    const resp = {
+      groups: [
+        makeGroup('P1', 'Page One', [
+          { id: 'B1', content: 'Notebook app, aka Reminder, is handy' },
+        ]),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'Note' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await waitFor(() => {
+      expect(mockedGetPageAliases).toHaveBeenCalledWith('PAGE1')
+    })
+    await screen.findByText('Notebook app, aka Reminder, is handy')
+
+    await user.click(screen.getByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).toHaveBeenCalledWith('B1', 'Notebook app, aka [[PAGE1]], is handy')
+  })
+
+  it('"Link it" does not splice mid-grapheme into an NFD-decomposed accented cluster', async () => {
+    // Page titled "cafe" (no accent) must NOT match inside NFD-decomposed
+    // "café" ("caf" + "e" + U+0301 combining acute) — without `\p{M}` in the
+    // boundary class, the combining mark isn't `\p{L}\p{N}_`, so a naive
+    // lookahead would treat it as a valid right boundary and splice the
+    // link in the middle of the accented cluster, corrupting the accent.
+    const decomposedCafe = `caf${'e'}${'́'}`
+    const user = userEvent.setup()
+    mockedGetPageAliases.mockResolvedValue([])
+    const resp = {
+      groups: [makeGroup('P1', 'Page One', [{ id: 'B1', content: `my ${decomposedCafe} today` }])],
+      next_cursor: null,
+      has_more: false,
+      total_count: 1,
+      filtered_count: 1,
+      truncated: false,
+    }
+    mockedListUnlinked.mockResolvedValue(resp)
+
+    renderUnlinkedReferences({ pageId: 'PAGE1', pageTitle: 'cafe' })
+    await user.click(screen.getByRole('button', { name: /unlinked references/i }))
+    await screen.findByText(`my ${decomposedCafe} today`)
+
+    await user.click(screen.getByRole('button', { name: /link it/i }))
+
+    expect(mockedEditBlock).not.toHaveBeenCalled()
+    expect(vi.mocked(logger.warn)).toHaveBeenCalledWith(
+      'UnlinkedReferences',
+      'No title/alias match found for Link it',
+      expect.objectContaining({ blockId: 'B1', pageId: 'PAGE1' }),
+    )
+  })
 })

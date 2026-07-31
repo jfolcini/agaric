@@ -487,6 +487,25 @@ mod tests {
     }
 
     #[test]
+    fn literal_segment_after_exact_cap_alts_group_still_applies() {
+        // `{a,b,c,d}` repeated 3x is 4^3 = 64 alternatives — landing EXACTLY
+        // on EXPANSION_CAP after the 3rd group, followed by a trailing
+        // literal `X`. The post-segment guard is `results.len() >
+        // EXPANSION_CAP`, not `>=`, so landing exactly at the cap must NOT
+        // stop the loop early: the trailing literal segment still has to be
+        // applied to all 64 results. Mirrors the matching TS regression test
+        // in `glob-validate.test.ts` (a prior TS-side bug broke one
+        // iteration too early on `results.length >= EXPANSION_CAP`, silently
+        // dropping the `X` suffix from every result).
+        let pattern = format!("{}X", "{a,b,c,d}".repeat(3));
+        let out = expand_braces(&pattern).unwrap();
+        assert_eq!(out.len(), EXPANSION_CAP, "got {} patterns", out.len());
+        for p in &out {
+            assert!(p.ends_with('X'), "missing X suffix: {p}");
+        }
+    }
+
+    #[test]
     fn under_cap_literal_pattern_expands_unchanged() {
         // A pattern with a literal segment that stays under the cap must
         // expand exactly as before — the new guard only fires above the cap.

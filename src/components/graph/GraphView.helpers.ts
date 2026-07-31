@@ -31,10 +31,23 @@ function fetchPages(tagFilterIds: readonly string[], spaceId: string): Promise<P
   return listAllPagesInSpace(spaceId, tagIds)
 }
 
+/**
+ * `backlinksTruncated` mirrors `PageLinksResponse.truncated` (#2298
+ * count-then-cap). When the edge fetch was capped, the backend drops the
+ * WEAKEST edges first (`ORDER BY edge_count DESC … LIMIT`), so a page with
+ * a single inbound link sorts last and can be cut entirely — `backlinkCounts`
+ * would then miscount it as zero rather than merely "unknown". Since that
+ * bias applies across the whole node set (not just the ones that got cut),
+ * every node's `backlink_count` is set to `undefined` rather than computed
+ * when truncated (#3314 finding 3), so callers to the boolean
+ * `hasBacklinks` filter dimension can tell "no backlinks" apart from
+ * "don't know" (see `nodeMatchesFilter` in `@/lib/graph-filters`).
+ */
 function buildNodes(
   items: PageHeading[],
   templateIds: Set<string>,
   backlinkCounts: Map<string, number>,
+  backlinksTruncated: boolean,
 ): GraphNode[] {
   return items.map((p) => ({
     id: p.id,
@@ -44,7 +57,7 @@ function buildNodes(
     due_date: p.due_date,
     scheduled_date: p.scheduled_date,
     is_template: templateIds.has(p.id),
-    backlink_count: backlinkCounts.get(p.id) ?? 0,
+    backlink_count: backlinksTruncated ? undefined : (backlinkCounts.get(p.id) ?? 0),
   }))
 }
 
@@ -101,7 +114,7 @@ export async function fetchGraphData(
 
   const nodeIds = new Set<string>(pages.map((p) => p.id))
   const backlinkCounts = countBacklinks(links, nodeIds)
-  const nodes = buildNodes(pages, templateIds, backlinkCounts)
+  const nodes = buildNodes(pages, templateIds, backlinkCounts, linksResponse.truncated)
   const edges: GraphEdge[] = links
     .filter((l) => nodeIds.has(l.source_id) && nodeIds.has(l.target_id))
     .map((l) => ({

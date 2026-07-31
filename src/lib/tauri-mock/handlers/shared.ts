@@ -351,8 +351,13 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
       // backend's `in_or_null("b.priority", values, is_null, exclude)`
       // (src-tauri/agaric-store/src/filters/primitive.rs). INCLUDE: row matches if its
       // priority is in `values` OR (is_null AND priority IS NULL). EXCLUDE:
-      // NULL-inclusive inversion — a NULL priority counts as "not in the
-      // excluded set", and `is_null` ADDS "priority IS NOT NULL". An empty,
+      // the shape depends on `is_null` (#2019). `is_null == false` KEEPS
+      // NULL-priority rows ("not in the excluded set"), OR-joined:
+      // `priority IS NULL OR priority NOT IN (values)`. `is_null == true`
+      // means "exclude the listed values AND the NULL bucket", AND-joined:
+      // `priority IS NOT NULL AND priority NOT IN (values)`. OR-joining both
+      // parts (the previous bug) is a tautology — every row hits one side or
+      // the other, so the filter silently matched every row. An empty,
       // null-less set is a no-op (matches every row), mirroring the legacy
       // helper's early return.
       const values = (f['values'] as string[] | undefined) ?? []
@@ -363,8 +368,7 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
       }
       const inValues = r.priority != null && values.includes(r.priority)
       if (exclude) {
-        const notIn = r.priority == null || !inValues
-        return isNull ? notIn || r.priority != null : notIn
+        return isNull ? r.priority != null && !inValues : r.priority == null || !inValues
       }
       return inValues || (isNull && r.priority == null)
     }
@@ -385,15 +389,16 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
     }
     case 'State': {
       // Multi-value membership over `blocks.todo_state`, identical shape to
-      // `Priority` (mirrors the backend's `in_or_null("b.todo_state", …)`).
+      // `Priority` (mirrors the backend's `in_or_null("b.todo_state", …)`,
+      // including the #2019 EXCLUDE + `is_null` AND-join fix — see the
+      // `Priority` arm's comment for the full rationale).
       const values = (f['values'] as string[] | undefined) ?? []
       const isNull = (f['is_null'] as boolean | undefined) ?? false
       const exclude = (f['exclude'] as boolean | undefined) ?? false
       if (values.length === 0 && !isNull) return true
       const inValues = r.todoState != null && values.includes(r.todoState)
       if (exclude) {
-        const notIn = r.todoState == null || !inValues
-        return isNull ? notIn || r.todoState != null : notIn
+        return isNull ? r.todoState != null && !inValues : r.todoState == null || !inValues
       }
       return inValues || (isNull && r.todoState == null)
     }
@@ -426,7 +431,8 @@ export function metaRowMatchesFilter(r: PageMetaRow, f: Record<string, unknown>)
  * mirroring the backend's date-column comparison (`DueDate` / `Scheduled`). ISO
  * day strings sort lexically, so string comparison is date comparison. `On` is
  * exact-day equality (day-granular columns), matching the legacy `value_date =`
- * semantics; `Between` is half-open `[from, to)`.
+ * semantics; `Between` is INCLUSIVE on both ends, mirroring SQL `BETWEEN ? AND ?`
+ * (`pages_date_predicate` in `src-tauri/agaric-store/src/filters/primitive.rs`).
  */
 export function datePredicateMatches(
   v: string | null,
@@ -452,7 +458,7 @@ export function datePredicateMatches(
       return v === (pred?.['date'] as string)
     }
     case 'Between': {
-      return v >= (pred?.['from'] as string) && v < (pred?.['to'] as string)
+      return v >= (pred?.['from'] as string) && v <= (pred?.['to'] as string)
     }
     default: {
       return true
