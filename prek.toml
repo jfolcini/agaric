@@ -1616,6 +1616,30 @@ pass_filenames = false
 files = '^(scripts/file-scheduled-failures\.mjs|\.github/workflows/scheduled-deep-checks\.yml)$'
 stages = ["pre-commit"]
 
+# workflow-watchdog-selftest (#3374): every in-workflow reporter shares the
+# fate of the workflow it reports on, so none of them can report "this
+# workflow never ran". `workflow-watchdog.yml` is the out-of-band observer
+# that can, and `scripts/check-workflow-liveness.mjs` is what it runs. Its
+# fixture suite pins the parts that would silently un-notify: a stale or
+# never-run workflow must NOT read as healthy, an unparseable `createdAt` must
+# throw rather than compare false against every window, a `gh` that fails or
+# returns non-JSON must throw AND write no results file (a half-written file
+# reads to the filer as "nothing is failing" and CLOSES the tracking issue),
+# and the self-watch must exclude the in-flight run so it is capable of
+# failing at all. Keyed to the whole workflows directory as well, because the
+# `WATCHED` list must stay in lockstep with the crons on disk in BOTH
+# directions — a new scheduled workflow nobody watches is the original bug.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "workflow-watchdog-selftest"
+name = "scheduled-workflow watchdog self-test"
+entry = "node scripts/check-workflow-liveness.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^(scripts/check-workflow-liveness\.mjs|\.github/workflows/.*\.ya?ml)$'
+stages = ["pre-commit"]
+
 # ─── pre-push only ────────────────────────────────────────────────
 #
 # A single chokepoint hook runs `scripts/verify-ci-equivalent.sh`. It is

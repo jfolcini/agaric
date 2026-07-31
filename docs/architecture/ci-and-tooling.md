@@ -88,6 +88,8 @@ Revisit trigger (shared with the tracking issue #144 and the bypass above): the 
 
 Drift on this ruleset is policed by the `branch-protection-assert.yml` daily cron, which re-reads the live rule-type set and diffs it against the expected six; an accidental UI toggle surfaces the next morning.
 
+That "surfaces" was, until #3374, only true for whoever opened the Actions tab: the job had no notification path, so a red assertion — or a cron that quietly stopped firing — told nobody. `workflow-watchdog.yml` now observes every scheduled workflow from outside on its own daily cron (`scripts/check-workflow-liveness.mjs`), asserting both that a `schedule`-event run happened inside the window its cron implies and that the newest completed one succeeded, and files a rolling tracking issue through the same #3359 filer. It watches itself against its *previous* run, so a skipped day reports. The residual it does not close: if the watchdog stops running permanently — including GitHub disabling a repo's schedules after 60 days without commit activity, which silences everything at once — nothing reports. Closing that needs a dead-man's switch outside GitHub.
+
 ## Accepted risks and revisit triggers
 
 Each row is a deliberate decision, the reason it is accepted today, and the trigger that would force a re-evaluation.

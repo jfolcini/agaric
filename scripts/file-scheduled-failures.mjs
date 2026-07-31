@@ -46,10 +46,14 @@
 //     in the same job that files a separate "reporter is broken" notice with
 //     nothing but `gh` — no Node, no parsing, no marker blocks. See
 //     `.github/workflows/scheduled-deep-checks.yml`.
-//   - What remains irreducible: if the reporting JOB never starts (invalid
-//     workflow file, runner-pool outage, whole-run cancellation before it is
-//     scheduled) nothing reports. That needs an out-of-band watchdog and is
-//     out of scope; `actionlint` in prek covers the invalid-workflow half.
+//   - What remained irreducible in #3359: if the reporting JOB never starts
+//     (invalid workflow file, runner-pool outage, whole-run cancellation
+//     before it is scheduled) nothing reports. That is now covered from
+//     OUTSIDE by `.github/workflows/workflow-watchdog.yml` +
+//     `scripts/check-workflow-liveness.mjs` (#3374), which asks GitHub's runs
+//     API whether each scheduled workflow ran at all — and which reuses this
+//     script, via `--profile workflow-watchdog`, rather than growing a second
+//     issue-filing mechanism. See § Profiles below.
 //
 // A MISSING `needs` payload is a hard error, not an empty one: reporting
 // "zero lanes failed" because the context was absent would be the exact
@@ -58,9 +62,21 @@
 // State lives in the tracking issue's body, not a committed baseline file —
 // the job needs `issues: write` only, never `contents: write`.
 //
+// Profiles (#3374):
+//   The diff/dedup/state-machine/render pipeline above is about "a set of
+//   named things, each with a pass/fail result, tracked by one rolling issue".
+//   That description fits the deep-check LANES and, unchanged, the scheduled
+//   WORKFLOWS the #3374 watchdog observes — the watchdog synthesises the same
+//   `{ name: { result } }` shape from `gh run list` and feeds it in here. A
+//   profile carries only what differs between the two callers: the tracking
+//   issue's title and labels, and the nouns in the rendered prose. Everything
+//   that could get a notification wrong — the throw on absent input, the
+//   job-id dedup, the close path clearing the tracked set — stays single-copy.
+//
 // Usage (from the repo root or anywhere — paths are resolved as given):
 //   node scripts/file-scheduled-failures.mjs \
 //     --needs-json-file <path to a file holding `${{ toJSON(needs) }}`> \
+//     [--profile deep-checks|workflow-watchdog]   (default: deep-checks)
 //     [--skipped-ok]                (treat `skipped` as OK; only correct off
 //                                    the `schedule` event, where the two
 //                                    scheduled-only filers really are skipped)
@@ -90,12 +106,63 @@ import {
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-// Stable title: the ONLY thing the find-or-file logic matches on. Never
-// rename an existing issue with this title — the script would stop finding it
-// and would file a duplicate.
-export const TRACKING_ISSUE_TITLE =
-  'Scheduled deep checks: failing lanes (auto-filed, do not rename)'
-export const TRACKING_ISSUE_LABELS = ['github-actions', 'testing']
+// Stable titles: the ONLY thing the find-or-file logic matches on. Never
+// rename an existing issue with one of these titles — the script would stop
+// finding it and would file a duplicate.
+//
+// One rolling issue PER PROFILE, not per lane and not per watched workflow:
+//   - deep-checks: the lanes are heavily correlated (a toolchain bump reds
+//     four at once), and the unit a maintainer acts on is "this week's deep
+//     checks are red". See the § Rolling issue note in the header.
+//   - workflow-watchdog: there is ONE observer job looking at every scheduled
+//     workflow in a single pass, exactly as `report-scheduled-failures` looks
+//     at every lane in a single pass — structurally the same situation, so
+//     the same answer. Per-workflow issues would be the right shape if each
+//     workflow filed its own report from inside itself; #3374 chose the
+//     out-of-band watchdog instead, so there is one reporter and one issue.
+//     Per-workflow ownership is not lost: the NOTIFICATION is the comment,
+//     and the comment names the specific workflow and how it failed, while
+//     the marker block and status table carry the per-workflow breakdown.
+export const PROFILES = Object.freeze({
+  'deep-checks': Object.freeze({
+    title: 'Scheduled deep checks: failing lanes (auto-filed, do not rename)',
+    labels: Object.freeze(['github-actions', 'testing']),
+    unit: 'lane',
+    units: 'lanes',
+    // First body paragraph after the boilerplate — the "why you are reading
+    // this" line, which differs completely between the two callers.
+    what: 'This issue tracks lanes of `.github/workflows/scheduled-deep-checks.yml` that are currently FAILING (#3359).',
+    why: 'Every lane in that workflow is non-blocking triage signal, so a red lane is visible only to whoever opens the Actions tab — the #3163 fuzz compile break survived five days that way. This issue is the push notification that closes that gap.',
+    headline: 'scheduled-deep-checks lane',
+    recovery: 'All scheduled-deep-checks lanes are green again',
+  }),
+  'workflow-watchdog': Object.freeze({
+    title:
+      'Scheduled workflow watchdog: workflows not running, or failing (auto-filed, do not rename)',
+    labels: Object.freeze(['github-actions', 'testing']),
+    unit: 'workflow',
+    units: 'workflows',
+    what: "This issue tracks scheduled workflows that either did NOT RUN inside the window their cron implies, or whose newest completed scheduled run FAILED (#3374). It is filed by `.github/workflows/workflow-watchdog.yml`, which observes them from outside via GitHub's runs API.",
+    why: 'Every other notification path in this repo lives inside the workflow it reports on, so a workflow that never starts — invalid file, runner-pool outage, cancelled before its reporter is scheduled, schedules disabled for inactivity — reports nothing. And four scheduled workflows (`e2e-tauri-weekly`, `codeql`, `scorecard`, `branch-protection-assert`) had no failure notification at all. This issue is that notification.',
+    headline: 'scheduled workflow',
+    recovery: 'Every scheduled workflow is running on time and green again',
+  }),
+})
+
+export const DEFAULT_PROFILE = 'deep-checks'
+
+export function resolveProfile(name = DEFAULT_PROFILE) {
+  const profile = PROFILES[name]
+  if (!profile) {
+    throw new Error(`unknown --profile "${name}" (known: ${Object.keys(PROFILES).join(', ')})`)
+  }
+  return profile
+}
+
+// Back-compat aliases: `deep-checks` was the only behaviour before #3374 and
+// these two names are referenced from its tests and prose.
+export const TRACKING_ISSUE_TITLE = PROFILES['deep-checks'].title
+export const TRACKING_ISSUE_LABELS = [...PROFILES['deep-checks'].labels]
 
 const MARKER_START = '<!-- scheduled-failures:begin -->'
 const MARKER_END = '<!-- scheduled-failures:end -->'
@@ -243,31 +310,31 @@ export function decideAction({ newOnes, resolvedOnes, all, existingIssue }) {
  * has to infer whether an unlisted lane was green or simply never reported.
  * Sits OUTSIDE the marker block, so it can never affect dedup.
  */
-export function buildStatusTable(lanes) {
-  const lines = ['| lane | result |', '| --- | --- |']
+export function buildStatusTable(lanes, profile = PROFILES[DEFAULT_PROFILE]) {
+  const lines = [`| ${profile.unit} | result |`, '| --- | --- |']
   for (const l of lanes) {
     lines.push(`| \`${l.job}\` | ${RESULT_LABEL[l.result] ?? l.result} |`)
   }
   return lines
 }
 
-export function buildIssueBody({ all, lanes, runUrl }) {
+export function buildIssueBody({ all, lanes, runUrl, profile = PROFILES[DEFAULT_PROFILE] }) {
   const out = []
   out.push(
-    'This issue tracks lanes of `.github/workflows/scheduled-deep-checks.yml` that are currently FAILING (#3359). It is filed, updated and closed automatically by `scripts/file-scheduled-failures.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
+    `${profile.what} It is filed, updated and closed automatically by \`scripts/file-scheduled-failures.mjs\` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.`,
   )
   out.push('')
   out.push(
-    'Every lane in that workflow is non-blocking triage signal, so a red lane is visible only to whoever opens the Actions tab — the #3163 fuzz compile break survived five days that way. This issue is the push notification that closes that gap. It is a rolling issue: it reopens when a lane newly fails and closes itself once every lane is green again.',
+    `${profile.why} It is a rolling issue: it reopens when a ${profile.unit} newly fails and closes itself once every ${profile.unit} is healthy again.`,
   )
   out.push('')
   out.push(
-    'A lane that stays red across runs is NOT re-commented — only a newly-failing lane produces a comment, so a persistent failure never spams this thread.',
+    `A ${profile.unit} that stays red across runs is NOT re-commented — only a newly-failing ${profile.unit} produces a comment, so a persistent failure never spams this thread.`,
   )
   out.push('')
-  out.push(`### Currently-failing lanes (${all.length})`)
+  out.push(`### Currently-failing ${profile.units} (${all.length})`)
   out.push(
-    '_Machine-readable — do not hand-edit the marker lines below. Removing a lane here just means the next run will report it as new again._',
+    `_Machine-readable — do not hand-edit the marker lines below. Removing a ${profile.unit} here just means the next run will report it as new again._`,
   )
   out.push(MARKER_START)
   out.push('```')
@@ -276,9 +343,9 @@ export function buildIssueBody({ all, lanes, runUrl }) {
   out.push(MARKER_END)
   if (lanes.length > 0) {
     out.push('')
-    out.push('### All lanes, last run')
+    out.push(`### All ${profile.units}, last run`)
     out.push('')
-    out.push(...buildStatusTable(lanes))
+    out.push(...buildStatusTable(lanes, profile))
   }
   if (runUrl) {
     out.push('')
@@ -287,24 +354,33 @@ export function buildIssueBody({ all, lanes, runUrl }) {
   return out.join('\n')
 }
 
-export function buildFailureComment({ newOnes, lanes, runUrl }) {
+export function buildFailureComment({
+  newOnes,
+  lanes,
+  runUrl,
+  profile = PROFILES[DEFAULT_PROFILE],
+}) {
   const lines = []
   lines.push(
-    `**${newOnes.length} scheduled-deep-checks lane${newOnes.length === 1 ? '' : 's'} newly failing this run:** ${newOnes.map((j) => `\`${j}\``).join(', ')}`,
+    `**${newOnes.length} ${profile.headline}${newOnes.length === 1 ? '' : 's'} newly failing this run:** ${newOnes.map((j) => `\`${j}\``).join(', ')}`,
   )
   lines.push('')
   if (lanes.length > 0) {
-    lines.push(...buildStatusTable(lanes))
+    lines.push(...buildStatusTable(lanes, profile))
     lines.push('')
   }
   if (runUrl) lines.push(`Run: ${runUrl}`)
   return lines.join('\n')
 }
 
-export function buildRecoveryComment({ resolvedOnes, runUrl }) {
+export function buildRecoveryComment({
+  resolvedOnes,
+  runUrl,
+  profile = PROFILES[DEFAULT_PROFILE],
+}) {
   const lines = []
   lines.push(
-    `All scheduled-deep-checks lanes are green again — closing. Recovered since the last update: ${resolvedOnes.map((j) => `\`${j}\``).join(', ')}.`,
+    `${profile.recovery} — closing. Recovered since the last update: ${resolvedOnes.map((j) => `\`${j}\``).join(', ')}.`,
   )
   if (runUrl) lines.push('', `Run: ${runUrl}`)
   return lines.join('\n')
@@ -365,14 +441,14 @@ function ghJson(args) {
 }
 
 /** Finds the single tracking issue by exact title, preferring an OPEN match. */
-function findTrackingIssue(repo) {
+function findTrackingIssue(repo, title) {
   const results = ghJson([
     'issue',
     'list',
     '--repo',
     repo,
     '--search',
-    `in:title "${TRACKING_ISSUE_TITLE}"`,
+    `in:title "${title}"`,
     '--state',
     'all',
     '--json',
@@ -380,7 +456,7 @@ function findTrackingIssue(repo) {
     '--limit',
     '20',
   ])
-  const exact = results.filter((i) => i.title === TRACKING_ISSUE_TITLE)
+  const exact = results.filter((i) => i.title === title)
   if (exact.length === 0) return null
   const open = exact.find((i) => i.state === 'OPEN')
   if (open) return open
@@ -409,6 +485,10 @@ function parseArgs(argv) {
     switch (a) {
       case '--needs-json-file': {
         args.needsJsonFile = argv[++i]
+        break
+      }
+      case '--profile': {
+        args.profile = argv[++i]
         break
       }
       case '--skipped-ok': {
@@ -453,6 +533,7 @@ function defaultRunUrl() {
 
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
+  const profile = resolveProfile(args.profile)
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
   const runUrl = args.runUrl ?? defaultRunUrl()
 
@@ -466,7 +547,7 @@ export function main(argv = process.argv.slice(2)) {
   const current = failingJobs(lanes, { skippedOk: args.skippedOk })
 
   console.log(
-    `scheduled-deep-checks lanes: ${lanes.length} total, ${current.length} failing${
+    `${profile.headline}s: ${lanes.length} total, ${current.length} failing${
       current.length > 0 ? ` (${current.join(', ')})` : ''
     }`,
   )
@@ -483,7 +564,7 @@ export function main(argv = process.argv.slice(2)) {
       throw new Error(
         '--repo (or $GITHUB_REPOSITORY) is required outside of --known-body-file test mode',
       )
-    existingIssue = findTrackingIssue(repo)
+    existingIssue = findTrackingIssue(repo, profile.title)
   }
 
   const known = parseKnownLanes(existingIssue?.body)
@@ -493,17 +574,17 @@ export function main(argv = process.argv.slice(2)) {
   if (action === 'noop') {
     console.log(
       all.length === 0
-        ? 'all scheduled-deep-checks lanes green — no-op (nothing open that tracks a failing lane)'
-        : `no newly-failing lane — no-op (still failing: ${all.join(', ')}; tracking issue left untouched)`,
+        ? `all ${profile.headline}s healthy — no-op (nothing open that tracks a failing ${profile.unit})`
+        : `no newly-failing ${profile.unit} — no-op (still failing: ${all.join(', ')}; tracking issue left untouched)`,
     )
     return
   }
 
-  const body = buildIssueBody({ all, lanes, runUrl })
+  const body = buildIssueBody({ all, lanes, runUrl, profile })
   const comment =
     action === 'close'
-      ? buildRecoveryComment({ resolvedOnes, runUrl })
-      : buildFailureComment({ newOnes, lanes, runUrl })
+      ? buildRecoveryComment({ resolvedOnes, runUrl, profile })
+      : buildFailureComment({ newOnes, lanes, runUrl, profile })
 
   if (args.dryRun) {
     // Compare against null explicitly — the `--known-body-file` stub uses
@@ -511,7 +592,7 @@ export function main(argv = process.argv.slice(2)) {
     // would misreport an existing issue as "not found".
     const where =
       existingIssue === null
-        ? `a new issue titled "${TRACKING_ISSUE_TITLE}"`
+        ? `a new issue titled "${profile.title}"`
         : `issue #${existingIssue.number} (${existingIssue.state})`
     console.log(`[dry-run] action=${action} target=${where}`)
     console.log(
@@ -528,20 +609,20 @@ export function main(argv = process.argv.slice(2)) {
 
   if (action === 'create') {
     withTempFile(body, (bodyFile) => {
-      const labelArgs = TRACKING_ISSUE_LABELS.flatMap((l) => ['--label', l])
+      const labelArgs = profile.labels.flatMap((l) => ['--label', l])
       gh([
         'issue',
         'create',
         '--repo',
         repo,
         '--title',
-        TRACKING_ISSUE_TITLE,
+        profile.title,
         '--body-file',
         bodyFile,
         ...labelArgs,
       ])
     })
-    console.log(`filed a new tracking issue (${all.length} failing lane(s))`)
+    console.log(`filed a new tracking issue (${all.length} failing ${profile.unit}(s))`)
     return
   }
 
@@ -561,7 +642,9 @@ export function main(argv = process.argv.slice(2)) {
       gh(['issue', 'comment', number, '--repo', repo, '--body-file', f])
     })
     gh(['issue', 'close', number, '--repo', repo])
-    console.log(`closed tracking issue #${number} (all lanes green again; tracked set cleared)`)
+    console.log(
+      `closed tracking issue #${number} (all ${profile.units} healthy again; tracked set cleared)`,
+    )
     return
   }
 
@@ -579,7 +662,9 @@ export function main(argv = process.argv.slice(2)) {
     withTempFile(comment, (f) => {
       gh(['issue', 'comment', number, '--repo', repo, '--body-file', f])
     })
-    console.log(`updated tracking issue #${number} (${newOnes.length} newly-failing lane(s))`)
+    console.log(
+      `updated tracking issue #${number} (${newOnes.length} newly-failing ${profile.unit}(s))`,
+    )
   } else {
     console.log(
       `synced tracking issue #${number} body (${resolvedOnes.length} recovered, ${all.length} still failing; no comment — a partial recovery is not news)`,
@@ -623,8 +708,10 @@ function selfTestGhCallSequence({ check }) {
       "const fs = require('node:fs')",
       'const a = process.argv.slice(2)',
       "const i = a.indexOf('--body-file')",
+      "const t = a.indexOf('--title')",
       `fs.appendFileSync(${JSON.stringify(log)}, JSON.stringify({`,
       '  sub: a[1],',
+      "  title: t === -1 ? '' : a[t + 1],",
       "  body: i === -1 ? '' : fs.readFileSync(a[i + 1], 'utf8'),",
       "}) + '\\n')",
       '',
@@ -638,7 +725,7 @@ function selfTestGhCallSequence({ check }) {
 
   // An EMPTY `--known-body-file` is how `main()` spells "no existing issue",
   // so no file removal is needed between drives.
-  const drive = (needs, knownBody, knownState) => {
+  const drive = (needs, knownBody, knownState, profileArgs = []) => {
     writeFileSync(needsFile, JSON.stringify(needs), 'utf8')
     writeFileSync(bodyFile, knownBody, 'utf8')
     writeFileSync(log, '', 'utf8')
@@ -659,6 +746,7 @@ function selfTestGhCallSequence({ check }) {
         'owner/repo',
         '--run-url',
         'https://example/run',
+        ...profileArgs,
       ])
     } catch (err) {
       // Surface as a failed assertion below rather than a raw stack: the one
@@ -725,6 +813,29 @@ function selfTestGhCallSequence({ check }) {
     'an unchanged failure issues no `gh` write at all',
     `gh sequence was: ${noopSeq.join(',')}`,
   )
+
+  // …and `--profile workflow-watchdog` really files under the WATCHDOG title.
+  // Asserting `PROFILES` holds two distinct titles proves nothing about which
+  // one `gh issue create` is handed: a `main()` that still passed
+  // `TRACKING_ISSUE_TITLE` would keep every pure assertion green while
+  // silently overwriting the deep-checks issue.
+  {
+    const created = drive({ 'codeql.yml': { result: 'stale (…)' } }, '', 'OPEN', [
+      '--profile',
+      'workflow-watchdog',
+    ])
+    const create = created.find((c) => c.sub === 'create')
+    check(
+      create !== undefined && create.title === PROFILES['workflow-watchdog'].title,
+      'main() --profile workflow-watchdog files under the watchdog title, not the deep-checks one',
+      `sub sequence=${created.map((c) => c.sub).join(',')} title=${create?.title}`,
+    )
+    check(
+      create !== undefined && parseKnownLanes(create.body).has('codeql.yml'),
+      'the watchdog issue main() creates tracks the workflow filename',
+      `tracked=[${create ? [...parseKnownLanes(create.body)].join(',') : ''}]`,
+    )
+  }
 }
 
 function runSelfTest() {
@@ -1006,6 +1117,75 @@ function runSelfTest() {
   //     Fixtures live in `selfTestGhCallSequence` above.
   selfTestGhCallSequence({ check })
 
+  // 11. Profiles (#3374). The watchdog reuses this whole pipeline, so the one
+  //     thing that must never drift is the pair of tracking-issue TITLES: the
+  //     find-or-file logic matches on the title verbatim, so two profiles
+  //     sharing one would make the watchdog rewrite the deep-checks issue's
+  //     marker block — silently un-tracking every red lane.
+  {
+    const titles = Object.values(PROFILES).map((p) => p.title)
+    check(
+      new Set(titles).size === titles.length && titles.length >= 2,
+      'every profile has a DISTINCT tracking-issue title (they cannot hijack each other)',
+      titles.join(' | '),
+    )
+    check(
+      Object.values(PROFILES).every(
+        (p) => p.title && p.unit && p.units && p.what && p.why && p.headline && p.recovery,
+      ),
+      'every profile fills in every rendered field (no `undefined` in an issue body)',
+      JSON.stringify(Object.keys(PROFILES)),
+    )
+    let threw = null
+    try {
+      resolveProfile('no-such-profile')
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw !== null,
+      'an unknown --profile throws instead of silently defaulting to deep-checks',
+      'no throw — the watchdog would file into the deep-checks issue on a typo',
+    )
+
+    // The watchdog's "lane" ids are workflow FILENAMES, and its results are
+    // free-form strings (`stale (…)`, `failure (…)`). Both must survive the
+    // marker-block round trip, or every watched workflow re-notifies forever.
+    const watchdog = resolveProfile('workflow-watchdog')
+    const lanes = [
+      {
+        job: 'branch-protection-assert.yml',
+        result: 'stale (newest scheduled run started 2.3d ago; window is 40h)',
+      },
+      { job: 'codeql.yml', result: 'success' },
+    ]
+    const body = buildIssueBody({
+      all: failingJobs(lanes),
+      lanes,
+      runUrl: 'https://example/run',
+      profile: watchdog,
+    })
+    const reparsed = parseKnownLanes(body)
+    check(
+      reparsed.size === 1 &&
+        reparsed.has('branch-protection-assert.yml') &&
+        body.includes('window is 40h') &&
+        !body.includes('undefined'),
+      'a watchdog body tracks the workflow filename and renders the free-form result',
+      `${[...reparsed].join(',')}`,
+    )
+    check(
+      buildFailureComment({
+        newOnes: ['branch-protection-assert.yml'],
+        lanes,
+        runUrl: 'https://example/run',
+        profile: watchdog,
+      }).includes('scheduled workflow newly failing'),
+      'the watchdog failure comment names WHAT kind of thing failed',
+      buildFailureComment({ newOnes: ['x'], lanes: [], profile: watchdog }),
+    )
+  }
+
   if (failures.length > 0) {
     console.error(`\nself-test: ${failures.length} assertion(s) failed`)
     process.exit(2)
@@ -1013,6 +1193,12 @@ function runSelfTest() {
   console.log('self-test: all assertions passed')
 }
 
+// Entry-point detection in the one sanctioned form (#3373): both sides
+// realpath'd. The banned `file://` template form was live here when #3374's
+// watchdog was verified against a checkout whose `scripts/` was a symlink —
+// this script exited 0 having filed nothing, silently, the exact bug class the
+// reporter exists to remove. #3376 landed the same fix on `main` first, so
+// this note is all that remains of it here.
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
