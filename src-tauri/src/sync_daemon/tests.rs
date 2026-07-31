@@ -2290,16 +2290,29 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
     materializer.shutdown();
 }
 
-/// T-16 Test 4: Sending a non-HeadExchange message (SyncComplete) as
-/// the first message skips peer validation and goes straight to
-/// orch.handle_message(), which rejects it as out-of-order.
-/// Verify the function completes without panicking.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
+/// #3324 shared harness: drive `handle_incoming_sync` with `first_msg` as the
+/// responder's FIRST wire message and assert the connection is refused before
+/// the orchestrator — and therefore before
+/// `snapshot_transfer::try_offer_loro_snapshot_catchup` — ever sees it.
+///
+/// The cert-less in-memory `test_connection_pair` is the attacker's exact
+/// position: production TLS accepts anonymous clients
+/// (`sync_net::tls::AllowAnyCert`, `client_auth_mandatory() == false`), so
+/// pre-#3324 no certificate at all was needed to reach the export.
+///
+/// Asserts, in order:
+/// 1. the responder's reply is `Error` naming `HeadExchange`;
+/// 2. nothing follows it on the wire (no snapshot / `SyncComplete` — the
+///    catch-up sub-flow was never entered);
+/// 3. the task returns `Ok` and does not panic (the file-transfer variants
+///    trip a `debug_assert!` if they reach `handle_message`);
+/// 4. NO sync event was emitted — the orchestrator was never constructed.
+async fn assert_non_head_exchange_first_msg_rejected(first_msg: SyncMessage) {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
 
     let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
 
@@ -2320,28 +2333,136 @@ async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
         .await
     });
 
-    // Send SyncComplete as the first message — no HeadExchange
-    client_conn
-        .send_json(&SyncMessage::SyncComplete {
-            last_hash: "fakehash".to_string(),
-        })
-        .await
-        .unwrap();
+    client_conn.send_json(&first_msg).await.unwrap();
 
-    // The handler should complete (likely with an error from the
-    // orchestrator rejecting SyncComplete in Idle state) but must
-    // not panic.
-    let result = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
+    // (1) `SyncMessage::Error.message` is an unstructured `String`, so combine
+    // the variant pin (matches!) with a substring check, as the other
+    // rejection tests in this file do.
+    let response: SyncMessage = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client_conn.recv_json::<SyncMessage>(),
+    )
+    .await
+    .expect("responder must reply within timeout")
+    .expect("responder must send a rejection before closing");
+    assert!(
+        matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("HeadExchange")
+        ),
+        "expected SyncMessage::Error naming HeadExchange for first message \
+         {first_msg:?}, got: {response:?}"
+    );
+
+    // (2) Nothing else on the wire: the connection is closed right after the
+    // rejection, so this recv fails (Close frame / EOF) rather than yielding a
+    // `LoroSync` snapshot or the catch-up's terminal `SyncComplete`.
+    let after = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        client_conn.recv_json::<SyncMessage>(),
+    )
+    .await
+    .expect("responder must close the connection promptly after rejecting");
+    assert!(
+        after.is_err(),
+        "responder must send NOTHING after the rejection (no vault snapshot \
+         export) for first message {first_msg:?}, got: {after:?}"
+    );
+
+    // (3) No panic, and the rejection is a normal `Ok(())` return like every
+    // other identity-rejection path.
+    let joined = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
         .await
         .expect("handle_incoming_sync must complete within timeout");
-
-    // The spawned task itself must not panic
+    let result = joined.expect("spawned task must not panic (JoinError would indicate a panic)");
     assert!(
         result.is_ok(),
-        "spawned task must not panic (JoinError would indicate a panic)"
+        "handle_incoming_sync must return Ok after refusing the connection, got: {result:?}"
+    );
+
+    // (4) Pre-#3324 a `ResetRequired` first message emitted `SyncEvent::Error`
+    // from the orchestrator plus the catch-up's `loro_snapshot_offered`
+    // progress event; a refused connection must emit neither.
+    assert_eq!(
+        sink.events().len(),
+        0,
+        "a refused connection must emit no sync events, got: {:?}",
+        sink.events()
     );
 
     materializer.shutdown();
+}
+
+/// T-16 Test 4 / #3324: a `SyncComplete` first message is refused up front.
+///
+/// This variant was always harmless (the state table rejects it in `Idle`),
+/// which is precisely why the original version of this test did not catch
+/// #3324; it now asserts the same explicit rejection as its dangerous
+/// siblings below.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
+    assert_non_head_exchange_first_msg_rejected(SyncMessage::SyncComplete {
+        last_hash: "fakehash".to_string(),
+    })
+    .await;
+}
+
+/// #3324 (HIGH) regression: `ResetRequired` is the exploit primitive. The
+/// state machine accepts it in ANY state, its dispatch arm sets
+/// `SyncState::ResetRequired`, and `is_terminal()` counts that as terminal —
+/// so pre-fix a single anonymous `{"type":"ResetRequired","reason":"x"}` text
+/// frame skipped the message loop and fell straight into
+/// `try_offer_loro_snapshot_catchup`, which exports every registered space's
+/// full LoroDoc with no identity check of its own. The whole authorization
+/// block (self-sync check, S-1 unpaired gate + #855 pairing proof, S-5
+/// per-peer lock, B-33/#800 cert pin) was skipped because it lived inside the
+/// `if let SyncMessage::HeadExchange { .. }` block.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_reset_required_first_msg() {
+    assert_non_head_exchange_first_msg_rejected(SyncMessage::ResetRequired {
+        reason: "x".to_string(),
+    })
+    .await;
+}
+
+/// #3324 regression: `Error` is `ResetRequired`'s nearest miss. It is the only
+/// OTHER variant the state table accepts in *any* state
+/// (`session_state_machine.rs`, the `(_, SyncMessage::Error { .. } |
+/// SyncMessage::ResetRequired { .. })` arm) and whose dispatch returns
+/// `Ok(None)` after moving the session into a state `is_terminal()` accepts —
+/// so pre-fix it too skipped the message loop entirely. It happened not to
+/// export anything only because the catch-up is gated on
+/// `matches!(state, SyncState::ResetRequired)` (`server.rs`) rather than on
+/// `is_terminal()`; widening that gate would have made `Error` a second
+/// exfiltration primitive. Pinned here so the guard, not that one `matches!`,
+/// is what keeps it out.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_error_first_msg() {
+    assert_non_head_exchange_first_msg_rejected(SyncMessage::Error {
+        message: "x".to_string(),
+    })
+    .await;
+}
+
+/// #3324 regression: `FileRequest` passes the state-validation table in any
+/// state (file-transfer variants are only supposed to be read off the wire by
+/// `sync_files`), so pre-fix an unauthenticated first message reached
+/// `handle_message`'s file-transfer dispatch arm and tripped its
+/// `debug_assert!`. It must now be refused before the orchestrator exists.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_file_request_first_msg() {
+    assert_non_head_exchange_first_msg_rejected(SyncMessage::FileRequest {
+        attachment_ids: vec!["att-1".to_string()],
+    })
+    .await;
+}
+
+/// #3324 regression: same as the `FileRequest` case for the unit-variant
+/// `FileTransferComplete`, which is reachable with a two-field-free frame
+/// (`{"type":"FileTransferComplete"}`) thanks to `#[serde(tag = "type")]`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_handle_incoming_sync_rejects_file_transfer_complete_first_msg() {
+    assert_non_head_exchange_first_msg_rejected(SyncMessage::FileTransferComplete).await;
 }
 
 /// T-16c Test 5 (B-34): When the TLS certificate CN doesn't match the

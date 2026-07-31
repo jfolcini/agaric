@@ -231,6 +231,43 @@ async fn handle_incoming_sync_inner(
     // loop uniform.)
     let first_msg: SyncMessage = super::wire::recv_sync_message(&mut conn).await?;
 
+    // ── S-1/S-5: the first message MUST be a HeadExchange (#3324) ─────────
+    // Every peer-authorization gate below — the self-sync check, the S-1
+    // unpaired-device gate with its #855 pairing-proof compare, the S-5
+    // per-peer lock, and the B-33/#800 cert-hash pin — lives inside the
+    // `if let SyncMessage::HeadExchange { .. }` block that follows, because
+    // the peer's identity is only known once it has advertised its heads.
+    // A first message of any OTHER variant used to fall through that block's
+    // `else` arm with `_peer_guard == None` and still be dispatched to the
+    // orchestrator, running an unauthenticated session: TLS accepts anonymous
+    // clients (`sync_net::tls`, `client_auth_mandatory() == false`), the state
+    // machine accepts `ResetRequired` in any state, and `ResetRequired` is
+    // terminal — so a single `{"type":"ResetRequired",…}` frame skipped the
+    // message loop and landed straight in `try_offer_loro_snapshot_catchup`,
+    // which exports every registered space's full LoroDoc. The same hole let a
+    // version-skewed peer run a responder session with NO per-peer lock,
+    // concurrently with an outbound initiator session to the same device
+    // (S-5 mutual exclusion).
+    //
+    // Reject anything that is not a HeadExchange here, BEFORE the orchestrator
+    // is ever handed the message. This is a rejection path, so — exactly like
+    // the identity rejections below — `cancel_guard.owns` stays `false` and the
+    // pending cancel flag is preserved for its real target (#637/#2537).
+    if !matches!(first_msg, SyncMessage::HeadExchange { .. }) {
+        // Log the variant only (`discriminant`, the convention in
+        // `session_state_machine::handle_message`) — never the payload.
+        tracing::warn!(
+            msg = ?std::mem::discriminant(&first_msg),
+            "rejecting sync: first message was not a HeadExchange (#3324)"
+        );
+        conn.send_json(&SyncMessage::Error {
+            message: "HeadExchange expected as the first message".into(),
+        })
+        .await?;
+        let _ = conn.close().await;
+        return Ok(());
+    }
+
     // #2503: the responder's Loro-snapshot catch-up
     // (`try_offer_loro_snapshot_catchup`) exports from the live engine
     // registry, not from a stored SQL snapshot, so it no longer needs the
@@ -509,6 +546,10 @@ async fn handle_incoming_sync_inner(
 
         Some(guard)
     } else {
+        // Unreachable since #3324: a non-`HeadExchange` first message is
+        // rejected and returned on above, before this point. Kept as
+        // defence in depth — if this arm ever becomes reachable again, the
+        // session runs with no per-peer lock and no identity check.
         None
     };
 
