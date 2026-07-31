@@ -1,0 +1,195 @@
+# =============================================================================
+# Scheduled-workflow watchdog (#3374)
+# =============================================================================
+# Every other notification path in this repo lives INSIDE the workflow it
+# reports on, and therefore shares that workflow's fate. #3359 wired a
+# `report-scheduled-failures` job into `scheduled-deep-checks.yml` and wrote
+# down the hole it could not close from in there:
+#
+#     "if the reporting JOB never starts (invalid workflow file, runner-pool
+#      outage, whole-run cancellation before it is scheduled) nothing reports."
+#
+# A workflow cannot report its own non-existence. This one is the out-of-band
+# observer that can. It runs on its own cron, asks GitHub's runs API about
+# every scheduled workflow in the repo, and answers two questions per workflow:
+#
+#   1. LIVENESS  — did a `schedule`-event run start inside the window its cron
+#                  implies?  ("the checking machinery did not run")
+#   2. CONCLUSION— did the newest COMPLETED scheduled run succeed?
+#                  ("the checking machinery ran and said no")
+#
+# Question 2 is why this workflow also closes the other half of #3374: before
+# it, `e2e-tauri-weekly`, `codeql`, `scorecard` and `branch-protection-assert`
+# had no failure notification path at all — a red run was visible only to
+# whoever opened the Actions tab. `branch-protection-assert` is the alarming
+# one: its silent failure means the ruleset keeping unreviewed code off `main`
+# may have drifted, with nobody told.
+#
+# The trade this makes versus adding a reporter job to each of those four
+# workflows: notification is delayed to this workflow's next tick (≤24h)
+# instead of firing at the end of the failing run, and the granularity is the
+# whole run rather than the individual job. In exchange, the report does not
+# depend on the watched workflow being able to run at all — which is the case
+# the in-workflow reporters cannot cover, and the case where "no news" is most
+# dangerous.
+#
+# ─── Independence, and the residual ──────────────────────────────────────────
+#
+# * Separate workflow, separate cron (19:37 UTC daily), offset from every
+#   watched cron: 02:43/04:17/06:00 Mon, 06:00 Tue, 12:00 daily. Nothing here
+#   `needs:` a watched workflow, downloads its artifacts, or shares code with
+#   it. A watched workflow that is invalid, disabled, starved of runners, or
+#   cancelled before its own reporter is scheduled is still reported.
+# * No `concurrency:` group, deliberately. Any concurrency control is a way for
+#   this run to be CANCELLED by a later trigger, and a cancelled watchdog is a
+#   silent watchdog. The job is one Node process and two `gh` calls per watched
+#   workflow; there is nothing to save by collapsing runs.
+# * The watchdog watches ITSELF, judged against its PREVIOUS scheduled run
+#   (`--exclude-run-id` drops the in-flight one — without that it would grade
+#   its own currently-running run and could never fail). A skipped day reads as
+#   stale; a previous run that died reads as a failure. Expected on DAY ONE:
+#   there is no previous scheduled run, so the first run reports itself as
+#   `never-ran` and files the tracking issue, which then closes itself on day
+#   two. That is not a bug to suppress — it is the notification path proving,
+#   live and once, that it works end to end.
+# * RESIDUAL, stated honestly: if this workflow stops running PERMANENTLY,
+#   nothing reports — self-watch only fires on the runs that do happen. That
+#   includes GitHub disabling all of a repo's schedules after 60 days without
+#   commit activity, which would silence the watched workflows and the watchdog
+#   together. Closing that requires a dead-man's switch OUTSIDE GitHub (an
+#   external uptime monitor this job pings). Deliberately not built here: it
+#   needs a secret and a third-party account, which is a different decision to
+#   make. Tracked as the follow-up on #3374.
+# =============================================================================
+
+name: Scheduled workflow watchdog
+
+on:
+  schedule:
+    # Daily 19:37 UTC. Daily because `branch-protection-assert` is daily, so a
+    # weekly watchdog would leave up to six days of unreported ruleset drift.
+    # 19:37 is offset from every watched cron and off the top of the hour, so
+    # this never queues behind the workflows it is meant to observe. The
+    # windows in `scripts/check-workflow-liveness.mjs` are derived FROM this
+    # time — change both together.
+    - cron: '37 19 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  watchdog:
+    name: Watch every scheduled workflow
+    runs-on: ubuntu-24.04
+    # Two `gh` calls per watched workflow plus a Node process. Observed cost is
+    # seconds; 10 min bounds a wedged API call rather than budgeting real work.
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      # `gh run list` reads the Actions API.
+      actions: read
+      # The tracking issue this files/updates/closes.
+      issues: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+
+      - name: Classify every scheduled workflow's liveness and last conclusion
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Via `env:` rather than inline `${{ }}` per zizmor template-injection.
+          TARGET_REPO: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          node scripts/check-workflow-liveness.mjs \
+            --repo "$TARGET_REPO" \
+            --exclude-run-id "$CURRENT_RUN_ID" \
+            --out watchdog.json
+
+      - name: File, update or close the watchdog tracking issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EVENT_NAME: ${{ github.event_name }}
+        # Same filer, same rolling-issue state machine as #3359, under a
+        # separate `--profile` so it keeps its OWN issue and can never corrupt
+        # the deep-checks one. Reuse rather than a parallel mechanism: the
+        # step above hands it exactly the shape `toJSON(needs)` has.
+        run: |
+          set -euo pipefail
+          extra=()
+          if [ "$EVENT_NAME" != "schedule" ]; then
+            # Dispatch/manual run: exercise the whole path, write nothing.
+            extra=(--dry-run)
+          fi
+          node scripts/file-scheduled-failures.mjs \
+            --profile workflow-watchdog \
+            --needs-json-file watchdog.json \
+            "${extra[@]}"
+
+      - name: Last-resort notice (the watchdog itself broke)
+        # Fires only when a step ABOVE failed — i.e. the watchdog is the thing
+        # that broke, so nothing was reported for any watched workflow this
+        # cycle. The self-watch above does NOT cover this: it reports the
+        # previous run's failure on the NEXT tick, and a deterministic break
+        # fails that tick too, forever. This step is the floor.
+        #
+        # Deliberately minimal and Node-free — three `gh` calls, no parsing, no
+        # marker block, its own tracking issue — mirroring the same fallback in
+        # `scheduled-deep-checks.yml`. `|| true` on `issue reopen` only, because
+        # reopening an already-open issue exits non-zero.
+        #
+        # Schedule-only: a dispatch run is being watched by the human who
+        # triggered it, and its `--dry-run` failure must not file an issue.
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TARGET_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -uo pipefail
+          title='Scheduled workflow watchdog: the watchdog is broken (auto-filed, do not rename)'
+          body="$(printf '%s\n' \
+            "The scheduled-workflow watchdog failed before it could report, so **no scheduled workflow's liveness or last conclusion was checked this cycle** (#3374)." \
+            "" \
+            "Nothing else covers this: the watchdog's self-watch reports a broken run only on the NEXT tick, and a deterministic break fails that tick too. This notice is written by a minimal bash fallback (no Node, no parsing, no shared code with the watchdog) so a break in \`scripts/check-workflow-liveness.mjs\` cannot also swallow the report of itself." \
+            "" \
+            "Run: $RUN_URL" \
+            "" \
+            "Open that run, then check by hand that \`branch-protection-assert\`, \`codeql\`, \`scorecard\`, \`e2e-tauri-weekly\` and \`scheduled-deep-checks\` have all run recently and green.")"
+          number="$(gh issue list --repo "$TARGET_REPO" \
+            --search "in:title \"$title\"" --state all \
+            --json number,title,state --limit 20 \
+            --jq "[.[] | select(.title == \"$title\")] | sort_by(.state != \"OPEN\") | .[0].number // empty")"
+          # Every `gh` WRITE below is checked explicitly. `set -e` is
+          # deliberately NOT used — a failing `gh issue list` must still fall
+          # through to `gh issue create` rather than abort — but that also
+          # means a bare `gh ...` followed by `echo` would leave the step's
+          # exit status at the `echo`'s 0, i.e. this last-resort notice would
+          # report "filed" while having written NOTHING. That is the exact
+          # class of vacuous check this whole workflow exists to eliminate, in
+          # the one layer that has no layer beneath it.
+          if [ -n "$number" ]; then
+            gh issue reopen "$number" --repo "$TARGET_REPO" || true
+            if gh issue comment "$number" --repo "$TARGET_REPO" --body "$body"; then
+              echo "commented on existing watchdog-broken issue #$number"
+            else
+              echo "::error::could not comment on watchdog-broken issue #$number — no scheduled workflow was checked this cycle"
+              exit 1
+            fi
+          else
+            if gh issue create --repo "$TARGET_REPO" --title "$title" --body "$body" \
+              --label github-actions --label testing; then
+              echo "filed a new watchdog-broken issue"
+            else
+              echo "::error::could not file the watchdog-broken issue — no scheduled workflow was checked this cycle"
+              exit 1
+            fi
+          fi
