@@ -48,6 +48,10 @@
 //   node scripts/file-fuzz-findings.mjs \
 //     --result-dir <dir the fuzz-status artifact was downloaded to> \
 //     [--job-status <needs.fuzz.result>]  (success|failure|cancelled|skipped)
+//     [--require-results]           (#3360: FAIL when a lane that did not fail
+//                                    produced no per-target results at all)
+//     [--require-targets-manifest]  (#3360: FAIL when the result dir has status
+//                                    files but no `targets.txt`)
 //     [--repo owner/repo]           (default: $GITHUB_REPOSITORY)
 //     [--run-url <url>]             (default: derived from $GITHUB_SERVER_URL
 //                                    /$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)
@@ -58,6 +62,7 @@
 //                                    a missing/empty file means "no existing
 //                                    issue". Lets the diff+file/update logic
 //                                    be exercised without real GitHub state.)
+//     [--self-test]                 (run the fixture suite and exit)
 //
 // `--result-dir` is best-effort: a missing/empty directory contributes zero
 // per-target findings (the artifact download is `continue-on-error`, so a
@@ -65,12 +70,30 @@
 // what keeps that case from silently reporting nothing when the lane did in
 // fact fail.
 //
+// #3360 — but that fallback only covers a lane that DID fail. Two blind spots
+// remained, the same missing-vs-empty ambiguity #3364 closed for the mutation
+// filer:
+//   * a lane that SUCCEEDED whose `fuzz-status` upload was lost (the upload is
+//     `if-no-files-found: ignore`, the download is `continue-on-error`) gives
+//     `results = []`, no `[lane]` finding, and a cheerful "no new findings"
+//     no-op — indistinguishable from a clean week. `--require-results` makes
+//     that a hard error.
+//   * a PARTIAL artifact without `targets.txt` falls back to globbing the
+//     `.status` files that did arrive, so a target whose files went missing
+//     vanishes from the report entirely rather than being reported `not_run`.
+//     `--require-targets-manifest` makes that a hard error.
+// Both are opt-in flags (the workflow passes them) so the genuinely
+// catastrophic case — the lane died before writing anything — still reaches
+// the `[lane]` finding instead of erroring out before it can file.
+//
 // Exit codes: 0 on success (including the no-op case), 1 on a real error
-// (bad args, a `gh` call failing).
+// (bad args, a missing/partial artifact under the `--require-*` flags, a `gh`
+// call failing), 2 on a `--self-test` failure.
 
 import { execFileSync } from 'node:child_process'
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readdirSync,
   readFileSync,
@@ -148,6 +171,38 @@ export function parseTargetResults(dir) {
       .map((l) => l.trim())
       .filter((l) => l.length > 0),
   }))
+}
+
+/**
+ * Why `parseTargetResults` returned what it returned (#3360). `parseTargetResults`
+ * is deliberately forgiving — every degraded shape yields *some* array — which
+ * is exactly why the degraded shapes are invisible without this.
+ *
+ *   'ok'               `targets.txt` present and non-empty: the target list is
+ *                      the one the lane intended to run.
+ *   'missing-manifest' status files but no usable `targets.txt`: the list is
+ *                      INFERRED from whichever files arrived, so a target whose
+ *                      files went missing is not reported `not_run` — it is not
+ *                      reported at all.
+ *   'empty-dir'        the directory exists but holds nothing recognisable.
+ *   'missing-dir'      no directory (artifact absent, download skipped).
+ *   'unreadable-dir'   present but not listable.
+ */
+export function resultDirDiagnosis(dir) {
+  if (!dir || !existsSync(dir)) return 'missing-dir'
+  let entries
+  try {
+    entries = readdirSync(dir)
+  } catch {
+    return 'unreadable-dir'
+  }
+  const manifest = readFileOr(join(dir, 'targets.txt'))
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+  if (manifest.length > 0) return 'ok'
+  if (entries.some((e) => e.endsWith('.status'))) return 'missing-manifest'
+  return 'empty-dir'
 }
 
 /** Last few meaningful lines of a target's log, bounded — the human-readable half of a finding. */
@@ -351,61 +406,77 @@ export function buildStatusSummary(results) {
 }
 
 export function buildIssueBody({ all, newOnes, resolvedOnes, byId, results = [], runUrl }) {
-  const head = []
-  head.push(
+  const intro = [
     'This issue tracks findings from the weekly `fuzz` lane in `scheduled-deep-checks.yml` (#3169) — build failures, crash reproducers, per-input timeouts, and targets that never ran. It is filed and updated automatically by `scripts/file-fuzz-findings.mjs` — **do not rename the title**, the filing script matches on it verbatim to find this issue instead of opening a new one.',
-  )
-  head.push('')
-  head.push(
+    '',
     'A red weekly workflow is easy to miss (a compile break in this very lane survived five days, #3163), so the lane pushes here instead. Triage each finding below: fix it and remove its line from the machine-readable block — once a line is gone, the next run that still sees it will re-add it as "new". Only genuinely new findings update this issue; an unchanged failure is a silent no-op.',
-  )
-  head.push('')
-  head.push(...buildStatusSummary(results))
+    '',
+  ]
+
+  // Presentational: nice to have, first thing dropped when the body overflows.
+  const presentational = [...buildStatusSummary(results)]
   if (newOnes.length > 0) {
-    head.push(`### New this run (${newOnes.length})`)
-    head.push('```')
-    head.push(...newOnes)
-    head.push('```')
-    head.push('')
+    presentational.push(`### New this run (${newOnes.length})`)
+    presentational.push('```')
+    presentational.push(...newOnes)
+    presentational.push('```')
+    presentational.push('')
   }
   if (resolvedOnes.length > 0) {
-    head.push(`### Resolved since last run (${resolvedOnes.length})`)
-    head.push('```')
-    head.push(...resolvedOnes)
-    head.push('```')
-    head.push('')
+    presentational.push(`### Resolved since last run (${resolvedOnes.length})`)
+    presentational.push('```')
+    presentational.push(...resolvedOnes)
+    presentational.push('```')
+    presentational.push('')
   }
-  head.push('### All currently-known findings')
-  head.push(
+
+  // State: the script's ONLY cross-run memory. Never truncated, never dropped.
+  const state = [
+    '### All currently-known findings',
     '_Machine-readable — do not hand-edit the marker lines below. Remove a finding line once it is fixed; leave the rest untouched._',
-  )
-  head.push(MARKER_START)
-  head.push('```')
-  head.push(...all)
-  head.push('```')
-  head.push(MARKER_END)
+    MARKER_START,
+    '```',
+    ...all,
+    '```',
+    MARKER_END,
+  ]
 
-  const tail = []
-  const details = renderDetails(all, byId)
-  if (details.length > 0) {
-    tail.push('')
-    tail.push('### Details')
-    tail.push(...details)
-  }
+  const footerLines = []
   if (runUrl) {
-    tail.push('')
-    tail.push(`_Last updated by [this run](${runUrl})._`)
+    footerLines.push('')
+    footerLines.push(`_Last updated by [this run](${runUrl})._`)
   }
 
-  // Clamp by dropping the DETAILS section wholesale rather than truncating —
-  // the marker block is state and must never be cut mid-way.
-  const headText = head.join('\n')
-  const full = [headText, ...tail].join('\n')
+  const details = renderDetails(all, byId)
+  const detailsSection = details.length > 0 ? ['', '### Details', ...details] : []
+  const seeRun = runUrl ? `[this run](${runUrl})` : 'the workflow run'
+
+  const render = (mid, det) => [...intro, ...mid, ...state, ...det, ...footerLines].join('\n')
+
+  const full = render(presentational, detailsSection)
   if (full.length <= MAX_BODY_CHARS) return full
-  const footer = runUrl
-    ? `\n\n_Details omitted (too long) — see [this run](${runUrl})._`
-    : '\n\n_Details omitted (too long) — see the workflow run._'
-  return headText + footer
+
+  // Clamp 1: drop the DETAILS section wholesale rather than truncating — the
+  // marker block is state and must never be cut mid-way.
+  const noDetails = render(presentational, ['', `_Details omitted (too long) — see ${seeRun}._`])
+  if (noDetails.length <= MAX_BODY_CHARS) return noDetails
+
+  // Clamp 2 (#3360): the details are not the only unbounded section. A run
+  // with hundreds of findings blows the cap on the new/resolved lists alone,
+  // and the old code returned that oversized body anyway — `gh issue edit`
+  // then 422s, and because the same body is recomputed from the same unchanged
+  // state next week, the job wedges red forever (#3257, in the sibling filer).
+  const bare = render(
+    [`_Per-run breakdown omitted to keep this body under the working limit — see ${seeRun}._`, ''],
+    [],
+  )
+  if (bare.length <= MAX_BODY_CHARS) return bare
+
+  // The state block alone does not fit. Fail with a diagnosis rather than
+  // letting `gh issue edit` return a bare 422 nobody can act on.
+  throw new Error(
+    `the fuzz finding set outgrew a single issue body: ${all.length} finding(s) render to ${bare.length} chars, over the ${MAX_BODY_CHARS}-char cap (GitHub's hard limit is 65536). The machine-readable state block cannot be truncated without corrupting the tracked set. Triage the tracking issue down, or lower MAX_ID_CHARS (currently ${MAX_ID_CHARS}).`,
+  )
 }
 
 export function buildNewFindingComment({ newOnes, byId, results = [], runUrl }) {
@@ -465,7 +536,7 @@ function withTempFile(content, fn) {
 // ---------------------------------------------------------------------------
 
 function parseArgs(argv) {
-  const args = { dryRun: false }
+  const args = { dryRun: false, requireResults: false, requireTargetsManifest: false }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
     switch (a) {
@@ -475,6 +546,14 @@ function parseArgs(argv) {
       }
       case '--job-status': {
         args.jobStatus = argv[++i]
+        break
+      }
+      case '--require-results': {
+        args.requireResults = true
+        break
+      }
+      case '--require-targets-manifest': {
+        args.requireTargetsManifest = true
         break
       }
       case '--repo': {
@@ -509,6 +588,32 @@ function defaultRunUrl() {
   return undefined
 }
 
+/**
+ * #3360 — the missing-vs-empty guards. Split out of `main` to keep its
+ * cyclomatic complexity under the repo lint budget.
+ *
+ * Called AFTER `buildFindings` so the `[lane]` fallback still gets to describe
+ * a lane that died outright. They fire only where that fallback does NOT: a
+ * `failure`/`cancelled` lane is the `[lane]` finding's job, and a `skipped` one
+ * never ran and legitimately wrote nothing — firing on either would replace a
+ * filed report with a red filer. What is left is `success` (the lane ran to
+ * completion, so it MUST have written results) and an unknown status (nothing
+ * else would report the blindness at all).
+ */
+function assertLaneInputs(args, results) {
+  const laneShouldHaveWritten = !args.jobStatus || args.jobStatus === 'success'
+  if (args.requireResults && results.length === 0 && laneShouldHaveWritten) {
+    throw new Error(
+      `--require-results: no per-target results under ${args.resultDir ?? '(unset)'} (${resultDirDiagnosis(args.resultDir)}) for a fuzz lane reported as "${args.jobStatus || 'unknown'}". The lane writes targets.txt and pre-seeds every status BEFORE it fuzzes anything, so a lane that got that far always produces results — none means the fuzz-status artifact was lost, which is NOT the same as "no findings". Refusing to report a clean week from no data (#3360).`,
+    )
+  }
+  if (args.requireTargetsManifest && resultDirDiagnosis(args.resultDir) === 'missing-manifest') {
+    throw new Error(
+      `--require-targets-manifest: ${args.resultDir} has per-target status files but no targets.txt, so the target list was inferred from whichever files arrived. A target whose files went missing then vanishes from the report entirely instead of being reported as not_run — a partial artifact reads as a shorter, healthier run (#3360).`,
+    )
+  }
+}
+
 export function main(argv = process.argv.slice(2)) {
   const args = parseArgs(argv)
   const repo = args.repo ?? process.env.GITHUB_REPOSITORY
@@ -521,6 +626,8 @@ export function main(argv = process.argv.slice(2)) {
     results.length > 0 ? results.map((r) => `${r.target}=${r.status}`).join(' ') : '(none)'
   console.log(`fuzz target statuses: ${statusSummary}`)
   console.log(`fuzz findings this run: ${current.length}`)
+
+  assertLaneInputs(args, results)
 
   // --known-body-file is a TEST-ONLY escape hatch: it substitutes for the
   // `gh issue list` lookup so the diff/file/update logic can be exercised
@@ -632,16 +739,537 @@ export function main(argv = process.argv.slice(2)) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// self-test
+// ---------------------------------------------------------------------------
+//
+// #3360 — this is the more complex of the two filers (libFuzzer log
+// excerpting, MAX_EXCERPT_LINES/CHARS, marker-block state, the same unguarded
+// `execFileSync('gh', ...)` write path) and was the less tested: it had no
+// fixture suite at all while `file-mutation-survivors.mjs` did. Wired as the
+// `fuzz-findings-filer-selftest` prek hook.
+//
+// Every assertion is paired with its negative where one exists — a clamp that
+// never clamps and a guard that never fires are the two ways this file could
+// have looked tested without being tested.
+
+/** Writes a fuzz-status result dir; `targets` may omit files to simulate a partial artifact. */
+function fixtureResultDir({ manifest, files }) {
+  const dir = mkdtempSync(join(tmpdir(), 'fuzz-selftest-'))
+  if (manifest !== undefined) writeFileSync(join(dir, 'targets.txt'), manifest.join('\n'), 'utf8')
+  for (const [name, content] of Object.entries(files)) {
+    writeFileSync(join(dir, name), content, 'utf8')
+  }
+  return dir
+}
+
+function selfTestParsing({ ok, fail }) {
+  // 1. The manifest is authoritative: a target listed in targets.txt but with
+  //    no `.status` file reads as `not_run`, not as absent. That is the whole
+  //    point of pre-seeding, and the reason a partial artifact is dangerous.
+  {
+    const dir = fixtureResultDir({
+      manifest: ['alpha', 'beta'],
+      files: { 'alpha.status': 'ok\n' },
+    })
+    const results = parseTargetResults(dir)
+    if (
+      results.length === 2 &&
+      results[0].target === 'alpha' &&
+      results[0].status === 'ok' &&
+      results[1].target === 'beta' &&
+      results[1].status === 'not_run'
+    )
+      ok('targets.txt is authoritative — a missing status file reads as not_run')
+    else fail('targets.txt is authoritative', JSON.stringify(results.map((r) => r.status)))
+  }
+
+  // 2. …and without the manifest the same missing target simply DISAPPEARS.
+  //    This is the damage `--require-targets-manifest` prevents, demonstrated
+  //    rather than asserted about (#3360).
+  {
+    const dir = fixtureResultDir({ files: { 'alpha.status': 'ok\n' } })
+    const results = parseTargetResults(dir)
+    if (results.length === 1 && resultDirDiagnosis(dir) === 'missing-manifest')
+      ok('without targets.txt a missing target vanishes rather than reporting not_run (#3360)')
+    else
+      fail(
+        'without targets.txt a missing target vanishes',
+        `${results.length} result(s), diagnosis=${resultDirDiagnosis(dir)}`,
+      )
+  }
+
+  // 3. Diagnosis distinguishes the degraded shapes `parseTargetResults` flattens.
+  {
+    const okDir = fixtureResultDir({ manifest: ['alpha'], files: { 'alpha.status': 'ok' } })
+    const emptyDir = fixtureResultDir({ files: {} })
+    const cases = [
+      ['ok', resultDirDiagnosis(okDir)],
+      ['empty-dir', resultDirDiagnosis(emptyDir)],
+      ['missing-dir', resultDirDiagnosis(join(emptyDir, 'nope'))],
+      ['missing-dir', resultDirDiagnosis(undefined)],
+    ]
+    const bad = cases.filter(([want, got]) => want !== got)
+    if (bad.length === 0) ok('resultDirDiagnosis separates ok / empty / missing')
+    else fail('resultDirDiagnosis separates ok / empty / missing', JSON.stringify(cases))
+  }
+
+  // 4. Excerpt bounds. A libFuzzer log is thousands of lines; the excerpt must
+  //    keep the TAIL (where the failure is) and stay under both caps.
+  {
+    const log = Array.from({ length: 500 }, (_, i) => `line ${i}`).join('\n')
+    const excerpt = excerptFromLog(log)
+    const excerptLines = excerpt.split('\n')
+    if (
+      excerptLines.length <= MAX_EXCERPT_LINES &&
+      excerpt.length <= MAX_EXCERPT_CHARS + 1 &&
+      excerpt.includes('line 499') &&
+      !excerpt.includes('line 0\n')
+    )
+      ok('excerptFromLog keeps the bounded tail')
+    else fail('excerptFromLog keeps the bounded tail', `${excerptLines.length} lines`)
+
+    // The char cap bites independently of the line cap: 10 very long lines.
+    const wide = Array.from({ length: 10 }, () => 'x'.repeat(1000)).join('\n')
+    const wideExcerpt = excerptFromLog(wide)
+    if (wideExcerpt.length <= MAX_EXCERPT_CHARS + 1 && wideExcerpt.startsWith('…'))
+      ok('excerptFromLog enforces the char cap independently of the line cap')
+    else fail('excerptFromLog enforces the char cap', `len=${wideExcerpt.length}`)
+
+    // …and a short log is left completely alone (the negative case).
+    if (excerptFromLog('a\nb') === 'a\nb') ok('a short log is not clamped')
+    else fail('a short log is not clamped', excerptFromLog('a\nb'))
+  }
+
+  // 5. The `[build]` finding ID is only stable week-to-week if the compiler
+  //    error line is extracted, not the whole log.
+  {
+    const log = ['warning: unused', '   error[E0432]: unresolved import `foo`', 'more'].join('\n')
+    const got = firstCompilerError(log)
+    if (got === 'error[E0432]: unresolved import `foo`')
+      ok('firstCompilerError picks the rustc line')
+    else fail('firstCompilerError picks the rustc line', got)
+    if (firstCompilerError('all fine here') === '')
+      ok('firstCompilerError returns empty on no error')
+    else fail('firstCompilerError returns empty on no error', firstCompilerError('all fine here'))
+    // Bounded: a 10K-char error line must not blow up a single-line finding ID.
+    const huge = firstCompilerError(`error: ${'x'.repeat(10_000)}`)
+    if (huge.length <= MAX_ID_CHARS && !huge.includes('\n')) ok('a huge compiler error is bounded')
+    else fail('a huge compiler error is bounded', `len=${huge.length}`)
+  }
+
+  // 6. Reproducer extraction: the artifacts listing wins, the log is the
+  //    fallback for when the artifacts dir did not survive the upload.
+  {
+    const fromArtifacts = reproducersFor({ artifacts: ['crash-abc123', 'README'], log: '' }, [
+      'crash',
+      'leak',
+      'oom',
+    ])
+    const fromLog = reproducersFor(
+      { artifacts: [], log: 'Test unit written to ./artifacts/x/crash-deadbeef' },
+      ['crash', 'leak', 'oom'],
+    )
+    if (
+      fromArtifacts.length === 1 &&
+      fromArtifacts[0] === 'crash-abc123' &&
+      fromLog.length === 1 &&
+      fromLog[0] === 'crash-deadbeef'
+    )
+      ok('reproducersFor prefers artifacts and falls back to the log line')
+    else
+      fail(
+        'reproducersFor prefers artifacts and falls back to the log line',
+        `${JSON.stringify(fromArtifacts)} / ${JSON.stringify(fromLog)}`,
+      )
+  }
+}
+
+function selfTestFindings({ ok, fail }) {
+  const r = (target, status, extra = {}) => ({
+    target,
+    status,
+    log: '',
+    artifacts: [],
+    ...extra,
+  })
+
+  // 7. Every documented status maps to a finding except `ok`, which maps to
+  //    none. A status that produced no finding at all would be a silently
+  //    unreported failure.
+  {
+    const results = [
+      r('a', 'ok'),
+      r('b', 'build_failed', { log: 'error[E0433]: boom' }),
+      r('c', 'crashed', { artifacts: ['crash-1'] }),
+      r('d', 'timed_out'),
+      r('e', 'not_run'),
+      r('f', 'weird_new_status'),
+    ]
+    const ids = buildFindings(results, 'failure').map((f) => f.id)
+    const wanted = ['[build] b:', '[crash] c:', '[timeout] d:', '[not-run] e:', '[failed] f:']
+    const missing = wanted.filter((w) => !ids.some((id) => id.startsWith(w)))
+    if (missing.length === 0 && ids.length === 5 && !ids.some((id) => id.includes(' a:')))
+      ok('every non-ok status produces exactly one finding and `ok` produces none')
+    else fail('every non-ok status produces a finding', `missing=${missing} ids=${ids.join(' | ')}`)
+  }
+
+  // 8. The `[lane]` fallback: no results + a failed lane must still report.
+  //    And its negative — no results + a SUCCESSFUL lane reports nothing,
+  //    which is exactly the hole `--require-results` covers.
+  {
+    const failed = buildFindings([], 'failure')
+    const cancelled = buildFindings([], 'cancelled')
+    const succeeded = buildFindings([], 'success')
+    const skipped = buildFindings([], 'skipped')
+    if (
+      failed.length === 1 &&
+      failed[0].id.startsWith('[lane]') &&
+      cancelled.length === 1 &&
+      succeeded.length === 0 &&
+      skipped.length === 0
+    )
+      ok('the [lane] fallback fires for failure/cancelled only')
+    else
+      fail(
+        'the [lane] fallback fires for failure/cancelled only',
+        `${failed.length}/${cancelled.length}/${succeeded.length}/${skipped.length}`,
+      )
+  }
+}
+
+function selfTestBodyAndState({ ok, fail }) {
+  const finding = (i) => ({
+    id: `[crash] target_${i}: crash-${'a'.repeat(40)}${i}`,
+    detail: `detail for ${i}\n`.repeat(20),
+  })
+
+  // 9. Round-trip: what `buildIssueBody` writes into the marker block is
+  //    exactly what `parseKnownFindings` reads back. This is the script's only
+  //    cross-run memory — a lossy round-trip re-reports every finding as new,
+  //    forever.
+  {
+    const current = [finding(1), finding(2), finding(3)]
+    const { newOnes, resolvedOnes, all, byId } = diffFindings(current, new Set())
+    const body = buildIssueBody({ all, newOnes, resolvedOnes, byId, runUrl: 'https://example/run' })
+    const reparsed = parseKnownFindings(body)
+    if (reparsed.size === 3 && current.every((f) => reparsed.has(f.id)))
+      ok('the marker block round-trips through parseKnownFindings')
+    else fail('the marker block round-trips', `size=${reparsed.size}`)
+
+    // A body with no marker block at all means "no issue yet", not "empty set
+    // of findings" — both parse to an empty set, but the difference matters
+    // for the caller, so pin the shapes that must NOT throw.
+    if (parseKnownFindings('').size === 0 && parseKnownFindings(undefined).size === 0)
+      ok('an absent body parses to an empty known set')
+    else fail('an absent body parses to an empty known set', 'threw or non-empty')
+  }
+
+  // 10. Diff semantics: unchanged findings are not "new" (the no-spam
+  //     property), and a disappeared one is "resolved".
+  {
+    const known = new Set([finding(1).id, finding(2).id])
+    const { newOnes, resolvedOnes } = diffFindings([finding(1), finding(3)], known)
+    if (
+      newOnes.length === 1 &&
+      newOnes[0] === finding(3).id &&
+      resolvedOnes.length === 1 &&
+      resolvedOnes[0] === finding(2).id
+    )
+      ok('diffFindings reports only genuinely new and genuinely gone findings')
+    else fail('diffFindings reports new/resolved', JSON.stringify({ newOnes, resolvedOnes }))
+  }
+
+  selfTestClampLadder({ ok, fail, finding })
+}
+
+/**
+ * The body clamp ladder (#3257-class, extended by #3360). Split out of
+ * `selfTestBodyAndState` to keep its cyclomatic complexity under the repo lint
+ * budget.
+ */
+/**
+ * Assertion 12 alone — split out to keep `selfTestClampLadder` under the repo's
+ * cyclomatic-complexity lint budget once the rung classification was added.
+ */
+function selfTestClampRung2({ ok, fail, finding }) {
+  const current = Array.from({ length: 650 }, (_, i) => finding(i))
+  const { newOnes, resolvedOnes, all, byId } = diffFindings(current, new Set())
+  // Caught, not propagated: with clamp 2 removed this fixture falls through to
+  // clamp 3's throw, and an unhandled exception here would abort the whole
+  // suite before the remaining assertions ran.
+  let body = null
+  let threw = null
+  try {
+    body = buildIssueBody({ all, newOnes, resolvedOnes, byId, runUrl: 'https://example/run' })
+  } catch (err) {
+    threw = err
+  }
+  const rung =
+    body === null
+      ? `threw (${threw.message.slice(0, 60)}…)`
+      : body.includes('Per-run breakdown omitted')
+        ? 'clamp2'
+        : body.includes('Details omitted')
+          ? 'clamp1 (NOT the rung under test)'
+          : 'full (NOT the rung under test)'
+  if (rung === 'clamp2' && body.length <= MAX_BODY_CHARS && parseKnownFindings(body).size === 650)
+    ok('a body oversized by its per-run lists alone is clamped, not returned oversized (#3360)')
+  else
+    fail(
+      'a body oversized by its per-run lists alone is clamped',
+      `rung=${rung} len=${body?.length ?? 0} cap=${MAX_BODY_CHARS}`,
+    )
+}
+
+function selfTestClampLadder({ ok, fail, finding }) {
+  // 11. Clamp ladder step 1 (details dropped, state intact). ~250 findings
+  //     with 20-line details render well past the 60K cap on details alone.
+  {
+    const current = Array.from({ length: 250 }, (_, i) => finding(i))
+    const { newOnes, resolvedOnes, all, byId } = diffFindings(
+      current,
+      new Set(current.map((f) => f.id)),
+    )
+    const body = buildIssueBody({ all, newOnes, resolvedOnes, byId, runUrl: 'https://example/run' })
+    const reparsed = parseKnownFindings(body)
+    if (body.length <= MAX_BODY_CHARS && body.includes('Details omitted') && reparsed.size === 250)
+      ok('an oversized body drops Details and keeps the state block whole (#3257-class)')
+    else
+      fail(
+        'an oversized body drops Details and keeps the state block whole',
+        `len=${body.length} reparsed=${reparsed.size}`,
+      )
+  }
+
+  // 12. Clamp ladder step 2: the presentational new/resolved lists are
+  //     themselves unbounded. Before #3360 the function returned an oversized
+  //     body regardless — `gh issue edit` 422s and, because the same body is
+  //     recomputed from the same state next week, the job wedges red forever.
+  //
+  //     The fixture size and the marker assertion are BOTH load-bearing, and
+  //     both were added in review. With this `finding()` shape the rungs
+  //     switch at n=108 (full → clamp 1), n=424 (clamp 1 → clamp 2) and n=844
+  //     (clamp 2 → throw). The original fixture used n=400, which lands on
+  //     CLAMP 1 — so this assertion was a duplicate of #11 and stayed green
+  //     with clamp 2 deleted outright, i.e. the one rung #3360 added was the
+  //     one rung untested. n=650 is the midpoint of the clamp-2 window, and
+  //     asserting clamp 2's own marker text binds the assertion to the rung it
+  //     names instead of to "some clamp happened".
+  selfTestClampRung2({ ok, fail, finding })
+
+  // 13. Clamp ladder step 3: when the STATE BLOCK alone cannot fit, throwing
+  //     an actionable error beats a raw 422.
+  {
+    const current = Array.from({ length: 3000 }, (_, i) => finding(i))
+    const { newOnes, resolvedOnes, all, byId } = diffFindings(current, new Set())
+    let threw = null
+    let len = 0
+    try {
+      len = buildIssueBody({ all, newOnes, resolvedOnes, byId, runUrl: undefined }).length
+    } catch (err) {
+      threw = err
+    }
+    if (threw && /outgrew a single issue body/.test(threw.message))
+      ok('an unclampable state block fails with a diagnosis, not a raw 422 (#3360)')
+    else fail('an unclampable state block fails with a diagnosis', threw?.message ?? `len=${len}`)
+  }
+
+  // 14. The negative for 11–13: a small body is left completely alone.
+  {
+    const current = [finding(1)]
+    const { newOnes, resolvedOnes, all, byId } = diffFindings(current, new Set())
+    const body = buildIssueBody({
+      all,
+      newOnes,
+      resolvedOnes,
+      byId,
+      results: [{ target: 'alpha', status: 'crashed' }],
+      runUrl: 'https://example/run',
+    })
+    if (!body.includes('omitted') && body.includes('### Details') && body.includes('alpha'))
+      ok('a small body keeps its details, status table and per-run sections')
+    else fail('a small body is not clamped', body.slice(0, 200))
+  }
+
+  // 15. The per-run COMMENT hits the same 65536 limit as the body — capping
+  //     only the body would move the 422 one `gh` call down.
+  {
+    const current = Array.from({ length: 3000 }, (_, i) => finding(i))
+    const { newOnes, byId } = diffFindings(current, new Set())
+    const comment = buildNewFindingComment({ newOnes, byId, runUrl: 'https://example/run' })
+    if (comment.length <= MAX_BODY_CHARS + 20 && comment.includes('truncated'))
+      ok('an oversized per-run comment is truncated')
+    else fail('an oversized per-run comment is truncated', `len=${comment.length}`)
+  }
+
+  // 16. The status table names every target, passing ones included — the
+  //     property that keeps a skipped target from being invisible (#3169).
+  {
+    const results = [
+      { target: 'alpha', status: 'ok' },
+      { target: 'beta', status: 'not_run' },
+    ]
+    const summary = buildStatusSummary(results).join('\n')
+    if (summary.includes('alpha') && summary.includes('beta') && summary.includes('1 of 2'))
+      ok('the status table lists passing targets too')
+    else fail('the status table lists passing targets too', summary)
+  }
+}
+
+function selfTestCliGuards({ ok, fail }) {
+  const root = mkdtempSync(join(tmpdir(), 'fuzz-selftest-cli-'))
+  const emptyDir = join(root, 'empty')
+  mkdirSync(emptyDir)
+  const partialDir = join(root, 'partial')
+  mkdirSync(partialDir)
+  writeFileSync(join(partialDir, 'alpha.status'), 'ok\n')
+  const fullDir = join(root, 'full')
+  mkdirSync(fullDir)
+  writeFileSync(join(fullDir, 'targets.txt'), 'alpha\nbeta\n')
+  writeFileSync(join(fullDir, 'alpha.status'), 'ok\n')
+  writeFileSync(join(fullDir, 'beta.status'), 'ok\n')
+  const absent = join(root, 'nope')
+
+  // `main()` runs in --dry-run + --known-body-file mode throughout, so no `gh`
+  // process is ever spawned. Belt and braces: PATH is emptied for the duration,
+  // so an accidental `execFileSync('gh', …)` would ENOENT rather than reach
+  // the network — an assertion the dry-run flag alone cannot make.
+  const runQuiet = (argv) => {
+    const realLog = console.log
+    const realPath = process.env.PATH
+    console.log = () => {}
+    process.env.PATH = ''
+    try {
+      main(argv)
+      return null
+    } catch (err) {
+      return err
+    } finally {
+      console.log = realLog
+      process.env.PATH = realPath
+    }
+  }
+  const base = ['--dry-run', '--known-body-file', join(root, 'no-such-body.md')]
+
+  // 17. The guards fire on exactly the shapes they were added for.
+  const badCases = [
+    [
+      'a lost artifact on a SUCCESSFUL lane fails --require-results (#3360)',
+      [...base, '--result-dir', absent, '--job-status', 'success', '--require-results'],
+      /no per-target results/,
+    ],
+    [
+      'an EMPTY artifact fails --require-results too — empty is still no data',
+      [...base, '--result-dir', emptyDir, '--job-status', 'success', '--require-results'],
+      /no per-target results/,
+    ],
+    [
+      'an unknown job status fails --require-results (nothing else would report it)',
+      [...base, '--result-dir', absent, '--require-results'],
+      /no per-target results/,
+    ],
+    [
+      'a manifest-less partial artifact fails --require-targets-manifest (#3360)',
+      [
+        ...base,
+        '--result-dir',
+        partialDir,
+        '--job-status',
+        'success',
+        '--require-targets-manifest',
+      ],
+      /no targets\.txt/,
+    ],
+  ]
+  for (const [name, argv, pattern] of badCases) {
+    const err = runQuiet(argv)
+    if (err && pattern.test(err.message)) ok(name)
+    else fail(name, err ? err.message : 'did not throw')
+  }
+
+  // 18. …and stay silent on everything else, or they are just a permanently
+  //     red weekly job. Note the FAILED-lane case: the `[lane]` finding is the
+  //     report there, so --require-results must NOT pre-empt it.
+  const okCases = [
+    [
+      'a complete artifact passes both guards',
+      [
+        ...base,
+        '--result-dir',
+        fullDir,
+        '--job-status',
+        'success',
+        '--require-results',
+        '--require-targets-manifest',
+      ],
+    ],
+    [
+      'a lane that FAILED with no artifact still files the [lane] finding rather than erroring',
+      [...base, '--result-dir', absent, '--job-status', 'failure', '--require-results'],
+    ],
+    [
+      'a SKIPPED lane with no artifact is not an error',
+      [...base, '--result-dir', absent, '--job-status', 'skipped', '--require-results'],
+    ],
+    [
+      'the guards are opt-in: without the flags a missing artifact is still tolerated',
+      [...base, '--result-dir', absent, '--job-status', 'success'],
+    ],
+    [
+      'a manifest-less artifact is tolerated without --require-targets-manifest',
+      [...base, '--result-dir', partialDir, '--job-status', 'success'],
+    ],
+  ]
+  for (const [name, argv] of okCases) {
+    const err = runQuiet(argv)
+    if (err === null) ok(name)
+    else fail(name, err.message)
+  }
+
+  // 19. An unknown flag is a hard error, not a silently ignored typo — a
+  //     mistyped `--require-results` would otherwise disarm the guard.
+  {
+    const err = runQuiet([...base, '--require-reslts'])
+    if (err && /unrecognized argument/.test(err.message)) ok('an unrecognized flag is rejected')
+    else fail('an unrecognized flag is rejected', err ? err.message : 'did not throw')
+  }
+}
+
+function runSelfTest() {
+  const failures = []
+  const ok = (name) => console.log(`  ok   - ${name}`)
+  const fail = (name, detail) => {
+    failures.push(name)
+    console.error(`  FAIL - ${name}: ${detail}`)
+  }
+
+  selfTestParsing({ ok, fail })
+  selfTestFindings({ ok, fail })
+  selfTestBodyAndState({ ok, fail })
+  selfTestCliGuards({ ok, fail })
+
+  if (failures.length > 0) {
+    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
+    process.exit(2)
+  }
+  console.log('self-test: all assertions passed')
+}
+
 // Entry-point check (#3373): realpath BOTH sides — `import.meta.filename` is the
 // RESOLVED path while `process.argv[1]` is the path AS INVOKED, so a naive
 // comparison is false through a symlink and the script exits 0 having run nothing.
 const isMainModule =
   !!process.argv[1] && realpathSync(import.meta.filename) === realpathSync(process.argv[1])
 if (isMainModule) {
-  try {
-    main()
-  } catch (err) {
-    console.error(`file-fuzz-findings: ${err.message}`)
-    process.exit(1)
+  if (process.argv.slice(2).includes('--self-test')) {
+    runSelfTest()
+  } else {
+    try {
+      main()
+    } catch (err) {
+      console.error(`file-fuzz-findings: ${err.message}`)
+      process.exit(1)
+    }
   }
 }
