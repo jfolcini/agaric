@@ -129,5 +129,111 @@ describe('pageBrowserFilters store', () => {
       usePageBrowserFiltersStore.getState().addFilter(SPACE_A, tagX)
       expect(filtersFor(SPACE_A)[1]).toMatchObject({ type: 'Tag', tag: 'X', _addId: 8 })
     })
+
+    // #3323 — `migrate`/`merge` must coerce a corrupt or malformed blob
+    // instead of throwing it straight into store state (mirrors
+    // `search-history.test.ts`'s coercion coverage). Reached through the
+    // same public seam zustand uses on rehydrate.
+    describe('hardened persist (#3323)', () => {
+      const options = usePageBrowserFiltersStore.persist.getOptions()
+      const defaults = {
+        filtersBySpace: {},
+        nextAddId: 0,
+      } as unknown as Parameters<NonNullable<typeof options.merge>>[1]
+
+      interface MergedPageBrowserFilters {
+        filtersBySpace: Record<string, FilterPrimitive[]>
+        nextAddId: number
+      }
+
+      function mergeRun(blob: unknown): MergedPageBrowserFilters {
+        return options.merge?.(blob, defaults) as unknown as MergedPageBrowserFilters
+      }
+
+      it('is wired into the persist options (both migrate and merge)', () => {
+        expect(typeof options.migrate).toBe('function')
+        expect(typeof options.merge).toBe('function')
+      })
+
+      it('drops a non-array slice', () => {
+        const result = mergeRun({
+          filtersBySpace: { [SPACE_A]: { a: 1 }, [SPACE_B]: [{ type: 'Orphan', _addId: 1 }] },
+          nextAddId: 1,
+        })
+        expect(result.filtersBySpace).toEqual({ [SPACE_B]: [{ type: 'Orphan', _addId: 1 }] })
+      })
+
+      it('drops entries that are not PageFilterWithKey-shaped', () => {
+        const result = mergeRun({
+          filtersBySpace: {
+            [SPACE_A]: [
+              { a: 1 }, // no `type` / `_addId`
+              { type: 'Orphan' }, // missing `_addId`
+              { _addId: 1 }, // missing `type`
+              null,
+              'not-an-object',
+              { type: 'Orphan', _addId: 1 },
+            ],
+          },
+          nextAddId: 1,
+        })
+        expect(result.filtersBySpace).toEqual({ [SPACE_A]: [{ type: 'Orphan', _addId: 1 }] })
+      })
+
+      it.each([
+        ['string', '0'],
+        ['negative', -3],
+        ['NaN', Number.NaN],
+      ])('coerces a %s nextAddId to a non-negative integer', (_label, bad) => {
+        const result = mergeRun({ filtersBySpace: {}, nextAddId: bad })
+        expect(result.nextAddId).toBe(0)
+      })
+
+      it('truncates a non-integer nextAddId', () => {
+        const result = mergeRun({ filtersBySpace: {}, nextAddId: 3.7 })
+        expect(result.nextAddId).toBe(3)
+      })
+
+      it('passes a valid blob through unchanged (round-trips)', () => {
+        const result = mergeRun({
+          filtersBySpace: { [SPACE_A]: [{ type: 'Orphan', _addId: 1 }] },
+          nextAddId: 1,
+        })
+        expect(result).toEqual({
+          filtersBySpace: { [SPACE_A]: [{ type: 'Orphan', _addId: 1 }] },
+          nextAddId: 1,
+        })
+      })
+
+      it('does not throw on a wholly non-object blob', () => {
+        expect(() => mergeRun('corrupt')).not.toThrow()
+        expect(mergeRun('corrupt')).toEqual({ filtersBySpace: {}, nextAddId: 0 })
+      })
+
+      // End-to-end: a same-version (v1) blob bypasses `migrate` entirely and
+      // reaches `merge` raw under the pre-fix default shallow merge — seed
+      // localStorage directly and rehydrate the live store to prove the fix
+      // closes that path, not just the unit-level `merge` function.
+      it('end-to-end: rehydrating a same-version corrupt blob repairs the store instead of throwing', () => {
+        localStorage.setItem(
+          STORAGE_KEY,
+          JSON.stringify({
+            state: {
+              filtersBySpace: { [SPACE_A]: { a: 1 }, [SPACE_B]: [{ type: 'Orphan', _addId: 1 }] },
+              nextAddId: '0',
+            },
+            version: 1,
+          }),
+        )
+
+        expect(() => usePageBrowserFiltersStore.persist.rehydrate()).not.toThrow()
+
+        const state = usePageBrowserFiltersStore.getState()
+        expect(state.filtersBySpace).toEqual({ [SPACE_B]: [{ type: 'Orphan', _addId: 1 }] })
+        expect(state.nextAddId).toBe(0)
+        expect(() => filtersFor(SPACE_A)).not.toThrow()
+        expect(filtersFor(SPACE_A)).toHaveLength(0)
+      })
+    })
   })
 })

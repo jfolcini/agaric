@@ -31,7 +31,9 @@ import type { PageBlockState } from '@/stores/page-blocks-types'
  *     below), then splices the run in at `p = clamp(newIndex, 0, base.length)` —
  *     `base[0..p] ++ orderedIds ++ base[p..]`;
  *  2. dense-renumbers that destination group and each VACATED source group;
- *  3. rebuilds the flattened, depth-annotated tree via `buildFlatTree` (which
+ *  3. dense-renumbers EVERY OTHER sibling group too, from its RENDERED
+ *     flat-array order (#3320 — see below for why this step exists);
+ *  4. rebuilds the flattened, depth-annotated tree via `buildFlatTree` (which
  *     recomputes each block's depth from its new parent chain — descendants of a
  *     moved root travel with it automatically because they still point at it via
  *     `parent_id`).
@@ -44,11 +46,28 @@ import type { PageBlockState } from '@/stores/page-blocks-types'
  * the stored `position` integers: the optimistic same-parent movers (#404
  * `reorder`, `moveUp`, `moveDown`) keep the ARRAY order authoritative but rewrite
  * only the moved block's `position` to the backend's PROVISIONAL rank, leaving
- * sibling integers stale (duplicated, or even sorting out of order after stacked
- * moves). Within a sibling group ascending flat-array index IS the sibling order
- * (`state.blocks` is a DFS flatten and `buildFlatTree`'s position sort is
- * stable), so array order reproduces exactly the dense baseline the backend
- * splices against.
+ * sibling integers stale (duplicated, or even out of order after stacked moves).
+ *
+ * #3320 — step 3 exists because that staleness is NOT harmless for sibling
+ * groups this function would otherwise leave untouched. An earlier version of
+ * this comment argued `buildFlatTree`'s SORT STABILITY rescues untouched
+ * groups for free — that argument is wrong: stability only preserves relative
+ * order among EQUAL keys, not among keys that are already out of order. Worked
+ * counterexample, a dense run A=1,B=2,C=3,D=4: `reorder(C,0)` →
+ * `reorder(D,0)` → `reorder(B,1)` (three legal, unrelated single-block
+ * reorders, none of which touch this batch move) leaves the array as
+ * [D,B,C,A] with STORED positions D=1,B=2,C=1,A=1. Handed to `buildFlatTree`
+ * unchanged, its position-only sibling sort (stable) produces [D,C,A,B] — a
+ * scramble of a group nobody in this move touched. Dense-renumbering every
+ * sibling group from its rendered array order (step 3) makes `buildFlatTree`'s
+ * sort a no-op for every group, not only destination/source, so the worked
+ * counterexample above no longer reproduces.
+ *
+ * This renumbering is FE-optimistic state only: the `move_blocks_batch` IPC
+ * already fired with `orderedIds`/`requestedParentId`/`newIndex` (see the
+ * `moveBlocks` reducer, which calls this function AFTER that IPC resolves), so
+ * re-deriving every group's `position` here cannot change what was sent to, or
+ * already accepted by, the backend.
  *
  * Because every block in a page store belongs to the SAME page, an intra-page
  * batch move never changes any block's `page_id`, so it is left untouched.
@@ -115,11 +134,39 @@ export function reconcileBatchMove(
     remainingChildren(sp).forEach((bid, i) => posOf.set(bid, i + 1))
   }
 
-  // Materialise the updated bag and rebuild. A block re-allocates when its
-  // (parent, rank) changed — including blocks whose stored `position` was a
-  // stale optimistic leftover, which this pass heals to the dense rank. Blocks
-  // in untouched sibling groups keep their reference (posOf has no entry → the
-  // stored position is preserved).
+  // #3320 — dense-renumber every OTHER sibling group too (untouched by this
+  // move), from its RENDERED array order. Without this, a group nobody
+  // touched in THIS move can still hold stale/duplicate/out-of-order
+  // `position` integers left behind by earlier optimistic same-parent movers
+  // (#404 `reorder`/`moveUp`/`moveDown`, which heal only the ONE moved
+  // block's position — see the doc comment above). Left alone, those stale
+  // integers would make `buildFlatTree`'s position sort scramble a group the
+  // user never touched. Group by FINAL parent (`parentOf`) and walk `blocks`
+  // in array order so each group gets a fresh dense rank matching what's
+  // already rendered; ids already ranked above (destination, vacated
+  // sources) are skipped via `posOf.has`.
+  const remainingByParent = new Map<string | null, string[]>()
+  for (const b of blocks) {
+    if (posOf.has(b.id)) continue
+    const par = parentOf.get(b.id) ?? null
+    let group = remainingByParent.get(par)
+    if (!group) {
+      group = []
+      remainingByParent.set(par, group)
+    }
+    group.push(b.id)
+  }
+  for (const group of remainingByParent.values()) {
+    group.forEach((bid, i) => posOf.set(bid, i + 1))
+  }
+
+  // Materialise the updated bag and rebuild. Every block now has a `posOf`
+  // entry (destination/source groups above, every other group just above), so
+  // every sibling group gets a dense rank reproducing its rendered order, not
+  // only the group(s) this move directly touched. A block re-allocates only
+  // when its (parent, rank) actually changed — the `pos === b.position` guard
+  // below keeps the same reference for a block whose dense rank already
+  // matched its stored position.
   const updatedBag: FlatBlock[] = []
   for (const b of blocks) {
     const par = parentOf.get(b.id) ?? null

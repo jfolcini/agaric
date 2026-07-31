@@ -398,6 +398,121 @@ describe('PageBlockStore', () => {
         expect(firstSpecContent(batches)).toBe('see [[Dup]]')
         expect(createdPages).toEqual([])
       })
+
+      // #3323 — the sibling slot must be captured from LIVE state right
+      // before the create-batch IPC fires, not from the pre-await snapshot.
+      // `buildImportRefInternalizers` builds its page cache LAZILY: an
+      // unresolved `[[Fresh Page]]` token opens a real await window on
+      // `list_all_pages_in_space` (a full paginated fetch in production). A
+      // concurrent write landing a new sibling ABOVE the anchor during that
+      // window must be honored — the pasted block belongs after the anchor's
+      // POST-await sibling slot, not its stale pre-await one.
+      it('#3323 — recomputes the sibling slot from LIVE state after the internalization await', async () => {
+        const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0 })
+        store.setState({ blocks: [anchor] })
+
+        const batches: unknown[][] = []
+        let createdBlocks = 0
+        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+          if (cmd === 'list_all_pages_in_space') {
+            // Simulate a concurrent remote/MCP write inserting a new sibling
+            // ABOVE the anchor while this lazy, only-when-needed IPC is in
+            // flight (this is the await window `internalizeRefTokens` opens).
+            store.setState({
+              blocks: [makeBlock({ id: 'REMOTE', parent_id: 'PAGE_1', position: 0 }), anchor],
+            })
+            return []
+          }
+          if (cmd === 'list_all_tags_in_space') return []
+          if (cmd === 'create_page_in_space') return '01HZ0CREATEDPAGE0000000000'
+          if (cmd === 'create_blocks_batch') {
+            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+              content: string
+              parentId: string | null
+              position: number
+            }>
+            batches.push(specs)
+            return specs.map((s) => ({
+              id: `NEW${createdBlocks++}`,
+              block_type: 'content',
+              content: s.content,
+              parent_id: s.parentId,
+              position: null,
+              deleted_at: null,
+            }))
+          }
+          if (cmd === 'load_page_subtree') return subtreeResp(store.getState().blocks)
+          return []
+        })
+
+        await store.getState().pasteBlocks('A', 'link [[Fresh Page]]')
+
+        expect(batches).toHaveLength(1)
+        const specs = batches[0] as Array<{ position: number }>
+        // Pre-fix this would be 2 (anchor's stale pre-await slot-0 snapshot
+        // + 2). The live sibling slot after the concurrent insert is 1
+        // (REMOTE, then A) → wire position 3.
+        expect(specs[0]?.position).toBe(3)
+      })
+
+      // #3323 — the fix also re-derives `parentId` from the LIVE anchor, not
+      // just the sibling slot. `siblingSlot` filters candidates by the
+      // passed block's OWN `parent_id`/`depth`, so if the anchor itself
+      // moved to a different parent during the internalization await, using
+      // the stale pre-await `parentId` together with the live slot would be
+      // internally inconsistent (a slot computed among the NEW parent's
+      // children, applied under the OLD parent). Pasting into the anchor's
+      // live parent — the correct call, since the anchor id is the source
+      // of truth for "paste after this sibling" — requires both to come
+      // from the same live read.
+      it('#3323 — recomputes parentId from the LIVE anchor when it moved parents during the await', async () => {
+        const anchor = makeBlock({ id: 'A', parent_id: 'PAGE_1', position: 0, depth: 0 })
+        store.setState({ blocks: [anchor] })
+
+        const batches: unknown[][] = []
+        let createdBlocks = 0
+        mockedInvoke.mockImplementation(async (cmd: string, args?: unknown) => {
+          if (cmd === 'list_all_pages_in_space') {
+            // Simulate a concurrent write re-parenting the anchor itself
+            // (e.g. an indent/move from another device) while the lazy
+            // page-list fetch is in flight.
+            const sibling = makeBlock({ id: 'SIB', parent_id: 'NEWPARENT', position: 0, depth: 1 })
+            const movedAnchor = { ...anchor, parent_id: 'NEWPARENT', depth: 1, position: 1 }
+            store.setState({ blocks: [sibling, movedAnchor] })
+            return []
+          }
+          if (cmd === 'list_all_tags_in_space') return []
+          if (cmd === 'create_page_in_space') return '01HZ0CREATEDPAGE0000000000'
+          if (cmd === 'create_blocks_batch') {
+            const specs = ((args as { specs?: unknown })?.specs ?? []) as Array<{
+              content: string
+              parentId: string | null
+              position: number
+            }>
+            batches.push(specs)
+            return specs.map((s) => ({
+              id: `NEW${createdBlocks++}`,
+              block_type: 'content',
+              content: s.content,
+              parent_id: s.parentId,
+              position: null,
+              deleted_at: null,
+            }))
+          }
+          if (cmd === 'load_page_subtree') return subtreeResp(store.getState().blocks)
+          return []
+        })
+
+        await store.getState().pasteBlocks('A', 'link [[Fresh Page]]')
+
+        expect(batches).toHaveLength(1)
+        const specs = batches[0] as Array<{ parentId: string | null; position: number }>
+        // Must land under the anchor's LIVE parent, not the stale 'PAGE_1'.
+        expect(specs[0]?.parentId).toBe('NEWPARENT')
+        // Slot computed among NEWPARENT's children: [SIB, A] → A is index 1
+        // → wire position 1 + 2 = 3.
+        expect(specs[0]?.position).toBe(3)
+      })
     })
   })
   describe('#2850 prefetch integration', () => {
