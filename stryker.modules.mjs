@@ -24,6 +24,23 @@
  * test file of its own (only exercised indirectly via `SearchDateFilterForm.tsx`
  * and the `register.ts` pipeline), so there is no way to scope it to a single
  * test file without pulling in a component suite.
+ *
+ * Entry shape:
+ *   <name>: {
+ *     src:   'path/to/module.ts',        // the ONE file Stryker mutates
+ *     tests: ['path/to/its.test.ts'],    // the ONLY tests that run
+ *     setup: true,                       // optional, #3350 — see below
+ *   }
+ *
+ * `setup: true` (#3350) makes `stryker.vitest.config.mjs` load
+ * `src/test-setup.ts` for that module. The #886 seed set did not need it
+ * (pure libs, no globals) and still does not — leaving it off is what keeps
+ * those modules cheap. But the modules worth widening to are tested through
+ * that file's global `@tauri-apps/api/core` mock and fail immediately
+ * without it (`mockedInvoke.mockResolvedValue is not a function`). Opt in
+ * per module, never globally: the flag roughly 4x's the per-mutant test-run
+ * cost, which is why the deferred list at the bottom of this file is as long
+ * as it is.
  */
 
 export const MODULES = {
@@ -83,6 +100,113 @@ export const MODULES = {
       'src/lib/__tests__/tree-utils.mutants-simulate.test.ts',
     ],
   },
+
+  // ───────────────────────────────────────────────────────────────────────
+  // #3350 — second enrolment wave.
+  //
+  // The set above is the #886 seed: search-query's pure parsing helpers plus
+  // four standalone libs. It measures assertion strength on ~1.8K mutants of
+  // a ~209K-line product, which is a narrow enough slice that "the lane is
+  // green" says almost nothing about the code where a defect would actually
+  // hurt. The modules below were chosen by RISK, not by convenience: each
+  // one either reorders/renumbers user data, parses untrusted input, or
+  // rewrites text — the shapes where a surviving mutant means a real hole,
+  // not a cosmetic one.
+  //
+  // Every candidate was measured before enrolment (mutant count from
+  // `stryker run --dryRunOnly`, wall-clock and survivor count from a real
+  // single-module run) rather than estimated. Modules deliberately NOT
+  // enrolled, and why, are listed under "Measured but deferred" below —
+  // that list is the honest half of this decision and should be read before
+  // anyone adds "just one more".
+  // ───────────────────────────────────────────────────────────────────────
+
+  'block-tree-ops': {
+    src: 'src/lib/block-tree-ops.ts',
+    tests: ['src/lib/__tests__/block-tree-ops.test.ts'],
+  },
+  'graph-neighborhood': {
+    src: 'src/lib/graph-neighborhood.ts',
+    tests: ['src/lib/__tests__/graph-neighborhood.test.ts'],
+  },
+  'history-utils': {
+    src: 'src/lib/history-utils.ts',
+    tests: ['src/lib/__tests__/history-utils.test.ts'],
+  },
+  'inline-property-parse': {
+    src: 'src/lib/inline-property-parse.ts',
+    tests: ['src/lib/__tests__/inline-property-parse.test.ts'],
+  },
+  // Text search over block content: an off-by-one or a dropped anchor here
+  // silently returns the wrong range, and the in-page-find replace path acts
+  // on that range.
+  'in-page-find-matcher': {
+    src: 'src/lib/in-page-find/matcher.ts',
+    tests: ['src/lib/in-page-find/__tests__/matcher.test.ts'],
+  },
+  'query-utils': {
+    src: 'src/lib/query-utils.ts',
+    tests: ['src/lib/__tests__/query-utils.test.ts'],
+  },
+  'tag-expr': {
+    src: 'src/lib/tagExpr.ts',
+    tests: ['src/lib/__tests__/tagExpr.test.ts'],
+  },
+  // Importer: parses a foreign vault into blocks. Untrusted input, and the
+  // result is written to the user's database.
+  'vault-import': {
+    src: 'src/lib/vault-import.ts',
+    tests: ['src/lib/vault-import.test.ts'],
+  },
+  // Exporter: the inverse. A survivor here is a lossy backup.
+  'export-graph': {
+    setup: true,
+    src: 'src/lib/export-graph.ts',
+    tests: ['src/lib/__tests__/export-graph.test.ts'],
+  },
+  // The single highest-value target in this wave, and the reason `setup`
+  // exists: `reconcileBatchMove` renumbers siblings after a batch move, and
+  // the defect class it guards against is silent ORDER SCRAMBLING of the
+  // user's outline — invisible until someone notices their blocks moved.
+  'page-blocks-move': {
+    setup: true,
+    src: 'src/stores/page-blocks-move.ts',
+    tests: [
+      'src/stores/__tests__/page-blocks.reorder.test.ts',
+      'src/stores/__tests__/page-blocks.move-reparent.test.ts',
+    ],
+  },
 }
+
+/**
+ * Measured but deferred (#3350) — do not re-litigate these without numbers.
+ *
+ * All figures below are single-module `npx stryker run` measurements on one
+ * developer machine; the scheduled runner is roughly 1.5–1.8x slower, so
+ * treat them as ratios against the pre-#3350 set (1799 mutants, 229s on the
+ * same machine), not as absolutes.
+ *
+ * - `agenda-filters` (426 mutants, 145s, 40 survivors) and `template-utils`
+ *   (317 mutants, 107s, 70 survivors). Together they cost more wall-clock
+ *   than the ENTIRE pre-#3350 lane and return the worst signal-per-second
+ *   ratio measured. Both are `setup: true` shapes whose per-mutant test run
+ *   is dominated by `src/test-setup.ts`.
+ *
+ * - `jex-import` (514 mutants, 150 survivors) and `enex-import` (459
+ *   mutants, 93 survivors). These are the strongest *signal* of anything
+ *   measured — a 71% covered score on `jex-import` is exactly the
+ *   "line-covering, not invariant-pinning" finding #3350 is about — but
+ *   enrolling both would add 243 survivors in a single week on top of this
+ *   wave's ~222. `scripts/file-mutation-survivors.mjs` clamps the tracking
+ *   issue body at MAX_BODY_CHARS (60_000) and THROWS when the
+ *   machine-readable state block alone will not fit; at ~95 characters per
+ *   survivor line that ceiling is ~630 survivors, and the throw wedges the
+ *   weekly filer job red with no self-healing path. Enrol these once this
+ *   wave has been triaged down, not before.
+ *
+ * - `jaro-winkler` (100 mutants, 32 survivors, 16s). Cheap, but it ranks
+ *   fuzzy-search suggestions; a survivor means "results ordered slightly
+ *   differently", which is not the defect class this lane is for.
+ */
 
 export const MODULE_NAMES = Object.keys(MODULES)

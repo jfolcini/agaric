@@ -1,0 +1,185 @@
+name: Mutation (diff-scoped, informational)
+
+# #3350 — mutation testing where it is cheap to act on it.
+#
+# ─── Why a per-PR lane at all ───────────────────────────────────────────────
+#
+# The `mutants-frontend` lane in `scheduled-deep-checks.yml` runs weekly, over
+# a batch of unrelated commits, hours after the fact. A survivor it reports
+# cannot be attributed to a change and nobody is in context to act on it. This
+# lane mutates ONLY the modules the pull request touches — typically one, often
+# none — and reports on the PR itself, while the author is still holding the
+# code in their head. Same information, delivered when it is cheap.
+#
+# ─── This lane must never gate a merge ──────────────────────────────────────
+#
+# Explicitly rejected by the maintainer, and the reasoning is recorded in
+# #3350: equivalent mutants are undecidable in general and can never be killed
+# (#3248 is 21 of them today), so a mutation gate carries permanent
+# unactionable red and becomes a gate people learn to bypass. Concretely, here:
+#
+#   * the workflow name is NOT in any required-check list (see
+#     `.github/workflows/branch-protection-assert.yml`), and must not be added;
+#   * `stryker.config.mjs` sets no `thresholds.break`, so a low score cannot
+#     make Stryker exit non-zero in the first place;
+#   * the run step is `|| true` anyway;
+#   * the comment step is `continue-on-error`, because a fork PR's GITHUB_TOKEN
+#     is read-only and failing to comment must not colour the run.
+#
+# The step summary is written unconditionally and is the durable copy: if the
+# comment cannot be posted, the information still exists on the run.
+
+on:
+  pull_request:
+    branches: [main]
+    # Only the trees a mutation module can live in, plus the config that
+    # decides which modules exist. Everything else can never select a module,
+    # so there is nothing to run.
+    paths:
+      - 'src/lib/**'
+      - 'src/stores/**'
+      - 'stryker.modules.mjs'
+      - 'stryker.config.mjs'
+      - 'stryker.vitest.config.mjs'
+      - 'scripts/run-mutation.mjs'
+      - 'scripts/select-mutation-modules.mjs'
+      - '.github/workflows/mutation-pr.yml'
+
+concurrency:
+  group: mutation-pr-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  diff-scoped-mutation:
+    runs-on: ubuntu-24.04
+    # A hard ceiling on the "informational lane eats the runner pool" failure
+    # mode. `scripts/select-mutation-modules.mjs` already caps the selection at
+    # 4 modules, and the slowest enrolled module measured ~66s locally, so a
+    # worst case of ~4 capped modules lands well inside this. If this timeout
+    # ever fires, lower `--max`, do not raise this.
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      # Posting the informational comment. Read-only on fork PRs, which is why
+      # the comment step is `continue-on-error`.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Needed to diff against the base branch. `pull_request` checks out
+          # the merge commit with depth 1 by default, which has no merge base
+          # to compare against.
+          fetch-depth: 0
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Select mutation modules touched by this PR
+        id: select
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          # `fetch-depth: 0` above means the base commit is normally already
+          # present; fall back to fetching the base branch if it is not, rather
+          # than diffing against nothing and selecting nothing (a silent "this
+          # PR touches no module" is indistinguishable from the truthful one).
+          base="$BASE_SHA"
+          if ! git cat-file -e "${base}^{commit}" 2>/dev/null; then
+            git fetch --no-tags origin "$BASE_REF"
+            base="$(git rev-parse "origin/${BASE_REF}")"
+          fi
+          # Three-dot diff: what this branch changed relative to the merge
+          # base, NOT relative to whatever has since landed on the base branch.
+          # A two-dot diff would attribute other people's merges to this PR and
+          # select modules the author never touched.
+          git diff --name-only "${base}...HEAD" > changed.txt
+          echo "--- changed files ---"
+          cat changed.txt
+          echo "--- selection ---"
+          node scripts/select-mutation-modules.mjs --changed-from changed.txt
+
+      - name: Install npm dependencies
+        if: steps.select.outputs.count != '0'
+        run: npm ci
+
+      - name: Run Stryker on the selected modules
+        if: steps.select.outputs.count != '0'
+        env:
+          MODULES: ${{ steps.select.outputs.modules }}
+        # Never gate. A non-zero exit here would be an actual Stryker crash
+        # rather than a low mutation score (no `thresholds.break` is
+        # configured), and even that must not fail a PR on an informational
+        # lane — the weekly lane's liveness guard is where a broken Stryker is
+        # supposed to become visible.
+        run: |
+          set -uo pipefail
+          # shellcheck disable=SC2086 # module names are a space-separated argv list by design
+          node scripts/run-mutation.mjs $MODULES || true
+
+      - name: Render report
+        if: always()
+        env:
+          COUNT: ${{ steps.select.outputs.count }}
+        run: |
+          set -euo pipefail
+          {
+            echo "## Mutation testing — diff-scoped (#3350)"
+            echo
+            echo "_Informational. This lane never gates a merge: surviving mutants are"
+            echo "triage signal, some are provably equivalent and can never be killed,"
+            echo "and the full sweep still runs weekly in \`scheduled-deep-checks.yml\`._"
+            echo
+            node scripts/select-mutation-modules.mjs --changed-from changed.txt --markdown
+            echo
+          } > report.md
+          if [ "$COUNT" != "0" ]; then
+            node scripts/render-mutation-summary.mjs \
+              --reports-dir reports/mutation \
+              --title '### Results' >> report.md
+          fi
+          cat report.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Comment on the PR
+        # Best-effort by design. A fork PR's GITHUB_TOKEN is read-only, so this
+        # will fail there; the step summary written above is the durable copy
+        # and carries the same content. Failing the run over a comment on an
+        # informational lane would be exactly the "permanent unactionable red"
+        # #3350 argues against.
+        if: always() && steps.select.outputs.count != '0'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # A sticky comment: find the one this lane previously left on this PR
+          # (matched on the marker below, which is invisible in rendered
+          # Markdown) and edit it, so a PR pushed ten times carries one comment
+          # rather than ten.
+          marker='<!-- mutation-pr-report -->'
+          printf '%s\n' "$marker" >> report.md
+          # Match on the marker AND on this lane's own authorship. The marker
+          # alone is not enough: it is plain text in the comment body, so a
+          # human who quotes this lane's comment in a review reply — or who
+          # pastes the marker deliberately — would own a comment that this step
+          # then PATCHes on every push. Filtering to the bot keeps the sticky
+          # comment stuck to the bot's own comment.
+          existing=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments?per_page=100" \
+            --jq "[.[] | select(.user.login == \"github-actions[bot]\") | select(.body | contains(\"$marker\"))] | .[-1].id // empty" | tail -1)
+          if [ -n "$existing" ]; then
+            gh api -X PATCH "repos/$REPO/issues/comments/$existing" -F body=@report.md >/dev/null
+            echo "updated existing comment $existing"
+          else
+            gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -F body=@report.md >/dev/null
+            echo "posted a new comment"
+          fi
