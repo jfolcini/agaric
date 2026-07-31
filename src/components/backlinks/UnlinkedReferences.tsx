@@ -60,6 +60,37 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
+/**
+ * Build a case-insensitive, Unicode-aware "whole word/run" matcher for `term`.
+ *
+ * #3313 — the unanchored `new RegExp(escapeRegExp(term), 'i')` this replaces
+ * matched ANY substring occurrence, so a page titled `Note` corrupted
+ * `Notebook shopping list` into `[[pageId]]book shopping list`. The
+ * lookarounds require a non-letter/non-digit/non-underscore/non-combining-mark
+ * (or string boundary) on each side, so `term` must stand alone —
+ * punctuation-adjacent matches (`Note.`, `(Note)`, `Note's`) still work since
+ * `.`, `(`, `)`, `'` are not in `\p{L}\p{N}\p{M}_`.
+ *
+ * `\p{M}` (combining marks) is included in the boundary class alongside
+ * `\p{L}\p{N}_` — without it, a term like `cafe` would over-match inside
+ * NFD-decomposed content such as `caf` + `e` + U+0301 (visually "café"),
+ * because the trailing combining acute accent is not itself a letter/digit,
+ * so a naive lookahead would treat the accented cluster's base letter as a
+ * legitimate right boundary and splice mid-grapheme.
+ *
+ * Deliberate consequence: script-based word boundaries do not exist for
+ * CJK, so a CJK title that is a substring of a longer CJK run will no
+ * longer match here — the caller falls through to the existing
+ * `unlinkedRefs.linkFailed` toast instead of splicing. That is correct: a
+ * visible no-op beats silent corruption.
+ */
+function buildBoundaryRegex(term: string): RegExp {
+  return new RegExp(
+    `(?<![\\p{L}\\p{N}\\p{M}_])${escapeRegExp(term)}(?![\\p{L}\\p{N}\\p{M}_])`,
+    'iu',
+  )
+}
+
 export function UnlinkedReferences({
   pageId,
   pageTitle,
@@ -199,7 +230,7 @@ export function UnlinkedReferences({
       let newContent = content
       let replaced = false
       for (const term of candidates) {
-        const regex = new RegExp(escapeRegExp(term), 'i')
+        const regex = buildBoundaryRegex(term)
         if (regex.test(content)) {
           newContent = content.replace(regex, `[[${pageId}]]`)
           replaced = true
@@ -207,12 +238,17 @@ export function UnlinkedReferences({
         }
       }
       if (!replaced) {
-        // Reachable when the backend FTS5 match succeeds on a token
-        // the regex literal-matcher can't see (e.g. trigram-tokenized
-        // CJK aliases, or aliases added between the search and the
-        // click). Reuse the existing toast so the user sees something
-        // other than a silent removal — keeping the failure mode
-        // Visible was the whole point of.
+        // Reachable when the backend FTS5 match succeeds on a token the
+        // regex literal-matcher can't see (e.g. trigram-tokenized CJK
+        // aliases, or aliases added between the search and the click) —
+        // OR (#3313) when `term` only occurs as a substring of a larger
+        // word/run (no `\p{L}\p{N}_` boundary on both sides), which is
+        // exactly the corrupting-splice case `buildBoundaryRegex` now
+        // refuses to rewrite. CJK titles have no script-based word
+        // boundary, so a CJK substring match lands here too — that is
+        // intentional; do not special-case it. Reuse the existing toast
+        // so the user sees something other than a silent removal —
+        // keeping the failure mode visible was the whole point of it.
         logger.warn('UnlinkedReferences', 'No title/alias match found for Link it', {
           blockId,
           pageId,

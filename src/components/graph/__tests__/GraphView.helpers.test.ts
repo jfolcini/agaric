@@ -9,6 +9,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { fetchGraphData } from '@/components/graph/GraphView.helpers'
+import { applyGraphFilters } from '@/lib/graph-filters'
 
 const mockedInvoke = vi.mocked(invoke)
 
@@ -272,5 +273,91 @@ describe('fetchGraphData', () => {
 
     expect(result.edgesTotal).toBe(1)
     expect(result.edgesTruncated).toBe(false)
+  })
+
+  // #3314 finding 3 — `countBacklinks` only sees the (possibly-capped)
+  // `edges` array. Above the cap the backend drops the WEAKEST edges
+  // first, so a page with one inbound link can be cut entirely and get
+  // miscounted as a true zero rather than "unknown". The fix: when the
+  // fetch was truncated, every node's `backlink_count` is `undefined`
+  // instead of computed, so the "Has backlinks" filter dimension is
+  // disabled (pass-through) rather than lying.
+  it('leaves backlink_count undefined on every node when the edge fetch is truncated', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([
+          { id: 'page-1', content: 'Page One' },
+          { id: 'page-2', content: 'Page Two' },
+          { id: 'page-3', content: 'Page Three' },
+        ])
+      if (cmd === 'list_page_links')
+        return Promise.resolve(
+          linksOf(
+            [
+              { source_id: 'page-1', target_id: 'page-2', ref_count: 5 },
+              { source_id: 'page-3', target_id: 'page-2', ref_count: 2 },
+            ],
+            { total: 20001, truncated: true },
+          ),
+        )
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    const result = await fetchGraphData([], SPACE_ID)
+
+    // Every node — including page-2, which DOES have counted inbound
+    // edges in the (capped) response above — gets `undefined` rather
+    // than a possibly-wrong number: above the cap, the edges that
+    // survived are themselves not a trustworthy total.
+    for (const node of result.nodes) {
+      expect(node.backlink_count).toBeUndefined()
+    }
+  })
+
+  it('computes backlink_count as before when the edge fetch is not truncated', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([
+          { id: 'page-1', content: 'Page One' },
+          { id: 'page-2', content: 'Page Two' },
+        ])
+      if (cmd === 'list_page_links')
+        return Promise.resolve(
+          linksOf([{ source_id: 'page-1', target_id: 'page-2', ref_count: 1 }]),
+        )
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    const result = await fetchGraphData([], SPACE_ID)
+    const byId = new Map(result.nodes.map((n) => [n.id, n]))
+
+    expect(byId.get('page-1')?.backlink_count).toBe(0)
+    expect(byId.get('page-2')?.backlink_count).toBe(1)
+  })
+
+  it('an undefined backlink_count disables the "Has backlinks" filter dimension (pass-through)', async () => {
+    mockedInvoke.mockImplementation((cmd: string) => {
+      if (cmd === 'list_all_pages_in_space')
+        return Promise.resolve([{ id: 'page-1', content: 'Orphan-looking Page' }])
+      if (cmd === 'list_page_links')
+        return Promise.resolve(linksOf([], { total: 20001, truncated: true }))
+      if (cmd === 'list_template_page_ids_in_space') return Promise.resolve([])
+      return Promise.resolve(null)
+    })
+
+    const result = await fetchGraphData([], SPACE_ID)
+    expect(result.nodes[0]?.backlink_count).toBeUndefined()
+
+    // Neither `{ hasBacklinks: true }` nor `{ hasBacklinks: false }`
+    // should exclude the node once the dimension is unavailable — both
+    // must pass it through rather than asserting a wrong answer (a real
+    // page whose single inbound edge got capped away must not silently
+    // become an "orphan").
+    expect(applyGraphFilters(result.nodes, [{ type: 'hasBacklinks', value: true }])).toHaveLength(1)
+    expect(applyGraphFilters(result.nodes, [{ type: 'hasBacklinks', value: false }])).toHaveLength(
+      1,
+    )
   })
 })

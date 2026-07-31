@@ -76,6 +76,12 @@ export const references: Record<string, string> = {
   // #2298 count-then-cap — the backend edge cap fired; the graph renders
   // a partial edge set and says so instead of truncating silently.
   'graph.filter.edgesTruncated': 'Showing {{shown}} of {{total}} links — large graph truncated',
+  // #3314 finding 3 — sibling of `edgesTruncated`: when the edge cap fires
+  // the backend drops the weakest edges first, so per-node backlink counts
+  // (and therefore the "Has backlinks" filter dimension) are unreliable
+  // too, not just the raw edge count. Rendered alongside `edgesTruncated`.
+  'graph.filter.backlinksUnavailableTruncated':
+    'Backlink counts are unavailable while the graph is truncated.',
   'graph.filter.tag': 'Tag',
   'graph.filter.tagPlural': 'Tags',
   'graph.filter.tagNoTags': 'No tags available',

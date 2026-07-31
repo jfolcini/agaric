@@ -19,7 +19,18 @@ export interface GraphNode extends SimulationNodeDatum {
   due_date: string | null
   scheduled_date: string | null
   is_template: boolean
-  backlink_count: number
+  /**
+   * Inbound-link count for this node, computed from the (possibly
+   * server-capped) edge list. `undefined` — rather than `0` — when the
+   * fetch's edge list was truncated (#3314 finding 3): above the cap the
+   * backend drops the WEAKEST edges first, so a page with exactly one
+   * inbound link can be cut entirely and would otherwise be miscounted
+   * as zero. `undefined` here makes `nodeMatchesFilter`'s `hasBacklinks`
+   * case (`@/lib/graph-filters`) treat the dimension as unavailable
+   * (pass-through) instead of silently lying about orphan/non-orphan
+   * status.
+   */
+  backlink_count: number | undefined
 }
 
 export interface GraphEdge extends SimulationLinkDatum<GraphNode> {

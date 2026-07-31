@@ -629,7 +629,12 @@ export function GraphFilterBar({
           aria-atomic="true"
           data-testid="graph-edges-truncated"
         >
-          {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}
+          {t('graph.filter.edgesTruncated', { shown: edgesShown, total: edgesTotal })}{' '}
+          {/* #3314 finding 3 — the same edge cap that truncates the edge
+              list also makes per-node backlink counts (and the "Has
+              backlinks" filter) unreliable; say so in the same notice
+              rather than letting the dimension silently misbehave. */}
+          {t('graph.filter.backlinksUnavailableTruncated')}
         </span>
       )}
     </fieldset>

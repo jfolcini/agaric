@@ -393,6 +393,26 @@ describe('GraphFilterBar', () => {
     )
   })
 
+  // #3314 finding 3 — the same edge cap that truncates the edge list also
+  // makes per-node backlink counts (and the "Has backlinks" filter)
+  // unreliable; the truncation notice must say so.
+  it('extends the edge-truncation notice to say backlink counts are unavailable', () => {
+    render(
+      <GraphFilterBar
+        filters={[]}
+        onFiltersChange={onFiltersChange}
+        allTags={sampleTags}
+        edgesShown={500}
+        edgesTotal={1200}
+        edgesTruncated
+      />,
+    )
+
+    expect(screen.getByTestId('graph-edges-truncated')).toHaveTextContent(
+      t('graph.filter.backlinksUnavailableTruncated'),
+    )
+  })
+
   it('hides the edge-truncation notice when edgesTruncated is false', () => {
     render(
       <GraphFilterBar
