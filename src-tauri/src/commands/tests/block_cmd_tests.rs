@@ -1427,49 +1427,246 @@ async fn purge_block_physically_removes_from_db() {
     );
 }
 
-// #85 F2 — single-block purge must unlink attachment FILES, not just rows.
-#[test]
-fn remove_purged_attachment_files_unlinks_safe_paths_only() {
-    use crate::commands::blocks::crud::remove_purged_attachment_files;
-    let dir = tempfile::tempdir().unwrap();
-    let root = dir.path();
-    std::fs::create_dir_all(root.join("attachments")).unwrap();
-    std::fs::write(root.join("attachments/a.png"), b"x").unwrap();
-    std::fs::write(root.join("attachments/b.pdf"), b"y").unwrap();
-    // A file the parent-escaping path WOULD reach — proves we never touch it.
-    let outside = root.join("secret.txt");
-    std::fs::write(&outside, b"keep").unwrap();
+// ======================================================================
+// #3259 — purge must never unlink bytes a SURVIVING row still references
+//
+// Since the #1993 content-hash dedup, N `attachments` rows legitimately
+// share ONE canonical file: `add_attachment_inner` points a new row at the
+// existing `attachment_blobs.on_disk_path` when the hash matches, and
+// `backfill_attachment_blobs` repoints every duplicate-hash row onto one
+// canonical path at boot. All three purge paths used to capture
+// `SELECT fs_path FROM attachments WHERE block_id IN (<member>)` and
+// `remove_file` each captured path post-commit with only a path-SHAPE check,
+// so purging one block deleted bytes other blocks' rows still pointed at.
+//
+// Byte reclamation now belongs solely to `cleanup_orphaned_attachments`,
+// which unlinks a file only when NO row references it — the same rule
+// `delete_attachment_inner` and the dedup branch of `add_attachment_inner`
+// already follow. These tests pin that on every purge path.
+// ======================================================================
 
-    remove_purged_attachment_files(
-        root,
-        &[
-            "attachments/a.png".to_string(),
-            "attachments/b.pdf".to_string(),
-            "../secret.txt".to_string(), // parent-escape → skipped
-            "/etc/agaric-should-not-touch".to_string(), // absolute → skipped, no panic
-            "attachments/already-gone.png".to_string(), // missing → no-op, no panic
-        ],
+/// The bytes shared by both attachment rows in [`shared_blob_fixture`].
+const SHARED_BLOB_BYTES: &[u8] = b"shared-blob-bytes";
+
+/// Two blocks over ONE deduped blob, with the doomed one soft-deleted and
+/// ready to purge.
+struct SharedBlobFixture {
+    pool: SqlitePool,
+    /// Owns the app-data dir; must outlive the test body.
+    dir: tempfile::TempDir,
+    mat: Materializer,
+    /// The canonical blob file BOTH rows' `fs_path` points at (app-relative).
+    canonical_rel: String,
+    /// The redundant duplicate written for the second add. No row references
+    /// it, so the GC — and only the GC — may reclaim it; its disappearance is
+    /// this test's signal that a GC pass ran to completion.
+    duplicate_rel: String,
+    /// The surviving block's attachment id.
+    keep_attachment_id: BlockId,
+}
+
+/// Attach the SAME bytes to `KEEPBLK` and `DOOMBLK` through two distinct
+/// on-disk paths (exactly what the frontend and `markdown.rs` import do),
+/// then soft-delete `DOOMBLK` so any purge path can take it.
+async fn shared_blob_fixture() -> SharedBlobFixture {
+    let (pool, dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+    let app_data_dir = dir.path().to_path_buf();
+    // The GC pass needs the app-data dir to locate `attachments/`.
+    mat.set_app_data_dir(app_data_dir.clone());
+
+    insert_block(&pool, "KEEPBLK", "content", "survivor", None, Some(1)).await;
+    insert_block(&pool, "DOOMBLK", "content", "doomed", None, Some(2)).await;
+
+    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
+    let canonical_rel = "attachments/KEEPBLK.png".to_string();
+    let duplicate_rel = "attachments/DOOMBLK.png".to_string();
+    std::fs::write(app_data_dir.join(&canonical_rel), SHARED_BLOB_BYTES).unwrap();
+    std::fs::write(app_data_dir.join(&duplicate_rel), SHARED_BLOB_BYTES).unwrap();
+    let size = i64::try_from(SHARED_BLOB_BYTES.len()).unwrap();
+
+    let keep = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        &app_data_dir,
+        "KEEPBLK".into(),
+        "banner.png".into(),
+        "image/png".into(),
+        size,
+        canonical_rel.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+    let doomed = add_attachment_inner(
+        &pool,
+        DEV,
+        &mat,
+        &app_data_dir,
+        "DOOMBLK".into(),
+        "banner.png".into(),
+        "image/png".into(),
+        size,
+        duplicate_rel.clone(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    // Precondition, not decoration: if the second add did NOT dedup onto the
+    // first add's file there is no sharing and the regression is unprovable.
+    assert_eq!(
+        keep.fs_path, canonical_rel,
+        "first add owns the canonical blob path"
+    );
+    assert_eq!(
+        doomed.fs_path, canonical_rel,
+        "#1993 dedup precondition: the second add must point at the FIRST \
+         add's canonical file, otherwise this fixture proves nothing"
     );
 
+    soft_delete::cascade_soft_delete(&pool, &mat, DEV, "DOOMBLK")
+        .await
+        .unwrap();
+
+    SharedBlobFixture {
+        pool,
+        dir,
+        mat,
+        canonical_rel,
+        duplicate_rel,
+        keep_attachment_id: keep.id,
+    }
+}
+
+/// Poll `cond` for up to ~4 s. Returns whether it ever held.
+async fn wait_until(mut cond: impl FnMut() -> bool) -> bool {
+    for _ in 0..200 {
+        if cond() {
+            return true;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    false
+}
+
+/// Assert the post-purge invariants shared by all three purge paths.
+///
+/// Waits for the enqueued `CleanupOrphanedAttachments` pass to reclaim the
+/// unreferenced duplicate first — that is the signal a full GC pass ran, so
+/// the "canonical file still there" assertion below is a real statement about
+/// the settled state rather than a race the purge simply hadn't lost yet.
+///
+/// The wait is ASSERTED, not merely awaited: if the purge stopped enqueuing
+/// the GC pass, the poll would simply time out and every remaining assertion
+/// here would pass vacuously (an un-run GC trivially fails to delete the
+/// canonical file). Failing on the timeout keeps this helper a statement about
+/// a settled post-GC state and doubles as the per-path "purge still reclaims
+/// bytes" check.
+async fn assert_shared_blob_survived(f: &SharedBlobFixture, purge_path: &str) {
+    let app_data_dir = f.dir.path();
+    let duplicate = app_data_dir.join(&f.duplicate_rel);
     assert!(
-        !root.join("attachments/a.png").exists(),
-        "safe relative path unlinked"
+        wait_until(|| !duplicate.exists()).await,
+        "{purge_path}: the purge must enqueue a `CleanupOrphanedAttachments` \
+         pass that reclaims the unreferenced duplicate — it never ran, so the \
+         assertions below would be vacuous (and purge would leak bytes)"
     );
+
+    let canonical = app_data_dir.join(&f.canonical_rel);
     assert!(
-        !root.join("attachments/b.pdf").exists(),
-        "safe relative path unlinked"
+        canonical.exists(),
+        "{purge_path}: purging DOOMBLK unlinked the canonical blob file that \
+         KEEPBLK's surviving attachment row still points at — #3259 data loss"
     );
-    assert!(
-        outside.exists(),
-        "parent-escaping path must be skipped, not followed"
+
+    let bytes = read_attachment_inner(&f.pool, app_data_dir, f.keep_attachment_id.clone())
+        .await
+        .unwrap_or_else(|e| {
+            panic!(
+                "{purge_path}: the surviving block's attachment must still be \
+                 readable after the purge, got {e:?}"
+            )
+        });
+    assert_eq!(
+        bytes, SHARED_BLOB_BYTES,
+        "{purge_path}: surviving attachment must still yield the original bytes"
+    );
+
+    // The doomed block's row is gone; the survivor's row is untouched.
+    let doomed_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE block_id = 'DOOMBLK'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        doomed_rows, 0,
+        "{purge_path}: the purged block's attachment ROW must be deleted"
+    );
+    let keep_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE block_id = 'KEEPBLK'")
+            .fetch_one(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        keep_rows, 1,
+        "{purge_path}: the surviving block's attachment row must be untouched"
+    );
+
+    // `attachment_blobs` stays consistent: the shared hash still maps to the
+    // canonical file, and that file is still on disk (so a re-add of the same
+    // bytes dedups onto a path that actually exists).
+    let blob_paths: Vec<String> =
+        sqlx::query_scalar("SELECT on_disk_path FROM attachment_blobs ORDER BY on_disk_path")
+            .fetch_all(&f.pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        blob_paths,
+        vec![f.canonical_rel.clone()],
+        "{purge_path}: the blob row must survive and still map the shared \
+         hash to the canonical (still-present) file"
     );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn purge_block_unlinks_attachment_files() {
+async fn purge_block_keeps_blob_shared_with_a_surviving_block() {
+    let f = shared_blob_fixture().await;
+    purge_block_inner(&f.pool, DEV, &f.mat, "DOOMBLK".into())
+        .await
+        .unwrap();
+    assert_shared_blob_survived(&f, "purge_block_inner").await;
+    f.mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_all_deleted_keeps_blob_shared_with_a_surviving_block() {
+    let f = shared_blob_fixture().await;
+    // Only DOOMBLK is soft-deleted, so "empty trash" takes exactly it.
+    purge_all_deleted_inner(&f.pool, DEV, &f.mat).await.unwrap();
+    assert_shared_blob_survived(&f, "purge_all_deleted_inner").await;
+    f.mat.shutdown();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_blocks_by_ids_keeps_blob_shared_with_a_surviving_block() {
+    let f = shared_blob_fixture().await;
+    purge_blocks_by_ids_inner(&f.pool, DEV, &f.mat, vec!["DOOMBLK".into()])
+        .await
+        .unwrap();
+    assert_shared_blob_survived(&f, "purge_blocks_by_ids_inner").await;
+    f.mat.shutdown();
+}
+
+/// The other half of the contract: dropping the eager unlink must not turn
+/// purge into a byte LEAK. When the purged row held the last reference, the
+/// `CleanupOrphanedAttachments` pass the purge enqueues reclaims both the
+/// file and the now-dangling `attachment_blobs` row.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn purge_block_reclaims_genuinely_unreferenced_attachment_bytes() {
     let (pool, dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
-    // The unlink resolves fs_path against the materializer's app_data_dir.
     let app_data_dir = dir.path().to_path_buf();
     mat.set_app_data_dir(app_data_dir.clone());
 
@@ -1501,19 +1698,33 @@ async fn purge_block_unlinks_attachment_files() {
         .await
         .unwrap();
 
-    // The post-commit unlink is fire-and-forget on a blocking thread; poll.
+    // The GC pass is enqueued post-commit and runs on the background
+    // consumer; poll for its effect.
     let target = app_data_dir.join(file_rel);
-    let mut gone = false;
-    for _ in 0..100 {
-        if !target.exists() {
-            gone = true;
+    assert!(
+        wait_until(|| !target.exists()).await,
+        "purge must still reclaim bytes NOTHING references (via the \
+         refcount-aware GC pass it enqueues) — dropping the eager unlink \
+         must not leak files forever (#85 F2 / #3259)"
+    );
+
+    // The GC prunes blob rows AFTER its file walk, so poll rather than
+    // reading once the instant the file disappears.
+    let mut blob_rows: i64 = -1;
+    for _ in 0..200 {
+        blob_rows = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        if blob_rows == 0 {
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     }
-    assert!(
-        gone,
-        "single-block purge must unlink the attachment file from disk (#85 F2)"
+    assert_eq!(
+        blob_rows, 0,
+        "the GC's `on_disk_path NOT IN (SELECT fs_path FROM attachments)` \
+         prune must also drop the now-dangling blob row"
     );
 
     mat.shutdown();
