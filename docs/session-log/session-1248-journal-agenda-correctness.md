@@ -1,4 +1,4 @@
-## Session 1247 — Journal and agenda correctness (2026-08-04)
+## Session 1248 — Journal and agenda correctness (2026-08-04)
 
 | Metadata | Value |
 |----------|-------|
@@ -24,7 +24,7 @@ shortcut serialization in the shared ARIA helper.
 - `src/components/journal/__tests__/UnfinishedTasks.test.tsx` (+49/-3)
 - `src/lib/keyboard-config/storage.ts` (+47/-27)
 - `src/lib/__tests__/keyboard-config.test.ts` (+6/-0)
-- `docs/session-log/session-1247-journal-agenda-correctness.md` (new)
+- `docs/session-log/session-1248-journal-agenda-correctness.md` (new)
 
 **Verification:**
 - Focused Vitest run — 4 files passed, 337 tests passed.
@@ -38,4 +38,4 @@ recent past value to issue #3341's explicit `min(pastDates)` / past-most require
 UX review found that the existing ARIA helper emitted arrow glyphs instead of UI Events key
 names; the helper now emits `ArrowLeft`/`ArrowRight` and space-separated alternatives.
 
-**Commit plan:** single commit, pushed.
+**Commit plan:** two commits, pushed.
