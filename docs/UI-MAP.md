@@ -15,7 +15,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 | **TabBar** | Hoisted tab strip above the view. Hidden on mobile and when only one tab. | `TabBar.tsx` |
 | **PageHeader** | Sticky title bar for the page-editor view (title, breadcrumb, aliases, tags, properties, kebab menu). | `PageHeader.tsx` |
 | **ViewDispatcher** | Single source of truth for which view renders. Store-driven (no router). | `ViewDispatcher.tsx` |
-| **JournalPage** | The default view — daily / weekly / monthly / agenda modes of dated blocks. **Only eager view**; everything else is React.lazy. | `JournalPage.tsx` |
+| **JournalPage** | The default view — dated journal, continuous history stream, and task agenda. **Only eager view**; everything else is React.lazy. | `JournalPage.tsx` |
 | **PageEditor** | Single-page editor (title + BlockTree). Opened via link / nav, not in the sidebar. | `PageEditor.tsx` |
 | **BlockTree** | The editor render tree. Owns DnD + keyboard + multi-select + history wiring. | `BlockTree.tsx` |
 | **EditableBlock** | The block that currently hosts the **roving** TipTap editor. | `EditableBlock.tsx` |
@@ -23,8 +23,7 @@ Names below are how we refer to each surface in conversation. They mostly match 
 | **RichContentRenderer** | Read-only renderer dispatching markdown nodes to per-type mark / block components. | `RichContentRenderer/` |
 | **FormattingToolbar** | Always-visible per-block toolbar (links, structure, metadata, history, overflow popover). | `FormattingToolbar.tsx` + `FormattingToolbar/` |
 | **SelectionBubbleMenu** | Contextual mark toolbar (Bold / Italic / Code / Strike / Highlight + External Link) on non-empty selection. | `SelectionBubbleMenu.tsx` |
-| **SuggestionList** | Shared popup for every inline picker (`[[`, `@`, `((`, `/`, `::`). | `SuggestionList.tsx` |
-| **BlockLinkPicker** / **TagPicker** / **BlockRefPicker** / **SlashMenu** / **PropertyPicker** | The five inline pickers, all rendered through SuggestionList. | TipTap extensions under `src/editor/extensions/` |
+| **SuggestionList** | Shared popup for the TipTap inline picker extensions; the current trigger-to-picker catalog lives in [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers). | `SuggestionList.tsx` + `src/editor/extensions/` |
 | **BlockPropertyDrawer** | Slide-out sheet of typed property editors for a block. | `BlockPropertyDrawer.tsx` |
 | **PropertyRowEditor** | One typed property row inside the drawer. | `properties/PropertyRowEditor.tsx` + `properties/PropertyRowEditor/` |
 | **SortableBlockWrapper** | DnD wrapper around each block. Owns the offscreen-placeholder optimisation. | `SortableBlockWrapper.tsx` |
@@ -67,7 +66,7 @@ App
 
 | View | What the user sees | Sidebar item |
 | --- | --- | --- |
-| **Journal** | Eager-mounted; daily / weekly / monthly / agenda sub-modes share one date cursor. | Calendar |
+| **Journal** | Eager-mounted; dated modes use the cursor to scope content, while Stream and Agenda hide the previous/next stepper and date display. | Calendar |
 | **Search** | Debounced + cursor-paginated FTS; filter chips for pages and tags. `Ctrl+Shift+F` also focuses it (`Ctrl+F` is in-page find, not this view). | Search |
 | **Pages** | Virtualised list of all page blocks; multi-select + delete. | FileText |
 | **Tags** | Tag CRUD + colour picker + filtered task panel. | Tag |
@@ -97,15 +96,7 @@ Both toolbars use `onPointerDown + preventDefault()` so clicks never steal focus
 
 ### Inline pickers
 
-All five route through **SuggestionList**, registered as TipTap extensions:
-
-| Trigger | Picker            | Inserts                                       |
-| --- | --- | --- |
-| `[[`    | BlockLinkPicker   | `block_link` node (ULID)                      |
-| `@`     | TagPicker         | `tag_ref` node (ULID)                         |
-| `((`    | BlockRefPicker    | `block_ref` node (ULID)                       |
-| `/`     | SlashMenu         | varies by category                            |
-| `::`    | PropertyPicker    | `key::` text; parent wires `setProperty`      |
+`use-roving-editor.ts` registers the TipTap inline picker extensions, which route through **SuggestionList** via the shared `createPickerPlugin` helper. [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) owns the current trigger-to-picker mapping and insertion semantics; don't duplicate that catalog here.
 
 `@floating-ui/dom` positions them. Each opt-in carries `data-editor-portal=""` on its outermost element.
 
@@ -123,7 +114,7 @@ Composed from category sub-hooks under `src/components/block-tree/use-block-slas
 
 - **Sidebar** — header (logo + SpaceSwitcher), body (nav items), footer (action buttons). Open/closed state persists in a cookie; width in localStorage.
 - **PageHeader** owns the page title, alias section, tag row, property table, and a kebab menu. See `docs/UX.md` § App-specific features → Kebab menu for the canonical action list.
-- **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts` and are user-customisable in Settings → Keyboard. Picker-trigger characters (`/`, `@`, `[[`, `((`, `::`) are not rebindable.
+- **Keyboard shortcuts** live in `src/lib/keyboard-config/catalog.ts`; rebindable entries are user-customisable in Settings → Keyboard, while structural bindings and picker triggers are not. See [Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers) for the current catalogs.
 - **Search surfaces**: three distinct entry points (mirrors README § Search):
   - **In-page find toolbar** — `Ctrl+F`, with `F3` / `Shift+F3` to cycle matches (`findInPage` in `src/lib/keyboard-config/catalog.ts`). Browser-style find over the current page; state in `src/stores/useInPageFindStore.ts`, UI in `src/components/query/InPageFind.tsx`. Does **not** open the Search view.
   - **Search view** — `Ctrl+Shift+F` (`focusSearch`) or the sidebar Search button. Lands in `SearchPanel`, the cross-page FTS view.

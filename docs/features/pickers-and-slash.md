@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Pickers & Slash Menu
 
-Inline pickers let you reference other content or insert structure without leaving the keyboard. Each is triggered by typing a character (or pair) in the editor. The trigger characters are **not user-rebindable** (every other shortcut is).
+Inline pickers let you reference other content or insert structure without leaving the keyboard. Each is triggered by typing a character (or pair) in the editor. The trigger characters are **not user-rebindable**; [Keyboard](keyboard.md#whats-not-rebindable) documents the other structural bindings that are fixed.
 
 ## The pickers
 
