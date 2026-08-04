@@ -6,18 +6,21 @@
  *  - `onPointerDown` with no movement is treated as a click → toggle.
  *  - `onPointerDown` with horizontal drag past 2-px hysteresis sets
  *    isResizing=true and updates width.
- *  - Drag from collapsed state opens the sidebar.
+ *  - Incremental drags from a collapsed state survive below the icon threshold.
  *  - Dragging below SIDEBAR_WIDTH_ICON_PX collapses the sidebar.
  *  - Unmounting mid-drag detaches the document-level listeners (FE-H-15).
  *  - Ignores non-primary mouse buttons.
  */
 
 import { act, renderHook } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { useSidebarRailDrag } from '@/components/ui/sidebar/use-sidebar-rail-drag'
 
-function makePointerEvent(type: 'pointermove' | 'pointerup', clientX: number): PointerEvent {
+function makePointerEvent(
+  type: 'pointermove' | 'pointerup' | 'pointercancel',
+  clientX: number,
+): PointerEvent {
   const event = new Event(type, { bubbles: true }) as Event & { clientX: number }
   event.clientX = clientX
   return event as unknown as PointerEvent
@@ -44,6 +47,11 @@ function defaultOptions(overrides: Partial<Parameters<typeof useSidebarRailDrag>
 }
 
 describe('useSidebarRailDrag', () => {
+  afterEach(() => {
+    document.documentElement.style.cursor = ''
+    document.body.style.userSelect = ''
+  })
+
   it('onDoubleClick resets width to default and opens', () => {
     const opts = defaultOptions()
     const { result } = renderHook(() => useSidebarRailDrag(opts))
@@ -100,40 +108,82 @@ describe('useSidebarRailDrag', () => {
     expect(opts.toggleSidebar).not.toHaveBeenCalled()
   })
 
-  it('drag from collapsed state opens the sidebar', () => {
+  it('incrementally drags from collapsed through the icon threshold and opens', () => {
     const opts = defaultOptions({ open: false, sidebarWidth: 200 })
     const { result } = renderHook(() => useSidebarRailDrag(opts))
 
     act(() => {
       result.current.onPointerDown(makeReactPointerEvent(0))
     })
-    act(() => {
-      document.dispatchEvent(makePointerEvent('pointermove', 80)) // delta=80
-    })
+
+    for (const delta of [3, 10, 25]) {
+      act(() => {
+        document.dispatchEvent(makePointerEvent('pointermove', delta))
+      })
+
+      expect(document.documentElement.style.cursor).toBe('col-resize')
+      expect(document.body.style.userSelect).toBe('none')
+      expect(opts.setOpen).not.toHaveBeenCalledWith(false)
+    }
 
     expect(opts.setOpen).toHaveBeenCalledWith(true)
-    // start width was 0 (collapsed), so new width is 0 + 80 = 80.
-    expect(opts.setSidebarWidth).toHaveBeenCalledWith(80)
 
     act(() => {
-      document.dispatchEvent(makePointerEvent('pointerup', 80))
+      document.dispatchEvent(makePointerEvent('pointermove', 60))
+      document.dispatchEvent(makePointerEvent('pointermove', 120))
     })
+
+    // The collapsed drag starts at zero and continues after crossing 48px.
+    expect(opts.setSidebarWidth).toHaveBeenNthCalledWith(1, 3)
+    expect(opts.setSidebarWidth).toHaveBeenNthCalledWith(2, 10)
+    expect(opts.setSidebarWidth).toHaveBeenNthCalledWith(3, 25)
+    expect(opts.setSidebarWidth).toHaveBeenNthCalledWith(4, 60)
+    expect(opts.setSidebarWidth).toHaveBeenLastCalledWith(120)
+
+    act(() => {
+      document.dispatchEvent(makePointerEvent('pointerup', 120))
+    })
+
+    expect(opts.setOpen).not.toHaveBeenCalledWith(false)
+    expect(opts.setIsResizing).toHaveBeenLastCalledWith(false)
   })
 
-  it('dragging below SIDEBAR_WIDTH_ICON_PX collapses the sidebar', () => {
-    const opts = defaultOptions({ open: true, sidebarWidth: 100 })
+  it('recollapses after a collapsed drag crosses back below SIDEBAR_WIDTH_ICON_PX', () => {
+    const opts = defaultOptions({ open: false, sidebarWidth: 150 })
     const { result } = renderHook(() => useSidebarRailDrag(opts))
 
     act(() => {
-      result.current.onPointerDown(makeReactPointerEvent(100))
+      result.current.onPointerDown(makeReactPointerEvent(0))
     })
-    // Drag left so new width = 100 - 70 = 30 (< 48 icon px).
     act(() => {
-      document.dispatchEvent(makePointerEvent('pointermove', 30))
+      document.dispatchEvent(makePointerEvent('pointermove', 60))
+      document.dispatchEvent(makePointerEvent('pointermove', 25))
     })
 
     expect(opts.setIsResizing).toHaveBeenLastCalledWith(false)
     expect(opts.setOpen).toHaveBeenCalledWith(false)
+    expect(document.documentElement.style.cursor).toBe('')
+    expect(document.body.style.userSelect).toBe('')
+  })
+
+  it('pointercancel ends a drag without falling back to a click', () => {
+    const opts = defaultOptions()
+    const { result } = renderHook(() => useSidebarRailDrag(opts))
+
+    act(() => {
+      result.current.onPointerDown(makeReactPointerEvent(100))
+      document.dispatchEvent(makePointerEvent('pointermove', 120))
+      document.dispatchEvent(makePointerEvent('pointercancel', 120))
+    })
+
+    expect(opts.setIsResizing).toHaveBeenLastCalledWith(false)
+    expect(opts.toggleSidebar).not.toHaveBeenCalled()
+    expect(document.documentElement.style.cursor).toBe('')
+    expect(document.body.style.userSelect).toBe('')
+
+    document.dispatchEvent(makePointerEvent('pointermove', 200))
+    document.dispatchEvent(makePointerEvent('pointerup', 200))
+    expect(opts.setSidebarWidth).toHaveBeenCalledTimes(1)
   })
 
   it('ignores non-primary mouse buttons', () => {
@@ -153,15 +203,21 @@ describe('useSidebarRailDrag', () => {
     expect(opts.setIsResizing).not.toHaveBeenCalled()
   })
 
-  it('unmount mid-drag detaches document listeners (FE-H-15)', () => {
+  it('unmount mid-drag restores the prior global styles and detaches listeners (FE-H-15)', () => {
     const opts = defaultOptions()
     const { result, unmount } = renderHook(() => useSidebarRailDrag(opts))
+
+    document.documentElement.style.cursor = 'wait'
+    document.body.style.userSelect = 'text'
 
     act(() => {
       result.current.onPointerDown(makeReactPointerEvent(100))
     })
 
     unmount()
+
+    expect(document.documentElement.style.cursor).toBe('wait')
+    expect(document.body.style.userSelect).toBe('text')
 
     // After unmount, dispatching a move/up should not call any setters.
     document.dispatchEvent(makePointerEvent('pointermove', 200))
