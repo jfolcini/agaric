@@ -95,5 +95,13 @@ agaric-release.apk.idsig
 .serena/
 
 # Per-machine active cargo config (the staged `.example` is tracked;
-# activating it makes the build depend on host-installed mold)
+# activating it makes the build depend on host-installed mold).
+# NOTE: this must stay pinned to `config.toml` — `src-tauri/.cargo/mutants.toml`
+# is TRACKED and load-bearing (it is the only path cargo-mutants reads its
+# config from, #3386), as is `src-tauri/.cargo/audit.toml`.
 .cargo/config.toml
+
+# cargo-mutants output. `--in-place` writes these into the source tree, and
+# each run renames the previous one to `mutants.out.old` (#3386).
+mutants.out/
+mutants.out.old/

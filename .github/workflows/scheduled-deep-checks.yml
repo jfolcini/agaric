@@ -753,7 +753,8 @@ jobs:
           -E 'not test(create_block_apply_then_reverse_round_trip_i_lifecycle_3)'
 
   # ---------------------------------------------------------------------------
-  # mutants (#649) — cargo-mutants scoped (via mutants.toml `examine_globs`)
+  # mutants (#649) — cargo-mutants scoped (via `.cargo/mutants.toml`'s
+  # `examine_globs` — see that file's header: the path is load-bearing, #3386)
   # to the invariant core. Non-blocking: the deliverable is the survivor list
   # in the step summary + uploaded artifact, which a maintainer triages into
   # test gaps. `|| true` is intentional — a surviving mutant is signal, not a
@@ -762,6 +763,11 @@ jobs:
   mutants:
     runs-on: ubuntu-24.04
     timeout-minutes: 120
+    # Job-level so the run step and the guard step below quote the SAME
+    # number: the guard names the budget in its partial-coverage notice, and
+    # two copies of it would drift (#3386).
+    env:
+      MUTANTS_WALL_BUDGET: '5400'
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -813,9 +819,26 @@ jobs:
         with:
           tool: cargo-mutants,cargo-nextest
 
+      - name: Mutation-scope guard (#3386) — config is readable and every glob is live
+        # Runs BEFORE the expensive step, because every failure mode it checks
+        # for produces a run that burns its full budget and yields nothing:
+        #   * the config sitting anywhere but `src-tauri/.cargo/mutants.toml`
+        #     (cargo-mutants then silently uses `Config::default()`),
+        #   * an `examine_globs` entry that matches no file, or matches files
+        #     in a package this lane does not examine (the #2621 arch-wave
+        #     drift: op.rs / op_log / loro-engine moved to `agaric-store` and
+        #     `agaric-engine`, which a bare `cargo mutants` never mutates),
+        #   * the paths the steps below read drifting away from where
+        #     cargo-mutants actually writes (`--output DIR` creates
+        #     `DIR/mutants.out`, not `DIR`).
+        # Same guard runs as a prek hook on every commit that touches the
+        # config, this workflow, or the invariant-core sources.
+        run: node scripts/check-mutants-scope.mjs
+
       - name: Run cargo-mutants (scoped to invariant core)
         working-directory: src-tauri
-        # Scope, test-tool (nextest), and timeouts come from mutants.toml.
+        # Scope, test-tool (nextest), and timeouts come from
+        # `src-tauri/.cargo/mutants.toml`.
         # `--in-place` avoids the default copy-to-tmp (faster; the runner is
         # ephemeral). Never gate here: surviving mutants are triage signal
         # (the *zero-coverage guard* step below — deliberately OUTSIDE this
@@ -835,7 +858,7 @@ jobs:
         # Fix, in order of what we changed:
         #   1. `--timeout` (MUTANTS_TIMEOUT) 300 → 900: ~3x headroom over
         #      the observed baseline test-phase failure point. We did NOT
-        #      also narrow mutants.toml's test scope — nextest is already
+        #      also narrow `.cargo/mutants.toml`'s test scope — nextest is already
         #      the full, real test arbiter for the invariant core, and
         #      trimming it to "make the baseline faster" would weaken the
         #      very coverage signal mutation testing exists to measure.
@@ -849,14 +872,79 @@ jobs:
         #      budget.
         # The dispatch input rides via `env:` (not inline `${{ }}`) so it
         # can't expand into the shell as code (zizmor template-injection).
+        #
+        # #3386, three further corrections:
+        #
+        #   a. `--workspace`. The four `examine_globs` are the invariant core,
+        #      but the #2621 arch waves moved three of them into the
+        #      `agaric-store` / `agaric-engine` packages. cargo-mutants only
+        #      generates mutants in the packages it examines, and this
+        #      workspace's root manifest is itself the `agaric` package with
+        #      no `default-members`, so a bare invocation examines ONLY
+        #      `agaric` — 137 of the 607 mutants the config asks for, with the
+        #      other three globs silently matching nothing. Measured with
+        #      `cargo mutants --list` on 2026-07-31: 137 without
+        #      `--workspace`, 607 with it.
+        #
+        #   b. No `--output`. `-o/--output DIR` means "create mutants.out
+        #      WITHIN this directory" — so `--output mutants-out` wrote
+        #      `src-tauri/mutants-out/mutants.out/`, while the guard, the
+        #      summary and the `file-mutation-survivors` filer all read
+        #      `mutants-out/…` directly. Every one of them was reading a path
+        #      that never existed, which is why `--require-rust` in the filer
+        #      (#3387) could never see a `missed.txt`. The default location,
+        #      `src-tauri/mutants.out/`, is what the steps below read.
+        #
+        #   c. A wall-clock budget. 607 mutants do not fit in the job's 120
+        #      minutes: measured locally (16 cores) a mutant costs ~26s in
+        #      `agaric-store` and 13-35s+ in `agaric`, and a 4-vCPU runner is
+        #      several times slower — cargo-mutants also runs mutants
+        #      SEQUENTIALLY by default (`--jobs` defaults to 1). Without a
+        #      budget the job would be CANCELLED at 120 minutes, the guard
+        #      step below would never run, and the lane would be red for a
+        #      brand-new reason. `timeout --signal=INT` instead makes
+        #      cargo-mutants stop cleanly: it writes the partial
+        #      `outcomes.json` / `missed.txt` for the mutants it did test, with
+        #      the baseline still recorded as Success, so everything the steps
+        #      below read is present and honest (measured on cargo-mutants
+        #      27.1.0: a SIGINT'd run left `total_mutants: 5` against a
+        #      20-mutant `mutants.json`). Tree restoration on SIGINT is
+        #      usually but NOT reliably clean — 12 of 13 measured runs left
+        #      `git status` clean, one left a mutant written into the source
+        #      file. That is harmless on an ephemeral runner (the steps below
+        #      read only `mutants.out/`, and the artifact is that directory),
+        #      but if you reproduce this locally with `--in-place`, check
+        #      `git status` afterwards: a stray mutant lands in a TRACKED file
+        #      and .gitignore will not save you. The same applies, EVERY run,
+        #      to proptest: a mutant caught by a proptest makes proptest write
+        #      `<pkg>/proptest-regressions/<mod>.txt` recording a seed that
+        #      only fails because a mutant was applied. cargo-mutants restores
+        #      the source it mutated and knows nothing about those files, and
+        #      they are deliberately not gitignored (the repo tracks six real
+        #      ones). Delete them after a local run; never commit them.
+        #      Mutant order is deterministic (`--no-shuffle` is the default),
+        #      so a truncated run covers a STABLE prefix and the survivor
+        #      filer's cross-run diff does not churn. That stability is also
+        #      the catch: the prefix is ordered by package, so the cut is not
+        #      a proportional sample and the LAST packages are never tested.
+        #      Measured 2026-07-31: src/reverse occupies positions 1-137,
+        #      agaric-engine/src/loro 138-509, agaric-store 510-607 — so
+        #      op.rs / op_log, the hash-chain core this lane exists for, is
+        #      reached only if the budget covers ~84% of the surface, which it
+        #      does not. Right-sizing (a rotating `--shard`, `--jobs > 1`, or
+        #      narrower globs) is tracked separately; until then the summary
+        #      step prints the per-package split so the blind spot is named
+        #      rather than merely disclosed as a ratio.
+        #      90 min leaves ~25 min of the 120 for setup, install and upload
+        #      (observed: ~2 min of setup before cargo-mutants starts).
         env:
           MUTANTS_TIMEOUT: ${{ github.event.inputs.mutants_timeout || '900' }}
           MUTANTS_BUILD_TIMEOUT: '600'
         run: |
-          cargo mutants --in-place \
-            --timeout "$MUTANTS_TIMEOUT" \
-            --build-timeout "$MUTANTS_BUILD_TIMEOUT" \
-            --output mutants-out || true
+          timeout --signal=INT --kill-after=120 "$MUTANTS_WALL_BUDGET" \
+            cargo mutants --in-place --workspace \
+              --timeout "$MUTANTS_TIMEOUT" \
+              --build-timeout "$MUTANTS_BUILD_TIMEOUT" || true
 
       - name: Zero-coverage guard (#3057) — the load-bearing acceptance item
         # Deliberately OUTSIDE the `|| true` above: a baseline that times out
@@ -884,7 +972,7 @@ jobs:
         working-directory: src-tauri
         run: |
           set -uo pipefail
-          outcomes=mutants-out/outcomes.json
+          outcomes=mutants.out/outcomes.json
           if [ ! -f "$outcomes" ]; then
             echo "::error::cargo-mutants wrote no $outcomes — the run crashed or aborted before producing any output; treating as zero mutation coverage (#3057)."
             exit 1
@@ -907,7 +995,16 @@ jobs:
           if [ "$fail" -eq 1 ]; then
             exit 1
           fi
+          # #3386: the wall-clock budget can stop the run part-way through the
+          # generated set. That is an acceptable, DELIBERATE truncation — but
+          # it must never be silent, so state it. `mutants.json` is the full
+          # generated set (written before testing begins); `total_mutants` is
+          # what was actually tested.
+          generated=$(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo 0)
           echo "zero-coverage guard OK: total_mutants=$total baseline=$baseline_summary (surviving/missed mutants, if any, are triage signal — see the summary step below — and never gate this job)"
+          if [ "$generated" -gt 0 ] && [ "$total" -lt "$generated" ]; then
+            echo "::notice::mutation coverage is PARTIAL: $total of $generated generated mutants were tested before the ${MUTANTS_WALL_BUDGET}s wall-clock budget stopped the run. Mutant order is deterministic, so the same prefix is covered each week; the untested tail carries no signal either way."
+          fi
 
       - name: Mutants summary
         if: always()
@@ -916,20 +1013,47 @@ jobs:
           {
             echo "## cargo-mutants (invariant core)"
             echo
-            if [ -f mutants-out/outcomes.json ]; then
+            if [ -f mutants.out/outcomes.json ]; then
               echo '```'
+              # tested-of-generated first (#3386): the wall-clock budget can
+              # truncate the run, and a tally that omits the denominator reads
+              # as full coverage of a small surface.
+              echo "tested: $(jq -r '.total_mutants // 0' mutants.out/outcomes.json) of $(jq -r 'length' mutants.out/mutants.json 2>/dev/null || echo '?') generated"
+              # …then the same split PER PACKAGE (#3386 review). The budget
+              # stops the run at a deterministic prefix, and the mutant list is
+              # ordered by package, so the cut is not a proportional sample: the
+              # packages at the END of the order get ZERO mutants tested, the
+              # same ones every week. `agaric-store` (op.rs / op_log — the
+              # hash-chain core this lane exists for) is last in that order, so
+              # a bare "tested: N of 607" can read as healthy sampling while the
+              # highest-value surface is never mutated at all. Naming the
+              # per-package split is what makes the truncation legible rather
+              # than merely disclosed. Defensive throughout: this step must not
+              # be able to fail (see the `Mutation summary` note on the
+              # frontend lane).
+              echo "per package (tested of generated):"
+              jq -r '.[].package' mutants.out/mutants.json 2>/dev/null | sort | uniq -c |
+                while read -r generated pkg; do
+                  [ -n "$pkg" ] || continue
+                  tested=$(jq -r --arg p "$pkg" '[.outcomes[]? | select((.scenario|type) == "object") | select(.scenario.Mutant.package == $p)] | length' mutants.out/outcomes.json 2>/dev/null || echo 0)
+                  if [ "${tested:-0}" -eq 0 ]; then
+                    echo "  $pkg: 0 of $generated  <-- NOT COVERED this run (budget stopped before this package)"
+                  else
+                    echo "  $pkg: $tested of $generated"
+                  fi
+                done || true
               # caught / missed / unviable / timeout tallies
               for f in caught missed unviable timeout; do
-                if [ -f "mutants-out/$f.txt" ]; then
-                  echo "$f: $(wc -l < "mutants-out/$f.txt")"
+                if [ -f "mutants.out/$f.txt" ]; then
+                  echo "$f: $(wc -l < "mutants.out/$f.txt")"
                 fi
               done
               echo '```'
               echo
-              if [ -s mutants-out/missed.txt ]; then
+              if [ -s mutants.out/missed.txt ]; then
                 echo "### Surviving (missed) mutants — triage into test gaps"
                 echo '```'
-                cat mutants-out/missed.txt
+                cat mutants.out/missed.txt
                 echo '```'
               fi
             else
@@ -942,7 +1066,10 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: mutants-out
-          path: src-tauri/mutants-out/
+          # Must be cargo-mutants' output directory ITSELF, not a parent:
+          # `file-mutation-survivors` reads `mutants-artifact/missed.txt`
+          # flat off the downloaded artifact root (#3386/#3387).
+          path: src-tauri/mutants.out/
           if-no-files-found: ignore
           retention-days: 30
 

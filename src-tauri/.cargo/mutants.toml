@@ -1,0 +1,88 @@
+# cargo-mutants configuration (#649).
+#
+# ── THE PATH OF THIS FILE IS LOAD-BEARING (#3386) ──────────────────────────
+# cargo-mutants reads its config from EXACTLY ONE place:
+# `<workspace-root>/.cargo/mutants.toml` (`src/config.rs`,
+# `Config::read_tree_config`). If the file is not there it logs
+# `No config found in workspace` at debug level and silently proceeds with
+# `Config::default()` — no warning, no error, exit 0.
+#
+# This file lived at `src-tauri/mutants.toml` from #866 until #3386, which is
+# a path nothing reads. The whole config was therefore inert for the entire
+# life of the lane, with three compounding consequences:
+#
+#   * `examine_globs` was ignored, so the lane mutated the WHOLE `agaric`
+#     crate — 3192 mutants in the 2026-07-29 run, across `src/commands/**`,
+#     `src/db/**`, `src/link_metadata/**`, everything.
+#   * `test_tool` was ignored, so the baseline ran `cargo test` instead of
+#     `cargo nextest run`. Five tests fail under `cargo test`'s
+#     one-process/many-threads model and pass under nextest's
+#     process-per-test model (4 × `mcp::tools_ro::tests::*` with
+#     `unable to open database file`, plus the B4 reproject proptest taking
+#     the SQL-only fallback). So the baseline FAILED, and a failed baseline
+#     means cargo-mutants tests no mutants at all: `total_mutants: 0`.
+#   * `exclude_globs` was ignored, so proptest harnesses were mutated too.
+#
+# `total_mutants: 0` is exactly what the #3057 zero-coverage guard fires on,
+# which is why the lane was red for weeks. Do not move this file. The
+# `mutants-scope` prek hook (`scripts/check-mutants-scope.mjs`) fails if it
+# is moved, or if a stray copy reappears at the old path.
+# ───────────────────────────────────────────────────────────────────────────
+#
+# Mutation testing tells us whether the proptests actually CONSTRAIN the
+# implementation rather than just exercising it. The correctness story of
+# this codebase rests on a small invariant core — hash-chain append,
+# inverse-op derivation, and CRDT merge — each heavily proptested with
+# independent oracles. Those are exactly the surfaces where a surviving
+# mutant means a proptest is too weak (the review found a real example:
+# `fg_apply_dropped_bumps_once_per_failed_batch` asserting `>= 1` where its
+# own comment says "exactly once").
+#
+# Scope is deliberately narrow: mutating the whole crate would take hours
+# and bury the high-value survivors. `examine_globs` restricts mutation to
+# the invariant core; everything else is left to the (cheaper, broader)
+# proptest + nextest suites. Run from `src-tauri/` via the scheduled
+# `scheduled-deep-checks.yml` mutants lane (never per-PR, never gating —
+# surviving mutants are triage signal for new tests).
+
+# Only mutate the invariant core (#649: op, op_log, reverse, loro/engine).
+#
+# #3386: three of these four globs live in `agaric-store` / `agaric-engine`,
+# where the #2621 arch waves (S2, S3b-ii, E1) moved them out of the `agaric`
+# package. cargo-mutants only generates mutants in the packages it is told to
+# examine, and this workspace's root manifest is itself a package with no
+# `default-members`, so a bare `cargo mutants` examines ONLY `agaric` — those
+# three globs then match nothing and the surface silently collapses to
+# `src/reverse/**` (137 of 607 mutants). The lane therefore passes
+# `--workspace`, and `scripts/check-mutants-scope.mjs` fails if any glob here
+# resolves outside the package set the lane actually examines.
+examine_globs = [
+    "agaric-store/src/op.rs",
+    "agaric-store/src/op_log/**",
+    "src/reverse/**",
+    "agaric-engine/src/loro/engine/**",
+]
+
+# Never mutate test code or proptest harnesses — they are the oracle, not
+# the system under test.
+exclude_globs = [
+    "**/tests.rs",
+    "**/tests/**",
+    "**/*_tests.rs",
+    "**/*proptest*.rs",
+]
+
+# nextest is this repo's test arbiter (it catches dynamic-SQL / STRICT-table
+# bugs that `cargo check` is green on). Use it so a mutant that breaks a
+# runtime invariant is actually caught.
+#
+# #3386: this is also what makes the BASELINE pass at all. Under `cargo test`
+# the `agaric` package has 5 failing tests that are artifacts of the shared
+# test process; under `cargo nextest run -p agaric` all 3383 pass. Measured
+# locally on 2026-07-31: `cargo nextest run -p agaric` → 3383 passed in 123s.
+test_tool = "nextest"
+
+# Skip mutants whose unmutated build/test already fails to build or times
+# out — keeps the survivor list to genuine test-coverage gaps.
+# (Per-mutant timeout is supplied on the CLI by the workflow so it can be
+#  tuned via workflow_dispatch without editing this file.)

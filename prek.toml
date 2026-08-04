@@ -1717,6 +1717,45 @@ pass_filenames = false
 files = '^(scripts/check-mutation-reports\.mjs|stryker\.modules\.mjs)$'
 stages = ["pre-commit"]
 
+# mutants-scope (#3386): the Rust half of the same problem, and worse — the
+# `mutants` lane produced ZERO coverage for its entire life. cargo-mutants
+# reads its config from `src-tauri/.cargo/mutants.toml` and NOWHERE else; the
+# file sat at `src-tauri/mutants.toml` from #866, so every setting in it was
+# inert (whole-crate surface, `cargo test` instead of nextest, no
+# exclude_globs) and the baseline failed → `total_mutants: 0`. Two more silent
+# modes ride along: a glob whose files still EXIST but now live in a package
+# the lane does not examine (the #2621 arch-wave move of op.rs / op_log /
+# loro-engine — a pure existence check passes and the surface collapses
+# anyway), and reader paths that drift from where cargo-mutants writes
+# (`--output DIR` creates `DIR/mutants.out`, not `DIR`). Pure file/YAML/TOML
+# reads, no cargo. Runs on the config, the workflow, and the invariant-core
+# sources the globs name.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutants-scope"
+name = "cargo-mutants scope is live and reachable"
+entry = "node scripts/check-mutants-scope.mjs"
+language = "system"
+pass_filenames = false
+files = '^(src-tauri/(\.cargo/)?mutants\.toml|src-tauri/Cargo\.toml|\.github/workflows/scheduled-deep-checks\.yml|src-tauri/(src/reverse|agaric-store/src|agaric-engine/src/loro)/.*\.rs)$'
+stages = ["pre-commit"]
+
+# Self-test the guard's own exit behavior (missing config FAILS, stray config
+# FAILS, a glob outside the examined packages FAILS, `--output` nesting is
+# modelled correctly) whenever the guard script itself changes, so a
+# regression that defangs it can't land.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "mutants-scope-selftest"
+name = "cargo-mutants scope guard self-test"
+entry = "node scripts/check-mutants-scope.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/check-mutants-scope\.mjs$'
+stages = ["pre-commit"]
+
 # mutation-survivors-filer-selftest (#3245/#3257): the survivor tracking
 # issue's body has already broken twice — once by listing every survivor
 # under both "New this run" and the machine-readable block (doubling every
