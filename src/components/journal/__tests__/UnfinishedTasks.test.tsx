@@ -96,9 +96,7 @@ function mockInvokeForBlocks(blocks: BlockRow[], resolvedPages?: { id: string; t
       const todoStates = params.todoStates
       const filtered = blocks.filter((b) => {
         if (!todoStates.includes(b.todo_state ?? '')) return false
-        const date = b.due_date ?? b.scheduled_date
-        if (!date || date >= beforeDate) return false
-        return true
+        return [b.due_date, b.scheduled_date].some((date) => date != null && date < beforeDate)
       })
       return { items: filtered, next_cursor: null, has_more: false }
     }
@@ -952,6 +950,54 @@ describe('UnfinishedTasks', () => {
     await user.click(screen.getByRole('button', { expanded: false }))
 
     expect(screen.getByText('Scheduled task')).toBeInTheDocument()
+  })
+
+  it('groups a past scheduled date with a future due date under Yesterday', async () => {
+    const user = userEvent.setup()
+    const futureDue = new Date()
+    futureDue.setDate(futureDue.getDate() + 7)
+    mockInvokeForBlocks([
+      makeBlock({
+        id: 'MIXED_DATES',
+        content: 'Past scheduled task',
+        todo_state: 'TODO',
+        due_date: toLocalDateStr(futureDue),
+        scheduled_date: daysAgo(1),
+        page_id: null,
+      }),
+    ])
+
+    render(<UnfinishedTasks />)
+    await screen.findByTestId('unfinished-tasks')
+    await user.click(screen.getByRole('button', { expanded: false }))
+
+    expect(
+      within(screen.getByTestId('unfinished-group-yesterday')).getByText('Past scheduled task'),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('unfinished-group-older')).not.toBeInTheDocument()
+  })
+
+  it('uses the past-most date when both due and scheduled dates are past', async () => {
+    const user = userEvent.setup()
+    mockInvokeForBlocks([
+      makeBlock({
+        id: 'BOTH_PAST',
+        content: 'Past-most date wins',
+        todo_state: 'TODO',
+        due_date: daysAgo(14),
+        scheduled_date: daysAgo(1),
+        page_id: null,
+      }),
+    ])
+
+    render(<UnfinishedTasks />)
+    await screen.findByTestId('unfinished-tasks')
+    await user.click(screen.getByRole('button', { expanded: false }))
+
+    expect(
+      within(screen.getByTestId('unfinished-group-older')).getByText('Past-most date wins'),
+    ).toBeInTheDocument()
+    expect(screen.queryByTestId('unfinished-group-yesterday')).not.toBeInTheDocument()
   })
 
   it('has no a11y violations when empty', async () => {

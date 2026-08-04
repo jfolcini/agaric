@@ -17,6 +17,7 @@ import { axe } from 'vitest-axe'
 
 import { JournalControls } from '@/components/journal/JournalControls'
 import { __resetCalendarPageDatesForTests } from '@/hooks/useCalendarPageDates'
+import { resetAllShortcuts, setCustomShortcut } from '@/lib/keyboard-config'
 import { useJournalStore } from '@/stores/journal'
 import { useSpaceStore } from '@/stores/space'
 
@@ -30,6 +31,7 @@ const mockedInvoke = vi.mocked(invoke)
 
 beforeEach(() => {
   vi.clearAllMocks()
+  resetAllShortcuts()
   __resetCalendarPageDatesForTests()
   useJournalStore.setState({
     mode: 'daily',
@@ -108,6 +110,26 @@ describe('JournalControls', () => {
     await user.click(screen.getByRole('button', { name: /next day/i }))
 
     expect(format(useJournalStore.getState().currentDate, 'yyyy-MM-dd')).toBe('2025-06-16')
+  })
+
+  it('shows custom navigation bindings in tooltips and aria-keyshortcuts', async () => {
+    setCustomShortcut('prevDayWeekMonth', 'Ctrl + Shift + Arrow Left')
+    const user = userEvent.setup()
+    render(<JournalControls />)
+
+    const previous = screen.getByRole('button', { name: /previous day/i })
+    await user.hover(previous)
+
+    expect(await screen.findByText('Ctrl + Shift + Arrow Left')).toBeInTheDocument()
+    expect(previous).toHaveAttribute('aria-keyshortcuts', 'Control+Shift+ArrowLeft')
+    expect(screen.getByRole('button', { name: /next day/i })).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Alt+ArrowRight',
+    )
+    expect(screen.getByRole('button', { name: /go to today/i })).toHaveAttribute(
+      'aria-keyshortcuts',
+      'Alt+T',
+    )
   })
 
   it('renders the calendar trigger', () => {

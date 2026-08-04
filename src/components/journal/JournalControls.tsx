@@ -37,6 +37,7 @@ import {
   getMaxJournalDate,
   MIN_JOURNAL_DATE,
 } from '@/lib/date-utils'
+import { getShortcutKeys, toAriaKeyshortcuts } from '@/lib/keyboard-config'
 import { useJournalStore } from '@/stores/journal'
 
 // Shared by the roving-tabindex keyboard handler and the `.map` below so the
@@ -184,6 +185,9 @@ export function JournalControls(): React.ReactElement {
   // prev/next date stepper + date display (the stepper would have nothing to
   // move). The calendar picker stays available in both.
   const hidesDateNav = mode === 'agenda' || mode === 'stream'
+  const previousShortcut = getShortcutKeys('prevDayWeekMonth')
+  const nextShortcut = getShortcutKeys('nextDayWeekMonth')
+  const todayShortcut = getShortcutKeys('goToToday')
 
   return (
     <div
@@ -257,20 +261,20 @@ export function JournalControls(): React.ReactElement {
           date context), but Today + Agenda + calendar stay visible so the
           user can jump back into dated views. */}
       <div className="flex items-center gap-1">
-        {/*  sub-fix 2: surface the Alt+Left / Alt+Right / Alt+T
-            shortcuts via Tooltips so users discover the bindings without
-            opening the KeyboardShortcuts sheet. */}
+        {/* Surface the current configurable bindings so users discover the
+            shortcuts without opening the KeyboardShortcuts sheet. */}
         {!hidesDateNav && (
           <>
             <IconButton
               variant="ghost"
               size="icon-xs"
               ariaLabel={navLabels.prev}
+              aria-keyshortcuts={toAriaKeyshortcuts(previousShortcut)}
               tooltip={
                 <>
                   {navLabels.prev}{' '}
                   <Kbd className="ml-1" aria-hidden="true">
-                    Alt+←
+                    {previousShortcut}
                   </Kbd>
                 </>
               }
@@ -289,11 +293,12 @@ export function JournalControls(): React.ReactElement {
               variant="ghost"
               size="icon-xs"
               ariaLabel={navLabels.next}
+              aria-keyshortcuts={toAriaKeyshortcuts(nextShortcut)}
               tooltip={
                 <>
                   {navLabels.next}{' '}
                   <Kbd className="ml-1" aria-hidden="true">
-                    Alt+→
+                    {nextShortcut}
                   </Kbd>
                 </>
               }
@@ -322,6 +327,7 @@ export function JournalControls(): React.ReactElement {
                   }
                 }}
                 aria-label={t('journal.goToToday')}
+                aria-keyshortcuts={toAriaKeyshortcuts(todayShortcut)}
               >
                 {t('journal.today')}
               </Button>
@@ -329,7 +335,7 @@ export function JournalControls(): React.ReactElement {
             <TooltipContent>
               {t('journal.goToToday')}{' '}
               <Kbd className="ml-1" aria-hidden="true">
-                Alt+T
+                {todayShortcut}
               </Kbd>
             </TooltipContent>
           </Tooltip>

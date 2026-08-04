@@ -88,37 +88,57 @@ export function getShortcutKeys(id: string): string {
  * canonical `aria-keyshortcuts` token form ("Control+Shift+ArrowUp") so
  * assistive tech announces the binding (#216 C2 — tooltips don't fire on
  * touch). Modifier aliases are normalised to the ARIA names; non-modifier
- * keys have their internal whitespace stripped ("Arrow Up" → "ArrowUp").
- * Returns `''` for an empty/unknown binding so callers can omit the attribute.
+ * keys have their internal whitespace stripped ("Arrow Up" → "ArrowUp") and
+ * arrow glyphs are expanded to their UI Events key names ("←" → "ArrowLeft").
+ * Slash-separated alternatives become the space-separated shortcut list that
+ * `aria-keyshortcuts` expects. Returns `''` for an empty/unknown binding so
+ * callers can omit the attribute.
  */
 export function toAriaKeyshortcuts(displayKeys: string): string {
   if (!displayKeys) return ''
   return displayKeys
-    .split('+')
-    .map((part) => part.trim())
-    .filter((part) => part.length > 0)
-    .map((part) => {
-      switch (part) {
-        case 'Ctrl':
-        case 'Control': {
-          return 'Control'
-        }
-        case 'Cmd':
-        case 'Command':
-        case '⌘': {
-          return 'Meta'
-        }
-        case 'Opt':
-        case 'Option':
-        case 'Alt': {
-          return 'Alt'
-        }
-        default: {
-          return part.replace(/\s+/g, '')
-        }
-      }
-    })
-    .join('+')
+    .split(' / ')
+    .map((shortcut) =>
+      shortcut
+        .split('+')
+        .map((part) => part.trim())
+        .filter((part) => part.length > 0)
+        .map((part) => {
+          switch (part) {
+            case 'Ctrl':
+            case 'Control': {
+              return 'Control'
+            }
+            case 'Cmd':
+            case 'Command':
+            case '⌘': {
+              return 'Meta'
+            }
+            case 'Opt':
+            case 'Option':
+            case 'Alt': {
+              return 'Alt'
+            }
+            case '←': {
+              return 'ArrowLeft'
+            }
+            case '→': {
+              return 'ArrowRight'
+            }
+            case '↑': {
+              return 'ArrowUp'
+            }
+            case '↓': {
+              return 'ArrowDown'
+            }
+            default: {
+              return part.replace(/\s+/g, '')
+            }
+          }
+        })
+        .join('+'),
+    )
+    .join(' ')
 }
 
 export function getCurrentShortcuts(): (ShortcutBinding & { isCustom: boolean })[] {

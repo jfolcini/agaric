@@ -94,7 +94,13 @@ function groupByAge(blocks: BlockRow[], todayStr: string): AgeGroup[] {
   const older: BlockRow[] = []
 
   for (const block of blocks) {
-    const dateStr = block.due_date ?? block.scheduled_date
+    // The query returns a task when either date is in the past. If the other
+    // date is future, it must not demote the task to Older; among qualifying
+    // dates, use the past-most date for the age bucket.
+    const dateStr = [block.due_date, block.scheduled_date]
+      .filter((date): date is string => date != null && date < todayStr)
+      .toSorted()
+      .at(0)
     if (!dateStr) continue
     const age = classifyAge(dateStr, todayStr)
     if (age === 'yesterday') yesterday.push(block)

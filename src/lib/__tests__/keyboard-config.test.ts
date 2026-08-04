@@ -154,12 +154,18 @@ describe('keyboard-config', () => {
       expect(toAriaKeyshortcuts('Ctrl + E')).toBe('Control+E')
       expect(toAriaKeyshortcuts('Ctrl + Shift + S')).toBe('Control+Shift+S')
       expect(toAriaKeyshortcuts('Ctrl + Shift + Arrow Up')).toBe('Control+Shift+ArrowUp')
+      expect(toAriaKeyshortcuts('Alt + ←')).toBe('Alt+ArrowLeft')
+      expect(toAriaKeyshortcuts('Alt + →')).toBe('Alt+ArrowRight')
     })
 
     it('maps Cmd/⌘ → Meta and Opt/Option → Alt', () => {
       expect(toAriaKeyshortcuts('Cmd + B')).toBe('Meta+B')
       expect(toAriaKeyshortcuts('⌘ + K')).toBe('Meta+K')
       expect(toAriaKeyshortcuts('Opt + Enter')).toBe('Alt+Enter')
+    })
+
+    it('maps slash-separated alternatives to an ARIA shortcut list', () => {
+      expect(toAriaKeyshortcuts('Ctrl + U / Ctrl + Shift + U')).toBe('Control+U Control+Shift+U')
     })
 
     it('returns empty string for an empty binding', () => {
