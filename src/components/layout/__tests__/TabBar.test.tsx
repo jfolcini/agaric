@@ -997,19 +997,65 @@ describe('TabBar', () => {
       })
     })
 
-    it('Enter on a focused close item closes that tab and keeps the menu open', async () => {
+    it.each([
+      ['Enter', '{Enter}'],
+      ['Space', ' '],
+    ])('%s on a focused close item preserves menu focus and arrow navigation', async (_, key) => {
       setupThreeTabs(0)
       await openDropdown()
 
       const user = userEvent.setup()
-      // Focus is on activate-0. ArrowDown → close-0. Enter → closeTab(0).
+      // Focus is on activate-0. ArrowDown → close-0. Activation → closeTab(0).
       await user.keyboard('{ArrowDown}')
-      await user.keyboard('{Enter}')
+      await user.keyboard(key)
 
       expect(useTabsStore.getState().tabs).toHaveLength(2)
       expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 2', 'Page 3'])
       // Menu is still open after the close — user can keep pruning.
       expect(screen.getByRole('menu')).toBeInTheDocument()
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(closeItems[0]).toHaveFocus()
+      })
+
+      await user.keyboard('{ArrowDown}')
+      const activateItems = screen.getAllByRole('menuitemradio')
+      await waitFor(() => {
+        expect(activateItems[1]).toHaveFocus()
+      })
+    })
+
+    it('keeps the dropdown closed when a second tab is added after the bar auto-hides', async () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [], label: 'Page 1' },
+          { id: '1', pageStack: [], label: 'Page 2' },
+        ],
+        activeTabIndex: 0,
+      })
+      await openDropdown()
+
+      const user = userEvent.setup()
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await user.click(closeItems[1] as HTMLElement)
+
+      await waitFor(() => {
+        expect(screen.queryByRole('menu')).toBeNull()
+      })
+
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [], label: 'Page 1' },
+          { id: '2', pageStack: [], label: 'Page 3' },
+        ],
+        activeTabIndex: 0,
+      })
+
+      await waitFor(() => {
+        expect(screen.getAllByRole('tab')).toHaveLength(2)
+      })
+      expect(screen.queryByRole('menu')).toBeNull()
     })
 
     it('Escape with focus on a close item still closes the dropdown', async () => {
@@ -1040,6 +1086,77 @@ describe('TabBar', () => {
 
       expect(useTabsStore.getState().tabs).toHaveLength(2)
       expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual(['Page 1', 'Page 2'])
+    })
+
+    it('clicking a higher-indexed close item restores focus to a surviving menu item', async () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [], label: 'Page 1' },
+          { id: '1', pageStack: [], label: 'Page 2' },
+          { id: '2', pageStack: [], label: 'Page 3' },
+          { id: '3', pageStack: [], label: 'Page 4' },
+        ],
+        activeTabIndex: 0,
+      })
+      await openDropdown()
+
+      const user = userEvent.setup()
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await user.click(closeItems[3] as HTMLElement)
+
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual([
+        'Page 1',
+        'Page 2',
+        'Page 3',
+      ])
+      const activateItems = screen.getAllByRole('menuitemradio')
+      await waitFor(() => {
+        expect(activateItems[0]).toHaveFocus()
+      })
+
+      await user.keyboard('{ArrowUp}')
+      const survivingCloseItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(survivingCloseItems[2]).toHaveFocus()
+      })
+    })
+
+    it('Enter on a higher-indexed close item clamps focus and keeps arrow navigation working', async () => {
+      useNavigationStore.setState({ currentView: 'page-editor' })
+      useTabsStore.setState({
+        tabs: [
+          { id: '0', pageStack: [], label: 'Page 1' },
+          { id: '1', pageStack: [], label: 'Page 2' },
+          { id: '2', pageStack: [], label: 'Page 3' },
+          { id: '3', pageStack: [], label: 'Page 4' },
+        ],
+        activeTabIndex: 0,
+      })
+      await openDropdown()
+
+      const user = userEvent.setup()
+      // activate-0 → … → close-3, then remove that final row.
+      await user.keyboard(
+        '{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}{ArrowDown}',
+      )
+      await user.keyboard('{Enter}')
+
+      expect(useTabsStore.getState().tabs.map((tab) => tab.label)).toEqual([
+        'Page 1',
+        'Page 2',
+        'Page 3',
+      ])
+      const closeItems = document.querySelectorAll('[data-tab-dropdown-close]')
+      await waitFor(() => {
+        expect(closeItems[2]).toHaveFocus()
+      })
+
+      await user.keyboard('{ArrowDown}')
+      const activateItems = screen.getAllByRole('menuitemradio')
+      await waitFor(() => {
+        expect(activateItems[0]).toHaveFocus()
+      })
     })
   })
 })

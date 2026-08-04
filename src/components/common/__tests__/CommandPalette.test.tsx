@@ -60,11 +60,7 @@ vi.mock('@/lib/notify', () => ({
   notify: { error: vi.fn(), success: vi.fn(), info: vi.fn(), warning: vi.fn() },
 }))
 
-// #2942 — `export-page-markdown` writes through `@/lib/clipboard`'s
-// `writeText` (not `navigator.clipboard` directly, unlike the existing
-// "Copy page link" action menu item below) — mock it directly per the
-// convention documented in `test-setup.ts` next to the shared
-// `@tauri-apps/plugin-clipboard-manager` mock.
+// All palette copy actions write through the Tauri-aware clipboard wrapper.
 vi.mock('@/lib/clipboard', () => ({ writeText: vi.fn().mockResolvedValue(undefined) }))
 
 // Mock the partitioned IPC so we can drive its responses deterministically
@@ -386,25 +382,34 @@ describe('CommandPalette — action menu (Phase 5)', () => {
 
   it('selecting "Copy page link" writes a pasteable [[ULID]] page link to clipboard (#1521)', async () => {
     seedRecents()
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    const orig = navigator.clipboard
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-copy-page-link'))
+    // #1521 — must be the `[[ULID]]` link form, not the bare ULID (which
+    // pastes as dead text).
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('[[PAGE_R]]')
+      expect(mockedNotify.success).toHaveBeenCalledWith(t('palette.copyPageLinkSuccess'))
     })
-    try {
-      render(<CommandPalette />)
-      openPalette()
-      const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
-      recentRow.setAttribute('aria-selected', 'true')
-      fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
-      fireEvent.click(await screen.findByTestId('palette-action-copy-page-link'))
-      // #1521 — must be the `[[ULID]]` link form, not the bare ULID (which
-      // pastes as dead text).
-      expect(writeText).toHaveBeenCalledWith('[[PAGE_R]]')
-    } finally {
-      Object.defineProperty(navigator, 'clipboard', { value: orig, configurable: true })
-    }
+  })
+
+  it('shows a copy error when the clipboard wrapper rejects', async () => {
+    seedRecents()
+    mockedWriteText.mockRejectedValueOnce(new Error('clipboard unavailable'))
+    render(<CommandPalette />)
+    openPalette()
+    const recentRow = await screen.findByTestId('palette-recent-PAGE_R')
+    recentRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-copy-page-link'))
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('[[PAGE_R]]')
+      expect(mockedNotify.error).toHaveBeenCalledWith(t('palette.copyFailed'))
+    })
+    expect(mockedNotify.success).not.toHaveBeenCalled()
   })
 
   it('selecting "Remove from recents" deletes the entry (Phase 5 expansion)', async () => {
@@ -440,39 +445,32 @@ describe('CommandPalette — action menu (Phase 5)', () => {
         [makeBlockRow('BLOCK_42', 'alpha note', 'PAGE_X', 'alpha <mark>note</mark>')],
       ),
     )
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    const orig = navigator.clipboard
-    Object.defineProperty(navigator, 'clipboard', {
-      value: { writeText },
-      configurable: true,
+    render(<CommandPalette />)
+    openPalette()
+    fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'alpha' } })
+    // Wait for the IPC to fire AND the search results to render before
+    // looking for the block row — without this the findByTestId can
+    // time out on a cold mock pipeline.
+    await waitFor(() => {
+      expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
     })
-    try {
-      render(<CommandPalette />)
-      openPalette()
-      fireEvent.change(screen.getByTestId('command-palette-input'), { target: { value: 'alpha' } })
-      // Wait for the IPC to fire AND the search results to render before
-      // looking for the block row — without this the findByTestId can
-      // time out on a cold mock pipeline.
-      await waitFor(() => {
-        expect(mockedSearchBlocksPartitioned).toHaveBeenCalled()
-      })
-      const blockRow = await waitFor(() => screen.getByTestId('palette-block-BLOCK_42'), {
-        timeout: 2000,
-      })
-      // Strip selection off any other row and set it on the block row so
-      // the Tab handler picks the block as the focused target. cmdk
-      // assigns aria-selected to the first item by default; we override
-      // for this test.
-      for (const item of document.querySelectorAll('[cmdk-item]')) {
-        item.setAttribute('aria-selected', 'false')
-      }
-      blockRow.setAttribute('aria-selected', 'true')
-      fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
-      fireEvent.click(await screen.findByTestId('palette-action-copy-block-link'))
-      expect(writeText).toHaveBeenCalledWith('((BLOCK_42))')
-    } finally {
-      Object.defineProperty(navigator, 'clipboard', { value: orig, configurable: true })
+    const blockRow = await waitFor(() => screen.getByTestId('palette-block-BLOCK_42'), {
+      timeout: 2000,
+    })
+    // Strip selection off any other row and set it on the block row so
+    // the Tab handler picks the block as the focused target. cmdk
+    // assigns aria-selected to the first item by default; we override
+    // for this test.
+    for (const item of document.querySelectorAll('[cmdk-item]')) {
+      item.setAttribute('aria-selected', 'false')
     }
+    blockRow.setAttribute('aria-selected', 'true')
+    fireEvent.keyDown(screen.getByTestId('command-palette-input'), { key: 'Tab' })
+    fireEvent.click(await screen.findByTestId('palette-action-copy-block-link'))
+    await waitFor(() => {
+      expect(mockedWriteText).toHaveBeenCalledWith('((BLOCK_42))')
+      expect(mockedNotify.success).toHaveBeenCalledWith(t('palette.copyLinkSuccess'))
+    })
   })
 
   it('arrow-down inside the menu advances focus through the actions', async () => {

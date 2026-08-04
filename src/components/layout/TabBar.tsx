@@ -110,9 +110,13 @@ export function TabBar(): React.ReactElement | null {
   // advances. Radix Popover focuses the content element on open; this
   // effect overrides that to land focus on the seeded menu item.
   useEffect(() => {
+    // React calls the previous inline ref callbacks with `null` during a
+    // keyed row move. That cleanup can re-extend an array truncated in the
+    // close handler, so enforce the live DOM length after the commit too.
+    dropdownItemRefs.current.length = dropdownOpen ? tabs.length * 2 : 0
     if (!dropdownOpen) return
     dropdownItemRefs.current[dropdownFocusedIndex]?.focus()
-  }, [dropdownOpen, dropdownFocusedIndex])
+  }, [dropdownOpen, dropdownFocusedIndex, tabs.length])
 
   // Scope item 6: TabBar is desktop-only. Mobile users navigate via
   // sidebar + breadcrumbs; the `openInNewTab` IPC surface collapses to a
@@ -198,6 +202,28 @@ export function TabBar(): React.ReactElement | null {
       e.preventDefault()
       setDropdownFocusedIndex(total - 1)
     }
+  }
+
+  function closeDropdownTab(i: number): void {
+    const remainingItemCount = (tabs.length - 1) * 2
+
+    // The menu remains open while pruning tabs, so discard references for
+    // items which will be unmounted before the focus effect runs. When the
+    // bar itself is about to disappear, also close its Popover state.
+    dropdownItemRefs.current.length = Math.max(remainingItemCount, 0)
+    if (remainingItemCount <= 2) {
+      // At one remaining tab the whole TabBar auto-hides. Close the
+      // controlled Popover as well so it does not reopen if another tab is
+      // added later while this component instance remains mounted.
+      setDropdownFocusedIndex(0)
+      setDropdownOpen(false)
+    } else {
+      // Preserve the current roving position when possible; otherwise use
+      // the final surviving item (e.g. closing the last row's close action).
+      setDropdownFocusedIndex((current) => Math.min(current, remainingItemCount - 1))
+    }
+
+    closeTab(i)
   }
 
   return (
@@ -357,13 +383,13 @@ export function TabBar(): React.ReactElement | null {
                       // the user likely wants to prune several tabs in a row.
                       e.stopPropagation()
                       e.preventDefault()
-                      closeTab(i)
+                      closeDropdownTab(i)
                     }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' || e.key === ' ') {
                         e.preventDefault()
                         e.stopPropagation()
-                        closeTab(i)
+                        closeDropdownTab(i)
                       }
                     }}
                   >
