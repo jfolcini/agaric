@@ -6,9 +6,10 @@
 //!   1. Loads each fixture (seed state + op sequence).
 //!   2. Inserts the seed blocks/properties/tags with their LITERAL expanded
 //!      ids, scoped to one test space.
-//!   3. Dispatches every op through the real `*_inner` command layer,
-//!      `settle()`-ing the materializer after each so derived caches
-//!      (`block_links`) are populated.
+//!   3. Translates each fixture command into its durable serialized `OpPayload`,
+//!      appends it to the op log, and replays it through the materializer,
+//!      `settle()`-ing after each op so derived caches (`block_links`) are
+//!      populated.
 //!   4. Reads the full DB state and builds a *normalized snapshot* with
 //!      canonical id relabeling (see `snapshot.rs` — shared with the TS side).
 //!   5. Asserts the snapshot equals the fixture's `expected`.
@@ -21,19 +22,31 @@
 //!
 //! Production constructs the Loro engine state unconditionally at boot
 //! (#2249: an `Arc<LoroState>` built at the top of `crate::run` setup and
-//! handed to the `Materializer` as a constructor argument), so every op
-//! runs the `apply_*_via_loro` ENGINE path — which reprojects dense
-//! 1-based sibling positions via `projection::reproject_dense_positions`.
-//! This runner therefore SEEDS each fixture's seed blocks into the test
-//! materializer's per-space Loro tree (mirroring the raw-SQL seed insert)
-//! so ops resolve their space and route through the engine, not the
+//! handed to the `Materializer` as a constructor argument). Since #2325,
+//! local `*_inner` command paths append their op and call `apply_op_projected`
+//! in the command transaction. Boot recovery deserializes those durable records
+//! through `ReplayApplyOp` / `ApplyMode::ReplaySuppressed` and reaches the same
+//! projection. Inbound sync is different: it imports Loro bytes through
+//! `import_and_project`, not through this op-record dispatcher.
+//!
+//! This runner intentionally tests the durable serialized-op boundary: it
+//! builds an `OpPayload`, appends it, and feeds the resulting record to the
+//! test-only `Materializer::dispatch_op` helper (`ApplyOp` in normal mode plus
+//! background fan-out). It does not exercise validation that exists only in
+//! the command layer before an op is appended; those contracts belong in
+//! command integration tests.
+//!
+//! The runner therefore SEEDS each fixture's seed blocks into the test
+//! materializer's per-space Loro tree (mirroring the raw-SQL seed insert) so
+//! replayed ops resolve their space and route through the engine, not the
 //! SQL-only fallback — whose provisional `index+1` positions DIFFER from
 //! production, producing the spurious `position_reproject_drift` (#763).
-//! #2249/#2250: the engine can no longer be "uninstalled" — the state is a
-//! required `&LoroState` parameter down the whole apply path, so the #891
-//! false-drift class (a test silently exercising the fallback while
-//! believing it covers the engine path) is structurally impossible; the
-//! only remaining fallback trigger is an unresolvable space.
+//! Both live fallback reasons remain relevant: `SpaceUnresolved`, and
+//! `EngineMissingTarget` when a block (or a move's target parent) is absent
+//! from the resolved space's engine. The fixture-local parity checks below run
+//! after setup and after every op, catching a fallback whenever its SQL result
+//! diverges from the isolated engine — in particular the #763 position drift —
+//! without consulting the process-global fallback metric.
 //!
 //! The TS runner (`src/lib/tauri-mock/__tests__/conformance.test.ts`) builds
 //! the SAME normalized snapshot from the tauri-mock and asserts it matches the
@@ -57,7 +70,7 @@ use agaric_store::op::{
     SetPropertyPayload,
 };
 use serde_json::{Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use super::conformance_snapshot::{Snapshot, build_snapshot_with_order};
@@ -147,22 +160,23 @@ fn seed_block_into_engine(state: &agaric_engine::loro::shared::LoroState, b: &Va
     drop(guard);
 }
 
-/// Dispatch one fixture op through the production ENGINE path (#891).
+/// Dispatch one fixture op through the durable-op test path (#891).
 ///
 /// The op is appended to the op-log (`append_local_op`) and applied via the
-/// materializer's `dispatch_op` — the FOREGROUND `ApplyOp` task, which runs
-/// `apply_op_tx` → `apply_*_via_loro` (the engine apply + dense-rank
-/// reprojection) plus the matching background cache fan-out (block_links, FTS,
-/// derived caches). This is the SAME pipeline production runs for op-log replay
-/// and inbound sync — the path that reprojects dense 1-based sibling positions.
+/// materializer's test-only `dispatch_op` helper — the foreground `ApplyOp`
+/// task, which runs `apply_op_projected` in normal mode (engine apply + dense
+/// rank reprojection), followed by the matching background cache fan-out
+/// (`block_links`, FTS, derived caches). Boot recovery uses `ReplayApplyOp`
+/// with `ApplyMode::ReplaySuppressed`; inbound sync instead imports Loro bytes
+/// through `import_and_project`.
 ///
-/// NOTE on path choice (the #891 fix): the previous runner used the LOCAL
-/// `*_inner` command layer (`create_block_inner` etc.). That path writes SQL
-/// inline with a PROVISIONAL `index+1` position and only enqueues background
-/// cache rebuilds — it never runs `apply_op_tx`, so it never reprojects. With
-/// no engine installed it was identical to the `apply_*_sql_only` fallback,
-/// which is why the fixtures encoded fallback (gapped) positions. Routing
-/// through `dispatch_op` exercises the engine path the mock mirrors.
+/// NOTE on path choice: since #2325, LOCAL `*_inner` commands also route their
+/// just-appended op through `apply_op_projected` in the command transaction.
+/// This runner deliberately stays below those commands: it serializes the
+/// fixture operation as an `OpPayload`, appends the durable record, and drives
+/// the test dispatcher. That pins the shared projection and durable op
+/// representation, but intentionally excludes command-only validation
+/// performed before an op is appended.
 ///
 /// Reserved column-backed keys (`set_todo_state` / `set_priority` /
 /// `set_due_date` / `set_scheduled_date`) map to a `SetProperty` op with the
@@ -474,6 +488,416 @@ async fn read_created_block_ids_in_op_order(pool: &SqlitePool) -> Vec<String> {
 }
 
 // ---------------------------------------------------------------------------
+// Fixture-local SQL ↔ engine path guard
+// ---------------------------------------------------------------------------
+
+fn parity_property_key(key: &str) -> bool {
+    // Auto timestamps are deliberately outside the shared conformance surface.
+    // `space` is projected to `blocks.space_id` and hydrates the per-space doc;
+    // it is membership metadata, not an engine property entry.
+    !matches!(key, "created_at" | "completed_at" | "space")
+}
+
+async fn verify_fixture_engine_parity(
+    pool: &SqlitePool,
+    state: &agaric_engine::loro::shared::LoroState,
+    fixture_name: &str,
+    known_ids: &[String],
+    gapped_parents: &BTreeSet<Option<String>>,
+) -> Result<(), String> {
+    use agaric_engine::loro::engine::PropertyValue;
+
+    let raw = read_raw_state(pool).await;
+    let known: BTreeSet<&str> = known_ids.iter().map(String::as_str).collect();
+    let sql_blocks: BTreeMap<&str, &super::conformance_snapshot::RawBlock> = raw
+        .blocks
+        .iter()
+        .filter(|block| known.contains(block.id.as_str()))
+        .map(|block| (block.id.as_str(), block))
+        .collect();
+    let op_rows = sqlx::query_as::<_, (String, String)>(
+        "SELECT op_type, payload FROM op_log \
+         WHERE device_id = ? AND is_replicated = 0 ORDER BY seq",
+    )
+    .bind(DEV)
+    .fetch_all(pool)
+    .await
+    .map_err(|error| format!("fixture '{fixture_name}': read property op history: {error}"))?;
+    // `Some(target)` means the latest durable op for this property is exactly
+    // a value_ref setter. `None` records any later non-ref set/delete so a stale
+    // historical ref cannot qualify for the narrow purge-dangling exception.
+    let mut latest_ref_targets: BTreeMap<(String, String), Option<String>> = BTreeMap::new();
+    for (op_type, payload) in op_rows {
+        match op_type.as_str() {
+            "set_property" => {
+                let property: SetPropertyPayload =
+                    serde_json::from_str(&payload).map_err(|error| {
+                        format!("fixture '{fixture_name}': parse set_property: {error}")
+                    })?;
+                latest_ref_targets.insert(
+                    (property.block_id.to_string(), property.key),
+                    property.value_ref.map(|target| target.to_string()),
+                );
+            }
+            "delete_property" => {
+                let property: DeletePropertyPayload =
+                    serde_json::from_str(&payload).map_err(|error| {
+                        format!("fixture '{fixture_name}': parse delete_property: {error}")
+                    })?;
+                latest_ref_targets.insert((property.block_id.to_string(), property.key), None);
+            }
+            _ => {}
+        }
+    }
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space (conformance parity)");
+    let engine = guard.engine_mut();
+
+    let fail = |detail: String| {
+        Err(format!(
+            "fixture '{fixture_name}': SQL/Loro parity failed after fixture setup/op: {detail} \
+             (#891 engine-path guard)"
+        ))
+    };
+
+    for id in known_ids {
+        let sql = sql_blocks.get(id.as_str()).copied();
+        let loro = engine
+            .read_block(id)
+            .map_err(|error| format!("fixture '{fixture_name}': read Loro block {id}: {error}"))?;
+        if sql.is_none() || loro.is_none() {
+            if sql.is_none() && loro.is_none() {
+                let properties = engine.read_all_properties_typed(id).map_err(|error| {
+                    format!("fixture '{fixture_name}': read purged properties {id}: {error}")
+                })?;
+                let tags = engine.read_tags(id).map_err(|error| {
+                    format!("fixture '{fixture_name}': read purged tags {id}: {error}")
+                })?;
+                if !properties.is_empty() || !tags.is_empty() {
+                    return fail(format!(
+                        "purged block {id} retained Loro satellites \
+                         (properties={properties:?}, tags={tags:?})"
+                    ));
+                }
+                continue;
+            }
+            return fail(format!(
+                "block {id} presence differs (SQL={}, Loro={})",
+                sql.is_some(),
+                loro.is_some()
+            ));
+        }
+        let sql = sql.expect("SQL presence checked");
+        let loro = loro.expect("Loro presence checked");
+        let loro_deleted = engine
+            .read_deleted(id)
+            .map_err(|error| format!("fixture '{fixture_name}': read deleted {id}: {error}"))?;
+        if sql.block_type != loro.block_type
+            || sql.content.as_deref().unwrap_or("") != loro.content
+            || sql.parent_id != loro.parent_id
+            || sql.deleted != loro_deleted
+        {
+            return fail(format!(
+                "block {id} core differs (SQL type/content/parent/deleted={:?}/{:?}/{:?}/{}, \
+                 Loro={:?}/{:?}/{:?}/{})",
+                sql.block_type,
+                sql.content,
+                sql.parent_id,
+                sql.deleted,
+                loro.block_type,
+                loro.content,
+                loro.parent_id,
+                loro_deleted
+            ));
+        }
+        if !gapped_parents.contains(&sql.parent_id) && sql.position != Some(loro.position) {
+            return fail(format!(
+                "block {id} position differs (SQL={:?}, Loro={}); parent {:?} is not a \
+                 purge-gapped group",
+                sql.position, loro.position, sql.parent_id
+            ));
+        }
+    }
+
+    // Purge does not re-rank surviving SQL siblings. Only parent groups that a
+    // fixture purge actually touched may carry a numeric gap; their relative
+    // order must still equal the engine's order exactly.
+    for parent in gapped_parents {
+        let mut sql_order: Vec<_> = sql_blocks
+            .values()
+            .filter(|block| block.parent_id == *parent)
+            .map(|block| (block.position.unwrap_or(i64::MAX), block.id.as_str()))
+            .collect();
+        sql_order.sort_unstable();
+        let sql_order: Vec<_> = sql_order.into_iter().map(|(_, id)| id).collect();
+        let mut loro_order = Vec::new();
+        for id in &sql_order {
+            let position = engine.read_position(id).map_err(|error| {
+                format!("fixture '{fixture_name}': read position {id}: {error}")
+            })?;
+            loro_order.push((position, *id));
+        }
+        loro_order.sort_unstable();
+        let loro_order: Vec<_> = loro_order.into_iter().map(|(_, id)| id).collect();
+        if sql_order != loro_order {
+            return fail(format!(
+                "purge-gapped parent {parent:?} order differs (SQL={sql_order:?}, \
+                 Loro={loro_order:?})"
+            ));
+        }
+    }
+
+    // Every surviving SQL property/tag must be in Loro. Engine-only entries
+    // are rejected below except for an exactly identified latest-op value_ref
+    // or tag whose canonical target has since been purged from SQL.
+    let mut sql_property_keys = BTreeSet::new();
+    for property in raw
+        .properties
+        .iter()
+        .filter(|property| parity_property_key(&property.key))
+    {
+        sql_property_keys.insert((property.block_id.clone(), property.key.clone()));
+        let expected = if let Some(value) = &property.value_text {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = property.value_num {
+            PropertyValue::Num(value)
+        } else if let Some(value) = &property.value_date {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = &property.value_ref {
+            PropertyValue::Str(value.clone())
+        } else if let Some(value) = property.value_bool {
+            PropertyValue::Bool(value)
+        } else {
+            return fail(format!(
+                "SQL property {}/{} has no typed value",
+                property.block_id, property.key
+            ));
+        };
+        let actual = engine
+            .read_all_properties_typed(&property.block_id)
+            .map_err(|error| {
+                format!(
+                    "fixture '{fixture_name}': read properties {}: {error}",
+                    property.block_id
+                )
+            })?
+            .into_iter()
+            .find(|(key, _)| key == &property.key)
+            .map(|(_, value)| value);
+        if actual.as_ref() != Some(&expected) {
+            return fail(format!(
+                "property {}/{} differs (SQL={expected:?}, Loro={actual:?})",
+                property.block_id, property.key
+            ));
+        }
+    }
+    for block in sql_blocks.values() {
+        let loro_properties = engine
+            .read_all_properties_typed(&block.id)
+            .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?;
+        for (key, value) in [
+            ("todo_state", block.todo_state.as_ref()),
+            ("priority", block.priority.as_ref()),
+            ("due_date", block.due_date.as_ref()),
+            ("scheduled_date", block.scheduled_date.as_ref()),
+        ] {
+            if let Some(expected) = value {
+                sql_property_keys.insert((block.id.clone(), key.to_owned()));
+                let actual = loro_properties
+                    .iter()
+                    .find(|(candidate, _)| candidate == key);
+                if !matches!(actual, Some((_, PropertyValue::Str(value))) if value == expected) {
+                    return fail(format!(
+                        "reserved property {}/{} differs (SQL={expected:?}, Loro={actual:?})",
+                        block.id, key
+                    ));
+                }
+            }
+        }
+        for (key, value) in loro_properties {
+            if !parity_property_key(&key)
+                || matches!(value, PropertyValue::Null)
+                || sql_property_keys.contains(&(block.id.clone(), key.clone()))
+            {
+                continue;
+            }
+            let allowed_dangling_ref = match &value {
+                PropertyValue::Str(target) => {
+                    latest_ref_targets
+                        .get(&(block.id.clone(), key.clone()))
+                        .is_some_and(|latest| latest.as_deref() == Some(target.as_str()))
+                        && known.contains(target.as_str())
+                        && !sql_blocks.contains_key(target.as_str())
+                }
+                _ => false,
+            };
+            if !allowed_dangling_ref {
+                return fail(format!(
+                    "engine-only property {}/{} has no matching SQL row or exact purged \
+                     value_ref evidence: {value:?}",
+                    block.id, key
+                ));
+            }
+        }
+    }
+    let sql_tags: BTreeSet<_> = raw
+        .block_tags
+        .iter()
+        .map(|tag| (tag.block_id.as_str(), tag.tag_id.as_str()))
+        .collect();
+    for tag in &raw.block_tags {
+        if !known.contains(tag.block_id.as_str()) || !sql_blocks.contains_key(tag.tag_id.as_str()) {
+            continue;
+        }
+        let tags = engine
+            .read_tags(&tag.block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
+        if !tags.contains(&tag.tag_id) {
+            return fail(format!(
+                "direct tag {}/{} exists in SQL but not Loro",
+                tag.block_id, tag.tag_id
+            ));
+        }
+    }
+    for block in sql_blocks.values() {
+        for tag_id in engine
+            .read_tags(&block.id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?
+        {
+            if sql_tags.contains(&(block.id.as_str(), tag_id.as_str())) {
+                continue;
+            }
+            let allowed_dangling_tag =
+                known.contains(tag_id.as_str()) && !sql_blocks.contains_key(tag_id.as_str());
+            if !allowed_dangling_tag {
+                return fail(format!(
+                    "engine-only direct tag {}/{} still targets a surviving/unknown block",
+                    block.id, tag_id
+                ));
+            }
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
+fn fixture_set_property_is_clear(args: &Value) -> bool {
+    const TYPED_FIELDS: [&str; 5] = [
+        "value_text",
+        "value_num",
+        "value_date",
+        "value_ref",
+        "value_bool",
+    ];
+    let value = args.get("value").unwrap_or(&Value::Null);
+    TYPED_FIELDS
+        .iter()
+        .all(|field| value.get(field).is_none_or(Value::is_null))
+}
+
+fn verify_removed_value_in_engine(
+    state: &agaric_engine::loro::shared::LoroState,
+    fixture_name: &str,
+    op: &Value,
+) -> Result<(), String> {
+    use agaric_engine::loro::engine::PropertyValue;
+
+    let command = op["command"].as_str().expect("op command");
+    let args = &op["args"];
+    let block_id = args["blockId"].as_str().map(seed_label_to_id);
+    let space = SpaceId::from_trusted(TEST_SPACE_ID);
+    let mut guard = state
+        .registry
+        .for_space(&space, DEV)
+        .expect("for_space (negative parity)");
+    let engine = guard.engine_mut();
+    let fail = |detail| Err(format!("fixture '{fixture_name}': {detail}"));
+
+    if command == "delete_property" {
+        let block_id = block_id.expect("delete_property blockId");
+        let key = args["key"].as_str().expect("delete_property key");
+        let value = engine
+            .read_all_properties_typed(&block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?
+            .into_iter()
+            .find(|(candidate, _)| candidate == key);
+        if value.is_some() {
+            return fail(format!(
+                "delete_property left {block_id}/{key} in Loro: {value:?}"
+            ));
+        }
+    } else if command == "remove_tag" {
+        let block_id = block_id.expect("remove_tag blockId");
+        let tag_id = seed_label_to_id(args["tagId"].as_str().expect("remove_tag tagId"));
+        let tags = engine
+            .read_tags(&block_id)
+            .map_err(|error| format!("fixture '{fixture_name}': read tags: {error}"))?;
+        if tags.contains(&tag_id) {
+            return fail(format!("remove_tag left {block_id}/{tag_id} in Loro"));
+        }
+    } else if matches!(
+        command,
+        "set_property" | "set_todo_state" | "set_priority" | "set_due_date" | "set_scheduled_date"
+    ) {
+        let (key, cleared) = match command {
+            "set_property" => (
+                args["key"].as_str().expect("set_property key"),
+                fixture_set_property_is_clear(args),
+            ),
+            "set_todo_state" => ("todo_state", args["state"].is_null()),
+            "set_priority" => ("priority", args["level"].is_null()),
+            "set_due_date" => ("due_date", args["date"].is_null()),
+            "set_scheduled_date" => ("scheduled_date", args["date"].is_null()),
+            _ => unreachable!(),
+        };
+        if cleared {
+            let block_id = block_id.expect("cleared property blockId");
+            let value = engine
+                .read_all_properties_typed(&block_id)
+                .map_err(|error| format!("fixture '{fixture_name}': read properties: {error}"))?
+                .into_iter()
+                .find(|(candidate, _)| candidate == key)
+                .map(|(_, value)| value);
+            if !matches!(value, None | Some(PropertyValue::Null)) {
+                return fail(format!(
+                    "cleared property {block_id}/{key} remains non-null in Loro: {value:?}"
+                ));
+            }
+        }
+    }
+    drop(guard);
+    Ok(())
+}
+
+#[test]
+fn set_property_clear_detection_matches_fixture_payload_projection() {
+    assert!(fixture_set_property_is_clear(&json!({})));
+    assert!(fixture_set_property_is_clear(&json!({ "value": null })));
+    assert!(fixture_set_property_is_clear(&json!({ "value": {} })));
+    assert!(fixture_set_property_is_clear(&json!({
+        "value": {
+            "value_text": null,
+            "value_num": null,
+            "value_date": null,
+            "value_ref": null,
+            "value_bool": null,
+        }
+    })));
+    for value in [
+        json!({ "value_text": "x" }),
+        json!({ "value_num": 0 }),
+        json!({ "value_date": "2026-08-05" }),
+        json!({ "value_ref": "S1" }),
+        json!({ "value_bool": false }),
+    ] {
+        assert!(!fixture_set_property_is_clear(&json!({ "value": value })));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Per-fixture run + assert / update
 // ---------------------------------------------------------------------------
 
@@ -486,21 +910,9 @@ async fn run_fixture(path: &PathBuf) {
     let (pool, _dir) = test_pool().await;
     let mat = test_materializer(&pool);
 
-    // #891: install the process-global Loro engine so ops route through the
-    // production `apply_*_via_loro` ENGINE path (dense-reproject positions),
-    // not the SQL-only fallback. `install_for_test` is a no-op once the
-    // OnceLock is set, so the SAME `LoroState` is shared by every fixture in
-    // this test binary. Fixtures all scope to TEST_SPACE_ID and reuse the same
-    // `'0'`-padded ids (S1→B1, …), so the prior fixture's per-space tree would
-    // otherwise bleed in. `registry.clear()` drops every registered engine,
-    // so the `for_space` below lazy-creates a FRESH empty tree for this
-    // fixture — equivalent to a first boot, against this fixture's own fresh
-    // pool.
-    // #2249: the engine state is the materializer's own per-instance
-    // registry — the very state the command/apply pipeline mutates. A
-    // fresh materializer means a fresh, isolated per-test tree (no
-    // process-global registry, no `registry.clear()` cross-talk, and
-    // plain `cargo test` is safe — see `loro::shared`).
+    // #2249: every fresh Materializer owns a fresh per-instance LoroState. The
+    // fixture therefore has an isolated engine tree even when plain
+    // `cargo test` runs this module concurrently with other tests.
     let state = mat.loro_state();
 
     // 1. Seed blocks (literal expanded ids), then scope every seed block to one
@@ -576,58 +988,92 @@ async fn run_fixture(path: &PathBuf) {
     }
     assign_all_to_test_space(&pool).await;
 
-    // 2. Apply ops.
+    let mut canonical_order: Vec<String> = seed["blocks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let mut purge_gapped_parents: BTreeSet<Option<String>> = BTreeSet::new();
+
+    // Guard setup before fixture ops can remove/overwrite a seeded property or
+    // tag and erase evidence that its command took a SQL-only fallback.
+    verify_fixture_engine_parity(&pool, state, &name, &canonical_order, &purge_gapped_parents)
+        .await
+        .unwrap_or_else(|message| panic!("{message}"));
+
+    // 2. Apply ops and guard EACH settled boundary. Structural comparisons use
+    // exact raw SQL positions except for the one parent group a successful
+    // purge is known to leave gapped. A later create/move touching that group
+    // owes a dense reproject, so it removes the allowance before comparison.
     if let Some(ops) = fixture["ops"].as_array() {
         for op in ops.clone() {
+            let command = op["command"].as_str().expect("op command");
+            let old_parent = if matches!(command, "move_block" | "purge_block") {
+                let block_id = seed_label_to_id(
+                    op["args"]["blockId"]
+                        .as_str()
+                        .expect("structural op blockId"),
+                );
+                sqlx::query_as::<_, (Option<String>,)>("SELECT parent_id FROM blocks WHERE id = ?")
+                    .bind(block_id)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("read structural op parent")
+                    .0
+            } else {
+                None
+            };
             apply_op(&pool, &mat, &op).await;
+
+            match command {
+                "create_block" => {
+                    let parent = op["args"]["parentId"].as_str().map(seed_label_to_id);
+                    purge_gapped_parents.remove(&parent);
+                }
+                "move_block" => {
+                    let new_parent = op["args"]["newParentId"].as_str().map(seed_label_to_id);
+                    purge_gapped_parents.remove(&old_parent);
+                    purge_gapped_parents.remove(&new_parent);
+                }
+                "purge_block" => {
+                    purge_gapped_parents.insert(old_parent);
+                }
+                _ => {}
+            }
+            for created in read_created_block_ids_in_op_order(&pool).await {
+                if !canonical_order.contains(&created) {
+                    canonical_order.push(created);
+                }
+            }
+            verify_fixture_engine_parity(
+                &pool,
+                state,
+                &name,
+                &canonical_order,
+                &purge_gapped_parents,
+            )
+            .await
+            .unwrap_or_else(|message| panic!("{message}"));
+            verify_removed_value_in_engine(state, &name, &op)
+                .unwrap_or_else(|message| panic!("{message}"));
         }
     }
     // Catch any top-level pages created mid-op so their descendants resolve a
     // space (otherwise a follow-up cross-space ref/link op would be rejected).
     assign_all_to_test_space(&pool).await;
 
-    // #891 ENGINE-PATH GUARD: every block CREATED by an op must be present in
-    // the per-space engine tree. The SQL-only fallback never touches the
-    // engine, so this asserts the ops genuinely ran the production
-    // `apply_*_via_loro` path (dense-reproject positions) — not the fallback
-    // whose gapped provisional positions produced the spurious #763 drift. If
-    // a future change regresses the runner back to the fallback (e.g. drops
-    // `install_for_test`, the engine seed, or space assignment), this fails
-    // loudly instead of silently re-encoding fallback positions into fixtures.
-    {
-        let space = SpaceId::from_trusted(TEST_SPACE_ID);
-        let created = read_created_block_ids_in_op_order(&pool).await;
-        let mut guard = state.registry.for_space(&space, DEV).expect("for_space");
-        for id in &created {
-            assert!(
-                guard
-                    .engine_mut()
-                    .read_block(id)
-                    .expect("read_block")
-                    .is_some(),
-                "fixture '{name}': op-created block {id} is absent from the engine tree — \
-                 the op took the SQL-only FALLBACK, not the production engine path (#891)",
-            );
-        }
-        drop(guard);
-    }
-
-    // 3. Canonical order: seed blocks first (fixture seed order), then created
-    //    blocks in op (creation) order — read from the op_log's `create_block`
-    //    entries in seq order. The same order is computed on the TS side.
-    let mut canonical_order: Vec<String> = Vec::new();
-    if let Some(blocks) = seed["blocks"].as_array() {
-        for b in blocks {
-            canonical_order.push(seed_label_to_id(b["id"].as_str().expect("seed block id")));
-        }
-    }
+    // 3. Canonical order: seed blocks first, then op-created blocks in seq
+    // order. The loop maintains this after every op; this final read is an
+    // idempotent safeguard for fixtures with an empty/non-array op list.
     for created in read_created_block_ids_in_op_order(&pool).await {
         if !canonical_order.contains(&created) {
             canonical_order.push(created);
         }
     }
 
-    // 4. Snapshot.
+    // 4. Build the mock-comparison snapshot. Per-op parity reads never mutate
+    // this state, so canonical relabeling and fixture output remain unchanged.
     let raw_state = read_raw_state(&pool).await;
     let snapshot: Snapshot = build_snapshot_with_order(raw_state, &canonical_order);
     let snapshot_value = serde_json::to_value(&snapshot).unwrap();
@@ -666,6 +1112,83 @@ async fn conformance_fixtures_match_backend() {
     for path in &paths {
         run_fixture(path).await;
     }
+}
+
+/// #3333 — the engine-path guard must cover a real fixture whose op list has
+/// no `create_block`. Reproduce the observable result of move_dedent taking the
+/// SQL-only arm (the target row changes while this fixture's isolated engine
+/// does not), then drive the SAME state capture + comparator used by
+/// `run_fixture`. The direct SQL update deliberately does not call the fallback
+/// implementation or touch its process-global metric.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn engine_parity_guard_rejects_sql_only_move_dedent_divergence() {
+    let path = fixture_paths()
+        .into_iter()
+        .find(|path| path.file_stem().is_some_and(|stem| stem == "move_dedent"))
+        .expect("move_dedent fixture path");
+    let fixture: Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).expect("read move_dedent fixture"))
+            .expect("parse move_dedent fixture");
+    assert_eq!(fixture["name"].as_str(), Some("move_dedent"));
+    let ops = fixture["ops"].as_array().expect("move_dedent ops");
+    assert!(
+        ops.iter().all(|op| op["command"] != "create_block"),
+        "move_dedent must remain a no-create fixture for this regression"
+    );
+    let move_op = ops
+        .iter()
+        .find(|op| op["command"] == "move_block")
+        .expect("move_dedent move op");
+
+    let (pool, _dir) = test_pool().await;
+    let mat = test_materializer(&pool);
+    let state = mat.loro_state();
+    let seed = &fixture["seed"];
+    let blocks = seed["blocks"].as_array().expect("move_dedent seed blocks");
+    for block in blocks {
+        insert_seed_block(&pool, block).await;
+    }
+    assign_all_to_test_space(&pool).await;
+    for block in blocks {
+        seed_block_into_engine(state, block);
+    }
+
+    let canonical_order: Vec<String> = blocks
+        .iter()
+        .map(|block| seed_label_to_id(block["id"].as_str().expect("seed block id")))
+        .collect();
+    let moved_id = seed_label_to_id(move_op["args"]["blockId"].as_str().expect("move blockId"));
+    let new_parent_id = seed_label_to_id(
+        move_op["args"]["newParentId"]
+            .as_str()
+            .expect("move newParentId"),
+    );
+    let new_position = agaric_store::pagination::index_to_provisional_position(
+        move_op["args"]["newIndex"].as_i64().expect("move newIndex"),
+    );
+    // dynamic-sql: test-only simulation of `project_move_block_to_sql`; using
+    // the fixture's actual args keeps this regression coupled to move_dedent.
+    sqlx::query("UPDATE blocks SET parent_id = ?, position = ? WHERE id = ?")
+        .bind(&new_parent_id)
+        .bind(new_position)
+        .bind(&moved_id)
+        .execute(&pool)
+        .await
+        .expect("simulate SQL-only move");
+
+    let message = verify_fixture_engine_parity(
+        &pool,
+        state,
+        "move_dedent",
+        &canonical_order,
+        &BTreeSet::new(),
+    )
+    .await
+    .expect_err("move-only SQL/engine divergence must fail the fixture-local guard");
+    assert!(
+        message.contains("fixture 'move_dedent'") && message.contains(&moved_id),
+        "guard diagnostic must identify the real fixture and divergent block: {message}"
+    );
 }
 
 /// #928 f7 — FE-`newIndex` ↔ engine-clamp parity at the sibling-group TAIL.
@@ -2965,8 +3488,8 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
 //   * `local_move_inheritance_engine_arm_1392`  — engine seeded → the move
 //     routes through `apply_move_block_via_loro`'s engine path;
 //   * `local_move_inheritance_sql_fallback_arm_1392` — blocks left WITHOUT a
-//     space (#2249/#2250: `SpaceUnresolved` is the ONLY remaining sql_only
-//     trigger; the old EngineUninit arm is structurally gone) → the move
+//     space (`SpaceUnresolved`; the old EngineUninit arm is structurally gone,
+//     while `EngineMissingTarget` remains a separate live fallback) → the move
 //     falls back to `apply_move_block_sql_only`.
 //
 // Fixture (both arms): S1 > {PA > XX, PB}; PB carries a direct tag TG. Moving
@@ -2979,8 +3502,8 @@ async fn restore_does_not_over_restore_independently_deleted_nested_subtree_1549
 /// Seed the shared #1392 fixture into SQL; `assign_space` scopes every block
 /// to the test space (the engine arm needs it so `resolve_block_space`
 /// succeeds; the fallback arm passes `false` so the move hits the
-/// `SpaceUnresolved` sql_only arm — the only remaining fallback trigger,
-/// #2250). Returns `(pa, pb, xx, tg)` literal ids. Does NOT touch the
+/// `SpaceUnresolved` sql_only arm, #2250). Returns `(pa, pb, xx, tg)` literal
+/// ids. Does NOT touch the
 /// engine — callers seed the engine themselves on the engine arm only.
 async fn seed_move_inheritance_fixture_1392(
     pool: &SqlitePool,
@@ -3100,8 +3623,8 @@ async fn local_move_inheritance_engine_arm_1392() {
 }
 
 /// #1392 SQL-FALLBACK ARM — with the blocks left OUTSIDE any space
-/// (`resolve_block_space` misses → `SpaceUnresolved`, the only sql_only
-/// trigger left after #2249/#2250 deleted EngineUninit), the same move
+/// (`resolve_block_space` misses → `SpaceUnresolved`, one of the live sql_only
+/// triggers after #2249/#2250 deleted EngineUninit), the same move
 /// falls back to `apply_move_block_sql_only`, whose own
 /// `recompute_subtree_inheritance` likewise makes XX inherit TG from PB —
 /// confirming the dropped explicit call is unnecessary on the fallback arm
