@@ -352,6 +352,8 @@ export function useDuePanelData({
         const resp = await queryByProperty({
           key: 'due_date',
           valueDateRange: [tomorrowStr, endExclusive],
+          excludeTodoStates: ['DONE'],
+          contentNonEmpty: true,
           limit: paginationLimit(200),
           spaceId: currentSpaceId,
         })
@@ -484,12 +486,22 @@ export function useDuePanelData({
         setHasMore(resp.has_more)
         setTotalCount(nonEmptyItems.length)
 
-        // Resolve parent page titles + inline ULID refs (B-53). Replaces
-        // the map (initial fetch wipes pageTitles above).
+        // Resolve parent page titles + inline ULID refs (B-53). The initial
+        // fetch already wipes pageTitles above, so merge here rather than
+        // replacing again after the await. This preserves titles resolved by
+        // the parallel overdue / upcoming / projected effects.
         await resolveAndMergeTitles(
           collectResolveIds(nonEmptyItems),
           () => cancelled,
-          (resolved) => setPageTitles(buildTitleMap(resolved, 'Untitled')),
+          (resolved) => {
+            setPageTitles((prev) => {
+              const next = new Map(prev)
+              for (const [id, title] of buildTitleMap(resolved, 'Untitled')) {
+                next.set(id, title)
+              }
+              return next
+            })
+          },
         )
       } catch (err) {
         logger.warn('useDuePanelData', 'block fetch failed', undefined, err)
@@ -520,12 +532,38 @@ export function useDuePanelData({
       projectedCache.clear()
     }
 
+    const resolveProjectedTitles = (entries: ProjectedAgendaEntry[]) => {
+      const idsToResolve = collectResolveIds(entries.map((entry) => entry.block))
+      return resolveAndMergeTitles(
+        idsToResolve,
+        () => stale,
+        (resolved) => {
+          setPageTitles((prev) => {
+            const next = new Map(prev)
+            for (const r of resolved) {
+              next.set(r.id, r.title ?? 'Untitled')
+            }
+            return next
+          })
+        },
+      ).catch((err) => {
+        // Skip side effects (logging, toast) if the effect has unmounted.
+        if (stale) return
+        logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
+        notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
+      })
+    }
+
     // Serve cached data immediately if available
     const cached = projectedCache.get(cacheKey)
     if (cached && Date.now() - cached.timestamp < PROJECTED_CACHE_TTL_MS) {
-      setProjectedEntries(cached.entries.filter((e) => e.block.content?.trim()))
+      const nonEmptyEntries = cached.entries.filter((e) => e.block.content?.trim())
+      setProjectedEntries(nonEmptyEntries)
       setProjectedLoading(false)
-      return
+      void resolveProjectedTitles(nonEmptyEntries)
+      return () => {
+        stale = true
+      }
     }
 
     if (cached) {
@@ -554,25 +592,7 @@ export function useDuePanelData({
           // Filter out empty-content projected entries
           const nonEmptyEntries = entries.filter((e) => e.block.content?.trim())
           setProjectedEntries(nonEmptyEntries)
-          const idsToResolve = collectResolveIds(nonEmptyEntries.map((e) => e.block))
-          resolveAndMergeTitles(
-            idsToResolve,
-            () => stale,
-            (resolved) => {
-              setPageTitles((prev) => {
-                const next = new Map(prev)
-                for (const r of resolved) {
-                  next.set(r.id, r.title ?? 'Untitled')
-                }
-                return next
-              })
-            },
-          ).catch((err) => {
-            // Skip side effects (logging, toast) if the effect has unmounted.
-            if (stale) return
-            logger.warn('useDuePanelData', 'nested agenda fetch failed', undefined, err)
-            notify.error(t('duePanel.loadAgendaFailed'), { id: 'due-panel-load-failed' })
-          })
+          void resolveProjectedTitles(nonEmptyEntries)
         }
       })
       .catch((err) => {
