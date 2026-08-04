@@ -7,6 +7,7 @@ import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
 import { parse } from '@/editor/markdown-serializer'
 import { announce } from '@/lib/announcer'
+import { logger } from '@/lib/logger'
 
 vi.mock('@/lib/announcer', () => ({ announce: vi.fn() }))
 vi.mock('@/editor/markdown-serializer', () => ({
@@ -29,6 +30,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 const mockedAnnounce = vi.mocked(announce)
+const mockedLoggerWarn = vi.mocked(logger.warn)
 
 function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockActionOrchestration>[0]>) {
   return {
@@ -316,6 +318,69 @@ describe('useBlockActionOrchestration handleDedent', () => {
   })
 })
 
+describe('useBlockActionOrchestration handleIndentById/handleDedentById', () => {
+  it('flushes, indents, and announces a successful context-menu action', async () => {
+    const params = makeDefaultParams()
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleIndentById('C')
+    })
+
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
+    expect(params.indent).toHaveBeenCalledWith('C')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockIndented')
+    expect(params.rovingEditor.mount).not.toHaveBeenCalled()
+  })
+
+  it('preserves focused editor content while dedenting by id', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'Unsaved focused content')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleDedentById('B')
+    })
+
+    expect(params.dedent).toHaveBeenCalledWith('B')
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Unsaved focused content')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockDedented')
+  })
+
+  it('announces failure when indent by id is a no-op', async () => {
+    const params = makeDefaultParams({ indent: vi.fn(async () => false) })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleIndentById('A')
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.moveFailed')
+  })
+
+  it('logs and announces failure when dedent by id rejects', async () => {
+    const error = new Error('dedent failed')
+    const params = makeDefaultParams({
+      dedent: vi.fn(async () => {
+        throw error
+      }),
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleDedentById('A')
+    })
+
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'useBlockActionOrchestration',
+      'dedent by id failed',
+      { blockId: 'A' },
+      error,
+    )
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.moveFailed')
+  })
+})
+
 describe('useBlockActionOrchestration handleMoveUp/Down', () => {
   it('flushes and moves block up', async () => {
     const params = makeDefaultParams()
@@ -356,28 +421,67 @@ describe('useBlockActionOrchestration handleMoveUp/Down', () => {
 })
 
 describe('useBlockActionOrchestration handleMoveUpById/DownById', () => {
-  it('flushes and moves block by id', () => {
+  it('flushes, moves, and announces a successful move up by id', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
-    act(() => {
-      result.current.handleMoveUpById('C')
+    await act(async () => {
+      await result.current.handleMoveUpById('C')
     })
 
     expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveUp).toHaveBeenCalledWith('C')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedUp')
   })
 
-  it('flushes and moves block down by id', () => {
+  it('flushes, moves, and announces a successful move down by id', async () => {
     const params = makeDefaultParams()
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
-    act(() => {
-      result.current.handleMoveDownById('A')
+    await act(async () => {
+      await result.current.handleMoveDownById('A')
     })
 
     expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
     expect(params.moveDown).toHaveBeenCalledWith('A')
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.blockMovedDown')
+  })
+
+  it('preserves focused editor content while moving up by id', async () => {
+    const params = makeDefaultParams()
+    params.rovingEditor.getMarkdown = vi.fn(() => 'Unsaved focused content')
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMoveUpById('B')
+    })
+
+    expect(params.rovingEditor.getMarkdown).toHaveBeenCalled() // no-args by contract
+    expect(params.handleFlush).toHaveBeenCalled() // no-args by contract
+    expect(params.moveUp).toHaveBeenCalledWith('B')
+    expect(params.rovingEditor.mount).toHaveBeenCalledWith('B', 'Unsaved focused content')
+  })
+
+  it('announces failure and retains logger metadata when move down by id rejects', async () => {
+    const error = new Error('move failed')
+    const params = makeDefaultParams({
+      moveDown: vi.fn(async () => {
+        throw error
+      }),
+    })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMoveDownById('A')
+    })
+
+    expect(mockedLoggerWarn).toHaveBeenCalledWith(
+      'useBlockActionOrchestration',
+      'moveDown by id failed',
+      { blockId: 'A' },
+      error,
+    )
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.moveFailed')
   })
 })
 
@@ -439,8 +543,7 @@ describe('useBlockActionOrchestration  scrollIntoView', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
-      result.current.handleMoveUpById('C')
-      await Promise.resolve()
+      await result.current.handleMoveUpById('C')
     })
 
     await vi.waitFor(() => {
@@ -459,8 +562,7 @@ describe('useBlockActionOrchestration  scrollIntoView', () => {
     const { result } = renderHook(() => useBlockActionOrchestration(params))
 
     await act(async () => {
-      result.current.handleMoveDownById('A')
-      await Promise.resolve()
+      await result.current.handleMoveDownById('A')
     })
 
     await vi.waitFor(() => {
@@ -468,6 +570,18 @@ describe('useBlockActionOrchestration  scrollIntoView', () => {
     })
 
     if (otherEl.parentNode) otherEl.parentNode.removeChild(otherEl)
+  })
+
+  it('announces failure and does not scroll when handleMoveUpById is a no-op', async () => {
+    const params = makeDefaultParams({ moveUp: vi.fn(async () => false) })
+    const { result } = renderHook(() => useBlockActionOrchestration(params))
+
+    await act(async () => {
+      await result.current.handleMoveUpById('B')
+    })
+
+    expect(mockedAnnounce).toHaveBeenCalledWith('announce.moveFailed')
+    expect(scrollSpy).not.toHaveBeenCalled()
   })
 
   it('does NOT scroll when moveUp rejects', async () => {

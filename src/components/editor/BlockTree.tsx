@@ -184,19 +184,26 @@ export function BlockTree({
   })
 
   // ── Mount envelope (#2467) ──────────────────────────────────────────
-  // Bounds how many of the collapse-filtered rows actually MOUNT as React
-  // components — a large flat (or not-yet-collapsed) page otherwise mounts
-  // every row regardless of viewport (offscreen rows only stop PAINTING,
-  // see useViewportObserver). `collapsedVisible` below is the capped result;
-  // everything downstream (zoom, DnD, keyboard nav, rendering) composes on
-  // top of it exactly as it did on the uncapped list, so the cap and the
-  // collapse mechanism stack instead of conflicting. See useBlockMountLimit
-  // for the envelope numbers and what this deliberately doesn't cover.
+  // Project the collapse-filtered list into the active zoom view BEFORE
+  // applying the mount cap. Otherwise a zoomed pane inherits the page-wide
+  // hidden count and offers to reveal rows that are not part of that pane
+  // (#3254). See useBlockMountLimit for the envelope numbers.
   const {
-    mounted: collapsedVisible,
+    zoomedBlockId,
+    zoomIn: handleZoomIn,
+    zoomToRoot,
+    breadcrumbs: zoomBreadcrumb,
+    zoomedVisible: uncappedZoomedVisible,
+  } = useBlockZoom(blocks, collapseFilteredVisible)
+
+  // Scope expansion to both the page and zoom root so an expanded envelope
+  // cannot leak across either kind of navigation.
+  const mountScopeKey = `${rootParentId ?? '__ROOT__'}:${zoomedBlockId ?? '__PAGE__'}`
+  const {
+    mounted: mountedVisible,
     hiddenCount: hiddenMountCount,
     expandMountLimit,
-  } = useBlockMountLimit(collapseFilteredVisible, { pageKey: rootParentId })
+  } = useBlockMountLimit(uncappedZoomedVisible, { pageKey: mountScopeKey })
 
   // ── Mount-cap exclusion set for the metadata window (#2580) ─────────────
   // `useViewportWindow` (below) conservatively treats any never-measured
@@ -205,8 +212,8 @@ export function BlockTree({
   // `useBlockMountLimit` excluded from the mounted tree altogether: that
   // block will never mount, so it will never be measured, so the
   // conservative rule would keep issuing metadata IPCs for it forever. Name
-  // exactly the ids the mount cap dropped — `collapseFilteredVisible` (the
-  // full collapse-filtered list, pre-cap) minus `collapsedVisible` (the
+  // exactly the ids the mount cap dropped in the currently rendered
+  // projection — `uncappedZoomedVisible` minus `mountedVisible` (the
   // capped, actually-mounted list) — so the window can subtract them.
   // Deliberately does NOT extend to collapse-hidden or zoomed-out blocks
   // (a pre-existing, separate over-inclusion #1268/#2467 already share, see
@@ -218,22 +225,18 @@ export function BlockTree({
   // is never starved by this exclusion.
   const mountCapExcludedIds = useMemo(() => {
     if (hiddenMountCount === 0) return null
-    const mountedIds = new Set(collapsedVisible.map((b) => b.id))
+    const mountedIds = new Set(mountedVisible.map((b) => b.id))
     const excluded = new Set<string>()
-    for (const b of collapseFilteredVisible) {
+    for (const b of uncappedZoomedVisible) {
       if (!mountedIds.has(b.id) && b.id !== focusedBlockId) excluded.add(b.id)
     }
     return excluded.size > 0 ? excluded : null
-  }, [collapseFilteredVisible, collapsedVisible, hiddenMountCount, focusedBlockId])
+  }, [uncappedZoomedVisible, mountedVisible, hiddenMountCount, focusedBlockId])
 
-  // ── Zoom hook (state + breadcrumb + zoomed view) ───────────────────
-  const {
-    zoomedBlockId,
-    zoomIn: handleZoomIn,
-    zoomToRoot,
-    breadcrumbs: zoomBreadcrumb,
-    zoomedVisible,
-  } = useBlockZoom(blocks, collapsedVisible)
+  // ── Capped active projection ────────────────────────────────────────────
+  // Keep one name for the capped active projection consumed by DnD,
+  // keyboard/range navigation, and rendering below.
+  const zoomedVisible = mountedVisible
 
   // #1063 — the ids of the rows actually rendered (collapsed/zoomed-out blocks
   // filtered out). Both mouse Shift+Click range-select (handleSelect) and the
@@ -669,6 +672,8 @@ export function BlockTree({
     handleDedent: handleDedentKey,
     handleMoveUp,
     handleMoveDown,
+    handleIndentById,
+    handleDedentById,
     handleMoveUpById,
     handleMoveDownById,
     handleMergeWithPrev,
@@ -987,8 +992,8 @@ export function BlockTree({
   const { blockActions, blockResolvers } = useBlockTreeContextBags({
     onNavigate: handleNavigate,
     onDelete: remove,
-    onIndent: indent,
-    onDedent: dedent,
+    onIndent: handleIndentById,
+    onDedent: handleDedentById,
     onMoveUp: handleMoveUpById,
     onMoveDown: handleMoveDownById,
     onMerge: handleMergeById,

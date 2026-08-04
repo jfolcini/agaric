@@ -126,9 +126,17 @@ describe('useBlockMountLimit', () => {
 
   it('resets the mount limit when pageKey changes (page switch without remount)', () => {
     const blocks = makeFlatBlocks(1200)
+    const renderedLengths: number[] = []
     const { result, rerender } = renderHook(
-      ({ pageKey }: { pageKey: string }) =>
-        useBlockMountLimit(blocks, { initialLimit: 500, step: 500, pageKey }),
+      ({ pageKey }: { pageKey: string }) => {
+        const mountEnvelope = useBlockMountLimit(blocks, {
+          initialLimit: 500,
+          step: 500,
+          pageKey,
+        })
+        renderedLengths.push(mountEnvelope.mounted.length)
+        return mountEnvelope
+      },
       { initialProps: { pageKey: 'PAGE_1' } },
     )
 
@@ -137,8 +145,12 @@ describe('useBlockMountLimit', () => {
     expect(result.current.mounted).toHaveLength(1000)
 
     // Switching pages resets the expanded limit back to the initial cap.
+    renderedLengths.length = 0
     rerender({ pageKey: 'PAGE_2' })
     expect(result.current.mounted).toHaveLength(500)
+    // The first render in the new scope is capped too; no passive-effect frame
+    // is allowed to mount rows using the previous scope's expanded limit.
+    expect(renderedLengths[0]).toBe(500)
   })
 
   it('does not reset the mount limit on re-render when pageKey is unchanged', () => {

@@ -229,25 +229,83 @@ export interface DocNode {
 
 // -- PM position helpers ------------------------------------------------------
 
+type PMPositionNode =
+  | BlockLevelNode
+  | ListItemNode
+  | TableRowNode
+  | TableCellNode
+  | TableHeaderNode
+  | InlineNode
+
+function pmContentSize(content: readonly PMPositionNode[] | undefined): number {
+  return content?.reduce((size, child) => size + pmNodeSize(child), 0) ?? 0
+}
+
+/** Text contributes its length, leaf atoms one position, and containers two tags. */
+function pmNodeSize(node: PMPositionNode): number {
+  switch (node.type) {
+    case 'text': {
+      return node.text.length
+    }
+    case 'tag_ref':
+    case 'block_link':
+    case 'block_ref':
+    case 'hardBreak':
+    case 'math_inline':
+    case 'image':
+    case 'horizontalRule':
+    case 'math_block': {
+      return 1
+    }
+    default: {
+      return 2 + pmContentSize(node.content)
+    }
+  }
+}
+
+function pmRightmostTextblockEnd(node: PMPositionNode, start: number): number | undefined {
+  switch (node.type) {
+    case 'paragraph':
+    case 'heading':
+    case 'codeBlock': {
+      return start + 1 + pmContentSize(node.content)
+    }
+    case 'tag_ref':
+    case 'block_link':
+    case 'block_ref':
+    case 'hardBreak':
+    case 'math_inline':
+    case 'image':
+    case 'text':
+    case 'horizontalRule':
+    case 'math_block': {
+      return undefined
+    }
+    default: {
+      let childStart = start + 1
+      let rightmost: number | undefined
+      for (const child of node.content ?? []) {
+        rightmost = pmRightmostTextblockEnd(child, childStart) ?? rightmost
+        childStart += pmNodeSize(child)
+      }
+      return rightmost
+    }
+  }
+}
+
 /**
- * Compute the ProseMirror cursor position at the end of the first
- * paragraph/heading in a DocNode.  Used to position the cursor at the
- * join point after merging two blocks.
+ * Compute the ProseMirror cursor position at the end of the rightmost textblock
+ * within the first block of a DocNode. Used to position the cursor at the join
+ * point after merging two blocks.
  *
- * PM positions: 0=before doc, 1=paragraph open, 1+n=after n inline
- * positions (text.length for text nodes, 1 for atom nodes like
- * tag_ref / block_link / hardBreak).
+ * PM positions count one position for every open wrapper/textblock tag, text
+ * length for text nodes, and one for inline atoms such as tag_ref, block_link,
+ * and hardBreak. Closed wrapper tags affect sibling starts through `nodeSize`,
+ * but the returned position stays inside the final textblock so it is a valid
+ * text selection.
  */
 export function pmEndOfFirstBlock(doc: DocNode): number {
   const block = doc.content?.[0]
   if (!block) return 1
-  if (block.type === 'codeBlock') {
-    return 1 + (block.content?.[0]?.text.length ?? 0)
-  }
-  if (!block.content) return 1
-  let pos = 1 // paragraph/heading open tag
-  for (const node of block.content) {
-    pos += node.type === 'text' ? node.text.length : 1
-  }
-  return pos
+  return pmRightmostTextblockEnd(block, 0) ?? 1
 }
