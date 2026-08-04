@@ -2,11 +2,15 @@ import { describe, expect, it } from 'vitest'
 
 import {
   blockLink,
+  blockquote,
   bold,
+  bulletList,
   codeBlock,
   doc,
   hardBreak,
   heading,
+  listItem,
+  orderedList,
   paragraph,
   tagRef,
   text,
@@ -65,6 +69,54 @@ describe('pmEndOfFirstBlock', () => {
   it('empty code block', () => {
     // doc(codeBlock("")) → pos 1 + 0 = 1
     expect(pmEndOfFirstBlock(doc(codeBlock('')))).toBe(1)
+  })
+
+  it('bullet list', () => {
+    // list open (1) + item open (1) + paragraph open (1) + "hello" (5) = 8
+    expect(pmEndOfFirstBlock(doc(bulletList(listItem(paragraph(text('hello'))))))).toBe(8)
+  })
+
+  it('ordered list', () => {
+    // list open (1) + item open (1) + paragraph open (1) + "first" (5) = 8
+    expect(pmEndOfFirstBlock(doc(orderedList(listItem(paragraph(text('first'))))))).toBe(8)
+  })
+
+  it('blockquote', () => {
+    // quote open (1) + paragraph open (1) + "quoted" (6) = 8
+    expect(pmEndOfFirstBlock(doc(blockquote(paragraph(text('quoted')))))).toBe(8)
+  })
+
+  it('empty textblock inside a wrapper', () => {
+    // quote open (1) + empty paragraph open (1) = 2
+    expect(pmEndOfFirstBlock(doc(blockquote(paragraph())))).toBe(2)
+  })
+
+  it('rightmost empty textblock inside nested wrappers', () => {
+    const wrapped = bulletList(listItem(paragraph(), blockquote(paragraph())))
+
+    // list/item opens (2) + first empty paragraph nodeSize (2) + quote/last
+    // empty paragraph opens (2) lands inside the final textblock at position 6.
+    expect(pmEndOfFirstBlock(doc(wrapped))).toBe(6)
+  })
+
+  it('multi-item list with a nested list', () => {
+    const wrapped = bulletList(
+      listItem(paragraph(text('one'))),
+      listItem(
+        paragraph(text('parent')),
+        orderedList(
+          listItem(paragraph(text('inner'))),
+          listItem(paragraph(text('tail'), hardBreak(), tagRef('T'))),
+        ),
+      ),
+    )
+
+    // Outer list content starts at 1. The first item occupies 7 positions
+    // (item tags 2 + paragraph tags 2 + "one" 3), so item two starts at 8.
+    // Its open tag and "parent" paragraph occupy 1 + 8, putting the nested
+    // list at 17. Nested open (1) + first item (9) + last item/paragraph opens
+    // (2) + "tail" (4) + hardBreak (1) + tagRef (1) lands at position 35.
+    expect(pmEndOfFirstBlock(doc(wrapped))).toBe(35)
   })
 
   it('only uses first block when multiple blocks exist', () => {

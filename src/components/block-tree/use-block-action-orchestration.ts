@@ -203,8 +203,10 @@ export interface UseBlockActionOrchestrationReturn {
   handleDedent: () => void
   handleMoveUp: () => void
   handleMoveDown: () => void
-  handleMoveUpById: (id: string) => void
-  handleMoveDownById: (id: string) => void
+  handleIndentById: (id: string) => Promise<void>
+  handleDedentById: (id: string) => Promise<void>
+  handleMoveUpById: (id: string) => Promise<void>
+  handleMoveDownById: (id: string) => Promise<void>
   handleMergeWithPrev: () => Promise<void>
   handleMergeById: (blockId: string) => Promise<void>
   handleEnterSave: () => Promise<void>
@@ -370,36 +372,86 @@ export function useBlockActionOrchestration({
     rovingEditorRef.current.mount(blockId, content)
   }, [focusedBlockId, handleFlush, moveDown, t])
 
+  const handleIndentById = useCallback(
+    (id: string) => {
+      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      handleFlush()
+      const result = announceMoveResult(
+        indent(id).catch((err: unknown) => {
+          logger.warn('useBlockActionOrchestration', 'indent by id failed', { blockId: id }, err)
+          throw err instanceof Error ? err : new Error(String(err))
+        }),
+        t,
+        'announce.blockIndented',
+      )
+      if (content !== null) {
+        rovingEditorRef.current.mount(id, content)
+      }
+      return result
+    },
+    [focusedBlockId, handleFlush, indent, t],
+  )
+
+  const handleDedentById = useCallback(
+    (id: string) => {
+      const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
+      handleFlush()
+      const result = announceMoveResult(
+        dedent(id).catch((err: unknown) => {
+          logger.warn('useBlockActionOrchestration', 'dedent by id failed', { blockId: id }, err)
+          throw err instanceof Error ? err : new Error(String(err))
+        }),
+        t,
+        'announce.blockDedented',
+      )
+      if (content !== null) {
+        rovingEditorRef.current.mount(id, content)
+      }
+      return result
+    },
+    [dedent, focusedBlockId, handleFlush, t],
+  )
+
   const handleMoveUpById = useCallback(
     (id: string) => {
       const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
-      moveUp(id)
-        .then(() => scrollFocusedBlockIntoView(id))
-        .catch((err: unknown) => {
+      const result = announceMoveResult(
+        moveUp(id).catch((err: unknown) => {
           logger.warn('useBlockActionOrchestration', 'moveUp by id failed', { blockId: id }, err)
-        })
+          throw err instanceof Error ? err : new Error(String(err))
+        }),
+        t,
+        'announce.blockMovedUp',
+        () => scrollFocusedBlockIntoView(id),
+      )
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
       }
+      return result
     },
-    [focusedBlockId, handleFlush, moveUp],
+    [focusedBlockId, handleFlush, moveUp, t],
   )
 
   const handleMoveDownById = useCallback(
     (id: string) => {
       const content = id === focusedBlockId ? (rovingEditorRef.current.getMarkdown?.() ?? '') : null
       handleFlush()
-      moveDown(id)
-        .then(() => scrollFocusedBlockIntoView(id))
-        .catch((err: unknown) => {
+      const result = announceMoveResult(
+        moveDown(id).catch((err: unknown) => {
           logger.warn('useBlockActionOrchestration', 'moveDown by id failed', { blockId: id }, err)
-        })
+          throw err instanceof Error ? err : new Error(String(err))
+        }),
+        t,
+        'announce.blockMovedDown',
+        () => scrollFocusedBlockIntoView(id),
+      )
       if (content !== null) {
         rovingEditorRef.current.mount(id, content)
       }
+      return result
     },
-    [focusedBlockId, handleFlush, moveDown],
+    [focusedBlockId, handleFlush, moveDown, t],
   )
 
   /**
@@ -853,6 +905,8 @@ export function useBlockActionOrchestration({
     handleDedent,
     handleMoveUp,
     handleMoveDown,
+    handleIndentById,
+    handleDedentById,
     handleMoveUpById,
     handleMoveDownById,
     handleMergeWithPrev,

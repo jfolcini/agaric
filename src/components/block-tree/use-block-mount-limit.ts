@@ -15,7 +15,8 @@
  * fibers regardless of viewport — the "full-tree mounting" half of #2467.
  *
  * ## What this does
- * Applies a row-count ceiling AFTER collapse filtering, using the exact same
+ * Applies a row-count ceiling AFTER the caller's collapse/zoom filtering,
+ * using the exact same
  * "don't put it in the array `BlockListRenderer` maps over" mechanism
  * collapse already relies on: the excess rows are not placeholders, they are
  * simply absent from the mounted tree. A boundary row below the last mounted
@@ -49,7 +50,7 @@
  *   separate, not-yet-addressed instance of the same over-inclusion.
  */
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import type { FlatBlock } from '@/lib/tree-utils'
 
@@ -79,11 +80,11 @@ export interface UseBlockMountLimitOptions {
   /** Rows added per `expandMountLimit()` call. Defaults to `MOUNT_LIMIT_STEP`. */
   step?: number
   /**
-   * Scope key (the page root id) — the limit resets to `initialLimit`
-   * whenever this changes. BlockTree is NOT remounted on page switch (the
-   * journal week/month views swap pages in place), so without this an
-   * expanded limit on one large page would leak into the next page.
-   * Mirrors `useBlockCollapse`'s `pageKey` reset (#752).
+   * Scope key (normally the page root id; BlockTree also includes its active
+   * zoom root) — the limit resets to `initialLimit` whenever this changes.
+   * BlockTree is NOT remounted on page/zoom navigation, so without this an
+   * expanded limit in one projection would leak into the next one. Mirrors
+   * `useBlockCollapse`'s page-scoped reset (#752).
    */
   pageKey?: string | null
 }
@@ -94,18 +95,24 @@ export function useBlockMountLimit(
 ): UseBlockMountLimitReturn {
   const { initialLimit = INITIAL_MOUNT_LIMIT, step = MOUNT_LIMIT_STEP, pageKey = null } = options
 
-  const [mountLimit, setMountLimit] = useState(initialLimit)
+  const [mountScope, setMountScope] = useState(() => ({ pageKey, limit: initialLimit }))
 
-  const prevPageKeyRef = useRef(pageKey)
+  // A changed scope must use the initial cap during the render that observes
+  // it. Waiting for the effect below would commit one render with the previous
+  // scope's expanded limit, briefly mounting the very rows this envelope is
+  // meant to keep out of the React tree.
+  const mountLimit = mountScope.pageKey === pageKey ? mountScope.limit : initialLimit
   useEffect(() => {
-    if (prevPageKeyRef.current === pageKey) return
-    prevPageKeyRef.current = pageKey
-    setMountLimit(initialLimit)
-  }, [pageKey, initialLimit])
+    if (mountScope.pageKey === pageKey) return
+    setMountScope({ pageKey, limit: initialLimit })
+  }, [mountScope.pageKey, pageKey, initialLimit])
 
   const expandMountLimit = useCallback(() => {
-    setMountLimit((prev) => prev + step)
-  }, [step])
+    setMountScope((previous) => ({
+      pageKey,
+      limit: (previous.pageKey === pageKey ? previous.limit : initialLimit) + step,
+    }))
+  }, [initialLimit, pageKey, step])
 
   const hiddenCount = Math.max(0, visibleBlocks.length - mountLimit)
   // Reference-stable when nothing is hidden — keeps identity churn out of

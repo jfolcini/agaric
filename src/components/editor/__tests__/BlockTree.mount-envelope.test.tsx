@@ -3,7 +3,8 @@
  *
  * Complements the focused unit tests in `useBlockMountLimit.test.ts` and
  * `BlockListRenderer.test.tsx` by pinning the full wiring: a large page's
- * flat block list is capped BEFORE it reaches `BlockListRenderer`, the
+ * active collapse + zoom projection is capped BEFORE it reaches
+ * `BlockListRenderer`, the
  * excess rows are not mounted at all (not placeholders — absent from the
  * DOM), a boundary affordance reports how many are hidden, and clicking it
  * mounts the next batch.
@@ -29,12 +30,30 @@ import { useBlockStore } from '@/stores/blocks'
 import { createPageBlockStore, PageBlockContext, type PageBlockState } from '@/stores/page-blocks'
 import { useSpaceStore } from '@/stores/space'
 
-vi.mock('@/components/editor/SortableBlock', () => ({
-  SortableBlock: (props: { blockId: string }) => (
-    <div data-testid={`sortable-block-${props.blockId}`}>SortableBlock</div>
-  ),
-  INDENT_WIDTH: 24,
-}))
+vi.mock('@/components/editor/SortableBlock', async () => {
+  const { useBlockActions } = await import('@/components/block-tree/use-block-actions')
+  return {
+    SortableBlock: (props: { blockId: string; hasChildren?: boolean }) => {
+      const actions = useBlockActions()
+      const onZoomIn = props.hasChildren ? actions.onZoomIn : undefined
+      return (
+        <div data-testid={`sortable-block-${props.blockId}`}>
+          {onZoomIn && (
+            <button
+              type="button"
+              data-testid={`zoom-in-${props.blockId}`}
+              onClick={() => onZoomIn(props.blockId)}
+            >
+              Zoom In
+            </button>
+          )}
+          SortableBlock
+        </div>
+      )
+    },
+    INDENT_WIDTH: 24,
+  }
+})
 
 vi.mock('@/editor/use-roving-editor', () => ({
   useRovingEditor: () => ({
@@ -169,6 +188,72 @@ describe('BlockTree mount envelope (#2467)', () => {
 
     const boundary = screen.getByTestId('block-tree-mount-boundary')
     expect(boundary).toHaveTextContent(String(total - INITIAL_MOUNT_LIMIT))
+  })
+
+  it('does not show a page-scoped boundary in a fully mounted zoom subtree', async () => {
+    const user = userEvent.setup()
+    const zoomRoot = makeBlock({ id: 'ZOOM_ROOT', content: 'Zoom root' })
+    const zoomChildren = Array.from({ length: 6 }, (_, i) =>
+      makeBlock({
+        id: `ZOOM_CHILD_${i}`,
+        parent_id: zoomRoot.id,
+        depth: 1,
+        content: `Zoom child ${i}`,
+      }),
+    )
+    const pageRows = makeFlatBlocks(INITIAL_MOUNT_LIMIT + 100)
+    pageStore.setState({ blocks: [zoomRoot, ...zoomChildren, ...pageRows], loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+
+    await user.click(screen.getByTestId(`zoom-in-${zoomRoot.id}`))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(zoomChildren.length)
+    })
+    for (const child of zoomChildren) {
+      expect(screen.getByTestId(`sortable-block-${child.id}`)).toBeInTheDocument()
+    }
+    expect(screen.queryByTestId(`sortable-block-${zoomRoot.id}`)).not.toBeInTheDocument()
+    expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
+  })
+
+  it('resets an expanded page envelope when entering a large zoom subtree', async () => {
+    const user = userEvent.setup()
+    const zoomRoot = makeBlock({ id: 'LARGE_ZOOM_ROOT', content: 'Large zoom root' })
+    const zoomChildren = Array.from({ length: INITIAL_MOUNT_LIMIT + 100 }, (_, i) =>
+      makeBlock({
+        id: `LARGE_ZOOM_CHILD_${i}`,
+        parent_id: zoomRoot.id,
+        depth: 1,
+        content: `Large zoom child ${i}`,
+      }),
+    )
+    const pageRows = makeFlatBlocks(INITIAL_MOUNT_LIMIT + 400)
+    pageStore.setState({ blocks: [zoomRoot, ...zoomChildren, ...pageRows], loading: false })
+
+    renderBlockTree()
+    await screen.findByTestId('block-tree-mount-boundary')
+    await user.click(getBoundaryButton())
+    expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(
+      INITIAL_MOUNT_LIMIT + MOUNT_LIMIT_STEP,
+    )
+
+    await user.click(screen.getByTestId(`zoom-in-${zoomRoot.id}`))
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(INITIAL_MOUNT_LIMIT)
+    })
+    expect(screen.getByTestId('block-tree-mount-boundary')).toHaveTextContent('100')
+
+    await user.click(getBoundaryButton())
+
+    await waitFor(() => {
+      expect(screen.getAllByTestId(/^sortable-block-/)).toHaveLength(zoomChildren.length)
+    })
+    expect(screen.getByTestId(`sortable-block-${zoomChildren.at(-1)?.id}`)).toBeInTheDocument()
+    expect(screen.queryByTestId('block-tree-mount-boundary')).not.toBeInTheDocument()
   })
 
   it('mounts the next batch when the boundary is expanded (deferred rows load/mount)', async () => {
