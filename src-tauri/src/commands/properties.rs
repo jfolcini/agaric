@@ -884,10 +884,11 @@ pub async fn set_scheduled_date_inner(
 ///
 /// # Errors
 ///
-/// - [`AppError::Validation`] — `key` is a system-managed lifecycle property
-///   (`created_at` / `completed_at` / `repeat-*`); these are written only by
-///   internal state-transition helpers and must not be deleted by FE/MCP
-///   callers, or recurrence bookkeeping breaks (#658).
+/// - [`AppError::Validation`] — `key` is a protected lifecycle/recurrence
+///   property (`created_at` / `completed_at` / `repeat-*`). Created/completed dates are
+///   managed by state transitions, while repeat keys participate in recurrence
+///   configuration; direct FE/MCP deletion is rejected to protect that
+///   bookkeeping (#658).
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
 #[instrument(skip(pool, device_id, materializer), err)]
 pub async fn delete_property_inner(
@@ -897,11 +898,11 @@ pub async fn delete_property_inner(
     block_id: ActiveBlockId,
     key: String,
 ) -> Result<(), AppError> {
-    // #658: `delete_property_core` is the unguarded path used internally by
-    // state-transition helpers (e.g. clearing `created_at` / `completed_at`
-    // / `repeat-*` during a recurrence transition). The public command must
-    // NOT let callers remove those system-managed *lifecycle* keys, or
-    // recurrence bookkeeping silently breaks.
+    // #658: `delete_property_core` is the standalone path that owns its
+    // transaction, and this is its sole production caller. Keep the lifecycle
+    // guard here before delegating. State-transition helpers that already hold
+    // a transaction use `delete_property_in_tx` to clear `created_at` /
+    // `completed_at` keys.
     //
     // The reserved *column* keys (`todo_state` / `priority` / `due_date` /
     // `scheduled_date`) are intentionally NOT blocked: clearing them is a
@@ -1064,12 +1065,12 @@ pub async fn create_property_def_inner(
 /// (AGENTS.md invariant #3).
 ///
 /// `key` is the primary key on `property_definitions` (a string, not a
-/// ULID), so the keyset cursor is encoded via [`Cursor::for_id`] with
+/// ULID), so the keyset cursor is encoded via [`pagination::Cursor::for_id`] with
 /// `last.key.clone()` — `for_id` accepts any `String` and stores it in
-/// the cursor's `id` slot. `limit` is forwarded through
-/// [`pagination::PageRequest::new`] which clamps to the canonical
-/// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
-/// `LIST_RESULT_CAP` clamp.
+/// the cursor's `id` slot. [`pagination::PageRequest::new`] rejects a
+/// supplied `limit` outside the canonical `[1, MAX_PAGE_SIZE]` range;
+/// the MCP tool boundary applies its stricter `LIST_RESULT_CAP`
+/// validation first.
 ///
 /// Previously returned a flat `Vec<PropertyDefinition>`. Now
 /// returns a [`PageResponse<PropertyDefinition>`] so the tool surface

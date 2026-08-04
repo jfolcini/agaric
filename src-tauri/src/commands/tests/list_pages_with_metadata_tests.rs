@@ -2,7 +2,7 @@
 //!
 //! Covers: the four metadata columns, all five sort modes, cursor
 //! pagination across modes, the has-property bitmask, space filtering,
-//! and limit-clamp validation.
+//! and strict limit validation.
 
 #![cfg(test)]
 
@@ -700,7 +700,7 @@ async fn space_filter_excludes_pages_in_other_space() {
     );
 }
 
-// ── Validation: limit clamp ───────────────────────────────────────────────
+// ── Validation: limit range ───────────────────────────────────────────────
 
 #[tokio::test]
 async fn limit_out_of_range_returns_validation_error() {
@@ -711,7 +711,7 @@ async fn limit_out_of_range_returns_validation_error() {
         .expect_err("limit=0 must reject");
     assert!(
         format!("{err}").contains("limit must be in"),
-        "expected limit clamp error, got: {err}"
+        "expected limit validation error, got: {err}"
     );
 
     let err =
@@ -720,7 +720,7 @@ async fn limit_out_of_range_returns_validation_error() {
             .expect_err("limit=101 must reject");
     assert!(
         format!("{err}").contains("limit must be in"),
-        "expected limit clamp error, got: {err}"
+        "expected limit validation error, got: {err}"
     );
 }
 
