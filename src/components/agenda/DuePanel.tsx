@@ -596,7 +596,9 @@ export function DuePanel({
                             key={`projected-${entry.block.id}-${entry.source}`}
                             entry={entry}
                             pageTitle={
-                              entry.block.page_id ? (pageTitles.get(entry.block.page_id) ?? '') : ''
+                              entry.block.page_id
+                                ? (pageTitles.get(entry.block.page_id) ?? t('duePanel.untitled'))
+                                : ''
                             }
                             isFocused={focusedIndex === currentFlatIndex}
                             onNavigateToPage={onNavigateToPage}
