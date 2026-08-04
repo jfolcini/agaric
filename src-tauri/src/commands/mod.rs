@@ -686,11 +686,11 @@ pub async fn get_block_history_inner(
     pagination::list_block_history(pool, &block_id, op_type_filter.as_deref(), &page).await
 }
 
-/// Core deletion logic without the built-in key guard.
+/// Standalone deletion path that owns and commits its transaction.
 ///
-/// Used internally by state-transition helpers (e.g. `set_todo_state_inner`)
-/// that need to clear system-managed properties like `created_at` /
-/// `completed_at`.
+/// Its sole production caller is `delete_property_inner`, which applies the
+/// lifecycle-key guard before delegating here. Callers that already hold a
+/// transaction must use `delete_property_in_tx` instead.
 async fn delete_property_core(
     pool: &SqlitePool,
     device_id: &str,

@@ -864,7 +864,7 @@ pub async fn list_pages_with_metadata_inner(
     cursor: Option<String>,
     limit: Option<i64>,
 ) -> Result<PageResponse<PageWithMetadataRow>, AppError> {
-    // Mirror the limit-clamp policy from `list_pages_inner`.
+    // Mirror the strict limit-validation policy from `list_pages_inner`.
     if let Some(l) = limit
         && !(1..=MCP_PAGE_LIMIT_CAP).contains(&l)
     {

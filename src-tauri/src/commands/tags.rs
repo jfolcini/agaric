@@ -619,7 +619,7 @@ pub async fn list_tags_by_prefix_inner(
 /// limit-clamp-followup — backs the tag-management list view
 /// (`TagList.tsx`), which used to call
 /// `list_tags_by_prefix({ prefix: "", limit: 500 })` and silently get
-/// only 200 rows because `list_tags_by_prefix_inner` clamps at
+/// only 200 rows because `list_tags_by_prefix_inner` clamped at
 /// `MAX_TAGS_PREFIX = 200`.  Tags are space-scoped via the tag block's
 /// own `blocks.space_id` column (#533, migration 0086 — see
 /// `add_tag_inner`'s cross-space guard), so this command takes a
@@ -638,10 +638,10 @@ pub async fn list_all_tags_in_space_inner(
 ///
 /// Backs the MCP `list_tags` tool. Ordered by `tag_id ASC`
 /// (ULIDs sort chronologically) so the keyset cursor encoded via
-/// [`Cursor::for_id`] is monotonic. `limit` is forwarded through
-/// [`pagination::PageRequest::new`] which clamps to the canonical
-/// `[1, MAX_PAGE_SIZE]` range; the MCP tool boundary applies its own
-/// `LIST_RESULT_CAP` clamp.
+/// [`pagination::Cursor::for_id`] is monotonic. A supplied `limit`
+/// outside the canonical `[1, MAX_PAGE_SIZE]` range is rejected by
+/// [`pagination::PageRequest::new`]; the MCP tool boundary applies its
+/// stricter `LIST_RESULT_CAP` validation first.
 ///
 /// Previously a thin wrapper over `list_tags_by_prefix_inner("")`
 /// returning a flat `Vec<TagCacheRow>`. Now returns a

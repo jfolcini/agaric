@@ -11,12 +11,12 @@
 //!
 //! | Tool | Backing `*_inner` | Notes |
 //! |------|-------------------|-------|
-//! | `list_pages` | [`list_pages_inner`](crate::commands::list_pages_inner) | Cursor paginated. Limit clamped server-side to 100. |
+//! | `list_pages` | [`list_pages_inner`](crate::commands::list_pages_inner) | Cursor paginated. Limits outside `[1, 100]` are rejected. |
 //! | `get_page` | [`get_page_inner`](crate::commands::get_page_inner) | Composes `get_active_block_inner` + paginated subtree via `page_id`. soft-deleted pages → `NotFound`. |
 //! | `search` | [`search_blocks_inner`](crate::commands::search_blocks_inner) | FTS5. Result count capped at 50, snippet length at 512 chars. |
 //! | `get_block` | [`get_active_block_inner`](crate::commands::get_active_block_inner) | soft-deleted blocks → `NotFound`. |
 //! | `list_backlinks` | [`list_backlinks_grouped_inner`](crate::commands::list_backlinks_grouped_inner) | Grouped by source page. |
-//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated. Limit clamped server-side to 100. |
+//! | `list_tags` | [`list_tags_inner`](crate::commands::list_tags_inner) | Cursor paginated. Limits outside `[1, 100]` are rejected. |
 //! | `list_property_defs` | [`list_property_defs_inner`](crate::commands::list_property_defs_inner) | Typed property schema; cursor paginated. |
 //! | `get_agenda` | [`list_projected_agenda_inner`](crate::commands::list_projected_agenda_inner) | Date-range agenda projection. |
 //! | `journal_for_date` | [`journal_for_date_inner`](crate::commands::journal_for_date_inner) | Idempotent date → page lookup with a **bounded create carve-out (#2719)**: for `date` within today ± [`JOURNAL_CREATE_WINDOW_MONTHS`] months, creates the missing page on first call (single `CreateBlock`+`SetProperty` op pair, origin `agent:<name>`); outside that window the tool never creates — it returns an existing page as a pure read or `AppError::NotFound`. See [`ReadOnlyTools`] and [`handle_journal_for_date`] below. |
@@ -91,9 +91,9 @@ pub const SEARCH_RESULT_CAP: i64 = 50;
 
 /// Default for list-style tools (`list_pages`, `list_tags`,
 /// `list_backlinks`). Re-exported from
-/// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary cap and
-/// the [`list_pages_inner`] / [`get_page_inner`] internal clamp share a
-/// single source of truth.
+/// [`crate::commands::MCP_PAGE_LIMIT_CAP`] so the tool boundary and the
+/// [`list_pages_inner`] / [`get_page_inner`] internal strict validation
+/// share a single source of truth.
 pub use crate::commands::MCP_PAGE_LIMIT_CAP as LIST_RESULT_CAP;
 
 /// Per-result snippet length cap (in Unicode scalars / `char`s) for the

@@ -24,18 +24,19 @@ use agaric_store::space::SpaceScope;
 
 use super::super::*;
 
-/// Soft cap applied to `list_pages_inner` / `get_page_inner` at the tool
-/// boundary. Callers may pass any `Option<i64>`; the value is clamped to
-/// [1, 100] before being forwarded to the underlying pagination layer.
-/// Matches the tool-surface cap.
+/// Maximum `limit` accepted by `list_pages_inner` / `get_page_inner`.
+/// Values outside [1, 100] are rejected with [`AppError::Validation`]
+/// before reaching the underlying pagination layer. Matches the
+/// tool-surface cap.
 pub const MCP_PAGE_LIMIT_CAP: i64 = 100;
 
 /// List all pages in the database with cursor pagination.
 ///
 /// Returns non-deleted, non-conflict blocks with `block_type = 'page'`,
-/// ordered by `id ASC` (ULID ≈ chronological). `limit` is clamped to
-/// `[1, MCP_PAGE_LIMIT_CAP]` at this boundary; callers can still fetch
-/// all pages via the returned cursor.
+/// ordered by `id ASC` (ULID ≈ chronological). A supplied `limit`
+/// outside `[1, MCP_PAGE_LIMIT_CAP]` is rejected with
+/// [`AppError::Validation`]; callers can still fetch all pages via the
+/// returned cursor.
 ///
 /// Thin wrapper over [`pagination::list_by_type`]; used directly by the
 /// MCP `list_pages` tool. Frontend code reaches for backlinks /
