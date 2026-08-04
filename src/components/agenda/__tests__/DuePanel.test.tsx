@@ -1584,6 +1584,32 @@ describe('DuePanel', () => {
       })
     })
 
+    it('keeps a same-day scheduled block visible for a future subject day when toggle is ON', async () => {
+      localStorage.setItem('agaric:hideBeforeScheduled', 'true')
+      const subjectDate = '2099-12-31'
+      mockedListBlocks.mockResolvedValue({
+        items: [
+          makeBlock({
+            id: 'SAME_DAY',
+            content: 'Same-day scheduled task',
+            parent_id: null,
+            todo_state: 'TODO',
+            due_date: subjectDate,
+            scheduled_date: subjectDate,
+            page_id: null,
+          }),
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      render(<DuePanel date={subjectDate} />)
+
+      expect(await screen.findByText('Same-day scheduled task')).toBeInTheDocument()
+      expect(screen.getByText(t('duePanel.headerOne'))).toBeInTheDocument()
+    })
+
     it('toggle button shows correct label', async () => {
       mockedListBlocks.mockResolvedValue({
         items: [makeBlock({ id: 'B1', content: 'label test block' })],

@@ -40,7 +40,6 @@ import {
   useRichContentCallbacks,
   useTagClickHandler,
 } from '@/hooks/useRichContentCallbacks'
-import { useToday } from '@/hooks/useToday'
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { priorityRank } from '@/lib/priority-levels'
@@ -251,8 +250,6 @@ export function DuePanel({
     loadMore,
   } = useDuePanelData({ date, sourceFilter, excludePageId })
 
-  const todayStr = useToday()
-
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => !prev)
   }, [])
@@ -263,14 +260,14 @@ export function DuePanel({
     untitledLabel: t('block.untitled'),
   })
 
-  // Filter out future-scheduled blocks when toggle is ON
+  // Filter out blocks scheduled after the panel's subject day when toggle is ON.
   const visibleBlocks = useMemo(() => {
     if (!hideBeforeScheduled) return blocks
     return blocks.filter((b) => {
-      if (b.scheduled_date && b.scheduled_date > todayStr) return false
+      if (b.scheduled_date && b.scheduled_date > date) return false
       return true
     })
-  }, [blocks, hideBeforeScheduled, todayStr])
+  }, [blocks, date, hideBeforeScheduled])
 
   // Combined items array for ListViewState empty detection
   const allDisplayItems = useMemo(
