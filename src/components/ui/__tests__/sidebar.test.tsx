@@ -313,6 +313,36 @@ describe('SidebarProvider interactions', () => {
     const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
     expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('150px')
   })
+
+  it('keeps an incremental collapsed rail drag alive through the width clamp (#3335)', () => {
+    localStorage.removeItem('sidebar_width')
+    render(
+      <SidebarProvider defaultOpen={false}>
+        <Sidebar collapsible="icon">
+          <SidebarContent>Content</SidebarContent>
+          <SidebarRail />
+        </Sidebar>
+      </SidebarProvider>,
+    )
+
+    const rail = document.querySelector('[data-slot="sidebar-rail"]') as HTMLButtonElement
+    const sidebar = document.querySelector('[data-slot="sidebar"]') as HTMLElement
+    const wrapper = document.querySelector('[data-slot="sidebar-wrapper"]') as HTMLElement
+    expect(sidebar).toHaveAttribute('data-state', 'collapsed')
+
+    fireEvent.pointerDown(rail, { button: 0, clientX: 0 })
+    for (const clientX of [3, 10, 25, 60, 180]) {
+      fireEvent.pointerMove(document, { clientX })
+    }
+    fireEvent.pointerUp(document, { clientX: 180 })
+
+    // `useSidebarState` deliberately clamps widths below 120px. The durable
+    // result must still be an open sidebar that continues past that minimum,
+    // rather than a drag that tears down at its first small delta.
+    expect(sidebar).toHaveAttribute('data-state', 'expanded')
+    expect(wrapper.style.getPropertyValue('--sidebar-width')).toBe('180px')
+    expect(localStorage.getItem('sidebar_width')).toBe('180')
+  })
 })
 
 // ---------------------------------------------------------------------------

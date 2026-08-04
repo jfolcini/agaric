@@ -10,7 +10,7 @@ import { SIDEBAR_WIDTH_DEFAULT } from '@/components/ui/sidebar/use-sidebar-state
  *   - Pointermove past the 2-px hysteresis threshold sets `isResizing`
  *     (and, if the sidebar was collapsed, expands it so the drag can
  *     widen smoothly from 0).
- *   - Dragging below `SIDEBAR_WIDTH_ICON_PX` collapses the sidebar.
+ *   - Dragging below `SIDEBAR_WIDTH_ICON_PX` after reaching it collapses the sidebar.
  *   - Pointerup that never moved is treated as a click → `toggleSidebar`.
  *   - FE-H-15: unmount during a drag must detach the `document`-level
  *     listeners (pointerup never fires in that case), so we track the
@@ -50,6 +50,7 @@ export function useSidebarRailDrag({
     startWidth: 0,
     moved: false,
     wasCollapsed: false,
+    hasReachedIconWidth: false,
   })
   // FE-H-15: track the active drag's listener handles so an unmount mid-drag
   // can detach them from `document` (the pointerup handler never fires in that
@@ -57,7 +58,30 @@ export function useSidebarRailDrag({
   const dragListenersRef = React.useRef<{
     move: (e: PointerEvent) => void
     up: (e: PointerEvent) => void
+    cancel: () => void
   } | null>(null)
+  const originalGlobalStylesRef = React.useRef<{
+    cursor: string
+    userSelect: string
+  } | null>(null)
+
+  const teardownDrag = React.useCallback(() => {
+    const state = dragState.current
+    const handles = dragListenersRef.current
+    state.dragging = false
+    if (handles) {
+      document.removeEventListener('pointermove', handles.move)
+      document.removeEventListener('pointerup', handles.up)
+      document.removeEventListener('pointercancel', handles.cancel)
+      dragListenersRef.current = null
+    }
+    const originalStyles = originalGlobalStylesRef.current
+    if (originalStyles) {
+      document.documentElement.style.cursor = originalStyles.cursor
+      document.body.style.userSelect = originalStyles.userSelect
+      originalGlobalStylesRef.current = null
+    }
+  }, [])
 
   const onDoubleClick = React.useCallback(() => {
     setSidebarWidth(SIDEBAR_WIDTH_DEFAULT)
@@ -69,12 +93,20 @@ export function useSidebarRailDrag({
       if (e.button !== 0) return
       e.preventDefault()
       const state = dragState.current
+      if (state.dragging) {
+        // A second pointerdown must replace, rather than orphan, the active
+        // document listeners. This is unusual for a mouse, but can occur for
+        // another pointer type or a synthetic event.
+        teardownDrag()
+        setIsResizing(false)
+      }
       state.dragging = true
       state.startX = e.clientX
       state.wasCollapsed = !open
       // When collapsed, start from 0 so dragging right opens smoothly
       state.startWidth = open ? sidebarWidth : 0
       state.moved = false
+      state.hasReachedIconWidth = open
 
       const onPointerMove = (ev: PointerEvent) => {
         if (!state.dragging) return
@@ -89,14 +121,12 @@ export function useSidebarRailDrag({
         }
         if (state.moved) {
           const newWidth = state.startWidth + delta
-          if (newWidth < SIDEBAR_WIDTH_ICON_PX) {
+          if (newWidth >= SIDEBAR_WIDTH_ICON_PX) {
+            state.hasReachedIconWidth = true
+          }
+          if (state.hasReachedIconWidth && newWidth < SIDEBAR_WIDTH_ICON_PX) {
             // Dragged below icon width — collapse
-            state.dragging = false
-            document.removeEventListener('pointermove', onPointerMove)
-            document.removeEventListener('pointerup', onPointerUp)
-            dragListenersRef.current = null
-            document.documentElement.style.cursor = ''
-            document.body.style.userSelect = ''
+            teardownDrag()
             setIsResizing(false)
             setOpen(false)
             return
@@ -106,12 +136,7 @@ export function useSidebarRailDrag({
       }
 
       const onPointerUp = () => {
-        state.dragging = false
-        document.removeEventListener('pointermove', onPointerMove)
-        document.removeEventListener('pointerup', onPointerUp)
-        dragListenersRef.current = null
-        document.documentElement.style.cursor = ''
-        document.body.style.userSelect = ''
+        teardownDrag()
         if (state.moved) {
           setIsResizing(false)
         } else {
@@ -120,28 +145,30 @@ export function useSidebarRailDrag({
         }
       }
 
+      const onPointerCancel = () => {
+        const moved = state.moved
+        teardownDrag()
+        if (moved) {
+          setIsResizing(false)
+        }
+      }
+
       document.addEventListener('pointermove', onPointerMove)
       document.addEventListener('pointerup', onPointerUp)
-      dragListenersRef.current = { move: onPointerMove, up: onPointerUp }
+      document.addEventListener('pointercancel', onPointerCancel)
+      dragListenersRef.current = { move: onPointerMove, up: onPointerUp, cancel: onPointerCancel }
+      originalGlobalStylesRef.current = {
+        cursor: document.documentElement.style.cursor,
+        userSelect: document.body.style.userSelect,
+      }
       document.documentElement.style.cursor = 'col-resize'
       document.body.style.userSelect = 'none'
     },
-    [open, sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen],
+    [open, sidebarWidth, setSidebarWidth, toggleSidebar, setIsResizing, setOpen, teardownDrag],
   )
 
-  // FE-H-15: if the rail unmounts mid-drag, detach the still-attached
-  // `document` listeners so they do not leak and reference stale state.
-  React.useEffect(
-    () => () => {
-      const handles = dragListenersRef.current
-      if (handles) {
-        document.removeEventListener('pointermove', handles.move)
-        document.removeEventListener('pointerup', handles.up)
-        dragListenersRef.current = null
-      }
-    },
-    [],
-  )
+  // FE-H-15: if the rail unmounts mid-drag, clean up the still-active drag.
+  React.useEffect(() => teardownDrag, [teardownDrag])
 
   return { onPointerDown, onDoubleClick }
 }
