@@ -16,7 +16,7 @@ same translated fallback as ordinary Due panel rows.
 
 **Files touched (this session):**
 - `src/hooks/useDuePanelData.ts` (+44/-24)
-- `src/hooks/__tests__/useDuePanelData.test.ts` (+123/-0)
+- `src/hooks/__tests__/useDuePanelData.test.ts` (+127/-0)
 - `src/components/agenda/DuePanel.tsx` (+3/-1)
 - `src/components/agenda/__tests__/DuePanel.test.tsx` (+36/-0)
 - `docs/session-log/session-1251-due-panel-data-fixes.md` (new)
@@ -37,4 +37,4 @@ DOM focus, so that out-of-scope change was reverted rather than shipped here. Th
 is stacked on #3412 so its session-1250 reservation remains contiguous; the PR targets
 that branch and can retarget to `main` after #3412 lands.
 
-**Commit plan:** single commit, pushed.
+**Commit plan:** two commits, pushed.
