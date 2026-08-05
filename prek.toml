@@ -1387,10 +1387,12 @@ stages = ["pre-push"]
 
 # Rust: smart related-only tests. Pre-push only (#817): the related-test
 # selector falls back to the FULL nextest suite whenever a foundational
-# module is touched (lib.rs/db.rs/op.rs/error.rs/pagination.rs — see
-# test-related-rust.sh), so at commit time this routinely ran the entire
-# suite and dominated commit latency. The pre-push verifier runs nextest
-# once, scoped to the push range, in Phase D of verify-ci-equivalent.sh;
+# module is touched (the app lib/main entry points or any file below its
+# db module, agaric-core's error.rs, agaric-store's op.rs, or any file below
+# its pagination module — see test-related-rust.sh), so at commit time this
+# routinely ran the entire suite and dominated commit latency. The pre-push
+# verifier runs nextest once, scoped to the push range, in Phase D of
+# verify-ci-equivalent.sh;
 # Phase A passes SKIP=cargo-test so it is not re-run there. (As a
 # pre-push-staged prek hook it would invoke the script with the default
 # `--cached` source against an empty index → a no-op at push; the genuine
@@ -1415,8 +1417,11 @@ stages = ["pre-push"]
 # non-empty filter, a package filter must force `--workspace` (without it
 # `package(agaric-engine)` matches nothing — #3212), an unmappable .rs file
 # must be reported loudly, and the pre-existing `src-tauri/src/**` module
-# mapping (plus the #818 specta pull-in) must stay byte-identical. Runs in
-# ~1s against a throwaway workspace in a temp dir. No file args.
+# mapping (plus the #818 specta pull-in) must stay byte-identical. #3256 also
+# pins current foundational file/directory fallbacks, missing-target failure,
+# NUL-safe unusual filenames, nested-cwd cached/range discovery, and the exact
+# cwd/argv of the non-dry full-suite cargo exec via a local stub. Runs against
+# a throwaway workspace in a temp dir. No file args.
 [[repos.hooks]]
 id = "test-related-rust-self-test"
 name = "related-test selector self-test (#3220 crate-mapping fixtures)"

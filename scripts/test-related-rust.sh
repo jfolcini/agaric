@@ -42,9 +42,10 @@
 # `-E "package(agaric-engine)"` alone would silently match 0 tests.
 # The `src-tauri/src/**`-only path keeps the historical bare form.
 #
-# Full-suite fallback: if any matched file is lib.rs, main.rs, db.rs,
-# error.rs, op.rs, or pagination.rs — these are foundational modules
-# imported by nearly every test, so a targeted run would miss too much.
+# Full-suite fallback: changes to the app entry/library files, the db module,
+# agaric-core's error type, agaric-store's op definitions, or its pagination
+# module force the whole workspace suite. These are foundational modules
+# imported by broad test surfaces, so a targeted run would miss too much.
 #
 # Diff sources:
 #   --cached         (default; pre-commit use) — files in the git index
@@ -85,6 +86,77 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
+  echo "ERROR: test-related-rust.sh must run inside a Git worktree." >&2
+  exit 2
+fi
+REPO_ROOT=$(cd "$REPO_ROOT" && pwd -P)
+CARGO_BIN="${CARGO_BIN:-cargo}"
+
+# ── Foundational targets that force the full workspace suite ─────────
+# A trailing slash declares a directory target and matches every file below
+# that path. File targets match exactly. Keeping the kind in the spelling makes
+# prefix matching path-segment-aware: `src/db/` matches `src/db/pool.rs`, but
+# never `src/db_extra.rs`; `src/op.rs` never matches `src/op.rs_extra.rs`.
+FALLBACK_TARGETS=(
+  "src-tauri/src/lib.rs"
+  "src-tauri/src/main.rs"
+  "src-tauri/src/db/"
+  "src-tauri/agaric-core/src/error.rs"
+  "src-tauri/agaric-store/src/op.rs"
+  "src-tauri/agaric-store/src/pagination/"
+)
+
+validate_fallback_targets() {
+  local target resolved failed=0
+
+  for target in "${FALLBACK_TARGETS[@]}"; do
+    case "$target" in
+      */)
+        resolved="$REPO_ROOT/${target%/}"
+        if [ ! -d "$resolved" ]; then
+          echo "ERROR: configured Rust fallback directory is missing: $target" >&2
+          failed=1
+        fi
+        ;;
+      *)
+        resolved="$REPO_ROOT/$target"
+        if [ ! -f "$resolved" ]; then
+          echo "ERROR: configured Rust fallback file is missing: $target" >&2
+          failed=1
+        fi
+        ;;
+    esac
+  done
+
+  if [ "$failed" -ne 0 ]; then
+    echo "ERROR: update FALLBACK_TARGETS after moving a foundational Rust path." >&2
+    return 1
+  fi
+}
+
+FALLBACK_MATCH=""
+matches_fallback_target() { # <repo-relative-file>
+  local file="$1" target
+  FALLBACK_MATCH=""
+  for target in "${FALLBACK_TARGETS[@]}"; do
+    case "$target" in
+      */)
+        case "$file" in
+          "$target"*) FALLBACK_MATCH="$target"; return 0 ;;
+        esac
+        ;;
+      *)
+        if [ "$file" = "$target" ]; then
+          FALLBACK_MATCH="$target"
+          return 0
+        fi
+        ;;
+    esac
+  done
+  return 1
+}
+
 # ── Workspace crate roots, derived from cargo metadata ───────────────
 # Emits one "<repo-relative-crate-dir> <package-name>" line per
 # workspace member, EXCLUDING the workspace-root package (`agaric`,
@@ -95,16 +167,15 @@ done
 # is added to `[workspace].members`; a hardcoded array is precisely how
 # the pre-#3220 blind spot survived six crate extractions.
 crate_roots() {
-  local repo_root manifest meta
-  repo_root=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
-  manifest="$repo_root/src-tauri/Cargo.toml"
+  local manifest meta
+  manifest="$REPO_ROOT/src-tauri/Cargo.toml"
   [ -f "$manifest" ] || return 1
 
   # --offline first (hooks must not reach the network); fall back to a
   # networked resolve only if the lockfile is incomplete.
-  meta=$(cargo metadata --manifest-path "$manifest" --no-deps \
+  meta=$("$CARGO_BIN" metadata --manifest-path "$manifest" --no-deps \
            --format-version 1 --offline 2>/dev/null) \
-    || meta=$(cargo metadata --manifest-path "$manifest" --no-deps \
+    || meta=$("$CARGO_BIN" metadata --manifest-path "$manifest" --no-deps \
            --format-version 1 2>/dev/null) \
     || return 1
 
@@ -117,7 +188,7 @@ for pkg in meta['packages']:
     if os.path.realpath(d) == ws:
         continue
     print(os.path.relpath(d, sys.argv[1]), pkg['name'])
-" "$repo_root"
+" "$REPO_ROOT"
 }
 
 CRATE_MAP=""
@@ -129,6 +200,13 @@ load_crate_map() {
   CRATE_MAP_LOADED=1
   CRATE_MAP=$(crate_roots || true)
 }
+
+# Validate the REAL checkout before the self-test builds its faithful fixture.
+# Otherwise the fixture could recreate a path that has gone stale in the
+# checkout and let the always-run self-test report a false green.
+if ! validate_fallback_targets; then
+  exit 1
+fi
 
 # ── Self-test ────────────────────────────────────────────────────────
 # Builds a throwaway workspace + git repo and asserts the selector's
@@ -162,6 +240,15 @@ if [ "$SELF_TEST" -eq 1 ]; then
     fi
   }
 
+  assert_eq() { # <label> <expected> <actual>
+    if [ "$2" = "$3" ]; then
+      echo "  ✓ $1"
+    else
+      echo "  ✗ $1 (expected: $2; actual: $3)" >&2
+      fails=$((fails + 1))
+    fi
+  }
+
   # The fixture must not inherit the caller's git context. When this
   # runs from a git hook, GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE point at
   # the REAL repository — `git init` there is a re-init that rewrites
@@ -171,7 +258,8 @@ if [ "$SELF_TEST" -eq 1 ]; then
   unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_OBJECT_DIRECTORY \
     GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_COMMON_DIR GIT_CONFIG \
     GIT_CONFIG_GLOBAL GIT_CONFIG_SYSTEM GIT_PREFIX GIT_INTERNAL_GETTEXT_SH_SCHEME
-  export GIT_CEILING_DIRECTORIES="$tmp"
+  ceiling_dir=$(dirname "$tmp")
+  export GIT_CEILING_DIRECTORIES="$ceiling_dir"
 
   cd "$tmp"
   git init -q -b main . >/dev/null
@@ -191,13 +279,13 @@ if [ "$SELF_TEST" -eq 1 ]; then
   # name matches its package name, one where it does not
   # (diagnostics/ → agaric-diagnostics), which is exactly the case a
   # hardcoded crate array gets wrong.
-  mkdir -p src-tauri/src/commands src-tauri/src/loro \
+  mkdir -p src-tauri/src/commands src-tauri/src/db src-tauri/src/loro \
     src-tauri/agaric-engine/src/apply src-tauri/agaric-core/src \
-    src-tauri/diagnostics/src tools
+    src-tauri/agaric-store/src/pagination src-tauri/diagnostics/src tools
   cat > src-tauri/Cargo.toml <<'TOML'
 [workspace]
 resolver = "2"
-members = [".", "agaric-core", "agaric-engine", "diagnostics"]
+members = [".", "agaric-core", "agaric-engine", "agaric-store", "diagnostics"]
 
 [package]
 name = "agaric"
@@ -205,6 +293,7 @@ version = "0.0.0"
 edition = "2021"
 TOML
   for member in agaric-core:agaric-core agaric-engine:agaric-engine \
+    agaric-store:agaric-store \
     diagnostics:agaric-diagnostics; do
     dir="${member%%:*}"; pkg="${member##*:}"
     cat > "src-tauri/$dir/Cargo.toml" <<TOML
@@ -216,9 +305,23 @@ TOML
     : > "src-tauri/$dir/src/lib.rs"
   done
   : > src-tauri/src/lib.rs
+  : > src-tauri/src/main.rs
+  : > src-tauri/src/db/mod.rs
+  : > src-tauri/agaric-core/src/error.rs
+  : > src-tauri/agaric-store/src/op.rs
+  : > src-tauri/agaric-store/src/pagination/mod.rs
   : > README.md
   git add -A
   git commit -qm "fixture scaffold"
+
+  cargo_stub="$tmp/cargo-stub"
+  cargo_stub_log="$tmp/cargo-stub.log"
+  cat > "$cargo_stub" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\0' "$PWD" "$@" > "$CARGO_STUB_LOG"
+STUB
+  chmod +x "$cargo_stub"
 
   stage() { # <path> — create (if absent) and stage a single file
     mkdir -p "$(dirname "$1")"
@@ -226,10 +329,32 @@ TOML
     git add -- "$1"
   }
 
-  run_sel() { # → combined stdout+stderr of a --dry run; never aborts
-    local out rc
+  run_sel_from() { # <cwd> [selector args...] → combined dry-run output
+    local cwd="$1" out rc
+    shift
     set +e
-    out=$(bash "$SELF" --dry 2>&1)
+    out=$(cd "$cwd" && bash "$SELF" --dry "$@" 2>&1)
+    rc=$?
+    set -e
+    if [ "$rc" -ne 0 ]; then
+      out="$out
+[exit $rc]"
+    fi
+    printf '%s' "$out"
+  }
+
+  run_sel() { # → dry run from the fixture root
+    run_sel_from "$tmp"
+  }
+
+  run_real_from() { # <cwd> [selector args...] → stubbed non-dry output
+    local cwd="$1" out rc
+    shift
+    set +e
+    out=$(
+      cd "$cwd" && \
+        CARGO_BIN="$cargo_stub" CARGO_STUB_LOG="$cargo_stub_log" bash "$SELF" "$@" 2>&1
+    )
     rc=$?
     set -e
     if [ "$rc" -ne 0 ]; then
@@ -303,6 +428,149 @@ TOML
   assert_out "agaric-core/src/error.rs -> full workspace suite" \
     'cargo nextest run --workspace (full)' "$out"
 
+  stage src-tauri/src/lib.rs
+  out=$(run_sel); git reset -q
+  assert_out "src/lib.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  stage src-tauri/src/main.rs
+  out=$(run_sel); git reset -q
+  assert_out "src/main.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  # (10) every file below the current db module directory is foundational.
+  stage src-tauri/src/db/command_tx.rs
+  out=$(run_sel); git reset -q
+  assert_out "db/command_tx.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  # (11) Directory matching happens before mod.rs is treated as unfilterable.
+  stage src-tauri/src/db/mod.rs
+  out=$(run_sel); git reset -q
+  assert_out "db/mod.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  # (12) The moved agaric-store op definition remains an exact-file fallback.
+  stage src-tauri/agaric-store/src/op.rs
+  out=$(run_sel); git reset -q
+  assert_out "agaric-store/src/op.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  # (13) Any file below agaric-store's pagination module is foundational.
+  stage src-tauri/agaric-store/src/pagination/history.rs
+  out=$(run_sel); git reset -q
+  assert_out "pagination/history.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  stage src-tauri/agaric-store/src/pagination/mod.rs
+  out=$(run_sel); git reset -q
+  assert_out "pagination/mod.rs -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+
+  # (14) Prefix-like siblings must stay on their normal narrow selectors.
+  stage src-tauri/src/db_extra.rs
+  stage src-tauri/agaric-store/src/pagination_extra/history.rs
+  stage src-tauri/agaric-store/src/op_extra.rs
+  stage src-tauri/agaric-store/src/op.rs_extra.rs
+  out=$(run_sel); git reset -q
+  assert_out "db_extra.rs remains module-filtered" 'test(~db_extra)' "$out"
+  assert_out "agaric-store prefix siblings remain package-filtered" \
+    'package(agaric-store)' "$out"
+  refute_out "prefix siblings do not trigger the full workspace fallback" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "prefix siblings are not reported as unmapped" 'UNMAPPED' "$out"
+
+  # (15) NUL-delimited paths keep spaces/newlines intact. Both unusual names
+  # are below foundational directories and must therefore escalate cleanly.
+  stage 'src-tauri/src/db/with space.rs'
+  out=$(run_sel); git reset -q
+  assert_out "spaced db filename -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "spaced db filename is not unmapped" 'UNMAPPED' "$out"
+
+  newline_fallback=$'src-tauri/agaric-store/src/pagination/line\nbreak.rs'
+  stage "$newline_fallback"
+  out=$(run_sel); git reset -q
+  assert_out "newline pagination filename -> full workspace suite" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "newline pagination filename is not unmapped" 'UNMAPPED' "$out"
+
+  stage 'src-tauri/src/feature with space.rs'
+  out=$(run_sel); git reset -q
+  assert_out "nonfallback spaced filename remains module-filtered" \
+    'test(~feature with space)' "$out"
+  refute_out "nonfallback spaced filename does not run the full suite" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "nonfallback spaced filename is not unmapped" 'UNMAPPED' "$out"
+
+  # (16) Both cached and range modes resolve paths from the repository root,
+  # even when the hook is launched from a nested workspace directory.
+  nested_cwd="$tmp/src-tauri/agaric-engine/src/apply"
+  stage src-tauri/src/main.rs
+  out=$(run_sel_from "$nested_cwd" --cached); git reset -q
+  assert_out "nested cwd cached diff finds foundational main.rs" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "nested cwd cached diff is not unmapped" 'UNMAPPED' "$out"
+
+  stage 'src-tauri/src/db/range nested.rs'
+  git commit -qm "range-mode fixture"
+  out=$(run_sel_from "$nested_cwd" --range 'HEAD^..HEAD')
+  assert_out "nested cwd range diff finds foundational db file" \
+    'cargo nextest run --workspace (full)' "$out"
+  refute_out "nested cwd range diff is not unmapped" 'UNMAPPED' "$out"
+
+  # (17) Exercise the REAL (non-dry) fallback branch with an injected cargo
+  # binary. The stub records NUL-delimited cwd/argv, proving the selector execs
+  # from the fixture's src-tauri root with the exact full-workspace command.
+  stage src-tauri/src/main.rs
+  out=$(run_real_from "$nested_cwd" --cached); git reset -q
+  assert_out "stubbed non-dry fallback reaches the cargo exec" \
+    'running full test suite' "$out"
+  if [ -f "$cargo_stub_log" ]; then
+    cargo_call=()
+    mapfile -d '' -t cargo_call < "$cargo_stub_log"
+    assert_eq "cargo stub recorded cwd plus three argv entries" "4" "${#cargo_call[@]}"
+    assert_eq "full fallback cargo cwd is fixture/src-tauri" \
+      "$(cd "$tmp/src-tauri" && pwd -P)" "${cargo_call[0]:-}"
+    assert_eq "full fallback argv[0] is nextest" "nextest" "${cargo_call[1]:-}"
+    assert_eq "full fallback argv[1] is run" "run" "${cargo_call[2]:-}"
+    assert_eq "full fallback argv[2] is --workspace" "--workspace" "${cargo_call[3]:-}"
+  else
+    echo "  ✗ cargo stub did not write its invocation log" >&2
+    fails=$((fails + 1))
+  fi
+
+  # (18) A moved/deleted exact-file target makes the selector fail loudly.
+  rm src-tauri/agaric-store/src/op.rs
+  out=$(run_sel)
+  assert_out "missing fallback file is reported" \
+    'configured Rust fallback file is missing: src-tauri/agaric-store/src/op.rs' "$out"
+  assert_out "missing fallback file fails the selector" '[exit 1]' "$out"
+
+  # The always-run outer self-test mode must validate THIS checkout before it
+  # can construct a fixture that recreates the stale target and masks the move.
+  set +e
+  outer_out=$(bash "$SELF" --self-test 2>&1)
+  outer_rc=$?
+  set -e
+  if [ "$outer_rc" -ne 0 ]; then
+    outer_out="$outer_out
+[exit $outer_rc]"
+  fi
+  assert_out "outer self-test validates the real checkout first" \
+    'configured Rust fallback file is missing: src-tauri/agaric-store/src/op.rs' "$outer_out"
+  assert_out "outer self-test fails before building its fixture" '[exit 1]' "$outer_out"
+  git checkout -q -- src-tauri/agaric-store/src/op.rs
+
+  # (19) Directory targets are validated too, so a future module move cannot
+  # silently turn every prefix match into a dead fallback.
+  mv src-tauri/agaric-store/src/pagination src-tauri/agaric-store/src/pagination-moved
+  out=$(run_sel)
+  assert_out "missing fallback directory is reported" \
+    'configured Rust fallback directory is missing: src-tauri/agaric-store/src/pagination/' "$out"
+  assert_out "missing fallback directory fails the selector" '[exit 1]' "$out"
+  mv src-tauri/agaric-store/src/pagination-moved src-tauri/agaric-store/src/pagination
+
   if [ "$fails" -gt 0 ]; then
     echo "self-test: $fails assertion(s) failed" >&2
     exit 1
@@ -311,27 +579,30 @@ TOML
   exit 0
 fi
 
+STAGED_RS=()
 if [ "$SOURCE" = "--cached" ]; then
-  STAGED_RS=$(git diff --cached --name-only --diff-filter=ACMR -- '*.rs' || true)
+  mapfile -d '' -t STAGED_RS < <(
+    git -C "$REPO_ROOT" diff --cached --name-only -z --diff-filter=ACMR -- '*.rs' || true
+  )
   LABEL="staged"
 else
-  STAGED_RS=$(git diff "$RANGE" --name-only --diff-filter=ACMR -- '*.rs' || true)
+  mapfile -d '' -t STAGED_RS < <(
+    git -C "$REPO_ROOT" diff "$RANGE" --name-only -z --diff-filter=ACMR -- '*.rs' || true
+  )
   LABEL="range $RANGE"
 fi
 
-if [ -z "$STAGED_RS" ]; then
+if [ ${#STAGED_RS[@]} -eq 0 ]; then
   echo "No $LABEL .rs files — skipping cargo nextest"
   exit 0
 fi
 
-# ── Foundational files that trigger a full test run ──────────────────
-# These modules are imported by nearly every test — targeted filtering
-# would give a false sense of safety.
-FALLBACK_PATTERNS="src-tauri/src/lib.rs src-tauri/src/main.rs src-tauri/src/db.rs src-tauri/agaric-core/src/error.rs src-tauri/src/op.rs src-tauri/src/pagination.rs"
-
-for pat in $FALLBACK_PATTERNS; do
-  if echo "$STAGED_RS" | grep -qx "$pat"; then
-    echo "Foundational file in $LABEL set ($pat) — running full test suite"
+# Check the changed files against exact-file and path-bounded directory targets
+# before module/package filtering. This ensures foundational mod.rs files are
+# escalated instead of being skipped by the non-filterable basename rule below.
+for file in "${STAGED_RS[@]}"; do
+  if matches_fallback_target "$file"; then
+    echo "Foundational file in $LABEL set ($file matches $FALLBACK_MATCH) — running full test suite"
     if [ "$DRY" = "1" ]; then
       echo "  → cargo nextest run --workspace (full)"
       exit 0
@@ -340,7 +611,7 @@ for pat in $FALLBACK_PATTERNS; do
     # silently skips agaric-core/store/engine/sync/observability/diagnostics —
     # exactly the workspace members a foundational-file change (error.rs lives
     # in agaric-core) needs to re-verify.
-    cd src-tauri && exec cargo nextest run --workspace
+    cd "$REPO_ROOT/src-tauri" && exec "$CARGO_BIN" nextest run --workspace
   fi
 done
 
@@ -349,7 +620,7 @@ MODULE_FILTERS=()
 PKG_FILTERS=()
 UNMAPPED=()
 NEED_SPECTA=0
-for file in $STAGED_RS; do
+for file in "${STAGED_RS[@]}"; do
   case "$file" in
     src-tauri/src/*)
       # Any commands/*.rs change can alter the specta surface; the
@@ -372,7 +643,7 @@ for file in $STAGED_RS; do
       module="${file#src-tauri/src/}"
       module="${module%.rs}"
       # Convert / to :: for Rust module notation
-      module=$(echo "$module" | sed 's|/|::|g')
+      module="${module//\//::}"
 
       MODULE_FILTERS+=("$module")
       continue
@@ -486,4 +757,4 @@ if [ "$DRY" = "1" ]; then
   exit 0
 fi
 
-cd src-tauri && exec cargo nextest run "${SCOPE[@]}" --no-tests=pass -E "$EXPR"
+cd "$REPO_ROOT/src-tauri" && exec "$CARGO_BIN" nextest run "${SCOPE[@]}" --no-tests=pass -E "$EXPR"
