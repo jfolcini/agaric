@@ -396,7 +396,7 @@ if [ "$HAS_RS" = "0" ]; then
         check-dynamic-sql check-dynamic-sql-self-test check-command-arity \
         check-command-arity-self-test check-space-filter-drift unsafe-allowlist \
         audit-toml-in-sync migrations-immutable migrations-strict-tables \
-        migrations-rebuild-cascade)
+        migrations-rebuild-cascade migrations-rebuild-cascade-self-test)
 fi
 # CI/tooling absent → skip the workflow/shell lint hooks.
 if [ "$HAS_CI" = "0" ]; then
