@@ -302,6 +302,8 @@ pub fn compute_accept_backoff_duration(failure_count: u32) -> Duration {
 pub struct SyncServer {
     shutdown_tx: Option<tokio::sync::oneshot::Sender<()>>,
     join_handle: Option<tokio::task::JoinHandle<()>>,
+    #[cfg(any(test, feature = "test-util"))]
+    session_limiter: Arc<Semaphore>,
 }
 
 impl SyncServer {
@@ -351,6 +353,8 @@ impl SyncServer {
         // burst of connection attempts past the cap is rejected at the TCP
         // layer (the stream is dropped) without spending handshake CPU/FDs.
         let session_limiter = Arc::new(Semaphore::new(MAX_CONCURRENT_RESPONDER_SESSIONS));
+        #[cfg(any(test, feature = "test-util"))]
+        let test_session_limiter = Arc::clone(&session_limiter);
 
         // Track consecutive `accept()` failures so we back off
         // exponentially before retrying. Reset to 0 after every
@@ -558,9 +562,19 @@ impl SyncServer {
             SyncServer {
                 shutdown_tx: Some(shutdown_tx),
                 join_handle: Some(join_handle),
+                #[cfg(any(test, feature = "test-util"))]
+                session_limiter: test_session_limiter,
             },
             port,
         ))
+    }
+
+    /// Return the production limiter so tests can synchronously await the
+    /// recovery of all permits after exercising a real handshake path.
+    #[cfg(any(test, feature = "test-util"))]
+    #[doc(hidden)]
+    pub fn responder_session_limiter_for_test(&self) -> Arc<Semaphore> {
+        Arc::clone(&self.session_limiter)
     }
 
     /// Shut down the server gracefully.

@@ -44,8 +44,10 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
         // so `get_mdns_status` backfills a frontend whose `sync:mdns_disabled`
         // listener registers after this emission (the daemon can start
         // before the webview finishes mounting, same race `recovery:degraded`
-        // has). `try_state` (not `state`) because this sink is also exercised
-        // by tests that never call `app.manage(MdnsStatusState(..))`.
+        // has). Normal production setup manages `MdnsStatusState` before the
+        // daemon can invoke this sink. `try_state` (not `state`) preserves
+        // non-panicking behavior for optional or minimally configured hosts
+        // that construct the concrete sink without that managed state.
         if let SyncEvent::MdnsDisabled { reason } = &event
             && let Some(status) = self.0.try_state::<MdnsStatusState>()
             && let Ok(mut guard) = status.0.lock()
@@ -210,11 +212,13 @@ mod tests {
     // progress-shaped variants, so these tests pin the dual-emission
     // semantics now and will be updated in lockstep with that change.
 
-    use super::ChannelEventSink;
+    use super::{ChannelEventSink, TauriEventSink};
     use agaric_sync::sync_events::{
-        RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
+        EVENT_SYNC_MDNS_DISABLED, MdnsStatus, MdnsStatusState, RecordingEventSink, SyncEvent,
+        SyncEventSink, SyncProgressUpdate,
     };
     use std::sync::Arc;
+    use tauri::{Listener, Manager};
 
     /// Build a `Channel<SyncProgressUpdate>` whose payloads land in a
     /// shared `Vec` for assertion. The `Channel::new` constructor is the
@@ -248,6 +252,66 @@ mod tests {
             Ok(())
         });
         (channel, captured)
+    }
+
+    #[test]
+    fn tauri_event_sink_mdns_disabled_backfills_managed_status() {
+        let app = tauri::test::mock_app();
+        app.manage(MdnsStatusState(
+            std::sync::Mutex::new(MdnsStatus::default()),
+        ));
+        let sink = TauriEventSink(app.handle().clone());
+
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "multicast unavailable".into(),
+        });
+
+        let status = app.state::<MdnsStatusState>();
+        let actual = status.0.lock().expect("mDNS status mutex not poisoned");
+        assert_eq!(
+            *actual,
+            MdnsStatus {
+                disabled: true,
+                reason: Some("multicast unavailable".into()),
+            },
+            "the concrete Tauri sink must backfill the exact managed mDNS status"
+        );
+    }
+
+    #[test]
+    fn tauri_event_sink_mdns_disabled_without_managed_status_still_emits() {
+        // Deliberately no `app.manage(MdnsStatusState(..))`: this is the
+        // optional/minimally-configured host the `try_state` (rather than
+        // `state`) call in the sink exists for. The guarantee under test is
+        // that the missing managed state neither panics nor swallows the
+        // event — the `sync:mdns_disabled` emission still reaches the bus
+        // with its reason intact. Asserting on the emission (rather than on
+        // `try_state().is_none()`, which merely restates this setup) is what
+        // makes a regression to `state()` or to an early return visible.
+        let app = tauri::test::mock_app();
+        let seen: Arc<std::sync::Mutex<Vec<String>>> = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let seen_clone = Arc::clone(&seen);
+        app.listen(EVENT_SYNC_MDNS_DISABLED, move |event| {
+            seen_clone.lock().unwrap().push(event.payload().to_string());
+        });
+        let sink = TauriEventSink(app.handle().clone());
+
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "not managed in this host".into(),
+        });
+
+        let payloads = seen.lock().expect("emitted-event capture not poisoned");
+        assert_eq!(
+            payloads.len(),
+            1,
+            "the sink must still emit `{EVENT_SYNC_MDNS_DISABLED}` exactly once when \
+             the host manages no `MdnsStatusState`, got {payloads:?}"
+        );
+        assert!(
+            payloads[0].contains("not managed in this host"),
+            "the emitted payload must carry the disable reason, got {}",
+            payloads[0]
+        );
     }
 
     #[test]

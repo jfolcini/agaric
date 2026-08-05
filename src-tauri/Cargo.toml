@@ -308,6 +308,10 @@ loro = "1.12"
 # there now; the app crate no longer references it directly.
 
 [dev-dependencies]
+# Test-only mock runtime for exercising the concrete TauriEventSink against
+# real managed-state lookup and event emission. This reuses the production
+# Tauri version; Cargo feature unification applies `test` only to test builds.
+tauri = { version = "2", features = ["test"] }
 # Re-declare agaric-core with `test-util` so the moved `*::test_id` newtype
 # constructors are available to this crate's ~510 test call sites (#2621).
 # Only enabled for test builds; the normal `[dependencies]` entry stays lean.

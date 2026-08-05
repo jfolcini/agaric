@@ -747,6 +747,34 @@ mod tests {
         assert_eq!(roundtrip_compressed(msg.clone()).await, msg);
     }
 
+    #[test]
+    fn decompress_wire_roundtrips_payload_at_exact_max_size() {
+        const MAX_SIZE: u64 = 1_000;
+        let raw = vec![0x5a; usize::try_from(MAX_SIZE).expect("test size fits usize")];
+        let compressed = compress_wire(&raw).expect("test payload must compress");
+
+        let decoded = decompress_wire(&compressed, MAX_SIZE)
+            .expect("a payload exactly at max_size must not be truncated or rejected");
+
+        assert_eq!(decoded, raw, "the exact max_size boundary must round-trip");
+    }
+
+    #[test]
+    fn decompress_wire_rejects_payload_at_max_size_plus_one() {
+        const MAX_SIZE: u64 = 1_000;
+        let raw = vec![0x5a; usize::try_from(MAX_SIZE + 1).expect("test size fits usize")];
+        let compressed = compress_wire(&raw).expect("test payload must compress");
+
+        let err = decompress_wire(&compressed, MAX_SIZE)
+            .expect_err("max_size + 1 must be rejected rather than silently truncated");
+
+        assert_eq!(
+            err.to_string(),
+            "Invalid operation: [sync_daemon::wire] decompressed payload exceeds 1000 bytes — possible decompression bomb",
+            "the oversize branch must surface its explicit decompression-bound error"
+        );
+    }
+
     /// With compression negotiated, a compressible payload actually rides
     /// the wire as fewer bytes and the envelope's `compressed` flag is set.
     #[tokio::test]
