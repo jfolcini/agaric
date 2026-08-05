@@ -14,6 +14,7 @@ vi.mock('@/lib/logger', () => ({
 }))
 
 import { makeBlock } from '@/__tests__/fixtures'
+import type { BlockRow } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import {
   buildFlatTree,
@@ -104,6 +105,42 @@ describe('buildFlatTree', () => {
       ['child', 1],
       ['grandchild', 2],
     ])
+  })
+
+  it('preserves root and nested FlatBlock identities when their depths are already correct', () => {
+    const root = mkFlat('root', null, 1, 0)
+    const child = mkFlat('child', 'root', 1, 1)
+
+    const result = buildFlatTree([root, child])
+
+    expect(result[0]).toBe(root)
+    expect(result[1]).toBe(child)
+  })
+
+  it('clones stale-depth FlatBlocks, recomputes depth, and leaves the inputs unchanged', () => {
+    const root = mkFlat('root', null, 1, 7)
+    const child = mkFlat('child', 'root', 1, 9)
+    const input = [root, child]
+
+    const result = buildFlatTree(input)
+
+    expect(result[0]).not.toBe(root)
+    expect(result[1]).not.toBe(child)
+    expect(result.map((block) => block.depth)).toEqual([0, 1])
+    expect(input).toEqual([root, child])
+    expect(root.depth).toBe(7)
+    expect(child.depth).toBe(9)
+  })
+
+  it('clones a plain BlockRow with no depth before annotating it', () => {
+    const row: BlockRow = mkFlat('plain', null, 1, 0)
+    Reflect.deleteProperty(row, 'depth')
+
+    const result = buildFlatTree([row])
+
+    expect(result[0]).not.toBe(row)
+    expect(result[0]?.depth).toBe(0)
+    expect('depth' in row).toBe(false)
   })
 
   it('respects custom rootParentId', () => {

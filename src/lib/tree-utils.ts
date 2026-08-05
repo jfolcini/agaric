@@ -94,7 +94,11 @@ export function buildFlatTree(
     for (const child of children) {
       if (visited.has(child.id)) continue
       visited.add(child.id)
-      result.push({ ...child, depth })
+      // Optimistic tree updates already carry `FlatBlock` rows. Preserve the
+      // exact object when traversal confirms its existing depth so memoized
+      // rows outside the changed sibling group do not re-render.
+      const flatChild = child as FlatBlock
+      result.push('depth' in child && flatChild.depth === depth ? flatChild : { ...child, depth })
       dfs(child.id, depth + 1)
     }
   }
