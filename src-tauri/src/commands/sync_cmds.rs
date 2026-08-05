@@ -249,16 +249,30 @@ pub async fn confirm_pairing_inner(
     passphrase: String,
     _remote_device_id: String,
 ) -> Result<(), AppError> {
-    // Require a pairing flow to be in flight. This is a UI-state guard, not an
-    // authentication step: it keeps a stray Confirm from arming the marker (and
-    // so waking the daemon into pairing mode) outside an interactive pairing.
-    // Scoped so the std `Mutex` guard is dropped before the first `.await`.
-    {
-        let guard = lock_pairing_state(pairing_state)?;
-        if guard.is_none() {
-            return Err(AppError::validation("pairing.no_active_session".into()));
-        }
-    }
+    // #3463: there is deliberately NO "a local pairing session must exist" guard
+    // here, and removing it is part of the fix rather than a relaxation of it.
+    //
+    // A correct joiner never has a local session. It did not generate a
+    // passphrase — it was handed one. Requiring a session would mean requiring
+    // the joiner to first mint a competing passphrase of its own, which is
+    // exactly the role confusion that made two-device pairing impossible: both
+    // devices offering, neither accepting.
+    //
+    // The guard that used to live here read like a safety check but could only
+    // ever be satisfied by a device in the *wrong* role, so it was not
+    // protecting an invariant — it was enforcing the defect.
+    //
+    // Nothing security-relevant is lost. It tested state this same frontend had
+    // written seconds earlier via `start_pairing`, so it authenticated nothing;
+    // and arming the marker is inert without a passphrase the user typed. The
+    // real bound is the marker's 5-minute TTL plus the wire-side constant-time
+    // proof check in `sync_daemon::server`.
+    //
+    // Role exclusivity now lives where the roles actually are: the UI, which
+    // requires an explicit host/joiner choice before either path can run. Making
+    // that unrepresentable in the *backend* type (a `PairingRole` enum replacing
+    // `Option<PairingSession>`) is the right end state and is scoped into the
+    // pairing rewrite on plan #3464, where the passphrase becomes an iroh ticket.
 
     // The FE has no remote device_id at confirm time — the QR carries only the
     // passphrase, and mDNS + TOFU establish the real peer on the first

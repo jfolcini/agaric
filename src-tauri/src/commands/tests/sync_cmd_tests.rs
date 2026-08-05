@@ -369,8 +369,13 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
          otherwise the #855 gate would admit anyone"
     );
 
-    // And the degenerate self-confirm is equally useless: B confirming with its
-    // OWN passphrase still disagrees with A.
+    // And the degenerate self-confirm is equally useless. B confirming with its
+    // OWN passphrase now *succeeds* locally — arming a marker is a local act and
+    // #3463 removed the session precondition that used to make this error — but
+    // succeeding locally buys nothing, because the resulting proof still
+    // disagrees with the host's. Asserting it this way is stronger than asserting
+    // a local error: it pins that the security boundary is the wire-side proof
+    // comparison, not any local bookkeeping we could later relax again.
     confirm_pairing_inner(
         &pool_b,
         &state_b,
@@ -380,11 +385,21 @@ async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
         String::new(),
     )
     .await
-    .expect_err("the slot was consumed by the previous confirm");
-    assert_ne!(
-        proof_a,
+    .expect("arming a local marker is a local act and cannot fail on content");
+
+    let proof_b_self = peer_refs::get_pending_pairing_proof(&pool_b)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        proof_b_self,
         agaric_sync::pairing::pairing_proof(&passphrase_b),
-        "a device's own passphrase can never match the host's proof"
+        "the self-confirm armed B's own passphrase"
+    );
+    assert_ne!(
+        proof_a, proof_b_self,
+        "a device's own passphrase can never match the host's proof, so the #855 \
+         gate rejects it on connection"
     );
 }
 
@@ -551,35 +566,59 @@ async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
     );
 }
 
+/// #3463: a device that never generated a passphrase — a *pure joiner* — must be
+/// able to confirm.
+///
+/// This inverts the previous `confirm_pairing_inner_errors_when_no_pairing_in_flight`,
+/// and the inversion is the point. That test asserted a local pairing session was
+/// required, which reads like a safety check but could only ever be satisfied by a
+/// device in the wrong role: a correct joiner was handed a passphrase, it did not
+/// mint one, so it has no session. Requiring one forced every joiner to first
+/// become a competing host, which is the role confusion behind #3463.
+///
+/// With the UI now demanding an explicit host/joiner choice, this is the exact
+/// shape of the joiner path, and it must work with an empty slot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_errors_when_no_pairing_in_flight() {
+async fn confirm_pairing_pure_joiner_with_no_local_session_succeeds_3463() {
     let (pool, _dir) = test_pool().await;
-    // Empty slot — start_pairing_inner was never called.
+    // Empty slot: this device chose the joiner role and never called
+    // `start_pairing_inner`. It is not a degenerate state — it is the norm.
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
 
-    let result = confirm_pairing_inner(
+    let host_passphrase = "correct horse battery staple";
+
+    confirm_pairing_inner(
         &pool,
         &pairing_state,
         &scheduler,
         "device-local",
-        "any pass phrase here".into(),
-        "device-remote".into(),
+        host_passphrase.into(),
+        String::new(),
     )
-    .await;
+    .await
+    .expect("#3463: a joiner with no local session must be able to confirm");
 
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.no_active_session"),
-        "missing slot must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
+    // The marker must carry the proof of the passphrase the user typed, which is
+    // what lets this device and the host converge.
+    let proof = peer_refs::get_pending_pairing_proof(&pool)
+        .await
+        .unwrap()
+        .expect("joiner must arm a pending-pairing marker");
+    assert_eq!(
+        proof,
+        agaric_sync::pairing::pairing_proof(host_passphrase),
+        "the armed proof must be of the TYPED passphrase"
     );
 
-    // No peer should have been persisted.
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
+    // Still no peer_ref — TOFU establishes it on the first authenticated
+    // connection, not here (#855).
     assert!(
-        peer.is_none(),
-        "peer ref must NOT be persisted when no pairing is in flight"
+        peer_refs::get_peer_ref(&pool, "device-remote")
+            .await
+            .unwrap()
+            .is_none(),
+        "confirm must not persist a peer_ref directly (#855)"
     );
 }
 
