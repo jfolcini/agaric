@@ -233,7 +233,6 @@ macro_rules! agaric_commands {
             // BibTeX / CSL-JSON bibliography import (#1454 tier a)
             $crate::commands::pages::import_bibliography,
             // Attachments (F-7)
-            $crate::commands::attachments::add_attachment,
             $crate::commands::attachments::add_attachment_with_bytes,
             // NOTE: `read_attachment` is intentionally ABSENT here. It returns a
             // raw-byte `tauri::ipc::Response` (zero JSON encoding, #2654), which

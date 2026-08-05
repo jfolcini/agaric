@@ -2634,20 +2634,18 @@ describe('list_attachments_batch', () => {
     expect(result).toEqual({})
   })
 
-  it('returns full attachment lists per block after add_attachment', () => {
-    invoke('add_attachment', {
+  it('returns full attachment lists per block after add_attachment_with_bytes', () => {
+    invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'a.png',
       mimeType: 'image/png',
-      sizeBytes: 100,
-      fsPath: '/tmp/a.png',
+      bytes: Array.from({ length: 100 }, () => 1),
     })
-    invoke('add_attachment', {
+    invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'b.pdf',
       mimeType: 'application/pdf',
-      sizeBytes: 200,
-      fsPath: '/tmp/b.pdf',
+      bytes: Array.from({ length: 200 }, () => 2),
     })
     const result = invoke('list_attachments_batch', {
       blockIds: [SEED_IDS.BLOCK_GS_1, SEED_IDS.BLOCK_GS_2],
@@ -2657,38 +2655,35 @@ describe('list_attachments_batch', () => {
   })
 })
 
-describe('add_attachment', () => {
+describe('add_attachment_with_bytes', () => {
   it('returns attachment with expected shape', () => {
-    const result = invoke('add_attachment', {
+    const result = invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'test.pdf',
       mimeType: 'application/pdf',
-      sizeBytes: 1024,
-      fsPath: '/tmp/test.pdf',
+      bytes: Array.from({ length: 1024 }, () => 3),
     }) as Record<string, unknown>
     expect(result).toHaveProperty('id')
     expect(result['block_id']).toBe(SEED_IDS.BLOCK_GS_1)
     expect(result['filename']).toBe('test.pdf')
     expect(result['mime_type']).toBe('application/pdf')
     expect(result['size_bytes']).toBe(1024)
-    expect(result['fs_path']).toBe('/tmp/test.pdf')
+    expect(result['fs_path']).toBe(`attachments/${String(result['id'])}`)
     expect(result).toHaveProperty('created_at')
   })
 
   it('generates unique IDs for each attachment', () => {
-    const a1 = invoke('add_attachment', {
+    const a1 = invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'a.png',
       mimeType: 'image/png',
-      sizeBytes: 100,
-      fsPath: '/tmp/a.png',
+      bytes: Array.from({ length: 100 }, () => 1),
     }) as Record<string, unknown>
-    const a2 = invoke('add_attachment', {
+    const a2 = invoke('add_attachment_with_bytes', {
       blockId: SEED_IDS.BLOCK_GS_1,
       filename: 'b.png',
       mimeType: 'image/png',
-      sizeBytes: 200,
-      fsPath: '/tmp/b.png',
+      bytes: Array.from({ length: 200 }, () => 2),
     }) as Record<string, unknown>
     expect(a1['id']).not.toBe(a2['id'])
   })

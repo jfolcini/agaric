@@ -3495,8 +3495,9 @@ async fn ingest_attachments(
     // The block already exists + is committed (durable) by the time we ingest,
     // so the FK is satisfied and the rewrite is a normal `edit_block_inner`.
     //
-    // DEDUP: ingest a FRESH attachment per owning block (matching the editor's
-    // `add_attachment_inner`, which does not dedup). The ONLY dedup here is
+    // ROW OWNERSHIP: ingest a FRESH attachment row per owning block (matching
+    // the editor's `add_attachment_with_bytes_inner`; identical bytes may still
+    // share a content-addressed blob). The ONLY row-level dedup here is
     // within a single block: the same `original_ref` appearing multiple times
     // in ONE block ingests once and both rewrites share that id — safe because
     // the duplicates share the same owning block and thus the same CASCADE

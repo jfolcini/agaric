@@ -13,12 +13,6 @@ import { useUndoStore } from '@/stores/undo'
 export interface UseBlockAttachmentsReturn {
   attachments: AttachmentRow[]
   loading: boolean
-  handleAddAttachment: (
-    filename: string,
-    mimeType: string,
-    sizeBytes: number,
-    fsPath: string,
-  ) => Promise<void>
   handleDeleteAttachment: (attachmentId: string) => Promise<void>
   handleRenameAttachment: (attachmentId: string, newFilename: string) => Promise<void>
 }
@@ -55,7 +49,7 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
     // While the batch is in flight we mirror its loading flag (no per-block
     // IPC fires); once it resolves we read `get(blockId) ?? []` (absent
     // keys mean "no attachments"). The provider's `invalidate` path keeps
-    // local state in sync after add/delete mutations.
+    // local state in sync after delete/rename mutations.
     if (batchActive) {
       if (batchLoading) {
         setLoading(true)
@@ -76,27 +70,6 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
       })
       .finally(() => setLoading(false))
   }, [blockId, batchActive, batchLoading, batchRows])
-
-  const handleAddAttachment = useCallback(
-    async (filename: string, mimeType: string, sizeBytes: number, fsPath: string) => {
-      if (!blockId) return
-      try {
-        const row = unwrap(
-          await commands.addAttachment(blockId, filename, mimeType, sizeBytes, fsPath),
-        )
-        const { rootParentId } = pageStore.getState()
-        if (rootParentId) useUndoStore.getState().onNewAction(rootParentId)
-        setAttachments((prev) => [...prev, row])
-        // Invalidate the page-level batch cache so StaticBlock
-        // sees the new attachment without firing its own listAttachments IPC.
-        batchProvider?.invalidate(blockId)
-      } catch (err) {
-        logger.error('useBlockAttachments', 'Failed to add attachment', { blockId }, err)
-        notify.error(i18n.t('attachments.addFailed'))
-      }
-    },
-    [blockId, pageStore, batchProvider],
-  )
 
   const handleDeleteAttachment = useCallback(
     async (attachmentId: string) => {
@@ -147,7 +120,6 @@ export function useBlockAttachments(blockId: string | null): UseBlockAttachments
   return {
     attachments,
     loading,
-    handleAddAttachment,
     handleDeleteAttachment,
     handleRenameAttachment,
   }

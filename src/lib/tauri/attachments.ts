@@ -38,25 +38,6 @@ export async function getBatchAttachments(
   return unwrap(await commands.listAttachmentsBatch(blockIds))
 }
 
-/** Add an attachment to a block. */
-export async function addAttachment(params: {
-  blockId: string
-  filename: string
-  mimeType: string
-  sizeBytes: number
-  fsPath: string
-}): Promise<AttachmentRow> {
-  return unwrap(
-    await commands.addAttachment(
-      params.blockId,
-      params.filename,
-      params.mimeType,
-      params.sizeBytes,
-      params.fsPath,
-    ),
-  )
-}
-
 /**
  * Add an attachment by passing the file's raw bytes over IPC.
  * The backend is the sole writer — it persists the bytes under

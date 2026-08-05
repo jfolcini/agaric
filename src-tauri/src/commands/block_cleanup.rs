@@ -58,14 +58,14 @@ use agaric_core::error::AppError;
 /// This helper used to `SELECT fs_path FROM attachments WHERE block_id IN
 /// (<member>)` before the DELETE and hand those paths back for a post-commit
 /// `remove_file`. Since the #1993 content-hash dedup landed, N `attachments`
-/// rows legitimately SHARE one canonical file (`add_attachment_inner` reuses
+/// rows legitimately SHARE one canonical file (attachment ingest reuses
 /// an existing `attachment_blobs.on_disk_path`, and
 /// `backfill_attachment_blobs` repoints duplicate-hash rows onto one canonical
 /// path at boot), so that unfiltered capture unlinked bytes surviving rows on
 /// non-purged blocks still referenced — a live data-loss bug.
 ///
 /// Bytes are therefore reclaimed exactly the way `delete_attachment_inner` and
-/// the dedup branch of `add_attachment_inner` already reclaim them: by
+/// the dedup branch of `add_attachment_with_bytes_inner` already reclaim them: by
 /// `cleanup_orphaned_attachments`, which unlinks a walked file only when NO
 /// `attachments` row references its path — its authoritative write-pool
 /// membership re-check sits immediately before the `remove_file`, so the

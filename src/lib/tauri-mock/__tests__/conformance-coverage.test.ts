@@ -137,7 +137,6 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   flush_all_drafts: 'draft staging table outside the conformance snapshot scope',
 
   // ── Attachments (blob store, outside the conformance snapshot scope) ──
-  add_attachment: 'attachments blob store outside the conformance snapshot scope',
   add_attachment_with_bytes: 'attachments blob store outside the conformance snapshot scope',
   delete_attachment: 'attachments blob store outside the conformance snapshot scope',
   rename_attachment: 'attachments blob store outside the conformance snapshot scope',

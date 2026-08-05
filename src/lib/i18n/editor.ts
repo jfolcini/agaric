@@ -94,7 +94,6 @@ export const editor: Record<string, string> = {
   'editor.brokenLinkRemoved': 'Broken link removed (undo with Ctrl+Z)',
   'editor.brokenRefTooltip': 'Broken ref — target block deleted',
   'attachments.loadFailed': 'Failed to load attachments',
-  'attachments.addFailed': 'Failed to add attachment',
   'attachments.deleteFailed': 'Failed to delete attachment',
   'attachments.renameFailed': 'Failed to rename attachment',
   'attachments.rename': 'Rename attachment {{name}}',

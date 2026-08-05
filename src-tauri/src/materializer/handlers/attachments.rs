@@ -56,10 +56,9 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 ///   info as already-clean) are logged at warn and the pass continues
 ///   — the GC must complete even if individual files cannot be
 ///   removed.
-/// - Subdirectories under `attachments/` are walked recursively. The
-///   `add_attachment_inner` path validator
-///   (`check_attachment_fs_path_shape`) accepts subdirectories, and
-///   Large-vault layouts may organize attachments in subdirs.
+/// - Subdirectories under `attachments/` are walked recursively. Ingest
+///   currently writes backend-generated paths directly under that directory,
+///   while synced vaults may still contain valid nested layouts.
 ///
 /// Returns `Ok(())` always — failures are logged, never propagated,
 /// because a partial GC pass is strictly better than no GC pass.
@@ -130,7 +129,7 @@ pub(crate) async fn cleanup_orphaned_attachments(
     // The legacy per-file query had NO `deleted_at IS NULL` predicate, so
     // it matched soft-deleted rows too — we replicate that by selecting
     // every row's `fs_path` (no predicate). `fs_path` is stored as a
-    // relative, forward-slash path by `add_attachment_inner`, which is the
+    // relative, forward-slash path by attachment ingest, which is the
     // exact normalized shape we compute per walked file below, so an
     // in-memory `HashSet` membership test is byte-equivalent to the old
     // `WHERE fs_path = ?` comparison.
@@ -195,7 +194,7 @@ pub(crate) async fn cleanup_orphaned_attachments(
                         files.push(path);
                     }
                     // Symlinks and other entry types are intentionally
-                    // ignored: the writer (`add_attachment_inner`) only
+                    // ignored: the attachment writer only
                     // produces regular files, so anything else under
                     // the tree is user-managed and out of scope.
                 }
@@ -233,7 +232,7 @@ pub(crate) async fn cleanup_orphaned_attachments(
             scanned += 1;
             // Strip the app_data_dir prefix so we compare against the
             // relative path stored in `attachments.fs_path` by
-            // `add_attachment_inner`.
+            // attachment ingest.
             let Ok(relative) = full_path.strip_prefix(app_data_dir) else {
                 tracing::warn!(
                     path = %full_path.display(),

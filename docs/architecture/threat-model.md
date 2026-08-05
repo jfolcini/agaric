@@ -161,7 +161,7 @@ The lists in [`SECURITY.md`](../../SECURITY.md#out-of-scope) are canonical; this
 
 - **Adversarial LAN peers.** Sync peers are the user's own devices. Decoder panics under hostile peer input, packet-injection attacks against a paired peer, traffic-analysis on the sync graph — all welcome as regular bugs, none treated as security findings.
 - **Root-on-device attackers.** An attacker who already has read/write access to `~/.local/share/com.agaric.app/` already holds the user's data. Local-first apps store local data; that is the model.
-- **Supply-chain attacks against transitive dependencies already covered by `cargo-deny`.** The block / warn / time-boxed-waiver tiers documented in [`ci-and-tooling.md`](ci-and-tooling.md#advisory-handling--three-concentric-rings) are the current control. Findings against entries on the `deny.toml` ignore list need to be raised against the ignore-entry rationale, not the dependency.
+- **Supply-chain attacks against transitive dependencies already covered by `cargo-deny`.** The block and warn controls plus explicit waiver tiers documented in [`ci-and-tooling.md`](ci-and-tooling.md#advisory-handling--three-concentric-rings) are the current control. Only `.nsprc` waivers are time-boxed; findings against entries on the rationale-based `deny.toml` ignore list need to be raised against the ignore-entry rationale, not the dependency.
 - **Multi-user / multi-tenant scenarios.** Every paired device belongs to the same person. There is no concept of "other users" with separate permissions inside an Agaric install.
 - **Network-exposed servers, server-mode builds, hosted backends.** None exist; if any were proposed, this document and [`SECURITY.md`](../../SECURITY.md) would be revisited *before* the change landed.
 - **Mobile MDM, secure-enclave attestation, jailbreak detection.** Out of scope; the application targets desktop primarily and a single-user Android build secondarily, and assumes the OS provides the device-integrity story.
@@ -220,13 +220,14 @@ The shape is intentionally narrative, not GSN-formal: the threat model above is 
 
 ### Claim 5 — The supply chain is reviewed in three concentric rings
 
-**Argument.** Dependencies are reviewed at three escalating ringfences: hard-block via `cargo-deny`, warn via `cargo audit`, and time-boxed waiver via the `deny.toml` `[advisories].ignore` list. Each waiver carries a written rationale; the waiver list is itself reviewed.
+**Argument.** Dependencies are reviewed at three ringfences: blocking Rust advisory checks via `cargo-deny` and `cargo audit`, warn-only npm provenance verification via `npm audit signatures`, and time-boxed npm advisory waivers in `.nsprc`. Rust waivers in `deny.toml` are explicit but do not expire automatically: each carries a written rationale, with a concrete revisit trigger or tracking issue recorded where one is known.
 
 **Evidence.**
 
 - [`ci-and-tooling.md` §Advisory handling — three concentric rings](ci-and-tooling.md#advisory-handling--three-concentric-rings) documents the policy.
 - `cargo-deny` runs on every PR via the prek hook suite in `_validate.yml`'s `lint` job; `cargo audit` runs in the same job.
-- `src-tauri/deny.toml` `[advisories].ignore` entries each carry a one-line rationale; two of the 23 (the `quick-xml` pins) also cite a specific tracking issue (`#2310`), and the GTK3 bindings batch documents its own revisit trigger ("a Tauri release announces the GTK4 migration complete") in the comment above the list.
+- [`.nsprc`](../../.nsprc) gives every npm advisory waiver an `expiresOn` date; these are the time-boxed exceptions.
+- `src-tauri/deny.toml` `[advisories].ignore` entries each carry a `reason`. The GTK3 bindings batch documents an upstream-release revisit trigger and the `quick-xml` entries cite tracking issue `#2310`; several other current entries have no explicit trigger and none has an automatic expiry.
 - The Scorecard `Vulnerabilities` score-vs-policy gap (RUSTSEC noise from atk/gtk3 transitives via `wry → tauri`) auto-recovers when upstream finishes the gtk4 migration.
 
 ### How this is maintained

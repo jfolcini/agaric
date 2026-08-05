@@ -2706,7 +2706,7 @@ pub async fn create_blocks_batch(
 /// `SELECT fs_path FROM attachments WHERE block_id IN (<member>)` before the
 /// DELETE and `remove_file` each captured path post-commit, checking only the
 /// path's SHAPE. Since #1993, N `attachments` rows legitimately share ONE
-/// canonical file — `add_attachment_inner` points a new row at an existing
+/// canonical file — attachment ingest points a new row at an existing
 /// `attachment_blobs.on_disk_path` when the content hash matches, and
 /// `backfill_attachment_blobs` repoints every duplicate-hash row in the vault
 /// onto one canonical path at boot (markdown import makes this the norm: one
@@ -2717,10 +2717,10 @@ pub async fn create_blocks_batch(
 ///
 /// Filtering the capture with an anti-join inside the tx would not fix it
 /// either: the unlink necessarily runs AFTER the commit, and between the
-/// commit and the `remove_file` a concurrent `add_attachment_inner` can dedup
+/// commit and the `remove_file` a concurrent `add_attachment_with_bytes_inner` can dedup
 /// a fresh row onto that very path (the `attachment_blobs` row still maps the
 /// hash to it). That is precisely the race `delete_attachment_inner` and the
-/// dedup branch of `add_attachment_inner` already refuse to take: both defer
+/// dedup branch of `add_attachment_with_bytes_inner` already refuse to take: both defer
 /// byte reclamation to the GC, whose referenced-path membership test and
 /// unlink are colocated (and whose per-file re-check runs on the write pool).
 /// Purge now follows the same rule, so the invariant stated in migration

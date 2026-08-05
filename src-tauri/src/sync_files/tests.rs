@@ -2554,9 +2554,8 @@ fn validate_windows_style_backslashes_on_current_platform() {
 #[test]
 fn shape_check_matches_full_validator() {
     // Every case the full validator rejects must also be rejected by
-    // the shape-only helper, and vice versa. The shape helper is used
-    // at the command layer (`add_attachment`) where `app_data_dir` is
-    // not directly available.
+    // the shape-only helper, and vice versa. Snapshot restore and pre-write
+    // checks use the shape helper before a target file must exist.
     let cases = [
         ("", true),
         ("../../etc/passwd", true),
@@ -2632,50 +2631,6 @@ fn write_attachment_file_rejects_empty_path() {
         matches!(result, Err(AppError::Validation { .. })),
         "write_attachment_file must reject empty path, got {result:?}"
     );
-}
-
-// ── Integration: add_attachment_inner enforces the validator ───────────
-
-#[tokio::test]
-async fn add_attachment_rejects_traversal_at_command_layer() {
-    use crate::materializer::Materializer;
-    let dir = TempDir::new().unwrap();
-    let db_path = dir.path().join("test.db");
-    let pool = init_pool(&db_path).await.unwrap();
-    let mat = Materializer::new(pool.clone());
-
-    // Seed a valid block so the block-exists check passes *if the path
-    // validator did not exist*. This isolates the test to the path check.
-    sqlx::query("INSERT INTO blocks (id, block_type, content) VALUES ('BLK_OK', 'content', 'ok')")
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    let result = crate::commands::add_attachment_inner(
-        &pool,
-        "test-device",
-        &mat,
-        dir.path(),
-        "BLK_OK".into(),
-        "evil.bin".to_string(),
-        "application/octet-stream".to_string(),
-        10,
-        "../../outside/evil.bin".to_string(),
-        None,
-    )
-    .await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { .. })),
-        "add_attachment must reject traversal fs_path at the command layer, got {result:?}"
-    );
-
-    // No row inserted
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(count, 0, "bad fs_path must not leave an attachment row");
 }
 
 // ===========================================================================

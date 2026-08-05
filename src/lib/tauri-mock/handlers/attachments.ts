@@ -37,21 +37,6 @@ export const attachmentsHandlers = {
     return result
   },
 
-  add_attachment: (args) => {
-    const a = args as Record<string, unknown>
-    const row = {
-      id: fakeId(),
-      block_id: a['blockId'] as string,
-      filename: a['filename'] as string,
-      mime_type: a['mimeType'] as string,
-      size_bytes: a['sizeBytes'] as number,
-      fs_path: a['fsPath'] as string,
-      created_at: new Date().toISOString(),
-    }
-    attachments.set(row.id, row)
-    return row
-  },
-
   // Bytes-over-IPC add. Stores the raw bytes so `read_attachment`
   // can round-trip them; fs_path is backend-generated under attachments/.
   add_attachment_with_bytes: (args) => {
@@ -107,7 +92,6 @@ export const attachmentsHandlers = {
   TypedHandlers,
   | 'list_attachments'
   | 'list_attachments_batch'
-  | 'add_attachment'
   | 'add_attachment_with_bytes'
   | 'read_attachment_meta'
   | 'delete_attachment'
