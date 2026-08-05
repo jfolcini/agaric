@@ -1,4 +1,4 @@
-//! Privacy-safe one-line summaries per MCP tool, for the activity feed
+//! Field-filtered one-line summaries per MCP tool, for the activity feed
 //! .
 //!
 //! Each summariser takes the tool's parsed JSON `args` + structured
@@ -10,15 +10,16 @@
 //! summariser fall through to the bare tool name (defensive default for
 //! any tool added later without a summariser).
 //!
-//! # Privacy invariants
+//! # Field-filtering contract
 //!
 //! - **No block content.** The `content` field of `BlockRow`, the
 //!   serialised page title, the literal text of a property `value_text`,
 //!   and any tag display name are user content and must never appear in
 //!   a summary.
-//! - **Counts, ULIDs (or 8-char prefixes), tool names, dates, property
-//!   keys, and typed `ref` / `number` / `date` property values are
-//!   structural metadata** and are safe to embed.
+//! - **Counts, tool names, dates, property keys, typed `number` / `date` /
+//!   `bool` property values, and eight-character ULID/reference prefixes are
+//!   allowed to appear.** Full identifier/reference values are never included;
+//!   property keys are emitted verbatim as schema strings.
 //! - **Property keys are schema, not content.** A property key like
 //!   `effort` or `due_date` is fine to include; the corresponding
 //!   `value_text` is not.
@@ -316,9 +317,9 @@ pub fn summarise_update_block_content(_args: &Value, result: &Value) -> String {
 
 /// `set_property — set <key> on <block-prefix>` for `text` types
 /// (the text value is content) — but `set <key>=<value> on <block-prefix>`
-/// for `number` / `date` / `ref` types where the value is structural
-/// (numbers, ISO dates, ULIDs respectively). For `ref` we prefix the
-/// ULID just like every other id.
+/// for `number` / `date` / `bool` / `ref` types where the value is structural
+/// (numbers, ISO dates, booleans, and ULIDs respectively). For `ref` we prefix
+/// the ULID just like every other id.
 pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
     let block_id = str_field(args, "block_id").unwrap_or("");
     let block_prefix = ulid_prefix(block_id);
@@ -334,7 +335,7 @@ pub fn summarise_set_property(args: &Value, _result: &Value) -> String {
     } else if let Some(date) = args.get("value_date").and_then(Value::as_str) {
         Some(format!("={date}"))
     } else if let Some(b) = args.get("value_bool").and_then(Value::as_bool) {
-        // #697 — booleans are structural metadata, safe to embed.
+        // #697 — booleans are included by the field-filtering contract.
         Some(format!("={b}"))
     } else {
         // `value_text` is content (never embedded); `value_ref` (when
@@ -857,6 +858,23 @@ mod tests {
     }
 
     #[test]
+    fn set_property_bool_value_includes_bool() {
+        let args = json!({
+            "block_id": ULID_A,
+            "key": "archived",
+            "value_bool": true,
+        });
+        let s = summarise_set_property(&args, &json!({ "id": ULID_A }));
+        assert_eq!(
+            s,
+            format!(
+                "set_property — set archived=true on {}",
+                &ULID_A[..ULID_PREFIX_LEN]
+            ),
+        );
+    }
+
+    #[test]
     fn set_property_ref_value_includes_ref_prefix_only() {
         let args = json!({
             "block_id": ULID_A,
@@ -1030,7 +1048,7 @@ mod tests {
         for desc in &all_descriptions {
             let summary = summarise(&desc.name, &dirty_args, result_for(&desc.name));
 
-            // Privacy invariants — never leak block content, page
+            // Field-filtering contract — never leak block content, page
             // titles, value_text, tag display names, or query strings.
             assert_no_secrets(&summary);
             // Never leak the full ULID — only the 8-char prefix is OK.

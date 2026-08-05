@@ -10,7 +10,10 @@ Local-only MCP server for AI clients (Claude Desktop, Cursor, Continue). Read-on
 ### Transport
 
 - **Linux / macOS**: Unix domain socket, mode `0600`.
-- **Windows**: named pipe, default DACL (owner-only).
+- **Windows**: named pipe created with an explicit per-user security descriptor
+  (`D:P(A;;GA;;;<user SID>)(A;;GA;;;SY)(A;;GA;;;BA)`) via
+  `win_security::create_secured_pipe_instance`. The default named-pipe DACL grants read access to
+  `Everyone` and `Anonymous`, so Agaric deliberately does not rely on it (#2720).
 - **Never** a TCP port.
 
 The `agaric-mcp` binary is a stdio↔socket bridge bundled with the app. Agents spawn it; it forwards JSON-RPC frames over the socket. Configuration snippets live in [`docs/features/agent-access.md`](../features/agent-access.md).
@@ -22,19 +25,33 @@ Two separate sockets, two marker files (`mcp-ro-enabled` / `mcp-rw-enabled`):
 - **Read-only**: list pages, get page, search, get block, list backlinks, list tags, list property definitions, get agenda, fetch journal page by date, list spaces.
 - **Read-write**: append block, update block content, set property, add tag, create page, delete block — plus `list_spaces`, which both surfaces expose.
 
-`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` that `search` / `journal_for_date` / every RW tool require. The authoritative tool set is the `TOOL_*` dispatch in `src-tauri/src/mcp/tools_ro.rs` / `tools_rw.rs`.
+`list_spaces` returns `{ id, name, is_default }` for every space; it is the discovery surface for the `space_id` that `search` / `journal_for_date` / every mutating RW tool require. Wire names live as `TOOL_*` constants in `src-tauri/src/mcp/registry.rs`; the authoritative advertised and dispatched sets are `list_tool_descriptions()` and the `call_tool()` match arms in `tools_ro.rs` / `tools_rw.rs`.
 
 Splitting by R/W lets users disable writes while keeping reads on.
 
 ### `ToolRegistry` trait
 
-`src-tauri/src/mcp/registry.rs` defines a `ToolRegistry` trait with two impls (`ReadOnlyTools`, `ReadWriteTools`). To add a tool:
+`src-tauri/src/mcp/registry.rs` defines the `ToolRegistry` trait; `ReadOnlyTools` and
+`ReadWriteTools` implement it in `tools_ro.rs` and `tools_rw.rs`. To add a tool:
 
-1. Add the `TOOL_*` constant + tool-description factory in the matching `tools_ro.rs` / `tools_rw.rs`.
-2. Implement the dispatch arm in the registry's `call_tool`.
-3. Register it in the per-registry `list_tools` enumeration.
+1. Add its `TOOL_*` wire-name constant in `src-tauri/src/mcp/registry.rs`.
+2. In the matching `tools_ro.rs` / `tools_rw.rs`, add the tool-description factory and register it
+   in `list_tool_descriptions()` (the `list_tools()` enumeration).
+3. In that same tools file, add the `call_tool()` dispatch arm and handler implementation.
+4. Add a field-filtered `summarise_<name>` function and its `summarise()` match arm in
+   `src-tauri/src/mcp/summarise.rs`.
+5. Add validation, success, and error coverage for the tool in `tools_ro::tests` or
+   `tools_rw::tests`, as appropriate.
+6. Refresh the matching `tool_descriptions` insta snapshot and add or refresh the tool's response
+   snapshot when its test pins a response envelope.
 
-Every tool argument schema requires `space_id`; scope is enforced at the tool boundary.
+Read-only tools follow three `space_id` patterns: it is required by `search` and
+`journal_for_date`, optional for `list_backlinks` and `get_agenda`, and absent from `list_pages`,
+`get_page`, `get_block`, `list_tags`, `list_property_defs`, and `list_spaces`. Every mutating
+read-write tool requires an agent-supplied `space_id`: existing-block mutations validate that the
+target belongs to the claimed space, while `create_page` uses it to select the destination space.
+Neither use is an authorization boundary. See [Agent Access → Space scoping](../features/agent-access.md#space-scoping-reads-are-vault-wide-writes-are-space-scoped)
+for the full vault-wide read and write-scope contract.
 
 The MCP `search` tool takes `parent_id`, `tag_ids`, and `space_id` as **top-level** arguments (alongside `query`, `cursor`, `limit`) — `space_id` is required, the other two are optional. Everything else is carried by an optional structured `filter` arg that mirrors the user-facing `SearchFilter` minus those three already-top-level slots: `include_page_globs`, `exclude_page_globs`, `state_filter`, `priority_filter`, `excluded_state_filter`, `excluded_priority_filter`, `due_filter`, `scheduled_filter`, `property_filters`, `excluded_property_filters`, `block_type_filter`, `case_sensitive`, `whole_word`, `is_regex`. (`SearchFilterArgs` in `src-tauri/src/mcp/tools_ro.rs` is `deny_unknown_fields`, so passing `parent_id`/`tag_ids`/`space_id` *inside* `filter` is rejected.) Inline filter syntax (`tag:` / `state:` / `prop:`…) is **not** re-parsed from `query` at the MCP boundary — agents pass structured arguments. Omitting `filter` preserves the prior query-string-only behaviour.
 
@@ -44,7 +61,11 @@ Task-locals carry the agent identity through every IPC. The agent name comes fro
 
 - **PII redaction** in logs (the agent name never leaks into telemetry).
 - **`op_log.origin`** column gets stamped so user vs agent edits are distinguishable in History view + Activity Feed. A *named* client stamps `agent:<name>`. An *anonymous* client (absent/empty `clientInfo.name`) is **not** stamped a bare `agent:` — it stamps `agent:unknown:<session-ulid>` (`durable_agent_name`, #1545), folding the per-connection session ULID in so two simultaneous anonymous agents stay distinguishable in the append-only log. Both forms keep the `agent:` prefix, so any `LIKE 'agent:%'` consumer still matches. Agent ops are revertable like any other op.
-- **Activity feed emission** — every tool call writes a privacy-safe summary to the in-memory ring buffer (no block content, no page titles, no property values).
+- **Activity feed emission** — every tool call writes a field-filtered summary to the in-memory ring
+  buffer. Summaries may contain structural counts, dates, property keys, non-text property values
+  (number / date / bool), and eight-character ULID/reference prefixes. They never contain block
+  content, page titles, tag display names, search query strings, or text property values
+  (`value_text`).
 
 ### Lifecycle
 
@@ -52,7 +73,12 @@ Task-locals carry the agent identity through every IPC. The agent name comes fro
 
 ### Activity feed
 
-`useMcpActivityFeed` consumes a bounded ring buffer of recent tool invocations. The privacy contract: **summaries never contain block content, page titles, or property values** — only tool name, target id, op count, and an `Ok`/`Err` outcome with a redacted error message. Not persisted (per-device). Bounded so old entries roll off.
+`useMcpActivityFeed` consumes a bounded ring buffer of recent tool invocations. The field-filtering
+contract is explicit: summaries may contain structural counts, dates, property keys,
+number/date/bool property values, and shortened ULID/reference prefixes. They never contain block
+content, page titles, tag display names, search query strings, or `value_text`. Each entry also
+carries the tool name, operation references, and an `Ok`/`Err` result (errors are clipped); the
+feed is per-device, not persisted, and bounded so old entries roll off.
 
 ### Session revert
 

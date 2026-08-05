@@ -1088,9 +1088,10 @@ export type ActivityEntry_Deserialize = {
 	/**  MCP tool name (e.g. `"search"`, `"get_block"`). */
 	toolName: string,
 	/**
-	 *  Tool-specific short summary built by the handler (e.g.
-	 *  `"searched for '...' (12 results)"`). Must never include block
-	 *  content / page titles / property values — see module docs.
+	 *  Tool-specific short summary built by `mcp/summarise.rs` through the
+	 *  rmcp adapter (e.g. `"search — 0 matches"`). Property keys and non-text
+	 *  typed values may appear; content fields and query strings must not —
+	 *  see module docs.
 	 */
 	summary: string,
 	/**  UTC timestamp of the completion. */
@@ -1153,9 +1154,10 @@ export type ActivityEntry_Serialize = {
 	/**  MCP tool name (e.g. `"search"`, `"get_block"`). */
 	toolName: string,
 	/**
-	 *  Tool-specific short summary built by the handler (e.g.
-	 *  `"searched for '...' (12 results)"`). Must never include block
-	 *  content / page titles / property values — see module docs.
+	 *  Tool-specific short summary built by `mcp/summarise.rs` through the
+	 *  rmcp adapter (e.g. `"search — 0 matches"`). Property keys and non-text
+	 *  typed values may appear; content fields and query strings must not —
+	 *  see module docs.
 	 */
 	summary: string,
 	/**  UTC timestamp of the completion. */

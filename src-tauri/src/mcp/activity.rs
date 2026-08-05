@@ -13,8 +13,10 @@
 //!
 //! **No persistence.** The ring is pure in-memory state. explicitly
 //!   rejected a new table + retention policy.
-//! **Privacy.** `summary` strings are built by each tool handler
-//!   and must never include block content, page titles, or property values.
+//! **Field filtering.** `summary` strings may include structural counts, dates,
+//!   property keys, number/date/bool property values, and eight-character
+//!   ULID/reference prefixes. They must never include block content, page
+//!   titles, tag display names, search query strings, or `value_text`.
 //!   `agent_name` is serialized into Tauri events but redacted in `Debug`
 //!   output so it cannot leak into tracing spans.
 //! - **Decoupled emitter.** `ActivityEmitter` is a trait object so the
@@ -103,9 +105,10 @@ impl fmt::Debug for ActivityResult {
 pub struct ActivityEntry {
     /// MCP tool name (e.g. `"search"`, `"get_block"`).
     pub tool_name: String,
-    /// Tool-specific short summary built by the handler (e.g.
-    /// `"searched for '...' (12 results)"`). Must never include block
-    /// content / page titles / property values — see module docs.
+    /// Tool-specific short summary built by `mcp/summarise.rs` through the
+    /// rmcp adapter (e.g. `"search — 0 matches"`). Property keys and non-text
+    /// typed values may appear; content fields and query strings must not —
+    /// see module docs.
     pub summary: String,
     /// UTC timestamp of the completion.
     pub timestamp: DateTime<Utc>,
@@ -428,7 +431,7 @@ pub fn emit_activity(
 pub struct ToolCompletionEvent<'a> {
     /// Wire-format tool name (`"search"`, `"append_block"`, …).
     pub tool_name: &'a str,
-    /// Privacy-safe one-line summary (counts, ULID prefixes, property
+    /// Field-filtered one-line summary (counts, ULID prefixes, property
     /// keys — never block content or text-property values). See
     /// [`super::summarise`] for the construction rules.
     pub summary: &'a str,
@@ -678,7 +681,7 @@ mod tests {
             &ctx,
             ToolCompletionEvent {
                 tool_name: "search",
-                summary: "searched for '…' (0 results)",
+                summary: "search — 0 matches",
                 actor_kind: ActorKind::Agent,
                 agent_name: Some("claude-desktop".to_string()),
                 result: ActivityResult::Ok,
@@ -693,7 +696,7 @@ mod tests {
         assert_eq!(guard.len(), 1);
         let entry = guard.entries().front().expect("one entry");
         assert_eq!(entry.tool_name, "search");
-        assert_eq!(entry.summary, "searched for '…' (0 results)");
+        assert_eq!(entry.summary, "search — 0 matches");
         assert_eq!(entry.actor_kind, ActorKind::Agent);
         assert_eq!(entry.agent_name.as_deref(), Some("claude-desktop"));
         assert!(matches!(entry.result, ActivityResult::Ok));

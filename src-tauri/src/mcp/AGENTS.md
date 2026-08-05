@@ -48,7 +48,7 @@ Two distinct labels come out of this:
 After every `tools/call` completion, the adapter calls `emit_tool_completion(ctx, ToolCompletionEvent { ... })` (`mcp/activity.rs`). The event carries:
 
 - `tool_name` — the tool that ran.
-- `summary` — a privacy-safe one-line summary (built by `mcp/summarise.rs`; per-tool; structural counts + ULID prefixes only, never block content).
+- `summary` — a field-filtered one-line summary built per tool by `mcp/summarise.rs`. It may include structural counts, dates, property keys, number/date/bool property values, and eight-character ULID/reference prefixes. It never includes block content, page titles, tag display names, search query strings, or `value_text`.
 - `result` — `ActivityResult::Ok` or `Err(short_message)`.
 - `session_id` — the connection's session ULID (stable across the connection's lifetime).
 - `op_ref` + `additional_op_refs` — drained from the `LAST_APPEND` task-local; the first op is the primary `OpRef`, the rest are `additionalOpRefs`. **One activity-feed entry per tool call, regardless of how many ops the tool wrote.**
@@ -99,7 +99,7 @@ Before #2719, `handle_journal_for_date` parsed **any** valid `chrono::NaiveDate`
 
 ### Full-vault RO scope (no per-space isolation)
 
-The RO surface is **vault-wide read-only by design**: an agent given one `space_id` can still enumerate and read every space. `list_spaces` (`tools_ro.rs`, `handle_list_spaces` → `list_spaces_registry_inner`) is the concrete discovery surface — it returns `{id, name, is_default}` for *every* space with no scoping — and the other unscoped RO readers (search / list / fetch) then read any space's pages and blocks. This is the intended contract, not a leak.
+The RO surface is **vault-wide read-only by design**: an agent given one `space_id` can still enumerate and read every space. `list_spaces` (`tools_ro.rs`, `handle_list_spaces` → `list_spaces_registry_inner`) is the concrete discovery surface — it returns `{id, name, is_default}` for *every* space with no scoping — and the unscoped enumeration / list / fetch readers then read any space's pages and blocks. This is the intended contract, not a leak.
 
 **If you ever add per-space RO isolation**, `list_spaces` plus the unscoped RO readers are the enumeration path to close: gate `list_spaces` to the connection's authorised space(s) and scope every RO reader to a `space_id` filter. Until then, treat the RO surface as a full-vault enumeration capability.
 
