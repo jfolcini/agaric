@@ -4878,6 +4878,141 @@ async fn add_attachment_validates_mime_type() {
     mat.shutdown();
 }
 
+// ----------------------------------------------------------------------
+// Post-write verification guards (`verify_written_attachment`)
+//
+// #3319 removed the renderer-supplied `fs_path` IPC and with it
+// `add_attachment_inner`, the seam the previous coverage
+// (`add_attachment_size_mismatch_returns_validation_error`,
+// `add_attachment_returns_io_error_when_file_missing_on_disk`) drove. Those
+// tests could declare a `size_bytes` that disagreed with the file on disk, or
+// name a path that was never written. The bytes path derives `size_bytes` from
+// the buffer and generates its own `attachments/<ULID>` storage path, so
+// neither failure is provokable through the public entry point without racing
+// the filesystem — but both production guards were RETAINED, so they are
+// covered here against the extracted function the ingest path calls.
+// ----------------------------------------------------------------------
+
+/// Stat guard: if the just-written bytes cannot be stat'd, the upload must fail
+/// with `AppError::Io` rather than committing a row that points at a
+/// non-existent file (which would later trip the sync layer's
+/// `MissingAttachment` path).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verify_written_attachment_missing_file_returns_io_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    // Deliberately never created on disk.
+    let missing = dir.path().join("attachments/GHOST");
+
+    let result = crate::commands::attachments::verify_written_attachment(&missing, 1024).await;
+
+    match result {
+        Err(AppError::Io(err)) => assert_eq!(
+            err.kind(),
+            std::io::ErrorKind::NotFound,
+            "stat guard must surface the underlying NotFound: {err:?}"
+        ),
+        other => panic!("expected AppError::Io for an unstattable attachment, got: {other:?}"),
+    }
+}
+
+/// Size-mismatch guard: a recorded `size_bytes` that disagrees with the
+/// on-disk `metadata.len()` must surface as `AppError::Validation` — in *all*
+/// builds, not via a `debug_assert_eq!` that compiles out in release — and the
+/// rejected bytes must be unlinked.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verify_written_attachment_size_mismatch_returns_validation_error() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let path = dir.path().join("attachments/MISMATCH");
+    // 32 bytes on disk, 64 recorded. Both are well under MAX_ATTACHMENT_SIZE,
+    // so the length comparison is the only failure path exercised here.
+    std::fs::write(&path, vec![0u8; 32]).unwrap();
+
+    let result = crate::commands::attachments::verify_written_attachment(&path, 64).await;
+
+    match result {
+        Err(AppError::Validation { message: msg, .. }) => {
+            assert!(
+                msg.contains("size mismatch") && msg.contains("64") && msg.contains("32"),
+                "error message must report both recorded and on-disk sizes: {msg}"
+            );
+        }
+        other => panic!("expected AppError::Validation for size mismatch, got: {other:?}"),
+    }
+
+    assert!(
+        !path.exists(),
+        "size-mismatch rejection must unlink the bytes it rejected"
+    );
+}
+
+/// The guards must not false-positive: a file whose length matches the recorded
+/// size passes and is left in place for `persist_attachment` to commit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn verify_written_attachment_accepts_matching_size_and_keeps_bytes() {
+    let dir = tempfile::TempDir::new().unwrap();
+    std::fs::create_dir_all(dir.path().join("attachments")).unwrap();
+    let path = dir.path().join("attachments/MATCH");
+    std::fs::write(&path, vec![7u8; 32]).unwrap();
+
+    crate::commands::attachments::verify_written_attachment(&path, 32)
+        .await
+        .expect("matching on-disk length must pass verification");
+
+    assert!(path.exists(), "an accepted upload must keep its bytes");
+}
+
+/// Wiring: the bytes-ingest path runs the verification against the file it
+/// actually wrote, so the committed row's `size_bytes` always agrees with
+/// storage.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn add_attachment_with_bytes_verifies_stored_size_against_disk() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let block = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "verified".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+
+    let row = add_attachment_with_bytes_inner(
+        &pool,
+        DEV,
+        &mat,
+        _dir.path(),
+        block.id.clone(),
+        "ok.png".into(),
+        "image/png".into(),
+        vec![3u8; 128],
+    )
+    .await
+    .unwrap();
+
+    let on_disk = std::fs::metadata(_dir.path().join(&row.fs_path))
+        .unwrap()
+        .len();
+    assert_eq!(row.size_bytes, 128, "row must record the ingested length");
+    assert_eq!(
+        on_disk, 128,
+        "the verified file on disk must have the recorded length"
+    );
+    crate::commands::attachments::verify_written_attachment(
+        &_dir.path().join(&row.fs_path),
+        row.size_bytes,
+    )
+    .await
+    .expect("a committed row must satisfy the post-write guards");
+
+    mat.shutdown();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn list_attachments_returns_for_block() {
     let (pool, _dir) = test_pool().await;
