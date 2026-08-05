@@ -293,8 +293,7 @@ describe('KeyboardShortcuts', () => {
   })
 
   // #211 P2-11: strikethrough rebound to Ctrl+Shift+S (was Ctrl+Shift+X).
-  // Lock the resolved binding in at the display path. The legacy Ctrl+Shift+X
-  // still works via a hardcoded editor alias, but the dialog advertises S.
+  // Lock the resolved binding in at the display path.
   it('renders strikethrough as Ctrl + Shift + S (#211 P2-11)', () => {
     setPlatform('Linux x86_64')
     render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)

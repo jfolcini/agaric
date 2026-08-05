@@ -1001,9 +1001,7 @@ describe('keyboard-config', () => {
 
     it('strikethrough defaults to Ctrl + Shift + S (#211 P2-11)', () => {
       // #211 P2-11: rebound from the low-mnemonic `Ctrl+Shift+X` to
-      // `Ctrl+Shift+S`. `StrikeWithShortcut` keeps `Ctrl+Shift+X` as a
-      // hardcoded legacy alias for one release, so the old chord still works
-      // even though the catalog (display + tooltip) now advertises `S`.
+      // `Ctrl+Shift+S`.
       const s = DEFAULT_SHORTCUTS.find((sc) => sc.id === 'strikethrough')
       expect(s?.keys).toBe('Ctrl + Shift + S')
     })
@@ -2004,17 +2002,11 @@ describe('keyboard-config', () => {
       expect(matchesShortcutBinding(ev('k'), 'linkPopover')).toBe(false)
     })
 
-    // ── strikethrough (#1172) — primary chord + legacy alias ──────────────
-    // The catalog default moved to Ctrl+Shift+S (#211 P2-11). The legacy
-    // Ctrl+Shift+X is kept ONLY as a hardcoded TipTap keymap alias inside the
-    // editor (StrikeWithShortcut, asserted in use-roving-editor.test) — the
-    // catalog binding itself is Ctrl+Shift+S, so the matcher resolves S, not X.
-    it('strikethrough: the catalog binding is Ctrl+Shift+S (the X alias is editor-keymap only)', () => {
+    // ── strikethrough (#1172) — primary chord ──────────────────────────────
+    it('strikethrough: the catalog binding matches S, not the former X chord', () => {
       expect(
         matchesShortcutBinding(ev('s', { ctrlKey: true, shiftKey: true }), 'strikethrough'),
       ).toBe(true)
-      // The legacy X glyph is NOT the catalog binding — only the editor keymap
-      // honours it (see use-roving-editor.test).
       expect(
         matchesShortcutBinding(ev('x', { ctrlKey: true, shiftKey: true }), 'strikethrough'),
       ).toBe(false)
