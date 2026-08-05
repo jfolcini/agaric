@@ -279,11 +279,23 @@ dirs = { version = "6.0.0", default-features = false }
 # Official Rust MCP SDK — the canonical MCP transport/dispatch layer.
 # Hard (non-optional) dependency as of the rmcp migration (#693): the
 # `mcp_rmcp_spike` feature gate was retired and the hand-rolled framing
-# deleted, so `RmcpAdapter` serves both surfaces unconditionally. Pinned
-# to v1.7 (post-1.0, Apache-2.0). Defaults (`base64`, `macros`, `server`)
-# include the `transport-async-rw` server transport via the `server`
-# feature; the `client` feature is added so the end-to-end tests can
-# drive a real rmcp client over an in-memory `tokio::io::duplex` pair.
+# deleted, so `RmcpAdapter` serves both surfaces unconditionally. Held at
+# the 2.x line (Apache-2.0); the lockfile resolves 2.2.0. Defaults
+# (`base64`, `macros`, `server`) include the `transport-async-rw` server
+# transport via the `server` feature; the `client` feature is added so the
+# end-to-end tests can drive a real rmcp client over an in-memory
+# `tokio::io::duplex` pair.
+#
+# NOT a lazy pin: rmcp 3.0 is a breaking major for the exact APIs we
+# implement — `ServerHandler::call_tool`'s return type changed, the metadata
+# model split into `MetaObject` / `RequestMetaObject` /
+# `NotificationMetaObject`, and the pre-3.0 deprecated surface was removed.
+# Moving to `^3.0` requires porting `src/mcp/rmcp_adapter.rs`,
+# `src/mcp/server/tests_rmcp.rs`, and `src/mcp/server.rs` (which takes
+# `rmcp::service::ServiceExt`) in the same commit as the manifest + BOTH
+# lockfiles. Dependabot attempted the manifest half alone in #3432; see the
+# `/src-tauri/fuzz` entry in `.github/dependabot.yml` for the guard that
+# stops that recurring.
 rmcp = { version = "2.0", features = ["client"] }
 
 # Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
