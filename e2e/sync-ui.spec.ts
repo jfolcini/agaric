@@ -67,9 +67,11 @@ test.describe('Sync UI', () => {
       await expect(page.getByText('Pair Device')).toBeVisible()
     })
 
-    test('Pairing dialog shows QR code and passphrase', async ({ page }) => {
+    test('Pairing dialog shows QR code and passphrase on the host path', async ({ page }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
       await expect(page.getByText('Pair Device')).toBeVisible()
+      // #3463: only the host generates and displays a code.
+      await page.getByRole('button', { name: /show code on this device/i }).click()
 
       // Mock returns passphrase: 'alpha bravo charlie delta'
       // QR code should be visible (either as svg or data-testid)
@@ -77,9 +79,11 @@ test.describe('Sync UI', () => {
       await expect(page.getByText(/alpha/i)).toBeVisible()
     })
 
-    test('Pairing dialog has word entry inputs', async ({ page }) => {
+    test('Pairing dialog has word entry inputs on the joiner path', async ({ page }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
       await expect(page.getByText('Pair Device')).toBeVisible()
+      // #3463: only the joiner enters a code.
+      await page.getByRole('button', { name: /enter code from other device/i }).click()
 
       // Should have 4 word input fields
       const wordInputs = page.locator('input[aria-label*="Passphrase word"]')

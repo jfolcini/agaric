@@ -158,12 +158,26 @@ for (const profile of PROFILES) {
       await pairBtn.click()
       const dialog = activeDialog(page)
       await expect(dialog).toBeVisible()
-      // Wait for the entry-mode toggle to render (pairing init + lazy bits).
+
+      // #3463: the dialog now opens on a role chooser, so there are two
+      // surfaces to check at this width, not one. The chooser is new UI with
+      // two long button labels and descriptions — exactly the shape that
+      // overflowed before #1966 — so it is measured rather than clicked past.
+      await expect(dialog.getByRole('button', { name: /show code on this device/i })).toBeVisible()
+      await page.waitForTimeout(150)
+      await expectNoHorizontalOverflow(
+        page,
+        dialog,
+        `Pairing dialog · role chooser @ ${profile.name}`,
+      )
+
+      // Then the joiner surface, which hosts the entry-mode toggle.
+      await dialog.getByRole('button', { name: /enter code from other device/i }).click()
       await expect(
         dialog.getByRole('button', { name: 'Type Passphrase', exact: true }),
       ).toBeVisible()
       await page.waitForTimeout(150)
-      await expectNoHorizontalOverflow(page, dialog, `Pairing dialog @ ${profile.name}`)
+      await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · joiner @ ${profile.name}`)
     })
   })
 }
