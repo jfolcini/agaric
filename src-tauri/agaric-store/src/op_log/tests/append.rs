@@ -413,3 +413,125 @@ async fn insert_merge_op_in_tx_lands_row_with_defaults() {
     assert_eq!(is_replicated, 0, "omitted is_replicated defaults to 0");
     assert_eq!(is_undo, 0, "omitted is_undo defaults to 0");
 }
+
+// ── Indexed `attachment_id` column (migration 0064) ───────────────────
+
+/// Read the `op_log.attachment_id` **column** for one appended row.
+///
+/// Deliberately a runtime (untyped) query rather than `sqlx::query_scalar!`
+/// so this read-back adds no `.sqlx` offline-cache entries, matching the
+/// remote-ingest read-backs above.
+async fn stored_attachment_id(pool: &SqlitePool, device_id: &str, seq: i64) -> Option<String> {
+    sqlx::query_scalar("SELECT attachment_id FROM op_log WHERE device_id = ? AND seq = ?")
+        .bind(device_id)
+        .bind(seq)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+/// #3452 — the indexed `op_log.attachment_id` column must actually carry the
+/// id for every attachment-bearing op type.
+///
+/// The column is populated by `OpPayload::attachment_id()` inside
+/// `append_local_op_in_tx` (migration 0064, SQL-review B-4) and is what makes
+/// reverse-attachment lookups O(log N) instead of a scan over every
+/// `add_attachment` row. Mutation testing (`cargo mutants -p agaric-store`)
+/// showed three surviving mutants on that accessor — `None`, `Some("")` and
+/// `Some("xyzzy")` — because every existing assertion targets the *payload
+/// struct field* (`p.attachment_id`), never the stored column. This test
+/// asserts the column, one distinct id per match arm, so a wrong-arm or
+/// constant return value cannot pass.
+#[tokio::test]
+async fn append_populates_attachment_id_column_for_attachment_ops_3452() {
+    let (pool, _dir) = test_pool().await;
+    const DEV: &str = "dev-att-col";
+
+    // seq 1 — add_attachment
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::AddAttachment(AddAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT-ADD"),
+            block_id: BlockId::test_id("BLK-ATT"),
+            mime_type: "text/plain".into(),
+            filename: "readme.txt".into(),
+            size_bytes: 256,
+            fs_path: "attachments/readme.txt".into(),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // seq 2 — delete_attachment
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::DeleteAttachment(DeleteAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT-DEL"),
+            fs_path: "attachments/readme.txt".into(),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    // seq 3 — rename_attachment
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::RenameAttachment(RenameAttachmentPayload {
+            attachment_id: BlockId::test_id("ATT-REN"),
+            old_filename: "readme.txt".into(),
+            new_filename: "manual.txt".into(),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    for (seq, expected) in [(1, "ATT-ADD"), (2, "ATT-DEL"), (3, "ATT-REN")] {
+        assert_eq!(
+            stored_attachment_id(&pool, DEV, seq).await.as_deref(),
+            Some(expected),
+            "op_log.attachment_id column at seq {seq} must hold the payload's attachment id"
+        );
+    }
+}
+
+/// #3452 companion — a non-attachment op must leave the indexed column NULL.
+///
+/// Without this, an accessor mutated to return an unconditional `Some(..)`
+/// could still satisfy the positive test above. NULL is also load-bearing at
+/// the schema level: the partial index `idx_op_log_attachment_id` excludes
+/// NULL rows, so a spurious value would bloat the index with every
+/// non-attachment op.
+#[tokio::test]
+async fn append_leaves_attachment_id_column_null_for_non_attachment_ops_3452() {
+    let (pool, _dir) = test_pool().await;
+    const DEV: &str = "dev-att-null";
+
+    append_local_op_at(&pool, DEV, make_create_payload("BLK-NOATT"), FIXED_TS)
+        .await
+        .unwrap();
+    append_local_op_at(
+        &pool,
+        DEV,
+        OpPayload::AddTag(AddTagPayload {
+            block_id: BlockId::test_id("BLK-NOATT"),
+            tag_id: BlockId::test_id("TAG01"),
+        }),
+        FIXED_TS,
+    )
+    .await
+    .unwrap();
+
+    for seq in 1..=2 {
+        assert_eq!(
+            stored_attachment_id(&pool, DEV, seq).await,
+            None,
+            "op_log.attachment_id column at seq {seq} must be NULL for a non-attachment op"
+        );
+    }
+}
