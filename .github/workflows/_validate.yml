@@ -1031,7 +1031,9 @@ jobs:
         # regression (e.g. a heavy lib pulled onto the entry path via a new
         # static import). Budgets are measured + 10% headroom; re-baseline
         # with `node scripts/check-bundle-budget.mjs --update`.
-        run: node scripts/check-bundle-budget.mjs
+        run: |
+          node --test scripts/check-bundle-budget.test.mjs
+          node scripts/check-bundle-budget.mjs
 
       - name: Coverage summary
         if: hashFiles('coverage-merged/coverage-summary.json') != ''

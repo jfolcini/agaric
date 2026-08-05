@@ -1260,6 +1260,10 @@ describe('PageBlockStore', () => {
           beforeBatch.filter((b) => b.parent_id === 'GROUP_A').map((b) => [b.id, b.position]),
         ),
       ).toEqual({ D: 1, B: 2, C: 1, A: 1 })
+      const untouchedD = beforeBatch.find((b) => b.id === 'D')
+      const untouchedB = beforeBatch.find((b) => b.id === 'B')
+      expect(store.getState().blocksById.get('D')).toBe(untouchedD)
+      expect(store.getState().blocksById.get('B')).toBe(untouchedB)
 
       // A MULTI-SELECT batch move entirely inside GROUP_B — GROUP_A is
       // neither the destination nor a vacated source.
@@ -1290,6 +1294,14 @@ describe('PageBlockStore', () => {
           after.filter((b) => b.parent_id === 'GROUP_A').map((b) => [b.id, b.position]),
         ),
       ).toEqual({ D: 1, B: 2, C: 3, A: 4 })
+      // D/B already had the dense ranks that reconciliation requested. They
+      // are outside the moved sibling group and therefore keep their exact
+      // FlatBlock identities through buildFlatTree; only C/A need new rows to
+      // heal their stale ranks.
+      expect(after.find((b) => b.id === 'D')).toBe(untouchedD)
+      expect(after.find((b) => b.id === 'B')).toBe(untouchedB)
+      expect(store.getState().blocksById.get('D')).toBe(untouchedD)
+      expect(store.getState().blocksById.get('B')).toBe(untouchedB)
     })
   })
 })

@@ -633,6 +633,109 @@ describe('useViewportObserver', () => {
     unmount()
   })
 
+  // ── #1268: BlockTree-level window notification channel ───────────────────
+
+  it('coalesces multiple membership flips from one observer batch into one window callback', async () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const elA = makeEl('A')
+    const elB = makeEl('B')
+    result.current.createObserveRef('A')(elA)
+    result.current.createObserveRef('B')(elB)
+    const snapshots: number[] = []
+    const subscriber = vi.fn(() => {
+      snapshots.push(result.current.getWindowVersion())
+    })
+    const unsubscribe = result.current.subscribeWindow(subscriber)
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+    const before = result.current.getWindowVersion()
+
+    act(() => {
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+        {
+          target: elB,
+          isIntersecting: false,
+          boundingClientRect: { height: 40 } as DOMRectReadOnly,
+        },
+      ])
+    })
+
+    expect(result.current.getWindowVersion()).toBe(before + 2)
+    expect(subscriber).not.toHaveBeenCalled()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(subscriber).toHaveBeenCalledOnce()
+    expect(snapshots).toEqual([before + 2])
+
+    // A later, separate batch must schedule again. This pins the scheduled
+    // flag reset after the first microtask; leaving it set would suppress all
+    // future BlockTree-level notifications.
+    act(() => {
+      obs.trigger([
+        {
+          target: elA,
+          isIntersecting: true,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    expect(result.current.getWindowVersion()).toBe(before + 3)
+    expect(subscriber).toHaveBeenCalledOnce()
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(subscriber).toHaveBeenCalledTimes(2)
+    expect(snapshots).toEqual([before + 2, before + 3])
+
+    unsubscribe()
+    unmount()
+  })
+
+  it('stops window notifications after unsubscribe', async () => {
+    const { result, unmount } = renderHook(() => useViewportObserver())
+    const el = makeEl('A')
+    result.current.createObserveRef('A')(el)
+    const subscriber = vi.fn()
+    const unsubscribe = result.current.subscribeWindow(subscriber)
+    const obs = MockIntersectionObserver.instances[0] as MockIntersectionObserver
+
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: false,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(subscriber).toHaveBeenCalledOnce()
+
+    unsubscribe()
+    act(() => {
+      obs.trigger([
+        {
+          target: el,
+          isIntersecting: true,
+          boundingClientRect: { height: 30 } as DOMRectReadOnly,
+        },
+      ])
+    })
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(subscriber).toHaveBeenCalledOnce()
+
+    unmount()
+  })
+
   // ── #1067: viewport object identity stability ─────────────────────────────
 
   it('keeps a STABLE viewport object identity across offscreen flips (#1067)', () => {
