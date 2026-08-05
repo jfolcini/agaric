@@ -1,8 +1,10 @@
 # Benches — orientation, pitfalls, and the rules for keeping them green
 
-Criterion benches under `src-tauri/benches/`. They measure perf AND, for
-`interactive_slo`, enforce the product SLO (≤200 ms p95 @ 100K blocks; see
-`docs/architecture/operations.md` § Product SLO).
+Criterion benches under `src-tauri/benches/`. They measure perf and, for
+`interactive_slo`, enforce accumulated mean latency under command-specific
+budgets at 100K blocks. The product target is ≤200 ms p95, but the current
+batched harness does not directly measure or enforce per-call p95; see
+`docs/architecture/operations.md` § Product SLO.
 
 ## CI runs every bench: a `--test` smoke gate + the `interactive_slo` perf gate
 
@@ -16,12 +18,12 @@ two bench lanes:
   fails the job** instead of rotting silently. This validates SEEDS/FIXTURES, not
   perf. (#639/#978; sharded in #2122 after the old single-runner `bench-compile`
   job blew the 90 min cap mid-smoke.)
-- **`bench-slo`** — runs `interactive_slo` (the WARM perf gate — the only bench
-  with a timing budget) plus the `#[ignore]`d 20k-row perf gates. Split out of
-  the smoke shards so a smoke timeout can never skip the SLO gate.
+- **`bench-slo`** — runs `interactive_slo` (the WARM mean-budget perf gate —
+  the only bench with timing budgets) plus the `#[ignore]`d 20k-row perf gates.
+  Split out of the smoke shards so a smoke timeout can never skip the SLO gate.
   `interactive_slo` is excluded from the cold `--test` smoke loop so its
   `assert_under_budget` isn't tripped by cold timings. A `workflow_dispatch`
-  input (`slo_include_problem`) also measures the problem-tier probes.
+  input (`slo_include_problem`) also measures the cache/counterfactual probes.
 
 **History:** before #978 only `interactive_slo` actually RAN; every other bench
 was compile-only, so it could be false-green — it compiled but panicked the
@@ -95,11 +97,51 @@ regression. To decide whether a bench truly exceeds its budget, do a full warm
 measurement: `cargo bench --bench <name>` (criterion's `sample_size(10)` warm
 loop). Only gate on the warm number.
 
-Benches that genuinely exceed their budget go to the **problem tier**: add
-`if problem_skipped("<name> @ 100K") { return }` (see `interactive_slo.rs`'s
-`problem_skipped` + `list_page_links` / `list_projected_agenda` /
-`revert_ops_50op`), which skips them unless `SLO_INCLUDE_PROBLEM=1`. Measure
-warm before gating — don't gate on a cold `--test` shot.
+Confirmable problem/counterfactual probes use
+`if problem_skipped("<name> @ 100K") { return }`; the current examples are the
+#2508 cache direct-query and #2585 MostLinked probes, enabled together by
+`SLO_INCLUDE_PROBLEM=1`. The permanently over-budget revert probe has its own
+`SLO_INCLUDE_REVERT=1` gate and does not ride that shared flag. Measure warm
+before gating — don't gate on a cold `--test` shot.
+
+## `interactive_slo` probes must observe results outside timing (#3304)
+
+Every default-enforced read command must make one call after seeding and before
+registering its Criterion loop, then assert the fixture/result shape. Prefer
+exact stable expectations (requested id sets, page lengths, seeded counts,
+serialized child count, production caps); use a nonempty check only when the
+production result is intentionally variable. Keep this call outside
+`iter_custom` so validation adds no timing cost. The timed loop may continue to
+discard its result after this untimed assertion has pinned the exact scope and
+filter branch it invokes.
+
+Do **not** preflight a mutating command against the measured fixture: that
+changes its advertised scale and state. For mutators, capture/validate outside
+the elapsed region or assert exact durable state growth after `group.finish()`.
+`create_block` is the model: the fixture stays at exactly 100K before timing,
+then block and op-log counts must each grow by `Acc::iters()`.
+
+This is load-bearing fixture coverage: a filter/schema drift that turns a query
+into an empty result otherwise looks like a speedup and still passes the mean
+budget. The assertions execute when the relevant prebuilt Criterion binary is
+run by the scheduled, unfiltered warm lane. A compile-only check cannot
+exercise them. The current Criterion harness has no safe focused runtime path:
+a filter suppresses unmatched `bench_function` loops but still invokes their
+outer functions, whose zero-iteration budget assertions then panic. A full cold
+`interactive_slo --test` is likewise unsuitable for a budget verdict for the
+reasons above.
+
+The same probe belongs on any *non-SLO* bench whose fixture can degrade into a
+cheaper shape — there it is strictly better off, because those benches DO run in
+the `bench-smoke` `--test` lane, so the assertion is checked every scheduled run
+rather than only in the warm lane. `export_bench.rs::bench_export_page_markdown`
+is the model: the same `page_id` drift that silently reduced the SLO export
+probe to a heading-only page had reduced this bench too, and neither reported
+anything but a faster number. Because a shape probe is untimed and outside
+`iter_custom`, cold `--test` timings are irrelevant to it — put the assertion
+after the seeder and before `benchmark_group`, where the outer bench function
+runs it unconditionally (Criterion's `--test` and its name filters both still
+invoke that function body).
 
 ## Seeding fixtures: match the CURRENT schema (the drift checklist)
 

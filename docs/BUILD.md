@@ -13,7 +13,7 @@ prek run --all-files                     # run every CI gate locally (or: just c
 
 **`scripts/setup.sh` is the single canonical dev-environment setup — run it and it handles everything.** `npm run setup` and `just setup` are exact aliases for it (use whichever you have; `just` is optional). It is idempotent, so re-run it any time. It provisions the Node version pinned in [`.nvmrc`](../.nvmrc) via `nvm` when your active `node` is older than the `engines` floor (`>=24`), runs `npm ci`, copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` at compile time), seeds the sidecar placeholder, provisions the local dev DB via `scripts/setup-dev-db.sh`, and installs the prek hook toolchain via `scripts/setup-hooks.sh` (see [Hook toolchain](#hook-toolchain) below). The sidecar placeholder is also re-run automatically by `beforeDevCommand`, so `cargo tauri dev` needs no manual prep step. On Claude's cloud VMs it runs automatically — see [Claude Code on the web](#claude-code-on-the-web).
 
-Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run --workspace` (backend — bare form omits `agaric-core`/`store`/`engine`/`sync`/`observability`/`diagnostics`, #3212), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (perf SLO).
+Tests: `npx vitest run` (frontend), `cd src-tauri && cargo nextest run --workspace` (backend — bare form omits `agaric-core`/`store`/`engine`/`sync`/`observability`/`diagnostics`, #3212), `npx playwright test` (e2e), `cargo bench --bench interactive_slo` (warm latency mean-budget gate).
 
 ## After-clone setup
 
@@ -144,13 +144,13 @@ The active `.cargo/config.toml` is gitignored, so it never leaks into the tree �
 npx vitest run                                   # frontend
 cd src-tauri && cargo nextest run --workspace    # backend (bare form is package-scoped only, #3212)
 npx playwright test                              # e2e (chromium)
-cargo bench --bench interactive_slo              # perf SLOs at 100K blocks
+cargo bench --bench interactive_slo              # warm latency mean budgets at 100K blocks
 ```
 
 - **Frontend** tests use Vitest + jsdom + `@testing-library/react`. Every component test must include an `axe(container)` audit (enforced by the `axe-presence` prek hook).
 - **Backend** tests use `cargo-nextest` with insta snapshots. Materializer tests use the `test_pool()` + `TempDir` fixture; multi-thread runtime is `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`. Snapshot updates: `cargo insta review`.
 - **E2E** specs cover smoke flows, editor lifecycle, keyboard navigation, sync round-trip, and view dispatches. Specs live in `e2e/`.
-- **Bench gates**: `interactive_slo` enforces the product SLO of ≤200 ms p95 for interactive commands at a 100K-block fixture. Per-command budgets live in the bench itself. The scheduled `bench-smoke` lane (sharded, in `scheduled-deep-checks.yml`) also **smoke-runs every bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf). To reproduce locally before pushing, build once (`cd src-tauri && cargo bench --no-run`) then run each prebuilt `target/release/deps/<bench>-<hash> --test`; the exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
+- **Bench gates**: the product target is ≤200 ms p95 for interactive commands at 100K blocks; `interactive_slo` supports it by enforcing an accumulated mean against the per-command budgets defined in that bench, not by measuring per-call p95. It runs warm in the scheduled `bench-slo` lane. The sharded `bench-smoke` lane **smoke-runs every non-SLO bench once** (`--test`) so a drifted seed/fixture fails CI instead of rotting silently (#978 — validates fixtures, not perf); `interactive_slo` is deliberately excluded because cold `--test` timings can trip its budgets falsely. To reproduce the smoke lane, build once (`cd src-tauri && cargo bench --no-run`) and run the non-SLO prebuilt `target/release/deps/<bench>-<hash> --test` binaries; run `cargo bench --bench interactive_slo` warm for its budget verdict. The exact loop and the cargo #6313 build-race it dodges are in `src-tauri/benches/AGENTS.md`.
 
 ### Mutation testing (nightly)
 
