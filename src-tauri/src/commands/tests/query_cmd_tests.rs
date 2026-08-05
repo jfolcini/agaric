@@ -586,6 +586,17 @@ async fn insert_property(pool: &SqlitePool, block_id: &str, key: &str, value_tex
         .unwrap();
 }
 
+/// Helper: insert a property whose sole typed value is a block reference.
+async fn insert_property_ref(pool: &SqlitePool, block_id: &str, key: &str, value_ref: &str) {
+    sqlx::query("INSERT INTO block_properties (block_id, key, value_ref) VALUES (?, ?, ?)")
+        .bind(block_id)
+        .bind(key)
+        .bind(value_ref)
+        .execute(pool)
+        .await
+        .unwrap();
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn query_by_property_returns_matching_blocks() {
     let (pool, _dir) = test_pool().await;
@@ -4575,6 +4586,96 @@ async fn filtered_blocks_query_value_text_in_intersects() {
         ids,
         ["FBVTI_HIT"].into_iter().collect(),
         "value_text_in must filter via SET membership; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_text_neq_includes_other_typed_values_but_not_missing_keys() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(
+        &pool,
+        "FBNEQ_REF_TARGET",
+        "page",
+        "owner page",
+        None,
+        Some(1),
+    )
+    .await;
+    insert_block(&pool, "FBNEQ_OTHER", "content", "other", None, Some(2)).await;
+    insert_block(&pool, "FBNEQ_REF", "content", "reference", None, Some(3)).await;
+    insert_block(&pool, "FBNEQ_EQUAL", "content", "equal", None, Some(4)).await;
+    insert_block(&pool, "FBNEQ_MISSING", "content", "missing", None, Some(5)).await;
+
+    // Text neq: the differently-valued text row and the ref-valued row both
+    // differ from `alice`; the exactly-equal text row and a block without the
+    // key must both be excluded.
+    insert_property(&pool, "FBNEQ_OTHER", "owner", "bob").await;
+    insert_property_ref(&pool, "FBNEQ_REF", "owner", "FBNEQ_REF_TARGET").await;
+    insert_property(&pool, "FBNEQ_EQUAL", "owner", "alice").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "owner".into(),
+            value_text: Some("alice".into()),
+            value_text_in: Vec::new(),
+            value_date: None,
+            value_date_range: None,
+            operator: "neq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBNEQ_OTHER", "FBNEQ_REF"].into_iter().collect(),
+        "text neq must retain different text/ref values while excluding equal/missing rows; got {ids:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn filtered_blocks_query_date_neq_includes_other_typed_values_but_not_missing_keys() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FBDNEQ_OTHER", "content", "other", None, Some(1)).await;
+    insert_block(&pool, "FBDNEQ_TEXT", "content", "text", None, Some(2)).await;
+    insert_block(&pool, "FBDNEQ_EQUAL", "content", "equal", None, Some(3)).await;
+    insert_block(&pool, "FBDNEQ_MISSING", "content", "missing", None, Some(4)).await;
+
+    insert_property_date(&pool, "FBDNEQ_OTHER", "reviewed", "2026-02-01").await;
+    insert_property(&pool, "FBDNEQ_TEXT", "reviewed", "not-a-date").await;
+    insert_property_date(&pool, "FBDNEQ_EQUAL", "reviewed", "2026-01-01").await;
+
+    let result = filtered_blocks_query_inner(
+        &pool,
+        vec![PropertyFilter {
+            key: "reviewed".into(),
+            value_text: None,
+            value_text_in: Vec::new(),
+            value_date: Some("2026-01-01".into()),
+            value_date_range: None,
+            operator: "neq".into(),
+        }],
+        None,
+        None,
+        &SpaceScope::Global,
+        None,
+        None,
+    )
+    .await
+    .unwrap();
+    let ids: std::collections::HashSet<&str> = result.items.iter().map(|b| b.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["FBDNEQ_OTHER", "FBDNEQ_TEXT"].into_iter().collect(),
+        "date neq must retain different date/text values while excluding equal/missing rows; got {ids:?}"
     );
 }
 

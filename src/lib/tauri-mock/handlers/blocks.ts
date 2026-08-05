@@ -965,9 +965,11 @@ export const blocksHandlers = {
   //
   // Mirrors `commands/blocks/queries.rs::first_child_for_blocks_inner`:
   // returns a map of `parentId → first BlockRow` ordered by
-  // `(position ASC, id ASC)`. Soft-deleted children are filtered out so
-  // the value is always a live block. Parents with no active children
-  // are omitted from the record.
+  // `(COALESCE(position, NULL_POSITION_SENTINEL) ASC, id ASC)`. The mock
+  // represents the backend's i64::MAX sentinel with MAX_SAFE_INTEGER so
+  // a nullable legacy position sorts after every valid mock position.
+  // Soft-deleted children are filtered out so the value is always a live
+  // block. Parents with no active children are omitted from the record.
   // ---------------------------------------------------------------------------
 
   first_child_for_blocks: (args) => {
@@ -988,8 +990,8 @@ export const blocksHandlers = {
     }
     for (const [parent, children] of grouped) {
       children.sort((x, y) => {
-        const px = (x['position'] as number | null) ?? 0
-        const py = (y['position'] as number | null) ?? 0
+        const px = (x['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
+        const py = (y['position'] as number | null) ?? Number.MAX_SAFE_INTEGER
         if (px !== py) return px - py
         const idX = x['id'] as string
         const idY = y['id'] as string

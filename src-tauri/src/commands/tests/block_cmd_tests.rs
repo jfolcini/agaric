@@ -6331,6 +6331,58 @@ async fn first_child_for_blocks_returns_first_by_position() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn first_child_for_blocks_sorts_null_position_after_positioned_siblings() {
+    let (pool, _dir) = test_pool().await;
+
+    insert_block(&pool, "FC_NULL_PAR", "page", "parent", None, Some(1)).await;
+    // A pre-position-normalization snapshot can restore a genuine NULL even
+    // though current writers persist the sentinel. SQLite sorts NULL first
+    // under a bare ASC, so this fixture distinguishes the canonical COALESCE
+    // order from the old window-function order.
+    insert_block(
+        &pool,
+        "FC_NULL_LEGACY",
+        "content",
+        "legacy null",
+        Some("FC_NULL_PAR"),
+        None,
+    )
+    .await;
+    insert_block(
+        &pool,
+        "FC_NULL_POSITIONED",
+        "content",
+        "positioned",
+        Some("FC_NULL_PAR"),
+        Some(1),
+    )
+    .await;
+
+    let map = first_child_for_blocks_inner(&pool, vec!["FC_NULL_PAR".into()])
+        .await
+        .unwrap();
+    let canonical = agaric_store::pagination::list_children(
+        &pool,
+        Some("FC_NULL_PAR"),
+        &agaric_store::pagination::PageRequest::new(None, Some(2)).unwrap(),
+        None,
+    )
+    .await
+    .unwrap();
+
+    let row = map.get("FC_NULL_PAR").expect("FC_NULL_PAR has children");
+    assert_eq!(
+        row.id, "FC_NULL_POSITIONED",
+        "NULL position must sort at NULL_POSITION_SENTINEL after every positioned sibling; got {row:?}"
+    );
+    assert_eq!(
+        row.id.as_str(),
+        canonical.items[0].id.as_str(),
+        "batched first-child lookup must agree with canonical list_children ordering"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn first_child_for_blocks_breaks_ties_by_id() {
     let (pool, _dir) = test_pool().await;
 

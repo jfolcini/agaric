@@ -1135,6 +1135,16 @@ fn property_value_predicate_sql(
         let p = *next_param;
         *next_param += 1;
         binds.push(v.clone());
+        if sql_op == "!=" {
+            // Match `pagination::query_by_property`: typed property rows
+            // populate exactly one value column, so NULL in the queried
+            // column represents a value of another type and must satisfy
+            // `neq`. SQLite's bare `NULL != ?` would instead evaluate to
+            // NULL and silently exclude the row.
+            return Ok(format!(
+                " AND ({bp_alias}.value_text IS NULL OR {bp_alias}.value_text != ?{p})"
+            ));
+        }
         return Ok(format!(" AND {bp_alias}.value_text {sql_op} ?{p}"));
     }
     if !pf.value_text_in.is_empty() {
@@ -1152,6 +1162,13 @@ fn property_value_predicate_sql(
         let p = *next_param;
         *next_param += 1;
         binds.push(v.clone());
+        if sql_op == "!=" {
+            // See the value_text branch above: a value in any sibling typed
+            // column is unequal to the requested date rather than unknown.
+            return Ok(format!(
+                " AND ({bp_alias}.value_date IS NULL OR {bp_alias}.value_date != ?{p})"
+            ));
+        }
         return Ok(format!(" AND {bp_alias}.value_date {sql_op} ?{p}"));
     }
     if let Some((from, to)) = &pf.value_date_range {

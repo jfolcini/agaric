@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use tracing::instrument;
 
 use super::super::*;
-use agaric_store::pagination::ActiveBlockRow;
+use agaric_store::pagination::{ActiveBlockRow, NULL_POSITION_SENTINEL};
 use agaric_store::space::SpaceScope;
 
 /// List active blocks with pagination, applying at most one exclusive filter.
@@ -542,9 +542,12 @@ pub async fn trash_descendant_counts(
 /// Batch-fetch the first child of each parent block in a single query.
 ///
 /// Returns a `HashMap<parent_id, BlockRow>` where the value is the first
-/// child of `parent_id` ordered by `(position ASC, id ASC)` — the canonical
-/// sibling-order used by every page renderer. Parents with no active
-/// children are omitted; callers should treat missing keys as "no preview".
+/// child of `parent_id` ordered by
+/// `(COALESCE(position, NULL_POSITION_SENTINEL) ASC, id ASC)` — the canonical
+/// sibling order used by [`agaric_store::pagination::list_children`]. A
+/// nullable position from a restored legacy snapshot therefore sorts after
+/// every positioned sibling. Parents with no active children are omitted;
+/// callers should treat missing keys as "no preview".
 ///
 /// The templates view used to fire one
 /// `list_blocks({ parent_id, limit: 1 })` IPC per template just to
@@ -552,10 +555,9 @@ pub async fn trash_descendant_counts(
 /// N+1 into a single query using SQLite's `ROW_NUMBER()` window
 /// function partitioned by `parent_id`.
 ///
-/// Conflict copies  and soft-deleted rows
-/// (`deleted_at IS NOT NULL`) are excluded inside the CTE so the
-/// `rn = 1` row is always the first **active** sibling — matching the
-/// shape of every other UI-facing read in this module.
+/// Soft-deleted rows (`deleted_at IS NOT NULL`) are excluded inside the CTE,
+/// so the `rn = 1` row is always the first **active** sibling — matching the
+/// active-row contract of the corresponding list query.
 ///
 /// Empty `block_ids` returns an empty map (not an error). Above
 /// [`agaric_store::pagination::MAX_BATCH_BLOCK_IDS`] entries rejects with
@@ -581,17 +583,17 @@ pub async fn first_child_for_blocks_inner(
     let block_ids: Vec<String> = block_ids.into_iter().map(BlockId::into_string).collect();
     let ids_json = serde_json::to_string(&block_ids)?;
 
-    // ROW_NUMBER() OVER (PARTITION BY parent_id ORDER BY position, id)
-    // surfaces exactly one row per parent_id (the first child).
-    // The CTE pre-filters `deleted_at IS NULL`
-    // so the rn = 1 row is the first ACTIVE sibling — the same rows
-    // `list_blocks({ parent_id })` would return.
+    // ROW_NUMBER() surfaces exactly one row per parent_id (the first child).
+    // Its COALESCE sentinel is the same null-tolerant sibling ordering used by
+    // `pagination::list_children`; this matters defensively for pre-position-
+    // normalization snapshots that can restore a genuine NULL. The CTE
+    // pre-filters `deleted_at IS NULL`, so rn = 1 is the first ACTIVE sibling.
     let sql = format!(
         "WITH ranked AS ( \
              SELECT {cols}, \
                     ROW_NUMBER() OVER ( \
                         PARTITION BY parent_id \
-                        ORDER BY position ASC, id ASC \
+                        ORDER BY COALESCE(position, ?2) ASC, id ASC \
                     ) AS rn \
              FROM blocks \
              WHERE parent_id IN (SELECT value FROM json_each(?1)) \
@@ -602,6 +604,7 @@ pub async fn first_child_for_blocks_inner(
     );
     let rows = sqlx::query_as::<_, BlockRow>(sqlx::AssertSqlSafe(sql.as_str()))
         .bind(ids_json)
+        .bind(NULL_POSITION_SENTINEL)
         .fetch_all(pool)
         .await?;
 
