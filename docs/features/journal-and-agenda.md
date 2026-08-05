@@ -3,7 +3,9 @@
 
 The **Journal** is the default landing view and the only one mounted eagerly. It is your daily writing surface and the home of the agenda. Reach it from the sidebar's calendar icon.
 
-The Journal renders one of five **modes** that all share a single date cursor:
+The Journal renders one of five **modes**. Daily, Weekly, and Monthly use the active date
+cursor to scope their content; Stream and Agenda do not, so they hide the previous/next
+stepper and date display while keeping the calendar picker available:
 
 | Mode | What you see | Picker / hotkey |
 | --- | --- | --- |
@@ -54,7 +56,7 @@ Flat task list across a date range with filtering, sorting, and grouping.
 You can stack any combination of:
 
 - **Status** (TODO / DOING / DONE / CANCELLED)
-- **Priority** (P1 / P2 / P3 / none)
+- **Priority** (the configured levels plus none; defaults P1 / P2 / P3)
 - **Due date** preset (overdue, today, this week, this month, no date, custom range)
 - **Scheduled date** preset (same shape as due-date)
 - **Completed date** preset
@@ -87,4 +89,9 @@ Repeating tasks are configured via properties (see [properties.md](properties.md
 
 ## Inline tasks in the editor
 
-In the editor (any block can be a task), the **task state cycle** is `Ctrl+Enter`. The cycle moves TODO → DOING → DONE → (clear). Re-cycle on DONE jumps back to TODO (or, on a repeating task, advances the recurrence). Priority is set directly with `Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` (P1 / P2 / P3). Due and scheduled dates are set from the block toolbar; `Ctrl+Shift+D` inserts a plain date at the cursor.
+In the editor (any block can be a task), `Ctrl+Enter` advances the **task state cycle**:
+none → TODO → DOING → DONE → CANCELLED → none. Completing a repeating task creates its
+next occurrence according to the repeat rule. With the default priority levels,
+`Ctrl+Shift+1` / `Ctrl+Shift+2` / `Ctrl+Shift+3` set P1 / P2 / P3 directly. Due and
+scheduled dates are set from the block toolbar; `Ctrl+Shift+D` inserts a plain date at
+the cursor.

@@ -58,13 +58,18 @@ Reference the token, don't reinvent the value. The tokens themselves are defined
 
 ## Keyboard model
 
-All shortcuts live in `src/lib/keyboard-config/catalog.ts` and are user-customisable in Settings → Keyboard. Persistence is localStorage with cross-tab `storage`-event sync. Picker-trigger characters (`/`, `@`, `[[`, `((`, `::`) are not rebindable.
+Shortcut metadata lives in `src/lib/keyboard-config/catalog.ts`. Rebindable entries are
+user-customisable in Settings → Keyboard and persist in localStorage with cross-tab
+`storage`-event sync; structural bindings and picker-trigger characters are not rebindable.
+[Keyboard](features/keyboard.md) and [Pickers & Slash Menu](features/pickers-and-slash.md#the-pickers)
+own the current catalogs.
 
-Scopes (look in the catalog for the full set):
+Representative scope rules (see [Keyboard](features/keyboard.md) for the current default-binding catalog):
 
-- **Editor** — block split / merge, indent / dedent (use `Ctrl+Shift+Arrow`, never `Tab` — Tab is browser focus navigation), collapse, mark toggles, link insertion, slash menu.
+- **Editor** — block split / merge, collapse, mark toggles, link insertion, and the slash menu. `Tab` / `Shift+Tab` indent / dedent by default; users can restore browser focus navigation in Settings → Editor, while `Ctrl+Shift+Arrow` remains available.
 - **Formatting** — bold / italic / strike / code / highlight + heading levels + code block.
-- **Global** — `Ctrl+F` (focus search), `?` (shortcuts panel), `Escape` (close all overlays), `Ctrl+Z` / `Ctrl+Y` (page-level undo/redo when not in editor), `Ctrl+1`-`Ctrl+9` (switch space).
+- **Search and navigation** — `Ctrl+F` finds within the current page, `Ctrl+Shift+F` opens the cross-page Search view, and `Ctrl+K` opens the command palette outside the editor. `?`, `Escape`, and `Ctrl+1`-`Ctrl+9` expose shortcuts, close overlays, and switch spaces.
+- **Undo / redo** — `Ctrl+Z` and `Ctrl+Y` / `Ctrl+Shift+Z` use editor history while editing and page-level history when focus is outside the editor on a PageEditor view.
 - **Journal** — `Alt+←` / `Alt+→` (prev / next), `Alt+T` (today).
 - **List navigation** — `Home` / `End` / `PageUp` / `PageDown` + optional wrap-around via `useKeyboardNavigableList`.
 
@@ -122,7 +127,11 @@ The cross-feature primitives most worth knowing (not exhaustive — see `src/com
 ## App-specific features
 
 - **Spaces.** Each space has its own slice of nav state (`currentView`, recent pages, tabs, journal mode). Switching spaces flips them. `Ctrl+1`-`Ctrl+9` switch by index. The sidebar header collapses **SpaceSwitcher** to **SpaceAccentBadge** in icon-rail mode. Cross-space links to a foreign-space target render via the existing broken-link variant; the actual block is never resolved across spaces.
-- **Journal.** Daily / Weekly / Monthly / Agenda modes sharing a date cursor. **DuePanel** / **DonePanel** are children of journal modes, not standalone views — clicking a Due / Done badge scrolls them into view, doesn't navigate.
+- **Journal.** Dated modes use the date cursor to scope their content; the continuous
+  Stream and task-focused Agenda do not, so they hide the previous/next stepper and date
+  display. **DuePanel** / **DonePanel** are children of journal modes, not standalone views
+  — clicking a Due / Done badge scrolls them into view, doesn't navigate. See
+  [Journal & Agenda](features/journal-and-agenda.md) for the mode catalog.
 - **Block zoom-in.** Title is a text link in a breadcrumb (`Page › Section › Block`), not a pill — the breadcrumb implies "you're inside this".
 - **Inline query blocks.** `{{query: …}}` blocks render a filtered list inline. Edit-on-click; the body is the query, not the results.
 - **Conflict resolution.** UI offers Keep / Discard per conflict, or batch operations. Devices are shown by name (not ULID) for the user to disambiguate.
