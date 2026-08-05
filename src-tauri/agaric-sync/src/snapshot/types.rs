@@ -258,6 +258,54 @@ mod tests {
         }
     }
 
+    /// The insta redactions on `AttachmentSnapshot::deleted_at` and
+    /// `PropertyDefinitionSnapshot::created_at` replace the value with
+    /// `[TIMESTAMP]` **by path, regardless of its type**. That closes the
+    /// non-determinism the redaction guard requires, but it opens a hole exactly
+    /// where the history says the risk lives: a TEXT -> INTEGER retype of either
+    /// field would leave all nine `.snap` files byte-identical, and a
+    /// column-retype migration is precisely the class of change credited with
+    /// forcing `MIN_SCHEMA_VERSION = 4`.
+    ///
+    /// These two are the only snapshot timestamps still carried as
+    /// `Option<String>` ISO-8601 rather than `i64` epoch-ms (a deliberate #109
+    /// Phase 2 carve-out), which is why they need redacting at all while
+    /// `BlockSnapshot::deleted_at` does not.
+    ///
+    /// So the shape is pinned here instead, independently of the snapshots: the
+    /// serialized value must be a JSON **string**.
+    ///
+    /// One nuance found while falsifying this, which narrows what it is for.
+    /// Retyping the Rust field alone does **not** reach this test — it is a
+    /// compile error, because `sqlx::query_as!` verifies the field type against
+    /// the live column at build time (`Option<String>` will not coerce to
+    /// `Option<i64>`). Likewise a migration that retypes the column alone breaks
+    /// the same macro. So the uncoordinated half of the risk is already caught,
+    /// and caught earlier, by the compiler.
+    ///
+    /// What this test covers is the **coordinated** change: a migration and the
+    /// struct moving together, which compiles cleanly, leaves every `.snap`
+    /// byte-identical because the redaction erases the value's type along with
+    /// its content, and would otherwise ship silently.
+    #[test]
+    fn iso8601_timestamp_fields_serialize_as_strings_not_numbers() {
+        let attachment = serde_json::to_value(attachment_fixture()).expect("serializes");
+        assert!(
+            attachment["deleted_at"].is_string(),
+            "AttachmentSnapshot::deleted_at must serialize as a string; a retype to \
+             INTEGER is invisible to the redacted snapshots. Got: {:?}",
+            attachment["deleted_at"]
+        );
+
+        let prop = serde_json::to_value(property_definition_fixture()).expect("serializes");
+        assert!(
+            prop["created_at"].is_string(),
+            "PropertyDefinitionSnapshot::created_at must serialize as a string; a retype \
+             to INTEGER is invisible to the redacted snapshots. Got: {:?}",
+            prop["created_at"]
+        );
+    }
+
     fn attachment_fixture() -> AttachmentSnapshot {
         AttachmentSnapshot {
             id: BlockId::test_id("ATT01"),

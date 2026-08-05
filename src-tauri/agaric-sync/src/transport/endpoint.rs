@@ -1,11 +1,11 @@
 //! The LAN-only iroh endpoint, and the guard that keeps it LAN-only.
 //!
-//! Ported from the #78 spike (`spikes/iroh-lan`), where the configuration below was
-//! derived by reading iroh 1.0.3's source and then verified by forcing each assertion
-//! red. The spike's own README noted that its guard was *not* build-enforced, because
-//! nothing in CI compiled that crate. Living here, inside a workspace member, the
-//! guard runs under `cargo nextest run --workspace` — which is the whole point of
-//! moving it.
+//! The configuration below was derived by reading iroh 1.0.3's source and then
+//! verified by forcing each assertion red. It began life in a throwaway spike crate
+//! whose guard was *not* build-enforced, because nothing in CI compiled it; the
+//! findings behind it are recorded on #78 and in plan #3464. Living here, inside a
+//! workspace member, the guard runs under `cargo nextest run --workspace` — which is
+//! the whole point of moving it.
 
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
@@ -14,7 +14,7 @@ use std::{
 
 use iroh::{
     Endpoint, RelayMode,
-    endpoint::{BindOpts, Builder, presets},
+    endpoint::{BindOpts, Builder, InvalidSocketAddr, presets},
 };
 use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
 use n0_error::e;
@@ -103,7 +103,10 @@ impl Resolver for RecordingResolver {
 ///    the mandatory crypto provider. Building from `N0` or `N0DisableRelay` instead
 ///    would install `PkarrPublisher::n0_dns()`, `PkarrResolver::n0_dns()` and
 ///    `DnsAddressLookup::n0_dns()`, and **disabling the relay does not disable those**.
-///    That is the trap this whole module exists to avoid.
+///    That is the trap this whole module exists to avoid. `clear_address_lookup()` is
+///    then called anyway, belt-and-braces: `Minimal` installs none today, but it is a
+///    preset we do not control, and the cost of the call is one line against a silent
+///    reacquisition of an outbound path.
 /// 3. **Egress confined to the subnet.** iroh routes outgoing datagrams by
 ///    longest-prefix match over bound sockets, falling back to whichever socket is
 ///    marked the default route. Binding only the LAN subnet with
@@ -125,9 +128,14 @@ impl Resolver for RecordingResolver {
 /// iroh dialling a hardcoded bootstrap IP. Layer 3 is the backstop for that case,
 /// which is the second reason `clear_ip_transports()` matters.
 ///
-/// # Panics
-/// If `bind` is not a valid socket address for the given `prefix_len`.
-pub fn lan_only(bind: SocketAddr, prefix_len: u8, resolver: DnsResolver) -> Builder {
+/// # Errors
+/// If `bind` is not a valid socket address for the given `prefix_len` (for IPv4 the
+/// maximum prefix is 32, for IPv6 128).
+pub fn lan_only(
+    bind: SocketAddr,
+    prefix_len: u8,
+    resolver: DnsResolver,
+) -> Result<Builder, InvalidSocketAddr> {
     Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
         .clear_relay_transports()
@@ -140,7 +148,6 @@ pub fn lan_only(bind: SocketAddr, prefix_len: u8, resolver: DnsResolver) -> Buil
                 .set_prefix_len(prefix_len)
                 .set_is_default_route(false),
         )
-        .expect("LAN bind address is valid")
 }
 
 /// The permissive, internet-facing configuration.
@@ -264,6 +271,7 @@ mod tests {
             LAN_PREFIX,
             DnsResolver::custom(recorder.clone()),
         )
+        .expect("loopback /8 is a valid LAN bind")
     }
 
     // -- Guard 1: the endpoint resolves no hostnames at all ------------------
