@@ -86,6 +86,7 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 import { usePagePrefetchIntent } from '@/hooks/usePagePrefetchIntent'
 import { useVoiceInput } from '@/hooks/useVoiceInput'
 import { isCancellation } from '@/lib/app-error'
+import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { addRecentSearch, clearRecentSearches, getRecentSearches } from '@/lib/recent-searches'
@@ -712,8 +713,7 @@ export function PaletteBody({
   // outside the row-type handlers so `notify` is the single source of
   // user-visible state for these actions.
   function copyToClipboard(value: string, successKey: string): void {
-    navigator.clipboard
-      .writeText(value)
+    writeText(value)
       .then(() => notify.success(t(successKey)))
       .catch(() => notify.error(t('palette.copyFailed')))
   }

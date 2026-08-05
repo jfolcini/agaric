@@ -19,9 +19,10 @@
  *    the rejection internally to avoid an unhandled-rejection log; the
  *    caller is responsible for surfacing the error (toast.error / inline
  *    banner).
- *  - Multi-action escape hatch: `secondaryAction` injects a third button
- *    between Cancel and Confirm — used by the Google Calendar disconnect
- *    flow (Delete-Calendar vs Keep-Calendar vs Cancel).
+ *  - Body-content escape hatch: `children` renders additional dialog content.
+ *    On desktop it is wrapped in `AlertDialogBody` so a tall body scrolls
+ *    while the footer remains available; the mobile Sheet path keeps its
+ *    native flow.
  *
  * When `variant === 'destructive'`, initial focus lands on the
  * Cancel button (not the Action button) so that a reflex Enter keypress
@@ -63,19 +64,6 @@ type ConfirmHandler = () => Promise<void> | void
  */
 const NOOP_CONFIRM: ConfirmHandler = () => {}
 
-export interface ConfirmDialogSecondaryAction {
-  /** i18n key for the secondary button label (resolved via `t()`). */
-  labelKey?: string
-  /** Pre-resolved label — overrides `labelKey` when both are set. */
-  label?: string
-  /** Click handler (sync or async). Promise rejections keep the dialog open. */
-  onConfirm: ConfirmHandler
-  /** Button visual variant; defaults to `'default'` (neutral). */
-  variant?: 'default' | 'destructive' | 'outline'
-  /** Optional data-testid for the secondary button. */
-  testId?: string | undefined
-}
-
 export interface ConfirmDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -114,9 +102,6 @@ export interface ConfirmDialogProps {
    */
   loading?: boolean
 
-  /** Optional third button rendered between Cancel and Confirm. */
-  secondaryAction?: ConfirmDialogSecondaryAction
-
   children?: React.ReactNode
   className?: string | undefined
   /** Optional data-testid for the AlertDialogContent / SheetContent root. */
@@ -139,7 +124,6 @@ export function ConfirmDialog({
   onConfirm,
   onCancel,
   loading = false,
-  secondaryAction,
   children,
   className,
   contentTestId,
@@ -235,25 +219,11 @@ export function ConfirmDialog({
     [effectiveOnConfirm, runConfirm],
   )
 
-  const handleSecondaryClick = useCallback(
-    async (event?: React.MouseEvent<HTMLButtonElement>) => {
-      if (!secondaryAction) return
-      event?.preventDefault()
-      await runConfirm(secondaryAction.onConfirm)
-    },
-    [secondaryAction, runConfirm],
-  )
-
   const parts = useDialogOrSheet()
   const { Root, Content, Header, Title, Footer } = parts
 
   // Sheet's Content takes a `side` prop; AlertDialogContent does not.
   const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
-
-  const secondaryLabel = secondaryAction
-    ? (secondaryAction.label ?? (secondaryAction.labelKey ? t(secondaryAction.labelKey) : ''))
-    : ''
-  const secondaryVariant = secondaryAction?.variant ?? 'default'
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
@@ -290,16 +260,6 @@ export function ConfirmDialog({
               >
                 {resolvedCancelLabel}
               </Button>
-              {secondaryAction && (
-                <Button
-                  variant={secondaryVariant}
-                  disabled={isPending}
-                  onClick={handleSecondaryClick}
-                  data-testid={secondaryAction.testId}
-                >
-                  {secondaryLabel}
-                </Button>
-              )}
               <Button
                 variant={isDestructive ? 'destructive' : 'default'}
                 disabled={isPending}
@@ -329,16 +289,6 @@ export function ConfirmDialog({
               >
                 {resolvedCancelLabel}
               </AlertDialogCancel>
-              {secondaryAction && (
-                <AlertDialogAction
-                  className={cn(buttonVariants({ variant: secondaryVariant }))}
-                  onClick={handleSecondaryClick}
-                  disabled={isPending}
-                  data-testid={secondaryAction.testId}
-                >
-                  {secondaryLabel}
-                </AlertDialogAction>
-              )}
               <AlertDialogAction
                 className={cn(isDestructive && buttonVariants({ variant: 'destructive' }))}
                 onClick={handleConfirmClick}
