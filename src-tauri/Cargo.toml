@@ -296,7 +296,7 @@ dirs = { version = "6.0.0", default-features = false }
 # lockfiles. Dependabot attempted the manifest half alone in #3432; see the
 # `/src-tauri/fuzz` entry in `.github/dependabot.yml` for the guard that
 # stops that recurring.
-rmcp = { version = "2.0", features = ["client"] }
+rmcp = { version = "3.0", features = ["client"] }
 
 # Phase 1 — Loro CRDT runtime. Hard dep as of Phase 3 day-9
 # (the `loro-shadow` feature gate retired); the engine is the only
