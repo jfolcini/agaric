@@ -1118,6 +1118,42 @@ describe('DuePanel', () => {
       expect(onNavigate).toHaveBeenCalledWith('PAGE2', 'My Page', 'PROJ2')
     })
 
+    it('uses the translated untitled label when a projected page title is unresolved', async () => {
+      const onNavigate = vi.fn()
+      mockedListBlocks.mockResolvedValue(emptyResponse)
+      mockedListProjectedAgenda.mockResolvedValue({
+        items: [
+          {
+            block: makeBlock({
+              id: 'PROJ_UNTITLED',
+              content: 'Navigate without a resolved title',
+              parent_id: 'PAGE_UNTITLED',
+              page_id: 'PAGE_UNTITLED',
+              todo_state: 'TODO',
+              due_date: '2026-04-20',
+            }),
+            projected_date: '2026-04-20',
+            source: 'due_date',
+          },
+        ],
+        next_cursor: null,
+        has_more: false,
+        total_count: null,
+      })
+
+      const user = userEvent.setup()
+      render(<DuePanel date="2026-04-20" onNavigateToPage={onNavigate} />)
+
+      const item = await screen.findByText(/Navigate without a resolved title/)
+      await user.click(item.closest('li') as HTMLElement)
+
+      expect(onNavigate).toHaveBeenCalledWith(
+        'PAGE_UNTITLED',
+        t('duePanel.untitled'),
+        'PROJ_UNTITLED',
+      )
+    })
+
     it('projected entries show priority badge when priority is set', async () => {
       mockedListBlocks.mockResolvedValue(emptyResponse)
       mockedListProjectedAgenda.mockResolvedValue({

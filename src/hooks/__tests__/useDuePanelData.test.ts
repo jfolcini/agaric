@@ -650,6 +650,28 @@ describe('useDuePanelData', () => {
     })
   })
 
+  it('pushes DONE and empty-content exclusions into the upcoming SQL query (#3284)', async () => {
+    localStorage.setItem('agaric:deadlineWarningDays', '7')
+
+    renderHook(() => useDuePanelData({ date: '2026-04-15', sourceFilter: null }))
+
+    await waitFor(() => {
+      const upcomingCall = mockedQueryByProperty.mock.calls.find(
+        (args) =>
+          args[0]?.key === 'due_date' &&
+          args[0]?.valueDateRange?.[0] === '2026-04-16' &&
+          args[0]?.valueDateRange?.[1] === '2026-04-23',
+      )
+      expect(upcomingCall).toBeDefined()
+      expect(upcomingCall?.[0]).toEqual(
+        expect.objectContaining({
+          excludeTodoStates: ['DONE'],
+          contentNonEmpty: true,
+        }),
+      )
+    })
+  })
+
   it('upcoming batchResolve includes content ULIDs (B-55)', async () => {
     const ULID_REF = '01ABCDEFGHJKLMNPQRSTUVWXYZ'
     const today = new Date()
@@ -1024,6 +1046,111 @@ describe('projected cache invalidation (#738 sub-3)', () => {
       expect(result.current.projectedEntries[0]?.block.id).toBe('PROJ_2026-04-15')
     })
     expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
+  })
+
+  it('restores projected parent titles from a fresh round-trip cache hit (#3284)', async () => {
+    const resolvedFor = (ids: string[]) =>
+      ids.map((id) => ({
+        id,
+        title: `${id} title`,
+        block_type: 'page' as const,
+        deleted: false,
+      }))
+    const blocksFor = (date: string) => ({
+      items: [
+        makeBlock({
+          id: `MAIN_${date}`,
+          content: 'main task',
+          page_id: `MAIN_PARENT_${date}`,
+        }),
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    const projectedFor = (date: string) => ({
+      items: [
+        {
+          block: makeBlock({
+            id: `PROJ_${date}`,
+            content: 'projected task',
+            page_id: `PROJECTED_PARENT_${date}`,
+          }),
+          projected_date: date,
+          source: 'due_date' as const,
+        },
+      ],
+      next_cursor: null,
+      has_more: false,
+      total_count: null,
+    })
+    let returningToFirstDate = false
+    let resolveReturningMain:
+      | ((resolved: Awaited<ReturnType<typeof batchResolve>>) => void)
+      | undefined
+
+    mockedListBlocks.mockImplementation(({ agendaDate }) => {
+      if (!agendaDate) throw new Error('expected an agenda date')
+      return Promise.resolve(blocksFor(agendaDate))
+    })
+    mockedListProjectedAgenda.mockImplementation(({ startDate }) =>
+      Promise.resolve(projectedFor(startDate)),
+    )
+    mockedBatchResolve.mockImplementation((ids) => {
+      if (returningToFirstDate && ids.includes('MAIN_PARENT_2026-04-15')) {
+        return new Promise((resolve) => {
+          resolveReturningMain = resolve
+        })
+      }
+      return Promise.resolve(resolvedFor(ids))
+    })
+
+    const { result, rerender } = renderHook(
+      ({ date }) => useDuePanelData({ date, sourceFilter: null }),
+      { initialProps: { date: '2026-04-15' } },
+    )
+
+    await waitFor(() => {
+      expect(result.current.pageTitles.get('PROJECTED_PARENT_2026-04-15')).toBe(
+        'PROJECTED_PARENT_2026-04-15 title',
+      )
+    })
+
+    rerender({ date: '2026-04-16' })
+    await waitFor(() => {
+      expect(result.current.pageTitles.has('PROJECTED_PARENT_2026-04-15')).toBe(false)
+      expect(result.current.pageTitles.get('PROJECTED_PARENT_2026-04-16')).toBe(
+        'PROJECTED_PARENT_2026-04-16 title',
+      )
+    })
+    expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
+
+    returningToFirstDate = true
+    rerender({ date: '2026-04-15' })
+    await waitFor(() => {
+      expect(result.current.pageTitles.get('PROJECTED_PARENT_2026-04-15')).toBe(
+        'PROJECTED_PARENT_2026-04-15 title',
+      )
+    })
+    expect(mockedListProjectedAgenda).toHaveBeenCalledTimes(2)
+
+    const finishReturningMain = resolveReturningMain
+    if (!finishReturningMain) {
+      throw new Error('returning main title resolution did not start')
+    }
+    await act(async () => {
+      finishReturningMain(resolvedFor(['MAIN_PARENT_2026-04-15']))
+      await Promise.resolve()
+    })
+
+    await waitFor(() => {
+      expect(result.current.pageTitles.get('MAIN_PARENT_2026-04-15')).toBe(
+        'MAIN_PARENT_2026-04-15 title',
+      )
+      expect(result.current.pageTitles.get('PROJECTED_PARENT_2026-04-15')).toBe(
+        'PROJECTED_PARENT_2026-04-15 title',
+      )
+    })
   })
 
   it('clears the cache (refetches) when invalidationKey changes', async () => {
