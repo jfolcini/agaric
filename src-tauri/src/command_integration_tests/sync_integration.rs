@@ -326,18 +326,37 @@ async fn start_sync_rejects_peer_in_backoff() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pair_then_sync_workflow() {
+    // #3463: two devices with independent pairing state and independent DBs.
+    // This test used to feed one device's own passphrase back into
+    // `confirm_pairing_inner` on the same `PairingState`, which models a device
+    // confirming itself and is green regardless of whether real pairing works.
+    //
+    // Remote device (the host): mints the passphrase and arms its own marker.
+    let (pool_remote, _dir_remote) = test_pool().await;
+    let pairing_remote = PairingState(Mutex::new(None));
+    let scheduler_remote = SyncScheduler::new();
+    let host_passphrase = crate::commands::start_pairing_armed_inner(
+        &pool_remote,
+        &pairing_remote.0,
+        &scheduler_remote,
+        "dev-remote",
+    )
+    .await
+    .unwrap()
+    .passphrase;
+
+    // Local device (the joiner): its dialog also opened a session, then the
+    // user typed the passphrase displayed on the remote device.
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
-
-    // Pair
-    let info = start_pairing_inner(&pairing.0, "dev-local").unwrap();
+    start_pairing_inner(&pairing.0, "dev-local").unwrap();
     confirm_pairing_inner(
         &pool,
         &pairing.0,
         &scheduler,
         "dev-local",
-        info.passphrase,
+        host_passphrase.clone(),
         "dev-remote".into(),
     )
     .await
@@ -358,6 +377,15 @@ async fn full_pair_then_sync_workflow() {
     assert!(
         peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "the pending-pairing window must be armed after confirm"
+    );
+    // #3463: and the two devices agree on the proof, which is what the
+    // wire-side #855 gate actually checks.
+    assert_eq!(
+        peer_refs::get_pending_pairing_proof(&pool).await.unwrap(),
+        peer_refs::get_pending_pairing_proof(&pool_remote)
+            .await
+            .unwrap(),
+        "#3463: host and joiner must hold the same pairing proof"
     );
 }
 

@@ -958,7 +958,7 @@ mod sanitize_internal_error_tests {
     fn user_facing_variants_pass_through_unchanged() {
         // Validation carries a frontend-renderable code and must reach the
         // UI verbatim — no correlation id, no collapsing.
-        let original = "pairing.passphrase.mismatch";
+        let original = "pairing.no_active_session";
         match sanitize_internal_error(AppError::validation(original.into())) {
             AppError::Validation { message: msg, .. } => assert_eq!(msg, original),
             other => panic!("Validation must pass through unchanged, got {other:?}"),

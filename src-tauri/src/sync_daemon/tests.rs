@@ -2113,6 +2113,135 @@ async fn inmem_handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
     );
 }
 
+/// #3463 (end-to-end): drive the real command layer on TWO devices, then feed
+/// the joiner's resulting proof into the responder's #855 gate.
+///
+/// This closes the loop the unit tests can only assert half of. The host runs
+/// `start_pairing_armed_inner` (what the `start_pairing` command calls) and the
+/// joiner runs `start_pairing_inner` + `confirm_pairing_inner` with the host's
+/// passphrase — the exact production call sequence, on two independent pools and
+/// two independent `pairing_state` slots. The proof the joiner would put on the
+/// wire is read the same way `sync_protocol::session_state_machine::start` reads
+/// it (`get_pending_pairing_proof` on the initiator's own DB), and the host's DB
+/// is the one `handle_incoming_sync` consults.
+///
+/// Before #3463 the joiner's `confirm_pairing_inner` failed with
+/// `pairing.passphrase.mismatch`, so it never armed a marker and had no proof to
+/// offer at all — this connection was rejected as "peer not paired".
+///
+/// As in `inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending`,
+/// the per-peer lock is pre-acquired so that passing the S-1 gate produces the
+/// distinct, observable "busy" response rather than falling through into a full
+/// sync session.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn inmem_pairing_proof_from_two_device_command_flow_is_admitted_3463() {
+    // --- Device JOINER: real command-layer pairing against HOST's passphrase.
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_state = std::sync::Mutex::new(None);
+    let joiner_sched = SyncScheduler::new();
+
+    // --- Device HOST: this test's responder. Its pool is the daemon's pool.
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    let host_passphrase = crate::commands::start_pairing_armed_inner(
+        &pool,
+        &std::sync::Mutex::new(None),
+        &scheduler,
+        "LOCAL_DEV",
+    )
+    .await
+    .unwrap()
+    .passphrase;
+
+    // The joiner's dialog mints a competing passphrase of its own (#3463's
+    // root cause), then the user types the host's.
+    crate::commands::start_pairing_inner(&joiner_state, "JOINING_DEV").unwrap();
+    crate::commands::confirm_pairing_inner(
+        &joiner_pool,
+        &joiner_state,
+        &joiner_sched,
+        "JOINING_DEV",
+        host_passphrase,
+        String::new(),
+    )
+    .await
+    .expect("#3463: the joiner must accept the host's passphrase");
+
+    // What the initiator puts on the wire (`session_state_machine::start`).
+    let offered_proof = peer_refs::get_pending_pairing_proof(&joiner_pool)
+        .await
+        .unwrap()
+        .expect("#3463: the joiner must hold a pending-pairing marker after confirm");
+
+    assert!(
+        peer_refs::get_peer_ref(&pool, "JOINING_DEV")
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: joining device must still be unpaired on the host"
+    );
+    let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
+
+    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    let pool_clone = pool.clone();
+    let mat_clone = materializer.clone();
+    let sched_clone = scheduler.clone();
+    let sink_clone = event_sink.clone();
+    let handle = tokio::spawn(async move {
+        handle_incoming_sync(
+            server_conn,
+            pool_clone,
+            "LOCAL_DEV".to_string(),
+            mat_clone,
+            sched_clone,
+            sink_clone,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+    });
+
+    client_conn
+        .send_json(&SyncMessage::HeadExchange {
+            heads: vec![DeviceHead {
+                device_id: "JOINING_DEV".to_string(),
+                seq: 0,
+                hash: "fakehash".to_string(),
+            }],
+            loro_vvs: vec![],
+            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+            op_log_replication: false,
+            wire_compression: false,
+            op_log_batch_chunked: false,
+            pairing_proof: Some(offered_proof),
+        })
+        .await
+        .unwrap();
+
+    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    handle.await.unwrap().unwrap();
+    materializer.shutdown();
+
+    assert!(
+        matches!(&response, SyncMessage::Error { message } if message.contains("busy")),
+        "#3463: a proof produced by the real two-device command flow must pass the \
+         #855 gate (landing on the held-lock 'busy' branch), got: {response:?}"
+    );
+    assert!(
+        !matches!(&response, SyncMessage::Error { message } if message.contains("not paired")),
+        "#3463: the joiner must not be rejected as unpaired"
+    );
+    assert!(
+        !matches!(
+            &response,
+            SyncMessage::Error { message } if message.contains("pairing passphrase proof")
+        ),
+        "#3463: the joiner's proof must satisfy the #855 constant-time check"
+    );
+}
+
 /// #1519 (control): the pending-pairing exception is gated on the marker — an
 /// unpaired device with NO active pending-pairing marker is still rejected at
 /// the S-1 gate. This guards against the fix accidentally admitting every

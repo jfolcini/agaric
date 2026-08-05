@@ -185,19 +185,15 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 /// an abandoned pairing must stop driving the daemon into pairing-mode.
 pub use agaric_store::peer_refs::PAIRING_TIMEOUT;
 
-/// Maximum number of failed passphrase attempts permitted within a single
-/// pairing session before it is invalidated and the user must re-initiate
-/// pairing (regenerate the QR / restart the flow).
-///
-/// #1603: previously the *only* bound on retries was the session time limit
-/// ([`PAIRING_TIMEOUT`]), so guesses could be sprayed for the whole window.
-/// The passphrase has ~51.7 bits of entropy, so a handful of guesses is
-/// statistically harmless; the cap exists to convert "unbounded within the
-/// window" into "bounded", not to defend a low-entropy secret. 5 mirrors the
-/// common lock-screen / PIN-entry convention — small enough to be obviously
-/// safe, large enough to absorb a couple of genuine typos before forcing a
-/// restart.
-pub const MAX_PASSPHRASE_ATTEMPTS: u32 = 5;
+// #3463: `MAX_PASSPHRASE_ATTEMPTS` and `PairingSession::{failed_attempts,
+// attempts_exhausted, record_failed_attempt}` were removed here. They bounded
+// repeated *local* guesses against the local `pairing_state` slot in
+// `confirm_pairing_inner` (#1603). That comparison is gone — it made two-device
+// pairing structurally impossible and authenticated nothing — so nothing was
+// left for the counter to count, and an unreachable counter that reads like a
+// security control is worse than none. The bound that matters is the wire-side
+// one: the pending-pairing marker expires after [`PAIRING_TIMEOUT`], so a
+// remote guesser has 5 minutes, one connection per try, against ~51.7 bits.
 
 /// Domain-separation tag for [`pairing_proof`] (#855). Bumping it invalidates
 /// every proof from an older peer, so keep it stable across compatible releases.
@@ -238,10 +234,6 @@ pub fn pairing_proof(passphrase: &str) -> String {
 pub struct PairingSession {
     pub passphrase: String,
     pub created_at: std::time::Instant,
-    /// #1603: count of failed passphrase verifications observed for this
-    /// session. Bounded by [`MAX_PASSPHRASE_ATTEMPTS`]; once the cap is hit
-    /// the session refuses further attempts until re-initiated.
-    pub failed_attempts: u32,
 }
 
 impl PairingSession {
@@ -255,7 +247,6 @@ impl PairingSession {
         Self {
             passphrase: generate_passphrase(),
             created_at: std::time::Instant::now(),
-            failed_attempts: 0,
         }
     }
 
@@ -273,23 +264,7 @@ impl PairingSession {
         Self {
             passphrase: passphrase.to_owned(),
             created_at: std::time::Instant::now(),
-            failed_attempts: 0,
         }
-    }
-
-    /// #1603: `true` once the session has burned through
-    /// [`MAX_PASSPHRASE_ATTEMPTS`] failed passphrase verifications. The
-    /// caller must drop the session (refuse further confirms) when this
-    /// returns `true`.
-    pub fn attempts_exhausted(&self) -> bool {
-        self.failed_attempts >= MAX_PASSPHRASE_ATTEMPTS
-    }
-
-    /// #1603: record one failed passphrase attempt and report whether the
-    /// session is now exhausted. Saturates so the counter never wraps.
-    pub fn record_failed_attempt(&mut self) -> bool {
-        self.failed_attempts = self.failed_attempts.saturating_add(1);
-        self.attempts_exhausted()
     }
 }
 
@@ -329,6 +304,15 @@ pub enum PairingMessage {
 }
 
 /// Extract and verify the remote device info from a [`PairingMessage`].
+///
+/// **Not reachable from production code as of #3463.** Its only production
+/// caller was `confirm_pairing_inner`'s local-slot passphrase comparison, which
+/// made two-device pairing structurally impossible and authenticated nothing.
+/// [`PairingMessage`] and this function are retained (with their unit tests)
+/// only because #3464 Slice 1 retires this whole module when the transport is
+/// ported to iroh; deleting half of it now and the rest a week later is motion,
+/// not progress. Nothing new should call it — the live check is the wire-side
+/// `pairing_proof` comparison in `sync_daemon::server` (#855).
 ///
 /// Verification is layered:
 ///
