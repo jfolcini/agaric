@@ -29,7 +29,12 @@ src-tauri/gen/
 # cargo-fuzz (#650): build tree + libFuzzer crash artifacts are generated;
 # the targets, Cargo.toml/lock, and seed corpora under fuzz/ stay tracked.
 src-tauri/fuzz/target/
+
 src-tauri/fuzz/artifacts/
+
+# #78 spike crates live outside the src-tauri workspace; their build artifacts
+# are per-crate and must not be committed (the iroh dep tree alone is ~2.5G).
+spikes/*/target/
 # Generated per-target copies of bundled external binaries (see
 # scripts/prepare-external-bins.mjs + tauri.conf.json → externalBin).
 src-tauri/binaries/

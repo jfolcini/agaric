@@ -1,0 +1,20 @@
+[package]
+name = "iroh-lan-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+# Deliberately OUTSIDE the `src-tauri` workspace (#78 spike).
+# Throwaway evidence for a go/no-go decision, not shipped code. Keeping it out
+# of the workspace means it cannot perturb the main build, `cargo nextest run
+# --workspace`, or the release binary's dependency tree.
+
+[dependencies]
+iroh = "1.0.3"
+iroh-dns = "1.0.3"
+n0-error = "1.0"
+n0-future = "0.2"
+
+[dev-dependencies]
+# Test-only: nothing in `src/` drives a runtime.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
