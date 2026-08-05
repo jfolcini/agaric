@@ -64,11 +64,25 @@ and should not be described as one.
 
 ### The guard
 
-`tests/offline_guard.rs` turns Q1 into a build-enforced assertion, as the decision comment
-requires. A `RecordingResolver` is injected via `Builder::dns_resolver`; every path to n0
-(pkarr publish, pkarr resolve, DNS lookup, relay URL resolution) begins with a name lookup,
-so nothing reaches n0 without leaving a record. It refuses every query — a guard that let
-the lookup succeed would be permitting the leak it observes.
+`tests/offline_guard.rs` turns Q1 into a repeatable assertion. A `RecordingResolver` is
+injected via `Builder::dns_resolver`; every path to n0 (pkarr publish, pkarr resolve, DNS
+lookup, relay URL resolution) begins with a name lookup, so nothing reaches n0 without
+leaving a record. It refuses every query — a guard that let the lookup succeed would be
+permitting the leak it observes.
+
+**It is not yet build-enforced, and saying so would be false.** Nothing in CI compiles
+this crate: `cargo-tests`, `cargo-clippy` and `cargo-fmt` all run inside `src-tauri`, and
+Dependabot's cargo ecosystem is scoped to `src-tauri/Cargo.toml`. An iroh bump that
+reintroduced a leak would land with this guard green because it never ran. Closing that is
+part of the port, not of the spike — the guard has to move into the real crate to become a
+gate. Until then it is a thing you run, not a thing that stops you.
+
+**What the guard cannot see.** It observes DNS, which covers every route to n0 that iroh
+currently uses, since relay selection and pkarr both start from a hostname. It would not
+catch a future iroh dialling a hardcoded bootstrap IP, which needs no resolution. Layer 3
+is the backstop for that case, and it is why `clear_ip_transports()` in `lan_only` is
+load-bearing: leave the default wildcard transports installed and every off-subnet
+destination regains a default route, while all four guards stay green.
 
 **Every guard is paired with a control, because the first draft was not.** Four assertions
 passed immediately and two could not have failed:

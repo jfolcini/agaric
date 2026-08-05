@@ -17,7 +17,7 @@ use std::{
 };
 
 use iroh_dns::dns::DnsResolver;
-use iroh_lan_spike::{lan_only, RecordingResolver};
+use iroh_lan_spike::{RecordingResolver, lan_only};
 
 const ALPN: &[u8] = b"agaric/spike/echo/0";
 

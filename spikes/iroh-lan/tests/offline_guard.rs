@@ -34,9 +34,9 @@ use std::{
     time::Duration,
 };
 
-use iroh::{endpoint::presets, Endpoint};
+use iroh::{Endpoint, endpoint::presets};
 use iroh_dns::dns::DnsResolver;
-use iroh_lan_spike::{is_publicly_routable, lan_only, permissive, RecordingResolver};
+use iroh_lan_spike::{RecordingResolver, is_publicly_routable, lan_only, permissive};
 
 /// Loopback with a /8 prefix: a stand-in for "the LAN subnet" available on any machine
 /// and in CI, with no reliance on the host having a particular private range.
@@ -45,15 +45,42 @@ fn lan_bind() -> SocketAddr {
 }
 const LAN_PREFIX: u8 = 8;
 
-/// Long enough for startup address-lookup and relay work to have been attempted.
-/// Measured: the permissive control accumulates its first queries within ~1s; the full
-/// `N0` preset reaches >200 within 6s. Three seconds is comfortably past the first.
+/// How long a guard waits before concluding "nothing was resolved".
+///
+/// This one must be a fixed wait: proving absence means giving the endpoint time to act.
 const SETTLE: Duration = Duration::from_secs(3);
 
+/// How long a *control* waits for the leak it expects. Controls poll rather than sleep,
+/// so a loaded machine reports slowly instead of reporting "NEGATIVE CONTROL FAILED" —
+/// that message must mean "the guard can no longer fire", never "this box was busy".
+const CONTROL_DEADLINE: Duration = Duration::from_secs(15);
+
+/// Run an endpoint for [`SETTLE`] and return every name it resolved. For the
+/// absence-asserting guards.
 async fn queries_for(builder: iroh::endpoint::Builder, recorder: RecordingResolver) -> Vec<String> {
     let endpoint = builder.bind().await.expect("endpoint binds");
     tokio::time::sleep(SETTLE).await;
     let queries = recorder.queries();
+    endpoint.close().await;
+    queries
+}
+
+/// Run an endpoint until `want` is satisfied or [`CONTROL_DEADLINE`] elapses. For the
+/// presence-asserting controls.
+async fn queries_until(
+    builder: iroh::endpoint::Builder,
+    recorder: RecordingResolver,
+    want: impl Fn(&[String]) -> bool,
+) -> Vec<String> {
+    let endpoint = builder.bind().await.expect("endpoint binds");
+    let deadline = tokio::time::Instant::now() + CONTROL_DEADLINE;
+    let queries = loop {
+        let queries = recorder.queries();
+        if want(&queries) || tokio::time::Instant::now() >= deadline {
+            break queries;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    };
     endpoint.close().await;
     queries
 }
@@ -91,7 +118,12 @@ async fn lan_only_endpoint_resolves_no_hostnames() {
 #[tokio::test]
 async fn control_relay_disabled_preset_still_queries_n0_dns() {
     let recorder = RecordingResolver::new();
-    let queries = queries_for(permissive(DnsResolver::custom(recorder.clone())), recorder).await;
+    let queries = queries_until(
+        permissive(DnsResolver::custom(recorder.clone())),
+        recorder,
+        |q| q.iter().any(|s| s.contains("iroh.link")),
+    )
+    .await;
 
     assert!(
         queries.iter().any(|q| q.contains("iroh.link")),
@@ -140,9 +172,10 @@ async fn lan_only_endpoint_never_looks_for_a_relay() {
 #[tokio::test]
 async fn control_n0_preset_does_look_for_relays() {
     let recorder = RecordingResolver::new();
-    let queries = queries_for(
+    let queries = queries_until(
         Endpoint::builder(presets::N0).dns_resolver(DnsResolver::custom(recorder.clone())),
         recorder,
+        |q| q.iter().any(|s| s.contains("relay")),
     )
     .await;
 

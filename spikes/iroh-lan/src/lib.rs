@@ -14,8 +14,8 @@ use std::{
 };
 
 use iroh::{
-    endpoint::{presets, BindOpts, Builder},
     Endpoint, RelayMode,
+    endpoint::{BindOpts, Builder, presets},
 };
 use iroh_dns::dns::{BoxIter, DnsError, DnsResolver, Resolver, TxtRecordData};
 use n0_error::e;
@@ -120,6 +120,25 @@ impl Resolver for RecordingResolver {
 /// Layer 3 is what makes this enforcement rather than configuration: it does not depend on
 /// iroh choosing not to talk to a public address, but on there being no route by which it
 /// could.
+///
+/// # `clear_ip_transports()` is load-bearing, and no test will tell you so
+///
+/// The builder installs default wildcard (`0.0.0.0/0`) IP transports. Those are
+/// default-route sockets by definition, so leaving them in place gives every off-subnet
+/// destination a socket to leave by and layer 3 collapses entirely — while all four
+/// guards in `tests/offline_guard.rs` stay green, because the guards observe *name
+/// resolution* and this leak needs none.
+///
+/// It is removed before the subnet-scoped socket is added. Do not drop the call as
+/// redundant.
+///
+/// # What the guard cannot see
+///
+/// The offline guard observes DNS. That covers every route to n0 that iroh currently
+/// uses, because relay selection and pkarr both start from a hostname. It would **not**
+/// catch a future iroh dialling a hardcoded bootstrap IP address, which needs no
+/// resolution. Layer 3 is the backstop for that case — which is the other reason
+/// `clear_ip_transports()` matters.
 pub fn lan_only(bind: SocketAddr, prefix_len: u8, resolver: DnsResolver) -> Builder {
     Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)

@@ -1,7 +1,7 @@
 [package]
 name = "iroh-lan-spike"
 version = "0.0.0"
-edition = "2021"
+edition = "2024"
 publish = false
 
 # Deliberately OUTSIDE the `src-tauri` workspace (#78 spike).
@@ -12,6 +12,9 @@ publish = false
 [dependencies]
 iroh = "1.0.3"
 iroh-dns = "1.0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
 n0-error = "1.0"
 n0-future = "0.2"
+
+[dev-dependencies]
+# Test-only: nothing in `src/` drives a runtime.
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "net"] }
