@@ -959,23 +959,40 @@ export function fbqCompare(operator: string, lhs: string, rhs: string): boolean 
   }
 }
 
-/** Resolve a block's candidate text/date for `key` from block_properties or
- *  the row-level reserved column. `null` text+date both null ⇒ key absent. */
+/** Apply backend NULL semantics for a scalar property comparison. Non-reserved
+ * property rows store exactly one typed column, so a sibling-column NULL is
+ * unequal to a target. Reserved block columns retain their `IS NOT NULL` gate. */
+function fbqTypedValueMatches(
+  operator: string,
+  lhs: string | null,
+  rhs: string,
+  source: 'property' | 'reserved',
+): boolean {
+  if (lhs === null) return operator === 'neq' && source === 'property'
+  return fbqCompare(operator, lhs, rhs)
+}
+
+/** Resolve a block's candidate text/date and storage source for `key`.
+ * Returns null only when a non-reserved property key is absent; reserved keys
+ * retain a result with null values so their backend `IS NOT NULL` gate wins. */
 export function fbqResolveValues(
   b: Record<string, unknown>,
   key: string,
-): { pText: string | null; pDate: string | null } | null {
+): { pText: string | null; pDate: string | null; source: 'property' | 'reserved' } | null {
   const prop = properties.get(b['id'] as string)?.get(key)
   if (prop) {
     return {
       pText: (prop['value_text'] as string | null) ?? null,
       pDate: (prop['value_date'] as string | null) ?? null,
+      source: 'property',
     }
   }
   const rowKind = FBQ_ROW_FIELD_KEYS[key]
   if (rowKind === undefined) return null // key absent
   const v = (b[key] as string | null | undefined) ?? null
-  return rowKind === 'text' ? { pText: v, pDate: null } : { pText: null, pDate: v }
+  return rowKind === 'text'
+    ? { pText: v, pDate: null, source: 'reserved' }
+    : { pText: null, pDate: v, source: 'reserved' }
 }
 
 /**
@@ -989,7 +1006,7 @@ export function fbqPropertyFilterMatches(
 ): boolean {
   const resolved = fbqResolveValues(b, pf['key'] as string)
   if (resolved === null) return false
-  const { pText, pDate } = resolved
+  const { pText, pDate, source } = resolved
   const operator = ((pf['operator'] as string | null) ?? 'eq').toLowerCase()
 
   const valueTextIn = (pf['valueTextIn'] as string[] | null) ?? null
@@ -1002,9 +1019,13 @@ export function fbqPropertyFilterMatches(
     if (pDate == null || !(pDate >= from && pDate < to)) return false
   }
   const valueText = (pf['valueText'] as string | null) ?? null
-  if (valueText !== null && (pText == null || !fbqCompare(operator, pText, valueText))) return false
+  if (valueText !== null && !fbqTypedValueMatches(operator, pText, valueText, source)) {
+    return false
+  }
   const valueDate = (pf['valueDate'] as string | null) ?? null
-  if (valueDate !== null && (pDate == null || !fbqCompare(operator, pDate, valueDate))) return false
+  if (valueDate !== null && !fbqTypedValueMatches(operator, pDate, valueDate, source)) {
+    return false
+  }
   return true
 }
 

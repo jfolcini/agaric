@@ -28,6 +28,7 @@ vi.mock('@/lib/logger', () => ({
 
 import { logger } from '@/lib/logger'
 import { clearMockErrors, injectMockError, resetMock, SEED_IDS, setupMock } from '@/lib/tauri-mock'
+import { blocks } from '@/lib/tauri-mock/seed'
 
 /** Helper — call the captured IPC handler as if invoke() were called. */
 function invoke(cmd: string, args: Record<string, unknown> = {}): unknown {
@@ -3162,6 +3163,35 @@ describe('first_child_for_blocks', () => {
     expect(result[parentId]?.['content']).toBe('first')
   })
 
+  it('sorts a nullable legacy position after positioned siblings', () => {
+    const parent = invoke('create_block', {
+      blockType: 'content',
+      content: 'legacy parent',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const parentId = parent['id'] as string
+    const legacy = invoke('create_block', {
+      blockType: 'content',
+      content: 'legacy null',
+      parentId,
+    }) as Record<string, unknown>
+    const positioned = invoke('create_block', {
+      blockType: 'content',
+      content: 'positioned',
+      parentId,
+      index: 0,
+    }) as Record<string, unknown>
+    const legacyRow = blocks.get(legacy['id'] as string)
+    if (!legacyRow) throw new Error('legacy child was not stored')
+    legacyRow['position'] = null
+
+    const result = invoke('first_child_for_blocks', {
+      blockIds: [parentId],
+    }) as Record<string, Record<string, unknown>>
+
+    expect(result[parentId]?.['id']).toBe(positioned['id'])
+  })
+
   it('omits parents with no active children', () => {
     const parent = invoke('create_block', {
       blockType: 'content',
@@ -3416,6 +3446,122 @@ describe('scope-filter parity', () => {
       scope: { kind: 'active', space_id: 'SPACE_PERSONAL' },
     }) as { items: Array<Record<string, unknown>> }
     expect(result.items.map((b) => b['id'])).not.toContain(foreignBlockId)
+  })
+
+  it('filtered_blocks_query neq retains same-key values stored outside the queried column', () => {
+    const textBlock = invoke('create_block', {
+      blockType: 'content',
+      content: 'text owner',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const refBlock = invoke('create_block', {
+      blockType: 'content',
+      content: 'reference owner',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const equalBlock = invoke('create_block', {
+      blockType: 'content',
+      content: 'equal owner',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const missingBlock = invoke('create_block', {
+      blockType: 'content',
+      content: 'missing owner',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+
+    const setOwner = (blockId: string, valueText: string | null, valueRef: string | null) =>
+      invoke('set_property', {
+        blockId,
+        key: 'owner',
+        value: {
+          value_text: valueText,
+          value_num: null,
+          value_date: null,
+          value_ref: valueRef,
+          value_bool: null,
+        },
+      })
+    setOwner(textBlock['id'] as string, 'bob', null)
+    setOwner(refBlock['id'] as string, null, SEED_IDS.PAGE_QUICK_NOTES)
+    setOwner(equalBlock['id'] as string, 'alice', null)
+
+    const result = invoke('filtered_blocks_query', {
+      propertyFilters: [{ key: 'owner', valueText: 'alice', operator: 'neq' }],
+      tagFilters: null,
+      scope: { kind: 'global' },
+    }) as { items: Array<Record<string, unknown>> }
+    const ids = new Set(result.items.map((b) => b['id']))
+
+    expect(ids).toEqual(new Set([textBlock['id'], refBlock['id']]))
+    expect(ids.has(equalBlock['id'])).toBe(false)
+    expect(ids.has(missingBlock['id'])).toBe(false)
+  })
+
+  it('filtered_blocks_query date neq retains a same-key text value', () => {
+    const otherDate = invoke('create_block', {
+      blockType: 'content',
+      content: 'other date',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const textValue = invoke('create_block', {
+      blockType: 'content',
+      content: 'text value',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const equalDate = invoke('create_block', {
+      blockType: 'content',
+      content: 'equal date',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+    const missing = invoke('create_block', {
+      blockType: 'content',
+      content: 'missing review date',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+
+    const setReviewed = (blockId: string, valueText: string | null, valueDate: string | null) =>
+      invoke('set_property', {
+        blockId,
+        key: 'reviewed',
+        value: {
+          value_text: valueText,
+          value_num: null,
+          value_date: valueDate,
+          value_ref: null,
+          value_bool: null,
+        },
+      })
+    setReviewed(otherDate['id'] as string, null, '2026-02-01')
+    setReviewed(textValue['id'] as string, 'not-a-date', null)
+    setReviewed(equalDate['id'] as string, null, '2026-01-01')
+
+    const result = invoke('filtered_blocks_query', {
+      propertyFilters: [{ key: 'reviewed', valueDate: '2026-01-01', operator: 'neq' }],
+      tagFilters: null,
+      scope: { kind: 'global' },
+    }) as { items: Array<Record<string, unknown>> }
+    const ids = new Set(result.items.map((b) => b['id']))
+
+    expect(ids).toEqual(new Set([otherDate['id'], textValue['id']]))
+    expect(ids.has(equalDate['id'])).toBe(false)
+    expect(ids.has(missing['id'])).toBe(false)
+  })
+
+  it('filtered_blocks_query reserved-column neq still excludes null values', () => {
+    const noStatus = invoke('create_block', {
+      blockType: 'content',
+      content: 'no todo status',
+      parentId: SEED_IDS.PAGE_GETTING_STARTED,
+    }) as Record<string, unknown>
+
+    const result = invoke('filtered_blocks_query', {
+      propertyFilters: [{ key: 'todo_state', valueText: 'DONE', operator: 'neq' }],
+      tagFilters: null,
+      scope: { kind: 'global' },
+    }) as { items: Array<Record<string, unknown>> }
+
+    expect(result.items.map((b) => b['id'])).not.toContain(noStatus['id'])
   })
 
   // -------------------------------------------------------------------------

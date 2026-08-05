@@ -1025,4 +1025,39 @@ mod position_keyset_drift {
             "expected ≥3 inlined keyset ORDER BY copies; found {order_hits}."
         );
     }
+
+    /// The batched first-child query is a windowed sibling lookup rather than
+    /// a paginated keyset walk, so it has no canonical WHERE fragment for the
+    /// production-site scanner above to discover. Pin its window ORDER BY to
+    /// the same canonical null-tolerant shape separately.
+    #[test]
+    fn first_child_window_order_matches_canonical() {
+        let source = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/commands/blocks/queries.rs"),
+        )
+        .expect("read commands/blocks/queries.rs");
+        let window_order_re = Regex::new(
+            r"(?s)ROW_NUMBER\(\)[\s\\]+OVER[\s\\]*\([\s\\]*PARTITION[\s\\]+BY[\s\\]+parent_id[\s\\]+(?P<order>ORDER[\s\\]+BY[\s\\]+COALESCE\(position,[\s\\]*\?\d+\)[\s\\]+ASC,[\s\\]+id[\s\\]+ASC)",
+        )
+        .expect("first-child window ORDER BY regex compiles");
+        let matches: Vec<_> = window_order_re.captures_iter(&source).collect();
+
+        assert_eq!(
+            matches.len(),
+            1,
+            "expected exactly one first-child ROW_NUMBER window with the canonical null-tolerant sibling order; found {}",
+            matches.len()
+        );
+        let actual = normalize_keyset(
+            matches[0]
+                .name("order")
+                .expect("window regex captures ORDER BY")
+                .as_str(),
+        );
+        assert_eq!(
+            actual,
+            normalize_keyset(POSITION_KEYSET_ORDER_CANONICAL),
+            "first_child_for_blocks window ordering drifted from POSITION_KEYSET_ORDER_CANONICAL"
+        );
+    }
 }
