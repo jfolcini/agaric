@@ -123,18 +123,18 @@ describe('notify.error debug-mode formatting (#1987)', () => {
   })
 
   it('shows a cleaned IPC AppError message and hides the kind when debug is off', () => {
-    notify.error({ kind: 'validation', message: 'Validation error: pairing.passphrase.mismatch' })
+    notify.error({ kind: 'validation', message: 'Validation error: pairing.no_active_session' })
 
     expect(toast.error).toHaveBeenCalledTimes(1)
-    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe('pairing.passphrase.mismatch')
+    expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe('pairing.no_active_session')
   })
 
   it('appends the kind code to an IPC AppError when debug is on', () => {
     useDebugStore.setState({ debugMode: true })
-    notify.error({ kind: 'validation', message: 'Validation error: pairing.passphrase.mismatch' })
+    notify.error({ kind: 'validation', message: 'Validation error: pairing.no_active_session' })
 
     expect(vi.mocked(toast.error).mock.calls[0]?.[0]).toBe(
-      'pairing.passphrase.mismatch · code: validation',
+      'pairing.no_active_session · code: validation',
     )
   })
 

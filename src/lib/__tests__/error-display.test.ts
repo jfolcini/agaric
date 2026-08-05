@@ -56,16 +56,16 @@ describe('formatErrorForDisplay', () => {
   describe('IPC AppError objects', () => {
     const appError = {
       kind: 'validation',
-      message: 'Validation error: pairing.passphrase.mismatch',
+      message: 'Validation error: pairing.no_active_session',
     }
 
     it('shows the cleaned message without the kind when debug is off', () => {
-      expect(formatErrorForDisplay(appError, { debug: false })).toBe('pairing.passphrase.mismatch')
+      expect(formatErrorForDisplay(appError, { debug: false })).toBe('pairing.no_active_session')
     })
 
     it('appends the kind as a code when debug is on', () => {
       expect(formatErrorForDisplay(appError, { debug: true })).toBe(
-        'pairing.passphrase.mismatch · code: validation',
+        'pairing.no_active_session · code: validation',
       )
     })
 

@@ -11,6 +11,39 @@
 
 import { type TypedHandlers, returnNull, returnUndefined } from '@/lib/tauri-mock/handlers/shared'
 
+// #3463 — the mock used to accept ANY passphrase (`confirm_pairing:
+// returnUndefined`), an unconditional no-op success that hid the real bug
+// (the FE unconditionally started a competing pairing session on every
+// device that opened the dialog, so real two-device pairing was structurally
+// impossible) from dev mode and every frontend test for months.
+//
+// As landed on the backend (#3463), `confirm_pairing` does NOT compare the
+// typed passphrase against anything held locally — the joiner arms a local
+// "pending pairing" proof from whatever the user typed, and a WRONG
+// passphrase is only discovered later, on the wire, when the two devices'
+// proofs fail to match during the actual sync handshake. So a resolved
+// promise from this handler does NOT mean the passphrase was correct — it
+// means a confirm request was accepted for processing. There is no `pairing.
+// passphrase.mismatch` tag any more; the backend never emits it.
+//
+// Modelling that wire-level proof mismatch faithfully is out of scope for
+// this single-process browser mock — there is no peer transport for a wrong
+// passphrase to fail against. If a sync/connect mock handler ever grows a
+// notion of a remote peer, THAT is where a wrong-passphrase failure belongs,
+// not here.
+//
+// `confirm_pairing` also does NOT require a prior `start_pairing` call on
+// this device any more. It briefly did (`pairing.no_active_session`, a
+// UI-state guard), but that guard was satisfiable only by a device that had
+// itself called `start_pairing` — i.e. only by a host — so it made every
+// pure joiner fail on every real attempt, which is exactly the role
+// confusion #3463 exists to fix. It was removed from the backend, and
+// `pairing.no_active_session` is not returned by `confirm_pairing` at all
+// any more (the tag itself still exists and is used elsewhere). This mock
+// therefore succeeds unconditionally for any input, including an empty
+// passphrase — there is no backend-side check left to model here. (The FE's
+// own "Pair disabled while any word is empty" is a pure client-side
+// affordance and never reaches this handler.)
 export const syncHandlers = {
   list_peer_refs: () => [],
   get_peer_ref: returnNull,

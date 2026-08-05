@@ -22,6 +22,18 @@ export const sync: Record<string, string> = {
   'pairing.qrScannedMessage': 'QR code scanned \u2014 verify and tap Pair',
   'pairing.closeDialogLabel': 'Close pairing dialog',
   'pairing.dialogTitle': 'Pair Device',
+  // #3463 — role-chooser step: pairing only works between two devices when
+  // exactly one of them shows a code and the other enters it, so the dialog
+  // asks the user to say which this device is doing before touching the
+  // backend.
+  'pairing.roleChooserInstruction':
+    'Pairing connects two devices — one shows a code, the other enters it. What should this device do?',
+  'pairing.hostRoleButton': 'Show code on this device',
+  'pairing.hostRoleDescription':
+    'Generate a passphrase and QR code for the other device to scan or type.',
+  'pairing.joinerRoleButton': 'Enter code from other device',
+  'pairing.joinerRoleDescription': 'Scan or type the passphrase shown on the other device.',
+  'pairing.backButton': 'Back',
   'pairing.startingMessage': 'Starting pairing...',
   'pairing.qrCodeLabel': 'QR code for device pairing',
   'pairing.passphraseLabel': 'Passphrase:',

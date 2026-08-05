@@ -1,10 +1,20 @@
 /**
  * PairingDialog -- modal dialog for device pairing (#219).
  *
- * Three sections (each extracted as a sub-component for testability):
- *  1. QR code + passphrase display (PairingQrDisplay)
- *  2. Passphrase entry (PairingEntryForm)
- *  3. List of already-paired devices (PairingPeersList)
+ * #3463 — pairing only works when exactly one of the two devices shows a
+ * code (the "host") and the other enters it (the "joiner"). The dialog's
+ * first state is always a role choice (`PairingRole`); opening the dialog
+ * fires ZERO backend calls, and the two roles' UI is mutually exclusive by
+ * construction — `role` is a single tri-state value, not two booleans, so
+ * "both at once" is not representable. Only the host path calls
+ * `commands.startPairing()`; only the joiner path renders the entry
+ * form/QR-scanner and calls `commands.confirmPairing()`.
+ *
+ * Sections (each extracted as a sub-component for testability):
+ *  0. Role chooser (inline — two buttons, no backend call)
+ *  1. QR code + passphrase display (PairingQrDisplay) — host only
+ *  2. Passphrase entry (PairingEntryForm) — joiner only
+ *  3. List of already-paired devices (PairingPeersList) — either role
  *
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  *
@@ -33,7 +43,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
-import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import type { PairingInfo, PeerRef as PeerRefRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
@@ -48,15 +58,18 @@ interface PairingDialogProps {
 
 const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
 
+// #3463 — the dialog's first state. A single tri-state value (rather than
+// e.g. `isHost: boolean` + `isJoiner: boolean`) so "both roles selected at
+// once" — the bug this fix addresses — is not representable in the type.
+type PairingRole = 'chooser' | 'host' | 'joiner'
+
 export function PairingDialog({
   open,
   onOpenChange,
   triggerRef,
 }: PairingDialogProps): React.ReactElement | null {
-  const [pairingInfo, setPairingInfo] = useState<{
-    passphrase: string
-    qr_svg: string
-  } | null>(null)
+  const [role, setRole] = useState<PairingRole>('chooser')
+  const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [words, setWords] = useState<[string, string, string, string]>(['', '', '', ''])
   const [peers, setPeers] = useState<PeerRefRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -70,7 +83,10 @@ export function PairingDialog({
   // Pause the countdown while the user is mid-keystroke in the
   // passphrase inputs so an in-flight handshake doesn't fail to a tick
   // boundary. PairingEntryForm enforces a 5s idle debounce so an idle
-  // user with focus can't keep this true forever.
+  // user with focus can't keep this true forever. Only ever meaningful on
+  // the host's own countdown, but the callback is shared with
+  // PairingEntryForm (joiner) unconditionally — harmless there because no
+  // countdown is ever rendered alongside the joiner's entry form.
   const [pausedByTyping, setPausedByTyping] = useState(false)
 
   const { t } = useTranslation()
@@ -79,6 +95,11 @@ export function PairingDialog({
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
   // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
+  // True only once `startPairing` has actually succeeded (host path). Gates
+  // every `cancelPairing` call (close/unmount cleanup, explicit Cancel, Back
+  // to chooser) so we never cancel a session that was never started —
+  // required because the joiner path never calls `startPairing` at all.
+  const sessionStartedRef = useRef(false)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
   // detached DOM node after the dialog closes.
@@ -105,26 +126,17 @@ export function PairingDialog({
 
   const syncSetState = useSyncStore((s) => s.setState)
 
-  // Bootstrap the pairing session via the shared useIpcCommand
-  // hook. The error template literal mirrors the existing inline format
-  // so the error banner copy stays byte-equivalent.
-  const { execute: executeInit } = useIpcCommand<
-    void,
-    [{ passphrase: string; qr_svg: string }, PeerRefRow[]]
-  >({
-    call: () =>
-      Promise.all([
-        commands.startPairing().then((r) => unwrap(r)),
-        commands.listPeerRefs().then((r) => unwrap(r)),
-      ]),
+  // Host-only: mint a passphrase + QR code via the shared useIpcCommand
+  // hook. The error template literal mirrors the existing inline format so
+  // the error banner copy stays byte-equivalent regardless of which of the
+  // two calls in `initHost` below fails.
+  const { execute: executeStartPairing } = useIpcCommand<void, PairingInfo>({
+    call: () => commands.startPairing().then((r) => unwrap(r)),
     module: 'PairingDialog',
-    errorLogMessage: 'Failed to initialize pairing',
-    onSuccess: ([info, peerList]) => {
+    errorLogMessage: 'Failed to start pairing',
+    onSuccess: (info) => {
+      sessionStartedRef.current = true
       setPairingInfo(info)
-      setPeers(peerList)
-      // #1076: keep the shared sync store in step with the dialog's local
-      // peer list so StatusPanel / sidebar dot stay correct.
-      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
     onError: (err) => {
@@ -136,18 +148,60 @@ export function PairingDialog({
     },
   })
 
-  // init function extracted so it can be called for retry (#282)
-  const init = useCallback(async () => {
+  // Shared by both roles: refresh the paired-devices list. Never calls
+  // `startPairing` — read-only, so it's safe for the joiner path too.
+  const { execute: executeLoadPeers } = useIpcCommand<void, PeerRefRow[]>({
+    call: () => commands.listPeerRefs().then((r) => unwrap(r)),
+    module: 'PairingDialog',
+    errorLogMessage: 'Failed to load paired devices',
+    onSuccess: (peerList) => {
+      setPeers(peerList)
+      // #1076: keep the shared sync store in step with the dialog's local
+      // peer list so StatusPanel / sidebar dot stay correct.
+      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
+    },
+    onError: (err) => {
+      setError(
+        t('pairing.startFailed', {
+          message: String(err instanceof Error ? err.message : err),
+        }),
+      )
+    },
+  })
+
+  // Host path: only entry point that calls `startPairing`.
+  const initHost = useCallback(async () => {
+    setRole('host')
     setLoading(true)
     setError(null)
-    await executeInit()
+    await Promise.all([executeStartPairing(), executeLoadPeers()])
     setLoading(false)
-  }, [executeInit])
+  }, [executeStartPairing, executeLoadPeers])
 
-  // Cleanup-side cancelPairing — fires when the dialog closes
-  // or unmounts. Logger.warn + notify.error matches the original inline
-  // shape (handleCancel uses a different logger.error-only flavor that
-  // stays inline because it has no toast).
+  // Joiner path: never calls `startPairing` — only refreshes the peers list
+  // so the paired-devices section still has something to show.
+  const initJoiner = useCallback(async () => {
+    setRole('joiner')
+    setLoading(true)
+    setError(null)
+    await executeLoadPeers()
+    setLoading(false)
+  }, [executeLoadPeers])
+
+  // Retry button (#282) re-runs whichever role's init failed.
+  const handleRetry = useCallback(() => {
+    if (role === 'host') {
+      void initHost()
+    } else if (role === 'joiner') {
+      void initJoiner()
+    }
+  }, [role, initHost, initJoiner])
+
+  // Cleanup-side cancelPairing — fires when the dialog closes or unmounts,
+  // but ONLY if a host session was actually started (`sessionStartedRef`).
+  // Logger.warn + notify.error matches the original inline shape
+  // (handleCancel uses a different logger.error-only flavor that stays
+  // inline because it has no toast).
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
     call: () =>
       commands.cancelPairing().then((r) => {
@@ -161,35 +215,34 @@ export function PairingDialog({
     },
   })
 
-  // Load pairing info and peer list when dialog opens;
-  // cancel the pairing session on close/unmount to avoid leaking the listener.
+  // #3463 — opening the dialog fires ZERO backend calls: reset to a fresh
+  // role choice every time `open` flips true. The previous version
+  // unconditionally called `startPairing` here, which is exactly the bug.
   useEffect(() => {
     if (!open) return
+    setRole('chooser')
+    setPairingInfo(null)
+    setWords(['', '', '', ''])
+    setPeers([])
+    setError(null)
+    setCountdown(null)
+    setEntryMode('manual')
+    sessionStartedRef.current = false
+  }, [open])
 
-    let cancelled = false
-
-    async function doInit() {
-      await init()
-    }
-
-    doInit()
-      .then(() => {
-        if (cancelled) {
-          // Component closed before init finished — clean up
-        }
-      })
-      .catch((err) => {
-        logger.warn('PairingDialog', 'init failed', undefined, err)
-      })
-
+  // Cancel the pairing session on the backend when the dialog closes or
+  // unmounts — but only if a session was actually started (host path that
+  // successfully called `startPairing`). The joiner path never starts a
+  // session, so this is a correct no-op for it.
+  useEffect(() => {
+    if (!open) return
     return () => {
-      cancelled = true
-      // Cancel the pairing session on the backend when the dialog closes or
-      // unmounts. The in-flight IPC payload itself may already have crossed
-      // the bridge; this only invalidates the server-side session state.
-      void executeCancelPairingCleanup()
+      if (sessionStartedRef.current) {
+        sessionStartedRef.current = false
+        void executeCancelPairingCleanup()
+      }
     }
-  }, [open, init, executeCancelPairingCleanup])
+  }, [open, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
   // Read the pause flag through a ref inside the interval so flipping
@@ -255,13 +308,16 @@ export function PairingDialog({
     }
   }, [countdown, t])
 
-  // Focus first word input when pairing info is loaded
+  // Focus first word input once the joiner's entry form is rendered. Was
+  // previously keyed off `pairingInfo` (a HOST-only value) as a proxy for
+  // "the entry form is visible" — a symptom of the original bug, since both
+  // widgets used to mount together. Now keyed directly on the joiner role.
   useEffect(() => {
-    if (open && pairingInfo) {
+    if (open && role === 'joiner' && !loading) {
       const inputs = getWordInputs()
       inputs[0]?.focus()
     }
-  }, [open, pairingInfo, getWordInputs])
+  }, [open, role, loading, getWordInputs])
 
   // #279: Paste support — when pasting multi-word text, split and distribute across inputs
   const handleWordChange = useCallback(
@@ -304,7 +360,8 @@ export function PairingDialog({
   // the same "Pairing failed:" banner — matches existing behavior where
   // a post-confirm `listPeerRefs()` rejection is reported under the same
   // label. `setWords` / success toast / dialog close run only on full
-  // success via `onSuccess`.
+  // success via `onSuccess`. Joiner-only — the host never renders the form
+  // that calls this.
   const { execute: executePair } = useIpcCommand<{ passphrase: string }, void>({
     call: async ({ passphrase }) => {
       // remoteDeviceId is derived from the passphrase in the pairing protocol
@@ -384,27 +441,52 @@ export function PairingDialog({
     [t],
   )
 
-  const handleCancel = useCallback(() => {
-    // Cancel any in-progress pairing session
-    commands
-      .cancelPairing()
-      .then((r) => unwrap(r))
-      .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
+  // Resets all role/session-scoped local state back to the pre-role-choice
+  // shape. Shared by `handleCancel` (closes the dialog) and
+  // `handleBackToChooser` (keeps it open, returns to the role choice).
+  const resetRoleState = useCallback(() => {
+    setRole('chooser')
     setPairingInfo(null)
     setWords(['', '', '', ''])
+    setPeers([])
     setError(null)
     setCountdown(null)
     setEntryMode('manual')
     // Clear any stale paused state (ref + render state) so a
     // future re-open starts fresh.
     handleTypingStateChange(false)
+  }, [handleTypingStateChange])
+
+  const handleCancel = useCallback(() => {
+    // Cancel any in-progress pairing session — only if one was actually
+    // started (host path). The joiner path never calls `startPairing`, so
+    // there is nothing on the backend to cancel for it.
+    if (sessionStartedRef.current) {
+      sessionStartedRef.current = false
+      commands
+        .cancelPairing()
+        .then((r) => unwrap(r))
+        .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
+    }
+    resetRoleState()
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
-  }, [onOpenChange, triggerRef, handleTypingStateChange])
+  }, [onOpenChange, triggerRef, resetRoleState])
+
+  // Back to the role choice (does NOT close the dialog). Cleans up any
+  // started session exactly like `handleCancel`, satisfying "going back to
+  // re-choose a role must clean up any started session."
+  const handleBackToChooser = useCallback(async () => {
+    if (sessionStartedRef.current) {
+      sessionStartedRef.current = false
+      await executeCancelPairingCleanup()
+    }
+    resetRoleState()
+  }, [executeCancelPairingCleanup, resetRoleState])
 
   // Unpair a peer device. Same template-literal error format
-  // as `handlePair` / `init` so the existing inline banner is preserved.
+  // as `handlePair` / `initHost` so the existing inline banner is preserved.
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
     call: ({ peerId }) =>
       commands.deletePeerRef(peerId).then((r) => {
@@ -502,88 +584,139 @@ export function PairingDialog({
 
           <Body>
             <div ref={dialogRef}>
-              {/* Error message with Retry button (#282) */}
-              {error && (
-                <div
-                  className="pairing-error flex items-center gap-2 mb-4"
-                  role="alert"
-                  aria-live="polite"
-                >
-                  <p className="text-sm text-destructive flex-1">{error}</p>
+              {/* Role chooser (#3463) — the dialog's first state. No
+                  backend call fires until one of these is clicked. */}
+              {role === 'chooser' && (
+                <div className="pairing-role-chooser flex flex-col gap-3 py-2">
+                  <p className="text-sm text-muted-foreground">
+                    {t('pairing.roleChooserInstruction')}
+                  </p>
                   <Button
                     variant="outline"
-                    size="sm"
-                    ref={retryBtnRef}
-                    onClick={() => init()}
-                    className="pairing-retry-btn shrink-0"
+                    className="pairing-role-host-btn h-auto justify-start py-3 text-left"
+                    onClick={() => void initHost()}
                   >
-                    {t('pairing.retryButton')}
+                    <span className="flex flex-col items-start gap-0.5">
+                      <span className="font-medium">{t('pairing.hostRoleButton')}</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {t('pairing.hostRoleDescription')}
+                      </span>
+                    </span>
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className="pairing-role-joiner-btn h-auto justify-start py-3 text-left"
+                    onClick={() => void initJoiner()}
+                  >
+                    <span className="flex flex-col items-start gap-0.5">
+                      <span className="font-medium">{t('pairing.joinerRoleButton')}</span>
+                      <span className="text-xs font-normal text-muted-foreground">
+                        {t('pairing.joinerRoleDescription')}
+                      </span>
+                    </span>
                   </Button>
                 </div>
               )}
 
-              {/* Loading state — QR-shaped square placeholder + entry-row
-                  placeholders instead of a bare centered spinner, mirroring
-                  the PairingQrDisplay + PairingEntryForm layout that
-                  replaces it once the pairing session starts. */}
-              {loading && (
-                <div className="pairing-loading flex flex-col items-center gap-3 py-6">
-                  <span className="text-sm text-muted-foreground">
-                    {t('pairing.startingMessage')}
-                  </span>
-                  <LoadingSkeleton
-                    count={1}
-                    height="h-40"
-                    className="w-40"
-                    ariaLabel={t('pairing.startingMessage')}
-                  />
-                  <LoadingSkeleton count={2} height="h-10" loading={false} className="w-full" />
-                </div>
-              )}
-
-              {/* QR + Passphrase display and Entry form */}
-              {!loading && pairingInfo && (
+              {role !== 'chooser' && (
                 <>
-                  <PairingQrDisplay
-                    qrSvg={pairingInfo.qr_svg}
-                    passphrase={pairingInfo.passphrase}
-                    countdownDisplay={countdownDisplay}
-                    countdown={countdown}
-                    isExpired={isExpired}
-                    error={error}
-                    onRetry={() => init()}
-                    retryBtnRef={retryBtnRef}
-                    pausedByTyping={pausedByTyping}
-                  />
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="pairing-back-btn -ml-2 mb-2 self-start"
+                    onClick={() => void handleBackToChooser()}
+                  >
+                    {t('pairing.backButton')}
+                  </Button>
 
-                  <PairingEntryForm
-                    words={words}
-                    entryMode={entryMode}
-                    onEntryModeChange={setEntryMode}
-                    onWordChange={handleWordChange}
-                    onWordKeyDown={handleWordKeyDown}
-                    onQrScan={handleQrScan}
-                    onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
-                    onCancel={handleCancel}
-                    onPair={handlePair}
-                    pairLoading={pairLoading}
-                    isExpired={isExpired}
-                    onTypingStateChange={handleTypingStateChange}
-                  />
+                  {/* Error message with Retry button (#282) */}
+                  {error && (
+                    <div
+                      className="pairing-error flex items-center gap-2 mb-4"
+                      role="alert"
+                      aria-live="polite"
+                    >
+                      <p className="text-sm text-destructive flex-1">{error}</p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        ref={retryBtnRef}
+                        onClick={handleRetry}
+                        className="pairing-retry-btn shrink-0"
+                      >
+                        {t('pairing.retryButton')}
+                      </Button>
+                    </div>
+                  )}
+
+                  {/* Loading state — QR-shaped square placeholder + entry-row
+                      placeholders instead of a bare centered spinner, mirroring
+                      the PairingQrDisplay + PairingEntryForm layout that
+                      replaces it once the pairing session starts. */}
+                  {loading && (
+                    <div className="pairing-loading flex flex-col items-center gap-3 py-6">
+                      <span className="text-sm text-muted-foreground">
+                        {t('pairing.startingMessage')}
+                      </span>
+                      <LoadingSkeleton
+                        count={1}
+                        height="h-40"
+                        className="w-40"
+                        ariaLabel={t('pairing.startingMessage')}
+                      />
+                      <LoadingSkeleton count={2} height="h-10" loading={false} className="w-full" />
+                    </div>
+                  )}
+
+                  {/* QR + Passphrase display — host only */}
+                  {!loading && role === 'host' && pairingInfo && (
+                    <PairingQrDisplay
+                      qrSvg={pairingInfo.qr_svg}
+                      passphrase={pairingInfo.passphrase}
+                      countdownDisplay={countdownDisplay}
+                      countdown={countdown}
+                      isExpired={isExpired}
+                      error={error}
+                      onRetry={handleRetry}
+                      retryBtnRef={retryBtnRef}
+                      pausedByTyping={pausedByTyping}
+                    />
+                  )}
+
+                  {/* Passphrase entry — joiner only */}
+                  {!loading && role === 'joiner' && (
+                    <PairingEntryForm
+                      words={words}
+                      entryMode={entryMode}
+                      onEntryModeChange={setEntryMode}
+                      onWordChange={handleWordChange}
+                      onWordKeyDown={handleWordKeyDown}
+                      onQrScan={handleQrScan}
+                      onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
+                      onCancel={handleCancel}
+                      onPair={handlePair}
+                      pairLoading={pairLoading}
+                      isExpired={false}
+                      onTypingStateChange={handleTypingStateChange}
+                    />
+                  )}
+
+                  {/* Paired Devices */}
+                  {!loading && (
+                    <PairingPeersList
+                      peers={peers}
+                      onUnpair={(peerId) => setUnpairPeerId(peerId)}
+                    />
+                  )}
+
+                  {/* Status message for screen readers */}
+                  <div aria-live="polite" className="sr-only">
+                    {loading && t('pairing.startingMessage')}
+                    {pairLoading && t('pairing.inProgress')}
+                    {error}
+                  </div>
                 </>
               )}
-
-              {/* Paired Devices */}
-              {!loading && (
-                <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
-              )}
-
-              {/* Status message for screen readers */}
-              <div aria-live="polite" className="sr-only">
-                {loading && t('pairing.startingMessage')}
-                {pairLoading && t('pairing.inProgress')}
-                {error}
-              </div>
             </div>
           </Body>
         </Content>
