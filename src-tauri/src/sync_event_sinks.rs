@@ -44,8 +44,10 @@ impl<R: tauri::Runtime> SyncEventSink for TauriEventSink<R> {
         // so `get_mdns_status` backfills a frontend whose `sync:mdns_disabled`
         // listener registers after this emission (the daemon can start
         // before the webview finishes mounting, same race `recovery:degraded`
-        // has). `try_state` (not `state`) because this sink is also exercised
-        // by tests that never call `app.manage(MdnsStatusState(..))`.
+        // has). Normal production setup manages `MdnsStatusState` before the
+        // daemon can invoke this sink. `try_state` (not `state`) preserves
+        // non-panicking behavior for optional or minimally configured hosts
+        // that construct the concrete sink without that managed state.
         if let SyncEvent::MdnsDisabled { reason } = &event
             && let Some(status) = self.0.try_state::<MdnsStatusState>()
             && let Ok(mut guard) = status.0.lock()
@@ -210,11 +212,13 @@ mod tests {
     // progress-shaped variants, so these tests pin the dual-emission
     // semantics now and will be updated in lockstep with that change.
 
-    use super::ChannelEventSink;
+    use super::{ChannelEventSink, TauriEventSink};
     use agaric_sync::sync_events::{
-        RecordingEventSink, SyncEvent, SyncEventSink, SyncProgressUpdate,
+        MdnsStatus, MdnsStatusState, RecordingEventSink, SyncEvent, SyncEventSink,
+        SyncProgressUpdate,
     };
     use std::sync::Arc;
+    use tauri::Manager;
 
     /// Build a `Channel<SyncProgressUpdate>` whose payloads land in a
     /// shared `Vec` for assertion. The `Channel::new` constructor is the
@@ -248,6 +252,45 @@ mod tests {
             Ok(())
         });
         (channel, captured)
+    }
+
+    #[test]
+    fn tauri_event_sink_mdns_disabled_backfills_managed_status() {
+        let app = tauri::test::mock_app();
+        app.manage(MdnsStatusState(
+            std::sync::Mutex::new(MdnsStatus::default()),
+        ));
+        let sink = TauriEventSink(app.handle().clone());
+
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "multicast unavailable".into(),
+        });
+
+        let status = app.state::<MdnsStatusState>();
+        let actual = status.0.lock().expect("mDNS status mutex not poisoned");
+        assert_eq!(
+            *actual,
+            MdnsStatus {
+                disabled: true,
+                reason: Some("multicast unavailable".into()),
+            },
+            "the concrete Tauri sink must backfill the exact managed mDNS status"
+        );
+    }
+
+    #[test]
+    fn tauri_event_sink_mdns_disabled_without_managed_status_does_not_panic() {
+        let app = tauri::test::mock_app();
+        let sink = TauriEventSink(app.handle().clone());
+
+        sink.on_sync_event(SyncEvent::MdnsDisabled {
+            reason: "not managed in this host".into(),
+        });
+
+        assert!(
+            app.try_state::<MdnsStatusState>().is_none(),
+            "the sink must not invent managed state when the host omitted it"
+        );
     }
 
     #[test]
