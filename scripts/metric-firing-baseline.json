@@ -2,7 +2,7 @@
   {
     "metric": "QueueMetrics::bg_deduped",
     "rule": "no-firing-test",
-    "reason": "PROVEN, but not textually. src-tauri/src/materializer/tests/idempotency.rs:133 binds `metrics().bg_deduped.load(..) > before` as `collapsed` and only records a dedup snapshot inside `if collapsed`; the `dedup_snap.expect(\"precondition: at least one drain must collapse duplicate tasks…\")` at :143 then fails the test if the counter never advanced within the retry budget. It cannot be asserted inline because the first non-collapsing attempt is legitimate (the two enqueues may land in separate drains). The guard credits only a literal `assert…!` with the metric on the high side, because the alternative — crediting any bound comparison that is later read — also credits `let rose = m.x.load(..) > before; tracing::debug!(rose);`, which cannot fail. This entry goes stale (and must be deleted) the moment a literal firing assertion is added there."
+    "reason": "PROVEN, but not textually. src-tauri/src/materializer/tests/idempotency.rs:133 binds `metrics().bg_deduped.load(..) > before` as `collapsed` and only records a dedup snapshot inside `if collapsed`; the `dedup_snap.expect(\"precondition: at least one drain must collapse duplicate tasks…\")` at :143 then fails the test if the counter never advanced within the retry budget. It cannot be asserted inline because the first non-collapsing attempt is legitimate (the two enqueues may land in separate drains). #3384 taught the guard to credit a bound firing comparison that an ASSERTION reads (`let collapsed = …; assert!(collapsed)`), which is exact — but this proof does not take that shape: it travels from `collapsed` through an `Option` assigned inside `if collapsed` and only then reaches `.expect()`, two hops through a mutable binding that a textual analysis cannot follow without also crediting `let rose = …; tracing::debug!(rose);`, which cannot fail. This entry goes stale (and must be deleted) the moment a firing assertion — literal or `assert!(collapsed)` — is added there."
   },
   {
     "metric": "QueueMetrics::bg_errors",
@@ -23,16 +23,6 @@
     "metric": "QueueMetrics::bg_panics",
     "rule": "unreachable-under-panic-abort",
     "reason": "Cited by #3349, THE HEADLINE INSTANCE. `[profile.release]` sets `panic = \"abort\"` (src-tauri/Cargo.toml, deliberately and with a documented rationale). The sole emit site (consumer.rs:755) sits under `if panicked`, where `panicked` comes from `JoinError::is_panic` on a `tokio::spawn` join — an arm the runtime can only reach when a panic UNWINDS. In the shipped binary the process is already gone, so this counter reads zero forever and an operator auditing panic rates reads that zero as health. Left in place rather than deleted here because removing it is a cross-cutting change (QueueMetrics, StatusInfo, the specta-generated TS bindings, StatusPanel.tsx, the tauri-mock handler and ~10 test files) that belongs in its own PR, and because it still moves in debug/test builds, where `panic = \"unwind\"` applies."
-  },
-  {
-    "metric": "QueueMetrics::cached_op_log_count",
-    "rule": "no-firing-test",
-    "reason": "PROVEN, but not textually. #385's rate-limited `SELECT COUNT(*) FROM op_log` cache, written at src-tauri/src/materializer/coordinator.rs:744 and surfaced as `StatusInfo::total_ops_in_log`. `get_status_total_ops_in_log_is_rate_limited_cache` (src-tauri/src/commands/tests/status_cmd_tests.rs:184) drives it through the production refresh path and asserts `assert_eq!(i64::try_from(cached).unwrap(), actual)` against a live `SELECT COUNT(*)` of 5 — a real firing proof that fails if the refresh stops writing. The guard cannot credit it because the expected value is a runtime binding rather than a non-zero literal, so it cannot tell `assert_eq!(x, actual)` from `assert_eq!(x, zero_so_far)`. Clearing this entry means asserting a literal (`assert!(cached > 0)`) alongside the equality."
-  },
-  {
-    "metric": "QueueMetrics::cached_op_log_count_at_ms",
-    "rule": "no-firing-test",
-    "reason": "PROVEN, but not textually. Companion timestamp for `cached_op_log_count` (written at coordinator.rs:747) and the sole input to the TTL decision that gates the recompute. `get_status_total_ops_in_log_is_rate_limited_cache` (status_cmd_tests.rs:150-176) DOES prove production stamps it: the second status call must serve the stale cached 3, which only happens if the cold call wrote a fresh timestamp — were the stamp never written the value would stay 0, every call would look stale, and the assertion would see 5. The test then stores 0 into the atomic itself to force invalidation. The guard cannot credit this because the only assertions naming the metric are the test's own `.store(0, …)` setup and equality against runtime bindings, none of which is a literal above-zero assertion on this counter."
   },
   {
     "metric": "QueueMetrics::fg_full_waits",

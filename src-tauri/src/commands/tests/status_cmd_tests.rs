@@ -152,6 +152,22 @@ async fn get_status_total_ops_in_log_is_rate_limited_cache() {
         "cold call must reflect the real op_log count"
     );
 
+    // The cold refresh must also STAMP the TTL timestamp. The within-TTL
+    // assertion below already depends on that — an unstamped `0` would make
+    // every call look stale and re-COUNT to 5 — but only implicitly, and
+    // nothing in this file ever named the timestamp in an assertion, so the
+    // metric-provability guard read it as unobserved (#3382, #3384). Assert it
+    // directly: a regression that stopped stamping now fails HERE, naming the
+    // field, instead of surfacing as a confusing count mismatch two lines down.
+    let stamped_at = mat
+        .metrics()
+        .cached_op_log_count_at_ms
+        .load(Ordering::Relaxed);
+    assert!(
+        stamped_at > 0,
+        "the cold refresh must stamp cached_op_log_count_at_ms"
+    );
+
     // Insert 2 more rows WITHOUT invalidating the cache; the next call is
     // within the TTL window, so it must serve the cached (stale) 3.
     for i in 4..=5 {

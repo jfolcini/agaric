@@ -848,7 +848,7 @@ name = "Every metric must have a test proving it can fire (#3349)"
 entry = "node scripts/check-metric-provable.mjs"
 language = "system"
 pass_filenames = false
-files = "^(src-tauri/(src|[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
+files = "^(src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs|src-tauri/Cargo\\.toml|scripts/(check-metric-provable\\.mjs|metric-firing-baseline\\.json))$"
 stages = ["pre-commit"]
 
 # Self-test the metric-provable guard's own exit behavior whenever it
@@ -859,15 +859,27 @@ stages = ["pre-commit"]
 # firing assertion, a reasoned marker, a reasoned baseline entry, the same
 # panic-gated emit under `panic = "unwind"`, and a process-global config
 # atomic with no `count()` all PASS. A bound firing comparison
-# (`let rose = m.x > before;`) is NOT a proof however it is later read —
+# (`let rose = m.x > before;`) is NOT a proof however it is later READ —
 # logged, tested by a no-op `if`, or rebound — because none of those can
-# fail. Enumeration is pinned against silent narrowing: the exact
+# fail; it IS a proof when an `assert!` is what reads it, which is the line
+# #3384 drew between the two. Each #3384 widening carries its sibling
+# rejection: an equality against a SQL ground truth counts while the same
+# equality against a projection of the same counter — or against a SQL read
+# parameterised by the counter itself — does not; `if o.was_panic`
+# is a panic gate while `if !o.panicked` is not; a second `…Metrics` struct is
+# enumerated while a struct named otherwise is not; a type-aliased or
+# `Arc`-wrapped atomic is a counter while an `AtomicBool` and a `f64` alias are
+# not. Enumeration is pinned against silent narrowing: the exact
 # `scanRoots` set, the exact set of metric-declaring files, and the
 # declaration variants Rust allows (`pub(crate)`, no trailing comma, a
 # path-qualified type, a non-U64 atomic, a static inside a `mod`). It also
-# asserts the guard reads nothing outside src-tauri/ (so it cannot match its
+# asserts the guard reads nothing outside src-tauri/, reads only `.rs`, and
+# that this script's own path lies under no scan root (so it cannot match its
 # own source, fixtures or baseline) and that the live release profile really
-# is `panic = "abort"`, without which rule 3 would be silently inert.
+# is `panic = "abort"`, without which rule 3 would be silently inert. Evidence
+# is scoped to test code on both sides: an `assert!` in production code is not
+# a firing test, and a module's own mutator definition is not a production
+# caller of it — both were credited until #3384's review pinned them.
 [[repos.hooks]]
 id = "metric-provable-selftest"
 name = "Metric-provability guard self-test"
