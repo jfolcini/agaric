@@ -49,6 +49,25 @@ uuid = { version = "1.23.2", features = ["v4"] }
 # on the loro-sync apply path (loro_sync.rs). Mirrors the feature set the app
 # resolves for tokio (the app pulls `rt-multi-thread` transitively via tauri).
 tokio = { version = "1", features = ["sync", "macros", "rt", "rt-multi-thread", "net", "io-util", "io-std"] }
+# iroh — QUIC transport for peer sync (#78, plan #3464). Pinned to an exact
+# minor: iroh is 1.0 with semver'd wire stability, but the LAN-only posture we
+# depend on (no relays, no address-lookup services) is a *configuration* iroh
+# defaults against, so a minor bump is exactly the event that could silently
+# reintroduce an outbound path. `transport::endpoint`'s guard tests are the
+# tripwire; the pin keeps the bump deliberate. Default features give the ring
+# crypto provider that `presets::Minimal` requires.
+iroh = "1.0.3"
+# `iroh-dns` — needed directly for `DnsResolver::custom`, which is how the
+# offline guard injects a recording resolver into the endpoint. Version tracks
+# iroh's own (they release in lockstep); a mismatch here silently produces two
+# incompatible `n0-error` copies and the `e!` macro stops type-checking.
+iroh-dns = "1.0.3"
+# `n0-error` / `n0-future` — iroh's error and future plumbing, needed to
+# implement the `Resolver` trait (`BoxFuture`, the `e!` macro). Versions must
+# match what iroh resolves, not what looks newest.
+n0-error = "1.0"
+n0-future = "0.2"
+
 # Loro CRDT runtime — the sync protocol reads `loro::{VersionVector, PeerID, …}`
 # directly (the wire types + apply path). Caret-1 mirrors the app crate.
 loro = "1.12"
@@ -122,6 +141,11 @@ agaric-core = { path = "../agaric-core", version = "0.1.0", features = ["test-ut
 # fixture) in place of the app-only `crate::db::init_pool` (same pattern as
 # agaric-engine's dev-deps). Only enabled for test builds.
 agaric-store = { path = "../agaric-store", version = "0.1.0", features = ["test-util"] }
+# `snapshot::types`' tests pin the serialized shape of every snapshot row type
+# with `insta` snapshot assertions (#3460 — on-disk/on-wire format must not
+# drift silently across a transport migration). Version/features mirror
+# `agaric-store`'s dev-dependency.
+insta = { version = "1.47.0", features = ["yaml", "redactions"] }
 
 # Mirror the app crate's lint posture so clippy/rustc behave identically under
 # CI (same pattern as the `agaric-core` / `agaric-store` / `agaric-engine`

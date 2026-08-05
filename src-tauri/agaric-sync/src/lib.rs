@@ -41,8 +41,15 @@ pub mod apply_host;
 /// Tauri-backed sinks live app-side (`src/sync_event_sinks.rs`).
 pub mod sync_events;
 
+/// QUIC transport built on iroh (#78, plan #3464). Replaces the WebSocket +
+/// mTLS stack in [`sync_net`], which is retired as the port lands. Carries the
+/// LAN-only endpoint configuration and the offline guard that keeps it that way.
+pub mod transport;
+
 /// Networking primitives: TLS cert gen, mDNS announce/browse, WebSocket
 /// server/client, the unified `SyncConnection`.
+///
+/// Superseded by [`transport`] and slated for deletion — see plan #3464.
 pub mod sync_net;
 
 /// Sync protocol orchestrator: head exchange, Loro-CRDT engine sync, peer-ref
