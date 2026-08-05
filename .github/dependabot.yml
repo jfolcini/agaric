@@ -271,8 +271,9 @@ updates:
   # arbitrary, the parent crate as a path dep) → one catch-all group.
   #
   # `versioning-strategy: lockfile-only` is load-bearing, not a style choice
-  # (#3432). The fuzz crate takes `agaric` as a *path* dep, so Dependabot
-  # fetches `src-tauri/Cargo.toml` too and treats every parent-crate dep
+  # (#3432). The fuzz crate takes FOUR *path* deps — `agaric` (`..`),
+  # `agaric-store`, `agaric-sync`, `agaric-engine` — so Dependabot fetches
+  # each of those manifests too and treats every dep declared in them
   # (rmcp, mdns-sd, …) as an in-scope DIRECT dep of this entry. Under the
   # cargo default (`increase-if-necessary`) a bump whose new version does not
   # satisfy the parent's requirement makes Dependabot EDIT the shared

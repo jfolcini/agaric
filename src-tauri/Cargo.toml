@@ -290,8 +290,9 @@ dirs = { version = "6.0.0", default-features = false }
 # implement — `ServerHandler::call_tool`'s return type changed, the metadata
 # model split into `MetaObject` / `RequestMetaObject` /
 # `NotificationMetaObject`, and the pre-3.0 deprecated surface was removed.
-# Moving to `^3.0` requires porting `src/mcp/rmcp_adapter.rs` and
-# `src/mcp/tests_rmcp.rs` in the same commit as the manifest + BOTH
+# Moving to `^3.0` requires porting `src/mcp/rmcp_adapter.rs`,
+# `src/mcp/server/tests_rmcp.rs`, and `src/mcp/server.rs` (which takes
+# `rmcp::service::ServiceExt`) in the same commit as the manifest + BOTH
 # lockfiles. Dependabot attempted the manifest half alone in #3432; see the
 # `/src-tauri/fuzz` entry in `.github/dependabot.yml` for the guard that
 # stops that recurring.

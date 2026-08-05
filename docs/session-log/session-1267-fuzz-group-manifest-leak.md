@@ -49,7 +49,17 @@ removed: [('agaric', '0.9.2'), ('mdns-sd', '0.20.2')]
 added:   [('agaric', '0.9.3'), ('mdns-sd', '0.20.3')]
 ```
 
-The package-version set is otherwise byte-identical. The other 14 lines re-point 11 `cfg(windows)` edges among versions already present, because `errno 0.3.14` and `rustix 1.1.4` both declare `windows-sys = ">=0.52, <0.62"` and `winapi-util 0.1.11` declares `">=0.48.0, <=0.61.*"` — any re-resolve re-decides their unification. Confirmed not attributable to mdns-sd: its two manifests differ only in the `version` line, and a re-resolve with no dep bump produces a 1-line diff. The `agaric 0.9.2 → 0.9.3` line is the path dep catching up to the release bump, which the fuzz lock was also stale on.
+The package-version set is otherwise byte-identical. The remaining lines re-point **13** `cfg(windows)` edges (12 `windows-sys`, 1 `windows-link`) among versions already present in the lock. The cause is that several crates declare unusually wide `windows-sys` ranges, so any re-resolve re-decides their unification:
+
+| crate | declared range |
+|---|---|
+| `os_pipe` | `>=0.28, <=0.61` |
+| `errno 0.3.14`, `rustix 1.1.4` | `>=0.52, <0.62` |
+| `winapi-util 0.1.11` | `>=0.48.0, <=0.61.*` |
+
+`os_pipe`'s range is the widest and is what allows an edge to land as low as `windows-sys 0.45.0` — a move the narrower `>=0.52` ranges cannot explain on their own. (An earlier draft of this log cited only `errno`/`rustix` and counted 11 edges; both were wrong, caught in review.)
+
+Confirmed not attributable to mdns-sd: its 0.20.2 and 0.20.3 manifests differ only in the `version` line, and a re-resolve with no dep bump produces a 1-line diff. The `agaric 0.9.2 → 0.9.3` line is the path dep catching up to the release bump, which the fuzz lock was also stale on.
 
 ## Verification
 
