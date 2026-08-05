@@ -50,7 +50,7 @@ Writes are space-scoped; reads are not. See the next section.
 
 The read-only and read-write surfaces treat spaces differently **by design**, and it's important to understand the difference before you hand an agent a space ULID.
 
-- **Read-write tools require a `space_id` — but it's a self-declared consistency check, not an isolation boundary.** Every write tool (`append_block`, `update_block_content`, `set_property`, `add_tag`, `create_page`, `delete_block`) takes a **required** `space_id`, supplied by the agent itself. Before mutating a block, the server checks that the target block actually lives in the space the agent claimed, and rejects the call if it doesn't. This catches an agent acting on a stale or mismatched ULID (e.g. reusing a block ID from the wrong space) — but it does **not** confine an agent to "its" space: nothing binds a connection or agent identity to a fixed set of allowed spaces, so an agent that supplies the block's real `space_id` passes the check and can write to any space — and getting that value is trivial. `list_spaces` enumerates every real `space_id` in the vault (`get_page` / `get_block` don't return a block's `space_id` directly, but there are typically only a handful of spaces to try), and a wrong guess is self-correcting: the rejection message states the block's actual space (`"block '…' belongs to space '…'"`), so a single failed write hands the agent the value the next call needs.
+- **All six mutating read-write tools require an agent-supplied `space_id` — but it is not an isolation boundary.** `create_page` uses the value to choose the new page's destination. The other five tools (`append_block`, `update_block_content`, `set_property`, `add_tag`, `delete_block`) mutate existing targets and validate that each target belongs to the space the agent claimed, rejecting stale or mismatched ULIDs. Neither behavior binds a connection or agent identity to an allowed space set: an agent can choose any discovered space for a new page or supply an existing target's real `space_id` and mutate it. `list_spaces` enumerates every real `space_id` in the vault (`get_page` / `get_block` don't return a block's `space_id` directly, but there are typically only a handful of spaces to try), and a wrong guess for an existing-target mutation is self-correcting: the rejection message states the block's actual space (`"block '…' belongs to space '…'"`), so a single failed write hands the agent the value the next call needs.
 - **Read-only tools are deliberately vault-wide.** The read surface is designed to give an agent a whole-vault view, so reads are **not** uniformly confined to one space. Concretely, the read tools fall into three space-scoping patterns:
 
   | Pattern | Read-only tools | Behaviour |
@@ -61,7 +61,7 @@ The read-only and read-write surfaces treat spaces differently **by design**, an
 
 ### Security implication
 
-Because the read surface is cross-space, **handing an agent a `space_id` does not confine either its reads or its writes.** An agent "given" space A can still read every other space's pages, blocks, and tags — by enumerating with `list_pages` / `list_tags`, or by fetching a known ULID with `get_page` / `get_block`. That cross-space read access also undermines the write guard: `list_spaces` hands the agent every real `space_id` in the vault to try, and a write attempt with the wrong one is self-correcting — the guard's own rejection message states the block's actual space, so the agent can pass that value straight back on the next call and clear the consistency check above. The `space_id` argument is not an authorization or isolation boundary in either direction; it only catches accidental cross-space writes from a stale ULID.
+Because the read surface is cross-space, **handing an agent a `space_id` does not confine either its reads or its writes.** An agent "given" space A can still read every other space's pages, blocks, and tags — by enumerating with `list_pages` / `list_tags`, or by fetching a known ULID with `get_page` / `get_block`. That cross-space read access also undermines the existing-target write guard: `list_spaces` hands the agent every real `space_id` in the vault to try, and a write attempt with the wrong one is self-correcting — the rejection states the block's actual space, so the agent can pass that value straight back and clear the consistency check. `create_page` needs no such correction because its `space_id` simply selects any discovered destination. The argument is not an authorization or isolation boundary in either direction: it catches accidental cross-space writes from stale ULIDs for five tools and selects the destination for `create_page`.
 
 This is intentional for reads (agents are treated as whole-vault readers) and is a known, accepted limitation for writes (there is no per-connection or per-agent space allowlist). If you have a space whose contents an agent must not read or write, **do not rely on the MCP `space_id` argument to fence it off** — disable MCP, or don't expose that data to the agent's vault. Real per-space isolation (read or write) would require binding a connection/agent to an authorised space set and enforcing it in the dispatch layer, which does not exist today.
 
@@ -70,12 +70,17 @@ This is intentional for reads (agents are treated as whole-vault readers) and is
 The **ActivityFeed** in the Settings → Agent access tab streams a window of recent tool invocations. Each entry shows:
 
 - Relative timestamp (*"3s ago"*).
-- Tool name and a short, privacy-safe summary (`"search: 'planning'" → 4 results`).
+- Tool name and a short, field-filtered summary using the real output shape (for example,
+  `search — 4 matches` or `add_tag — applied 01HZTEST to 01HZB10C`).
 - Operation count if the call wrote anything.
 - A status indicator (green / amber / red).
 - A clickable target if relevant (the block or page that was touched).
 
 The feed is local to each device — agent activity isn't synced.
+
+Summaries may show structural counts, dates, property keys, number/date/bool property values, and
+shortened ULID/reference prefixes. They never include block content, page titles, tag display
+names, search query strings, or text property values (`value_text`).
 
 ## Session revert
 
@@ -98,7 +103,7 @@ On **Android** the custom scheme isn't available, so the same three routes are s
 ## Pitfalls to know
 
 - **MCP listens locally only.** It's never exposed over the network. Two computers can't share one Agaric's MCP — pair them via [sync.md](sync.md) instead.
-- **The MCP `space_id` argument fences off neither reads nor writes.** The read-only surface is deliberately vault-wide, and the write-side `space_id` is a self-declared consistency check an adversarial agent can satisfy for any space — not an isolation boundary. See [Space scoping](#space-scoping-reads-are-vault-wide-writes-are-space-scoped) above. Don't rely on the MCP space argument to hide or protect one space's contents from an agent.
+- **The MCP `space_id` argument fences off neither reads nor writes.** The read-only surface is deliberately vault-wide, and the write-side `space_id` is an agent-supplied destination (`create_page`) or consistency input (the five existing-target mutations) — not an isolation boundary. See [Space scoping](#space-scoping-reads-are-vault-wide-writes-are-space-scoped) above. Don't rely on the MCP space argument to hide or protect one space's contents from an agent.
 - **Reverting a session is coarse, and bounded by the feed.** It reverts every agent op still in the 100-entry activity window — not a surgical subset, and not ops that have already scrolled out. Use the History view for either of those.
 - **The activity feed is bounded and in-memory.** It holds 100 entries and doesn't survive a restart. For a long-term record, the History view is the source of truth — though it doesn't distinguish agent ops from your own, so match them up by time.
 - **Quick Capture goes to the active space.** If you switch spaces and capture, it lands in the new space.
