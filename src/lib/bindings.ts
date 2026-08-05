@@ -589,8 +589,6 @@ export const commands = {
 	 *  every [`IMPORT_BIB_CHUNK_ENTRIES`] entries (#2470 writer-lock contract).
 	 */
 	importBibliography: (content: string, format: string | null, spaceId: SpaceId) => typedError<ImportBibliographyResult, AppError>(__TAURI_INVOKE("import_bibliography", { content, format, spaceId })),
-	/**  Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`]. */
-	addAttachment: (blockId: BlockId, filename: string, mimeType: string, sizeBytes: number, fsPath: string) => typedError<AttachmentRow, AppError>(__TAURI_INVOKE("add_attachment", { blockId, filename, mimeType, sizeBytes, fsPath })),
 	/**
 	 *  Tauri command: add an attachment from raw bytes. Delegates to
 	 *  [`add_attachment_with_bytes_inner`].

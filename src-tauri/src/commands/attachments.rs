@@ -41,8 +41,9 @@ const MAX_ATTACHMENT_FILENAME_BYTES: usize = 255;
 /// root cause — the bad name being STORED at all.
 ///
 /// This **rejects** (returns [`AppError::Validation`]) rather than silently
-/// sanitizing, because both call sites (`add_attachment_inner`,
-/// `rename_attachment_inner`) are LOCAL, user-initiated commands: a clear
+/// sanitizing, because both local origination paths
+/// (`add_attachment_with_bytes_inner`, `rename_attachment_inner`) are
+/// user-initiated commands: a clear
 /// error is better UX than a surprising silent rewrite, and rejecting here
 /// stops THIS device from ever *originating* a traversal-shaped op into the
 /// op-log (whence it would replicate to peers).
@@ -100,69 +101,49 @@ fn validate_attachment_filename(filename: &str) -> Result<String, AppError> {
     Ok(trimmed.to_string())
 }
 
-/// Add a file attachment to a block.
-///
-/// Validates the block exists and is not deleted, checks file size and MIME
-/// type against the allow-list, generates a ULID for the attachment, appends
-/// an `AddAttachment` op, inserts into the `attachments` table, and dispatches
-/// background cache tasks.
-///
-/// Also stat-checks the file at `app_data_dir.join(&fs_path)` inside
-/// the IMMEDIATE transaction so a row is never committed without the
-/// underlying bytes on disk. The frontend writes the bytes via
-/// `@tauri-apps/plugin-fs` *before* invoking this command; if that write
-/// failed silently or the path drifted, the metadata lookup surfaces the
-/// problem as `AppError::Io` instead of leaving the sync layer to report
-/// `MissingAttachment` later.
-///
-/// # Errors
-///
-/// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-/// - [`AppError::Validation`] — size exceeds 50 MB, MIME type not allowed,
-///   or `metadata.len()` disagrees with the IPC-supplied `size_bytes`
-/// - [`AppError::Io`] — `fs_path` does not resolve to a file under
-///   `app_data_dir`
-#[allow(clippy::too_many_arguments)]
-#[instrument(skip(pool, device_id, materializer, app_data_dir, fs_path), err)]
-pub async fn add_attachment_inner(
-    pool: &SqlitePool,
-    device_id: &str,
-    materializer: &Materializer,
-    app_data_dir: &Path,
-    block_id: BlockId,
-    filename: String,
-    mime_type: String,
+/// Validate and normalize metadata for a new attachment before any bytes are
+/// written. The storage path is intentionally absent: only the backend-owned
+/// bytes command can originate attachments, and it generates that path.
+fn validate_new_attachment(
+    filename: &str,
+    mime_type: &str,
     size_bytes: i64,
-    fs_path: String,
-    precomputed_hash: Option<String>,
-) -> Result<AttachmentRow, AppError> {
-    // F-11 validation: size limit
+) -> Result<String, AppError> {
+    // F-11 validation: size limit.
     if size_bytes > MAX_ATTACHMENT_SIZE {
         return Err(AppError::validation(format!(
             "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
         )));
     }
 
-    // F-11 validation: MIME type allow-list
-    if !is_mime_allowed(&mime_type) {
+    // F-11 validation: MIME type allow-list.
+    if !is_mime_allowed(mime_type) {
         return Err(AppError::validation(format!(
             "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
              application/json, application/zip, application/x-tar"
         )));
     }
 
-    // #2989 (SECURITY): reject/normalize a path-traversal-shaped display
-    // filename so a traversal name (`../../evil.sh`) can never be STORED — the
-    // stored `filename` is later joined to build human-readable export/ZIP
-    // paths. `filename` is shadowed with the trimmed, validated value.
-    let filename = validate_attachment_filename(&filename)?;
+    validate_attachment_filename(filename)
+}
 
-    // Reject `fs_path` values that would escape the app data dir
-    // (absolute paths, `..` traversal, drive prefixes). The full path
-    // resolution happens later in read/write, but validating here stops
-    // bad rows from ever reaching the `attachments` table.
-    agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
-
+/// Persist metadata for bytes already written at a backend-generated path.
+///
+/// Validation and filesystem I/O happen before this helper. Keeping this core
+/// private ensures renderer callers can never supply an arbitrary app-data
+/// path while preserving the existing transaction, op-log, and dedup queries.
+#[allow(clippy::too_many_arguments)]
+async fn persist_attachment(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    block_id: BlockId,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    fs_path: String,
+    content_hash: String,
+) -> Result<AttachmentRow, AppError> {
     // Generate ULID for attachment_id
     let attachment_id = ulid::Ulid::generate().to_string().to_uppercase();
     let now = now_ms();
@@ -179,61 +160,6 @@ pub async fn add_attachment_inner(
         size_bytes,
         fs_path: fs_path.clone(),
     });
-
-    // #1620 (HIGH perf): SQLite has a single writer, so any I/O performed while
-    // the IMMEDIATE (exclusive-writer) tx is open serializes every other write
-    // behind it. The file stat + the multi-MB read + blake3 hash below depend
-    // only on the on-disk bytes, NOT on any DB/tx state, so we do them BEFORE
-    // `begin_immediate`. The writer lock is then held only across the DB work
-    // (block-exists check + op_log append + INSERT + commit). The block-exists
-    // validation stays inside the tx (TOCTOU-safe relative to the insert).
-
-    // Confirm the file really exists on disk before inserting the row.
-    // The frontend writes bytes via `@tauri-apps/plugin-fs` *before* invoking
-    // `add_attachment`; without this guard, a silent FS-write failure leaves
-    // the DB row pointing at a non-existent file and the sync layer eventually
-    // reports `MissingAttachment`. The TOCTOU window between this stat and the
-    // insert is irrelevant — sync GC reconciles missing attachments anyway
-    // (AGENTS.md §Threat Model).
-    let full_path = app_data_dir.join(&fs_path);
-    // H: async stat — avoids blocking on slow / contended storage
-    // (Android eMMC, USB-mounted vaults).
-    let metadata = tokio::fs::metadata(&full_path).await?;
-    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-    if on_disk_len != size_bytes {
-        return Err(AppError::validation(format!(
-            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
-            metadata.len()
-        )));
-    }
-
-    // #1453 Phase 1: compute and persist the blake3 content hash. Reuse the
-    // file-sync hashing helper (`read_attachment_file` → `blake3::hash(&data)
-    // .to_hex()`) so the stored hash is byte-for-byte identical to the hash
-    // the sync layer computes for the same bytes. The file is already on disk
-    // (the FE wrote it before invoking, and the stat above confirmed it).
-    // Synchronous std::fs read on the blocking pool (H), like the read
-    // Path. A hash failure is fatal here: the bytes the stat just saw are
-    // unreadable, so the row would be broken regardless. #1620: computed before
-    // the writer tx opens so the up-to-50-MB read doesn't hold the writer lock.
-    // #2192: the bytes path (`add_attachment_with_bytes_inner`) already has
-    // the full buffer in memory and hashes it while writing to disk, so it
-    // passes the hash in via `precomputed_hash` — byte-identical to what a
-    // disk read would produce, saving a redundant up-to-50-MB re-read. The
-    // path entry (`add_attachment`) passes `None` and keeps the disk-read
-    // hashing behavior (the caller wrote the bytes; we never held them).
-    let content_hash = if let Some(hash) = precomputed_hash {
-        hash
-    } else {
-        let dir = app_data_dir.to_path_buf();
-        let path = fs_path.clone();
-        let (_bytes, hash) = tokio::task::spawn_blocking(move || {
-            agaric_sync::sync_files::read_attachment_file(&dir, &path)
-        })
-        .await
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??;
-        hash
-    };
 
     // Single IMMEDIATE transaction: validation + op_log + attachments write.
     // CommandTx couples commit + post-commit dispatch.
@@ -348,23 +274,39 @@ pub async fn add_attachment_inner(
     })
 }
 
+/// Best-effort cleanup for bytes written by a rejected upload.
+async fn cleanup_rejected_attachment(full_path: &Path) {
+    match tokio::fs::remove_file(full_path).await {
+        Ok(()) => {}
+        Err(unlink_err) if unlink_err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(unlink_err) => {
+            tracing::warn!(
+                path = %full_path.display(),
+                error = %unlink_err,
+                "failed to clean up attachment bytes after add_attachment_with_bytes rejection; \
+                 will be reconciled by the GC pass"
+            );
+        }
+    }
+}
+
 /// Add an attachment by passing the raw file bytes over IPC.
 ///
 /// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
 /// them to this command; the **backend is the sole writer** — it generates the
 /// storage path, writes the bytes under `app_data_dir/attachments/`, then
-/// delegates to [`add_attachment_inner`] for the size/MIME/existence validation
-/// + op-log + row insert. This avoids the FE-writes-then-backend-stats handshake
-/// (and the orphaned-file-on-rejection race) of a filesystem-plugin design.
+/// persists the op-log + row atomically. This avoids exposing any renderer API
+/// that can point an attachment row at an arbitrary app-data file.
 ///
-/// On any failure from the delegate, the freshly-written bytes are unlinked so a
-/// rejected upload never leaks a file on disk.
+/// On any failure after writing, cleanup of the freshly-written bytes is
+/// attempted. A failed cleanup is logged and left for the attachment GC to
+/// reconcile.
 ///
 /// # Errors
 ///
 /// - [`AppError::Validation`] — size exceeds 50 MB or MIME type not allowed
 /// - [`AppError::NotFound`] — block does not exist or is soft-deleted
-/// - [`AppError::Io`] — writing the bytes to disk failed
+/// - [`AppError::Io`] — writing or verifying the bytes on disk failed
 #[allow(clippy::too_many_arguments)]
 #[instrument(skip(pool, device_id, materializer, app_data_dir, bytes), err)]
 pub async fn add_attachment_with_bytes_inner(
@@ -378,24 +320,12 @@ pub async fn add_attachment_with_bytes_inner(
     bytes: Vec<u8>,
 ) -> Result<AttachmentRow, AppError> {
     let size_bytes = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
-
-    // Pre-validate size + MIME BEFORE writing anything, so a rejected upload
-    // never touches the disk. `add_attachment_inner` re-checks (cheap).
-    if size_bytes > MAX_ATTACHMENT_SIZE {
-        return Err(AppError::validation(format!(
-            "attachment size {size_bytes} bytes exceeds maximum {MAX_ATTACHMENT_SIZE} bytes (50 MB)"
-        )));
-    }
-    if !is_mime_allowed(&mime_type) {
-        return Err(AppError::validation(format!(
-            "MIME type '{mime_type}' is not allowed; permitted: image/*, application/pdf, text/*, \
-             application/json, application/zip, application/x-tar"
-        )));
-    }
+    let filename = validate_new_attachment(&filename, &mime_type, size_bytes)?;
 
     // Backend-generated relative storage path — the FE never supplies one.
     let storage_id = ulid::Ulid::generate().to_string().to_uppercase();
     let fs_path = format!("attachments/{storage_id}");
+    agaric_sync::sync_files::check_attachment_fs_path_shape(&fs_path)?;
 
     // Write the bytes first (creates the attachments dir). `write_attachment_file`
     // is synchronous std::fs; run it on the blocking pool so a large write does
@@ -403,7 +333,7 @@ pub async fn add_attachment_with_bytes_inner(
     //
     // #2192: we already hold the full byte buffer in memory, so hash it HERE
     // (inside the same blocking task, before the buffer is dropped) instead of
-    // making `add_attachment_inner` re-read the file from disk and hash that.
+    // re-reading the file from disk only to hash the same bytes.
     // `blake3::hash(&bytes).to_hex()` is byte-identical to the disk-read hash
     // (`read_attachment_file` hashes the exact same bytes it just read back),
     // so the stored `content_hash` and the dedup key are unchanged.
@@ -418,37 +348,43 @@ pub async fn add_attachment_with_bytes_inner(
         .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))??
     };
 
-    // Delegate for validation + op-log + row insert. On ANY failure, unlink the
-    // bytes we just wrote so a rejected upload leaves nothing behind.
-    match add_attachment_inner(
+    // Retain the post-write stat guard from the former delegated path so a row
+    // is never committed if storage disappears or reports a different length.
+    let full_path = app_data_dir.join(&fs_path);
+    let metadata = match tokio::fs::metadata(&full_path).await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            cleanup_rejected_attachment(&full_path).await;
+            return Err(AppError::Io(error));
+        }
+    };
+    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+    if on_disk_len != size_bytes {
+        cleanup_rejected_attachment(&full_path).await;
+        return Err(AppError::validation(format!(
+            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
+            metadata.len()
+        )));
+    }
+
+    // On ANY persistence failure, unlink the bytes we just wrote so a rejected
+    // upload leaves nothing behind.
+    match persist_attachment(
         pool,
         device_id,
         materializer,
-        app_data_dir,
         block_id,
         filename,
         mime_type,
         size_bytes,
         fs_path.clone(),
-        Some(content_hash),
+        content_hash,
     )
     .await
     {
         Ok(row) => Ok(row),
         Err(e) => {
-            let full_path = app_data_dir.join(&fs_path);
-            match tokio::fs::remove_file(&full_path).await {
-                Ok(()) => {}
-                Err(unlink_err) if unlink_err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(unlink_err) => {
-                    tracing::warn!(
-                        path = %full_path.display(),
-                        error = %unlink_err,
-                        "failed to clean up attachment bytes after add_attachment rejection; \
-                         will be reconciled by the GC pass"
-                    );
-                }
-            }
+            cleanup_rejected_attachment(&full_path).await;
             Err(e)
         }
     }
@@ -596,7 +532,7 @@ pub async fn delete_attachment_inner(
     //
     // Rationale (delete-vs-ingest race): the write pool has >1 connection and
     // no global write mutex, so a concurrent ingest of the SAME bytes
-    // (`add_attachment_inner`) can link a fresh `attachments` row to this file
+    // (`add_attachment_with_bytes_inner`) can link a fresh `attachments` row to this file
     // between any post-commit "is it still referenced?" check and a
     // `remove_file`. An eager unlink here would then delete a file a live,
     // committed row references → data loss + a dangling reference.
@@ -781,39 +717,6 @@ pub async fn list_attachments_batch_inner(
     }
 
     Ok(grouped)
-}
-
-/// Tauri command: add an attachment to a block. Delegates to [`add_attachment_inner`].
-#[tauri::command]
-#[specta::specta]
-pub async fn add_attachment(
-    app: tauri::AppHandle,
-    ctx: State<'_, WriteCtx>,
-    block_id: BlockId,
-    filename: String,
-    mime_type: String,
-    size_bytes: i64,
-    fs_path: String,
-) -> Result<AttachmentRow, AppError> {
-    let app_data_dir = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| AppError::Io(std::io::Error::other(e.to_string())))?;
-    add_attachment_inner(
-        ctx.pool(),
-        ctx.device_id(),
-        ctx.materializer(),
-        &app_data_dir,
-        block_id,
-        filename,
-        mime_type,
-        size_bytes,
-        fs_path,
-        // #2192: path entry — we never held the bytes, so hash from disk.
-        None,
-    )
-    .await
-    .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: add an attachment from raw bytes. Delegates to

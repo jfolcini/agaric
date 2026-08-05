@@ -1,11 +1,9 @@
 /**
- * Tests for useBlockAttachments hook — attachment loading, adding, and deleting.
+ * Tests for useBlockAttachments hook — attachment loading, deleting, and renaming.
  *
  * Validates:
  * - loads attachments on mount via listAttachments
- * - handleAddAttachment calls addAttachment IPC and notifies undo store
  * - handleDeleteAttachment calls deleteAttachment IPC and notifies undo store
- * - handleAddAttachment does not notify undo on failure
  * - handleDeleteAttachment does not notify undo on failure
  * - loading state transitions correctly
  * Skips the per-block listAttachments IPC when an
@@ -176,105 +174,6 @@ describe('useBlockAttachments loading state', () => {
 })
 
 // ---------------------------------------------------------------------------
-// handleAddAttachment
-// ---------------------------------------------------------------------------
-
-describe('useBlockAttachments handleAddAttachment', () => {
-  it('calls addAttachment IPC and notifies undo store', async () => {
-    const onNewActionSpy = vi.fn()
-    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
-    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
-
-    const newRow = makeAttachmentRow('ATT_NEW', 'BLOCK_1', 'new.pdf')
-
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return []
-      if (cmd === 'add_attachment') return newRow
-      return undefined
-    })
-
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.handleAddAttachment(
-        'new.pdf',
-        'application/pdf',
-        12345,
-        '/files/new.pdf',
-      )
-    })
-
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
-      blockId: 'BLOCK_1',
-      filename: 'new.pdf',
-      mimeType: 'application/pdf',
-      sizeBytes: 12345,
-      fsPath: '/files/new.pdf',
-    })
-
-    expect(onNewActionSpy).toHaveBeenCalledWith('PAGE_1')
-    expect(result.current.attachments).toEqual([newRow])
-  })
-
-  it('does not notify undo on failure', async () => {
-    const onNewActionSpy = vi.fn()
-    // pageStore already has rootParentId: 'PAGE_1' from createPageBlockStore
-    useUndoStore.setState({ ...useUndoStore.getState(), onNewAction: onNewActionSpy })
-
-    mockedInvoke.mockImplementation(async (cmd: string) => {
-      if (cmd === 'list_attachments') return []
-      if (cmd === 'add_attachment') throw new Error('IPC failed')
-      return undefined
-    })
-
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.handleAddAttachment(
-        'fail.pdf',
-        'application/pdf',
-        100,
-        '/files/fail.pdf',
-      )
-    })
-
-    expect(onNewActionSpy).not.toHaveBeenCalled()
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to add attachment')
-    expect(result.current.attachments).toHaveLength(0)
-  })
-
-  it('does nothing when blockId is null', async () => {
-    mockedInvoke.mockResolvedValue(undefined)
-
-    const { result } = renderHook(() => useBlockAttachments(null), { wrapper })
-
-    await waitFor(() => {
-      expect(result.current.loading).toBe(false)
-    })
-
-    await act(async () => {
-      await result.current.handleAddAttachment(
-        'file.pdf',
-        'application/pdf',
-        100,
-        '/files/file.pdf',
-      )
-    })
-
-    const addCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'add_attachment')
-    expect(addCalls).toHaveLength(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
 // handleDeleteAttachment
 // ---------------------------------------------------------------------------
 
@@ -380,27 +279,6 @@ describe('useBlockAttachments error paths', () => {
       expect.objectContaining({ id: 'attachments-load-failed' }),
     )
     expect(result.current.attachments).toEqual([])
-  })
-
-  it('addAttachment rejection shows toast and preserves existing attachments', async () => {
-    const existing = [makeAttachmentRow('ATT_1', 'BLOCK_1', 'existing.pdf')]
-    mockedInvoke
-      .mockResolvedValueOnce(existing) // list_attachments succeeds
-      .mockRejectedValueOnce(new Error('Disk full')) // add_attachment fails
-
-    const { result } = renderHook(() => useBlockAttachments('BLOCK_1'), { wrapper })
-
-    await waitFor(() => {
-      expect(result.current.attachments).toHaveLength(1)
-    })
-
-    await act(async () => {
-      await result.current.handleAddAttachment('new.pdf', 'application/pdf', 5000, '/files/new.pdf')
-    })
-
-    expect(mockedToastError).toHaveBeenCalledWith('Failed to add attachment')
-    // Existing attachments must be preserved after failure
-    expect(result.current.attachments).toEqual(existing)
   })
 
   it('deleteAttachment rejection shows toast and preserves all attachments', async () => {

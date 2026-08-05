@@ -2,7 +2,8 @@
 //!
 //! Defense-in-depth sibling of the app crate's `validate_attachment_filename`
 //! (#2989). That validator REJECTS a traversal-shaped display filename at the
-//! LOCAL origination commands (`add_attachment_inner` / `rename_attachment_inner`),
+//! LOCAL origination commands (`add_attachment_with_bytes_inner` /
+//! `rename_attachment_inner`),
 //! stopping this device from ever putting a bad name into its own op-log.
 //!
 //! This sanitizer covers the hostile-PEER surface the origination guard cannot

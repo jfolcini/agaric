@@ -129,10 +129,10 @@ pub fn validate_attachment_fs_path(
 }
 
 /// Pure lexical check on an attachment `fs_path` — rejects absolute paths,
-/// `..` traversal, root / drive prefixes, and empty strings. Exists so
-/// command-layer inserts can validate without needing to know the current
-/// `app_data_dir`. See [`validate_attachment_fs_path`] for the
-/// full docs.
+/// `..` traversal, root / drive prefixes, and empty strings. Exists for trust
+/// boundaries such as snapshot restore and pre-write checks that need lexical
+/// validation without resolving the path or requiring its target to exist.
+/// See [`validate_attachment_fs_path`] for the full docs.
 ///
 /// # Errors
 ///

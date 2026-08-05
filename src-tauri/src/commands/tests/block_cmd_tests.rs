@@ -3,6 +3,52 @@ use super::common::*;
 use crate::soft_delete;
 use agaric_engine::draft;
 
+/// Exercise the production bytes-ingest path while allowing older domain
+/// fixtures to keep preparing deterministic files under the test app-data
+/// directory. The caller-supplied path is read only by this test helper; the
+/// production command always generates its own `attachments/<ULID>` path.
+#[allow(clippy::too_many_arguments)]
+async fn add_attachment_for_test(
+    pool: &SqlitePool,
+    device_id: &str,
+    materializer: &Materializer,
+    app_data_dir: &std::path::Path,
+    block_id: BlockId,
+    filename: String,
+    mime_type: String,
+    size_bytes: i64,
+    fs_path: String,
+    _precomputed_hash: Option<String>,
+) -> Result<AttachmentRow, AppError> {
+    let source_path = app_data_dir.join(fs_path);
+    let bytes = tokio::fs::read(&source_path).await?;
+    let actual_size = i64::try_from(bytes.len()).unwrap_or(i64::MAX);
+    if actual_size != size_bytes {
+        return Err(AppError::validation(format!(
+            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
+            bytes.len()
+        )));
+    }
+    let result = add_attachment_with_bytes_inner(
+        pool,
+        device_id,
+        materializer,
+        app_data_dir,
+        block_id,
+        filename,
+        mime_type,
+        bytes,
+    )
+    .await;
+    if let Ok(row) = &result {
+        let stored_path = app_data_dir.join(&row.fs_path);
+        if stored_path != source_path {
+            tokio::fs::remove_file(source_path).await?;
+        }
+    }
+    result
+}
+
 // ======================================================================
 // create_block
 // ======================================================================
@@ -1431,7 +1477,7 @@ async fn purge_block_physically_removes_from_db() {
 // #3259 — purge must never unlink bytes a SURVIVING row still references
 //
 // Since the #1993 content-hash dedup, N `attachments` rows legitimately
-// share ONE canonical file: `add_attachment_inner` points a new row at the
+// share ONE canonical file: `add_attachment_with_bytes_inner` points a new row at the
 // existing `attachment_blobs.on_disk_path` when the hash matches, and
 // `backfill_attachment_blobs` repoints every duplicate-hash row onto one
 // canonical path at boot. All three purge paths used to capture
@@ -1441,7 +1487,7 @@ async fn purge_block_physically_removes_from_db() {
 //
 // Byte reclamation now belongs solely to `cleanup_orphaned_attachments`,
 // which unlinks a file only when NO row references it — the same rule
-// `delete_attachment_inner` and the dedup branch of `add_attachment_inner`
+// `delete_attachment_inner` and the dedup branch of `add_attachment_with_bytes_inner`
 // already follow. These tests pin that on every purge path.
 // ======================================================================
 
@@ -1465,8 +1511,7 @@ struct SharedBlobFixture {
     keep_attachment_id: BlockId,
 }
 
-/// Attach the SAME bytes to `KEEPBLK` and `DOOMBLK` through two distinct
-/// on-disk paths (exactly what the frontend and `markdown.rs` import do),
+/// Attach the SAME bytes to `KEEPBLK` and `DOOMBLK` through the live byte IPC,
 /// then soft-delete `DOOMBLK` so any purge path can take it.
 async fn shared_blob_fixture() -> SharedBlobFixture {
     let (pool, dir) = test_pool().await;
@@ -1478,14 +1523,7 @@ async fn shared_blob_fixture() -> SharedBlobFixture {
     insert_block(&pool, "KEEPBLK", "content", "survivor", None, Some(1)).await;
     insert_block(&pool, "DOOMBLK", "content", "doomed", None, Some(2)).await;
 
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    let canonical_rel = "attachments/KEEPBLK.png".to_string();
-    let duplicate_rel = "attachments/DOOMBLK.png".to_string();
-    std::fs::write(app_data_dir.join(&canonical_rel), SHARED_BLOB_BYTES).unwrap();
-    std::fs::write(app_data_dir.join(&duplicate_rel), SHARED_BLOB_BYTES).unwrap();
-    let size = i64::try_from(SHARED_BLOB_BYTES.len()).unwrap();
-
-    let keep = add_attachment_inner(
+    let keep = add_attachment_with_bytes_inner(
         &pool,
         DEV,
         &mat,
@@ -1493,13 +1531,12 @@ async fn shared_blob_fixture() -> SharedBlobFixture {
         "KEEPBLK".into(),
         "banner.png".into(),
         "image/png".into(),
-        size,
-        canonical_rel.clone(),
-        None,
+        SHARED_BLOB_BYTES.to_vec(),
     )
     .await
     .unwrap();
-    let doomed = add_attachment_inner(
+    let canonical_rel = keep.fs_path.clone();
+    let doomed = add_attachment_with_bytes_inner(
         &pool,
         DEV,
         &mat,
@@ -1507,9 +1544,7 @@ async fn shared_blob_fixture() -> SharedBlobFixture {
         "DOOMBLK".into(),
         "banner.png".into(),
         "image/png".into(),
-        size,
-        duplicate_rel.clone(),
-        None,
+        SHARED_BLOB_BYTES.to_vec(),
     )
     .await
     .unwrap();
@@ -1517,14 +1552,30 @@ async fn shared_blob_fixture() -> SharedBlobFixture {
     // Precondition, not decoration: if the second add did NOT dedup onto the
     // first add's file there is no sharing and the regression is unprovable.
     assert_eq!(
-        keep.fs_path, canonical_rel,
-        "first add owns the canonical blob path"
-    );
-    assert_eq!(
         doomed.fs_path, canonical_rel,
         "#1993 dedup precondition: the second add must point at the FIRST \
          add's canonical file, otherwise this fixture proves nothing"
     );
+
+    let attachment_dir = app_data_dir.join("attachments");
+    let disk_paths: Vec<String> = std::fs::read_dir(&attachment_dir)
+        .unwrap()
+        .map(|entry| {
+            format!(
+                "attachments/{}",
+                entry.unwrap().file_name().to_string_lossy()
+            )
+        })
+        .collect();
+    assert_eq!(
+        disk_paths.len(),
+        2,
+        "the deduped second add must leave one redundant file for GC"
+    );
+    let duplicate_rel = disk_paths
+        .into_iter()
+        .find(|path| path != &canonical_rel)
+        .expect("one generated path must be the unreferenced duplicate");
 
     soft_delete::cascade_soft_delete(&pool, &mat, DEV, "DOOMBLK")
         .await
@@ -1672,10 +1723,7 @@ async fn purge_block_reclaims_genuinely_unreferenced_attachment_bytes() {
 
     insert_block(&pool, "PURGEATT", "content", "doomed", None, Some(1)).await;
 
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    let file_rel = "attachments/PURGEATT.png";
-    std::fs::write(app_data_dir.join(file_rel), b"img").unwrap();
-    add_attachment_inner(
+    let attachment = add_attachment_with_bytes_inner(
         &pool,
         DEV,
         &mat,
@@ -1683,9 +1731,7 @@ async fn purge_block_reclaims_genuinely_unreferenced_attachment_bytes() {
         "PURGEATT".into(),
         "doomed.png".into(),
         "image/png".into(),
-        3,
-        file_rel.into(),
-        None,
+        b"img".to_vec(),
     )
     .await
     .unwrap();
@@ -1700,7 +1746,7 @@ async fn purge_block_reclaims_genuinely_unreferenced_attachment_bytes() {
 
     // The GC pass is enqueued post-commit and runs on the background
     // consumer; poll for its effect.
-    let target = app_data_dir.join(file_rel);
+    let target = app_data_dir.join(&attachment.fs_path);
     assert!(
         wait_until(|| !target.exists()).await,
         "purge must still reclaim bytes NOTHING references (via the \
@@ -3988,7 +4034,7 @@ async fn add_attachment_creates_row() {
     let bytes: Vec<u8> = vec![0u8; 1024];
     std::fs::write(app_data_dir.join("attachments/photo.png"), &bytes).unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4013,9 +4059,13 @@ async fn add_attachment_creates_row() {
         "attachment mime_type should match"
     );
     assert_eq!(att.size_bytes, 1024, "attachment size should match");
-    assert_eq!(
-        att.fs_path, "attachments/photo.png",
-        "attachment fs_path should match"
+    assert!(
+        att.fs_path.starts_with("attachments/"),
+        "attachment fs_path must be backend-generated under attachments/"
+    );
+    assert!(
+        app_data_dir.join(&att.fs_path).is_file(),
+        "backend-generated attachment file must exist"
     );
     assert!(
         !att.id.as_str().is_empty(),
@@ -4068,7 +4118,7 @@ async fn add_attachment_persists_blake3_content_hash() {
     std::fs::write(app_data_dir.join(fs_path), &bytes).unwrap();
 
     let size = i64::try_from(bytes.len()).unwrap();
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4099,7 +4149,7 @@ async fn add_attachment_persists_blake3_content_hash() {
     // It must equal what the SYNC hasher computes for the same bytes — this is
     // the cross-check that the persisted hash matches the sync scheme.
     let (_b, sync_hash) =
-        agaric_sync::sync_files::read_attachment_file(app_data_dir, fs_path).unwrap();
+        agaric_sync::sync_files::read_attachment_file(app_data_dir, &att.fs_path).unwrap();
     assert_eq!(returned, sync_hash, "content_hash should match sync hasher");
 
     // And it must be persisted in the DB row, not just on the returned struct.
@@ -4138,7 +4188,7 @@ async fn rename_attachment_updates_filename() {
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/photo.png"), vec![0u8; 16]).unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4171,7 +4221,7 @@ async fn rename_attachment_updates_filename() {
         .await
         .unwrap();
     assert_eq!(
-        fs_path, "attachments/photo.png",
+        fs_path, att.fs_path,
         "rename must not move the underlying file"
     );
 
@@ -4211,7 +4261,7 @@ async fn rename_attachment_rejects_traversal_filenames() {
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/photo.png"), vec![0u8; 16]).unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4300,7 +4350,7 @@ async fn rename_attachment_rejects_traversal_filenames() {
     mat.shutdown();
 }
 
-/// #2989 (SECURITY): `add_attachment_inner` must likewise reject a
+/// #2989 (SECURITY): the live bytes-ingest path must reject a
 /// traversal-shaped display filename at creation time (pre-fix it applied NO
 /// filename check at all, so this fails against pre-fix code — non-tautology).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -4324,9 +4374,9 @@ async fn add_attachment_rejects_traversal_filename() {
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/blob.png"), vec![0u8; 16]).unwrap();
 
-    // Traversal-shaped DISPLAY filename (the fs_path itself is a valid,
-    // backend-shaped path — this isolates the filename check).
-    let res = add_attachment_inner(
+    // Traversal-shaped DISPLAY filename. The production path is generated by
+    // the backend, so this isolates filename validation from storage naming.
+    let res = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4354,8 +4404,8 @@ async fn add_attachment_rejects_traversal_filename() {
     .unwrap();
     assert_eq!(count, 0, "rejected add must not insert an attachments row");
 
-    // A legitimate filename at the same fs_path succeeds and stores verbatim.
-    let ok = add_attachment_inner(
+    // A legitimate filename with the same bytes succeeds and stores verbatim.
+    let ok = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4405,7 +4455,7 @@ async fn apply_attachment_sanitizes_peer_traversal_filename_3029() {
     let app_data_dir = _dir.path();
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/blob.png"), vec![0u8; 16]).unwrap();
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4505,7 +4555,7 @@ async fn delete_attachment_removes_row() {
     let bytes: Vec<u8> = vec![0u8; 2048];
     std::fs::write(app_data_dir.join("attachments/doc.pdf"), &bytes).unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4519,6 +4569,7 @@ async fn delete_attachment_removes_row() {
     )
     .await
     .unwrap();
+    let full_path = app_data_dir.join(&att.fs_path);
 
     // Delete it
     delete_attachment_inner(&pool, DEV, &mat, app_data_dir, att.id.clone())
@@ -4539,7 +4590,7 @@ async fn delete_attachment_removes_row() {
     // file survives until `cleanup_orphaned_attachments` runs (delete no
     // longer unlinks eagerly — see `delete_attachment_inner`).
     assert!(
-        app_data_dir.join("attachments/doc.pdf").exists(),
+        full_path.exists(),
         "attachment file should still be on disk immediately after delete (reclaimed by GC)"
     );
 
@@ -4548,7 +4599,7 @@ async fn delete_attachment_removes_row() {
         .await
         .unwrap();
     assert!(
-        !app_data_dir.join("attachments/doc.pdf").exists(),
+        !full_path.exists(),
         "attachment file should be removed from disk after cleanup_orphaned_attachments"
     );
 
@@ -4581,10 +4632,9 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     let bytes: Vec<u8> = vec![0u8; 64];
     let rel_path = "attachments/c3b_happy.pdf";
-    let full_path = app_data_dir.join(rel_path);
-    std::fs::write(&full_path, &bytes).unwrap();
+    std::fs::write(app_data_dir.join(rel_path), &bytes).unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4598,6 +4648,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
     )
     .await
     .unwrap();
+    let full_path = app_data_dir.join(&att.fs_path);
 
     // Sanity: file is present before delete.
     assert!(
@@ -4653,7 +4704,7 @@ async fn delete_attachment_unlinks_file_and_records_fs_path_in_op_log() {
         "op-log payload attachment_id must match"
     );
     assert_eq!(
-        parsed.fs_path, rel_path,
+        parsed.fs_path, att.fs_path,
         "C-3a: op-log payload fs_path must match the original add_attachment fs_path"
     );
 
@@ -4685,10 +4736,9 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     let app_data_dir = _dir.path();
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     let rel_path = "attachments/c3b_ghost.pdf";
-    let full_path = app_data_dir.join(rel_path);
-    std::fs::write(&full_path, b"x").unwrap();
+    std::fs::write(app_data_dir.join(rel_path), b"x").unwrap();
 
-    let att = add_attachment_inner(
+    let att = add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4702,6 +4752,7 @@ async fn delete_attachment_succeeds_when_file_already_missing_on_disk() {
     )
     .await
     .unwrap();
+    let full_path = app_data_dir.join(&att.fs_path);
 
     // Simulate the user (or a previous botched delete) removing the file
     // out from under us.
@@ -4758,7 +4809,7 @@ async fn add_attachment_validates_size_limit() {
 
     // Attempt to attach a file exceeding 50 MB
     let over_limit = MAX_ATTACHMENT_SIZE + 1;
-    let result = add_attachment_inner(
+    let result = add_attachment_with_bytes_inner(
         &pool,
         DEV,
         &mat,
@@ -4766,9 +4817,7 @@ async fn add_attachment_validates_size_limit() {
         block.id.clone(),
         "big.bin".into(),
         "application/zip".into(),
-        over_limit,
-        "attachments/big.bin".into(),
-        None,
+        vec![0; usize::try_from(over_limit).unwrap()],
     )
     .await;
 
@@ -4803,7 +4852,7 @@ async fn add_attachment_validates_mime_type() {
     .await
     .unwrap();
 
-    let result = add_attachment_inner(
+    let result = add_attachment_with_bytes_inner(
         &pool,
         DEV,
         &mat,
@@ -4811,9 +4860,7 @@ async fn add_attachment_validates_mime_type() {
         block.id.clone(),
         "virus.exe".into(),
         "application/x-msdownload".into(),
-        1024,
-        "attachments/virus.exe".into(),
-        None,
+        vec![0; 1024],
     )
     .await;
 
@@ -4827,73 +4874,6 @@ async fn add_attachment_validates_mime_type() {
         }
         other => panic!("expected Validation error, got: {other:?}"),
     }
-
-    mat.shutdown();
-}
-
-/// `add_attachment_inner` must reject a `size_bytes` that disagrees
-/// with the on-disk file's `metadata.len()` in *all* builds (previously
-/// only checked via `debug_assert_eq!`, which compiled out in release).
-/// The mismatch surfaces as `AppError::Validation` and the IMMEDIATE
-/// transaction rolls back so no row is committed.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn add_attachment_size_mismatch_returns_validation_error() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "hello".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-
-    // Write a 32-byte file but tell `add_attachment_inner` it is 64 bytes.
-    // Both values are well under MAX_ATTACHMENT_SIZE and use an allowed
-    // MIME, so the only failure path here is the size-mismatch guard.
-    let app_data_dir = _dir.path();
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    let rel_path = "attachments/mismatch.png";
-    std::fs::write(app_data_dir.join(rel_path), vec![0u8; 32]).unwrap();
-
-    let result = add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block.id.clone(),
-        "mismatch.png".into(),
-        "image/png".into(),
-        64, // declared, not the actual on-disk size
-        rel_path.into(),
-        None,
-    )
-    .await;
-
-    match result {
-        Err(AppError::Validation { message: msg, .. }) => {
-            assert!(
-                msg.contains("size mismatch") && msg.contains("64") && msg.contains("32"),
-                "error message must report both declared and on-disk sizes: {msg}"
-            );
-        }
-        other => panic!("expected AppError::Validation for size mismatch, got: {other:?}"),
-    }
-
-    // Rollback: no attachment row may be committed when the guard trips.
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        count, 0,
-        "size-mismatch failure must not leave an attachment row"
-    );
 
     mat.shutdown();
 }
@@ -4936,7 +4916,7 @@ async fn list_attachments_returns_for_block() {
     std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 50]).unwrap();
 
     // Add 2 attachments to block_a
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4951,7 +4931,7 @@ async fn list_attachments_returns_for_block() {
     .await
     .unwrap();
 
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -4967,7 +4947,7 @@ async fn list_attachments_returns_for_block() {
     .unwrap();
 
     // Add 1 attachment to block_b
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5063,7 +5043,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
     std::fs::write(app_data_dir.join("attachments/a2.pdf"), vec![0u8; 20]).unwrap();
     std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
 
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5077,7 +5057,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
     )
     .await
     .unwrap();
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5091,7 +5071,7 @@ async fn list_attachments_batch_returns_full_lists_per_block() {
     )
     .await
     .unwrap();
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5246,7 +5226,7 @@ async fn list_attachments_batch_filters_by_block_id() {
     std::fs::write(app_data_dir.join("attachments/a1.png"), vec![0u8; 10]).unwrap();
     std::fs::write(app_data_dir.join("attachments/b1.txt"), vec![0u8; 5]).unwrap();
 
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5260,7 +5240,7 @@ async fn list_attachments_batch_filters_by_block_id() {
     )
     .await
     .unwrap();
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5323,7 +5303,7 @@ async fn list_attachments_batch_attachment_row_shape_matches_list_attachments() 
     std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
     std::fs::write(app_data_dir.join("attachments/shape.png"), vec![0u8; 7]).unwrap();
 
-    add_attachment_inner(
+    add_attachment_for_test(
         &pool,
         DEV,
         &mat,
@@ -5419,273 +5399,6 @@ async fn list_attachments_returns_rows_with_deleted_at_set() {
         "row with deleted_at set must be returned (the old filter was a no-op)"
     );
     assert_eq!(rows[0].filename, "ghost.png");
-
-    mat.shutdown();
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn add_attachment_returns_io_error_when_file_missing_on_disk() {
-    // When the frontend's `@tauri-apps/plugin-fs` write fails or
-    // races so the file is never actually persisted, `add_attachment`
-    // must surface `AppError::Io` rather than committing a row that
-    // points at a non-existent file (which would later trip the sync
-    // layer's `MissingAttachment` path).
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "missing fs".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-
-    // Note: we deliberately do NOT create the file on disk.
-    let app_data_dir = _dir.path();
-
-    let result = add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block.id.clone(),
-        "ghost.png".into(),
-        "image/png".into(),
-        1024,
-        "attachments/ghost.png".into(),
-        None,
-    )
-    .await;
-
-    assert!(
-        matches!(result, Err(AppError::Io(_))),
-        "missing fs_path file must surface as AppError::Io, got: {result:?}"
-    );
-
-    // No row inserted — the IMMEDIATE tx rolled back on the metadata error.
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        count, 0,
-        "missing-file failure must not leave an attachment row"
-    );
-
-    mat.shutdown();
-}
-
-/// #1993 supersedes M-30: a second `add_attachment_inner` for the same
-/// `fs_path`/bytes across two different blocks now SUCCEEDS and DEDUPS — the
-/// partial unique index `idx_attachments_fs_path_unique` was dropped in
-/// migration 0094 so many attachment rows may share one content-addressed
-/// blob file. Both rows exist, there is exactly ONE `attachment_blobs` row,
-/// and both rows resolve to the shared file.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn add_attachment_duplicate_fs_path_returns_error_m30() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    // Two distinct blocks so the test exercises the *cross-block*
-    // Collision case (explicitly calls out "different attachment_id,
-    // even different block_id"). If a same-block re-add were the only
-    // case, it might be argued the frontend should dedupe; the schema
-    // guard has to cover the cross-block case too.
-    let block_a = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block a".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-    let block_b = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "block b".into(),
-        None,
-        Some(2),
-    )
-    .await
-    .unwrap();
-
-    let app_data_dir = _dir.path();
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    let rel_path = "attachments/m30_dup.png";
-    let bytes: Vec<u8> = vec![0u8; 16];
-    std::fs::write(app_data_dir.join(rel_path), &bytes).unwrap();
-
-    // First insert: succeeds normally.
-    add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_a.id.clone(),
-        "m30_dup.png".into(),
-        "image/png".into(),
-        16,
-        rel_path.into(),
-        None,
-    )
-    .await
-    .expect("first add_attachment must succeed");
-
-    // Second insert against the same `fs_path`/bytes from a different block:
-    // now SUCCEEDS and dedups against the existing blob.
-    let result = add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block_b.id.clone(),
-        "m30_dup.png".into(),
-        "image/png".into(),
-        16,
-        rel_path.into(),
-        None,
-    )
-    .await;
-    assert!(
-        result.is_ok(),
-        "#1993: duplicate bytes must dedup (succeed), got: {result:?}"
-    );
-
-    // Two attachment rows now point at the same file.
-    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE fs_path = ?")
-        .bind(rel_path)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        count, 2,
-        "#1993: both rows share one content-addressed blob file"
-    );
-
-    // Exactly one blob row owns those bytes.
-    let blobs: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs WHERE on_disk_path = ?")
-            .bind(rel_path)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    assert_eq!(blobs, 1, "#1993: one blob per distinct hash");
-
-    mat.shutdown();
-}
-
-/// The partial unique index excludes soft-deleted rows
-/// (`WHERE deleted_at IS NULL`). A tombstone row at a given `fs_path`
-/// must NOT block a fresh `add_attachment_inner` at the same path —
-/// otherwise a user who deletes a file and re-adds it would be locked
-/// out forever. Today's `delete_attachment_inner` hard-deletes (the
-/// `deleted_at` column is dead code per the audit), so the only
-/// way to materialise a tombstone is by direct SQL. This test is
-/// therefore phrased as a schema-level guarantee on the partial index,
-/// not as a workflow assertion against the command path.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn add_attachment_after_soft_delete_can_reuse_fs_path_m30() {
-    let (pool, _dir) = test_pool().await;
-    let mat = Materializer::new(pool.clone());
-
-    let block = create_block_inner(
-        &pool,
-        DEV,
-        &mat,
-        "content".into(),
-        "soft-delete reuse".into(),
-        None,
-        Some(1),
-    )
-    .await
-    .unwrap();
-
-    let app_data_dir = _dir.path();
-    std::fs::create_dir_all(app_data_dir.join("attachments")).unwrap();
-    let rel_path = "attachments/m30_reuse.png";
-    let bytes: Vec<u8> = vec![0u8; 8];
-    std::fs::write(app_data_dir.join(rel_path), &bytes).unwrap();
-
-    // First add via the normal path.
-    let first = add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block.id.clone(),
-        "m30_reuse.png".into(),
-        "image/png".into(),
-        8,
-        rel_path.into(),
-        None,
-    )
-    .await
-    .expect("first add_attachment must succeed");
-
-    // Simulate a soft-delete by stamping `deleted_at` directly. Today
-    // no production path writes this column, but the partial unique
-    // index is designed to be forward-compatible with a future
-    // soft-delete code path.
-    sqlx::query("UPDATE attachments SET deleted_at = ? WHERE id = ?")
-        .bind("2025-01-02T00:00:00Z")
-        .bind(&first.id)
-        .execute(&pool)
-        .await
-        .unwrap();
-
-    // Second add at the same `fs_path` — must succeed because the
-    // first row is now outside the partial index's predicate.
-    let second = add_attachment_inner(
-        &pool,
-        DEV,
-        &mat,
-        app_data_dir,
-        block.id.clone(),
-        "m30_reuse.png".into(),
-        "image/png".into(),
-        8,
-        rel_path.into(),
-        None,
-    )
-    .await
-    .expect("re-adding a fs_path after soft-delete must succeed");
-
-    assert_ne!(
-        first.id, second.id,
-        "second add must produce a fresh attachment_id"
-    );
-
-    // One tombstone + one live row at the same fs_path.
-    let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachments WHERE fs_path = ?")
-        .bind(rel_path)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        total, 2,
-        "tombstone row and fresh row must coexist at the same fs_path"
-    );
-    let live: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM attachments WHERE fs_path = ? AND deleted_at IS NULL",
-    )
-    .bind(rel_path)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        live, 1,
-        "exactly one non-soft-deleted row may exist at a given fs_path"
-    );
 
     mat.shutdown();
 }
@@ -8181,8 +7894,8 @@ async fn add_attachment_with_bytes_cleans_up_when_block_missing() {
     let mat = Materializer::new(pool.clone());
     let app_data_dir = _dir.path();
 
-    // No such block → add_attachment_inner returns NotFound *after* the bytes
-    // were written → the wrapper must unlink them (no leak).
+    // No such block → the live bytes command returns NotFound *after* writing,
+    // so it must unlink the rejected upload.
     let result = add_attachment_with_bytes_inner(
         &pool,
         DEV,

@@ -37,8 +37,8 @@ rules:
     ignore:
       - ci.yml:273
       - ci.yml:296
-      - ci.yml:416
-      - ci.yml:448
+      - ci.yml:426
+      - ci.yml:458
       - release.yml:132
       - release.yml:177
       # Re-anchored 2026-07-29 (#2737): the secretless "Install Tauri CLI for
@@ -48,7 +48,12 @@ rules:
       # the same 9 cache steps fire and none are left over.
       - release.yml:1039
       - release.yml:1071
-      - release.yml:1320
+      # Re-anchored 2026-08-05 (#3319): exact-version validation added 10
+      # lines before the cached Android/release CLI install in both workflow
+      # files, shifting the two later ci.yml cache steps and this final
+      # release.yml cache step by +10. Re-derived with an empty ignore list;
+      # the same 9 established cache steps fire and none are left over.
+      - release.yml:1330
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

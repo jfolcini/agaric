@@ -302,12 +302,22 @@ jobs:
         run: npm ci
 
       - name: Install Tauri CLI
-        # Skip the ~5-6 min source compile when the Swatinem cache restored
-        # a previously-built `cargo-tauri` into `~/.cargo/bin`. The cache
-        # is only populated by main-branch runs (`save-if` above); feature
-        # branches restore from main and reuse it.
+        # Reuse the cached binary only when it matches the exact npm CLI pin.
+        # The cache is populated by main (`save-if` above), so a dependency
+        # bump can otherwise leave feature branches running a stale Rust CLI.
+        shell: bash
         run: |
-          if ! command -v cargo-tauri >/dev/null; then cargo install tauri-cli --locked; fi
+          set -euo pipefail
+          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
+          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
+            exit 1
+          fi
+          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+          if [ "$have" != "$want" ]; then
+            cargo install tauri-cli --version "$want" --locked --force
+          fi
+          cargo tauri --version
 
       - name: Build Tauri app
         # `-v` raises tauri-bundler's log level so the real stdout/stderr
@@ -462,11 +472,21 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Tauri CLI
-        # Skip the ~5-6 min source compile when the Swatinem cache restored
-        # a previously-built `cargo-tauri` into `~/.cargo/bin` (see the
-        # `cache-bin: 'true'` config on the Rust cache step above).
+        # Reuse the cached binary only when it matches the exact npm CLI pin
+        # (see `cache-bin: 'true'` on the Rust cache step above).
+        shell: bash
         run: |
-          if ! command -v cargo-tauri >/dev/null; then cargo install tauri-cli --locked; fi
+          set -euo pipefail
+          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
+          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
+            exit 1
+          fi
+          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+          if [ "$have" != "$want" ]; then
+            cargo install tauri-cli --version "$want" --locked --force
+          fi
+          cargo tauri --version
 
       - name: Initialize Tauri Android project
         # `src-tauri/gen/android/` is gitignored EXCEPT for a handful of

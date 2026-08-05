@@ -13,7 +13,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  addAttachment,
+  addAttachmentWithBytes,
   addTag,
   batchResolve,
   cancelPairing,
@@ -3226,37 +3226,35 @@ describe('getBatchAttachments', () => {
 })
 
 // ---------------------------------------------------------------------------
-// addAttachment
+// addAttachmentWithBytes
 // ---------------------------------------------------------------------------
 
-describe('addAttachment', () => {
-  it('invokes add_attachment with all parameters', async () => {
+describe('addAttachmentWithBytes', () => {
+  it('invokes add_attachment_with_bytes with raw bytes', async () => {
     const expected = {
       id: 'ATT1',
       block_id: 'BLK001',
       filename: 'doc.pdf',
       mime_type: 'application/pdf',
       size_bytes: 2048,
-      fs_path: '/tmp/doc.pdf',
+      fs_path: 'attachments/ATT1',
       created_at: '2025-01-15T00:00:00Z',
     }
     mockedInvoke.mockResolvedValueOnce(expected)
 
-    const result = await addAttachment({
+    const result = await addAttachmentWithBytes({
       blockId: 'BLK001',
       filename: 'doc.pdf',
       mimeType: 'application/pdf',
-      sizeBytes: 2048,
-      fsPath: '/tmp/doc.pdf',
+      bytes: new Uint8Array([1, 2, 3, 255]),
     })
 
     expect(mockedInvoke).toHaveBeenCalledOnce()
-    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment', {
+    expect(mockedInvoke).toHaveBeenCalledWith('add_attachment_with_bytes', {
       blockId: 'BLK001',
       filename: 'doc.pdf',
       mimeType: 'application/pdf',
-      sizeBytes: 2048,
-      fsPath: '/tmp/doc.pdf',
+      bytes: [1, 2, 3, 255],
     })
     expect(result).toEqual(expected)
   })

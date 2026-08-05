@@ -495,11 +495,11 @@ jobs:
           # Require an EXACT pin. A range ('^2.11.4') would make the signing
           # tool non-deterministic across releases, which is not acceptable
           # for the updater root of trust.
-          case "$want" in
-            [0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "::error::@tauri-apps/cli must be an exact version, got '$want'"; exit 1 ;;
-          esac
-          have="$(cargo tauri --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
+            exit 1
+          fi
+          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
           if [ "$have" != "$want" ]; then
             cargo install tauri-cli --version "$want" --locked --force
           fi
@@ -1085,12 +1085,22 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Tauri CLI
-        # Skip the ~5-6 min source compile when the Swatinem cache
-        # restored a previously-built `cargo-tauri` into `~/.cargo/bin`
-        # (see `cache-bin: 'true'` on the Rust cache step above; matches
-        # ci.yml's android-build pattern).
+        # Reuse the cached binary only when it matches the exact npm CLI pin.
+        # A dependency bump can otherwise leave this release using a stale
+        # `cargo-tauri` restored through `cache-bin: 'true'` above.
+        shell: bash
         run: |
-          if ! command -v cargo-tauri >/dev/null; then cargo install tauri-cli --locked; fi
+          set -euo pipefail
+          want="$(node -p "require('./package.json').devDependencies['@tauri-apps/cli']")"
+          if [[ ! "$want" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+            echo "::error::@tauri-apps/cli must be an exact stable version, got '$want'"
+            exit 1
+          fi
+          have="$(cargo tauri --version 2>/dev/null | awk 'NR == 1 { print $2 }' || true)"
+          if [ "$have" != "$want" ]; then
+            cargo install tauri-cli --version "$want" --locked --force
+          fi
+          cargo tauri --version
 
       - name: Initialize Tauri Android project
         # Same scaffold-reset dance as ci.yml's android-build: stash the

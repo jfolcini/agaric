@@ -4,13 +4,15 @@
 //! Criterion benchmarks for attachment CRUD operations.
 //!
 //! Benches:
-//!   1. `add_attachment`    — add a file attachment to a random block
+//!   1. `add_attachment_with_bytes` — add a file attachment to a random block
 //!   2. `delete_attachment` — delete an attachment (re-insert between iterations)
 //!   3. `list_attachments`  — list attachments for a target block
 
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group};
 
-use agaric_lib::commands::{add_attachment_inner, delete_attachment_inner, list_attachments_inner};
+use agaric_lib::commands::{
+    add_attachment_with_bytes_inner, delete_attachment_inner, list_attachments_inner,
+};
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
 
@@ -72,11 +74,11 @@ async fn seed_attachments_for_block(pool: &SqlitePool, block_id: &str, m: usize)
 }
 
 // ===========================================================================
-// 1. bench_add_attachment — add one attachment per iteration to a random block
+// 1. bench_add_attachment_with_bytes — add one attachment per iteration
 // ===========================================================================
 
-fn bench_add_attachment(c: &mut Criterion) {
-    let mut group = c.benchmark_group("add_attachment");
+fn bench_add_attachment_with_bytes(c: &mut Criterion) {
+    let mut group = c.benchmark_group("add_attachment_with_bytes");
 
     // Cap intentional (#1231): attachments number in the thousands at most;
     // 10K is already reasonable, so this is not extended to the 100K ceiling.
@@ -87,15 +89,9 @@ fn bench_add_attachment(c: &mut Criterion) {
         let mat = rt.block_on(async { Materializer::new(pool.clone()) });
         let ids = rt.block_on(seed_blocks_bulk(&pool, size));
 
-        // `add_attachment_inner` now stat-checks the file under
-        // `app_data_dir`, so create the bench fixture once and reuse it
-        // for every iteration. The bench measures DB-write cost, not
-        // filesystem cost — a single zero-byte file is enough.
+        // Benchmark the only live origination path. An empty buffer keeps the
+        // filesystem portion minimal while retaining backend-owned path creation.
         let app_data_dir = dir.path().to_path_buf();
-        let attachments_dir = app_data_dir.join("attachments");
-        std::fs::create_dir_all(&attachments_dir).unwrap();
-        let bench_fs_path = "attachments/bench_file.txt".to_string();
-        std::fs::write(app_data_dir.join(&bench_fs_path), b"").unwrap();
 
         let mut counter = 0u64;
 
@@ -110,9 +106,8 @@ fn bench_add_attachment(c: &mut Criterion) {
                     let mat_ref = &mat;
                     let block_id = ids[counter as usize % ids.len()].clone();
                     let app_data_dir = app_data_dir.clone();
-                    let bench_fs_path = bench_fs_path.clone();
                     async move {
-                        add_attachment_inner(
+                        add_attachment_with_bytes_inner(
                             &pool,
                             "dev-bench",
                             mat_ref,
@@ -120,11 +115,7 @@ fn bench_add_attachment(c: &mut Criterion) {
                             block_id.into(),
                             format!("file_{counter}.txt"),
                             "text/plain".into(),
-                            0,
-                            bench_fs_path,
-                            // #2192: path-based bench entry — no in-memory
-                            // buffer, so hash from disk.
-                            None,
+                            Vec::new(),
                         )
                         .await
                         .unwrap();
@@ -282,7 +273,7 @@ fn bench_list_attachments(c: &mut Criterion) {
 
 criterion_group!(
     attachment_benches,
-    bench_add_attachment,
+    bench_add_attachment_with_bytes,
     bench_delete_attachment,
     bench_list_attachments,
 );

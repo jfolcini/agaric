@@ -31,9 +31,8 @@
  *
  * ## Cache invalidation
  *
- * When `useBlockAttachments` mutates (handleAddAttachment /
- * handleDeleteAttachment), it calls the provider's `invalidate(blockId)`
- * method which refetches the current window AND purges any cached id
+ * When `useBlockAttachments` deletes or renames an attachment, it calls the provider's
+ * `invalidate(blockId)` method, which refetches the current window AND purges any cached id
  * outside the window (cheap — same SQL query, just stale data refresh).
  * The purge matters because `invalidate()` carries no id-scoping guarantee
  * beyond the window it refetches; a stale off-window entry would otherwise
@@ -66,7 +65,7 @@ interface BatchAttachmentsValue {
    * Collapsed the separate count batch into this hook.
    */
   getCount: (blockId: string) => number
-  /** Trigger a refetch of the entire batch (used after add/delete mutations). */
+  /** Trigger a refetch of the entire batch (used after delete/rename mutations). */
   invalidate: (blockId: string) => void
 }
 
@@ -181,7 +180,7 @@ export function BatchAttachmentsProvider({ blockIds, children }: ProviderProps):
       // mutated" signal, and only the CURRENT window gets refetched below.
       // A cached id currently OUTSIDE the window can no longer be trusted
       // (the mutation that triggered this invalidate may be for exactly
-      // that id, e.g. an add/delete on a block that has since scrolled out
+      // that id, e.g. a delete/rename on a block that has since scrolled out
       // of view). Purge off-window entries so a later scroll back in
       // refetches fresh instead of silently serving a value that may
       // predate this invalidation (#2701 staleness fix).
