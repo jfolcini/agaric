@@ -194,7 +194,7 @@ ulid = "3.0.0"
 # longer uses it directly.
 blake3 = "1.8.5"
 chrono = { version = "0.4.44", features = ["serde"] }
-tokio = { version = "1", features = ["sync", "macros", "rt", "net", "io-util", "io-std"] }
+tokio = { version = "1", features = ["sync", "macros", "rt", "time", "net", "io-util", "io-std"] }
 regex = "1"
 aho-corasick = "1"
 # `unicode-normalization` moved with `tag_norm` + `nfc_normalise` into

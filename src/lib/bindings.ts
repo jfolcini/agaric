@@ -558,9 +558,8 @@ export const commands = {
 	/**
 	 *  Tauri command: fire an OS notification for a due / scheduled task.
 	 * 
-	 *  Validates the payload via [`prepare_notification`], then builds and
-	 *  shows the notification through `tauri-plugin-notification`.  A failure
-	 *  to dispatch (e.g. the plugin is unavailable) surfaces as
+	 *  Validates the payload via [`prepare_notification`], then dispatches it
+	 *  through the platform notification backend. A dispatch failure surfaces as
 	 *  [`AppError::InvalidOperation`]; a blank title surfaces as
 	 *  [`AppError::Validation`].
 	 */

@@ -1,8 +1,9 @@
 //! OS-notification command handlers.
 //!
 //! Provides the minimal backend path for surfacing a due / scheduled task
-//! as a native OS notification through `tauri-plugin-notification`.  This is
-//! the shippable vertical slice of (issue #138): one command,
+//! as a native OS notification through the platform notification backend
+//! (`notify-rust` directly on Linux, `tauri-plugin-notification` elsewhere).
+//! This is the shippable vertical slice of (issue #138): one command,
 //! [`notify_task`], that the frontend can call to fire a notification right
 //! now.  It deliberately does *not* yet include the full scheduler, dedupe
 //! ledger, snooze semantics, or the Settings sub-tab described in the issue
@@ -85,9 +86,8 @@ pub(crate) fn prepare_notification(
 
 /// Tauri command: fire an OS notification for a due / scheduled task.
 ///
-/// Validates the payload via [`prepare_notification`], then builds and
-/// shows the notification through `tauri-plugin-notification`.  A failure
-/// to dispatch (e.g. the plugin is unavailable) surfaces as
+/// Validates the payload via [`prepare_notification`], then dispatches it
+/// through the platform notification backend. A dispatch failure surfaces as
 /// [`AppError::InvalidOperation`]; a blank title surfaces as
 /// [`AppError::Validation`].
 #[tauri::command]
@@ -96,16 +96,18 @@ pub async fn notify_task(
     app: tauri::AppHandle,
     notification: TaskNotification,
 ) -> Result<(), AppError> {
-    notify_task_inner(&app, &notification).map_err(sanitize_internal_error)
+    notify_task_inner(&app, &notification)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
-/// Validate and dispatch the notification through the plugin.
+/// Validate and dispatch the notification through the platform backend.
 ///
 /// Split from the `#[tauri::command]` wrapper so the dispatch path is one
 /// unit and the wrapper can funnel errors through
 /// [`sanitize_internal_error`] (per the IPC error-sanitization convention).
 #[tracing::instrument(skip(app, notification), err)]
-fn notify_task_inner<R: tauri::Runtime>(
+async fn notify_task_inner<R: tauri::Runtime>(
     app: &tauri::AppHandle<R>,
     notification: &TaskNotification,
 ) -> Result<(), AppError> {
@@ -125,14 +127,14 @@ fn notify_task_inner<R: tauri::Runtime>(
     //
     // Running the blocking call on a plain `std::thread` makes dispatch
     // independent of the surrounding runtime (verified to emit the `Notify`
-    // and land in the center). #702: the thread is detached and its result
-    // collected over a bounded channel (`recv_timeout`) so a hung daemon
-    // can't park a tokio worker; a real failure still surfaces to the
-    // caller / logs, and a timeout is logged and returned as an error.
+    // and land in the center). #702 keeps that thread detached so the native
+    // call cannot pin shutdown. #3266 delivers its result through a Tokio
+    // oneshot awaited under `tokio::time::timeout`, so waiting yields the
+    // runtime worker; a real failure still surfaces to the caller / logs.
     #[cfg(target_os = "linux")]
     {
         let _ = app; // plugin handle unused on this path
-        dispatch_linux_notification(title, body)
+        dispatch_linux_notification(title, body).await
     }
 
     #[cfg(not(target_os = "linux"))]
@@ -150,25 +152,26 @@ fn notify_task_inner<R: tauri::Runtime>(
 
 /// Upper bound on how long we wait for the dedicated notification thread to
 /// finish before giving up. #702: a hung D-Bus / FDO daemon can leave
-/// `notify-rust`'s blocking `show()` parked forever; a synchronous
-/// `JoinHandle::join()` inside the async command would then pin a tokio
-/// worker indefinitely. We wait at most this long, then return without
-/// blocking. 5s is generously above a healthy daemon's sub-millisecond
-/// `Notify` round-trip while still bounding the worst case.
+/// `notify-rust`'s blocking `show()` parked forever. The async receiver wait
+/// yields its Tokio worker and expires after this duration. Expiry stops only
+/// the caller's wait: the detached OS thread is not cancellable and can remain
+/// parked indefinitely if the daemon never recovers. 5s is generously above a
+/// healthy daemon's sub-millisecond `Notify` round-trip.
 #[cfg(target_os = "linux")]
 const LINUX_NOTIFY_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Dispatch an OS notification on Linux via `notify-rust`, off the tokio
-/// runtime. See [`notify_task_inner`] for why the plugin path is bypassed.
+/// Dispatch an OS notification on Linux via `notify-rust`, with its blocking
+/// call off the Tokio runtime. See [`notify_task_inner`] for why the plugin
+/// path is bypassed.
 ///
 /// #702: the dedicated-thread workaround is kept (it's what makes the
 /// blocking `show()` independent of the surrounding async runtime), but the
-/// thread is **detached** and its result delivered over a bounded
-/// `mpsc::recv_timeout`. A hung notification daemon can therefore no longer
-/// park the calling tokio worker: on timeout we log and return, leaving the
-/// orphaned thread to drain on its own.
+/// thread is **detached** and its result delivered over a Tokio oneshot. The
+/// receiver is awaited under [`tokio::time::timeout`], so a hung notification
+/// daemon cannot park the calling Tokio worker. Timeout returns an error but
+/// cannot cancel the native call; its detached OS thread may remain parked.
 #[cfg(target_os = "linux")]
-fn dispatch_linux_notification(title: String, body: Option<String>) -> Result<(), AppError> {
+async fn dispatch_linux_notification(title: String, body: Option<String>) -> Result<(), AppError> {
     spawn_and_wait_notification(LINUX_NOTIFY_TIMEOUT, move || {
         let mut n = notify_rust::Notification::new();
         n.summary(&title);
@@ -181,51 +184,74 @@ fn dispatch_linux_notification(title: String, body: Option<String>) -> Result<()
         n.hint(notify_rust::Hint::DesktopEntry("agaric".to_string()));
         n.show().map(|_| ()).map_err(|e| e.to_string())
     })
+    .await
 }
 
 /// Run `work` on a dedicated, **detached** OS thread and wait at most
-/// `timeout` for its result over a bounded channel.
+/// `timeout` for its result over an async oneshot.
 ///
 /// Split from [`dispatch_linux_notification`] so the timeout / hang-guard
 /// behaviour (#702) is unit-testable without a live D-Bus daemon: a test can
-/// pass a `work` closure that sleeps past `timeout` and assert the call
-/// returns promptly with an error instead of blocking forever.
+/// pass controlled work and assert the async caller stays schedulable while it
+/// waits, without depending on a live D-Bus daemon.
 ///
-/// On timeout the worker thread is left running (detached); it will finish
-/// and drop its send half harmlessly once the underlying call unblocks.
+/// On timeout the worker thread is left running (detached). If the underlying
+/// call eventually unblocks, sending fails harmlessly because the receiver has
+/// gone; if it never unblocks, that OS thread remains parked.
 #[cfg(target_os = "linux")]
-fn spawn_and_wait_notification<F>(timeout: std::time::Duration, work: F) -> Result<(), AppError>
+async fn spawn_and_wait_notification<F>(
+    timeout: std::time::Duration,
+    work: F,
+) -> Result<(), AppError>
 where
     F: FnOnce() -> Result<(), String> + Send + 'static,
 {
-    let (tx, rx) = std::sync::mpsc::sync_channel::<Result<(), String>>(1);
+    let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     std::thread::Builder::new()
         .name("os-notify".into())
         .spawn(move || {
-            // If the receiver has already given up (timeout), the send fails
-            // and we simply drop the result — the thread exits cleanly.
-            let _ = tx.send(work());
+            send_notification_result(tx, work);
         })
         .map_err(|e| {
             AppError::InvalidOperation(format!("failed to spawn notification thread: {e}"))
         })?;
 
-    match rx.recv_timeout(timeout) {
-        Ok(Ok(())) => Ok(()),
-        Ok(Err(e)) => Err(AppError::InvalidOperation(format!(
+    wait_for_notification_result(timeout, rx).await
+}
+
+#[cfg(target_os = "linux")]
+fn send_notification_result<F>(tx: tokio::sync::oneshot::Sender<Result<(), String>>, work: F)
+where
+    F: FnOnce() -> Result<(), String>,
+{
+    // If the receiver has already given up (timeout or cancellation), log and
+    // drop the result. The detached thread then exits cleanly.
+    if tx.send(work()).is_err() {
+        tracing::debug!("OS notification result receiver dropped before the worker completed");
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn wait_for_notification_result(
+    timeout: std::time::Duration,
+    rx: tokio::sync::oneshot::Receiver<Result<(), String>>,
+) -> Result<(), AppError> {
+    match tokio::time::timeout(timeout, rx).await {
+        Ok(Ok(Ok(()))) => Ok(()),
+        Ok(Ok(Err(e))) => Err(AppError::InvalidOperation(format!(
             "failed to dispatch OS notification: {e}"
         ))),
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+        Err(_) => {
             tracing::warn!(
                 timeout_secs = timeout.as_secs(),
                 "OS notification dispatch timed out (notification daemon unresponsive); \
-                 abandoning the attempt without blocking the async runtime"
+                 giving up the async wait; the detached OS thread may remain parked"
             );
             Err(AppError::InvalidOperation(
                 "notification dispatch timed out".into(),
             ))
         }
-        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(AppError::InvalidOperation(
+        Ok(Err(_)) => Err(AppError::InvalidOperation(
             "notification dispatch thread exited without a result".into(),
         )),
     }
@@ -300,49 +326,16 @@ mod tests {
         assert_eq!(parsed.block_id, None);
     }
 
-    // -- #702: bounded-wait hang guard -----------------------------------
+    // -- #702/#3266: detached-thread async wait --------------------------
 
-    /// #702: a hung notification daemon must NOT park the caller. With a
-    /// short timeout and a worker that sleeps well past it, the call returns
-    /// promptly (an error), proving the blocking `join()` was replaced by a
-    /// bounded `recv_timeout`.
     #[cfg(target_os = "linux")]
-    #[test]
-    fn notify_dispatch_times_out_instead_of_blocking() {
-        use std::time::{Duration, Instant};
-
-        let timeout = Duration::from_millis(50);
-        let start = Instant::now();
-        let result = spawn_and_wait_notification(timeout, || {
-            // Simulate a wedged D-Bus call that never returns in time.
-            std::thread::sleep(Duration::from_secs(30));
-            Ok(())
-        });
-        let elapsed = start.elapsed();
-
-        assert!(
-            matches!(result, Err(AppError::InvalidOperation(_))),
-            "hung dispatch must return an error, got {result:?}"
-        );
-        assert!(
-            elapsed < Duration::from_secs(5),
-            "call must return shortly after the {timeout:?} timeout, took {elapsed:?}"
-        );
-    }
-
-    /// #702 happy path: a fast worker's result is delivered before the
-    /// timeout and propagated faithfully (success and failure).
-    #[cfg(target_os = "linux")]
-    #[test]
-    fn notify_dispatch_returns_worker_result_when_fast() {
-        use std::time::Duration;
-
-        let ok = spawn_and_wait_notification(Duration::from_secs(5), || Ok(()));
+    #[tokio::test]
+    async fn notify_dispatch_returns_worker_result_when_fast() {
+        let timeout = std::time::Duration::from_secs(5);
+        let ok = spawn_and_wait_notification(timeout, || Ok(())).await;
         assert!(ok.is_ok(), "fast success must propagate, got {ok:?}");
 
-        let err = spawn_and_wait_notification(Duration::from_secs(5), || {
-            Err("daemon said no".to_string())
-        });
+        let err = spawn_and_wait_notification(timeout, || Err("daemon said no".to_string())).await;
         match err {
             Err(AppError::InvalidOperation(msg)) => {
                 assert!(
@@ -352,5 +345,148 @@ mod tests {
             }
             other => panic!("fast failure must propagate as InvalidOperation, got {other:?}"),
         }
+    }
+
+    /// #3266: awaiting a parked native worker must yield a single-threaded
+    /// Tokio runtime. The sibling future releases the OS worker only after one
+    /// runtime turn; a synchronous receive would prevent that release, hit the
+    /// five-second error path, and make this assertion fail. No elapsed-time
+    /// threshold is involved.
+    #[cfg(target_os = "linux")]
+    #[tokio::test(flavor = "current_thread")]
+    async fn notify_dispatch_wait_keeps_current_thread_runtime_responsive() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let waiting = spawn_and_wait_notification(std::time::Duration::from_secs(5), move || {
+            started_tx
+                .send(())
+                .expect("signal that notification worker started");
+            release_rx
+                .recv()
+                .map_err(|error| format!("release worker: {error}"))?;
+            Ok(())
+        });
+        let release = async move {
+            started_rx
+                .await
+                .expect("notification worker must signal startup");
+            tokio::task::yield_now().await;
+            release_tx.send(()).expect("release notification worker");
+        };
+
+        let (result, ()) = tokio::join!(waiting, release);
+        assert!(
+            result.is_ok(),
+            "async wait must let the sibling release future run: {result:?}"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test(start_paused = true)]
+    async fn notify_dispatch_timeout_is_reported_with_virtual_time() {
+        let timeout = std::time::Duration::from_secs(5);
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel::<()>();
+        let waiting = tokio::spawn(spawn_and_wait_notification(timeout, move || {
+            started_tx
+                .send(())
+                .expect("signal that notification worker started");
+            release_rx
+                .recv()
+                .map_err(|error| format!("release worker: {error}"))?;
+            finished_tx
+                .send(())
+                .expect("signal that notification worker finished");
+            Ok(())
+        }));
+
+        started_rx
+            .await
+            .expect("notification worker must signal startup");
+        tokio::time::advance(timeout).await;
+        let result = waiting.await.expect("notification wait task must join");
+        match result {
+            Err(AppError::InvalidOperation(message)) => {
+                assert!(message.contains("timed out"), "timeout error: {message}");
+            }
+            other => panic!("pending sender must time out, got {other:?}"),
+        }
+
+        release_tx.send(()).expect("release timed-out worker");
+        finished_rx
+            .await
+            .expect("timed-out notification worker must exit");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn notify_dispatch_disconnected_sender_is_reported() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        drop(tx);
+        let result = wait_for_notification_result(std::time::Duration::from_secs(5), rx).await;
+        match result {
+            Err(AppError::InvalidOperation(message)) => assert!(
+                message.contains("exited without a result"),
+                "disconnect error: {message}"
+            ),
+            other => panic!("dropped sender must report disconnect, got {other:?}"),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn notification_worker_tolerates_disconnected_receiver() {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        drop(rx);
+        let work_ran = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let work_ran_in_worker = std::sync::Arc::clone(&work_ran);
+
+        send_notification_result(tx, move || {
+            work_ran_in_worker.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        });
+
+        assert!(
+            work_ran.load(std::sync::atomic::Ordering::SeqCst),
+            "worker must complete even when its receiver was cancelled"
+        );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn cancelling_notification_wait_drops_receiver_and_worker_can_exit() {
+        let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+        let (release_tx, release_rx) = std::sync::mpsc::channel::<()>();
+        let (finished_tx, finished_rx) = tokio::sync::oneshot::channel::<()>();
+        let waiting = tokio::spawn(spawn_and_wait_notification(
+            std::time::Duration::from_secs(5),
+            move || {
+                started_tx
+                    .send(())
+                    .expect("signal that notification worker started");
+                release_rx
+                    .recv()
+                    .map_err(|error| format!("release worker: {error}"))?;
+                finished_tx
+                    .send(())
+                    .expect("signal that notification worker finished");
+                Ok(())
+            },
+        ));
+
+        started_rx
+            .await
+            .expect("notification worker must signal startup");
+        waiting.abort();
+        let join_error = waiting
+            .await
+            .expect_err("aborted notification wait must be cancelled");
+        assert!(join_error.is_cancelled(), "join error: {join_error}");
+
+        release_tx.send(()).expect("release cancelled worker");
+        finished_rx
+            .await
+            .expect("cancelled notification worker must exit");
     }
 }
