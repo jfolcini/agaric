@@ -4272,8 +4272,15 @@ async fn seed_registered_space_with_member_and_satellites(
         .await
         .unwrap();
     sqlx::query(
-        "INSERT INTO block_drafts (block_id, content, updated_at) \
-             VALUES (?, 'draft content 606', 1755259200000)",
+        // NON-DEFAULT anchor values on purpose (#3271). `draft_anchor_seq`
+        // defaults to 0 and `draft_anchor_device` to NULL, so seeding the
+        // defaults would let a rebuild that snapshots or restores only
+        // (block_id, content, updated_at) reproduce them by accident and pass.
+        // With 4242/'DEV606ANCHOR' seeded, any column-dropping snapshot OR
+        // restore reddens this test as well as the source guard.
+        "INSERT INTO block_drafts \
+             (block_id, content, updated_at, draft_anchor_seq, draft_anchor_device) \
+             VALUES (?, 'draft content 606', 1755259200000, 4242, 'DEV606ANCHOR')",
     )
     .bind(member_id)
     .execute(pool)
@@ -4333,16 +4340,28 @@ async fn assert_registered_space_state(
         "{stage}: the exact page alias must survive"
     );
 
-    let draft: Option<(String, i64)> =
-        sqlx::query_as("SELECT content, updated_at FROM block_drafts WHERE block_id = ?")
-            .bind(member_id)
-            .fetch_optional(pool)
-            .await
-            .unwrap();
+    // The anchor columns (0092) are read back too: a rebuild whose scratch
+    // snapshot or whose restore projection drops them silently resets every
+    // draft to seq 0 / device NULL, which recovery reads as "no local op
+    // preceded this draft" — the #3271 loss class, invisible if this only
+    // asserted (content, updated_at).
+    let draft: Option<(String, i64, i64, Option<String>)> = sqlx::query_as(
+        "SELECT content, updated_at, draft_anchor_seq, draft_anchor_device \
+             FROM block_drafts WHERE block_id = ?",
+    )
+    .bind(member_id)
+    .fetch_optional(pool)
+    .await
+    .unwrap();
     assert_eq!(
         draft,
-        Some(("draft content 606".to_string(), 1755259200000)),
-        "{stage}: the exact draft payload must survive"
+        Some((
+            "draft content 606".to_string(),
+            1755259200000,
+            4242,
+            Some("DEV606ANCHOR".to_string())
+        )),
+        "{stage}: the exact draft payload, anchor seq, and anchor device must survive"
     );
 }
 
@@ -4655,10 +4674,14 @@ async fn agents_md_table_rebuild_recipe_preserves_authoritative_state_606() {
     )
     .await;
     let scratch: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_temp_master WHERE name LIKE '_keep_%'")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        // `ESCAPE '\'` so the leading `_` is a literal underscore, not a
+        // LIKE single-character wildcard (matching the 0089 scratch check).
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM sqlite_temp_master WHERE name LIKE '\\_keep\\_%' ESCAPE '\\'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(scratch, 0, "the recipe must remove every scratch table");
     let foreign_key_violations: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")

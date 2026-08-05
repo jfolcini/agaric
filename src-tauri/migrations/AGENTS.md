@@ -186,7 +186,7 @@ For `blocks`, the authoritative children were exactly `page_aliases` and `block_
 
 Three enforcement layers pin this choreography:
 
-- `migrations-rebuild-cascade` validates linked executable snapshots/restores and their ordering for every migration containing `DROP TABLE blocks`; `migrations-rebuild-cascade-self-test` mutation-tests its false-open cases.
+- `migrations-rebuild-cascade` validates linked executable snapshots/restores and their ordering for every migration containing `DROP TABLE blocks`; `migrations-rebuild-cascade-self-test` mutation-tests its false-open cases. The required column set is derived by replaying migration history and is enforced on **both** arms: a `SELECT *` snapshot paired with a narrowed restore (`INSERT INTO block_drafts (block_id, content, updated_at) SELECT …`) discards the omitted columns for every row just as surely as a narrowed snapshot would. Prefer `SELECT *` on both sides, as in the recipe above.
 - `spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708` asserts the complete registry, memberships, orphan repair, aliases, and drafts immediately after 0089 and again at head.
 - `future_blocks_rebuild_migrations_must_preserve_authoritative_state_606` seeds a trigger-registered owner plus membership before every post-0089 rebuild and asserts immediately and at head, without any post-rebuild property write that could heal the registry; `agents_md_table_rebuild_recipe_preserves_authoritative_state_606` executes the copy-paste recipe against the head schema.
 

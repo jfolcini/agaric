@@ -6,8 +6,8 @@
 | **Subagents** | 1 build + 2 review |
 | **Items closed** | #3271 |
 | **Items modified** | — |
-| **Tests added** | +21 guard assertions; migration boundary coverage strengthened |
-| **Files touched** | 5 |
+| **Tests added** | +28 guard assertions; migration boundary coverage strengthened |
+| **Files touched** | 7 |
 
 **Summary:** Extended the blocks-rebuild cascade guard and migration harness to preserve
 the `spaces` registry and exact `blocks.space_id` memberships alongside page aliases and
@@ -19,10 +19,12 @@ registry before the rebuild, and restores owners before correlated memberships.
 - `prek.toml`
 - `src-tauri/src/db/tests.rs`
 - `src-tauri/migrations/AGENTS.md`
+- `.github/workflows/_validate.yml`
+- `scripts/verify-ci-equivalent.sh`
 - `docs/session-log/session-1263-spaces-rebuild-guard.md` (new)
 
 **Verification:**
-- Guard fixture suite — 21/21 assertions passed; every shipped migration passed.
+- Guard fixture suite — 28/28 assertions passed; every shipped migration passed.
 - Dedicated live guard and guard-self-test prek hooks — passed.
 - Migration preservation suite (`test(/_(376|606|708)$/)`) — passed; the focused
   `_606` / `_708` subset passed 10/10.
@@ -44,6 +46,16 @@ exact registry, an unassigned owner, the member-to-owner mapping, aliases, draft
 scratch cleanup, and foreign-key integrity. The source guard strips comments and string
 literals, links snapshots to their restores, and rejects name-only, nested-source,
 conditional-delete, unaliased-membership, and uncorrelated-update decoys.
+
+**Review follow-up (CHANGES_REQUESTED on PR #3425):** the derived required-column set is
+now enforced on the RESTORE projection/column list as well as the snapshot — a full
+`SELECT *` snapshot paired with `INSERT INTO block_drafts (block_id, content, updated_at)`
+previously passed while discarding `draft_anchor_seq`/`draft_anchor_device` for every
+drafted row. The future-rebuild path also gained the "registry stays empty from its
+DELETE until after the blocks rename" check that the 0089 introduction path already had.
+The Rust harness seeds non-default anchor values (`4242` / `'DEV606ANCHOR'`) and asserts
+them, so a column-dropping rebuild reddens the runtime test too. Both new checks were
+verified against hand-built evading migrations that the pre-fix guard passed green.
 
 **Lessons learned (for future sessions):** Preserving the registry alone is insufficient:
 deleting its rows fires `ON DELETE SET NULL` into copied block memberships. Snapshot the

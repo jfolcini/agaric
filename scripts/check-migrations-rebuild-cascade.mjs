@@ -105,6 +105,18 @@ function normalizeStatement(statement) {
     .toLowerCase()
 }
 
+/**
+ * KNOWN LIMITATION: this splits on every `;`, so it mis-splits compound
+ * bodies — most notably `CREATE TRIGGER ... BEGIN <stmt>; <stmt>; END;`,
+ * which arrives as several fragments rather than one statement (AGENTS.md
+ * requires triggers to be re-created on a `block_properties` rebuild, so such
+ * bodies do occur in guarded files). Every consequence is fail-closed: a
+ * fragment can only ADD statements the checks below might reject, never
+ * satisfy a snapshot/restore requirement that the real DDL does not — a
+ * trigger-body `INSERT INTO spaces` fragment, for example, trips the
+ * premature-registry-write check rather than silencing it. A real SQL parser
+ * would be the fix if that ever becomes too noisy.
+ */
 function statementsFor(sql) {
   return stripSqlNoise(sql).split(';').map(normalizeStatement).filter(Boolean)
 }
@@ -165,7 +177,33 @@ function findSnapshot(statements, source, before, requiredColumns) {
   return null
 }
 
-function findRestore(statements, target, scratch, start) {
+/**
+ * Does an `INSERT INTO target ... SELECT ... FROM scratch` restore actually
+ * write every required column?
+ *
+ * An explicit column list is authoritative: anything it omits is silently
+ * defaulted/NULLed even when the scratch snapshot still holds the value. That
+ * is the #3271 loss class on the restore side — a `SELECT *` snapshot paired
+ * with `INSERT INTO block_drafts (block_id, content, updated_at)` destroys
+ * `draft_anchor_seq`/`draft_anchor_device` just as thoroughly as a truncated
+ * snapshot would, so the derived column set has to be enforced on BOTH arms.
+ *
+ * Without a column list the INSERT is positional over the target's full
+ * column set, so the SELECT projection itself must carry the columns.
+ */
+function restoreProvides(statement, target, scratch, requiredColumns) {
+  const columnList = statement.match(
+    new RegExp(`^insert\\s+into\\s+(?:main\\.)?${target}\\b\\s*\\(([^)]*)\\)\\s*select\\b`),
+  )
+  if (columnList) {
+    const named = new Set(columnList[1].split(',').map((column) => column.trim()))
+    return requiredColumns.every((column) => named.has(column))
+  }
+  const projection = selectProjection(statement, scratch)
+  return projection !== null && projectionProvides(projection, scratch, requiredColumns)
+}
+
+function findRestore(statements, target, scratch, start, requiredColumns) {
   const insertRe = new RegExp(
     `^insert\\s+into\\s+(?:main\\.)?${target}\\b(?:\\s*\\([^)]*\\))?\\s+select\\b`,
   )
@@ -177,7 +215,9 @@ function findRestore(statements, target, scratch, start) {
     const directSource = statement.match(
       /\bselect\b[\s\S]*?\bfrom\s+(?:main\.)?([a-z_][a-z0-9_]*)\b/,
     )
-    if (directSource?.[1] === scratch) return i
+    if (directSource?.[1] !== scratch) continue
+    if (!restoreProvides(statement, target, scratch, requiredColumns)) continue
+    return i
   }
   return -1
 }
@@ -308,9 +348,11 @@ function validateAuthoritativeChildren(statements, dropIndex, renameIndex, schem
       )
       continue
     }
-    if (findRestore(statements, table, snapshot.table, renameIndex + 1) < 0) {
+    if (findRestore(statements, table, snapshot.table, renameIndex + 1, columns) < 0) {
       violations.push(
-        `${table}: restore the (${columns.join(', ')}) scratch snapshot after the replacement is renamed`,
+        `${table}: restore all of (${columns.join(', ')}) from the scratch snapshot after the ` +
+          `replacement is renamed — a restore whose column list or projection omits any of ` +
+          `them discards that column for every row`,
       )
     }
   }
@@ -339,7 +381,11 @@ function validateSpacesIntroduction(statements, dropIndex, renameIndex, violatio
   if (prematureRegistryWrite >= 0) {
     violations.push('spaces: keep the initial registry empty until after the blocks rename')
   }
-  if (findRestore(statements, 'spaces', snapshot.table, renameIndex + 1) < 0) {
+  // The registry `spaces` is created by THIS migration with the single
+  // column `id`, so that is its full required set at the introduction
+  // boundary (`schemaAsOf` cannot supply it — the table does not yet exist
+  // at 0089's input boundary).
+  if (findRestore(statements, 'spaces', snapshot.table, renameIndex + 1, ['id']) < 0) {
     violations.push('spaces: populate the initial registry from its snapshot after the rename')
   }
 }
@@ -379,9 +425,30 @@ function validateFutureSpacesRebuild(statements, dropIndex, renameIndex, schema,
     deleteIndex >= dropIndex
   ) {
     violations.push('spaces: DELETE the live registry after both snapshots and before DROP')
+  } else if (
+    // Emptying the registry is only half the requirement: it has to STAY
+    // empty until the replacement table is in place. Re-populating it before
+    // `DROP TABLE blocks` restores the blocks → spaces CASCADE edge, so the
+    // DROP fires spaces → `blocks.space_id` SET NULL all over again. This
+    // mirrors the same premature-write rejection `validateSpacesIntroduction`
+    // applies to the one-time 0089 path.
+    findStatement(
+      statements,
+      /^(?:insert(?:\s+or\s+\w+)?\s+into|replace\s+into)\s+(?:main\.)?spaces\b/,
+      deleteIndex + 1,
+      dropIndex,
+    ) >= 0
+  ) {
+    violations.push('spaces: keep the registry empty from its DELETE until after the blocks rename')
   }
 
-  const restoreIndex = findRestore(statements, 'spaces', registry.table, renameIndex + 1)
+  const restoreIndex = findRestore(
+    statements,
+    'spaces',
+    registry.table,
+    renameIndex + 1,
+    registryColumns,
+  )
   if (restoreIndex < 0) {
     violations.push('spaces: restore the registry scratch rows after the rename')
     return
@@ -642,6 +709,60 @@ function runSelfTest() {
     complete,
     true,
     '0107_fixture.sql',
+  )
+  // The fixture above mutates BOTH arms, so it always trips the snapshot
+  // check first and proves nothing about the restore. This one truncates
+  // ONLY the restore: a full `SELECT *` snapshot faithfully captures the
+  // anchor columns, and then the restore's explicit column list throws them
+  // away — the exact #3271 loss class, previously invisible to the guard
+  // because `findRestore` only matched the INSERT/SELECT/FROM shape.
+  expect(
+    'a full snapshot with a column-dropping block_drafts restore fails (#3271)',
+    complete.replace(
+      'INSERT INTO block_drafts SELECT * FROM keep_drafts;',
+      'INSERT INTO block_drafts (block_id, content, updated_at) ' +
+        'SELECT block_id, content, updated_at FROM keep_drafts;',
+    ),
+    false,
+    '0107_fixture.sql',
+  )
+  expect(
+    'a full snapshot with a column-dropping page_aliases restore fails (#3271)',
+    complete.replace(
+      'INSERT INTO page_aliases SELECT * FROM keep_aliases;',
+      'INSERT INTO page_aliases (page_id) SELECT page_id FROM keep_aliases;',
+    ),
+    false,
+    '0107_fixture.sql',
+  )
+  expect(
+    'a listless restore whose projection drops columns fails (#3271)',
+    complete.replace(
+      'INSERT INTO block_drafts SELECT * FROM keep_drafts;',
+      'INSERT INTO block_drafts SELECT block_id, content, updated_at FROM keep_drafts;',
+    ),
+    false,
+    '0107_fixture.sql',
+  )
+  expect(
+    'an explicit full-column restore list satisfies the derived set',
+    complete.replace(
+      'INSERT INTO block_drafts SELECT * FROM keep_drafts;',
+      'INSERT INTO block_drafts ' +
+        '(block_id, content, updated_at, draft_anchor_seq, draft_anchor_device) ' +
+        'SELECT block_id, content, updated_at, draft_anchor_seq, draft_anchor_device ' +
+        'FROM keep_drafts;',
+    ),
+    true,
+    '0107_fixture.sql',
+  )
+  expect(
+    're-populating the registry before DROP fails on a future rebuild',
+    complete.replace(
+      'DELETE FROM spaces;',
+      'DELETE FROM spaces; INSERT INTO spaces (id) SELECT id FROM keep_spaces;',
+    ),
+    false,
   )
 
   if (failed) process.exit(1)
