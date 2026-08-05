@@ -28,7 +28,20 @@ That ~18× difference is the *test scope*, not the hardware. It is the concrete 
 98 mutants tested in 42m: 82 caught, 5 missed, 11 unviable
 ```
 
-94% of viable mutants caught. `agaric-store` is well tested; the five survivors fall on exactly two accessors, and only one is a real gap.
+94% of viable mutants caught. The five survivors fall on exactly two accessors, and only one is a real gap.
+
+### What "98 mutants" actually covers — read this before generalising
+
+`examine_globs` in `.cargo/mutants.toml` scopes `agaric-store` to **`op.rs` and `op_log/**` only**. That is deliberate ("only mutate the invariant core"), but it means the 94% figure describes the op-log core, **not the crate**:
+
+| | non-test LOC |
+|---|--:|
+| mutated (`op.rs` + `op_log/**`) | **3,005** |
+| never mutated (`db/`, `snapshots/`, `tag_query/`, `tag_inheritance/`, `pagination/`, `backlink/`, `cache/`, `peer_refs.rs`, `space_filter_canonical.rs`, `cancellation.rs`) | **37,024** |
+
+So **7.5%** of the crate was mutated. "`agaric-store` is well tested" would be an unearned generalisation from a twelfth of it, and the first draft of this log made exactly that claim.
+
+This compounds with #3393 rather than being covered by it: even a perfectly right-sized lane that reached `agaric-store` would still only mutate these globs. Widening the globs is a separate decision from fixing the budget, and the two are easy to conflate.
 
 ## The real gap — `OpPayload::attachment_id`
 
