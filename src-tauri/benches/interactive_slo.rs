@@ -2,15 +2,15 @@
 #![allow(clippy::cast_possible_wrap)]
 #![allow(clippy::cast_precision_loss)]
 
-//! Interactive-command SLO gate — the canonical enforcer of the product
-//! performance SLO documented in `docs/architecture/operations.md`
-//! (§ Product SLO).
+//! Interactive-command latency gate supporting the product performance SLO
+//! documented in `docs/architecture/operations.md` (§ Product SLO).
 //!
 //! Re-runs the 100K-scale measurements for every user-facing Tauri command
-//! and `panic!`s if any sample's *mean* elapsed wall-clock exceeds the
-//! per-command latency budget. The product SLO is "interactive commands
-//! ≤ 200 ms p95 @ 100K"; individual per-command budgets are listed inline
-//! beside each bench function (this file is the source of truth for them).
+//! and `panic!`s if the accumulated mean elapsed wall-clock exceeds the
+//! command's budget. Individual budgets are listed inline beside each bench
+//! function (this file is their source of truth). The product target remains
+//! "interactive commands ≤ 200 ms p95 @ 100K", but this harness does not
+//! directly measure or enforce a per-call p95.
 //!
 //! ## Running
 //!
@@ -24,10 +24,10 @@
 //!
 //! ## Problem-command gating
 //!
-//! The problem tier now holds only measurement probes (the #2508
-//! tags_cache / pages_cache direct-query cases), gated behind the
-//! `SLO_INCLUDE_PROBLEM` env var so they don't fail CI. The two former
-//! problem commands (`list_page_links`, `list_projected_agenda`) were
+//! The gated measurement tier now holds the #2508 tags/pages-cache
+//! direct-query probes and the #2585 MostLinked cache/counterfactual probes,
+//! behind `SLO_INCLUDE_PROBLEM` so they don't fail CI. The two former problem
+//! commands (`list_page_links`, `list_projected_agenda`) were
 //! promoted to the green tier after the nightly lane confirmed them
 //! under budget (#2178). To run the gated probes locally:
 //!
@@ -35,8 +35,8 @@
 //! SLO_INCLUDE_PROBLEM=1 cargo bench --bench interactive_slo
 //! ```
 //!
-//! Each Problem fn's gate carries a TODO pointing at its mitigation
-//! plan; remove the gate as the fix lands.
+//! Remove a probe's gate only after a warm run demonstrates that its purpose
+//! and budget belong in the default-enforced set.
 //!
 //! ## Why bench-internal `assert!` rather than Criterion thresholds?
 //!
@@ -47,13 +47,29 @@
 //! the dominant pattern in this tree (`compaction_bench.rs`,
 //! `attachment_bench.rs`, `property_bench.rs`) and avoids depending on
 //! Criterion's filesystem layout.
+//!
+//! `iter_custom` times each Criterion invocation as one batch, and [`Acc`]
+//! accumulates those batch totals and iteration counts into one overall mean.
+//! It does not retain individual-call latencies. Computing a percentile over
+//! batch means would therefore dilute the same slow-call tail rather than
+//! enforce the product p95; genuine p95 enforcement would require per-call
+//! timing and is intentionally outside this gate's design.
+//!
+//! Every default-enforced read probe also executes one untimed call and
+//! asserts its fixture/result shape before registering the Criterion loop.
+//! Keep those assertions outside `iter_custom`: they prevent an empty or
+//! wrong-shape fixture from looking like a speedup without charging the check
+//! to the command's measured latency. Mutators must not change the measured
+//! fixture with a preflight call; `create_block` instead asserts the exact
+//! post-loop block and op-log growth outside the timed region.
 
 use criterion::{Criterion, criterion_group, criterion_main};
 
 use agaric_lib::commands::{
-    batch_resolve_inner, count_agenda_batch_inner, count_backlinks_batch_inner, create_block_inner,
-    export_page_markdown_inner, get_block_inner, get_properties_inner, list_blocks_inner,
-    list_page_links_inner, list_projected_agenda_inner, revert_ops_inner,
+    PAGE_LINKS_EDGE_CAP, batch_resolve_inner, count_agenda_batch_inner,
+    count_backlinks_batch_inner, create_block_inner, export_page_markdown_inner, get_block_inner,
+    get_properties_inner, list_blocks_inner, list_page_links_inner, list_projected_agenda_inner,
+    revert_ops_inner,
 };
 use agaric_lib::db::init_pool;
 use agaric_lib::materializer::Materializer;
@@ -400,14 +416,17 @@ async fn seed_export_page(pool: &SqlitePool, page_id: &str, n: usize) {
                  ut labore et dolore magna aliqua."
             )
         };
+        // Export discovers the full subtree through the denormalized page_id
+        // column; parent_id alone makes this fixture export zero children.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-             VALUES (?, 'content', ?, ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&content)
         .bind(page_id)
         .bind(i as i64 + 1)
+        .bind(page_id)
         .execute(&mut *tx)
         .await
         .unwrap();
@@ -901,8 +920,8 @@ fn gate_skipped(cmd: &str, env_var: &str) -> bool {
     }
 }
 
-/// Skip-gate for the confirmable problem-tier probes (`list_page_links` /
-/// `list_projected_agenda`, #2178) that the `bench-slo` workflow measures via
+/// Skip-gate for the #2508 cache direct-query and #2585 MostLinked
+/// cache/counterfactual probes that the `bench-slo` workflow measures via
 /// `slo_include_problem`. Set `SLO_INCLUDE_PROBLEM=1` to run.
 fn problem_skipped(cmd: &str) -> bool {
     gate_skipped(cmd, "SLO_INCLUDE_PROBLEM")
@@ -969,7 +988,7 @@ fn problem_tier_verdict(_c: &mut Criterion) {
 /// Skip-gate for `revert_ops @ 100K`. This is a *permanently* known-over-budget
 /// bench (~6× the 200 ms ceiling; see its doc) with no near-term promotion path,
 /// so it must NOT ride the shared `SLO_INCLUDE_PROBLEM` flag — otherwise
-/// enabling that flag to measure the #2178 probes would drag this bench in and
+/// enabling the cache/counterfactual probes would drag this bench in and
 /// guarantee a red job (both a pool-saturation panic and the budget breach).
 /// It gets its own dedicated `SLO_INCLUDE_REVERT` gate, which the scheduled
 /// workflow never sets.
@@ -981,6 +1000,13 @@ fn revert_gate_skipped(cmd: &str) -> bool {
 // Green tier — budgets enforced
 // ===========================================================================
 
+// #3304: every default-enforced read probe in this section must observe one
+// command result before the timed loop and assert the fixture's intended
+// shape. Exact expectations are preferred; use only a nonempty/invariant
+// check when the production response is intentionally variable. Mutators must
+// keep the measured fixture unchanged and assert exact durable growth after
+// `group.finish()` instead (`create_block` below is the model).
+
 /// `get_block` — single-row lookup by id. Budget: 1 ms @ 100K.
 fn bench_get_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 1.0;
@@ -989,6 +1015,19 @@ fn bench_get_block(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_get_block"));
     let ids = rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
     let target_id = ids[FIXTURE_SIZE / 2].clone();
+
+    let observed = rt.block_on(get_block_inner(&pool, target_id.clone().into()));
+    let observed = observed.unwrap();
+    assert_eq!(
+        observed.id.as_str(),
+        target_id,
+        "get_block @ 100K: untimed probe must return the requested fixture row (#3304)"
+    );
+    assert_eq!(
+        observed.content.as_deref(),
+        Some("Seeded block 50000 with some placeholder content."),
+        "get_block @ 100K: untimed probe returned the wrong fixture payload (#3304)"
+    );
 
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
@@ -1045,6 +1084,20 @@ fn bench_get_properties(c: &mut Criterion) {
     });
     let target_id = ids[FIXTURE_SIZE / 2].clone();
 
+    let observed = rt
+        .block_on(get_properties_inner(&pool, target_id.clone().into()))
+        .unwrap();
+    let mut observed_shape: Vec<(&str, Option<&str>)> = observed
+        .iter()
+        .map(|property| (property.key.as_str(), property.value_text.as_deref()))
+        .collect();
+    observed_shape.sort_unstable();
+    assert_eq!(
+        observed_shape,
+        vec![("category", Some("high")), ("status", Some("active"))],
+        "get_properties @ 100K: untimed probe must return exactly the two fixture properties (#3304)"
+    );
+
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
     let acc = Acc::new();
@@ -1084,6 +1137,31 @@ fn bench_list_blocks(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_list_blocks"));
     rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
     rt.block_on(assign_all_to_slo_space(&pool));
+
+    let observed = rt
+        .block_on(list_blocks_inner(
+            &pool,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(50),
+            SLO_SPACE_ID.into(),
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.items.len(),
+        50,
+        "list_blocks @ 100K: untimed probe must fill the requested first page (#3304)"
+    );
+    assert!(
+        observed.next_cursor.is_some(),
+        "list_blocks @ 100K: 100K-row fixture must advertise another page (#3304)"
+    );
 
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
@@ -1155,6 +1233,26 @@ fn bench_batch_resolve(c: &mut Criterion) {
         .collect();
     let scope = SpaceScope::Active(SpaceId::from_trusted(SLO_SPACE_ID));
 
+    let observed = rt
+        .block_on(batch_resolve_inner(
+            &pool,
+            request_ids
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<_>>(),
+            &scope,
+        ))
+        .unwrap();
+    let mut observed_ids: Vec<String> = observed.into_iter().map(|row| row.id).collect();
+    observed_ids.sort_unstable();
+    let mut expected_ids = request_ids.clone();
+    expected_ids.sort_unstable();
+    assert_eq!(
+        observed_ids, expected_ids,
+        "batch_resolve @ 100K: untimed probe must resolve exactly all 50 requested ids (#3304)"
+    );
+
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
     let acc = Acc::new();
@@ -1213,6 +1311,27 @@ fn bench_count_agenda_batch(c: &mut Criterion) {
         })
         .collect();
 
+    let observed = rt
+        .block_on(count_agenda_batch_inner(
+            &pool,
+            dates.clone(),
+            &SpaceScope::Global,
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.len(),
+        dates.len(),
+        "count_agenda_batch @ 100K: untimed probe must return every requested date (#3304)"
+    );
+    let expected_per_date = FIXTURE_SIZE.div_ceil(30);
+    for date in &dates {
+        assert_eq!(
+            observed.get(date),
+            Some(&expected_per_date),
+            "count_agenda_batch @ 100K: wrong fixture count for {date} (#3304)"
+        );
+    }
+
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
     let acc = Acc::new();
@@ -1255,6 +1374,31 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 
     let page_ids: Vec<String> = (0..10).map(|p| format!("BLP{p:021}")).collect();
 
+    let observed = rt
+        .block_on(count_backlinks_batch_inner(
+            &pool,
+            page_ids
+                .clone()
+                .into_iter()
+                .map(Into::into)
+                .collect::<Vec<agaric_core::ulid::PageId>>(),
+            &SpaceScope::Global,
+        ))
+        .unwrap();
+    assert_eq!(
+        observed.len(),
+        page_ids.len(),
+        "count_backlinks_batch @ 100K: untimed probe must return all 10 target pages (#3304)"
+    );
+    let expected_per_page = FIXTURE_SIZE / page_ids.len();
+    for page_id in &page_ids {
+        assert_eq!(
+            observed.get(page_id),
+            Some(&expected_per_page),
+            "count_backlinks_batch @ 100K: wrong fixture count for {page_id} (#3304)"
+        );
+    }
+
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
     let acc = Acc::new();
@@ -1295,10 +1439,12 @@ fn bench_count_backlinks_batch(c: &mut Criterion) {
 }
 
 /// `export_page_markdown` — serialise a page with 2K children on top of
-/// a 100K background DB. Budget: 10 ms (per §A's "export_page_markdown
-/// (2K)" row, the scale parameter is *children of the exported page*).
+/// a 100K background DB. Budget: 30 ms; #3304 showed that the former 10 ms
+/// baseline measured only the page heading because the fixture children had
+/// no `page_id`. Corrected-fixture warm means were 13.40/19.45 ms. The scale
+/// parameter is *children of the exported page*.
 fn bench_export_page_markdown(c: &mut Criterion) {
-    const BUDGET_MS: f64 = 10.0;
+    const BUDGET_MS: f64 = 30.0;
     // Must be a valid ULID (Crockford base32, no I/L/O/U): export_page_markdown_inner
     // parses the page id as a ULID. "SLOEXPORT…" had invalid chars (L, O).
     const EXPORT_PAGE_ID: &str = "01SEXPRTPG0000000000000001";
@@ -1309,6 +1455,22 @@ fn bench_export_page_markdown(c: &mut Criterion) {
     let pool = rt.block_on(fresh_pool(&dir, "slo_export"));
     rt.block_on(seed_blocks_bulk(&pool, FIXTURE_SIZE));
     rt.block_on(seed_export_page(&pool, EXPORT_PAGE_ID, CHILD_COUNT));
+
+    let observed = rt
+        .block_on(export_page_markdown_inner(&pool, EXPORT_PAGE_ID))
+        .unwrap();
+    assert!(
+        observed.starts_with("# SLO Export Page\n"),
+        "export_page_markdown @ 100K: untimed probe must export the fixture page (#3304)"
+    );
+    assert_eq!(
+        observed
+            .lines()
+            .filter(|line| line.starts_with("- "))
+            .count(),
+        CHILD_COUNT,
+        "export_page_markdown @ 100K: untimed probe must serialize all 2K fixture children (#3304)"
+    );
 
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);
@@ -1342,7 +1504,7 @@ fn bench_export_page_markdown(c: &mut Criterion) {
 /// `create_block` — one new content block on top of a 100K DB. Budget: 60 ms.
 fn bench_create_block(c: &mut Criterion) {
     const BUDGET_MS: f64 = 60.0;
-    let rt = Runtime::new().unwrap();
+    let rt = Rc::new(Runtime::new().unwrap());
     let dir = TempDir::new().unwrap();
     let pool = rt.block_on(fresh_pool(&dir, "slo_create_block"));
     let materializer = rt.block_on(async { Materializer::new(pool.clone()) });
@@ -1355,11 +1517,12 @@ fn bench_create_block(c: &mut Criterion) {
 
     {
         let pool_outer = pool.clone();
+        let rt_for_bench = rt.clone();
         group.bench_function("create_block_100k", move |b| {
             let acc = acc_for_bench.clone();
             let pool = pool_outer.clone();
             let materializer_ref = &materializer;
-            b.to_async(&rt).iter_custom(move |iters| {
+            b.to_async(rt_for_bench.as_ref()).iter_custom(move |iters| {
                 let pool = pool.clone();
                 let acc = acc.clone();
                 async move {
@@ -1386,6 +1549,32 @@ fn bench_create_block(c: &mut Criterion) {
     }
     group.finish();
 
+    let created: i64 = rt.block_on(async {
+        sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE content = 'SLO bench block'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+    });
+    assert_eq!(
+        u64::try_from(created).unwrap(),
+        acc.iters(),
+        "create_block @ 100K: every represented timed call must persist exactly one block (#3304)"
+    );
+    let create_ops: i64 = rt.block_on(async {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FROM op_log \
+             WHERE device_id = 'dev-bench' AND op_type = 'create_block'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap()
+    });
+    assert_eq!(
+        u64::try_from(create_ops).unwrap(),
+        u64::try_from(FIXTURE_SIZE).unwrap() + acc.iters(),
+        "create_block @ 100K: every represented timed call must append exactly one op (#3304)"
+    );
+
     assert_under_budget("create_block @ 100K", &acc, BUDGET_MS);
 }
 
@@ -1401,10 +1590,10 @@ fn bench_create_block(c: &mut Criterion) {
 /// blocked by a known, tracked perf gap.
 ///
 /// It gets a dedicated gate so that enabling `SLO_INCLUDE_PROBLEM` to measure
-/// the confirmable #2178 probes (`list_page_links` / `list_projected_agenda`)
-/// does not also un-gate this permanently-over-budget bench — which would both
-/// saturate the bench pool (`PoolTimedOut`) and breach the budget, guaranteeing
-/// a red job every time someone gathers the #2178 numbers.
+/// the #2508/#2585 cache and MostLinked probes does not also un-gate this
+/// permanently-over-budget bench — which would both saturate the bench pool
+/// (`PoolTimedOut`) and breach the budget, guaranteeing a red job every time
+/// someone gathers those measurements.
 ///
 /// Phase 2 §B.1 gate for `history_bench::bench_revert_ops_50op`; `revert` is
 /// bulk-write but user-initiated (Cmd+Z over a selection), so it belongs in
@@ -1502,6 +1691,24 @@ fn bench_list_page_links(c: &mut Criterion) {
     // on delete/restore/purge, just hoisted to fixture time).
     rt.block_on(agaric_store::cache::rebuild_page_link_cache(&pool))
         .unwrap();
+
+    let observed = rt
+        .block_on(list_page_links_inner(&pool, &SpaceScope::Global, None))
+        .unwrap();
+    assert_eq!(
+        observed.edges.len(),
+        PAGE_LINKS_EDGE_CAP,
+        "list_page_links @ 100K: untimed probe must fill the exact production cap (#3304)"
+    );
+    assert_eq!(
+        observed.total,
+        i64::try_from(FIXTURE_SIZE * 3).unwrap(),
+        "list_page_links @ 100K: untimed probe must observe all three edges per fixture page (#3304)"
+    );
+    assert!(
+        observed.truncated,
+        "list_page_links @ 100K: fixture must exercise the truncated response shape (#3304)"
+    );
 
     let mut group = c.benchmark_group("interactive_slo");
     group.sample_size(SAMPLE_SIZE);

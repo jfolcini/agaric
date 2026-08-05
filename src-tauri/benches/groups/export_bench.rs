@@ -61,14 +61,17 @@ async fn seed_page_with_children(pool: &SqlitePool, n: usize) {
             )
         };
 
+        // Export discovers the full subtree through the denormalized page_id
+        // column; parent_id alone makes this fixture export zero children.
         sqlx::query(
-            "INSERT INTO blocks (id, block_type, content, parent_id, position) \
-             VALUES (?, 'content', ?, ?, ?)",
+            "INSERT INTO blocks (id, block_type, content, parent_id, position, page_id) \
+             VALUES (?, 'content', ?, ?, ?, ?)",
         )
         .bind(&id)
         .bind(&content)
         .bind(page_id)
         .bind(i as i64 + 1)
+        .bind(page_id)
         .execute(&mut *tx)
         .await
         .unwrap();

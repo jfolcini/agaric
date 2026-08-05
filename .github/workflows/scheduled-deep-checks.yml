@@ -25,8 +25,8 @@ name: Scheduled deep checks
 #                    20k-row perf gates, which nothing else exercises. Split out
 #                    of the smoke shards so a smoke timeout can never skip the
 #                    SLO gate again. `workflow_dispatch` can flip
-#                    `slo_include_problem` to also measure the problem-tier
-#                    probes (list_page_links / list_projected_agenda, #2178).
+#                    `slo_include_problem` to also measure the cache and
+#                    MostLinked counterfactual probes (#2508 / #2585).
 #   mutants        — #649: cargo-mutants scoped to the invariant core
 #                    (op, op_log, reverse, loro/engine). Non-blocking; the
 #                    survivor list is the deliverable to triage into tests.
@@ -107,7 +107,7 @@ on:
         required: false
         default: '120'
       slo_include_problem:
-        description: 'Also run the interactive_slo problem-tier probes (list_page_links / list_projected_agenda @ 100K, #2178) — off by default so the scheduled gate tracks only in-budget commands'
+        description: 'Also run the interactive_slo cache/counterfactual probes (#2508/#2585) — off by default so the scheduled gate tracks only in-budget commands'
         required: false
         type: boolean
         default: false
@@ -410,7 +410,7 @@ jobs:
           #                while `interactive_slo` got cold `--test`-smoke-run
           #                in a shard — exactly what the warm bench-slo lane
           #                exists to prevent, and enough to trip the bench's own
-          #                ARCHITECTURE.md §25 budget `panic!`s on a cold run.
+          #                inline latency-budget `panic!`s on a cold run.
           #                Added in review of #3362; the union check on its own
           #                left this mutation alive.
           lane_union="$(printf '%s\n' "${all[@]}" "${slo_lane[@]}" | sort -u)"
@@ -540,7 +540,7 @@ jobs:
   # them (the old single-job layout ran the SLO gate AFTER the whole smoke walk,
   # so the #2122 mid-smoke cancellation took the gate down with it). A
   # `workflow_dispatch` can also flip `slo_include_problem` to measure the
-  # problem-tier probes (#2178).
+  # cache/counterfactual probes (#2508 / #2585).
   # ---------------------------------------------------------------------------
   bench-slo:
     runs-on: ubuntu-24.04
@@ -599,8 +599,8 @@ jobs:
 
       - name: Run interactive_slo SLO gate (#639)
         working-directory: src-tauri
-        # The bench self-`panic!`s if any command's mean latency exceeds its
-        # ARCHITECTURE.md §25 budget, so a non-zero exit IS the gate.
+        # The bench self-`panic!`s if any command's accumulated mean latency
+        # exceeds its inline budget, so a non-zero exit IS the gate.
         #
         # #3362: WHICH benches this lane runs is no longer a hardcoded name
         # here. It is the workflow-level `$SLO_BENCHES` — the same list
@@ -609,13 +609,13 @@ jobs:
         # in Cargo.toml but not here used to be excluded from the shards AND
         # absent from this lane, i.e. never run, with both jobs green.
         #
-        # By default the already-breaching `list_page_links` /
-        # `list_projected_agenda` problem-tier probes stay gated OUT
-        # (SLO_INCLUDE_PROBLEM unset) so the scheduled gate tracks only the
-        # commands currently within budget. A `workflow_dispatch` with
-        # `slo_include_problem=true` exports SLO_INCLUDE_PROBLEM=1 to MEASURE
-        # those probes @ 100K (#2178). We export it ONLY when asked, because the
-        # bench treats ANY value (even an empty string) as "on".
+        # By default the #2508 cache direct-query probes and #2585 MostLinked
+        # cache/counterfactual probes stay gated OUT (SLO_INCLUDE_PROBLEM
+        # unset), so the scheduled gate tracks only the default command set. A
+        # `workflow_dispatch` with `slo_include_problem=true` exports
+        # SLO_INCLUDE_PROBLEM=1 to MEASURE those probes @ 100K. We export it
+        # ONLY when asked, because the bench treats ANY value (even an empty
+        # string) as "on".
         #
         # #978: tee stdout so the SLO summary step can capture the per-command
         # observed-mean-vs-budget lines. `pipefail` preserves the bench's exit
@@ -626,7 +626,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$SLO_INCLUDE_PROBLEM_INPUT" = "true" ]; then
-            echo "SLO_INCLUDE_PROBLEM=1 — problem-tier probes ENABLED via dispatch (#2178)"
+            echo "SLO_INCLUDE_PROBLEM=1 — cache/counterfactual probes ENABLED via dispatch (#2508/#2585)"
             export SLO_INCLUDE_PROBLEM=1
           fi
           # Same structural bench list `bench-smoke` derives its exclusion from.
@@ -706,7 +706,7 @@ jobs:
               fi
             done
             echo
-            echo "_Budgets are sourced from the bench (ARCHITECTURE.md §25); a"
+            echo "_Budgets are sourced from the bench's inline constants; a"
             echo "breach \`panic!\`s the gate above. Track these rows across"
             echo "weekly runs for drift._"
           } >> "$GITHUB_STEP_SUMMARY"

@@ -5,7 +5,9 @@ How the system stays responsive at scale, and the architectural choices that get
 
 ## Product SLO
 
-Interactive commands ≤ 200 ms p95 at 100K blocks. Pinned by `src-tauri/benches/interactive_slo.rs` — every interactive command has a per-command budget there (the bench file is the canonical source). The bench gates CI on regression; perf drift surfaces as a build failure, not a silent slowdown.
+The product target is **interactive commands ≤ 200 ms p95 at 100K blocks**. `src-tauri/benches/interactive_slo.rs` supports that target with a scheduled regression gate, but does not directly enforce p95: it accumulates elapsed time and iteration counts across Criterion's batched `iter_custom` invocations, then enforces the resulting **mean** against each command's inline budget (the bench file is the canonical source for those budgets). Most command budgets are substantially tighter than 200 ms, so the mean gate remains useful and fails the scheduled lane on broad regressions, but it is not a guarantee about the per-call tail.
+
+The harness intentionally does not compute a percentile over Criterion batch means. Individual-call latencies are not retained, so such a percentile would still dilute a slow-call tail; genuine p95 enforcement would require per-call timing. The ≤200 ms p95 figure therefore remains the product target, while the accumulated mean under the per-command budget is the metric enforced today.
 
 Every interactive command is now in the enforced green tier except `revert_ops` (separate `SLO_INCLUDE_REVERT=1` gate, aspirational budget). `list_page_links` was promoted after the 20K count-then-cap (#2529) brought it under budget. `list_projected_agenda` was **graduated off `SLO_INCLUDE_PROBLEM` into the green tier by #2601**: its earlier straddle was an artefact of the bench measuring the COLD-cache on-the-fly fallback (it seeded repeating blocks but never populated `projected_agenda_cache`). The production interactive read is a warm-cache index scan, and #2601 makes that the measured path — see "Bounded-horizon projected agenda" below. The graph path remains the known scaling frontier.
 
