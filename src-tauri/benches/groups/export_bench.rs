@@ -22,6 +22,11 @@ use tokio::runtime::Runtime;
 /// Crockford base32 string (no I/L/O/U, first char 0-7).
 const EXPORT_PAGE_ID: &str = "0000000000000000EXP0RTPAGE";
 
+/// Title of the seeded page block. Bound (not inlined in the SQL) so the
+/// untimed shape probe in `bench_export_page_markdown` asserts against the
+/// same string the seeder writes.
+const EXPORT_PAGE_TITLE: &str = "Benchmark Export Page";
+
 /// Spin up a fresh SQLite pool (with migrations) in a temp directory.
 async fn fresh_pool(dir: &TempDir, name: &str) -> SqlitePool {
     let db_path = dir.path().join(format!("{name}.db"));
@@ -40,9 +45,10 @@ async fn seed_page_with_children(pool: &SqlitePool, n: usize) {
     // `page_id_self_for_pages` CHECK).
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, position, page_id) \
-         VALUES (?, 'page', 'Benchmark Export Page', 1, ?)",
+         VALUES (?, 'page', ?, 1, ?)",
     )
     .bind(page_id)
+    .bind(EXPORT_PAGE_TITLE)
     .bind(page_id)
     .execute(&mut *tx)
     .await
@@ -92,6 +98,34 @@ fn bench_export_page_markdown(c: &mut Criterion) {
         let dir = TempDir::new().unwrap();
         let pool = rt.block_on(fresh_pool(&dir, &format!("export_{n_blocks}")));
         rt.block_on(seed_page_with_children(&pool, n_blocks));
+
+        // Untimed shape probe (#3304 idiom, see benches/AGENTS.md): one call
+        // after seeding and before registering the Criterion loop, pinning the
+        // fixture shape this group claims to measure. Without it the bench
+        // silently degrades to serializing the page heading alone — a fixture
+        // that drops the children (the `page_id` regression this bench was just
+        // fixed for) still exports fine, still reports a throughput number, and
+        // reads as a large speedup rather than as a broken fixture. Outside
+        // `iter_custom`, so it costs the measurement nothing.
+        let observed = rt
+            .block_on(export_page_markdown_inner(&pool, EXPORT_PAGE_ID))
+            .unwrap();
+        assert!(
+            observed.starts_with(&format!("# {EXPORT_PAGE_TITLE}\n")),
+            "export_page_markdown/{n_blocks}_blocks: untimed probe must export the \
+             seeded fixture page, but the first line was: {:?}",
+            observed.lines().next()
+        );
+        assert_eq!(
+            observed
+                .lines()
+                .filter(|line| line.starts_with("- "))
+                .count(),
+            n_blocks,
+            "export_page_markdown/{n_blocks}_blocks: untimed probe must serialize all \
+             {n_blocks} seeded children — a heading-only export means the fixture lost \
+             its subtree and this bench is timing the wrong work (#3304)"
+        );
 
         group.throughput(Throughput::Elements(n_blocks as u64));
         group.bench_with_input(

@@ -131,6 +131,18 @@ outer functions, whose zero-iteration budget assertions then panic. A full cold
 `interactive_slo --test` is likewise unsuitable for a budget verdict for the
 reasons above.
 
+The same probe belongs on any *non-SLO* bench whose fixture can degrade into a
+cheaper shape — there it is strictly better off, because those benches DO run in
+the `bench-smoke` `--test` lane, so the assertion is checked every scheduled run
+rather than only in the warm lane. `export_bench.rs::bench_export_page_markdown`
+is the model: the same `page_id` drift that silently reduced the SLO export
+probe to a heading-only page had reduced this bench too, and neither reported
+anything but a faster number. Because a shape probe is untimed and outside
+`iter_custom`, cold `--test` timings are irrelevant to it — put the assertion
+after the seeder and before `benchmark_group`, where the outer bench function
+runs it unconditionally (Criterion's `--test` and its name filters both still
+invoke that function body).
+
 ## Seeding fixtures: match the CURRENT schema (the drift checklist)
 
 Benches hand-seed via raw `sqlx::query(...)`. When you add/copy a seeder, it
