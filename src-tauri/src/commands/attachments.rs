@@ -290,6 +290,48 @@ async fn cleanup_rejected_attachment(full_path: &Path) {
     }
 }
 
+/// Post-write verification of freshly-stored attachment bytes.
+///
+/// The backend is the sole writer, but a row must never be committed for bytes
+/// that are not actually on disk, or whose on-disk length disagrees with the
+/// length recorded in the row. Both conditions would commit a row pointing at
+/// storage that does not match it, which later surfaces as a sync-layer
+/// `MissingAttachment` or as a row whose `size_bytes` lies about the blob.
+///
+/// On either rejection the freshly written bytes are cleaned up, so a rejected
+/// upload leaves nothing behind.
+///
+/// Extracted from [`add_attachment_with_bytes_inner`] so the guards are
+/// directly exercisable: in production the storage path is a backend-generated
+/// random ULID, so neither failure can be provoked through the public entry
+/// point without racing the filesystem.
+///
+/// # Errors
+///
+/// - [`AppError::Io`] — the just-written file cannot be stat'd
+/// - [`AppError::Validation`] — the on-disk length differs from `size_bytes`
+pub(crate) async fn verify_written_attachment(
+    full_path: &Path,
+    size_bytes: i64,
+) -> Result<(), AppError> {
+    let metadata = match tokio::fs::metadata(full_path).await {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            cleanup_rejected_attachment(full_path).await;
+            return Err(AppError::Io(error));
+        }
+    };
+    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
+    if on_disk_len != size_bytes {
+        cleanup_rejected_attachment(full_path).await;
+        return Err(AppError::validation(format!(
+            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
+            metadata.len()
+        )));
+    }
+    Ok(())
+}
+
 /// Add an attachment by passing the raw file bytes over IPC.
 ///
 /// The frontend reads the file into bytes (a browser `ArrayBuffer`) and hands
@@ -351,21 +393,7 @@ pub async fn add_attachment_with_bytes_inner(
     // Retain the post-write stat guard from the former delegated path so a row
     // is never committed if storage disappears or reports a different length.
     let full_path = app_data_dir.join(&fs_path);
-    let metadata = match tokio::fs::metadata(&full_path).await {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            cleanup_rejected_attachment(&full_path).await;
-            return Err(AppError::Io(error));
-        }
-    };
-    let on_disk_len = i64::try_from(metadata.len()).unwrap_or(i64::MAX);
-    if on_disk_len != size_bytes {
-        cleanup_rejected_attachment(&full_path).await;
-        return Err(AppError::validation(format!(
-            "attachment size mismatch: expected {size_bytes} bytes, on disk is {} bytes",
-            metadata.len()
-        )));
-    }
+    verify_written_attachment(&full_path, size_bytes).await?;
 
     // On ANY persistence failure, unlink the bytes we just wrote so a rejected
     // upload leaves nothing behind.
