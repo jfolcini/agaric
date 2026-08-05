@@ -238,6 +238,15 @@ export function createSuggestionRenderer(
    * optional dispatch, it snapshots and clears the renderer/popup references
    * before invoking their teardown methods. The outer call then observes null
    * state after a synchronous nested `onExit()` and becomes a harmless no-op.
+   *
+   * `editorRef` is only cleared when `dispatchExit` is false (i.e. this call
+   * IS the actual `onExit()`), never by the Escape/outside-click callers
+   * themselves. On a successful dispatch, the plugin synchronously re-enters
+   * via `onExit()` (`dispatchExit: false`), which clears it there. On a
+   * failed dispatch (`dispatchExitMeta()` catches internally and returns
+   * without re-entering), `editorRef` must survive so a second Escape or
+   * outside-click can retry the dispatch — matching the pre-refactor
+   * behaviour where only `onExit()` ever nulled `editorRef`.
    */
   function closePopup({ dispatchExit }: { dispatchExit: boolean }): void {
     if (dispatchExit) dispatchExitMeta()
@@ -252,7 +261,7 @@ export function createSuggestionRenderer(
     const popupToRemove = popup
     renderer = null
     popup = null
-    editorRef = null
+    if (!dispatchExit) editorRef = null
 
     rendererToDestroy?.destroy()
     popupToRemove?.remove()

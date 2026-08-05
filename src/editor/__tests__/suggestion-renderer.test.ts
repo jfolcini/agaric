@@ -797,6 +797,50 @@ describe('outside-click dismissal', () => {
     expect(document.querySelector('.suggestion-popup')).toBeNull()
   })
 
+  // Regression for the closePopup refactor: the old, per-path handlers only
+  // ever nulled `editorRef` inside `onExit()`. The shared `closePopup()`
+  // helper nulled it unconditionally, so a `dispatchExitMeta()` failure on
+  // the Escape path (caught internally, logged, no re-entrant `onExit()`)
+  // left no `editorRef` for a second Escape to retry with.
+  it('retains editorRef so a second Escape can retry a failed dispatchExitMeta', () => {
+    const pluginKey = new PluginKey('test-suggestion')
+    const setMeta = vi.fn().mockReturnThis()
+    const dispatch = vi.fn(() => {
+      throw new Error('dispatch failed')
+    })
+    const mockEditor = {
+      state: { tr: { setMeta } },
+      view: { isDestroyed: false, dispatch },
+    } as any
+
+    const renderer = createSuggestionRenderer('Tags', pluginKey)
+    const props = makeProps()
+    props.editor = mockEditor
+    renderer.onStart(props)
+
+    // First Escape: dispatchExitMeta() throws internally (caught + logged).
+    // The popup is still torn down, but editorRef must survive for a retry.
+    const firstHandled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+    expect(firstHandled).toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+
+    // Second Escape: if editorRef survived the failed dispatch, this attempts
+    // the dispatch again. If editorRef was wrongly nulled by the first call,
+    // `dispatchExitMeta()` early-returns and dispatch is never retried.
+    const secondHandled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+    expect(secondHandled).toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(2)
+  })
+
   it('skips view.dispatch when editor view is destroyed but still cleans up popup', () => {
     const pluginKey = new PluginKey('test-suggestion')
     const dispatch = vi.fn()
