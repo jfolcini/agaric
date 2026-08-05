@@ -18,22 +18,19 @@ export const sync: Record<string, string> = {
   'pairing.pairFailed': 'Pairing failed: {{message}}',
   'pairing.unpairFailed': 'Failed to unpair device: {{message}}',
   'pairing.cameraError': 'Camera error: {{error}}',
-  'pairing.successMessage': 'Device paired successfully',
+  // #3463 (review): `confirm_pairing` arms a local proof only — it does not
+  // validate the passphrase against the peer, so this device cannot claim
+  // the pairing succeeded. Deliberately not "Device paired successfully".
+  'pairing.awaitingPeerMessage': 'Waiting for the other device…',
   'pairing.qrScannedMessage': 'QR code scanned \u2014 verify and tap Pair',
   'pairing.closeDialogLabel': 'Close pairing dialog',
   'pairing.dialogTitle': 'Pair Device',
-  // #3463 — role-chooser step: pairing only works between two devices when
-  // exactly one of them shows a code and the other enters it, so the dialog
-  // asks the user to say which this device is doing before touching the
-  // backend.
-  'pairing.roleChooserInstruction':
-    'Pairing connects two devices — one shows a code, the other enters it. What should this device do?',
-  'pairing.hostRoleButton': 'Show code on this device',
-  'pairing.hostRoleDescription':
-    'Generate a passphrase and QR code for the other device to scan or type.',
-  'pairing.joinerRoleButton': 'Enter code from other device',
-  'pairing.joinerRoleDescription': 'Scan or type the passphrase shown on the other device.',
-  'pairing.backButton': 'Back',
+  // #3463 — the dialog opens directly on the host path (this device's own
+  // code); these two strings label the affordance that switches roles.
+  // Choosing "have a code" is what declares the joiner role, replacing the
+  // old upfront chooser question.
+  'pairing.switchToJoinerLink': 'Have a code from the other device?',
+  'pairing.switchToHostLink': 'Show my code instead',
   'pairing.startingMessage': 'Starting pairing...',
   'pairing.qrCodeLabel': 'QR code for device pairing',
   'pairing.passphraseLabel': 'Passphrase:',
@@ -63,7 +60,6 @@ export const sync: Record<string, string> = {
     'Pairing is in progress. Closing this dialog will cancel the handshake and the other device will need to start over.',
   'pairing.confirmCloseAction': 'Cancel pairing',
   'pairing.confirmCloseKeep': 'Keep pairing',
-  'pairing.countdownPaused': 'Paused while typing\u2026',
   'pairing.srCountdownMinutes_one': 'Session expires in {{count}} minute',
   'pairing.srCountdownMinutes_other': 'Session expires in {{count}} minutes',
   'pairing.srCountdownSeconds_one': 'Session expires in {{count}} second',

@@ -2,16 +2,20 @@
  * PairingDialog -- modal dialog for device pairing (#219).
  *
  * #3463 — pairing only works when exactly one of the two devices shows a
- * code (the "host") and the other enters it (the "joiner"). The dialog's
- * first state is always a role choice (`PairingRole`); opening the dialog
- * fires ZERO backend calls, and the two roles' UI is mutually exclusive by
- * construction — `role` is a single tri-state value, not two booleans, so
- * "both at once" is not representable. Only the host path calls
+ * code (the "host") and the other enters it (the "joiner"). The dialog
+ * opens directly on the host path (this device's own code, no upfront
+ * question) because that is the common case and a device is pairable the
+ * moment the dialog is open. Choosing to enter a code instead — via the
+ * "Have a code from the other device?" affordance on the host screen — is
+ * what declares the joiner role; that switch cancels the host's own
+ * session first (`cancelPairing`) so this device stops offering a code it
+ * is no longer showing. The two roles' UI stays mutually exclusive by
+ * construction — `role` is a single value, not two booleans, so "both at
+ * once" (the #3463 shape) is not representable. Only the host path calls
  * `commands.startPairing()`; only the joiner path renders the entry
  * form/QR-scanner and calls `commands.confirmPairing()`.
  *
  * Sections (each extracted as a sub-component for testability):
- *  0. Role chooser (inline — two buttons, no backend call)
  *  1. QR code + passphrase display (PairingQrDisplay) — host only
  *  2. Passphrase entry (PairingEntryForm) — joiner only
  *  3. List of already-paired devices (PairingPeersList) — either role
@@ -58,17 +62,19 @@ interface PairingDialogProps {
 
 const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
 
-// #3463 — the dialog's first state. A single tri-state value (rather than
-// e.g. `isHost: boolean` + `isJoiner: boolean`) so "both roles selected at
-// once" — the bug this fix addresses — is not representable in the type.
-type PairingRole = 'chooser' | 'host' | 'joiner'
+// #3463 — a single union value (rather than e.g. `isHost: boolean` +
+// `isJoiner: boolean`) so "both roles at once" — the bug this fix
+// addresses — is not representable in the type. Only the entry point
+// changed (host by default, no chooser step); this exclusivity property
+// is what actually prevents the bug and is preserved unchanged.
+type PairingRole = 'host' | 'joiner'
 
 export function PairingDialog({
   open,
   onOpenChange,
   triggerRef,
 }: PairingDialogProps): React.ReactElement | null {
-  const [role, setRole] = useState<PairingRole>('chooser')
+  const [role, setRole] = useState<PairingRole>('host')
   const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [words, setWords] = useState<[string, string, string, string]>(['', '', '', ''])
   const [peers, setPeers] = useState<PeerRefRow[]>([])
@@ -80,14 +86,6 @@ export function PairingDialog({
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
   // Guard against accidentally closing the dialog mid-handshake.
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
-  // Pause the countdown while the user is mid-keystroke in the
-  // passphrase inputs so an in-flight handshake doesn't fail to a tick
-  // boundary. PairingEntryForm enforces a 5s idle debounce so an idle
-  // user with focus can't keep this true forever. Only ever meaningful on
-  // the host's own countdown, but the callback is shared with
-  // PairingEntryForm (joiner) unconditionally — harmless there because no
-  // countdown is ever rendered alongside the joiner's entry form.
-  const [pausedByTyping, setPausedByTyping] = useState(false)
 
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -96,9 +94,10 @@ export function PairingDialog({
   // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
   // True only once `startPairing` has actually succeeded (host path). Gates
-  // every `cancelPairing` call (close/unmount cleanup, explicit Cancel, Back
-  // to chooser) so we never cancel a session that was never started —
-  // required because the joiner path never calls `startPairing` at all.
+  // every `cancelPairing` call (close/unmount cleanup, explicit Cancel,
+  // switching to the joiner path) so we never cancel a session that was
+  // never started — required because the joiner path never calls
+  // `startPairing` at all.
   const sessionStartedRef = useRef(false)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
@@ -215,12 +214,17 @@ export function PairingDialog({
     },
   })
 
-  // #3463 — opening the dialog fires ZERO backend calls: reset to a fresh
-  // role choice every time `open` flips true. The previous version
-  // unconditionally called `startPairing` here, which is exactly the bug.
+  // #3463 — opening the dialog resets local state and starts a fresh host
+  // session every time `open` flips true: this device shows its own code
+  // immediately (no upfront role question). This DOES fire a backend call
+  // on every open (`start_pairing`, which arms the 5-minute pending-pairing
+  // marker and wakes the sync daemon) — a deliberate change from the
+  // chooser design, and an accepted trade: the host must be pairable the
+  // moment the dialog is open. Switching to the joiner path cancels this
+  // session (see `handleSwitchToJoiner`) so it never runs uncancelled
+  // alongside a joiner attempt.
   useEffect(() => {
     if (!open) return
-    setRole('chooser')
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setPeers([])
@@ -228,7 +232,8 @@ export function PairingDialog({
     setCountdown(null)
     setEntryMode('manual')
     sessionStartedRef.current = false
-  }, [open])
+    void initHost()
+  }, [open, initHost])
 
   // Cancel the pairing session on the backend when the dialog closes or
   // unmounts — but only if a session was actually started (host path that
@@ -245,23 +250,11 @@ export function PairingDialog({
   }, [open, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
-  // Read the pause flag through a ref inside the interval so flipping
-  // pausedByTyping does NOT tear down and recreate the interval (which would
-  // also reset its 1s phase and skew the displayed countdown). The interval
-  // simply skips the decrement while paused.
-  //
-  // The ref is written synchronously in handleTypingStateChange (below) — not
-  // via a useEffect that mirrors the state — because under fake timers a
-  // burst of timer callbacks (e.g. interval tick + debounce expiry) runs
-  // back-to-back before React commits, so a deferred ref-sync would still
-  // see the stale value at the next tick.
   const countdownActive = countdown !== null && countdown > 0
-  const pausedByTypingRef = useRef(false)
   useEffect(() => {
     if (!countdownActive) return
 
     const interval = setInterval(() => {
-      if (pausedByTypingRef.current) return
       setCountdown((prev) => {
         if (prev === null || prev <= 1) {
           clearInterval(interval)
@@ -273,25 +266,6 @@ export function PairingDialog({
 
     return () => clearInterval(interval)
   }, [countdownActive])
-
-  // Single setter that updates both the ref (read by the interval)
-  // and the state (drives the `t('pairing.countdownPaused')` indicator render).
-  // Announces the pause / resume transition so screen-reader users — who
-  // can't see the inline `t('pairing.countdownPaused')` indicator (it sits inside
-  // an aria-hidden countdown <p>) — still hear the state change.
-  const handleTypingStateChange = useCallback(
-    (isTyping: boolean) => {
-      const wasPaused = pausedByTypingRef.current
-      pausedByTypingRef.current = isTyping
-      setPausedByTyping(isTyping)
-      if (isTyping && !wasPaused) {
-        announce(t('announce.pairingCountdownPaused'))
-      } else if (!isTyping && wasPaused) {
-        announce(t('announce.pairingCountdownResumed'))
-      }
-    },
-    [t],
-  )
 
   // Announce countdown crossings at SR-relevant thresholds only.
   // We deliberately avoid announcing every tick — only the meaningful
@@ -378,7 +352,15 @@ export function PairingDialog({
     errorLogMessage: 'Pairing failed',
     onSuccess: () => {
       setWords(['', '', '', ''])
-      notify.success(t('pairing.successMessage'))
+      // #3463 (review): `confirm_pairing` only arms a local proof — it does
+      // NOT validate the passphrase against the other device. A typo (or a
+      // stale/expired code) reaches this success path just as cleanly as a
+      // correct entry; the mismatch only surfaces later, as a generic sync
+      // error disconnected from this dialog. Claiming "paired successfully"
+      // here would be confidently wrong, which is worse than no feedback at
+      // all. This copy claims only what this device actually knows: that it
+      // armed its side of the handshake and is waiting on the peer.
+      notify.success(t('pairing.awaitingPeerMessage'))
       onOpenChange(false)
     },
     onError: (err) => {
@@ -441,21 +423,20 @@ export function PairingDialog({
     [t],
   )
 
-  // Resets all role/session-scoped local state back to the pre-role-choice
-  // shape. Shared by `handleCancel` (closes the dialog) and
-  // `handleBackToChooser` (keeps it open, returns to the role choice).
+  // Resets role/session-scoped local state back to a clean shape when the
+  // dialog is closed via `handleCancel`. (The `open` effect performs the
+  // equivalent reset — plus re-starting a fresh host session — the next
+  // time the dialog opens, so this mostly matters for the brief window
+  // before that effect re-runs.)
   const resetRoleState = useCallback(() => {
-    setRole('chooser')
+    setRole('host')
     setPairingInfo(null)
     setWords(['', '', '', ''])
     setPeers([])
     setError(null)
     setCountdown(null)
     setEntryMode('manual')
-    // Clear any stale paused state (ref + render state) so a
-    // future re-open starts fresh.
-    handleTypingStateChange(false)
-  }, [handleTypingStateChange])
+  }, [])
 
   const handleCancel = useCallback(() => {
     // Cancel any in-progress pairing session — only if one was actually
@@ -474,16 +455,34 @@ export function PairingDialog({
     triggerRef?.current?.focus()
   }, [onOpenChange, triggerRef, resetRoleState])
 
-  // Back to the role choice (does NOT close the dialog). Cleans up any
-  // started session exactly like `handleCancel`, satisfying "going back to
-  // re-choose a role must clean up any started session."
-  const handleBackToChooser = useCallback(async () => {
+  // #3463 — switching to the joiner path is what DECLARES the joiner role
+  // (replacing the removed upfront chooser question). Crucially, this
+  // cancels the host's own session first (`cancelPairing` clears the
+  // backend's in-memory `pairing_state` slot — see sync_cmds.rs
+  // `cancel_pairing_inner`) so this device stops offering a code it is no
+  // longer showing. Without this, a device could simultaneously be
+  // offering its own code (host) and entering another's (joiner) — the
+  // #3463 shape wearing a different hat.
+  const handleSwitchToJoiner = useCallback(async () => {
     if (sessionStartedRef.current) {
       sessionStartedRef.current = false
       await executeCancelPairingCleanup()
     }
-    resetRoleState()
-  }, [executeCancelPairingCleanup, resetRoleState])
+    setPairingInfo(null)
+    setCountdown(null)
+    setWords(['', '', '', ''])
+    setEntryMode('manual')
+    setError(null)
+    await initJoiner()
+  }, [executeCancelPairingCleanup, initJoiner])
+
+  // Reversible: switching back to the host path re-initialises a fresh
+  // host session (this device had none while it was a joiner).
+  const handleSwitchToHost = useCallback(async () => {
+    setWords(['', '', '', ''])
+    setEntryMode('manual')
+    await initHost()
+  }, [initHost])
 
   // Unpair a peer device. Same template-literal error format
   // as `handlePair` / `initHost` so the existing inline banner is preserved.
@@ -584,139 +583,118 @@ export function PairingDialog({
 
           <Body>
             <div ref={dialogRef}>
-              {/* Role chooser (#3463) — the dialog's first state. No
-                  backend call fires until one of these is clicked. */}
-              {role === 'chooser' && (
-                <div className="pairing-role-chooser flex flex-col gap-3 py-2">
-                  <p className="text-sm text-muted-foreground">
-                    {t('pairing.roleChooserInstruction')}
-                  </p>
+              {/* Error message with Retry button (#282) */}
+              {error && (
+                <div
+                  className="pairing-error flex items-center gap-2 mb-4"
+                  role="alert"
+                  aria-live="polite"
+                >
+                  <p className="text-sm text-destructive flex-1">{error}</p>
                   <Button
                     variant="outline"
-                    className="pairing-role-host-btn h-auto justify-start py-3 text-left"
-                    onClick={() => void initHost()}
+                    size="sm"
+                    ref={retryBtnRef}
+                    onClick={handleRetry}
+                    className="pairing-retry-btn shrink-0"
                   >
-                    <span className="flex flex-col items-start gap-0.5">
-                      <span className="font-medium">{t('pairing.hostRoleButton')}</span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {t('pairing.hostRoleDescription')}
-                      </span>
-                    </span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="pairing-role-joiner-btn h-auto justify-start py-3 text-left"
-                    onClick={() => void initJoiner()}
-                  >
-                    <span className="flex flex-col items-start gap-0.5">
-                      <span className="font-medium">{t('pairing.joinerRoleButton')}</span>
-                      <span className="text-xs font-normal text-muted-foreground">
-                        {t('pairing.joinerRoleDescription')}
-                      </span>
-                    </span>
+                    {t('pairing.retryButton')}
                   </Button>
                 </div>
               )}
 
-              {role !== 'chooser' && (
+              {/* Loading state — QR-shaped square placeholder + entry-row
+                  placeholders instead of a bare centered spinner, mirroring
+                  the PairingQrDisplay + PairingEntryForm layout that
+                  replaces it once the pairing session starts. */}
+              {loading && (
+                <div className="pairing-loading flex flex-col items-center gap-3 py-6">
+                  <span className="text-sm text-muted-foreground">
+                    {t('pairing.startingMessage')}
+                  </span>
+                  <LoadingSkeleton
+                    count={1}
+                    height="h-40"
+                    className="w-40"
+                    ariaLabel={t('pairing.startingMessage')}
+                  />
+                  <LoadingSkeleton count={2} height="h-10" loading={false} className="w-full" />
+                </div>
+              )}
+
+              {/* QR + Passphrase display — host only. Gated on `pairingInfo`
+                  because it has nothing to render without a session. */}
+              {!loading && role === 'host' && pairingInfo && (
+                <PairingQrDisplay
+                  qrSvg={pairingInfo.qr_svg}
+                  passphrase={pairingInfo.passphrase}
+                  countdownDisplay={countdownDisplay}
+                  countdown={countdown}
+                  isExpired={isExpired}
+                  error={error}
+                  onRetry={handleRetry}
+                  retryBtnRef={retryBtnRef}
+                />
+              )}
+
+              {/* The affordance (#3463) that switches to the joiner path.
+                  Choosing this is what DECLARES the joiner role — see
+                  `handleSwitchToJoiner`. Deliberately NOT gated on
+                  `pairingInfo`: it must stay reachable even when the host
+                  session failed to start (error banner above) or resolved
+                  with no data, so a user can always get to the joiner path
+                  regardless of whether this device's own code loaded. */}
+              {!loading && role === 'host' && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="pairing-switch-to-joiner-btn self-start px-0 h-auto"
+                  onClick={() => void handleSwitchToJoiner()}
+                >
+                  {t('pairing.switchToJoinerLink')}
+                </Button>
+              )}
+
+              {/* Passphrase entry — joiner only, plus the affordance
+                  (#3463) that switches back to the host path. Reversible by
+                  design — see `handleSwitchToHost`. */}
+              {!loading && role === 'joiner' && (
                 <>
                   <Button
-                    variant="ghost"
+                    variant="link"
                     size="sm"
-                    className="pairing-back-btn -ml-2 mb-2 self-start"
-                    onClick={() => void handleBackToChooser()}
+                    className="pairing-switch-to-host-btn self-start px-0 h-auto mb-2"
+                    onClick={() => void handleSwitchToHost()}
                   >
-                    {t('pairing.backButton')}
+                    {t('pairing.switchToHostLink')}
                   </Button>
-
-                  {/* Error message with Retry button (#282) */}
-                  {error && (
-                    <div
-                      className="pairing-error flex items-center gap-2 mb-4"
-                      role="alert"
-                      aria-live="polite"
-                    >
-                      <p className="text-sm text-destructive flex-1">{error}</p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        ref={retryBtnRef}
-                        onClick={handleRetry}
-                        className="pairing-retry-btn shrink-0"
-                      >
-                        {t('pairing.retryButton')}
-                      </Button>
-                    </div>
-                  )}
-
-                  {/* Loading state — QR-shaped square placeholder + entry-row
-                      placeholders instead of a bare centered spinner, mirroring
-                      the PairingQrDisplay + PairingEntryForm layout that
-                      replaces it once the pairing session starts. */}
-                  {loading && (
-                    <div className="pairing-loading flex flex-col items-center gap-3 py-6">
-                      <span className="text-sm text-muted-foreground">
-                        {t('pairing.startingMessage')}
-                      </span>
-                      <LoadingSkeleton
-                        count={1}
-                        height="h-40"
-                        className="w-40"
-                        ariaLabel={t('pairing.startingMessage')}
-                      />
-                      <LoadingSkeleton count={2} height="h-10" loading={false} className="w-full" />
-                    </div>
-                  )}
-
-                  {/* QR + Passphrase display — host only */}
-                  {!loading && role === 'host' && pairingInfo && (
-                    <PairingQrDisplay
-                      qrSvg={pairingInfo.qr_svg}
-                      passphrase={pairingInfo.passphrase}
-                      countdownDisplay={countdownDisplay}
-                      countdown={countdown}
-                      isExpired={isExpired}
-                      error={error}
-                      onRetry={handleRetry}
-                      retryBtnRef={retryBtnRef}
-                      pausedByTyping={pausedByTyping}
-                    />
-                  )}
-
-                  {/* Passphrase entry — joiner only */}
-                  {!loading && role === 'joiner' && (
-                    <PairingEntryForm
-                      words={words}
-                      entryMode={entryMode}
-                      onEntryModeChange={setEntryMode}
-                      onWordChange={handleWordChange}
-                      onWordKeyDown={handleWordKeyDown}
-                      onQrScan={handleQrScan}
-                      onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
-                      onCancel={handleCancel}
-                      onPair={handlePair}
-                      pairLoading={pairLoading}
-                      isExpired={false}
-                      onTypingStateChange={handleTypingStateChange}
-                    />
-                  )}
-
-                  {/* Paired Devices */}
-                  {!loading && (
-                    <PairingPeersList
-                      peers={peers}
-                      onUnpair={(peerId) => setUnpairPeerId(peerId)}
-                    />
-                  )}
-
-                  {/* Status message for screen readers */}
-                  <div aria-live="polite" className="sr-only">
-                    {loading && t('pairing.startingMessage')}
-                    {pairLoading && t('pairing.inProgress')}
-                    {error}
-                  </div>
+                  <PairingEntryForm
+                    words={words}
+                    entryMode={entryMode}
+                    onEntryModeChange={setEntryMode}
+                    onWordChange={handleWordChange}
+                    onWordKeyDown={handleWordKeyDown}
+                    onQrScan={handleQrScan}
+                    onQrError={(err) => setError(t('pairing.cameraError', { error: err }))}
+                    onCancel={handleCancel}
+                    onPair={handlePair}
+                    pairLoading={pairLoading}
+                    isExpired={false}
+                  />
                 </>
               )}
+
+              {/* Paired Devices */}
+              {!loading && (
+                <PairingPeersList peers={peers} onUnpair={(peerId) => setUnpairPeerId(peerId)} />
+              )}
+
+              {/* Status message for screen readers */}
+              <div aria-live="polite" className="sr-only">
+                {loading && t('pairing.startingMessage')}
+                {pairLoading && t('pairing.inProgress')}
+                {error}
+              </div>
             </div>
           </Body>
         </Content>

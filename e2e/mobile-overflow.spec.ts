@@ -159,20 +159,19 @@ for (const profile of PROFILES) {
       const dialog = activeDialog(page)
       await expect(dialog).toBeVisible()
 
-      // #3463: the dialog now opens on a role chooser, so there are two
-      // surfaces to check at this width, not one. The chooser is new UI with
-      // two long button labels and descriptions — exactly the shape that
-      // overflowed before #1966 — so it is measured rather than clicked past.
-      await expect(dialog.getByRole('button', { name: /show code on this device/i })).toBeVisible()
+      // #3463: the dialog now opens directly on the host path (this
+      // device's own code) — no upfront chooser — so the host surface is
+      // measured as soon as it renders, without a click.
+      await expect(
+        dialog.getByRole('button', { name: /have a code from the other device/i }),
+      ).toBeVisible()
       await page.waitForTimeout(150)
-      await expectNoHorizontalOverflow(
-        page,
-        dialog,
-        `Pairing dialog · role chooser @ ${profile.name}`,
-      )
+      await expectNoHorizontalOverflow(page, dialog, `Pairing dialog · host @ ${profile.name}`)
 
-      // Then the joiner surface, which hosts the entry-mode toggle.
-      await dialog.getByRole('button', { name: /enter code from other device/i }).click()
+      // Then the joiner surface, which hosts the entry-mode toggle — reached
+      // via the "Have a code from the other device?" affordance, which is
+      // also what declares the joiner role (replacing the old chooser).
+      await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
       await expect(
         dialog.getByRole('button', { name: 'Type Passphrase', exact: true }),
       ).toBeVisible()

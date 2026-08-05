@@ -1,19 +1,26 @@
 /**
  * Tests for PairingDialog component.
  *
- * #3463 — the dialog's first state is a role choice (host vs. joiner);
- * opening it fires zero backend commands, and the host/joiner UI is
- * mutually exclusive. Most tests below therefore select a role
- * (`selectHostRole` / `selectJoinerRole`) before asserting on
- * role-specific UI.
+ * #3463 — the dialog opens directly on the host path (this device's own
+ * code); there is no upfront role question. Opening it DOES fire a backend
+ * command (`start_pairing`, once) because the host session starts
+ * immediately. Switching to the joiner path (via the "Have a code from the
+ * other device?" affordance on the host screen) is what DECLARES the joiner
+ * role, and cancels the host's own session first. The host/joiner UI stays
+ * mutually exclusive throughout. Most tests below use the
+ * `selectHostRole` / `selectJoinerRole` helpers before asserting on
+ * role-specific UI — `selectHostRole` is now a no-op (host is the default),
+ * kept so existing call sites read the same way; `selectJoinerRole` clicks
+ * the switch-to-joiner affordance.
  *
  * Validates:
- *  - Opening the dialog fires no backend command; role choice is exclusive
+ *  - Opening the dialog starts a host session exactly once; role choice is exclusive
+ *  - Switching to the joiner path cancels the host session (#3463)
  *  - Only the host path calls startPairing; only the joiner path calls confirmPairing
  *  - Shows QR code / passphrase when the host starts a session
  *  - Shows 4 word input fields on the joiner path
  *  - Pair button calls confirmPairing with entered words
- *  - Cancel (joiner) / Back (host) close/exit without an unstarted cancelPairing call
+ *  - Cancel (joiner) closes without an extra cancelPairing call
  *  - Shows paired devices list
  *  - Unpair button calls deletePeerRef
  *  - Paste support distributes words across inputs
@@ -133,17 +140,20 @@ function mockInvokeByCommand(commands: Record<string, unknown>) {
   })
 }
 
-// #3463 — the dialog's first state is a role choice. These two helpers
-// click past it; tests that assert on host-only or joiner-only UI use the
-// matching one. Deliberately NOT clicked automatically on render, so every
-// test that reaches a role screen visibly opts in — makes it obvious in
-// each test body which device's flow is under test.
-async function selectHostRole(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: /Show code on this device/i }))
+// #3463 — the dialog opens directly on the host path; there is no upfront
+// role question left to click past. `selectHostRole` is kept as a no-op so
+// existing call sites don't need touching. `selectJoinerRole` clicks the
+// affordance on the host screen that switches roles — choosing to enter a
+// code is what DECLARES the joiner role. Both remain `async` so call sites
+// stay `await selectXRole(user)` regardless of which one is used.
+async function selectHostRole(_user: ReturnType<typeof userEvent.setup>) {
+  // no-op: host is the default entry state, nothing to select.
 }
 
 async function selectJoinerRole(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: /Enter code from other device/i }))
+  await user.click(
+    await screen.findByRole('button', { name: /Have a code from the other device\?/i }),
+  )
 }
 
 beforeEach(() => {
@@ -164,61 +174,85 @@ describe('PairingDialog', () => {
   // make "both roles at once" (the original bug) unrepresentable.
   // -----------------------------------------------------------------------
   describe('#3463 role split', () => {
-    it('renders the role chooser on open and fires no backend command at all', async () => {
-      render(<PairingDialog open onOpenChange={vi.fn()} />)
-
-      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
-      expect(screen.getByRole('button', { name: /Show code on this device/i })).toBeInTheDocument()
-      expect(
-        screen.getByRole('button', { name: /Enter code from other device/i }),
-      ).toBeInTheDocument()
-
-      // Opening must have zero backend side effects.
-      expect(mockedInvoke).not.toHaveBeenCalled()
-    })
-
-    it('choosing the host role calls startPairing exactly once', async () => {
-      const user = userEvent.setup()
+    it('opening the dialog starts a host session exactly once', async () => {
       mockInvokeByCommand({ start_pairing: mockPairingInfo, list_peer_refs: [] })
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await selectHostRole(user)
-      await screen.findByText('alpha bravo charlie delta')
 
+      expect(await screen.findByText('Pair Device')).toBeInTheDocument()
+      // Host screen renders immediately — no upfront role question.
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /Have a code from the other device\?/i }),
+      ).toBeInTheDocument()
+
+      // #3463: unlike the old chooser (zero backend effects on open), the
+      // host session now starts immediately — but only once.
       const startPairingCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'start_pairing')
       expect(startPairingCalls).toHaveLength(1)
     })
 
-    it('role choice is exclusive: the joiner path never reaches the QR display without going Back', async () => {
+    it('role choice is exclusive: switching to the joiner path hides all host UI, and switching back hides all joiner UI', async () => {
       const user = userEvent.setup()
-      mockInvokeByCommand({ list_peer_refs: [] })
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        cancel_pairing: undefined,
+      })
 
       render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+
       await selectJoinerRole(user)
 
-      // Entry form is visible; host-only QR UI and the chooser's own
-      // buttons are not — role is a single value, not two booleans, so
-      // there is no state combination that shows both.
+      // Entry form is visible; host-only QR UI is not — role is a single
+      // value, not two booleans, so there is no state combination that
+      // shows both.
       expect(await screen.findByLabelText('Passphrase word 1')).toBeInTheDocument()
       expect(screen.queryByTestId('pairing-qr-code')).not.toBeInTheDocument()
+      expect(screen.queryByText('alpha bravo charlie delta')).not.toBeInTheDocument()
       expect(
-        screen.queryByRole('button', { name: /Show code on this device/i }),
-      ).not.toBeInTheDocument()
-      expect(
-        screen.queryByRole('button', { name: /Enter code from other device/i }),
+        screen.queryByRole('button', { name: /Have a code from the other device\?/i }),
       ).not.toBeInTheDocument()
 
-      // Going back is the ONLY way to reach the host view from here.
-      await user.click(screen.getByRole('button', { name: /^Back$/i }))
-      expect(
-        await screen.findByRole('button', { name: /Show code on this device/i }),
-      ).toBeInTheDocument()
+      // Switching back to host is the only way to reach the QR view again
+      // — and it is reachable, because the switch is reversible by design.
+      await user.click(screen.getByRole('button', { name: /Show my code instead/i }))
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
       expect(screen.queryByLabelText('Passphrase word 1')).not.toBeInTheDocument()
     })
 
-    it('has no a11y violations on the role chooser', async () => {
+    // #3463: the required regression coverage for this change. Without this,
+    // a device could simultaneously offer its own code (host) and enter
+    // another's (joiner) — the exact #3463 shape wearing a different hat.
+    // Switching to the joiner path must cancel the host's own session so it
+    // stops offering a code it is no longer showing.
+    it('switching to the joiner path cancels the host session', async () => {
+      const user = userEvent.setup()
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        cancel_pairing: undefined,
+      })
+
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      await screen.findByText('Pair Device')
+      await screen.findByText('alpha bravo charlie delta')
+      expect(mockedInvoke).not.toHaveBeenCalledWith('cancel_pairing')
+
+      await selectJoinerRole(user)
+      await screen.findByLabelText('Passphrase word 1')
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
+      })
+      const cancelCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'cancel_pairing')
+      expect(cancelCalls).toHaveLength(1)
+    })
+
+    it('has no a11y violations on the default host screen', async () => {
+      mockInvokeByCommand({ start_pairing: mockPairingInfo, list_peer_refs: [] })
+      render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
 
       const results = await axe(document.body)
       expect(results).toHaveNoViolations()
@@ -278,9 +312,10 @@ describe('PairingDialog', () => {
     expect(screen.getByLabelText('Passphrase word 4')).toBeInTheDocument()
   })
 
-  it('(#3463) joiner path submits the typed passphrase via confirmPairing; startPairing is never called', async () => {
+  it('(#3463) joiner path submits the typed passphrase via confirmPairing; startPairing fires once on open, never again on submit', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
       list_peer_refs: [],
       confirm_pairing: undefined,
     })
@@ -304,10 +339,14 @@ describe('PairingDialog', () => {
         remoteDeviceId: '',
       })
     })
-    // `start_pairing` is not stubbed above — if the joiner path ever called
-    // it, the strict IPC stub (#3225) would reject it and this assertion
-    // would fail via the resulting error banner / unexpected call record.
-    expect(mockedInvoke).not.toHaveBeenCalledWith('start_pairing')
+    // #3463 (review): unlike the old chooser, opening the dialog now DOES
+    // fire `start_pairing` once (the host session begins immediately — see
+    // "opening the dialog starts a host session exactly once"). What must
+    // still hold is that submitting the joiner form never calls it AGAIN —
+    // confirming the passphrase goes through confirm_pairing only, it must
+    // not re-trigger a host session.
+    const startPairingCalls = mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'start_pairing')
+    expect(startPairingCalls).toHaveLength(1)
   })
 
   it('Pair button is disabled when words are empty', async () => {
@@ -325,61 +364,59 @@ describe('PairingDialog', () => {
   })
 
   // -----------------------------------------------------------------------
-  // #3463 — replaces the old single "Cancel button calls cancelPairing and
-  // closes dialog" test. That test encoded the pre-fix assumption that
-  // there is only one Cancel affordance and it always has a session to
-  // cancel — true only because host and joiner UI used to render together.
-  // Now: Cancel lives on the joiner screen, which never starts a session
-  // (so cancelPairing must NOT fire); Back lives on the host screen, which
-  // does (so it must).
+  // #3463 (review) — replaces the old single "Cancel button calls
+  // cancelPairing and closes dialog" test, and revises it again: opening
+  // the dialog now starts a host session immediately (implicit-role
+  // default), so by the time a user reaches the joiner screen via
+  // selectJoinerRole, cancel_pairing has ALREADY fired once — that's the
+  // required "switching to joiner cancels the host session" behavior,
+  // covered by its own test below ("switching to the joiner path cancels
+  // the host session"). What Cancel on the joiner screen itself must NOT do
+  // is fire a SECOND cancel_pairing call: there is no live session left to
+  // cancel at that point, only the dialog to close. The old "Back button"
+  // test that used to live here (asserting a `/^Back$/i` button that no
+  // longer exists) is superseded by the same required test.
   // -----------------------------------------------------------------------
-  it('Cancel button on the joiner path closes the dialog without calling cancelPairing (no session was ever started)', async () => {
+  it('Cancel button on the joiner path closes the dialog without calling cancelPairing again (the host session was already cancelled by the role switch)', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
-    mockInvokeByCommand({ list_peer_refs: [] })
-
-    render(<PairingDialog open onOpenChange={onOpenChange} />)
-    await selectJoinerRole(user)
-    await screen.findByLabelText('Passphrase word 1')
-
-    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i })
-    await user.click(cancelBtn)
-
-    expect(onOpenChange).toHaveBeenCalledWith(false)
-    expect(mockedInvoke).not.toHaveBeenCalledWith('cancel_pairing')
-  })
-
-  it('Back button on the host path cancels the started session and returns to the chooser', async () => {
-    const user = userEvent.setup()
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
       list_peer_refs: [],
       cancel_pairing: undefined,
     })
 
-    render(<PairingDialog open onOpenChange={vi.fn()} />)
-    await selectHostRole(user)
-    await screen.findByText('alpha bravo charlie delta')
+    render(<PairingDialog open onOpenChange={onOpenChange} />)
+    await selectJoinerRole(user)
+    await screen.findByLabelText('Passphrase word 1')
 
-    await user.click(screen.getByRole('button', { name: /^Back$/i }))
+    const cancelCallsAfterSwitch = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsAfterSwitch).toBe(1)
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
-    })
-    expect(
-      await screen.findByRole('button', { name: /Show code on this device/i }),
-    ).toBeInTheDocument()
+    const cancelBtn = screen.getByRole('button', { name: /^Cancel$/i })
+    await user.click(cancelBtn)
+
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+    const cancelCallsAfterClick = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsAfterClick).toBe(1)
   })
 
-  it('shows paired devices list', async () => {
-    const user = userEvent.setup()
+  it('shows paired devices list on the default host screen without any role selection (#3463 review)', async () => {
+    // #3463 (review): PairingPeersList used to live inside a
+    // `role !== 'chooser'` branch, so it was gated behind the chooser.
+    // With the chooser removed, it must be reachable on the default
+    // (host) screen with zero clicks — deliberately not calling
+    // `selectHostRole` here to prove that.
     mockInvokeByCommand({
       start_pairing: mockPairingInfo,
       list_peer_refs: mockPeers,
     })
 
     render(<PairingDialog open onOpenChange={vi.fn()} />)
-    await selectHostRole(user)
 
     // Wait for loading to finish
     await screen.findByText('Paired Devices')
@@ -484,12 +521,13 @@ describe('PairingDialog', () => {
   })
 
   it('shows loading state while the host is initializing', async () => {
-    const user = userEvent.setup()
     // Make start_pairing hang
     mockedInvoke.mockImplementation(() => new Promise(() => {})) // never resolves
 
+    // #3463 (review): the host session now starts automatically on mount —
+    // there is no button to click to reach this loading state, it's the
+    // very first thing rendered.
     render(<PairingDialog open onOpenChange={vi.fn()} />)
-    await user.click(await screen.findByRole('button', { name: /Show code on this device/i }))
 
     await waitFor(() => {
       const loadingEl = document.querySelector('.pairing-loading')
@@ -578,19 +616,34 @@ describe('PairingDialog', () => {
     expect(mockedInvoke).toHaveBeenCalledWith('cancel_pairing')
   })
 
-  it('does not call cancelPairing on unmount on the joiner path (no session was ever started)', async () => {
+  it('does not call cancelPairing again on unmount on the joiner path (the host session was already cancelled by the role switch)', async () => {
     const user = userEvent.setup()
     mockInvokeByCommand({
+      start_pairing: mockPairingInfo,
       list_peer_refs: [],
+      cancel_pairing: undefined,
     })
 
     render(<PairingDialog open onOpenChange={vi.fn()} />)
     await selectJoinerRole(user)
     await screen.findByLabelText('Passphrase word 1')
 
+    // #3463 (review): opening the dialog starts a host session, and
+    // switching to the joiner cancels it — so by this point cancel_pairing
+    // has ALREADY fired once. The unmount cleanup effect only owns the
+    // *host's* session; on the joiner screen there is no live session left
+    // for it to cancel a second time.
+    const cancelCallsBeforeUnmount = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsBeforeUnmount).toBe(1)
+
     cleanup()
 
-    expect(mockedInvoke).not.toHaveBeenCalledWith('cancel_pairing')
+    const cancelCallsAfterUnmount = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsAfterUnmount).toBe(1)
   })
 
   it('dialog has aria-labelledby pointing to the title', async () => {
@@ -738,15 +791,13 @@ describe('PairingDialog', () => {
         cancel_pairing: undefined,
       })
 
+      // #3463 (review): the host session now starts automatically on mount
+      // — there is no button to click to reach it, so this test no longer
+      // needs the fireEvent click that used to select the host role. The
+      // fireEvent-vs-userEvent deadlock note above is now moot for this
+      // specific click, but fireEvent is kept elsewhere in this test (the
+      // countdown assertions) as the established fake-timer-safe pattern.
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      // fireEvent, not userEvent — userEvent's internal artificial delays
-      // (even with `advanceTimers` wired to the fake clock) deadlock against
-      // vi.useFakeTimers() here: awaiting `user.click()` never resolves, and
-      // every test after this one in file order then hangs to its own 20s
-      // timeout because fake timers are still active (bit us during
-      // development). fireEvent dispatches synchronously with no internal
-      // timer of its own, so it doesn't have this problem.
-      fireEvent.click(screen.getByRole('button', { name: /Show code on this device/i }))
 
       // Wait for pairing info to load — use real microtasks for promises
       await act(async () => {
@@ -829,7 +880,7 @@ describe('PairingDialog', () => {
     document.body.removeChild(triggerRef.current)
   })
 
-  it('shows success toast after pairing (#436)', async () => {
+  it('shows an honest "waiting for the other device" toast after submitting (#436, #3463 review)', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     mockInvokeByCommand({
@@ -850,9 +901,13 @@ describe('PairingDialog', () => {
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
 
+    // #3463 (review): confirm_pairing only arms a local proof — it does not
+    // validate the passphrase against the peer — so the toast must NOT claim
+    // pairing succeeded. It must claim only what this device actually knows.
     await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+      expect(toast.success).toHaveBeenCalledWith('Waiting for the other device…')
     })
+    expect(toast.success).not.toHaveBeenCalledWith('Device paired successfully')
 
     expect(onOpenChange).toHaveBeenCalledWith(false)
   })
@@ -866,10 +921,9 @@ describe('PairingDialog', () => {
         cancel_pairing: undefined,
       })
 
+      // #3463 (review): the host session now starts automatically on
+      // mount — no click needed to reach it.
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      // fireEvent, not userEvent — see the (#294) test above for why
-      // userEvent.click() deadlocks under fake timers here.
-      fireEvent.click(screen.getByRole('button', { name: /Show code on this device/i }))
 
       // Wait for pairing info to load
       await act(async () => {
@@ -899,9 +953,10 @@ describe('PairingDialog', () => {
     // DialogBody owns the
     // scrollable region (flex-1 min-h-0 + ScrollArea); the frame stays
     // overflow-hidden via the DialogContent base so header/footer remain pinned.
-    // The role chooser alone (no backend mocks needed) already exercises
-    // this — Body wraps the chooser content the same as it wraps the
-    // host/joiner content.
+    // #3463 (review): the default host screen alone (no backend mocks
+    // needed — an unstubbed invoke resolves undefined, treated as success)
+    // already exercises this — Body wraps the host content the same as it
+    // wraps the joiner content.
     render(<PairingDialog open onOpenChange={vi.fn()} />)
     await waitFor(() => {
       const dialog = document.querySelector('.pairing-dialog')
@@ -967,7 +1022,13 @@ describe('PairingDialog', () => {
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_peer_refs') {
         listCallCount++
-        if (listCallCount === 1) return [] // initial (joiner) load succeeds
+        // #3463 (review): list_peer_refs now fires twice before the
+        // post-pair refresh — once for the host's initHost() on mount
+        // (implicit-role default), once for initJoiner() when
+        // selectJoinerRole switches roles. Both must succeed; only the
+        // THIRD call (the post-confirmPairing refresh) is the one under
+        // test here.
+        if (listCallCount <= 2) return []
         throw new Error('refresh failed') // post-pair refresh fails
       }
       if (cmd === 'confirm_pairing') return undefined
@@ -1085,10 +1146,9 @@ describe('PairingDialog', () => {
         cancel_pairing: undefined,
       })
 
+      // #3463 (review): the host session now starts automatically on
+      // mount — no click needed to reach it.
       render(<PairingDialog open onOpenChange={vi.fn()} />)
-      // fireEvent, not userEvent — see the (#294) test above for why
-      // userEvent.click() deadlocks under fake timers here.
-      fireEvent.click(screen.getByRole('button', { name: /Show code on this device/i }))
 
       // Flush init promises
       await act(async () => {
@@ -1183,15 +1243,26 @@ describe('PairingDialog', () => {
     expect(screen.getByRole('button', { name: /Keep pairing/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /^Cancel pairing$/i })).toBeInTheDocument()
 
-    // Click "Cancel pairing" — should close the dialog. #3463: the joiner
-    // never started a session (never called startPairing), so — unlike the
-    // pre-fix version of this test — cancelPairing must NOT be called here.
+    // #3463 (review): opening the dialog started a host session, and
+    // selectJoinerRole already cancelled it once when switching roles —
+    // before this click, cancel_pairing has already fired exactly once.
+    // Click "Cancel pairing" — should close the dialog, and must NOT fire
+    // cancel_pairing a SECOND time: the joiner has no live session of its
+    // own left for this guard action to cancel.
+    const cancelCallsBeforeGuardClick = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsBeforeGuardClick).toBe(1)
+
     await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
 
     await waitFor(() => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
-    expect(mockedInvoke).not.toHaveBeenCalledWith('cancel_pairing')
+    const cancelCallsAfterGuardClick = mockedInvoke.mock.calls.filter(
+      ([cmd]) => cmd === 'cancel_pairing',
+    ).length
+    expect(cancelCallsAfterGuardClick).toBe(1)
 
     // Resolve hung promise so test cleanup runs
     resolveConfirm(undefined)
@@ -1220,18 +1291,22 @@ describe('PairingDialog', () => {
   })
 
   // -----------------------------------------------------------------------
-  // #3463 — the countdown-pause-while-typing mechanism (handleTypingState-
-  // Change / pausedByTyping) used to be exercised by pausing the SAME
-  // dialog's countdown while typing in the SAME dialog's passphrase
-  // inputs. That scenario is now impossible to reproduce through the UI:
-  // the countdown only ever renders on the host screen, and the passphrase
-  // inputs only ever render on the joiner screen, and those two screens
-  // are mutually exclusive by construction (that mutual exclusion is this
-  // fix). The five tests that used to cover pause / resume / auto-resume /
-  // the "Paused while typing…" indicator / the pause-resume SR announcements
-  // have been removed and replaced with a single test asserting the
-  // (now effectively dead) wiring is harmless on the joiner screen. See the
-  // PR description for the full justification.
+  // #3463 (review) — the countdown-pause-while-typing mechanism (#294:
+  // handleTypingStateChange / pausedByTyping / onTypingStateChange, plus
+  // its `pairing.countdownPaused` and `announce.pairingCountdownPaused`/
+  // `pairingCountdownResumed` i18n strings) was only ever reachable by
+  // pausing the SAME dialog's countdown while typing in the SAME dialog's
+  // passphrase inputs. The implicit-role split makes that permanently
+  // unreachable through the UI: the countdown only ever renders on the
+  // host screen, and the passphrase inputs only ever render on the joiner
+  // screen, and those two screens are mutually exclusive by construction
+  // (that mutual exclusion is this fix). Per review, the dead state,
+  // effects, indicator markup, SR announcements, and orphaned i18n strings
+  // have all been deleted (PairingDialog.tsx, PairingQrDisplay.tsx,
+  // PairingEntryForm.tsx, src/lib/i18n/sync.ts, src/lib/i18n/common.ts) —
+  // this is not "effectively dead" wiring left in place, the wiring itself
+  // is gone. This test now guards a plain regression: typing in the joiner
+  // form must not throw, and no countdown/pause text can ever render there.
   // -----------------------------------------------------------------------
   it('typing in the joiner passphrase field is harmless (no countdown exists on the joiner screen to pause)', async () => {
     const user = userEvent.setup()

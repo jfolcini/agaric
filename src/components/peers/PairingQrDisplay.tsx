@@ -7,13 +7,11 @@
  * Extracted from PairingDialog (#R-9).
  */
 
-import { Copy, Pause } from 'lucide-react'
+import { Copy } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
-import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -27,12 +25,6 @@ export interface PairingQrDisplayProps {
   error: string | null
   onRetry: () => void
   retryBtnRef: React.RefObject<HTMLButtonElement | null>
-  /**
-   * When true, render an inline `t('pairing.countdownPaused')` indicator
-   * next to the countdown so the user knows the timer isn't ticking
-   * while they enter the passphrase.
-   */
-  pausedByTyping?: boolean
 }
 
 export function PairingQrDisplay({
@@ -44,26 +36,8 @@ export function PairingQrDisplay({
   error,
   onRetry,
   retryBtnRef,
-  pausedByTyping = false,
 }: PairingQrDisplayProps): React.ReactElement {
   const { t } = useTranslation()
-
-  // The visual `t('pairing.countdownPaused')` indicator lives inside an
-  // aria-hidden countdown paragraph (see below), so SR users can't hear it.
-  // Mirror the pause/resume transitions through the shared `announce()`
-  // singleton — same pattern PairingDialog's handleTypingStateChange uses,
-  // so the announcer's coalescing window suppresses the duplicate on
-  // production renders driven by the parent.
-  const prevPausedRef = useRef(pausedByTyping)
-  useEffect(() => {
-    if (prevPausedRef.current === pausedByTyping) return
-    prevPausedRef.current = pausedByTyping
-    if (pausedByTyping) {
-      announce(t('announce.pairingCountdownPaused'))
-    } else {
-      announce(t('announce.pairingCountdownResumed'))
-    }
-  }, [pausedByTyping, t])
 
   return (
     <div className="flex flex-col sm:flex-row [@media(pointer:coarse)]:flex-col gap-4 items-center mb-4">
@@ -106,20 +80,10 @@ export function PairingQrDisplay({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground mt-1">{t('pairing.scanOrEnterInstruction')}</p>
-        {/* #294: Countdown timer.
-            When pausedByTyping is true, append an inline indicator so
-            the user understands why the timer isn't ticking.
-            bump the indicator from muted italic to foreground +
-            Pause icon so it actually catches the eye while typing. */}
+        {/* #294: Countdown timer. */}
         {countdownDisplay && (
           <p className="pairing-countdown text-xs text-muted-foreground mt-1" aria-hidden="true">
             {t('pairing.sessionExpiresIn')} {countdownDisplay}
-            {pausedByTyping && (
-              <span className="pairing-countdown-paused ml-2 inline-flex items-center gap-1 text-foreground font-medium">
-                <Pause className="h-3 w-3" />
-                {t('pairing.countdownPaused')}
-              </span>
-            )}
           </p>
         )}
         {/* #424: SR-only countdown — announces at key intervals only.

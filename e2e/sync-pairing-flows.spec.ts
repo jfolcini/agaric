@@ -64,19 +64,17 @@ async function openPairNewDevice(page: import('@playwright/test').Page) {
 }
 
 /**
- * #3463: the dialog opens on a role chooser and touches no backend until the
- * user says which device this is. Pairing is asymmetric — one device shows a
- * code, the other enters it — and the old symmetric UI (both at once) is why
- * two-device pairing could never succeed. Every joiner-path test therefore has
- * to make that choice explicitly, exactly as a user does.
+ * #3463: the dialog now opens directly on the host path (this device's own
+ * code) — no upfront chooser question. Pairing is still asymmetric — one
+ * device shows a code, the other enters it — and the old symmetric UI (both
+ * at once) is why two-device pairing could never succeed. That exclusivity
+ * is now enforced by switching roles via this affordance instead of an
+ * upfront choice: choosing "Have a code from the other device?" cancels the
+ * host's own session and declares the joiner role. Every joiner-path test
+ * therefore has to make that switch explicitly, exactly as a user does.
  */
 async function chooseJoinerRole(dialog: ReturnType<typeof activeDialog>) {
-  await dialog.getByRole('button', { name: /enter code from other device/i }).click()
-}
-
-/** The host path: this device generates and displays the passphrase. */
-async function chooseHostRole(dialog: ReturnType<typeof activeDialog>) {
-  await dialog.getByRole('button', { name: /show code on this device/i }).click()
+  await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
 }
 
 async function fillPassphrase(
@@ -93,7 +91,7 @@ async function fillPassphrase(
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync pairing flows', () => {
-  test('entering the correct passphrase completes pairing: confirm_pairing fires, success toast, dialog closes', async ({
+  test('entering a passphrase submits confirm_pairing, shows the honest "waiting" toast, dialog closes', async ({
     page,
   }) => {
     const dialog = await openPairNewDevice(page)
@@ -111,7 +109,10 @@ test.describe('Sync pairing flows', () => {
     const calls = await getInvokeCalls(page, 'confirm_pairing')
     expect(calls.at(-1)?.['passphrase']).toBe('alpha bravo charlie delta')
 
-    await expect(page.getByText('Device paired successfully')).toBeVisible()
+    // #3463 (review): confirm_pairing only arms a local proof — it does not
+    // validate the passphrase against the peer — so the toast must not claim
+    // pairing succeeded, only that this device is waiting on the other one.
+    await expect(page.getByText('Waiting for the other device…')).toBeVisible()
     await expect(activeDialog(page)).toHaveCount(0)
   })
 
@@ -194,7 +195,8 @@ test.describe('Sync pairing flows', () => {
     await page.getByRole('button', { name: /pair new device/i }).click()
     const dialog = activeDialog(page)
     await expect(dialog.getByText('Pair Device')).toBeVisible()
-    await chooseHostRole(dialog)
+    // #3463: the dialog opens directly on the host path — no chooser click
+    // needed before the countdown appears.
     await expect(dialog.locator('.pairing-countdown')).toContainText('5:00')
 
     // PAIRING_TIMEOUT_SECONDS is 300 (PairingDialog.tsx); run past it.
