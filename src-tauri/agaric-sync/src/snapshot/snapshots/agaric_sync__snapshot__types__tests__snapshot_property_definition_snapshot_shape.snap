@@ -1,0 +1,8 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: property_definition_fixture()
+---
+key: priority
+value_type: select
+options: "low,medium,high"
+created_at: "[TIMESTAMP]"

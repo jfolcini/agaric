@@ -1,0 +1,6 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: block_tag_fixture()
+---
+block_id: BLK02
+tag_id: tag-important

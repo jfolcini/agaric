@@ -1,0 +1,11 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: block_property_fixture()
+---
+block_id: BLK03
+key: due
+value_text: needs review
+value_num: 42.5
+value_date: 2026-02-02
+value_ref: REF01
+value_bool: 1
