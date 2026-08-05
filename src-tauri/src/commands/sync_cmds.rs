@@ -232,10 +232,18 @@ pub async fn start_pairing_armed_inner(
 /// outright. A remote guesser must produce `pairing_proof(P)` for a ~51.7-bit
 /// passphrase inside that window, one TLS connection per try.
 ///
-/// # Error tags (stable, machine-readable, reach the frontend verbatim)
+/// # Errors
 ///
-/// - `pairing.no_active_session` — Confirm was pressed with no pairing flow in
-///   flight (slot empty: never started, cancelled, or already consumed).
+/// No longer fails on passphrase content. #3463 removed both the local
+/// comparison and the "a pairing session must exist" precondition, so this
+/// function is infallible apart from DB and lock failures — it arms a local
+/// marker, which is a local act that cannot be wrong about a value the user
+/// just typed. In particular `pairing.no_active_session` is **not** returned
+/// here any more; a correct joiner has no local session by construction.
+///
+/// The consequence is that a mistyped passphrase succeeds here and only fails
+/// later, at the wire-side proof check. The UI must not claim success on the
+/// strength of this returning `Ok` — see #3469.
 ///
 /// On success the pending-pairing marker is armed and the scheduler is
 /// signalled so a dormant sync daemon transitions to active mode without
