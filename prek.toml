@@ -723,10 +723,12 @@ stages = ["pre-commit"]
 # *.mjs, and requires the one sanctioned form:
 #     !!process.argv[1] &&
 #       realpathSync(import.meta.filename) === realpathSync(process.argv[1])
-# (`fs.realpathSync` equally accepted). NOT `import.meta.main`, which is
-# only "Added in: v24.2.0" while engines.node is ">=24" — on a
-# permitted-but-older 24.0/24.1 it is `undefined`, reproducing this exact
-# silent no-op. The guard scans scripts/ INCLUDING ITSELF, with no
+# (`fs.realpathSync` equally accepted). NOT `import.meta.main`: its old
+# version-floor rationale is now moot (engines.node is the derived
+# `^22.22.2 || ^24.15.0 || >=26.0.0`, and both line floors are above its
+# "Added in: v24.2.0, v22.18.0"), but it remains banned because it compares
+# the specifier AS SPELLED and so misjudges a script reached through a
+# symlink (#3373). The guard scans scripts/ INCLUDING ITSELF, with no
 # self-exemption; its own literal instances of the banned forms live in
 # comments (stripped) or are assembled from fragments at runtime.
 # pass_filenames=false — the script does its own scoped walk.

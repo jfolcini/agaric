@@ -28,11 +28,21 @@ retry() {
 }
 
 # --- Node toolchain --------------------------------------------------------
-# Everything below needs the Node version pinned in .nvmrc. package.json's
-# `engines` enforces it (>=24), so a mismatched node makes the very first
+# Everything below needs a Node that satisfies package.json's `engines.node`.
+# `.npmrc` sets engine-strict=true, so a mismatched node makes the very first
 # `npm ci` abort with EBADENGINE. Don't assume the caller's shell is already on
 # the right node: Claude's cloud VMs ship Node 20/21/22 (via nvm) by default,
-# all older than we need, so provision the pinned version here.
+# so provision the version pinned in .nvmrc when the active one won't do.
+#
+# The "is the active node good enough?" test reads `engines.node` from
+# package.json rather than comparing majors against .nvmrc. A major-only test
+# is wrong in BOTH directions now that the range is derived from the dependency
+# tree (`^22.22.2 || ^24.15.0 || >=26.0.0`, jsdom being the binding
+# constraint): it would skip provisioning on 24.0–24.14 — same major as .nvmrc,
+# but rejected by engine-strict, so `npm ci` fails immediately after the script
+# says the node is fine — and it would provision needlessly over a perfectly
+# supported 22.22.2+. Reading the range keeps this in lockstep with
+# package.json automatically when the range is next re-derived.
 #
 # This deliberately uses nvm over plain HTTPS — Node from nodejs.org, and (only
 # if nvm.sh is missing) nvm.sh from raw.githubusercontent.com — and NEVER
@@ -40,21 +50,42 @@ retry() {
 # so cloning a third-party repo (e.g. nvm-sh/nvm) over git returns 403, whereas
 # both HTTPS hosts are on the default "Trusted" network allowlist. So this works
 # at every network-access level without touching the git proxy.
+# Does the node currently on PATH satisfy package.json's `engines.node`?
+# Evaluated by node itself, dependency-free on purpose: this runs BEFORE
+# `npm ci`, so node_modules (and therefore the `semver` package) may not exist
+# yet. Handles the `^X.Y.Z` and `>=X.Y.Z` comparators the derived range is built
+# from; any other/unparseable comparator yields "not satisfied", which fails
+# SAFE by provisioning the pinned version rather than sailing into an
+# EBADENGINE. Verified against `semver.satisfies` across the range boundaries.
+node_satisfies_engines() {
+  node -e '
+    const r = (require("./package.json").engines || {}).node;
+    if (!r) process.exit(0);
+    const cur = process.versions.node.split(".").map(Number);
+    const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
+    const ok = r.split("||").some((part) => {
+      const m = part.trim().match(/^(\^|>=)\s*(\d+)\.(\d+)\.(\d+)$/);
+      if (!m) return false;
+      const min = [+m[2], +m[3], +m[4]];
+      if (cmp(cur, min) < 0) return false;
+      return m[1] === ">=" || cur[0] === min[0];   // ^ is major-locked
+    });
+    process.exit(ok ? 0 : 1);
+  ' 2>/dev/null
+}
+
 ensure_node() {
-  local want want_major
+  local want
   want="$(tr -d '[:space:]' < .nvmrc 2>/dev/null || true)"
   : "${want:=24}"
-  want_major="${want%%.*}"
 
-  # Already on a new-enough node? Nothing to do.
+  # Already on a node that engine-strict will accept? Nothing to do.
   if command -v node >/dev/null 2>&1; then
-    local have_major
-    have_major="$(node -v | sed 's/^v//; s/\..*//')"
-    if [ "${have_major:-0}" -ge "$want_major" ] 2>/dev/null; then
-      echo "node $(node -v) satisfies Node >=${want_major} — skipping nvm"
+    if node_satisfies_engines; then
+      echo "node $(node -v) satisfies package.json engines.node — skipping nvm"
       return 0
     fi
-    echo "node $(node -v) is older than required Node ${want} — provisioning via nvm…"
+    echo "node $(node -v) does not satisfy package.json engines.node — provisioning Node ${want} via nvm…"
   fi
 
   export NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
@@ -100,10 +131,8 @@ ensure_node() {
     echo "       Fix: run 'nvm install ${want}' manually, then re-run scripts/setup.sh." >&2
     exit 1
   fi
-  local now_major
-  now_major="$(node -v | sed 's/^v//; s/\..*//')"
-  if ! [ "${now_major:-0}" -ge "$want_major" ] 2>/dev/null; then
-    echo "error: node $(node -v) is still older than required Node ${want} after provisioning." >&2
+  if ! node_satisfies_engines; then
+    echo "error: node $(node -v) still does not satisfy package.json engines.node after provisioning." >&2
     echo "       Fix: run 'nvm install ${want} && nvm use ${want}', then re-run scripts/setup.sh." >&2
     exit 1
   fi
