@@ -22,7 +22,11 @@ name: Validate (prek-equivalent)
 #                        lint/docs-lint runs per push/PR).
 #   - vitest          — the full frontend suite as a single job (coverage,
 #                        production build, bundle-size gate); gated on
-#                        frontend changes.
+#                        frontend changes. Node 24 (primary).
+#   - vitest-node22   — the same suite (no coverage/build/budget) on the FLOOR
+#                        of `engines.node`, so the supported-Node claim is
+#                        tested rather than asserted; gated on frontend
+#                        changes like vitest.
 #   - playwright      — the e2e suite, sharded 3 ways; gated on frontend
 #                        changes.
 #   - cargo-tests     — backend `cargo nextest` + llvm-cov instrumentation,
@@ -1077,6 +1081,65 @@ jobs:
           retention-days: 30
 
   # ---------------------------------------------------------------------------
+  # vitest-node22 — the same frontend suite on the FLOOR of the supported Node
+  # range, so `engines.node` in package.json is a tested claim rather than an
+  # assertion in a manifest.
+  #
+  # Why a separate job and not a matrix on `vitest`: that job owns three
+  # single-instance side effects — the `vitest-coverage-merged` artifact
+  # (`if-no-files-found: error`, so two matrix legs collide on the name), the
+  # `--key vitest` coverage ratchet, and the bundle-size budget. A matrix would
+  # also rename the check to `vitest (24)` / `vitest (22)`, breaking the
+  # `check_job vitest` gate below (and any branch-protection required check).
+  #
+  # Cost: this lane deliberately drops coverage instrumentation (~2 min), the
+  # production build and the bundle budget — none of those are Node-version
+  # sensitive and all are already covered at 24. It runs in PARALLEL with the
+  # ~16-min cargo-tests long pole, so it costs a runner slot, not wall-clock on
+  # the critical path.
+  #
+  # 24 stays the primary lane (full coverage + build + budgets); this one only
+  # answers "does the suite still run on the oldest Node we claim to support".
+  # ---------------------------------------------------------------------------
+  vitest-node22:
+    needs: detect-changes
+    # Same frontend category gate as `vitest` — see detect-changes (fail-closed).
+    if: needs.detect-changes.outputs.frontend == 'true'
+    runs-on: ubuntu-24.04
+    # Strictly less work than the `vitest` job (no v8 coverage, no production
+    # build, no bundle budget), which is budgeted at 20. Same ceiling kept for
+    # headroom on a slower runner.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          # Pinned to the exact FLOOR of `engines.node` (^22.22.2), not the
+          # floating `22`, so this lane tests the lowest version we claim to
+          # support rather than whatever 22.x is newest. Keep in lockstep with
+          # the `engines.node` floor in package.json — that range is DERIVED
+          # from the dependency tree (jsdom is the binding constraint), so when
+          # jsdom moves its range, re-derive and update both together. Drift
+          # fails loudly here rather than silently shipping a false claim.
+          node-version: 22.22.2
+          cache: npm
+
+      # `.npmrc` sets engine-strict=true, so this step is itself part of the
+      # test: npm refuses to install at all if `engines.node` excludes 22.22.2.
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Typecheck (tsc -b)
+        run: npx tsc -b
+
+      - name: Vitest (full suite, no coverage)
+        run: npx vitest run
+
+  # ---------------------------------------------------------------------------
   # playwright — E2E browser tests, sharded 3-ways. Per-shard report uploaded
   # on failure (artifact name includes the shard number so the shards don't
   # collide). No merge step yet — deferred per the plan.
@@ -1666,7 +1729,7 @@ jobs:
   # flips frontend). Full truth table in the PR body.
   # ---------------------------------------------------------------------------
   validate-all:
-    needs: [detect-changes, verify-version-agreement, lint, docs-lint, vitest, playwright, cargo-tests, cargo-coverage, mcp-tests]
+    needs: [detect-changes, verify-version-agreement, lint, docs-lint, vitest, vitest-node22, playwright, cargo-tests, cargo-coverage, mcp-tests]
     if: always()
     runs-on: ubuntu-24.04
     # PEND-41 R1 — trivial jq/bash assertion (~2s observed); 5-min floor.
@@ -1746,6 +1809,7 @@ jobs:
           # absent from the diff.
           fe_skip_ok="false"; if [ "$frontend" != "true" ]; then fe_skip_ok="true"; fi
           check_job vitest "$fe_skip_ok"
+          check_job vitest-node22 "$fe_skip_ok"
           check_job playwright "$fe_skip_ok"
 
           # backend suite (+ its transitive coverage): skip allowed only when

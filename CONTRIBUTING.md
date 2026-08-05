@@ -20,7 +20,7 @@ bash scripts/setup.sh      # or: npm run setup  (identical)  ·  or: just setup 
 
 That is the whole dev-environment setup. The script is idempotent — safe to re-run any time — and handles all of it for you:
 
-- **Node** — provisions the version pinned in [`.nvmrc`](.nvmrc) via `nvm` if your active `node` is older (the `engines` floor is `>=24`), so you don't have to match it by hand.
+- **Node** — provisions the version pinned in [`.nvmrc`](.nvmrc) via `nvm` if your active `node` does not satisfy `engines.node` (`^22.22.2 || ^24.15.0 || >=26.0.0` — derived from the dependency tree, not hand-picked), so you don't have to match it by hand.
 - **Dependencies** — `npm ci` (deterministic install from the lockfile) and Playwright's chromium.
 - **`.env`** — copies `src-tauri/.env.example` to the gitignored `.env` beside it (sqlx reads `DATABASE_URL` from it at compile time; skipping this is the classic fresh-clone compile failure).
 - **Dev DB** — provisions the local sqlx offline-check database so pre-push Rust checks pass.
