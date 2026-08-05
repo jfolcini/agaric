@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
-  emojiByShortcode,
-  groupedEmoji,
   loadEmojiDataset,
   searchEmoji,
   type EmojiDataset,
@@ -36,20 +34,6 @@ describe('emoji-data', () => {
     expect(groups).toContain('Smileys & Emotion')
     expect(groups).toContain('Flags')
     expect(groups.length).toBe(9)
-  })
-
-  // #281 — `:shortcode:` closing-colon auto-replace lookup.
-  it('emojiByShortcode resolves an exact shortcode (case-insensitive) and null otherwise', async () => {
-    const emoji = await allEmoji()
-    const joy = emoji.find((e) => e.name === 'joy')
-    expect(joy).toBeDefined()
-    expect(await emojiByShortcode('joy')).toBe(joy?.char)
-    // Case-insensitive — users may type `:JOY:`.
-    expect(await emojiByShortcode('JOY')).toBe(joy?.char)
-    // Unknown shortcode → null (so the input rule leaves the text untouched).
-    expect(await emojiByShortcode('definitely_not_an_emoji_xyz')).toBeNull()
-    // Keywords are NOT matched (deterministic 1:1 replacement only).
-    expect(await emojiByShortcode('')).toBeNull()
   })
 
   it('every entry has a non-empty char, a clean shortcode name, and a keyword array', async () => {
@@ -107,9 +91,9 @@ describe('emoji-data', () => {
     expect((await searchEmoji('face', 10)).length).toBeLessThanOrEqual(10)
   })
 
-  describe('groupedEmoji', () => {
+  describe('grouped dataset', () => {
     it('partitions every emoji into exactly one group, losing none', async () => {
-      const buckets = await groupedEmoji()
+      const { grouped: buckets } = await loadEmojiDataset()
       const emoji = await allEmoji()
       const flattened = buckets.flatMap((b) => b.emoji)
       expect(flattened).toHaveLength(emoji.length)
@@ -118,7 +102,7 @@ describe('emoji-data', () => {
     })
 
     it('only emits known groups, in declared order, with no empties', async () => {
-      const buckets = await groupedEmoji()
+      const { grouped: buckets } = await loadEmojiDataset()
       const groups = await emojiGroupNames()
       for (const b of buckets) {
         expect(groups).toContain(b.group)
@@ -130,7 +114,7 @@ describe('emoji-data', () => {
     })
 
     it('leads with the Smileys & Emotion group', async () => {
-      const buckets = await groupedEmoji()
+      const { grouped: buckets } = await loadEmojiDataset()
       expect(buckets[0]?.group).toBe('Smileys & Emotion')
       expect(buckets[0]?.emoji[0]?.name).toBe('grinning')
     })

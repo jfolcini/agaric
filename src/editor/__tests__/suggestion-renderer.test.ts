@@ -1453,6 +1453,55 @@ describe('editable-combobox ARIA wiring (#1102)', () => {
     expect(dom.hasAttribute('aria-expanded')).toBe(false)
   })
 
+  it('synchronous onExit re-entry during Escape teardown is idempotent and can reopen', () => {
+    const pluginKey = new PluginKey('reentrant-suggestion')
+    const { editor, dom } = makeComboboxEditor()
+    const setMeta = vi.fn().mockReturnThis()
+    const dispatch = vi.fn(() => renderer.onExit())
+    editor.state = { tr: { setMeta } }
+    editor.view.dispatch = dispatch
+    const renderer = createSuggestionRenderer('Tags', pluginKey)
+    const removeListenerSpy = vi.spyOn(document, 'removeEventListener')
+
+    renderer.onStart(makeProps(editor))
+    const firstInstance: any = mockReactRenderer.mock.instances.at(-1)
+    expect(dom.getAttribute('role')).toBe('combobox')
+    removeListenerSpy.mockClear()
+
+    const handled = renderer.onKeyDown({
+      event: new KeyboardEvent('keydown', { key: 'Escape' }),
+      view: {} as never,
+      range: { from: 0, to: 0 },
+    })
+
+    expect(handled).toBe(true)
+    expect(dispatch).toHaveBeenCalledTimes(1)
+    expect(firstInstance.destroy).toHaveBeenCalledTimes(1)
+    expect(removeListenerSpy).toHaveBeenCalledTimes(1)
+    expect(removeListenerSpy).toHaveBeenCalledWith('pointerdown', expect.any(Function), true)
+    expect(document.querySelector('.suggestion-popup')).toBeNull()
+    expect(dom.getAttribute('role')).toBe('textbox')
+    expect(dom.hasAttribute('aria-expanded')).toBe(false)
+
+    // A late duplicate lifecycle exit is a no-op after the re-entrant close.
+    renderer.onExit()
+    expect(firstInstance.destroy).toHaveBeenCalledTimes(1)
+    expect(removeListenerSpy).toHaveBeenCalledTimes(1)
+
+    // The nested onExit cleared every captured reference, so the same lifecycle
+    // object can start a fresh popup without retaining the first renderer.
+    renderer.onStart(makeProps(editor, 'again'))
+    const secondInstance: any = mockReactRenderer.mock.instances.at(-1)
+    expect(secondInstance).not.toBe(firstInstance)
+    expect(document.querySelector('.suggestion-popup')).toBeInTheDocument()
+    expect(dom.getAttribute('role')).toBe('combobox')
+
+    renderer.onExit()
+    expect(secondInstance.destroy).toHaveBeenCalledTimes(1)
+    expect(dom.getAttribute('role')).toBe('textbox')
+    removeListenerSpy.mockRestore()
+  })
+
   it('aria-activedescendant on the contenteditable tracks the highlighted option id', () => {
     const { editor, dom } = makeComboboxEditor()
     const renderer = createSuggestionRenderer('Tags')

@@ -43,7 +43,7 @@ Settings → Keyboard. Each entry shows its current binding and a "Record" butto
 | `Ctrl+B` | Bold (inside the editor; outside it the same chord toggles the sidebar) |
 | `Ctrl+I` | Italic |
 | `Ctrl+E` | Inline code |
-| `Ctrl+Shift+S` | Strikethrough (legacy `Ctrl+Shift+X` still works for one release) |
+| `Ctrl+Shift+S` | Strikethrough |
 | `Ctrl+Shift+H` | Highlight |
 | `Ctrl+U` | Underline |
 | `Ctrl+Shift+C` | Code block (convert current block) |

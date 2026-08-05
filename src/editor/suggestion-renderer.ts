@@ -229,6 +229,35 @@ export function createSuggestionRenderer(
     }
   }
 
+  /**
+   * Close the popup through one idempotent teardown path.
+   *
+   * Escape and outside-click must dispatch the Suggestion plugin's exit meta
+   * before releasing any captured state. That dispatch can synchronously call
+   * `onExit()`, so this function deliberately tolerates re-entry: after the
+   * optional dispatch, it snapshots and clears the renderer/popup references
+   * before invoking their teardown methods. The outer call then observes null
+   * state after a synchronous nested `onExit()` and becomes a harmless no-op.
+   */
+  function closePopup({ dispatchExit }: { dispatchExit: boolean }): void {
+    if (dispatchExit) dispatchExitMeta()
+
+    // Restore combobox semantics while the captured editor is still available.
+    teardownCombobox()
+    cleanupListener()
+
+    // Clear shared state before calling external teardown hooks so any nested
+    // lifecycle callback cannot destroy/remove the same objects twice.
+    const rendererToDestroy = renderer
+    const popupToRemove = popup
+    renderer = null
+    popup = null
+    editorRef = null
+
+    rendererToDestroy?.destroy()
+    popupToRemove?.remove()
+  }
+
   return {
     onStart(props: SuggestionProps) {
       logger.debug('SuggestionRenderer', 'onStart', { label, query: props.query })
@@ -298,14 +327,7 @@ export function createSuggestionRenderer(
           logger.warn('SuggestionRenderer', 'outside click — deactivating plugin', { label })
           // Deactivate the Suggestion plugin so it doesn't stay stuck
           // active with a null renderer (B-77 fix layer 1).
-          dispatchExitMeta()
-          // #1102 — restore textbox semantics before we drop the references.
-          teardownCombobox()
-          cleanupListener()
-          renderer?.destroy()
-          renderer = null
-          popup?.remove()
-          popup = null
+          closePopup({ dispatchExit: true })
         }
       }
       deferredRegistrationId = requestAnimationFrame(() => {
@@ -358,14 +380,7 @@ export function createSuggestionRenderer(
         // Suggestion plugin stayed ACTIVE: continued typing extended the query
         // against a null renderer (the `onUpdate` desync warn). Mirror the
         // outside-click path's exit dispatch.
-        dispatchExitMeta()
-        // #1102 — Escape closes the picker; restore textbox semantics.
-        teardownCombobox()
-        cleanupListener()
-        renderer?.destroy()
-        renderer = null
-        popup?.remove()
-        popup = null
+        closePopup({ dispatchExit: true })
         return true
       }
       // Space: let it pass through to the editor so it's inserted as text
@@ -393,15 +408,7 @@ export function createSuggestionRenderer(
 
     onExit() {
       logger.debug('SuggestionRenderer', 'onExit', { label })
-      // #1102 — restore textbox semantics on the contenteditable BEFORE we drop
-      // `editorRef` (teardownCombobox reads it).
-      teardownCombobox()
-      cleanupListener()
-      renderer?.destroy()
-      renderer = null
-      popup?.remove()
-      popup = null
-      editorRef = null
+      closePopup({ dispatchExit: false })
     },
   }
 }

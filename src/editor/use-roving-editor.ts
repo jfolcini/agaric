@@ -154,13 +154,7 @@ export const CodeWithShortcut = Code.extend({
 /** Strike with configurable shortcut to toggle strikethrough. @internal Exported for testing. */
 export const StrikeWithShortcut = Strike.extend({
   addKeyboardShortcuts() {
-    const toggle = () => this.editor.commands.toggleStrike()
-    return {
-      ...tipTapShortcutMap('strikethrough', toggle),
-      // #211 P2-11 — keep the legacy `Ctrl+Shift+X` working for one release
-      // after the primary binding moved to `Ctrl+Shift+S`. Remove next release.
-      'Mod-Shift-x': toggle,
-    }
+    return tipTapShortcutMap('strikethrough', () => this.editor.commands.toggleStrike())
   },
 })
 

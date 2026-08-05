@@ -16,11 +16,10 @@
  * every cold start, even for users who never open an emoji surface. Instead
  * `loadEmojiDataset()` pulls the generated module in via a dynamic `import()`
  * on first use and memoizes the result (module load + derived-structure build
- * happen at most once); every export below is async and awaits it. Callers
- * that need the same resolved dataset repeatedly in one render (the
- * browse-grid picker) should hold the resolved value themselves rather than
- * re-invoking these — `loadEmojiDataset()` is cheap to re-call (it returns
- * the cached promise), but there is no reason to re-await it per keystroke.
+ * happen at most once). Callers that need the same resolved dataset repeatedly
+ * in one render (the browse-grid picker) should hold the resolved value and use
+ * the synchronous helpers rather than re-awaiting the cached promise per
+ * keystroke.
  */
 
 import { matchSorter } from 'match-sorter'
@@ -145,19 +144,4 @@ export function matchEmojiQuery(
 export async function searchEmoji(query: string, limit = 24): Promise<EmojiEntry[]> {
   const { flat } = await loadEmojiDataset()
   return matchEmojiQuery(flat, query, limit)
-}
-
-/**
- * The categorized buckets for the browse-grid (#286). Every emoji appears in
- * exactly one bucket and no group is empty (the generator omits empties).
- */
-export async function groupedEmoji(): Promise<readonly EmojiGroupBucket[]> {
-  const { grouped } = await loadEmojiDataset()
-  return grouped
-}
-
-/** Return the native emoji for an exact shortcode `name`, or null if unknown. */
-export async function emojiByShortcode(name: string): Promise<string | null> {
-  const { byShortcode } = await loadEmojiDataset()
-  return byShortcode.get(name.toLowerCase()) ?? null
 }

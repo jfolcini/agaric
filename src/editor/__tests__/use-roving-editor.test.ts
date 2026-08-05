@@ -476,9 +476,7 @@ describe('custom extension keyboard shortcuts', () => {
     expect(editor.isActive('strike')).toBe(true)
   })
 
-  it('StrikeWithShortcut binds both Ctrl+Shift+S and the legacy Ctrl+Shift+X (#211 P2-11)', () => {
-    // `strikethrough` defaults to Ctrl+Shift+S → Mod-Shift-s; the legacy
-    // Ctrl+Shift+X (Mod-Shift-x) is kept hardcoded for one release.
+  it('StrikeWithShortcut binds only the configured Ctrl+Shift+S chord', () => {
     const addKeyboardShortcuts = StrikeWithShortcut.config.addKeyboardShortcuts as
       | ((this: { editor: { commands: { toggleStrike: () => boolean } } }) => Record<
           string,
@@ -487,7 +485,7 @@ describe('custom extension keyboard shortcuts', () => {
       | undefined
     const toggleStrike = vi.fn(() => true)
     const shortcuts = addKeyboardShortcuts?.call({ editor: { commands: { toggleStrike } } }) ?? {}
-    expect(Object.keys(shortcuts).toSorted()).toEqual(['Mod-Shift-s', 'Mod-Shift-x'])
+    expect(Object.keys(shortcuts)).toEqual(['Mod-Shift-s'])
   })
 
   // #2679 — `@tiptap/extension-heading` ships hardcoded `Mod-Alt-1`…`Mod-Alt-6`
@@ -633,14 +631,12 @@ describe('custom extension keyboard shortcuts', () => {
 // -- Editor keymap key→action firing (#1172) ----------------------------------
 //
 // The existing `custom extension keyboard shortcuts` suite above asserts the
-// extensions REGISTER and that the toggle commands work, plus that the strike
-// keymap exposes both `Mod-Shift-s` and `Mod-Shift-x` (#211 P2-11). What was
-// missing: driving the ACTUAL keydown chord through ProseMirror's keymap and
-// asserting the resulting action — the key→action contract these tests pin.
+// extensions REGISTER and that the toggle commands work. What was missing:
+// driving the ACTUAL keydown chord through ProseMirror's keymap and asserting
+// the resulting action — the key→action contract these tests pin.
 //   • priority1/2/3 — Ctrl+Shift+1/2/3 must dispatch the `set-priority-N`
 //     CustomEvent on `document` (the priority handler the toolbar listens on).
-//   • strikethrough legacy alias — Ctrl+Shift+X must still toggle strike for
-//     one release, alongside the primary Ctrl+Shift+S.
+//   • strikethrough — Ctrl+Shift+S must toggle the strike mark.
 describe('editor keymap key→action firing (#1172)', () => {
   let editor: Editor
 
@@ -711,14 +707,26 @@ describe('editor keymap key→action firing (#1172)', () => {
     expect(editor.isActive('strike')).toBe(true)
   })
 
-  it('strikethrough — legacy Ctrl+Shift+X alias still toggles strike (#211 P2-11)', () => {
+  it('strikethrough — former Ctrl+Shift+X alias is unhandled', () => {
     editor = createEditor([StrikeWithShortcut])
     setHelloSelected(editor)
 
     const handled = dispatchKeydown(editor, 'x', { ctrlKey: true, shiftKey: true })
 
+    expect(handled).toBe(false)
+    expect(editor.isActive('strike')).toBe(false)
+  })
+
+  it('former Ctrl+Shift+X strike chord is available for an inline-code rebind', () => {
+    setCustomShortcut('inlineCode', 'Ctrl + Shift + X')
+    editor = createEditor([CodeWithShortcut, StrikeWithShortcut])
+    setHelloSelected(editor)
+
+    const handled = dispatchKeydown(editor, 'x', { ctrlKey: true, shiftKey: true })
+
     expect(handled).toBe(true)
-    expect(editor.isActive('strike')).toBe(true)
+    expect(editor.isActive('code')).toBe(true)
+    expect(editor.isActive('strike')).toBe(false)
   })
 })
 
