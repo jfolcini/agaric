@@ -8,6 +8,11 @@ import { test, expect } from '@playwright/test'
 // getPage → getViewport → render{canvasContext,viewport,canvas:null}) against
 // a real 1-page PDF, in the real browser, served by vite. It asserts the
 // version match, that the page parses, and that pixels actually get painted.
+//
+// EVERY pdfjs-dist bump (including Dependabot's) must re-vendor the worker in
+// the same commit, or this spec goes red and PDF attachments stop opening:
+//   cp node_modules/pdfjs-dist/build/pdf.worker.min.mjs public/pdf.worker.min.mjs
+// then update the pinned `result.version` assertion below to the new version.
 
 // Minimal valid 1-page PDF ("Hi 6.0"), generated offline.
 const PDF_B64 =
@@ -55,7 +60,7 @@ test('pdfjs v6 worker + API render the vendored worker without version mismatch'
 
   // API version must equal the vendored worker version (else getDocument would
   // have rejected before we got here).
-  expect(result.version).toBe('6.1.200')
+  expect(result.version).toBe('6.2.108')
   expect(result.numPages).toBe(1)
   expect(result.w).toBeGreaterThan(0)
   expect(result.h).toBeGreaterThan(0)
