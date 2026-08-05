@@ -19,15 +19,28 @@
 // backfill is checked separately. The full registry/member recipe applies
 // to every later blocks rebuild.
 //
+// #3271: the required-column sets for `block_drafts` and `spaces` used to
+// be hardcoded lists, and the `block_drafts` one went stale the moment
+// 0092 added `draft_anchor_seq`/`draft_anchor_device` — a rebuild whose
+// snapshot dropped those columns would have passed silently. Both sets
+// are now DERIVED by replaying every real migration file on disk up to
+// (not including) the one under test (`schemaAsOf`), so a future column
+// addition is automatically required in the next rebuild's snapshot/
+// restore with no hand-edit to this script. If derivation ever can't find
+// a table (a gap in the tracker's CREATE/ALTER/RENAME/DROP handling), the
+// guard fails loudly instead of silently treating "no required columns"
+// as "nothing to check".
+//
 // Usage: node scripts/check-migrations-rebuild-cascade.mjs <f.sql>...
 //        node scripts/check-migrations-rebuild-cascade.mjs --self-test
 // Exit:  0 = clean, 1 = a guarded rebuild misses the preservation step.
 // ─────────────────────────────────────────────────────────────────────
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
 import { basename } from 'node:path'
 
 const FIRST_GUARDED_MIGRATION = 89
 const SPACES_INTRODUCTION_MIGRATION = 89
+const MIGRATIONS_DIR = new URL('../src-tauri/migrations/', import.meta.url)
 
 /**
  * Remove SQL comments and single-quoted string contents. Keeping strings
@@ -174,18 +187,131 @@ function migrationNumber(name) {
   return match ? Number.parseInt(match[1], 10) : null
 }
 
-function validateAuthoritativeChildren(statements, dropIndex, renameIndex, violations) {
-  for (const [table, columns] of [
-    ['page_aliases', ['page_id', 'alias']],
-    ['block_drafts', ['block_id', 'content', 'updated_at']],
-  ]) {
+/** List every real migration file on disk, sorted by migration number. */
+function findAllMigrationFiles() {
+  return readdirSync(MIGRATIONS_DIR)
+    .filter((name) => /^\d+_.*\.sql$/.test(name))
+    .map((name) => ({ name, number: migrationNumber(name) }))
+    .toSorted((a, b) => a.number - b.number)
+}
+
+/** Split `text` on top-level occurrences of `sep`, ignoring ones nested inside parens. */
+function splitTopLevel(text, sep) {
+  const parts = []
+  let depth = 0
+  let current = ''
+  for (const ch of text) {
+    if (ch === '(') depth++
+    else if (ch === ')') depth--
+    if (ch === sep && depth === 0) {
+      parts.push(current)
+      current = ''
+    } else {
+      current += ch
+    }
+  }
+  parts.push(current)
+  return parts
+}
+
+/** Return the text between the first `(` at/after `from` and its matching `)`. */
+function extractParenBody(statement, from) {
+  const start = statement.indexOf('(', from)
+  if (start < 0) return null
+  let depth = 0
+  for (let i = start; i < statement.length; i++) {
+    if (statement[i] === '(') depth++
+    else if (statement[i] === ')') {
+      depth--
+      if (depth === 0) return statement.slice(start + 1, i)
+    }
+  }
+  return null
+}
+
+const TABLE_CONSTRAINT_RE = /^(constraint\b|primary\s+key\b|foreign\s+key\b|unique\s*\(|check\s*\()/
+
+/** Parse a `CREATE TABLE (...)` body into its column names, skipping table-level constraints. */
+function parseColumnList(body) {
+  const columns = []
+  for (const part of splitTopLevel(body, ',')) {
+    const trimmed = part.trim()
+    if (!trimmed || TABLE_CONSTRAINT_RE.test(trimmed)) continue
+    const name = trimmed.match(/^([a-z_][a-z0-9_]*)/)?.[1]
+    if (name) columns.push(name)
+  }
+  return columns
+}
+
+/** Replay one normalized statement's effect (if any) on the tracked table schemas. */
+function applyStatementToSchema(schema, statement) {
+  let match = statement.match(/^create\s+table\s+(?:if\s+not\s+exists\s+)?([a-z_][a-z0-9_]*)\s*\(/)
+  if (match) {
+    const body = extractParenBody(statement, match.index)
+    if (body !== null) schema.set(match[1], parseColumnList(body))
+    return
+  }
+
+  match = statement.match(
+    /^alter\s+table\s+(?:main\s*\.\s*)?([a-z_][a-z0-9_]*)\s+add\s+(?:column\s+)?([a-z_][a-z0-9_]*)/,
+  )
+  if (match) {
+    schema.get(match[1])?.push(match[2])
+    return
+  }
+
+  match = statement.match(
+    /^alter\s+table\s+(?:main\s*\.\s*)?([a-z_][a-z0-9_]*)\s+rename\s+to\s+([a-z_][a-z0-9_]*)/,
+  )
+  if (match) {
+    const columns = schema.get(match[1])
+    if (columns) schema.set(match[2], columns)
+    schema.delete(match[1])
+    return
+  }
+
+  match = statement.match(/^drop\s+table\s+(?:if\s+exists\s+)?(?:main\s*\.\s*)?([a-z_][a-z0-9_]*)/)
+  if (match) schema.delete(match[1])
+}
+
+/**
+ * Reconstruct every table's live column set as of just BEFORE `upToNumber`
+ * runs, by replaying every earlier real migration file on disk in order
+ * (CREATE TABLE / ALTER TABLE ADD COLUMN / ALTER TABLE RENAME TO / DROP TABLE).
+ * This is what lets the required-column checks below stay correct across
+ * schema changes with no hand-maintained list to go stale.
+ */
+function schemaAsOf(upToNumber) {
+  const schema = new Map()
+  for (const file of findAllMigrationFiles()) {
+    if (file.number === null || file.number >= upToNumber) continue
+    const statements = statementsFor(readFileSync(new URL(file.name, MIGRATIONS_DIR), 'utf8'))
+    for (const statement of statements) applyStatementToSchema(schema, statement)
+  }
+  return schema
+}
+
+function validateAuthoritativeChildren(statements, dropIndex, renameIndex, schema, violations) {
+  for (const table of ['page_aliases', 'block_drafts']) {
+    const columns = schema.get(table)
+    if (!columns || columns.length === 0) {
+      violations.push(
+        `${table}: could not derive its current columns from migration history — the schema ` +
+          `tracker in check-migrations-rebuild-cascade.mjs is out of sync, fix it before trusting this guard`,
+      )
+      continue
+    }
     const snapshot = findSnapshot(statements, table, dropIndex, columns)
     if (!snapshot) {
-      violations.push(`${table}: take a scratch-table snapshot before DROP TABLE blocks`)
+      violations.push(
+        `${table}: take a scratch-table snapshot of (${columns.join(', ')}) before DROP TABLE blocks`,
+      )
       continue
     }
     if (findRestore(statements, table, snapshot.table, renameIndex + 1) < 0) {
-      violations.push(`${table}: restore the scratch snapshot after the replacement is renamed`)
+      violations.push(
+        `${table}: restore the (${columns.join(', ')}) scratch snapshot after the replacement is renamed`,
+      )
     }
   }
 }
@@ -218,10 +344,23 @@ function validateSpacesIntroduction(statements, dropIndex, renameIndex, violatio
   }
 }
 
-function validateFutureSpacesRebuild(statements, dropIndex, renameIndex, violations) {
-  const registry = findSnapshot(statements, 'spaces', dropIndex, ['id'])
+function validateFutureSpacesRebuild(statements, dropIndex, renameIndex, schema, violations) {
+  const registryColumns = schema.get('spaces')
+  if (!registryColumns || registryColumns.length === 0) {
+    violations.push(
+      'spaces: could not derive its current columns from migration history — the schema ' +
+        'tracker in check-migrations-rebuild-cascade.mjs is out of sync, fix it before trusting this guard',
+    )
+    return
+  }
+
+  const registry = findSnapshot(statements, 'spaces', dropIndex, registryColumns)
   const members = findSnapshot(statements, 'blocks', dropIndex, ['block_id', 'space_id'])
-  if (!registry) violations.push('spaces: snapshot registry rows into a scratch table before DROP')
+  if (!registry) {
+    violations.push(
+      `spaces: snapshot registry rows (${registryColumns.join(', ')}) into a scratch table before DROP`,
+    )
+  }
   if (
     !members ||
     selectProjection(statements[members.index], 'blocks') !== 'id as block_id, space_id' ||
@@ -281,11 +420,12 @@ function violationsFor(name, sql) {
     return violations
   }
 
-  validateAuthoritativeChildren(statements, dropIndex, renameIndex, violations)
+  const schema = schemaAsOf(number ?? Number.POSITIVE_INFINITY)
+  validateAuthoritativeChildren(statements, dropIndex, renameIndex, schema, violations)
   if (number === SPACES_INTRODUCTION_MIGRATION) {
     validateSpacesIntroduction(statements, dropIndex, renameIndex, violations)
   } else {
-    validateFutureSpacesRebuild(statements, dropIndex, renameIndex, violations)
+    validateFutureSpacesRebuild(statements, dropIndex, renameIndex, schema, violations)
   }
   return violations
 }
@@ -474,6 +614,35 @@ function runSelfTest() {
   )
   expect('pre-0089 rebuild remains grandfathered', 'DROP TABLE blocks;', true, '0088_fixture.sql')
   expect('migration without a blocks drop is ignored', 'SELECT * FROM spaces;', true)
+
+  // #3271 regression: the required-column lists used to be hardcoded and
+  // went stale the moment 0092 added `block_drafts.draft_anchor_seq` /
+  // `draft_anchor_device` — a rebuild whose snapshot only carried the pre-
+  // 0092 columns would have passed silently, discarding both columns for
+  // every drafted row. Columns are now derived from migration history
+  // (`schemaAsOf`), so this must fail on any migration numbered after 0092.
+  const staleDraftColumns = complete
+    .replace(
+      'CREATE TEMP TABLE keep_drafts AS SELECT * FROM block_drafts;',
+      'CREATE TEMP TABLE keep_drafts AS SELECT block_id, content, updated_at FROM block_drafts;',
+    )
+    .replace(
+      'INSERT INTO block_drafts SELECT * FROM keep_drafts;',
+      'INSERT INTO block_drafts (block_id, content, updated_at) ' +
+        'SELECT block_id, content, updated_at FROM keep_drafts;',
+    )
+  expect(
+    'block_drafts snapshot missing draft_anchor_seq/draft_anchor_device fails (#3271)',
+    staleDraftColumns,
+    false,
+    '0107_fixture.sql',
+  )
+  expect(
+    'block_drafts SELECT * still satisfies a post-0092 required-column set',
+    complete,
+    true,
+    '0107_fixture.sql',
+  )
 
   if (failed) process.exit(1)
   console.log('self-test: all assertions passed')
