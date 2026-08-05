@@ -266,6 +266,39 @@ Every new or changed code path needs tests — non-negotiable, no code ships wit
   `@testing-library/react` + `userEvent`; mock IPC with `vi.mocked(invoke)`. See
   `src/__tests__/AGENTS.md`.
 
+### Acceptance is falsification, not assertion
+
+"Add a test" is satisfiable by a test that cannot fail. **State the acceptance criterion as
+the failure you expect to see**, and make the subagent produce it:
+
+> Temporarily break the production code this test covers, run the test, paste the verbatim
+> RED output, then restore. A test whose failure you cannot demonstrate has not been shown
+> to cover anything.
+
+This is not ceremony — it is the only step that distinguishes "asserts the behaviour is
+correct" from "distinguishes correct from broken". Worked examples where the difference was
+real: #3452 (a suggested test passed against the stubbed-out function, because the fallback
+path produced an identical result); #3455 (four mutants, killed and proven killed); #3453
+(`3 mutants tested: 3 caught` rather than "tests pass").
+
+Where mutation testing is available, "the mutant dies" is the strongest available form of
+this and cannot be satisfied vacuously.
+
+### Three failure modes to reject in review
+
+These recur, are cheap to spot, and each has shipped at least once:
+
+1. **The vacuous assertion.** Restates a precondition the test itself established
+   (`assert!(app.try_state::<T>().is_none())` in a test that never calls `manage`).
+   Ask: *what production change would redden this?* If the answer is "none", it is decoration.
+2. **The unreachable condition.** `!stem.endsWith('!=')` where the string cannot end in both;
+   an `endsWith('.mjs')` check against a list that only ever holds `.rs` paths. Guards whose
+   branch cannot be taken read as coverage and provide none.
+3. **The half-covered pair.** One arm of a symmetric property pinned and the other left open —
+   a snapshot column set checked while the restore projection is not (#3425), a guard body
+   tested while its invocation is not (#3435). Ask of every guard: *is the call site covered
+   as well as the body?*
+
 ## 4. REVIEW (pipelined with BUILD)
 
 **Don't wait for all builds.** As each build subagent completes, launch its review
@@ -403,6 +436,29 @@ the backlog, not to stop. Pending PRs get merged at the next batch-boundary swee
   `pending/PEND-*.md` files — that pattern was retired (2026-05-27 → 05-28).
 - Every commit passes pre-commit; every push passes pre-push. Both run automatically.
 - Keep refactoring and feature work in separate commits so reverts stay surgical.
+
+### Claims must carry their denominator
+
+Every quantitative claim in an issue, PR body, session log, or report states **what it is
+over**. "94% of mutants caught" is not a statement about a crate if the config scopes
+mutation to two files of it; "all 15 call sites pass an explicit input" is checkable and was
+false (3 did not). The recurring error is not a wrong number — it is a right number attached
+to a wider noun than it earned.
+
+Before writing a percentage, a count, or an "X is well tested / fully covered / always
+does Y": name the population, and confirm you measured *that* population and not a subset.
+When reviewing, the one-question version is **"over what?"**
+
+### Relayed claims are unverified until you verify them
+
+A claim from a reviewer, an upstream changelog, a subagent report, or an issue comment is
+evidence that someone believes it — not that it is true. Either check it before repeating it,
+or mark it explicitly as unverified when you pass it on. Repeating a plausible claim as
+established fact launders it: #3433 carried a reviewer's "all call sites pass an explicit
+toolchain" into an issue as a recommendation, and it was wrong in a way that would have
+silently changed the release build's toolchain.
+
+This applies with most force to claims that *support the conclusion you already want*.
 
 ## Common pitfalls (one-liners — full detail in `references/pitfalls.md`)
 
