@@ -118,7 +118,7 @@ When a table rebuild is needed (e.g. to add a `FOREIGN KEY … ON DELETE CASCADE
 
 Under `foreign_keys = ON` (every connection, including the migration transaction), the rebuild's `DROP TABLE <parent>` step **immediately cascade-deletes every row** of every child table holding an `ON DELETE CASCADE` FK into it. The cascade is part of the DROP itself, **not** a deferred FK validation, so the per-migration transaction does not protect children — only the *parent's* rows survive (via the `_new_` bulk copy). This is verified mechanically by the `*_376` and `*_606` harness tests in `src-tauri/src/db/tests.rs` (seed-then-migrate).
 
-Two more empirically-pinned DROP facts (SQLite 3.50; see `agents_md_table_rebuild_recipe_preserves_satellites_606`):
+Two more empirically-pinned DROP facts (SQLite 3.50; see `agents_md_table_rebuild_recipe_preserves_authoritative_state_606`):
 
 - There is **no commit-time FK row re-validation**. If a **non**-CASCADE child still holds referencing rows, the DROP aborts at the statement with `FOREIGN KEY constraint failed` — transaction or not. Rebuilds only ever "work" because every populated child either carries CASCADE (and is silently wiped) or is empty.
 - The `_new_<table>` DDL must redirect **self**-FKs to `_new_<table>` (0085 precedent: `parent_id TEXT REFERENCES _new_blocks(id)`). A self-FK left pointing at the old table makes the DROP abort the same way, because the freshly copied `_new_` rows still reference it. The post-swap `ALTER TABLE … RENAME` rewrites those references back to the real name.
@@ -132,25 +132,63 @@ These are **authoritative**: the shipped blocks rebuilds (0073, 0080, 0085) perm
 
 **Correction of record:** migration 0085's header claims the rebuild "is safe because the bulk copy is a pure `INSERT ... SELECT` (no rows deleted from `blocks`), so referencing FK rows keep pointing at valid ids throughout." That claim is **false** for cascade children — the DROP wipes them regardless of the copy. Migrations are append-only, so the comment cannot be fixed in place; this section is the correction. Do not copy that rationale into a future rebuild.
 
-**Rule for every future rebuild of a table with inbound `ON DELETE CASCADE` FKs:** copy each authoritative child table aside before the DROP and restore it after the rename. `PRAGMA foreign_keys = OFF` is *not* an option — sqlx wraps each migration in a transaction and the pragma is a no-op inside one. The recipe (`CREATE TEMP TABLE … AS SELECT` carries no type info, so STRICT does not apply; the scratch table is dropped in the same migration):
+**Rule for every future rebuild of a table with inbound `ON DELETE CASCADE` FKs:** copy each authoritative child table aside before the DROP and restore it after the rename. `PRAGMA foreign_keys = OFF` is *not* an option — sqlx wraps each migration in a transaction and the pragma is a no-op inside one. For `blocks`, copy the recipe below in full. `CREATE TEMP TABLE … AS SELECT` carries no type info, so STRICT does not apply; every scratch table is dropped in the same migration.
 
 ```sql
--- 1. Copy authoritative children aside (BEFORE the DROP).
+-- Must be the migration's first statement. This defers FK violation
+-- checks only; CASCADE and SET NULL actions still fire immediately.
+PRAGMA defer_foreign_keys = ON;
+
+-- 1. Snapshot every authoritative child and member assignment into
+-- no-FK scratch tables (BEFORE touching the live registry or blocks).
 CREATE TEMP TABLE _keep_page_aliases AS SELECT * FROM page_aliases;
 CREATE TEMP TABLE _keep_block_drafts AS SELECT * FROM block_drafts;
+CREATE TEMP TABLE _keep_spaces AS SELECT * FROM spaces;
+CREATE TEMP TABLE _keep_block_spaces AS
+    SELECT id AS block_id, space_id
+      FROM blocks
+     WHERE space_id IS NOT NULL;
 
--- 2. The rebuild swap. The DROP cascade-empties the children HERE.
+-- 2. Empty the registry before copying/rebuilding blocks. This SET NULLs
+-- live blocks.space_id immediately; _keep_block_spaces preserves them.
+DELETE FROM spaces;
+
+-- 3. Create _new_blocks here by copying the complete current blocks schema.
+-- Redirect parent_id/page_id self-FKs to _new_blocks(id); keep space_id
+-- REFERENCES spaces(id) ON DELETE SET NULL. Then copy the now-space-less
+-- rows. spaces MUST remain empty/absent through DROP and RENAME or the
+-- blocks → spaces CASCADE will wipe it and fan out SET NULL into replacement.
+INSERT INTO _new_blocks SELECT * FROM blocks;
 DROP TABLE blocks;
 ALTER TABLE _new_blocks RENAME TO blocks;
 
--- 3. Restore the children (their tables survive the cascade, emptied).
+-- 4. Restore registry owners after the rename, then repair memberships.
+-- The owner row must exist before each blocks.space_id FK is restored.
+INSERT INTO spaces SELECT * FROM _keep_spaces;
+UPDATE blocks
+   SET space_id = (
+       SELECT space_id
+         FROM _keep_block_spaces
+        WHERE block_id = blocks.id
+   )
+ WHERE id IN (SELECT block_id FROM _keep_block_spaces);
+
+-- 5. Restore the other authoritative children and remove all scratch.
 INSERT INTO page_aliases SELECT * FROM _keep_page_aliases;
 INSERT INTO block_drafts SELECT * FROM _keep_block_drafts;
 DROP TABLE _keep_page_aliases;
 DROP TABLE _keep_block_drafts;
+DROP TABLE _keep_spaces;
+DROP TABLE _keep_block_spaces;
 ```
 
-For `blocks`, the authoritative children were exactly `page_aliases` and `block_drafts` through migration 0088; **as of 0089 the preserve set also includes `spaces`** — wiping `spaces` is doubly destructive because `blocks.space_id … ON DELETE SET NULL` then silently clears every space membership. 0089 sidesteps this by keeping `spaces` EMPTY until after the rename (snapshot to `_spaces_backfill` first, populate last); copy that choreography in any future rebuild, and re-check the full list against the FK graph when writing one. Two enforcement layers exist: the `migrations-rebuild-cascade` prek hook (`scripts/check-migrations-rebuild-cascade.mjs`) greps any new migration containing `DROP TABLE blocks` for the satellite table names, and `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606` (`src-tauri/src/db/tests.rs`) seeds the satellites immediately before every post-0085 rebuild and asserts the rows reach head.
+For `blocks`, the authoritative children were exactly `page_aliases` and `block_drafts` through migration 0088; **as of 0089 the preserve set also includes the `spaces` registry and every non-NULL member `blocks.space_id` mapping**. Wiping `spaces` is doubly destructive because `blocks.space_id … ON DELETE SET NULL` silently clears memberships. Migration 0089 is the one-time introduction: it snapshots the registry source to `_spaces_backfill`, creates `spaces` empty, keeps it empty through the DROP and rename, and populates it afterward. A future rebuild starts with a populated registry, so it must snapshot both owners and member mappings, `DELETE FROM spaces` before copying blocks, keep the registry empty through DROP/rename, restore owners, then repair members exactly as above.
+
+Three enforcement layers pin this choreography:
+
+- `migrations-rebuild-cascade` validates linked executable snapshots/restores and their ordering for every migration containing `DROP TABLE blocks`; `migrations-rebuild-cascade-self-test` mutation-tests its false-open cases.
+- `spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708` asserts the complete registry, memberships, orphan repair, aliases, and drafts immediately after 0089 and again at head.
+- `future_blocks_rebuild_migrations_must_preserve_authoritative_state_606` seeds a trigger-registered owner plus membership before every post-0089 rebuild and asserts immediately and at head, without any post-rebuild property write that could heal the registry; `agents_md_table_rebuild_recipe_preserves_authoritative_state_606` executes the copy-paste recipe against the head schema.
 
 `PRAGMA defer_foreign_keys = ON` (first statement of the migration) defers FK *violation checks* to COMMIT — useful for circular FKs like `spaces(id) ↔ blocks.space_id` (0089) — but does **not** defer cascade/SET NULL actions.
 

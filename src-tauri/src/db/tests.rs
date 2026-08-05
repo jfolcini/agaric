@@ -3684,6 +3684,65 @@ async fn attachment_blobs_backfill_dedups_pre_0094_rows_1993() {
 // NULLed rather than aborting the migration.
 // ----------------------------------------------------------------------
 
+/// Assert the complete seeded 0089 contract at a particular migration
+/// boundary so no later migration can accidentally repair a broken branch.
+async fn assert_spaces_0089_fixture_state(pool: &SqlitePool, stage: &str) {
+    let registered: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        registered,
+        vec!["S1708".to_string(), "S2708".to_string()],
+        "{stage}: registry must contain exactly the live and soft-deleted is_space blocks"
+    );
+
+    for (block_id, expected) in [
+        ("P1708", Some("S1708")),
+        ("C1708", Some("S1708")),
+        ("P2708", None),
+    ] {
+        let actual: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(block_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            actual.as_deref(),
+            expected,
+            "{stage}: membership result drifted for {block_id}"
+        );
+    }
+
+    let alias: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM page_aliases WHERE page_id = 'P1708' AND alias = 'alias-708'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(alias, 1, "{stage}: page_aliases must survive (#606)");
+
+    let draft: Option<(String, i64)> =
+        sqlx::query_as("SELECT content, updated_at FROM block_drafts WHERE block_id = 'P1708'")
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        draft,
+        Some(("draft content 606".to_string(), 1755259200000)),
+        "{stage}: block_drafts must survive byte-for-byte (#606)"
+    );
+
+    let scratch: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '\\_preserve\\_%' ESCAPE '\\' \
+             OR name = '_spaces_backfill'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(scratch, 0, "{stage}: 0089 must drop its scratch tables");
+}
+
 /// Seed a representative pre-0089 (v88) database and migrate to head.
 #[tokio::test]
 async fn spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708() {
@@ -3746,78 +3805,21 @@ async fn spaces_0089_backfill_preserves_satellites_and_repairs_orphans_708() {
         .unwrap();
     sqlx::query(
         "INSERT INTO block_drafts (block_id, content, updated_at) \
-             VALUES ('P1708', 'draft body', 1700000000123)",
+             VALUES ('P1708', 'draft content 606', 1755259200000)",
     )
     .execute(&pool)
     .await
     .unwrap();
 
-    apply_migrations_to_head(&pool, 88).await;
+    // Assert at the exact 0088 → 0089 boundary first. Jumping straight to
+    // head would let a later trigger/property migration accidentally heal a
+    // registry row that 0089 itself failed to preserve.
+    apply_migrations_through(&pool, 88, 89).await;
+    assert_spaces_0089_fixture_state(&pool, "immediately after 0089").await;
 
-    // Registry backfilled from the `is_space` rows — INCLUDING the
-    // soft-deleted space (the registry mirrors the flag, not liveness).
-    let registered: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        registered,
-        vec!["S1708".to_string(), "S2708".to_string()],
-        "registry must contain exactly the is_space-flagged blocks (live + tombstoned)"
-    );
-
-    // Valid memberships survive the rebuild; the mis-stamp is NULLed.
-    let p1: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'P1708'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(p1.as_deref(), Some("S1708"), "valid membership preserved");
-    let c1: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'C1708'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(c1.as_deref(), Some("S1708"), "child membership preserved");
-    let p2: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = 'P2708'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(
-        p2, None,
-        "mis-stamped space_id (#612 class) must be NULLed, not abort the migration"
-    );
-
-    // #606: the satellites SURVIVE this rebuild (unlike 0073/0080/0085,
-    // which cascade-wiped them — the behaviour the #376 tests pin).
-    let alias: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM page_aliases WHERE page_id = 'P1708' AND alias = 'alias-708'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(
-        alias, 1,
-        "page_aliases must survive the 0089 rebuild (#606)"
-    );
-    let draft: Option<(String, i64)> =
-        sqlx::query_as("SELECT content, updated_at FROM block_drafts WHERE block_id = 'P1708'")
-            .fetch_optional(&pool)
-            .await
-            .unwrap();
-    assert_eq!(
-        draft,
-        Some(("draft body".to_string(), 1700000000123)),
-        "block_drafts must survive the 0089 rebuild byte-for-byte (#606)"
-    );
-
-    // No scratch tables left behind.
-    let scratch: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM sqlite_master WHERE name LIKE '\\_preserve\\_%' ESCAPE '\\' \
-             OR name = '_spaces_backfill'",
-    )
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    assert_eq!(scratch, 0, "0089 must drop its scratch tables");
+    // Then prove later migrations do not regress the state.
+    apply_migrations_to_head(&pool, 89).await;
+    assert_spaces_0089_fixture_state(&pool, "at migration head").await;
 }
 
 /// Fresh-DB (head) contract: the `spaces_register_is_space` trigger
@@ -4079,10 +4081,10 @@ async fn blocks_deleted_at_ms_backfill_handles_null_and_value_376() {
 //     harness drifted);
 //   * drift guard — the detector below scans EVERY migration's SQL for a
 //     `DROP TABLE blocks` statement, asserts the known-wiping set is
-//     exactly {0073, 0080, 0085}, and for every FUTURE rebuild seeds
-//     page_aliases + block_drafts immediately before it and asserts both
-//     survive to head (future rebuilds must copy them aside per
-//     migrations/AGENTS.md §Table-rebuild);
+//     exactly {0073, 0080, 0085}, explicitly pins the 0089 registry
+//     introduction, and for every post-0089 rebuild seeds aliases, drafts,
+//     a trigger-registered space, and a member mapping. Every dimension must
+//     survive both the rebuild boundary and migration to head;
 //   * end-to-end — rows seeded right after 0085 must survive every
 //     later migration to head.
 // ======================================================================
@@ -4092,6 +4094,11 @@ async fn blocks_deleted_at_ms_backfill_handles_null_and_value_376() {
 /// Do NOT bump this constant to silence a failing drift test — fix the
 /// new rebuild migration to copy the satellites aside instead.
 const LAST_WIPING_BLOCKS_REBUILD: i64 = 85;
+
+/// 0089 introduces the spaces registry while rebuilding blocks. It has a
+/// dedicated 0088→0089 regression above because a post-0089 registry fixture
+/// cannot be seeded before the table exists.
+const SPACES_REGISTRY_BLOCKS_REBUILD: i64 = 89;
 
 /// Every shipped blocks rebuild that destroyed page_aliases +
 /// block_drafts (damage is unrecoverable; list is closed).
@@ -4107,11 +4114,11 @@ const KNOWN_WIPING_BLOCKS_REBUILDS: [i64; 3] = [73, 80, 85];
 /// which ALSO re-points child FKs at the renamed table before dropping
 /// it), or a `--` inside a string literal earlier on the same line all
 /// evade this detector. None void the protection: any future migration
-/// that wipes the satellites — however it spells the drop — still fails
-/// `page_aliases_and_block_drafts_survive_migrations_after_0085_606`,
+/// that wipes the legacy satellites — however it spells the drop — still
+/// fails `page_aliases_and_block_drafts_survive_migrations_after_0085_606`,
 /// which seeds at 0085 and asserts survival to head. Missing a detection
 /// here only costs the per-rebuild diagnostic precision of the loop in
-/// `future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606`.
+/// `future_blocks_rebuild_migrations_must_preserve_authoritative_state_606`.
 fn sql_drops_blocks_table(sql: &str) -> bool {
     let stripped = sql
         .lines()
@@ -4158,7 +4165,7 @@ fn up_migration_versions() -> (Vec<i64>, Vec<i64>) {
 /// of 0084 or newer (post-0082, block_drafts.updated_at is INTEGER ms;
 /// post-0073, the page_id_self_for_pages CHECK requires page_id = id for
 /// pages).
-async fn seed_page_with_alias_and_draft(pool: &SqlitePool, block_id: &str, alias: &str) {
+async fn seed_legacy_page_with_alias_and_draft(pool: &SqlitePool, block_id: &str, alias: &str) {
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, page_id) \
              VALUES (?, 'page', 'seeded page 606', ?)",
@@ -4185,7 +4192,7 @@ async fn seed_page_with_alias_and_draft(pool: &SqlitePool, block_id: &str, alias
 }
 
 /// Count the seeded alias / draft rows for `block_id` after migrating.
-async fn satellite_counts(pool: &SqlitePool, block_id: &str) -> (i64, i64) {
+async fn legacy_satellite_counts(pool: &SqlitePool, block_id: &str) -> (i64, i64) {
     let aliases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM page_aliases WHERE page_id = ?")
         .bind(block_id)
         .fetch_one(pool)
@@ -4199,6 +4206,146 @@ async fn satellite_counts(pool: &SqlitePool, block_id: &str) -> (i64, i64) {
     (aliases, drafts)
 }
 
+/// Seed the complete authoritative-state fixture available after 0089.
+/// Register through the canonical `is_space` property trigger and assert the
+/// precondition before stamping the member. The fixture performs no later
+/// property writes: the rebuild DROP cascade removes this derived property,
+/// so it cannot re-fire the trigger and heal a lost registry row afterward.
+async fn seed_registered_space_with_member_and_satellites(
+    pool: &SqlitePool,
+    space_id: &str,
+    member_id: &str,
+    alias: &str,
+) {
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id) \
+             VALUES (?, 'page', 'space owner 606', ?)",
+    )
+    .bind(space_id)
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO block_properties (block_id, key, value_text) \
+             VALUES (?, 'is_space', 'true')",
+    )
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    let registered: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        registered,
+        vec![space_id.to_string()],
+        "fixture precondition: is_space trigger must create exactly the owner registry row"
+    );
+    let property: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM block_properties \
+             WHERE block_id = ? AND key = 'is_space' AND value_text = 'true'",
+    )
+    .bind(space_id)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        property, 1,
+        "fixture precondition: canonical is_space property"
+    );
+    sqlx::query(
+        "INSERT INTO blocks (id, block_type, content, page_id, space_id) \
+             VALUES (?, 'page', 'space member 606', ?, ?)",
+    )
+    .bind(member_id)
+    .bind(member_id)
+    .bind(space_id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query("INSERT INTO page_aliases (page_id, alias) VALUES (?, ?)")
+        .bind(member_id)
+        .bind(alias)
+        .execute(pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO block_drafts (block_id, content, updated_at) \
+             VALUES (?, 'draft content 606', 1755259200000)",
+    )
+    .bind(member_id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+/// Assert exact registry ownership, member linkage, and satellite payload.
+async fn assert_registered_space_state(
+    pool: &SqlitePool,
+    space_id: &str,
+    member_id: &str,
+    alias: &str,
+    stage: &str,
+) {
+    let registered: Vec<String> = sqlx::query_scalar("SELECT id FROM spaces ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        registered,
+        vec![space_id.to_string()],
+        "{stage}: the registry must contain exactly the seeded owner"
+    );
+
+    let owner_membership: Option<String> =
+        sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+            .bind(space_id)
+            .fetch_one(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        owner_membership, None,
+        "{stage}: the membership repair must not stamp the owner block"
+    );
+
+    let membership: Option<String> = sqlx::query_scalar("SELECT space_id FROM blocks WHERE id = ?")
+        .bind(member_id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+    assert_eq!(
+        membership.as_deref(),
+        Some(space_id),
+        "{stage}: the exact member → owner space_id must survive"
+    );
+
+    let preserved_alias: Option<String> =
+        sqlx::query_scalar("SELECT alias FROM page_aliases WHERE page_id = ?")
+            .bind(member_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        preserved_alias.as_deref(),
+        Some(alias),
+        "{stage}: the exact page alias must survive"
+    );
+
+    let draft: Option<(String, i64)> =
+        sqlx::query_as("SELECT content, updated_at FROM block_drafts WHERE block_id = ?")
+            .bind(member_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        draft,
+        Some(("draft content 606".to_string(), 1755259200000)),
+        "{stage}: the exact draft payload must survive"
+    );
+}
+
 /// Tripwire pinning what actually shipped: rows seeded just before the
 /// 0085 blocks rebuild are cascade-wiped by its `DROP TABLE blocks`
 /// (contradicting 0085's own safety header), while the parent block
@@ -4209,11 +4356,11 @@ async fn blocks_0085_rebuild_cascade_wipes_page_aliases_and_drafts_606() {
     let (pool, _dir) = unmigrated_pool().await;
     // 0084 is the last migration before the 0085 blocks rebuild.
     apply_migrations_through(&pool, 0, 84).await;
-    seed_page_with_alias_and_draft(&pool, "BLK606A", "alias-606-a").await;
+    seed_legacy_page_with_alias_and_draft(&pool, "BLK606A", "alias-606-a").await;
 
     apply_migrations_to_head(&pool, 84).await;
 
-    let (aliases, drafts) = satellite_counts(&pool, "BLK606A").await;
+    let (aliases, drafts) = legacy_satellite_counts(&pool, "BLK606A").await;
     assert_eq!(
         (aliases, drafts),
         (0, 0),
@@ -4238,11 +4385,11 @@ async fn blocks_0085_rebuild_cascade_wipes_page_aliases_and_drafts_606() {
 async fn page_aliases_and_block_drafts_survive_migrations_after_0085_606() {
     let (pool, _dir) = unmigrated_pool().await;
     apply_migrations_through(&pool, 0, LAST_WIPING_BLOCKS_REBUILD).await;
-    seed_page_with_alias_and_draft(&pool, "BLK606B", "alias-606-b").await;
+    seed_legacy_page_with_alias_and_draft(&pool, "BLK606B", "alias-606-b").await;
 
     apply_migrations_to_head(&pool, LAST_WIPING_BLOCKS_REBUILD).await;
 
-    let (aliases, drafts) = satellite_counts(&pool, "BLK606B").await;
+    let (aliases, drafts) = legacy_satellite_counts(&pool, "BLK606B").await;
     assert_eq!(
         (aliases, drafts),
         (1, 1),
@@ -4261,12 +4408,11 @@ async fn page_aliases_and_block_drafts_survive_migrations_after_0085_606() {
 
 /// Drift guard over the migration SOURCE: detect every rebuild-style
 /// migration (a `DROP TABLE blocks` statement), pin the known-wiping set
-/// exactly, and for each rebuild newer than 0085 run the full
-/// seed-before / migrate-through / assert-survival cycle so a future
-/// rebuild that forgets the copy-aside step fails this test the moment
-/// it is added.
+/// and the 0089 registry introduction, then run every post-0089 rebuild
+/// against a canonical registry/member fixture. State is asserted immediately
+/// after that rebuild and again at head so later migrations cannot mask it.
 #[tokio::test]
-async fn future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606() {
+async fn future_blocks_rebuild_migrations_must_preserve_authoritative_state_606() {
     let (versions, rebuilds) = up_migration_versions();
 
     // Detector meta-check: the shipped wiping rebuilds must be found
@@ -4283,12 +4429,19 @@ async fn future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606
         "rebuild detector drifted: it must find exactly the shipped blocks \
              rebuilds 0073/0080/0085 (and never miss one)"
     );
+    assert!(
+        rebuilds.contains(&SPACES_REGISTRY_BLOCKS_REBUILD),
+        "rebuild detector must include 0089, whose dedicated 0088→0089 test \
+             pins the initial spaces backfill and membership preservation"
+    );
 
-    // Every FUTURE rebuild must preserve the authoritative satellites.
+    // Every post-0089 rebuild must preserve all authoritative state. The
+    // fixture writes the canonical property only before the rebuild; no
+    // post-migration write can re-fire the trigger to heal a lost row.
     for rebuild in rebuilds
         .iter()
         .copied()
-        .filter(|v| *v > LAST_WIPING_BLOCKS_REBUILD)
+        .filter(|v| *v > SPACES_REGISTRY_BLOCKS_REBUILD)
     {
         let before = versions
             .iter()
@@ -4298,19 +4451,41 @@ async fn future_blocks_rebuild_migrations_must_preserve_alias_and_draft_rows_606
             .expect("a rebuild migration always has a predecessor");
         let (pool, _dir) = unmigrated_pool().await;
         apply_migrations_through(&pool, 0, before).await;
-        seed_page_with_alias_and_draft(&pool, "BLK606C", "alias-606-c").await;
-        apply_migrations_to_head(&pool, before).await;
+        seed_registered_space_with_member_and_satellites(
+            &pool,
+            "SPACE606C",
+            "BLK606C",
+            "alias-606-c",
+        )
+        .await;
+        assert_registered_space_state(
+            &pool,
+            "SPACE606C",
+            "BLK606C",
+            "alias-606-c",
+            &format!("before blocks rebuild {rebuild}"),
+        )
+        .await;
 
-        let (aliases, drafts) = satellite_counts(&pool, "BLK606C").await;
-        assert_eq!(
-            (aliases, drafts),
-            (1, 1),
-            "blocks rebuild migration {rebuild} cascade-wipes page_aliases and/or \
-                 block_drafts (#606). These tables do NOT recover from the op log — \
-                 the rebuild must copy them to scratch tables before `DROP TABLE \
-                 blocks` and restore them after the rename. Recipe in \
-                 migrations/AGENTS.md §Table-rebuild"
-        );
+        apply_migrations_through(&pool, before, rebuild).await;
+        assert_registered_space_state(
+            &pool,
+            "SPACE606C",
+            "BLK606C",
+            "alias-606-c",
+            &format!("immediately after blocks rebuild {rebuild}"),
+        )
+        .await;
+
+        apply_migrations_to_head(&pool, rebuild).await;
+        assert_registered_space_state(
+            &pool,
+            "SPACE606C",
+            "BLK606C",
+            "alias-606-c",
+            &format!("at head after blocks rebuild {rebuild}"),
+        )
+        .await;
     }
 }
 
@@ -4382,20 +4557,25 @@ async fn migration_versions_are_contiguous_and_unique() {
     );
 }
 
-/// Executable pin of the migrations/AGENTS.md §Table-rebuild recipe: run
-/// the documented copy-aside / swap / restore SQL as a synthetic future
-/// rebuild against the HEAD schema, inside a single transaction exactly
-/// as sqlx wraps a migration, and assert the authoritative satellites
-/// survive. The future-rebuild drift guard above runs zero iterations
-/// until a real post-0085 rebuild lands, so without this test nothing in
-/// CI ever executes the recipe — it could drift (FK mismatch on restore,
-/// TEMP-table/transaction interaction, STRICT friction) and the failure
-/// would surface only while writing the next real rebuild migration.
+/// Executable pin of migrations/AGENTS.md §Table-rebuild: run the full
+/// copy-aside / empty-registry / swap / restore SQL as a synthetic future
+/// rebuild against HEAD, inside one transaction exactly as sqlx wraps a
+/// migration. The post-0089 drift loop above currently has no real rebuild
+/// to exercise, so this test keeps the documented recipe executable.
 #[tokio::test]
-async fn agents_md_table_rebuild_recipe_preserves_satellites_606() {
+async fn agents_md_table_rebuild_recipe_preserves_authoritative_state_606() {
     let (pool, _dir) = unmigrated_pool().await;
     apply_migrations_to_head(&pool, 0).await;
-    seed_page_with_alias_and_draft(&pool, "BLK606D", "alias-606-d").await;
+    seed_registered_space_with_member_and_satellites(&pool, "SPACE606D", "BLK606D", "alias-606-d")
+        .await;
+    assert_registered_space_state(
+        &pool,
+        "SPACE606D",
+        "BLK606D",
+        "alias-606-d",
+        "before the documented synthetic rebuild",
+    )
+    .await;
 
     // Recreate `blocks` verbatim from whatever schema HEAD currently has
     // (so this test never drifts from the real schema), then run the
@@ -4430,19 +4610,34 @@ async fn agents_md_table_rebuild_recipe_preserves_satellites_606() {
     );
 
     let recipe = format!(
-        "{create_new_blocks};\n\
-             INSERT INTO _new_blocks SELECT * FROM blocks;\n\
-             -- 1. Copy authoritative children aside (BEFORE the DROP).\n\
+        "PRAGMA defer_foreign_keys = ON;\n\
+             -- 1. Snapshot every authoritative row and membership.\n\
              CREATE TEMP TABLE _keep_page_aliases AS SELECT * FROM page_aliases;\n\
              CREATE TEMP TABLE _keep_block_drafts AS SELECT * FROM block_drafts;\n\
-             -- 2. The rebuild swap. The DROP cascade-empties the children HERE.\n\
+             CREATE TEMP TABLE _keep_spaces AS SELECT * FROM spaces;\n\
+             CREATE TEMP TABLE _keep_block_spaces AS\n\
+                 SELECT id AS block_id, space_id FROM blocks WHERE space_id IS NOT NULL;\n\
+             -- 2. Empty the registry first. SET NULL fires immediately, but\n\
+             --    the member map above retains every assignment.\n\
+             DELETE FROM spaces;\n\
+             -- 3. Copy the now-space-less rows and swap the table while the\n\
+             --    live registry remains empty.\n\
+             {create_new_blocks};\n\
+             INSERT INTO _new_blocks SELECT * FROM blocks;\n\
              DROP TABLE blocks;\n\
              ALTER TABLE _new_blocks RENAME TO blocks;\n\
-             -- 3. Restore the children (their tables survive the cascade, emptied).\n\
+             -- 4. Restore owners before member FKs, then the CASCADE children.\n\
+             INSERT INTO spaces SELECT * FROM _keep_spaces;\n\
+             UPDATE blocks\n\
+                SET space_id = (SELECT space_id FROM _keep_block_spaces\n\
+                                 WHERE block_id = blocks.id)\n\
+              WHERE id IN (SELECT block_id FROM _keep_block_spaces);\n\
              INSERT INTO page_aliases SELECT * FROM _keep_page_aliases;\n\
              INSERT INTO block_drafts SELECT * FROM _keep_block_drafts;\n\
              DROP TABLE _keep_page_aliases;\n\
-             DROP TABLE _keep_block_drafts;"
+             DROP TABLE _keep_block_drafts;\n\
+             DROP TABLE _keep_spaces;\n\
+             DROP TABLE _keep_block_spaces;"
     );
     let mut tx = pool.begin().await.unwrap();
     sqlx::query(sqlx::AssertSqlSafe(recipe))
@@ -4451,19 +4646,29 @@ async fn agents_md_table_rebuild_recipe_preserves_satellites_606() {
         .expect("the AGENTS.md §Table-rebuild recipe must apply cleanly in one tx");
     tx.commit().await.unwrap();
 
-    let (aliases, drafts) = satellite_counts(&pool, "BLK606D").await;
+    assert_registered_space_state(
+        &pool,
+        "SPACE606D",
+        "BLK606D",
+        "alias-606-d",
+        "after the documented synthetic rebuild",
+    )
+    .await;
+    let scratch: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_temp_master WHERE name LIKE '_keep_%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(scratch, 0, "the recipe must remove every scratch table");
+    let foreign_key_violations: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM pragma_foreign_key_check")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
     assert_eq!(
-        (aliases, drafts),
-        (1, 1),
-        "the documented copy-aside/restore recipe must carry page_aliases and \
-             block_drafts through a blocks rebuild (migrations/AGENTS.md \
-             §Table-rebuild, #606)"
+        foreign_key_violations, 0,
+        "the recipe must leave every foreign key valid"
     );
-    let blk: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks WHERE id = 'BLK606D'")
-        .fetch_one(&pool)
-        .await
-        .unwrap();
-    assert_eq!(blk, 1, "the parent block survives the synthetic rebuild");
 }
 
 // ----------------------------------------------------------------------

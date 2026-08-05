@@ -1582,12 +1582,12 @@ stages = ["pre-commit"]
 # with an ON DELETE CASCADE FK into blocks — inside the migration
 # tx, before the `_new_blocks` rename. page_aliases (no op_log
 # entries) and block_drafts (device-local) do NOT re-materialize
-# at boot, so the shipped rebuilds 0073/0080/0085 destroyed both
-# (those are exempt via a floor in the script — immutable, damage
-# done). Any NEW migration dropping blocks must reference both
-# satellites (the copy-aside/restore recipe in
-# src-tauri/migrations/AGENTS.md §Table-rebuild). Deep verification
-# lives in the db.rs seed-then-migrate harness (`*_606` tests).
+# at boot, so the shipped rebuilds 0073/0080/0085 destroyed both.
+# Since 0089, the blocks → spaces CASCADE can also trigger
+# spaces → blocks.space_id SET NULL and wipe the registry plus
+# memberships. Any later blocks rebuild must follow the ordered
+# snapshot/empty-registry/restore recipe in migrations/AGENTS.md.
+# Deep verification lives in the db seed-then-migrate `*_606` tests.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -1597,6 +1597,17 @@ entry = "node scripts/check-migrations-rebuild-cascade.mjs"
 language = "system"
 pass_filenames = true
 files = "^src-tauri/migrations/.*\\.sql$"
+stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "migrations-rebuild-cascade-self-test"
+name = "migrations: blocks rebuild guard self-test"
+entry = "node scripts/check-migrations-rebuild-cascade.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-migrations-rebuild-cascade\\.mjs$"
 stages = ["pre-commit"]
 
 # zizmor: GitHub Actions security audit. Complements actionlint
