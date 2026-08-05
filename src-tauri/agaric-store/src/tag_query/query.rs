@@ -362,26 +362,49 @@ pub async fn list_tags_by_prefix(
         if let Some(exact) = exact
             && !rows.iter().any(|r| r.tag_id == exact.tag_id)
         {
-            // Find the BINARY-collated sorted slot for the exact match so the
-            // returned page stays in `ORDER BY name` order. `rows` is already
-            // sorted by `name` (BINARY), matching SQLite's default collation
-            // for `tags_cache.name`, so a partition_point on `r.name < name`
-            // yields the correct insertion index.
-            let pos = rows.partition_point(|r| r.name.as_str() < exact.name.as_str());
-            // Drop the page's last row if inserting the exact match would push
-            // the result over the caller's requested limit, keeping the cap.
-            // The exact match is inserted in-order, so we evict the highest
-            // (last) name rather than blindly the tail of a prepend.
-            if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= effective_limit {
-                rows.pop();
-            }
-            // Clamp the insertion index in case the eviction above shifted the
-            // tail boundary below `pos` (only possible when `pos == len`).
-            let pos = pos.min(rows.len());
-            rows.insert(pos, exact);
+            splice_exact_match(&mut rows, exact, effective_limit);
         }
     }
     Ok(rows)
+}
+
+/// Splice `exact` into its `ORDER BY name` (BINARY) slot in `rows`, evicting
+/// the page's tail if that would breach `effective_limit` (#768, #1557).
+///
+/// Extracted from [`list_tags_by_prefix`] so the insertion index is directly
+/// testable: `tags_cache.name` is `UNIQUE` (migration 0061), and the caller
+/// only splices a row whose `tag_id` is absent from `rows`, so a row whose
+/// name *equals* `exact.name` can never reach this code through the public
+/// API — yet that tie is exactly the case that distinguishes a `<`
+/// (lower-bound) partition from a `<=` (upper-bound) one.
+///
+/// Contract:
+///
+/// * `rows` must already be sorted by `name` (BINARY), matching SQLite's
+///   default collation for `tags_cache.name`.
+/// * Insertion uses the LOWER bound: on a tie the exact match is placed
+///   *before* the equal-named row, so the index is a deterministic function
+///   of the names alone and never depends on how many equal names precede it.
+/// * The result never exceeds `effective_limit` rows when `rows` entered
+///   within the cap.
+fn splice_exact_match(rows: &mut Vec<TagCacheRow>, exact: TagCacheRow, effective_limit: i64) {
+    // Find the BINARY-collated sorted slot for the exact match so the
+    // returned page stays in `ORDER BY name` order. `rows` is already
+    // sorted by `name` (BINARY), matching SQLite's default collation
+    // for `tags_cache.name`, so a partition_point on `r.name < name`
+    // yields the correct insertion index.
+    let pos = rows.partition_point(|r| r.name.as_str() < exact.name.as_str());
+    // Drop the page's last row if inserting the exact match would push
+    // the result over the caller's requested limit, keeping the cap.
+    // The exact match is inserted in-order, so we evict the highest
+    // (last) name rather than blindly the tail of a prepend.
+    if i64::try_from(rows.len()).unwrap_or(i64::MAX) >= effective_limit {
+        rows.pop();
+    }
+    // Clamp the insertion index in case the eviction above shifted the
+    // tail boundary below `pos` (only possible when `pos == len`).
+    let pos = pos.min(rows.len());
+    rows.insert(pos, exact);
 }
 
 /// Return every tag in `space_id`, ordered by name. No pagination, no
@@ -635,6 +658,60 @@ mod tests {
         assert!(!resp3.has_more);
         assert!(resp3.next_cursor.is_none());
     }
+
+    /// `has_more` at the exact-fill boundary: a page whose result set exactly
+    /// fills the requested limit has NO next page.
+    ///
+    /// `run_projection` over-fetches `limit + 1` rows and reports
+    /// `has_more = items.len() > limit`. The only input that distinguishes
+    /// `>` from `>=` is the exact fill (`len == limit`): with `>=` the caller
+    /// is handed a cursor for a page that comes back empty. The existing
+    /// pagination tests only ever see `len > limit` (mid-stream) or
+    /// `len < limit` (short tail), so neither pins the boundary.
+    #[tokio::test]
+    async fn eval_tag_query_exact_fill_has_no_next_page() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAG_F", "tag", "fill-tag").await;
+        for suffix in &["A", "B", "C"] {
+            let id = format!("BLK_{suffix}");
+            insert_block(&pool, &id, "content", &format!("block {suffix}")).await;
+            insert_tag_assoc(&pool, &id, "TAG_F").await;
+        }
+        let expr = TagExpr::Tag("TAG_F".into());
+
+        // limit == number of matching rows: the page is full, but there is
+        // nothing after it.
+        let exact_fill = PageRequest::new(None, Some(3)).unwrap();
+        let resp = eval_tag_query(&pool, &expr, &exact_fill, false, None, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.items.len(), 3, "all three rows must fit the page");
+        assert!(
+            !resp.has_more,
+            "a result that exactly fills the limit must not advertise a next \
+             page (got has_more = true, which sends the caller to an empty page)"
+        );
+        assert!(
+            resp.next_cursor.is_none(),
+            "no next page means no cursor; got {:?}",
+            resp.next_cursor
+        );
+
+        // One below the exact fill: there IS a next page, and it is non-empty.
+        let short = PageRequest::new(None, Some(2)).unwrap();
+        let resp = eval_tag_query(&pool, &expr, &short, false, None, None)
+            .await
+            .unwrap();
+        assert_eq!(resp.items.len(), 2);
+        assert!(resp.has_more, "2 of 3 rows must advertise a next page");
+        let next = PageRequest::new(resp.next_cursor, Some(2)).unwrap();
+        let tail = eval_tag_query(&pool, &expr, &next, false, None, None)
+            .await
+            .unwrap();
+        assert_eq!(tail.items.len(), 1, "the advertised next page must exist");
+        assert!(!tail.has_more);
+    }
+
     #[tokio::test]
     async fn eval_tag_query_empty_result() {
         let (pool, _dir) = test_pool().await;
@@ -976,6 +1053,182 @@ mod tests {
 
         // Cap honoured.
         assert!(result.len() <= 3, "result must not exceed the limit");
+    }
+
+    /// The `[1, MAX_TAGS_PREFIX]` limit bound is enforced, not decorative.
+    ///
+    /// Nothing exercised the rejection arm, so the whole guard could be
+    /// dropped and the suite would stay green: `limit = 0` would silently
+    /// return an empty typeahead and `limit = 1_000_000` would uncap the
+    /// scan. Both boundaries are asserted too, so the guard cannot be
+    /// tightened into rejecting everything either.
+    #[tokio::test]
+    async fn list_tags_by_prefix_rejects_out_of_range_limit() {
+        let (pool, _dir) = test_pool().await;
+        insert_block(&pool, "TAGCAP00000000000000000001", "tag", "capped").await;
+        insert_tag_cache(&pool, "TAGCAP00000000000000000001", "capped", 1).await;
+
+        // Below the floor and above the ceiling both surface as validation
+        // errors naming the bound — never a clamped or empty result.
+        for bad in [0_i64, -1, MAX_TAGS_PREFIX + 1] {
+            let err = list_tags_by_prefix(&pool, "cap", Some(bad))
+                .await
+                .expect_err("out-of-range limit must be rejected, not clamped");
+            assert!(
+                matches!(err, AppError::Validation { .. }),
+                "limit {bad} must surface AppError::Validation, got {err:?}"
+            );
+            assert!(
+                err.to_string().contains(&MAX_TAGS_PREFIX.to_string()),
+                "rejection for limit {bad} should name the bound: {err}"
+            );
+        }
+
+        // Both boundaries are inside the accepted range.
+        for good in [1_i64, MAX_TAGS_PREFIX] {
+            let rows = list_tags_by_prefix(&pool, "cap", Some(good))
+                .await
+                .unwrap_or_else(|e| panic!("limit {good} is in range but was rejected: {e}"));
+            assert_eq!(rows.len(), 1, "limit {good} must return the one match");
+        }
+
+        // `None` falls through to the default cap rather than erroring.
+        let defaulted = list_tags_by_prefix(&pool, "cap", None).await.unwrap();
+        assert_eq!(defaulted.len(), 1);
+    }
+
+    /// The NOCASE fast path is what decides the hoisted row; the normalized
+    /// scan is a *fallback*, reached only when NOCASE missed.
+    ///
+    /// Both lookups match the same set of ASCII case-variants (the
+    /// `ascii_fold_matches_sqlite_nocase` drift guard in `tag_norm` pins
+    /// that), so the only way to observe which one ran is the tie-break when
+    /// two case-variants coexist — the transient mid-rebuild duplicate that
+    /// `exact_match_normalized`'s own doc comment calls out.
+    /// `exact_match_nocase` takes the BINARY-smallest name (`ORDER BY name`,
+    /// served by the migration-0050 index); the fallback takes the smallest
+    /// `tag_id`. Seeding the two so they disagree makes a disabled fast path
+    /// visible: without it the page hoists the *other* row.
+    #[tokio::test]
+    async fn list_tags_by_prefix_hoists_the_nocase_fast_path_row() {
+        let (pool, _dir) = test_pool().await;
+
+        // Three uppercase siblings fill the limit-3 page: uppercase ASCII
+        // BINARY-sorts before every lowercase-initial exact variant below.
+        for i in 1..=3 {
+            let id = format!("TAGDUP{i:020}");
+            let name = format!("WIP-{i}");
+            insert_block(&pool, &id, "tag", &name).await;
+            insert_tag_cache(&pool, &id, &name, 1).await;
+        }
+        // Two exact case-variants of `wip`, seeded so the two lookups
+        // disagree: `wip` has the smaller tag_id (the fallback's winner),
+        // `wiP` the BINARY-smaller name (the NOCASE path's winner).
+        insert_block(&pool, "TAGDUPEXACT0000000000000A1", "tag", "wip").await;
+        insert_tag_cache(&pool, "TAGDUPEXACT0000000000000A1", "wip", 1).await;
+        insert_block(&pool, "TAGDUPEXACT0000000000000A2", "tag", "wiP").await;
+        insert_tag_cache(&pool, "TAGDUPEXACT0000000000000A2", "wiP", 1).await;
+
+        // Fixture invariant: neither exact variant survives the bare page,
+        // so the result below can only contain one via the splice path.
+        let bare = sqlx::query_scalar::<_, String>(
+            r"SELECT name FROM tags_cache WHERE name LIKE 'wip%' ESCAPE '\' ORDER BY name LIMIT 3",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(bare, ["WIP-1", "WIP-2", "WIP-3"], "fixture invariant");
+
+        let result = list_tags_by_prefix(&pool, "wip", Some(3)).await.unwrap();
+        let hoisted = result
+            .iter()
+            .find(|r| r.name.eq_ignore_ascii_case("wip"))
+            .expect("an exact match must be hoisted onto the page");
+        assert_eq!(
+            hoisted.tag_id, "TAGDUPEXACT0000000000000A2",
+            "the NOCASE fast path's row (`wiP`, BINARY-smallest name) must be \
+             the hoisted one; getting `wip` (smallest tag_id) means the fast \
+             path was skipped and the normalized fallback answered instead"
+        );
+        assert_eq!(hoisted.name, "wiP");
+        let names: Vec<&str> = result.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["WIP-1", "WIP-2", "wiP"], "page stays name-sorted");
+    }
+
+    fn cache_row(tag_id: &str, name: &str) -> TagCacheRow {
+        TagCacheRow {
+            tag_id: tag_id.to_string(),
+            name: name.to_string(),
+            usage_count: 1,
+            updated_at: "2025-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// `splice_exact_match` inserts at the LOWER bound of an equal-name run.
+    ///
+    /// `tags_cache.name` is `UNIQUE`, and the caller skips the splice when
+    /// `exact.tag_id` is already on the page, so a name tie is unreachable
+    /// through `list_tags_by_prefix` — and a tie is the only input that
+    /// separates a `<` partition (lower bound) from a `<=` one (upper
+    /// bound). Asserted directly on the helper so the index is pinned
+    /// rather than left to whichever operator happens to be typed.
+    #[test]
+    fn splice_exact_match_inserts_at_lower_bound_on_a_name_tie() {
+        let mut rows = vec![
+            cache_row("TAG_AAA", "aaa"),
+            cache_row("TAG_DUP", "wip"),
+            cache_row("TAG_ZZZ", "zzz"),
+        ];
+        // Limit high enough that no eviction happens: the index alone is
+        // under test here.
+        splice_exact_match(&mut rows, cache_row("TAG_EXACT", "wip"), 10);
+
+        let ids: Vec<&str> = rows.iter().map(|r| r.tag_id.as_str()).collect();
+        assert_eq!(
+            ids,
+            ["TAG_AAA", "TAG_EXACT", "TAG_DUP", "TAG_ZZZ"],
+            "the exact match must land immediately BEFORE the equal-named row \
+             (lower bound); landing after it means the partition used `<=`, \
+             and landing at 0 or the tail means it is not sorted at all"
+        );
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["aaa", "wip", "wip", "zzz"], "still name-sorted");
+    }
+
+    /// The rest of the splice contract: sorted insertion, tail eviction at
+    /// the cap, and the clamp for when the eviction moves the tail boundary
+    /// below the computed index.
+    #[test]
+    fn splice_exact_match_keeps_sort_order_within_the_limit() {
+        // Under the cap: plain in-order insertion, nothing evicted.
+        let mut rows = vec![cache_row("TAG_A", "aaa"), cache_row("TAG_C", "ccc")];
+        splice_exact_match(&mut rows, cache_row("TAG_B", "bbb"), 5);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["aaa", "bbb", "ccc"], "middle insertion, no evict");
+
+        // At the cap, exact match in the middle: the highest (last) name is
+        // evicted, not the tail of a prepend.
+        let mut rows = vec![
+            cache_row("TAG_A", "aaa"),
+            cache_row("TAG_C", "ccc"),
+            cache_row("TAG_D", "ddd"),
+        ];
+        splice_exact_match(&mut rows, cache_row("TAG_B", "bbb"), 3);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["aaa", "bbb", "ccc"], "evicts the highest name");
+        assert_eq!(rows.len(), 3, "cap honoured");
+
+        // At the cap, exact match after every row: `pos` lands past the
+        // post-eviction length and must be clamped to it.
+        let mut rows = vec![
+            cache_row("TAG_A", "aaa"),
+            cache_row("TAG_B", "bbb"),
+            cache_row("TAG_C", "ccc"),
+        ];
+        splice_exact_match(&mut rows, cache_row("TAG_Z", "zzz"), 3);
+        let names: Vec<&str> = rows.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["aaa", "bbb", "zzz"], "clamped to the tail");
+        assert_eq!(rows.len(), 3, "cap honoured");
     }
 
     /// Helper: assign a tag block to a space via the denormalized
