@@ -12,56 +12,67 @@ name: 'Agaric CodeQL config'
 queries:
   - uses: security-and-quality
 
+# ---------------------------------------------------------------------------
+# Why rust/unused-variable is excluded below
+#
+# NOTE ON PLACEMENT: this rationale sits above `query-filters:` rather than
+# immediately before the `- exclude:` entry because prek's `check-yaml` hook
+# rejects a long run of consecutive comments directly before a collection
+# entry ("too many consecutive comments before resolving collection entry").
+# PyYAML accepts it; the hook does not. Keep the comment block here.
+#
+# The query does not model Rust 2021 inline format-arg captures. A variable
+# used only as `{i}` inside format!/panic!/tracing! reads as unused to the
+# extractor, so idiomatic code is flagged:
+#
+#     for i in 0..cap {
+#         sockets.push(TcpStream::connect(&addr).await
+#             .unwrap_or_else(|e| panic!("peer {i} must connect: {e}")));
+#     }
+#
+# Measured: 135 alerts of this rule — 4x the next-largest and more than half
+# of every alert this repo has ever produced. 132 were dismissed by hand as
+# false positives, all citing this same cause. The remaining 3 were the entire
+# open-alert list, i.e. the Security tab's false-positive rate was 100%, which
+# is what makes this worth a config change: a scanner that is always wrong
+# trains the reader to dismiss on reflex, and the next real
+# rust/cleartext-logging or rust/hard-coded-cryptographic-value gets waved
+# through with it. Excluding the query restores signal rather than hiding it.
+#
+# Excluding it loses no coverage that is not already covered better, which is
+# the load-bearing part of this decision and the thing to re-check before
+# trusting it:
+#   * rustc's own `unused_variables` lint answers the same question exactly —
+#     it is name resolution, and the compiler is ground truth. Verified: a
+#     variable used only in `panic!("{i}")` draws no rustc warning, while a
+#     genuinely unused one in the same file does.
+#   * CI denies it. `_validate.yml` runs the prek `cargo-clippy` hook as
+#     `cargo clippy --workspace --all-targets -- -D warnings` on every backend
+#     PR, and `--all-targets` covers the tests/ and benches/ targets where
+#     every one of these 135 alerts lived.
+#
+# One documented exception, found in review rather than assumed away:
+# `src-tauri/fuzz` declares its own `[workspace]` (fuzz/Cargo.toml:65) and is
+# not a member of the root workspace, so `cargo clippy --workspace` never
+# reaches its 5 fuzz targets. CodeQL does scan them, so for those files this
+# exclusion is a real, if small, loss — accepted because an unused binding in a
+# fuzz harness is inert, and because leaving 135 false positives standing to
+# cover 5 files inverts the cost. If the fuzz targets ever join the workspace,
+# or grow a clippy job of their own, the exception disappears with them.
+#
+# So this exclusion is conditional on that clippy gate. If `-D warnings` is
+# ever dropped, or clippy stops running `--all-targets`, this filter starts
+# costing real coverage and should be removed with it.
+#
+# One more failure mode to know about: a `query-filters` entry that matches
+# zero queries is NOT an error. If this ID is ever renamed upstream the filter
+# silently becomes a no-op and the alerts return. Confirm the open-alert count
+# after a scan rather than trusting this file to still be doing anything.
+# ---------------------------------------------------------------------------
+
 # Filter order matters: the FIRST filter after the query selection sets the
 # default. Leading with `exclude` keeps "include everything else" as the
 # default, so this subtracts one query rather than allow-listing.
 query-filters:
-  # rust/unused-variable does not model Rust 2021 inline format-arg captures.
-  # A variable used only as `{i}` inside format!/panic!/tracing! reads as
-  # unused to the extractor, so idiomatic code is flagged:
-  #
-  #     for i in 0..cap {
-  #         sockets.push(TcpStream::connect(&addr).await
-  #             .unwrap_or_else(|e| panic!("peer {i} must connect: {e}")));
-  #     }
-  #
-  # Measured: 135 alerts of this rule — 4x the next-largest and more than half
-  # of every alert this repo has ever produced. 132 were dismissed by hand as
-  # false positives, all citing this same cause. The remaining 3 were the
-  # entire open-alert list, i.e. the Security tab's false-positive rate was
-  # 100%, which is what makes this worth a config change: a scanner that is
-  # always wrong trains the reader to dismiss on reflex, and the next real
-  # rust/cleartext-logging or rust/hard-coded-cryptographic-value gets waved
-  # through with it. Excluding the query restores signal rather than hiding it.
-  #
-  # Excluding it loses no coverage that is not already covered better, which is
-  # the load-bearing part of this decision and the thing to re-check before
-  # trusting it:
-  #   * rustc's own `unused_variables` lint answers the same question exactly —
-  #     it is name resolution, and the compiler is ground truth. Verified: a
-  #     variable used only in `panic!("{i}")` draws no rustc warning, while a
-  #     genuinely unused one in the same file does.
-  #   * CI denies it. `_validate.yml` runs the prek `cargo-clippy` hook as
-  #     `cargo clippy --workspace --all-targets -- -D warnings` on every
-  #     backend PR, and `--all-targets` covers the tests/ and benches/ targets
-  #     where every one of these 135 alerts lived.
-  #
-  # One documented exception, found in review rather than assumed away:
-  # `src-tauri/fuzz` declares its own `[workspace]` (fuzz/Cargo.toml:65) and is
-  # not a member of the root workspace, so `cargo clippy --workspace` never
-  # reaches its 5 fuzz targets. CodeQL does scan them, so for those files this
-  # exclusion is a real, if small, loss — accepted because an unused binding in
-  # a fuzz harness is inert, and because leaving 135 false positives standing to
-  # cover 5 files inverts the cost. If the fuzz targets ever join the workspace,
-  # or grow a clippy job of their own, the exception disappears with them.
-  #
-  # So this exclusion is conditional on that clippy gate. If `-D warnings` is
-  # ever dropped, or clippy stops running `--all-targets`, this filter starts
-  # costing real coverage and should be removed with it.
-  #
-  # One more failure mode to know about: a `query-filters` entry that matches
-  # zero queries is NOT an error. If this ID is ever renamed upstream the filter
-  # silently becomes a no-op and the alerts return. Confirm the open-alert count
-  # after a scan rather than trusting this file to still be doing anything.
   - exclude:
       id: rust/unused-variable
