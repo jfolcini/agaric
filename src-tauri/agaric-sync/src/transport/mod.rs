@@ -34,6 +34,12 @@ pub mod session;
 /// old transport needed two.
 pub mod driver;
 
+/// The endpoint service: owns the LAN-only endpoint, admits inbound peers under a
+/// concurrency cap, and hands out accepted sessions for a caller to drive. It does not
+/// drive them — see [`driver`] for that.
+pub mod service;
+
 pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
+pub use service::{InboundSession, SYNC_ALPN, ServiceBindError, SyncService};
 pub use session::{MAX_FRAME_SIZE, recv_sync_message, send_sync_message};
