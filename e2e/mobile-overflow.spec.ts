@@ -19,7 +19,6 @@
 import { devices } from '@playwright/test'
 
 import {
-  activeDialog,
   activeRoleDialog,
   activeSheet,
   expect,
@@ -156,7 +155,16 @@ for (const profile of PROFILES) {
       // Open the pairing dialog and assert the entry-mode toggle (the row that
       // overflowed before #1966) stays within the dialog at this width.
       await pairBtn.click()
-      const dialog = activeDialog(page)
+      // #3468 — on phones PairingDialog renders as a bottom Sheet
+      // (`useDialogOrSheet('dialog')`, deliberate per #2665), so its content
+      // carries `data-slot="sheet-content"`. This test used `activeDialog`
+      // (`data-slot="dialog-content"`), which no phone-width run can ever
+      // match, and timed out at both profiles while the pairing surface was
+      // open and fully functional behind it. Every profile in this file is
+      // below the 768px `useIsMobile` breakpoint, so the Sheet is the only
+      // primitive in play — asserting it directly also keeps this test
+      // honest about the mobile surface rather than accepting either one.
+      const dialog = activeSheet(page)
       await expect(dialog).toBeVisible()
 
       // #3463: the dialog now opens directly on the host path (this
