@@ -1,0 +1,13 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: attachment_fixture()
+---
+id: ATT01
+block_id: BLK04
+mime_type: image/png
+filename: photo.png
+size_bytes: 123456
+fs_path: /vault/attachments/photo.png
+created_at: 1690000000000
+deleted_at: "[TIMESTAMP]"
+content_hash: "b3:deadbeefcafebabe"

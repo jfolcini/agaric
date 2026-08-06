@@ -1,0 +1,6 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: block_link_fixture()
+---
+source_id: SRC01
+target_id: TGT01

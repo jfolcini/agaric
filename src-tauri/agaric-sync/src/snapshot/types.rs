@@ -193,3 +193,277 @@ pub struct SnapshotData {
     pub up_to_hash: String,
     pub tables: SnapshotTables,
 }
+
+// ---------------------------------------------------------------------------
+// #3460 — schema shape pinning
+// ---------------------------------------------------------------------------
+//
+// `SCHEMA_VERSION`'s doc comment states a back-compat rule ("a dropped field
+// must carry `#[serde(default)]`") but nothing enforced it before this test
+// module: six versions shipped on an honour system, and a violation would
+// only surface at a user's restore. These tests pin the exact serialized
+// shape of every row type in this module (via `insta`) so ANY change to a
+// field — add, remove, rename, retype — shows up as a mandatory, reviewable
+// `.snap` diff instead of silently changing the wire format. They also pin
+// `SCHEMA_VERSION` / `MIN_SCHEMA_VERSION` themselves and round-trip a full
+// `SnapshotData` through `encode_snapshot` / `decode_snapshot`.
+//
+// Every fixture below gives EVERY field a distinct, non-default value — a
+// fixture full of `None` / `0` / `""` would still serialize identically after
+// a field is silently dropped (serde just omits it), so it would pin nothing.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use agaric_core::ulid::BlockId;
+
+    fn block_fixture() -> BlockSnapshot {
+        BlockSnapshot {
+            id: BlockId::test_id("BLK01"),
+            block_type: "heading".to_string(),
+            content: Some("Quarterly roadmap".to_string()),
+            parent_id: Some(BlockId::test_id("PARENT01")),
+            position: Some(7),
+            deleted_at: Some(1_700_000_000_000),
+            todo_state: Some("doing".to_string()),
+            priority: Some("high".to_string()),
+            due_date: Some("2026-01-15".to_string()),
+            scheduled_date: Some("2026-01-10".to_string()),
+            space_id: Some(BlockId::test_id("SPACE01")),
+        }
+    }
+
+    fn block_tag_fixture() -> BlockTagSnapshot {
+        BlockTagSnapshot {
+            block_id: BlockId::test_id("BLK02"),
+            tag_id: "tag-important".to_string(),
+        }
+    }
+
+    fn block_property_fixture() -> BlockPropertySnapshot {
+        BlockPropertySnapshot {
+            block_id: BlockId::test_id("BLK03"),
+            key: "due".to_string(),
+            value_text: Some("needs review".to_string()),
+            value_num: Some(42.5),
+            value_date: Some("2026-02-02".to_string()),
+            value_ref: Some(BlockId::test_id("REF01").to_string()),
+            value_bool: Some(1),
+        }
+    }
+
+    fn block_link_fixture() -> BlockLinkSnapshot {
+        BlockLinkSnapshot {
+            source_id: BlockId::test_id("SRC01"),
+            target_id: BlockId::test_id("TGT01"),
+        }
+    }
+
+    /// The insta redactions on `AttachmentSnapshot::deleted_at` and
+    /// `PropertyDefinitionSnapshot::created_at` replace the value with
+    /// `[TIMESTAMP]` **by path, regardless of its type**. That closes the
+    /// non-determinism the redaction guard requires, but it opens a hole exactly
+    /// where the history says the risk lives: a TEXT -> INTEGER retype of either
+    /// field would leave all nine `.snap` files byte-identical, and a
+    /// column-retype migration is precisely the class of change credited with
+    /// forcing `MIN_SCHEMA_VERSION = 4`.
+    ///
+    /// These two are the only snapshot timestamps still carried as
+    /// `Option<String>` ISO-8601 rather than `i64` epoch-ms (a deliberate #109
+    /// Phase 2 carve-out), which is why they need redacting at all while
+    /// `BlockSnapshot::deleted_at` does not.
+    ///
+    /// So the shape is pinned here instead, independently of the snapshots: the
+    /// serialized value must be a JSON **string**.
+    ///
+    /// One nuance found while falsifying this, which narrows what it is for.
+    /// Retyping the Rust field alone does **not** reach this test — it is a
+    /// compile error, because `sqlx::query_as!` verifies the field type against
+    /// the live column at build time (`Option<String>` will not coerce to
+    /// `Option<i64>`). Likewise a migration that retypes the column alone breaks
+    /// the same macro. So the uncoordinated half of the risk is already caught,
+    /// and caught earlier, by the compiler.
+    ///
+    /// What this test covers is the **coordinated** change: a migration and the
+    /// struct moving together, which compiles cleanly, leaves every `.snap`
+    /// byte-identical because the redaction erases the value's type along with
+    /// its content, and would otherwise ship silently.
+    #[test]
+    fn iso8601_timestamp_fields_serialize_as_strings_not_numbers() {
+        let attachment = serde_json::to_value(attachment_fixture()).expect("serializes");
+        assert!(
+            attachment["deleted_at"].is_string(),
+            "AttachmentSnapshot::deleted_at must serialize as a string; a retype to \
+             INTEGER is invisible to the redacted snapshots. Got: {:?}",
+            attachment["deleted_at"]
+        );
+
+        let prop = serde_json::to_value(property_definition_fixture()).expect("serializes");
+        assert!(
+            prop["created_at"].is_string(),
+            "PropertyDefinitionSnapshot::created_at must serialize as a string; a retype \
+             to INTEGER is invisible to the redacted snapshots. Got: {:?}",
+            prop["created_at"]
+        );
+    }
+
+    fn attachment_fixture() -> AttachmentSnapshot {
+        AttachmentSnapshot {
+            id: BlockId::test_id("ATT01"),
+            block_id: BlockId::test_id("BLK04"),
+            mime_type: "image/png".to_string(),
+            filename: "photo.png".to_string(),
+            size_bytes: 123_456,
+            fs_path: "/vault/attachments/photo.png".to_string(),
+            created_at: 1_690_000_000_000,
+            deleted_at: Some("2026-03-03T00:00:00Z".to_string()),
+            content_hash: Some("b3:deadbeefcafebabe".to_string()),
+        }
+    }
+
+    fn property_definition_fixture() -> PropertyDefinitionSnapshot {
+        PropertyDefinitionSnapshot {
+            key: "priority".to_string(),
+            value_type: "select".to_string(),
+            options: Some("low,medium,high".to_string()),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    fn page_alias_fixture() -> PageAliasSnapshot {
+        PageAliasSnapshot {
+            page_id: "PAGE01".to_string(),
+            alias: "Q1 Roadmap".to_string(),
+        }
+    }
+
+    fn snapshot_tables_fixture() -> SnapshotTables {
+        SnapshotTables {
+            blocks: vec![block_fixture()],
+            block_tags: vec![block_tag_fixture()],
+            block_properties: vec![block_property_fixture()],
+            block_links: vec![block_link_fixture()],
+            attachments: vec![attachment_fixture()],
+            property_definitions: vec![property_definition_fixture()],
+            page_aliases: vec![page_alias_fixture()],
+        }
+    }
+
+    fn snapshot_data_fixture() -> SnapshotData {
+        SnapshotData {
+            schema_version: SCHEMA_VERSION,
+            snapshot_device_id: "device-abc-123".to_string(),
+            up_to_seqs: BTreeMap::from([
+                ("device-abc-123".to_string(), 42),
+                ("device-xyz-999".to_string(), 17),
+            ]),
+            up_to_hash: "deadbeefcafebabe0011223344556677".to_string(),
+            tables: snapshot_tables_fixture(),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Shape-pinning snapshots — one per row type named in #3460.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_block_snapshot_shape() {
+        insta::assert_yaml_snapshot!(block_fixture());
+    }
+
+    #[test]
+    fn snapshot_block_tag_snapshot_shape() {
+        insta::assert_yaml_snapshot!(block_tag_fixture());
+    }
+
+    #[test]
+    fn snapshot_block_property_snapshot_shape() {
+        insta::assert_yaml_snapshot!(block_property_fixture());
+    }
+
+    #[test]
+    fn snapshot_block_link_snapshot_shape() {
+        insta::assert_yaml_snapshot!(block_link_fixture());
+    }
+
+    #[test]
+    fn snapshot_attachment_snapshot_shape() {
+        insta::assert_yaml_snapshot!(attachment_fixture(), {
+            ".deleted_at" => "[TIMESTAMP]",
+        });
+    }
+
+    #[test]
+    fn snapshot_property_definition_snapshot_shape() {
+        insta::assert_yaml_snapshot!(property_definition_fixture(), {
+            ".created_at" => "[TIMESTAMP]",
+        });
+    }
+
+    #[test]
+    fn snapshot_page_alias_snapshot_shape() {
+        insta::assert_yaml_snapshot!(page_alias_fixture());
+    }
+
+    #[test]
+    fn snapshot_snapshot_tables_shape() {
+        insta::assert_yaml_snapshot!(snapshot_tables_fixture(), {
+            ".attachments[].deleted_at" => "[TIMESTAMP]",
+            ".property_definitions[].created_at" => "[TIMESTAMP]",
+        });
+    }
+
+    #[test]
+    fn snapshot_snapshot_data_shape() {
+        insta::assert_yaml_snapshot!(snapshot_data_fixture(), {
+            ".tables.attachments[].deleted_at" => "[TIMESTAMP]",
+            ".tables.property_definitions[].created_at" => "[TIMESTAMP]",
+        });
+    }
+
+    // -----------------------------------------------------------------------
+    // Version constants — a bump must be a deliberate, visible diff.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn schema_version_constants_are_pinned() {
+        assert_eq!(
+            SCHEMA_VERSION, 6,
+            "SCHEMA_VERSION changed — this must be a deliberate bump, reviewed \
+             alongside the corresponding shape-pinning `.snap` diffs above, not \
+             an incidental side effect of an unrelated change"
+        );
+        assert_eq!(
+            MIN_SCHEMA_VERSION, 4,
+            "MIN_SCHEMA_VERSION changed — verify old snapshots in that range \
+             genuinely still decode under the current struct shapes before \
+             widening (or narrowing) the accepted range"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Round-trip — encode_snapshot / decode_snapshot must be inverses.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn snapshot_data_round_trips_through_encode_decode() {
+        let original = snapshot_data_fixture();
+
+        let encoded =
+            super::super::codec::encode_snapshot(&original).expect("encode_snapshot failed");
+        let decoded =
+            super::super::codec::decode_snapshot(&encoded[..]).expect("decode_snapshot failed");
+
+        // Compare via JSON `Value` rather than deriving `PartialEq` on the
+        // production types (which would otherwise exist only for this test):
+        // any field dropped or altered in transit — including one silently
+        // defaulted by a permissive `#[serde(default)]` deserializer — shows
+        // up as a JSON diff.
+        let original_json = serde_json::to_value(&original).expect("serialize original");
+        let decoded_json = serde_json::to_value(&decoded).expect("serialize decoded");
+        assert_eq!(
+            original_json, decoded_json,
+            "SnapshotData did not round-trip through encode_snapshot/decode_snapshot \
+             byte-for-byte — a field was lost or altered on the way through"
+        );
+    }
+}

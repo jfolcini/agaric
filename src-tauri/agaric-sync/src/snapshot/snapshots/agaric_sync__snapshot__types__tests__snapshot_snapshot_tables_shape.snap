@@ -1,0 +1,48 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: snapshot_tables_fixture()
+---
+blocks:
+  - id: BLK01
+    block_type: heading
+    content: Quarterly roadmap
+    parent_id: PARENT01
+    position: 7
+    deleted_at: 1700000000000
+    todo_state: doing
+    priority: high
+    due_date: 2026-01-15
+    scheduled_date: 2026-01-10
+    space_id: SPACE01
+block_tags:
+  - block_id: BLK02
+    tag_id: tag-important
+block_properties:
+  - block_id: BLK03
+    key: due
+    value_text: needs review
+    value_num: 42.5
+    value_date: 2026-02-02
+    value_ref: REF01
+    value_bool: 1
+block_links:
+  - source_id: SRC01
+    target_id: TGT01
+attachments:
+  - id: ATT01
+    block_id: BLK04
+    mime_type: image/png
+    filename: photo.png
+    size_bytes: 123456
+    fs_path: /vault/attachments/photo.png
+    created_at: 1690000000000
+    deleted_at: "[TIMESTAMP]"
+    content_hash: "b3:deadbeefcafebabe"
+property_definitions:
+  - key: priority
+    value_type: select
+    options: "low,medium,high"
+    created_at: "[TIMESTAMP]"
+page_aliases:
+  - page_id: PAGE01
+    alias: Q1 Roadmap

@@ -1,0 +1,15 @@
+---
+source: agaric-sync/src/snapshot/types.rs
+expression: block_fixture()
+---
+id: BLK01
+block_type: heading
+content: Quarterly roadmap
+parent_id: PARENT01
+position: 7
+deleted_at: 1700000000000
+todo_state: doing
+priority: high
+due_date: 2026-01-15
+scheduled_date: 2026-01-10
+space_id: SPACE01
