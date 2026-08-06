@@ -869,6 +869,15 @@ mod tests {
     // alone is satisfiable by a completely broken configuration. Connectivity and
     // silence are asserted together, in one test, for that reason.
 
+    // A deliberate copy, not an oversight — `driver` and `session` import
+    // `service::SYNC_ALPN` precisely so they cannot drift from it, so a bare copy here
+    // needs saying why.
+    //
+    // This module is the layer `service` is *built on*. Importing the constant would
+    // point a dependency edge upwards to buy nothing: this test needs *an* ALPN that
+    // both of its own endpoints agree on, not *the* ALPN Agaric ships. If the two ever
+    // differ, this test is indifferent, which is exactly right for a test about relay
+    // and DNS silence.
     const TEST_ALPN: &[u8] = b"agaric/sync/0";
 
     #[tokio::test]

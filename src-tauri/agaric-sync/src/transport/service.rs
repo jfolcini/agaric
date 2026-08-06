@@ -65,19 +65,24 @@
 //!
 //! # Connection setup is bounded; concurrency of setup is not
 //!
-//! [`SyncService::accept`] awaits the handshake and `Connection::accept_bi` *inline*,
-//! so a peer that stalls between the two would park the accept loop and make the other
+//! [`SyncService::accept`] drives the handshake and `Connection::accept_bi` *inline*,
+//! so a peer that stalls in either would park the accept loop and make the other
 //! 15 slots unreachable — defeating the cap above with a single connection.
-//! [`CONNECTION_SETUP_TIMEOUT`] bounds that window and releases the slot on elapse; see
-//! that constant for why the number is restated here rather than imported.
+//!
+//! Both are bounded, with **different** budgets, because they are different waits:
+//! [`CONNECTION_SETUP_TIMEOUT`] for the handshake, and [`FIRST_FRAME_TIMEOUT`] for the
+//! peer's first frame, which it cannot send until it has read its own heads out of the
+//! database. See that second constant for why budgeting them together understated the
+//! first-message window by an order of magnitude.
 //!
 //! What remains is narrower, and stays out of scope deliberately: **accepts are
 //! serialized**. This service admits one connection at a time and spawns nothing, so
-//! two peers arriving together are set up one after the other rather than
-//! concurrently — each waiting at most [`CONNECTION_SETUP_TIMEOUT`], not forever. The
-//! old stack spawned a task per connection instead. Whether to do that here, and what
-//! supervises the spawned task, is a call-site shape rather than a property of
-//! admission control, so it belongs to the cutover and not to this slice.
+//! two peers arriving together are set up one after the other rather than concurrently.
+//! Note that this makes the wait a *per-queue* bound and not a per-peer one: N stalled
+//! peers ahead of you cost N budgets, not one. The old stack spawned a task per
+//! connection instead. Whether to do that here, and what supervises the spawned task, is
+//! a call-site shape rather than a property of admission control, so it belongs to the
+//! cutover and not to this slice — tracked as #3485.
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
@@ -101,12 +106,11 @@ use crate::transport::endpoint::{LanBindError, lan_only};
 /// incompatibly, the place to say so.
 pub const SYNC_ALPN: &[u8] = b"agaric/sync/0";
 
-/// Wall-clock budget for turning an accepted connection into a usable session: the QUIC
-/// handshake, plus the peer opening its bi-stream.
+/// Wall-clock budget for the QUIC handshake alone.
 ///
 /// Without it the cap this module exists to enforce is defeated by one peer. The permit
-/// is taken before the handshake, so a peer that completes the handshake and then never
-/// opens a stream holds a slot *and*, because [`SyncService::accept`] awaits the setup
+/// is taken before the handshake, so a peer that opens a connection and then stalls
+/// mid-handshake holds a slot *and*, because [`SyncService::accept`] drives setup
 /// inline, parks the accept loop — the remaining 15 slots are unreachable no matter how
 /// well-behaved the peers waiting behind it are. The old stack described the same
 /// failure in TLS terms: "16 such stalls wedge every responder slot".
@@ -125,6 +129,45 @@ pub const SYNC_ALPN: &[u8] = b"agaric/sync/0";
 /// silently retune QUIC connection setup. Same reasoning as `driver`'s `RECV_TIMEOUT`
 /// and `CLOSE_WAIT`: the number moves with the responsibility, not with the name.
 const CONNECTION_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Wall-clock budget for the peer's *first frame*, which is what makes `accept_bi`
+/// resolve.
+///
+/// # Why this is not [`CONNECTION_SETUP_TIMEOUT`]
+///
+/// It was, and that was wrong. A locally-opened QUIC stream is invisible to the peer
+/// until something is sent on it — this module's own `dial` test helper has to write a
+/// byte for exactly that reason — so `accept_bi` does not resolve when the initiator
+/// *opens* its stream, it resolves when the initiator *speaks*. And the initiator's
+/// first message is produced by `orch.start()`, which reads the local heads, collects
+/// the Loro version vectors, and looks up the pending pairing proof. That is database
+/// work on a device that may hold a large vault.
+///
+/// So this window covers peer-side application work, and the handshake window does not.
+/// Budgeting them together at 10 s silently tightened the first-message budget from the
+/// **180 s** the old stack gave it — `SyncConnection::RECV_TIMEOUT`, which bounded the
+/// responder's first `recv` — down to a handshake's budget. `TLS_HANDSHAKE_TIMEOUT`
+/// covered TLS plus the WebSocket upgrade, neither of which required the initiator to
+/// touch the database, so it was never the right analogy for this half.
+///
+/// The value is therefore `RECV_TIMEOUT`'s, restated for the same reason `driver`
+/// restates it: it is the budget a first message has always had, and it should not move
+/// because the transport underneath it changed.
+///
+/// This is the same defect as #3481 in the opposite direction — there a constant kept
+/// its value while its scope *widened*; here one was applied to a scope it never
+/// covered. Both come of carrying a number across a transport swap by its name rather
+/// than by what it bounds.
+///
+/// # What this does not weaken
+///
+/// The slot is still released on elapse, and a stalled peer is still bounded. What it
+/// costs is that a peer stalled *after* the handshake now holds its slot for up to
+/// 180 s rather than 10 s — which is precisely what the old responder did, so it is not
+/// a regression this port introduces. The real fix for a stalled peer blocking *other*
+/// peers' admission is per-connection spawning (#3485), not under-budgeting a wait that
+/// legitimately needs the time.
+const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(180);
 
 /// A bound LAN-only endpoint plus the admission control in front of it.
 ///
@@ -147,6 +190,9 @@ pub struct SyncService {
     /// one, so the production value is pinned by its own test and the *mechanism* is
     /// driven at a short one.
     setup_timeout: Duration,
+    /// Always [`FIRST_FRAME_TIMEOUT`] in production; drivable for the same reason as
+    /// [`Self::setup_timeout`], and more urgently — at 180 s, no test could wait it out.
+    first_frame_timeout: Duration,
 }
 
 /// One admitted inbound session: an authenticated peer, its bi-stream, and the
@@ -246,18 +292,27 @@ impl SyncService {
             endpoint,
             limiter: Arc::new(Semaphore::new(MAX_CONCURRENT_RESPONDER_SESSIONS)),
             setup_timeout: CONNECTION_SETUP_TIMEOUT,
+            first_frame_timeout: FIRST_FRAME_TIMEOUT,
         })
     }
 
-    /// Drive the connection-setup bound at a value a test can wait for.
+    /// Drive *both* setup bounds at a value a test can wait for.
+    ///
+    /// Collapses them deliberately. A test stalls its peer in one phase or the other and
+    /// should not have to know which — the stalled-peer test, for instance, reads as
+    /// "never opens a stream" but actually trips the first-frame bound, because a
+    /// locally-opened QUIC stream is invisible until written to. Setting one budget
+    /// would make that test's outcome depend on a distinction it is not making.
     ///
     /// Test-only for the same reason `available_permits` is: production has exactly one
-    /// correct value for this and it is [`CONNECTION_SETUP_TIMEOUT`], pinned by
-    /// [`tests::the_connection_setup_bound_is_the_value_carried_from_the_old_transport`].
+    /// correct value for each, and both are pinned by their own tests. Those tests are
+    /// not linked from here — they live behind `cfg(test)`, so an intra-doc link to them
+    /// breaks a `--features test-util` docs build.
     #[cfg(any(test, feature = "test-util"))]
     #[doc(hidden)]
-    pub fn set_connection_setup_timeout(&mut self, budget: Duration) {
+    pub fn set_setup_budgets(&mut self, budget: Duration) {
         self.setup_timeout = budget;
+        self.first_frame_timeout = budget;
     }
 
     /// This endpoint's address, which a peer needs in order to dial us.
@@ -303,29 +358,19 @@ impl SyncService {
                 continue;
             };
 
-            // Bounded: see `CONNECTION_SETUP_TIMEOUT`. A peer that completes the
-            // handshake and then never opens a stream must not park the accept loop,
-            // because that would make the other 15 slots unreachable.
-            let setup = tokio::time::timeout(self.setup_timeout, Self::set_up(incoming));
+            // Bounded in two phases, because they are two different waits with two
+            // different legitimate durations — see `CONNECTION_SETUP_TIMEOUT` and
+            // `FIRST_FRAME_TIMEOUT`. Either way, a stalled peer must not park the accept
+            // loop, because that would make the other 15 slots unreachable.
+            let setup = Self::set_up(incoming, self.setup_timeout, self.first_frame_timeout);
 
             // Every non-session arm below drops `permit` on the way out, freeing the
             // slot — which is the half that makes the bound worth having.
-            let (conn, send, recv, remote) = match setup.await {
-                Ok(Some(parts)) => parts,
-                // `set_up` has already logged the specific failure.
-                Ok(None) => continue,
-                Err(_elapsed) => {
-                    // The half-built `Connection` is dropped inside the cancelled
-                    // future, and `noq`'s implicit close means the peer is told rather
-                    // than left hanging.
-                    tracing::warn!(
-                        timeout_ms = self.setup_timeout.as_millis(),
-                        "transport.service.setup_timeout: peer did not complete \
-                         connection setup; dropping it and releasing its slot"
-                    );
-                    continue;
-                }
+            let Some(parts) = setup.await else {
+                // `set_up` has already logged which phase failed and why.
+                continue;
             };
+            let (conn, send, recv, remote) = parts;
 
             return Ok(Some(InboundSession {
                 conn,
@@ -337,20 +382,35 @@ impl SyncService {
         }
     }
 
-    /// Complete the QUIC handshake and take the bi-stream the peer opens.
+    /// Complete the QUIC handshake, then take the bi-stream the peer speaks on.
     ///
-    /// Split out as its own future so [`CONNECTION_SETUP_TIMEOUT`] can wrap the whole
-    /// setup rather than either half: a peer can stall in the handshake *or* after it,
-    /// and one budget over both is what the old `TLS_HANDSHAKE_TIMEOUT` covered
-    /// (handshake plus upgrade). Returns `None` when the connection failed for a reason
-    /// already logged here — the caller only needs to know it did not become a session.
+    /// Each phase carries its own budget, and they are not the same number. The first is
+    /// a handshake and nothing else; the second waits on the peer's first frame, which
+    /// it cannot send until `orch.start()` has read its heads and version vectors out of
+    /// the database. [`FIRST_FRAME_TIMEOUT`] documents why collapsing the two was wrong.
+    ///
+    /// Returns `None` when the connection failed for a reason already logged here — the
+    /// caller only needs to know it did not become a session.
     async fn set_up(
         incoming: Incoming,
+        handshake_budget: Duration,
+        first_frame_budget: Duration,
     ) -> Option<(Connection, SendStream, RecvStream, EndpointId)> {
-        let conn = match incoming.await {
-            Ok(conn) => conn,
-            Err(e) => {
+        let conn = match tokio::time::timeout(handshake_budget, incoming).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => {
                 tracing::debug!(error = %e, "inbound QUIC handshake failed");
+                return None;
+            }
+            Err(_elapsed) => {
+                // The half-built `Connection` is dropped inside the cancelled future,
+                // and `noq`'s implicit close means the peer is told rather than left
+                // hanging.
+                tracing::warn!(
+                    timeout_ms = handshake_budget.as_millis(),
+                    "transport.service.handshake_timeout: peer did not complete the QUIC \
+                     handshake; dropping it and releasing its slot"
+                );
                 return None;
             }
         };
@@ -358,15 +418,25 @@ impl SyncService {
         // From the peer's TLS certificate, established by the handshake above.
         let remote = conn.remote_id();
 
-        match conn.accept_bi().await {
-            Ok((send, recv)) => Some((conn, send, recv, remote)),
-            Err(e) => {
+        match tokio::time::timeout(first_frame_budget, conn.accept_bi()).await {
+            Ok(Ok((send, recv))) => Some((conn, send, recv, remote)),
+            Ok(Err(e)) => {
                 tracing::debug!(
                     %remote,
                     error = %e,
                     "peer connected but opened no sync bi-stream"
                 );
                 conn.close(0u32.into(), b"no sync stream");
+                None
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    %remote,
+                    timeout_ms = first_frame_budget.as_millis(),
+                    "transport.service.first_frame_timeout: peer completed the handshake \
+                     but never sent its first frame; dropping it and releasing its slot"
+                );
+                conn.close(0u32.into(), b"no first frame");
                 None
             }
         }
@@ -787,7 +857,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_peer_that_stalls_before_opening_a_stream_does_not_park_the_accept_loop() {
         let mut service = service().await;
-        service.set_connection_setup_timeout(TEST_SETUP_TIMEOUT);
+        service.set_setup_budgets(TEST_SETUP_TIMEOUT);
         let service = Arc::new(service);
         let peer = peer_endpoint().await;
 
@@ -890,29 +960,46 @@ mod tests {
         );
     }
 
-    /// The setup bound must be the value the old transport shipped.
+    /// Each setup bound must be the value the old transport gave *that phase*.
     ///
-    /// Asserted as a literal rather than as equality with `TLS_HANDSHAKE_TIMEOUT`, for
-    /// the reason `driver`'s own limits test gives about `CLOSE_WAIT`: that constant's
-    /// documented scope is the TLS handshake plus the WebSocket upgrade, machinery this
-    /// port deletes, so a tune made for *its* story would otherwise silently retune QUIC
-    /// connection setup with every test still green.
+    /// Asserted as literals rather than as equality with the old constants, for the
+    /// reason `driver`'s own limits test gives about `CLOSE_WAIT`: their documented
+    /// scopes are WebSocket machinery this port deletes, so a tune made for *their*
+    /// story would otherwise silently retune QUIC setup with every test still green.
+    ///
+    /// The pairing is the point. The first review of this module asserted only the
+    /// handshake bound, against `HANDSHAKE_TIMEOUT`, on the rationale that the two
+    /// "cover disjoint phases" — and that rationale was wrong, because one budget was
+    /// covering both the handshake *and* the wait for a first frame that requires
+    /// peer-side database work. Pinning them separately is what makes the two phases
+    /// visibly two.
     #[test]
-    fn the_connection_setup_bound_is_the_value_carried_from_the_old_transport() {
+    fn each_setup_bound_is_the_value_carried_from_the_old_transport() {
         assert_eq!(
             CONNECTION_SETUP_TIMEOUT,
             Duration::from_secs(10),
             "carried from TLS_HANDSHAKE_TIMEOUT, whose sizing rationale — LAN handshakes \
              in well under a second, headroom for a loaded device, still fast enough to \
-             keep the 16-slot pool flowing — describes this window exactly"
+             keep the 16-slot pool flowing — describes the handshake exactly"
         );
-        // The old constant's own doc draws this line: connection setup is "distinct from
-        // (and far below) the 120 s per-message HANDSHAKE_TIMEOUT and 180 s RECV_TIMEOUT,
-        // which cover the established session, not connection setup".
+        assert_eq!(
+            FIRST_FRAME_TIMEOUT,
+            Duration::from_secs(180),
+            "carried from SyncConnection::RECV_TIMEOUT, which is what bounded the \
+             responder's first recv on the old stack. The initiator cannot send its \
+             first frame until orch.start() has read its heads and version vectors out \
+             of the database, so this window covers peer-side work and a handshake \
+             budget does not fit it"
+        );
+        // The old TLS constant's own doc draws this line: connection setup is "distinct
+        // from (and far below) the 120 s per-message HANDSHAKE_TIMEOUT and 180 s
+        // RECV_TIMEOUT, which cover the established session, not connection setup". That
+        // remains true of the handshake half — and it is precisely why the first-frame
+        // half belongs with RECV_TIMEOUT instead.
         assert!(
-            CONNECTION_SETUP_TIMEOUT < crate::sync_constants::HANDSHAKE_TIMEOUT,
-            "a setup bound at or above the per-message session bound would let one peer \
-             hold a slot for a whole session's worth of time without ever starting one"
+            CONNECTION_SETUP_TIMEOUT < FIRST_FRAME_TIMEOUT,
+            "a handshake that is allowed as long as a first message has collapsed the \
+             distinction this split exists to draw"
         );
     }
 
