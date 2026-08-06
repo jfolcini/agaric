@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "INSERT INTO peer_refs (peer_id, endpoint_id)\n         VALUES (?, ?)\n         ON CONFLICT(peer_id) DO UPDATE SET endpoint_id = excluded.endpoint_id",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "7572b60234dc92007a6790f378665be46ee1c70aeff23d31991343548452246a"
+}

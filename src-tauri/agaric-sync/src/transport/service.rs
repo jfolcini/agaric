@@ -201,6 +201,48 @@ pub struct SyncService {
 /// The permit is a private field with no accessor, so the only way to release the slot
 /// is to drop the session. That is the point: a caller cannot return early, `?` out of
 /// a failed handshake, or panic without also freeing the slot.
+///
+/// # Why this type implements [`Drop`] when it has nothing to clean up
+///
+/// [`Self::_permit`] releases itself when the struct's fields are dropped, so the
+/// `Drop` impl below frees nothing that would otherwise leak. It is here for what the
+/// *compiler* does in its presence, not for what its body does.
+///
+/// Rust forbids moving a field out of a type that implements [`Drop`]. Without the
+/// impl, this compiles:
+///
+/// ```ignore
+/// let InboundSession { conn, send, recv, remote, .. } = service.accept().await?;
+/// ```
+///
+/// — and it is a slot leak in the shape most likely to be written, because it reads
+/// like ordinary destructuring and the thing it discards is the field named to look
+/// discardable. The permit drops *there*, at the top of the handler, while the session
+/// it was accounting for runs on for up to `RECV_TIMEOUT`. The cap would still be
+/// enforced; it would simply stop measuring anything, and nothing would fail.
+///
+/// With the impl, that line does not compile (E0509), so the streams cannot be
+/// separated from the permit that paid for them. This is the difference the cutover
+/// asked for between a permit released *because callers remember to hold the session*
+/// and one released because there is no way not to.
+///
+/// The guard for that is this example, which must keep failing to compile. It needs no
+/// [`SyncService`] and no network — naming the type is enough, which is why it can be a
+/// doctest rather than a fixture:
+///
+/// ```compile_fail,E0509
+/// use agaric_sync::transport::InboundSession;
+///
+/// // Taking the stream and letting the "unused" permit field go is the whole hazard:
+/// // it returns a live stream whose concurrency slot has already been handed back.
+/// fn unbundle(session: InboundSession) -> iroh::endpoint::RecvStream {
+///     let InboundSession { recv, .. } = session;
+///     recv
+/// }
+/// ```
+///
+/// Dropping the `impl Drop` below makes that example compile, which makes this doctest
+/// fail — the falsification is the deletion of the thing it guards.
 #[derive(Debug)]
 pub struct InboundSession {
     /// The live connection. Needed for shutdown —
@@ -216,6 +258,24 @@ pub struct InboundSession {
     /// Held for the session's whole life. Never read; dropping it is the entire
     /// contract.
     _permit: OwnedSemaphorePermit,
+}
+
+impl Drop for InboundSession {
+    fn drop(&mut self) {
+        // Intentionally empty of cleanup — see the type's docs. The permit is released
+        // by its own `Drop` immediately after this returns; the value of this impl is
+        // that its mere existence makes `InboundSession` non-destructurable, so the
+        // permit cannot be separated from the streams whose slot it accounts for.
+        //
+        // The trace is the one thing worth doing here, and only because it is the
+        // moment the slot actually comes back: `available_permits` rising has no other
+        // observable cause, so a slot-accounting question ("did that session ever give
+        // its permit back?") is answerable from a log rather than from a debugger.
+        tracing::trace!(
+            remote = %self.remote,
+            "transport.service.session_dropped: releasing the concurrency slot"
+        );
+    }
 }
 
 /// A [`SyncService`] could not be brought up.
