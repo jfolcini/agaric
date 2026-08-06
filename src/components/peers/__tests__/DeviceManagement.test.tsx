@@ -23,7 +23,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { comparePeers, DeviceManagement } from '@/components/peers/DeviceManagement'
-import type { PeerRefRow } from '@/lib/tauri'
+import type { PeerRef } from '@/lib/tauri'
 
 // #2506: DeviceManagement now mounts `useMdnsStatus`, which registers a
 // `sync:mdns_disabled` listener via `useTauriEventListener` → `listen()`.
@@ -929,7 +929,7 @@ describe('DeviceManagement', () => {
 
   // #1673: total-order comparator properties + tiebreaks
   describe('comparePeers (#1673)', () => {
-    const row = (over: Partial<PeerRefRow>): PeerRefRow => ({
+    const row = (over: Partial<PeerRef>): PeerRef => ({
       peer_id: 'peer-x',
       last_hash: null,
       last_sent_hash: null,
@@ -988,7 +988,7 @@ describe('DeviceManagement', () => {
     })
 
     it('is antisymmetric and transitive across a mixed set', () => {
-      const rows: PeerRefRow[] = [
+      const rows: PeerRef[] = [
         row({ peer_id: 'p-unnamed-old', synced_at: 100 }),
         row({ peer_id: 'p-unnamed-new', synced_at: 999 }),
         row({ peer_id: 'p-unnamed-never', synced_at: null }),
@@ -1028,7 +1028,7 @@ describe('DeviceManagement', () => {
 
     it('does not mutate the input array (sorts a copy in onSuccess path)', () => {
       // guards the IPC-payload-mutation fix: callers should spread before sort
-      const original: PeerRefRow[] = [
+      const original: PeerRef[] = [
         row({ peer_id: 'b', device_name: 'Zed' }),
         row({ peer_id: 'a', device_name: 'Abe' }),
       ]

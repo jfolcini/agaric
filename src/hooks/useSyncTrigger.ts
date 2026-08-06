@@ -4,13 +4,13 @@ import { mapBackendState } from '@/hooks/useSyncEvents'
 import { announce } from '@/lib/announcer'
 import { i18n } from '@/lib/i18n'
 import { notify } from '@/lib/notify'
-import type { PeerRefRow } from '@/lib/tauri'
+import type { PeerRef } from '@/lib/tauri'
 import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
 import type { PeerInfo } from '@/stores/sync'
 import { useSyncStore } from '@/stores/sync'
 
 /**
- * Maps a backend `PeerRefRow` to the store-facing `PeerInfo` shape (#1076).
+ * Maps a backend `PeerRef` to the store-facing `PeerInfo` shape (#1076).
  *
  * Single source of truth for the row → store mapping so `useSyncStore.peers`
  * — consumed by `StatusPanel` (Sync panel) and `AppSidebar` (status dot) —
@@ -20,7 +20,7 @@ import { useSyncStore } from '@/stores/sync'
  * `synced_at` is backend epoch-ms (or null); `PeerInfo.lastSyncedAt` is the
  * ISO-string form the store documents and its tests assert.
  */
-export function mapPeerRefToInfo(row: PeerRefRow): PeerInfo {
+export function mapPeerRefToInfo(row: PeerRef): PeerInfo {
   return {
     peerId: row.peer_id,
     lastSyncedAt: row.synced_at != null ? new Date(row.synced_at).toISOString() : null,

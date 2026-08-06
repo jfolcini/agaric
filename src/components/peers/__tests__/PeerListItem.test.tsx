@@ -17,11 +17,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PeerListItem } from '@/components/peers/PeerListItem'
-import type { PeerRefRow } from '@/lib/tauri'
+import type { PeerRef } from '@/lib/tauri'
 
 const mockedInvoke = vi.mocked(invoke)
 
-function makePeer(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
+function makePeer(overrides: Partial<PeerRef> = {}): PeerRef {
   return {
     peer_id: 'peer-abc-1234567890',
     last_hash: null,

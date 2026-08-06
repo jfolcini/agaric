@@ -17,7 +17,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Spinner } from '@/components/ui/spinner'
 import { unwrap } from '@/lib/app-error'
-import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import type { PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { truncateId } from '@/lib/format'
 import { formatRelativeTime } from '@/lib/format-relative-time'
@@ -25,7 +25,7 @@ import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 
 export interface PeerListItemProps {
-  peer: PeerRefRow
+  peer: PeerRef
   syncingPeerId: string | null
   syncingAll: boolean
   renamingPeerId: string | null
