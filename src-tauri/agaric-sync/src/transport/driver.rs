@@ -229,8 +229,8 @@ impl SessionEnd {
 /// non-`Clean` variants leave the final frame's fate genuinely unknown —
 /// [`Self::PeerDidNotClose`] force-closes when the wait expires, which discards that
 /// frame if the peer was merely slow rather than gone. Only [`Self::Clean`] is evidence
-/// of delivery; the other two are evidence of its absence, which is not the same as
-/// evidence of harmlessness.
+/// of delivery; the other two are the *absence* of that evidence, which is not the same
+/// as evidence the frame was lost — nor a reason to assume it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shutdown {
     /// The peer closed the connection *at the application layer*, so the final frame
@@ -459,8 +459,11 @@ mod tests {
     use crate::apply_host::test_support::RecordingApplyHost;
     use crate::sync_protocol::SyncMessage;
     use crate::transport::endpoint::{RecordingResolver, lan_only};
-
-    const SYNC_ALPN: &[u8] = b"agaric/sync/0";
+    // The canonical constant, not a copy of its value. A local copy would let a bump to
+    // `service::SYNC_ALPN` leave every test here green: each test builds *both* ends
+    // from the same local copy, so the two would simply agree with each other while
+    // disagreeing with production.
+    use crate::transport::service::SYNC_ALPN;
 
     /// Hang detector, not a performance bound — a LAN handshake was measured at 0.07 s
     /// in the #3462 spike.
