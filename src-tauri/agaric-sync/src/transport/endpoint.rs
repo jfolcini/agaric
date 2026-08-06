@@ -297,7 +297,10 @@ impl std::fmt::Display for LanBindError {
                  broad the confined block is, not where it sits, so a LAN-sized slice of \
                  public space would otherwise be accepted as LAN-only"
             ),
-            Self::InvalidSocketAddr(e) => write!(f, "invalid bind address for prefix: {e}"),
+            // Deliberately does NOT interpolate the inner error: `source()` returns it,
+            // so a chain-walking reporter (`{:#}`, `tracing`'s error chain) would print
+            // it twice. `Display` carries only the context this wrapper adds.
+            Self::InvalidSocketAddr(_) => write!(f, "invalid bind address for prefix"),
         }
     }
 }
@@ -683,6 +686,53 @@ mod tests {
         let err = lan_only(bind, 64, DnsResolver::custom(RecordingResolver::new()))
             .expect_err("a publicly-routable IPv6 bind must be rejected");
         assert!(matches!(err, LanBindError::BindAddressNotPrivate { .. }));
+    }
+
+    /// `LanBindError` must report the inner iroh error exactly once.
+    ///
+    /// `source()` exists so a caller walking the chain (or `tracing`'s error field) can
+    /// reach the underlying `InvalidSocketAddr`. That makes interpolating it into
+    /// `Display` a *duplicate*, not a convenience: `{:#}` and every chain-walking
+    /// reporter would print the same sentence twice. This pins both halves — the source
+    /// is reachable, and `Display` does not restate it — because either half silently
+    /// regresses on its own.
+    #[test]
+    fn lan_bind_error_reports_the_inner_error_exactly_once() {
+        use std::error::Error as _;
+
+        // A prefix above the IPv4 maximum clears both of our own checks — /33 is not
+        // "too broad", and loopback is not publicly routable — so rejection can only
+        // come from iroh, which is the one path that yields `InvalidSocketAddr`.
+        let bind: SocketAddr = "127.0.0.1:0".parse().expect("test address parses");
+        let err = lan_only(bind, 33, DnsResolver::custom(RecordingResolver::new()))
+            .expect_err("a prefix above the IPv4 maximum must be rejected by iroh");
+        let LanBindError::InvalidSocketAddr(_) = &err else {
+            panic!("expected the iroh-rejected variant, got {err:?}");
+        };
+
+        let source = err
+            .source()
+            .expect("InvalidSocketAddr must expose its inner error as the chain source");
+        let outer = err.to_string();
+        let inner = source.to_string();
+
+        assert!(
+            !outer.contains(&inner),
+            "Display must not restate what source() already returns, or chain-walking \
+             reporters print it twice; outer={outer:?} inner={inner:?}"
+        );
+        assert!(
+            !outer.is_empty(),
+            "Display must still carry the context this wrapper adds"
+        );
+
+        // The variants with nothing behind them must not invent a source.
+        let too_broad = lan_only(bind, 1, DnsResolver::custom(RecordingResolver::new()))
+            .expect_err("a /1 prefix must be rejected as too broad");
+        assert!(
+            too_broad.source().is_none(),
+            "PrefixTooBroad has no inner error to expose"
+        );
     }
 
     /// The addresses a real deployment binds must stay usable — the locality check must
