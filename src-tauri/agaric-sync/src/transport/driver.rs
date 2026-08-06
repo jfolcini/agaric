@@ -229,8 +229,8 @@ impl SessionEnd {
 /// non-`Clean` variants leave the final frame's fate genuinely unknown —
 /// [`Self::PeerDidNotClose`] force-closes when the wait expires, which discards that
 /// frame if the peer was merely slow rather than gone. Only [`Self::Clean`] is evidence
-/// of delivery; the other two are evidence of its absence, which is not the same as
-/// evidence of harmlessness.
+/// of delivery; the other two are the *absence* of that evidence, which is not the same
+/// as evidence the frame was lost — nor a reason to assume it landed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shutdown {
     /// The peer closed the connection *at the application layer*, so the final frame
