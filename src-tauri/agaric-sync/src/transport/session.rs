@@ -73,12 +73,19 @@ const LEN_PREFIX_BYTES: usize = 4;
 /// snapshot, attachment and chunked-LoroSync flows alike. Reusing it keeps one tunable
 /// instead of two, and means this value has already run in production.
 ///
-/// The trade is real and worth stating: a genuinely large frame now reallocates as it
-/// grows, where the eager form allocated once. `Vec`'s geometric growth keeps that
-/// amortised, and the overshoot is bounded by a small constant factor of the delivered
-/// size — paid only by frames far above the typical few-MB payload, and paid in
-/// transient memory rather than in an amplification lever. It has not been measured
-/// against a real 256 MB frame; if that case ever becomes hot, measure before tuning.
+/// A delivered frame is then sized in one exact step rather than grown, which matters
+/// more than it looks. Letting the buffer keep growing geometrically would end at a
+/// capacity ~1.25x the frame and hold both halves live across the final reallocation —
+/// for a 256 MB frame, a transient peak *above* the eager form it replaces, on exactly
+/// the memory-tight targets that motivated the change. Chunking is there to stop an
+/// unpaid claim from allocating; it is not something to keep doing once the peer has
+/// paid.
+///
+/// What that leaves is an amplification of this constant against `MAX_FRAME_SIZE` — a
+/// peer must actually deliver 5 MB to have 256 MB reserved, rather than 4 bytes. The
+/// threat model is the user's own paired devices, so the aim is that corruption or a
+/// version skew cannot turn a wrong number into an allocation; a peer willing to send
+/// 5 MB per frame is one that has already been authenticated by the QUIC handshake.
 const READ_CHUNK_BYTES: usize = BINARY_FRAME_CHUNK_SIZE;
 
 fn wire_err(msg: impl Into<String>) -> AppError {
@@ -124,7 +131,11 @@ pub async fn send_sync_message(send: &mut SendStream, msg: &SyncMessage) -> Resu
 /// untestable; against this trait it is one assertion.
 trait BodyReader {
     /// Fill `buf` completely, or fail.
-    fn fill_exact(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<(), AppError>>;
+    ///
+    /// `Send` is spelled out because the returned future is opaque: without it a
+    /// caller that spawns a session over a generic `R` fails to compile, and the
+    /// concrete [`RecvStream`] impl only works today by auto-trait leakage.
+    fn fill_exact(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<(), AppError>> + Send;
 }
 
 impl BodyReader for RecvStream {
@@ -140,16 +151,31 @@ impl BodyReader for RecvStream {
 /// `payload` is a caller-supplied `&mut Vec` rather than a return value so that a
 /// failed read leaves the partially-grown buffer observable — which is what makes the
 /// reservation policy assertable.
-async fn read_body<R: BodyReader + ?Sized>(
+///
+/// The limit of that guard is worth knowing: it binds *this* function, so a
+/// `Vec::with_capacity(capacity)` reintroduced at the [`recv_sync_message`] call site
+/// would restore the amplification with every test still green. The buffer is created
+/// empty there for that reason, and this is the only thing that should ever size it.
+async fn read_body<R: BodyReader>(
     recv: &mut R,
     capacity: usize,
     payload: &mut Vec<u8>,
 ) -> Result<(), AppError> {
-    while payload.len() < capacity {
-        let want = READ_CHUNK_BYTES.min(capacity - payload.len());
-        let filled = payload.len();
-        payload.resize(filled + want, 0);
-        recv.fill_exact(&mut payload[filled..]).await?;
+    // Reserve one chunk at most, whatever was announced. Until a byte arrives the
+    // length is a claim, and this is the only allocation a claim can buy.
+    let first = READ_CHUNK_BYTES.min(capacity);
+    payload.resize(first, 0);
+    recv.fill_exact(&mut payload[..]).await?;
+
+    if capacity > first {
+        // A full chunk arrived, so the peer has now paid for the length rather than
+        // merely asserting it. Size the buffer to the remainder in ONE exact step:
+        // letting it grow geometrically from here would end at ~1.25x the frame and
+        // hold both halves live across the final realloc — worse than the eager form
+        // it replaced, on precisely the memory-tight targets that motivated this.
+        payload.reserve_exact(capacity - first);
+        payload.resize(capacity, 0);
+        recv.fill_exact(&mut payload[first..]).await?;
     }
     Ok(())
 }
