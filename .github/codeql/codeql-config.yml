@@ -34,8 +34,9 @@ query-filters:
   # rust/cleartext-logging or rust/hard-coded-cryptographic-value gets waved
   # through with it. Excluding the query restores signal rather than hiding it.
   #
-  # Excluding it loses NO coverage, which is the load-bearing part of this
-  # decision and the thing to re-check before trusting it:
+  # Excluding it loses no coverage that is not already covered better, which is
+  # the load-bearing part of this decision and the thing to re-check before
+  # trusting it:
   #   * rustc's own `unused_variables` lint answers the same question exactly —
   #     it is name resolution, and the compiler is ground truth. Verified: a
   #     variable used only in `panic!("{i}")` draws no rustc warning, while a
@@ -45,8 +46,22 @@ query-filters:
   #     backend PR, and `--all-targets` covers the tests/ and benches/ targets
   #     where every one of these 135 alerts lived.
   #
+  # One documented exception, found in review rather than assumed away:
+  # `src-tauri/fuzz` declares its own `[workspace]` (fuzz/Cargo.toml:65) and is
+  # not a member of the root workspace, so `cargo clippy --workspace` never
+  # reaches its 5 fuzz targets. CodeQL does scan them, so for those files this
+  # exclusion is a real, if small, loss — accepted because an unused binding in
+  # a fuzz harness is inert, and because leaving 135 false positives standing to
+  # cover 5 files inverts the cost. If the fuzz targets ever join the workspace,
+  # or grow a clippy job of their own, the exception disappears with them.
+  #
   # So this exclusion is conditional on that clippy gate. If `-D warnings` is
   # ever dropped, or clippy stops running `--all-targets`, this filter starts
   # costing real coverage and should be removed with it.
+  #
+  # One more failure mode to know about: a `query-filters` entry that matches
+  # zero queries is NOT an error. If this ID is ever renamed upstream the filter
+  # silently becomes a no-op and the alerts return. Confirm the open-alert count
+  # after a scan rather than trusting this file to still be doing anything.
   - exclude:
       id: rust/unused-variable
