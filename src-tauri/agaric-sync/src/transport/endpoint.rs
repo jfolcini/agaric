@@ -35,10 +35,43 @@ use n0_future::boxed::BoxFuture;
 /// slice may do exactly that once there is somewhere to report to. Compare
 /// [`permissive`], which is test-only precisely because shipping an internet-facing
 /// configuration would be a liability rather than an asset.
+///
+/// # Bounded, because the production use is the point
+///
+/// Inviting production wiring and then growing a `Vec` forever would be an invitation to
+/// a leak. Measured against `presets::N0` (a fully leaking endpoint) on this machine:
+/// **~220 queries in the first 5 s, ~630 by 55 s, and only 5 distinct hostnames** — the
+/// volume is retries of the same few names, and it does not stop. So the record is
+/// capped at [`MAX_RECORDED_QUERIES`] and overflow is *counted*, not silently dropped
+/// ([`dropped_queries`](Self::dropped_queries)).
+///
+/// Capping cannot hide a leak from the guards. The buffer starts empty and the first
+/// queries recorded are the first queries made, so a configuration that leaks at all
+/// leaks into slot zero; the guards assert on emptiness and on content, never on a
+/// suffix. What the cap costs is fidelity about *how often* a known leak repeated, which
+/// is exactly the information worth trading for a fixed memory bound — the measurement
+/// above shows all 5 distinct names appear inside the first 5 s.
 #[derive(Debug, Clone, Default)]
 pub struct RecordingResolver {
-    queries: Arc<Mutex<Vec<String>>>,
+    state: Arc<Mutex<Recorded>>,
 }
+
+/// The bounded record behind a [`RecordingResolver`].
+#[derive(Debug, Default)]
+struct Recorded {
+    queries: Vec<String>,
+    dropped: usize,
+}
+
+/// How many hostnames a [`RecordingResolver`] retains before it stops recording and
+/// starts counting.
+///
+/// Sized from the measurement in [`RecordingResolver`]'s docs: ~4× the observed
+/// 220-query startup burst of a fully leaking endpoint, and roughly 90 s of its observed
+/// sustained rate. That is comfortably more than enough to show the complete distinct
+/// set (5 names, all within the first 5 s) plus enough repetition to judge frequency,
+/// while bounding the buffer at ~1024 short strings instead of ~950k per day.
+pub const MAX_RECORDED_QUERIES: usize = 1024;
 
 impl RecordingResolver {
     #[must_use]
@@ -46,23 +79,40 @@ impl RecordingResolver {
         Self::default()
     }
 
-    /// Every hostname iroh attempted to resolve, in order.
-    ///
-    /// # Panics
-    /// If the internal mutex was poisoned by a panic in another thread.
+    /// Every hostname iroh attempted to resolve, in order, up to
+    /// [`MAX_RECORDED_QUERIES`].
     #[must_use]
     pub fn queries(&self) -> Vec<String> {
-        self.queries
+        self.lock().queries.clone()
+    }
+
+    /// How many queries were observed but not retained because the record was full.
+    ///
+    /// Non-zero means [`queries`](Self::queries) is a prefix, not the whole story — it
+    /// never means nothing leaked.
+    #[must_use]
+    pub fn dropped_queries(&self) -> usize {
+        self.lock().dropped
+    }
+
+    /// Take the lock, recovering from poisoning rather than panicking.
+    ///
+    /// A tripwire that aborts the process when an unrelated thread panicked would be a
+    /// worse failure than the one it watches for, and the guarded data is an append-only
+    /// log of strings — there is no invariant a panic mid-`push` can break.
+    fn lock(&self) -> std::sync::MutexGuard<'_, Recorded> {
+        self.state
             .lock()
-            .expect("recording resolver mutex poisoned")
-            .clone()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
     fn record(&self, host: &str) {
-        self.queries
-            .lock()
-            .expect("recording resolver mutex poisoned")
-            .push(host.to_string());
+        let mut state = self.lock();
+        if state.queries.len() < MAX_RECORDED_QUERIES {
+            state.queries.push(host.to_string());
+        } else {
+            state.dropped += 1;
+        }
     }
 }
 
@@ -129,13 +179,31 @@ impl Resolver for RecordingResolver {
 /// which is the second reason `clear_ip_transports()` matters.
 ///
 /// # Errors
-/// If `bind` is not a valid socket address for the given `prefix_len` (for IPv4 the
-/// maximum prefix is 32, for IPv6 128).
+/// [`LanBindError::PrefixTooBroad`] if `prefix_len` describes a block too large to be a
+/// LAN (see [`MIN_IPV4_PREFIX_LEN`] / [`MIN_IPV6_PREFIX_LEN`]);
+/// [`LanBindError::InvalidSocketAddr`] if `bind` is not a valid socket address for the
+/// given `prefix_len` (for IPv4 the maximum prefix is 32, for IPv6 128).
 pub fn lan_only(
     bind: SocketAddr,
     prefix_len: u8,
     resolver: DnsResolver,
-) -> Result<Builder, InvalidSocketAddr> {
+) -> Result<Builder, LanBindError> {
+    // Layer 3 confines egress by longest-prefix match over the bound sockets. A prefix
+    // that covers more than a LAN does not confine anything — at /0 every destination on
+    // the internet matches this socket, so the third layer silently becomes a no-op
+    // while all four guards below stay green, because a route out needs no name
+    // resolution. Reject it here, where the caller can still be told why.
+    let minimum = match bind {
+        SocketAddr::V4(_) => MIN_IPV4_PREFIX_LEN,
+        SocketAddr::V6(_) => MIN_IPV6_PREFIX_LEN,
+    };
+    if prefix_len < minimum {
+        return Err(LanBindError::PrefixTooBroad {
+            prefix_len,
+            minimum,
+            family: if bind.is_ipv4() { "IPv4" } else { "IPv6" },
+        });
+    }
     Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
         .clear_relay_transports()
@@ -148,6 +216,74 @@ pub fn lan_only(
                 .set_prefix_len(prefix_len)
                 .set_is_default_route(false),
         )
+        .map_err(LanBindError::InvalidSocketAddr)
+}
+
+/// The smallest IPv4 prefix length [`lan_only`] will accept.
+///
+/// **Why 8.** `10.0.0.0/8` (RFC 1918) and `127.0.0.0/8` (loopback) are the largest
+/// blocks an interface can legitimately sit in and still be describing a local network;
+/// every other private range (`172.16/12`, `192.168/16`, CGNAT `100.64/10`) is narrower.
+/// So /8 is the broadest prefix that still names a subnet rather than a slice of the
+/// internet, and it is also what the guard tests below bind. Anything broader is
+/// accepting a claim the address space cannot support.
+pub const MIN_IPV4_PREFIX_LEN: u8 = 8;
+
+/// The smallest IPv6 prefix length [`lan_only`] will accept.
+///
+/// **Why 7.** `fc00::/7` (unique-local, RFC 4193) is the largest block an IPv6 LAN can
+/// legitimately occupy; link-local `fe80::/10` is narrower. Same reasoning as
+/// [`MIN_IPV4_PREFIX_LEN`], applied to the v6 address plan.
+pub const MIN_IPV6_PREFIX_LEN: u8 = 7;
+
+/// Why a [`lan_only`] endpoint could not be configured.
+///
+/// Hand-written rather than derived: `agaric-sync` does not depend on `thiserror` (it
+/// moved to `agaric-core` with `error.rs` in #2621), and pulling a dependency in for one
+/// two-variant enum is disproportionate. The variants stay distinct rather than
+/// collapsing into `AppError::InvalidOperation` because "the prefix cannot confine
+/// egress" is a security condition a caller may want to match on, not just log.
+#[derive(Debug)]
+pub enum LanBindError {
+    /// `prefix_len` describes a block too broad to confine egress to a LAN, so the
+    /// third layer of [`lan_only`]'s configuration would not hold.
+    PrefixTooBroad {
+        /// What the caller asked for.
+        prefix_len: u8,
+        /// The smallest value accepted for this address family.
+        minimum: u8,
+        /// `"IPv4"` or `"IPv6"`, for the message.
+        family: &'static str,
+    },
+    /// iroh rejected the address / prefix pair — e.g. a prefix above the family maximum
+    /// (32 for IPv4, 128 for IPv6).
+    InvalidSocketAddr(InvalidSocketAddr),
+}
+
+impl std::fmt::Display for LanBindError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PrefixTooBroad {
+                prefix_len,
+                minimum,
+                family,
+            } => write!(
+                f,
+                "prefix /{prefix_len} is too broad to confine egress to a LAN \
+                 (minimum /{minimum} for {family}); a subnet this large leaves every \
+                 off-subnet destination a route out, which no guard in this module can see"
+            ),
+            Self::InvalidSocketAddr(e) => write!(f, "invalid bind address for prefix: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LanBindError {}
+
+impl From<InvalidSocketAddr> for LanBindError {
+    fn from(e: InvalidSocketAddr) -> Self {
+        Self::InvalidSocketAddr(e)
+    }
 }
 
 /// The permissive, internet-facing configuration.
@@ -169,9 +305,23 @@ fn permissive(resolver: DnsResolver) -> Builder {
 /// Used to classify what an endpoint publishes. Deliberately conservative: anything
 /// not recognised as private, loopback, link-local, unique-local or CGNAT is treated
 /// as public, so an unfamiliar range fails toward "flag it" rather than "allow it".
+///
+/// # IPv4-mapped IPv6
+///
+/// `::ffff:192.168.1.10` is an IPv4 address wearing an IPv6 hat, and classifying it on
+/// `segments()[0]` (which is `0x0000`) fell through to "publicly routable" for every
+/// private address in that form. It is unmapped and classified as the v4 address it is.
+///
+/// Note this uses `to_ipv4_mapped`, **not** `to_ipv4`. The latter also converts the
+/// deprecated IPv4-compatible form, which would turn `::1` into `0.0.0.1` — an address
+/// none of the v4 predicates recognise, so genuine loopback would come back "public".
 #[must_use]
 pub fn is_publicly_routable(addr: &SocketAddr) -> bool {
-    match addr.ip() {
+    let ip = match addr.ip() {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        v4 => v4,
+    };
+    match ip {
         IpAddr::V4(v4) => {
             let o = v4.octets();
             !(v4.is_private()
@@ -390,6 +540,14 @@ mod tests {
             "[::1]:1",
             "[fe80::1]:1",
             "[fc00::1]:1",
+            // IPv4-mapped IPv6 (`::ffff:a.b.c.d`). Before the unmapping in
+            // `is_publicly_routable` these fell through on `segments()[0] == 0` and came
+            // back "publicly routable" — a private LAN address classified as internet.
+            "[::ffff:192.168.1.10]:1",
+            "[::ffff:10.0.6.1]:1",
+            "[::ffff:127.0.0.1]:1",
+            "[::ffff:169.254.1.1]:1",
+            "[::ffff:100.64.0.1]:1",
         ] {
             let sa: SocketAddr = addr.parse().expect("test address parses");
             assert!(
@@ -397,6 +555,154 @@ mod tests {
                 "{addr} must NOT be classified publicly routable"
             );
         }
+    }
+
+    /// Unmapping must not swallow the public case: `::ffff:8.8.8.8` is still the public
+    /// internet, and a fix that classified every mapped address as private would be
+    /// worse than the bug it replaced.
+    #[test]
+    fn classifier_recognises_public_ipv4_mapped_addresses() {
+        for addr in ["[::ffff:8.8.8.8]:443", "[::ffff:93.184.216.34]:80"] {
+            let sa: SocketAddr = addr.parse().expect("test address parses");
+            assert!(
+                is_publicly_routable(&sa),
+                "{addr} is a public IPv4 address in v6 clothing and must be flagged"
+            );
+        }
+    }
+
+    /// `to_ipv4_mapped`, not `to_ipv4`: the deprecated IPv4-*compatible* form would turn
+    /// `::1` into `0.0.0.1`, which no v4 predicate recognises, so loopback would be
+    /// reported as publicly routable. `[::1]:1` is already in the non-public list above;
+    /// this pins the reason, so a future "simplification" to `to_ipv4` fails here with
+    /// an explanation rather than there with a puzzle.
+    #[test]
+    fn classifier_does_not_unmap_the_ipv4_compatible_form() {
+        let sa: SocketAddr = "[::1]:1".parse().expect("test address parses");
+        assert!(
+            !is_publicly_routable(&sa),
+            "::1 is loopback; unmapping it as IPv4-compatible would yield 0.0.0.1 and \
+             classify loopback as public"
+        );
+    }
+
+    // -- Guard 5: the prefix length must be able to confine egress -------------
+    //
+    // Layer 3 of `lan_only` confines egress by longest-prefix match. A /0 subnet matches
+    // every destination on the internet, so the layer collapses — and none of guards 1-4
+    // can see it, because a route out needs no name resolution. That is the same blind
+    // spot the module docs call out for dropping `clear_ip_transports()`.
+
+    #[test]
+    fn lan_only_rejects_a_prefix_that_cannot_confine_egress() {
+        for prefix_len in 0..MIN_IPV4_PREFIX_LEN {
+            let err = lan_only(
+                lan_bind(),
+                prefix_len,
+                DnsResolver::custom(RecordingResolver::new()),
+            )
+            .expect_err("a prefix broader than a LAN must be rejected");
+            assert!(
+                matches!(err, LanBindError::PrefixTooBroad { .. }),
+                "/{prefix_len} must be rejected as too broad, got {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lan_only_rejects_a_broad_ipv6_prefix() {
+        let bind = SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
+        let err = lan_only(bind, 0, DnsResolver::custom(RecordingResolver::new()))
+            .expect_err("an IPv6 /0 must be rejected");
+        assert!(
+            matches!(
+                err,
+                LanBindError::PrefixTooBroad {
+                    minimum: MIN_IPV6_PREFIX_LEN,
+                    ..
+                }
+            ),
+            "IPv6 must be bounded by its own minimum, got {err:?}"
+        );
+    }
+
+    /// The check must *bound*, not forbid: raising the minimum until real LANs stop
+    /// binding would pass the rejection tests above while breaking every caller.
+    ///
+    /// The prefixes here are deliberate literals, not `MIN_IPV4_PREFIX_LEN`. An earlier
+    /// version of this test passed the constant to the function under test, which made
+    /// it self-referential and unfalsifiable — raising the minimum to /32 moved the
+    /// input in lockstep and the test stayed green. These are the prefix lengths real
+    /// networks actually use, so they hold the minimum down from the other side.
+    #[test]
+    fn lan_only_accepts_the_prefixes_real_lans_use() {
+        // 10.0.0.0/8 and 127.0.0.0/8; 192.168.0.0/16; a typical /24; a single host.
+        for prefix_len in [8u8, 16, 24, 32] {
+            assert!(
+                lan_only(
+                    lan_bind(),
+                    prefix_len,
+                    DnsResolver::custom(RecordingResolver::new()),
+                )
+                .is_ok(),
+                "/{prefix_len} is a real LAN prefix and must remain usable"
+            );
+        }
+    }
+
+    // -- The recorder itself is bounded ---------------------------------------
+
+    #[test]
+    fn recorder_bounds_its_buffer_and_counts_the_overflow() {
+        let recorder = RecordingResolver::new();
+        let overflow = 50usize;
+        for i in 0..(MAX_RECORDED_QUERIES + overflow) {
+            recorder.record(&format!("host-{i}.example"));
+        }
+
+        assert_eq!(
+            recorder.queries().len(),
+            MAX_RECORDED_QUERIES,
+            "the record must stop growing at the cap"
+        );
+        assert_eq!(
+            recorder.dropped_queries(),
+            overflow,
+            "overflow must be counted, so `queries()` is never silently a prefix"
+        );
+        // A leak lands in slot zero: the cap discards the tail, never the head, which is
+        // why bounding cannot hide a leak from the guards above.
+        assert_eq!(
+            recorder.queries().first().map(String::as_str),
+            Some("host-0.example")
+        );
+    }
+
+    /// A poisoned mutex must degrade to "the tripwire still reports" rather than "the
+    /// process aborts". The recorder guards an append-only list of strings; there is no
+    /// invariant a panic mid-`push` can leave broken.
+    #[test]
+    fn recorder_survives_a_poisoned_lock() {
+        let recorder = RecordingResolver::new();
+        recorder.record("before-panic.example");
+
+        let poisoner = recorder.clone();
+        let panicked = std::thread::spawn(move || {
+            let _guard = poisoner.lock();
+            panic!("poison the recorder's mutex");
+        })
+        .join();
+        assert!(panicked.is_err(), "the helper thread must actually panic");
+
+        recorder.record("after-panic.example");
+        assert_eq!(
+            recorder.queries(),
+            vec![
+                "before-panic.example".to_owned(),
+                "after-panic.example".to_owned()
+            ],
+            "a poisoned lock must not stop the tripwire recording or reading"
+        );
     }
 
     /// Defence-in-depth, with a stated limit: **this cannot fail on a NAT'd host.**
