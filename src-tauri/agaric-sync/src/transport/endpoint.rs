@@ -181,6 +181,9 @@ impl Resolver for RecordingResolver {
 /// # Errors
 /// [`LanBindError::PrefixTooBroad`] if `prefix_len` describes a block too large to be a
 /// LAN (see [`MIN_IPV4_PREFIX_LEN`] / [`MIN_IPV6_PREFIX_LEN`]);
+/// [`LanBindError::BindAddressNotPrivate`] if `bind` sits in publicly-routable space —
+/// the prefix bounds the block's *breadth*, this bounds *where* it sits, and both are
+/// needed before the doc's "confined to a LAN" reading is true;
 /// [`LanBindError::InvalidSocketAddr`] if `bind` is not a valid socket address for the
 /// given `prefix_len` (for IPv4 the maximum prefix is 32, for IPv6 128).
 pub fn lan_only(
@@ -203,6 +206,14 @@ pub fn lan_only(
             minimum,
             family: if bind.is_ipv4() { "IPv4" } else { "IPv6" },
         });
+    }
+    // The prefix bounds how *broad* the confined block is; it says nothing about
+    // *where* it sits. `lan_only("8.8.8.8:0", 8, ..)` satisfies the check above and
+    // installs a route for `8.0.0.0/8` — public space, confined to a LAN-sized slice
+    // of it. `MIN_IPV4_PREFIX_LEN` reasons from RFC 1918 and loopback, so without this
+    // second check the doc promises a guarantee the code does not deliver.
+    if is_publicly_routable(&bind) {
+        return Err(LanBindError::BindAddressNotPrivate { bind });
     }
     Endpoint::builder(presets::Minimal)
         .relay_mode(RelayMode::Disabled)
@@ -255,6 +266,13 @@ pub enum LanBindError {
         /// `"IPv4"` or `"IPv6"`, for the message.
         family: &'static str,
     },
+    /// `bind` is a publicly-routable address. The prefix check bounds how broad the
+    /// confined block is, not where it sits, so a LAN-sized slice of public space
+    /// would otherwise pass.
+    BindAddressNotPrivate {
+        /// The address the caller asked to bind.
+        bind: SocketAddr,
+    },
     /// iroh rejected the address / prefix pair — e.g. a prefix above the family maximum
     /// (32 for IPv4, 128 for IPv6).
     InvalidSocketAddr(InvalidSocketAddr),
@@ -273,12 +291,27 @@ impl std::fmt::Display for LanBindError {
                  (minimum /{minimum} for {family}); a subnet this large leaves every \
                  off-subnet destination a route out, which no guard in this module can see"
             ),
+            Self::BindAddressNotPrivate { bind } => write!(
+                f,
+                "bind address {bind} is publicly routable; the prefix check bounds how \
+                 broad the confined block is, not where it sits, so a LAN-sized slice of \
+                 public space would otherwise be accepted as LAN-only"
+            ),
             Self::InvalidSocketAddr(e) => write!(f, "invalid bind address for prefix: {e}"),
         }
     }
 }
 
-impl std::error::Error for LanBindError {}
+impl std::error::Error for LanBindError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // The inner error is in the `Display` string, but a caller walking the chain
+            // (or a `tracing` field) would otherwise find nothing behind it.
+            Self::InvalidSocketAddr(e) => Some(e),
+            Self::PrefixTooBroad { .. } | Self::BindAddressNotPrivate { .. } => None,
+        }
+    }
+}
 
 impl From<InvalidSocketAddr> for LanBindError {
     fn from(e: InvalidSocketAddr) -> Self {
@@ -624,6 +657,51 @@ mod tests {
             ),
             "IPv6 must be bounded by its own minimum, got {err:?}"
         );
+    }
+
+    /// The prefix guard bounds how *broad* the confined block is; it says nothing about
+    /// *where* it sits. `8.8.8.8/8` is a LAN-sized slice of public space and satisfies
+    /// every prefix check, so without a locality check the rustdoc — which reasons from
+    /// RFC 1918 and loopback — would promise more than the code delivers.
+    ///
+    /// Deliberately uses public addresses whose class is not in doubt, and a prefix
+    /// (`/8`, `/24`) that the breadth check *accepts*, so a failure here can only mean
+    /// the locality check is gone.
+    #[test]
+    fn lan_only_rejects_a_publicly_routable_bind_address() {
+        for addr in ["8.8.8.8:0", "1.1.1.1:0", "93.184.216.34:0"] {
+            let bind: SocketAddr = addr.parse().expect("test address parses");
+            let err = lan_only(bind, 24, DnsResolver::custom(RecordingResolver::new()))
+                .expect_err("a publicly-routable bind must be rejected");
+            assert!(
+                matches!(err, LanBindError::BindAddressNotPrivate { .. }),
+                "{addr} is public and must be rejected as such, got {err:?}"
+            );
+        }
+        // IPv6 too, and at a prefix the breadth check accepts.
+        let bind: SocketAddr = "[2606:4700:4700::1111]:0".parse().expect("parses");
+        let err = lan_only(bind, 64, DnsResolver::custom(RecordingResolver::new()))
+            .expect_err("a publicly-routable IPv6 bind must be rejected");
+        assert!(matches!(err, LanBindError::BindAddressNotPrivate { .. }));
+    }
+
+    /// The addresses a real deployment binds must stay usable — the locality check must
+    /// not be so eager that it rejects the LAN it exists to confine us to.
+    #[test]
+    fn lan_only_accepts_the_addresses_a_real_lan_binds() {
+        for (addr, prefix) in [
+            ("127.0.0.1:0", 8u8),   // loopback, used by every test here
+            ("192.168.1.10:0", 24), // RFC 1918
+            ("10.0.6.1:0", 8),      // RFC 1918
+            ("172.16.0.1:0", 16),   // RFC 1918
+            ("0.0.0.0:0", 8),       // unspecified: bind-all, not a public address
+        ] {
+            let bind: SocketAddr = addr.parse().expect("test address parses");
+            assert!(
+                lan_only(bind, prefix, DnsResolver::custom(RecordingResolver::new())).is_ok(),
+                "{addr}/{prefix} is a real LAN bind and must remain usable"
+            );
+        }
     }
 
     /// The check must *bound*, not forbid: raising the minimum until real LANs stop

@@ -398,7 +398,12 @@ mod tests {
         assert_eq!(got, sent, "the message did not survive the QUIC round trip");
 
         conn.close(0u32.into(), b"done");
-        echo.await.expect("echo task does not panic");
+        // Bounded like every other network await here: a regression in the echo task
+        // should fail this test, not wedge the suite until the harness timeout.
+        tokio::time::timeout(SESSION_TIMEOUT, echo)
+            .await
+            .expect("echo task finishes within the session budget")
+            .expect("echo task does not panic");
         listener.close().await;
         connector.close().await;
     }
