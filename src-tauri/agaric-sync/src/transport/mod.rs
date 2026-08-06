@@ -29,6 +29,12 @@ pub mod endpoint;
 /// module docs for why the chunking layer does not come along.
 pub mod session;
 
+/// Bulk byte transfer (attachments, compressed snapshots) over a QUIC bi-stream.
+/// The replacement for `SyncConnection`'s `send_binary_streaming` family — see the
+/// module docs for why the chunk loop does not come along and why the receive cap
+/// belongs to the caller.
+pub mod bulk;
+
 /// Driving a [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator) to a terminal
 /// state over a bi-stream. One loop for both roles — see the module docs for why the
 /// old transport needed two.
@@ -39,6 +45,7 @@ pub mod driver;
 /// drive them — see [`driver`] for that.
 pub mod service;
 
+pub use bulk::{BULK_COPY_BYTES, recv_bulk, send_bulk};
 pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
 pub use service::{InboundSession, SYNC_ALPN, ServiceBindError, SyncService};
