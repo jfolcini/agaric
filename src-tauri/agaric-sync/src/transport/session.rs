@@ -42,7 +42,7 @@ use iroh::endpoint::{RecvStream, SendStream};
 
 use agaric_core::error::AppError;
 
-use crate::sync_constants::MAX_LORO_SYNC_PAYLOAD_SIZE;
+use crate::sync_constants::{BINARY_FRAME_CHUNK_SIZE, MAX_LORO_SYNC_PAYLOAD_SIZE};
 use crate::sync_protocol::SyncMessage;
 
 /// Largest single framed [`SyncMessage`] accepted, in bytes.
@@ -57,6 +57,29 @@ pub const MAX_FRAME_SIZE: u64 = MAX_LORO_SYNC_PAYLOAD_SIZE;
 /// Bytes of length prefix. A `u32` covers [`MAX_FRAME_SIZE`] with three orders of
 /// magnitude to spare; a `u64` would only widen the range of values the cap rejects.
 const LEN_PREFIX_BYTES: usize = 4;
+
+/// How much of an announced frame is reserved before those bytes have arrived.
+///
+/// [`MAX_FRAME_SIZE`] bounds what a frame may cost in total; it does not bound what a
+/// four-byte prefix may reserve up front. Those are different levers, and only the
+/// second one turns a wrong number into an allocation: a prefix announcing exactly
+/// [`MAX_FRAME_SIZE`] is *within* the cap, so a single eager `vec![0; capacity]`
+/// committed 256 MB before reading a single body byte. Once a session driver holds
+/// several connections at once that multiplies — N peers × 256 MB, from 4N bytes.
+///
+/// So the buffer grows in steps as bytes actually land. The step is
+/// [`BINARY_FRAME_CHUNK_SIZE`] rather than a number chosen here: that is the crate's
+/// existing, shipped answer to "how much binary do we move at once", used by the
+/// snapshot, attachment and chunked-LoroSync flows alike. Reusing it keeps one tunable
+/// instead of two, and means this value has already run in production.
+///
+/// The trade is real and worth stating: a genuinely large frame now reallocates as it
+/// grows, where the eager form allocated once. `Vec`'s geometric growth keeps that
+/// amortised, and the overshoot is bounded by a small constant factor of the delivered
+/// size — paid only by frames far above the typical few-MB payload, and paid in
+/// transient memory rather than in an amplification lever. It has not been measured
+/// against a real 256 MB frame; if that case ever becomes hot, measure before tuning.
+const READ_CHUNK_BYTES: usize = BINARY_FRAME_CHUNK_SIZE;
 
 fn wire_err(msg: impl Into<String>) -> AppError {
     AppError::InvalidOperation(format!("[transport::session] {}", msg.into()))
@@ -92,6 +115,45 @@ pub async fn send_sync_message(send: &mut SendStream, msg: &SyncMessage) -> Resu
     Ok(())
 }
 
+/// The one thing [`read_body`] needs from a receive stream.
+///
+/// It exists so the growth policy can be driven by a reader that *refuses* to deliver.
+/// "The buffer does not reserve what has not arrived" is a claim about capacity, and no
+/// observable behaviour distinguishes the eager form from the incremental one — same
+/// error, same timing. Against a real [`RecvStream`] the property is therefore
+/// untestable; against this trait it is one assertion.
+trait BodyReader {
+    /// Fill `buf` completely, or fail.
+    fn fill_exact(&mut self, buf: &mut [u8]) -> impl Future<Output = Result<(), AppError>>;
+}
+
+impl BodyReader for RecvStream {
+    async fn fill_exact(&mut self, buf: &mut [u8]) -> Result<(), AppError> {
+        RecvStream::read_exact(self, buf)
+            .await
+            .map_err(|e| wire_err(format!("read payload: {e}")))
+    }
+}
+
+/// Read exactly `capacity` bytes into `payload`, growing it as they arrive.
+///
+/// `payload` is a caller-supplied `&mut Vec` rather than a return value so that a
+/// failed read leaves the partially-grown buffer observable — which is what makes the
+/// reservation policy assertable.
+async fn read_body<R: BodyReader + ?Sized>(
+    recv: &mut R,
+    capacity: usize,
+    payload: &mut Vec<u8>,
+) -> Result<(), AppError> {
+    while payload.len() < capacity {
+        let want = READ_CHUNK_BYTES.min(capacity - payload.len());
+        let filled = payload.len();
+        payload.resize(filled + want, 0);
+        recv.fill_exact(&mut payload[filled..]).await?;
+    }
+    Ok(())
+}
+
 /// Read one [`SyncMessage`] from `recv`, the inverse of [`send_sync_message`].
 ///
 /// # Errors
@@ -114,10 +176,8 @@ pub async fn recv_sync_message(recv: &mut RecvStream) -> Result<SyncMessage, App
             "announced length {len} exceeds this platform's usize"
         ))
     })?;
-    let mut payload = vec![0u8; capacity];
-    recv.read_exact(&mut payload)
-        .await
-        .map_err(|e| wire_err(format!("read payload: {e}")))?;
+    let mut payload: Vec<u8> = Vec::new();
+    read_body(recv, capacity, &mut payload).await?;
     serde_json::from_slice(&payload).map_err(|e| wire_err(format!("deserialize: {e}")))
 }
 
@@ -527,6 +587,78 @@ mod tests {
         assert!(
             MAX_FRAME_SIZE <= u64::from(u32::MAX),
             "the cap must fit the length prefix"
+        );
+    }
+
+    /// A reader that accepts the first chunk and then refuses, so [`read_body`] is
+    /// driven exactly as a stalled or truncated peer would drive it.
+    struct StallingReader {
+        chunks_before_failing: usize,
+    }
+
+    impl BodyReader for StallingReader {
+        async fn fill_exact(&mut self, _buf: &mut [u8]) -> Result<(), AppError> {
+            if self.chunks_before_failing == 0 {
+                return Err(wire_err("read payload: peer stopped sending"));
+            }
+            self.chunks_before_failing -= 1;
+            Ok(())
+        }
+    }
+
+    /// A frame *at* the cap is accepted, and must still not be reserved up front.
+    ///
+    /// [`an_oversized_length_prefix_is_refused_before_allocating`] covers lengths
+    /// **above** [`MAX_FRAME_SIZE`], which are rejected outright. It cannot catch this
+    /// one: `MAX_FRAME_SIZE` itself *passes* the cap, so the eager
+    /// `vec![0u8; capacity]` committed the full 256 MB from four bytes and no body.
+    /// That is the lever a session driver multiplies by its connection count, and it
+    /// bites hardest on 32-bit Android, where 16 such reservations exhaust the address
+    /// space outright.
+    ///
+    /// Falsified by restoring the eager form: the observed capacity goes from
+    /// 5,000,000 to 268,435,456.
+    #[tokio::test]
+    async fn a_frame_at_the_cap_is_not_reserved_before_it_arrives() {
+        let capacity = usize::try_from(MAX_FRAME_SIZE).expect("cap fits usize");
+        let mut reader = StallingReader {
+            chunks_before_failing: 0,
+        };
+        let mut payload = Vec::new();
+
+        let err = read_body(&mut reader, capacity, &mut payload)
+            .await
+            .expect_err("a body that never arrives must fail");
+        assert!(
+            err.to_string().contains("read payload"),
+            "expected a body-read failure, got: {err}"
+        );
+
+        assert!(
+            payload.capacity() <= READ_CHUNK_BYTES * 2,
+            "an unsent {MAX_FRAME_SIZE}-byte frame reserved {} bytes; a frame must not \
+             be reserved before it arrives",
+            payload.capacity()
+        );
+    }
+
+    /// The growth policy must still deliver a complete large frame — a bound that only
+    /// ever under-reads would satisfy the test above and break every real transfer.
+    #[tokio::test]
+    async fn read_body_fills_a_multi_chunk_frame_completely() {
+        let capacity = READ_CHUNK_BYTES * 2 + 1234;
+        let mut reader = StallingReader {
+            chunks_before_failing: 3,
+        };
+        let mut payload = Vec::new();
+
+        read_body(&mut reader, capacity, &mut payload)
+            .await
+            .expect("a delivered body must read");
+        assert_eq!(
+            payload.len(),
+            capacity,
+            "read_body must fill exactly the announced length"
         );
     }
 }
