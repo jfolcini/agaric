@@ -1629,6 +1629,34 @@ pass_filenames = false
 files = "^scripts/check-migrations-rebuild-cascade\\.mjs$"
 stages = ["pre-commit"]
 
+# zizmor-version-pin: the zizmor version zizmor-hook.sh's
+# ZIZMOR_PINNED_VERSION asserts against, and the `zizmor@X` entries in every
+# `taiki-e/install-action` `tool:` list under .github/workflows/, are
+# independent copies Dependabot cannot track (it bumps action refs, not tool
+# strings passed as an action input) (#3523). This guard fails fast, on the
+# commit that caused it, instead of letting the copies silently drift apart.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "zizmor-version-pin"
+name = "zizmor: version pin consistency (hook script vs. workflow tool: lists)"
+entry = "node scripts/check-zizmor-version-pin.mjs"
+language = "system"
+pass_filenames = false
+files = "^(scripts/zizmor-hook\\.sh|\\.github/workflows/.*\\.ya?ml)$"
+stages = ["pre-commit"]
+
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "zizmor-version-pin-self-test"
+name = "zizmor: version pin consistency guard self-test"
+entry = "node scripts/check-zizmor-version-pin.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-zizmor-version-pin\\.mjs$"
+stages = ["pre-commit"]
+
 # zizmor: GitHub Actions security audit. Complements actionlint
 # (which is style/correctness only) by catching unpinned `uses:`,
 # missing `persist-credentials: false`, env-injection in

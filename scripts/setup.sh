@@ -54,23 +54,40 @@ retry() {
 # Evaluated by node itself, dependency-free on purpose: this runs BEFORE
 # `npm ci`, so node_modules (and therefore the `semver` package) may not exist
 # yet. Handles the `^X.Y.Z` and `>=X.Y.Z` comparators the derived range is built
-# from; any other/unparseable comparator yields "not satisfied", which fails
-# SAFE by provisioning the pinned version rather than sailing into an
-# EBADENGINE. Verified against `semver.satisfies` across the range boundaries.
+# from.
+#
+# Three-way exit code — NOT a boolean — because "not satisfied" and "could not
+# tell" are different failure classes with different safe responses (#3450):
+#   0 = every version listed in the range parsed, and the active node matches
+#       at least one of them.
+#   1 = every version listed in the range parsed, and NONE match — the active
+#       node genuinely does not satisfy `engines.node`.
+#   2 = at least one `||`-separated alternative used a comparator this mini
+#       parser doesn't handle (e.g. `>=26`, `22.x`, `>=24 <25`), and none of
+#       the ones that DID parse matched either — so this function cannot tell
+#       whether the active node is fine or not. Callers must not treat this
+#       the same as 1: a caller that already ran `npm ci` should trust that
+#       instead (engine-strict=true in .npmrc makes it the real check); a
+#       caller running BEFORE `npm ci` should warn and continue rather than
+#       hard-fail on an "unsatisfied" verdict this function never actually
+#       reached. Verified against `semver.satisfies` across the parseable
+#       range's boundaries.
 node_satisfies_engines() {
   node -e '
     const r = (require("./package.json").engines || {}).node;
     if (!r) process.exit(0);
     const cur = process.versions.node.split(".").map(Number);
     const cmp = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
-    const ok = r.split("||").some((part) => {
+    let matched = false;
+    let hadUnparseable = false;
+    for (const part of r.split("||")) {
       const m = part.trim().match(/^(\^|>=)\s*(\d+)\.(\d+)\.(\d+)$/);
-      if (!m) return false;
+      if (!m) { hadUnparseable = true; continue; }
       const min = [+m[2], +m[3], +m[4]];
-      if (cmp(cur, min) < 0) return false;
-      return m[1] === ">=" || cur[0] === min[0];   // ^ is major-locked
-    });
-    process.exit(ok ? 0 : 1);
+      if (cmp(cur, min) < 0) continue;
+      if (m[1] === ">=" || cur[0] === min[0]) { matched = true; break; }   // ^ is major-locked
+    }
+    process.exit(matched ? 0 : (hadUnparseable ? 2 : 1));
   ' 2>/dev/null
 }
 
@@ -131,7 +148,25 @@ ensure_node() {
     echo "       Fix: run 'nvm install ${want}' manually, then re-run scripts/setup.sh." >&2
     exit 1
   fi
-  if ! node_satisfies_engines; then
+  # Capture the exit code rather than using it directly as an `if` condition's
+  # command — under `set -e`, a bare failing command (even one whose `$?` is
+  # read right after) still trips errexit unless it sits in a conditional
+  # context. `|| status=$?` gives it one without masking which code it was.
+  local post_status=0
+  node_satisfies_engines || post_status=$?
+  if [ "$post_status" -eq 2 ]; then
+    # #3450: "unparseable range" is not "genuinely unsatisfied" — this mini
+    # parser (no `semver` yet, since npm ci hasn't run) doesn't understand
+    # every comparator engines.node could contain. Hard-failing here on a
+    # Node that would actually work is exactly the bug being fixed. `npm ci`
+    # right after this function returns is the REAL check (engine-strict=true
+    # in .npmrc) and will fail loudly with EBADENGINE if node is genuinely
+    # too old — so warn and continue rather than block on a verdict this
+    # function couldn't actually reach.
+    local engines_range
+    engines_range="$(node -p '(require("./package.json").engines || {}).node ?? ""' 2>/dev/null || true)"
+    echo "warning: package.json engines.node (\"${engines_range}\") uses a comparator scripts/setup.sh's pre-npm-ci range check can't parse — skipping the post-provision satisfies check for node $(node -v). 'npm ci' below (engine-strict=true) is the real check and will fail loudly if this node is genuinely too old." >&2
+  elif [ "$post_status" -ne 0 ]; then
     echo "error: node $(node -v) still does not satisfy package.json engines.node after provisioning." >&2
     echo "       Fix: run 'nvm install ${want} && nvm use ${want}', then re-run scripts/setup.sh." >&2
     exit 1
