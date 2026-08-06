@@ -250,7 +250,26 @@ where
 /// already a `usize` — but they are written as conversions rather than casts so
 /// that a future change to either type fails loudly instead of truncating a
 /// length silently.
+///
+/// # `buffer_len` must not be zero
+///
+/// The old chunking API guarded this with `chunk_size.max(1)`. That guard is
+/// gone, and its absence is worse than its presence was: a zero-length buffer
+/// makes this return zero, which makes `copy_exact` loop forever issuing
+/// zero-byte reads — a hang with no I/O and no error, rather than a failure.
+///
+/// Unreachable today only because [`BULK_COPY_BYTES`] is a `const`, which is
+/// exactly the kind of guarantee that stops holding the moment someone makes the
+/// size configurable. The assert is debug-only because the release cost of the
+/// branch is not worth paying for a condition no production call site can
+/// currently express — its job is to fail the test run of whoever makes it
+/// expressible.
 fn remaining_this_pass(owed: u64, buffer_len: usize) -> usize {
+    debug_assert!(
+        buffer_len > 0,
+        "a zero-length copy buffer would make copy_exact spin forever issuing \
+         zero-byte reads; size the buffer before calling"
+    );
     let buffer = u64::try_from(buffer_len).unwrap_or(u64::MAX);
     usize::try_from(owed.min(buffer)).unwrap_or(buffer_len)
 }
@@ -1072,6 +1091,53 @@ mod tests {
         assert_eq!(
             writer.shutdowns, 0,
             "the stream stays open for the rest of the session"
+        );
+    }
+
+    /// `RecordingWriter::writes` was recorded and never read — scaffolding
+    /// wearing the costume of coverage, as the #3490 review noted.
+    ///
+    /// It gets its own test rather than another assertion on
+    /// [`progress_ticks_once_per_buffer_and_totals_the_payload`], because there
+    /// it was **unfalsifiable by shadowing**: every break that produces an
+    /// over-sized write also perturbs the tick sequence, so the tick assertion
+    /// fires first and the write assertion is never reached. An assertion that
+    /// only ever runs when it is already going to pass proves nothing, which was
+    /// the original complaint in a new costume.
+    ///
+    /// What it adds over the two existing memory tests: they watch the *read*
+    /// side — the length this module asks for. This watches the *sink*, which is
+    /// the last place an over-sized buffer is still visible. `writer.bytes` only
+    /// accumulates and so cannot tell one 12 MB write from three 5 MB ones.
+    ///
+    /// Falsified by sizing the copy buffer `vec![0u8; total_size as usize]`:
+    /// "no single write may exceed one buffer; got [10001234]" — one write of the
+    /// whole payload where there should have been three.
+    #[tokio::test]
+    async fn no_single_write_exceeds_one_buffer() {
+        let total = BULK_COPY_BYTES * 2 + 1234;
+        let mut reader = PatternReader::new(total, 128 * 1024);
+        let mut writer = RecordingWriter::default();
+
+        recv_bulk_from(
+            &mut reader,
+            &mut writer,
+            as_u64(total),
+            as_u64(total),
+            |_| {},
+        )
+        .await
+        .expect("the payload arrives");
+
+        assert!(
+            writer.writes.iter().all(|&n| n <= BULK_COPY_BYTES),
+            "no single write may exceed one buffer; got {:?}",
+            writer.writes
+        );
+        assert_eq!(
+            writer.writes.iter().sum::<usize>(),
+            total,
+            "the writes must account for the whole payload and nothing more"
         );
     }
 }
