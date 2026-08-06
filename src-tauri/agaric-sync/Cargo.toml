@@ -135,6 +135,12 @@ ndk-context = "0.1"
 # `device`'s tests build config-dir fixtures under a `TempDir`; the snapshot /
 # protocol tests use temp DBs. Version mirrors the app crate.
 tempfile = "3.27.0"
+# `mdns`'s tests spell an `EndpointId` the *other* way iroh's `FromStr` accepts
+# (52-char base32) to pin that parsing normalises both spellings onto one key.
+# iroh-base already builds against this exact crate for its own `HEXLOWER`/
+# `BASE32_NOPAD` codecs, so this pulls in nothing new — it only names a
+# transitive dependency so a test can reach it.
+data-encoding = "2.11"
 # The moved inline tests drive async flows under `#[tokio::test]` with paused
 # time (`test-util`). Version/features mirror the app crate's `[dev-dependencies]`.
 tokio = { version = "1", features = ["macros", "rt", "rt-multi-thread", "test-util"] }

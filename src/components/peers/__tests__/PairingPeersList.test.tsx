@@ -36,6 +36,7 @@ const mockPeers = [
     cert_hash: null,
     device_name: null,
     last_address: null,
+    endpoint_id: null,
   },
   {
     peer_id: 'peer-def-0987654321',
@@ -47,6 +48,7 @@ const mockPeers = [
     cert_hash: null,
     device_name: null,
     last_address: null,
+    endpoint_id: null,
   },
 ]
 

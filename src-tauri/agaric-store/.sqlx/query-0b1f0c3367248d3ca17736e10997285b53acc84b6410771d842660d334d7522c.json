@@ -1,0 +1,12 @@
+{
+  "db_name": "SQLite",
+  "query": "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": []
+  },
+  "hash": "0b1f0c3367248d3ca17736e10997285b53acc84b6410771d842660d334d7522c"
+}

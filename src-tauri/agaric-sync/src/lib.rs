@@ -46,8 +46,13 @@ pub mod sync_events;
 /// LAN-only endpoint configuration and the offline guard that keeps it that way.
 pub mod transport;
 
-/// Networking primitives: TLS cert gen, mDNS announce/browse, WebSocket
-/// server/client, the unified `SyncConnection`.
+/// LAN peer discovery over mDNS (#3488). Lifted out of [`sync_net`], whose other
+/// half the cutover deletes: iroh's own address lookup is cleared by
+/// [`transport::endpoint::lan_only`], so this is the only discovery left.
+pub mod mdns;
+
+/// Networking primitives: TLS cert gen, WebSocket server/client, the unified
+/// `SyncConnection`.
 ///
 /// Superseded by [`transport`] and slated for deletion — see plan #3464.
 pub mod sync_net;

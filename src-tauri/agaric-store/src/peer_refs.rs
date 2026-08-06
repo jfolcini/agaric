@@ -29,6 +29,18 @@ pub struct PeerRef {
     /// Last known network address (host:port) for direct connection.
     /// Updated after each successful sync. Used when mDNS is unavailable.
     pub last_address: Option<String>,
+    /// The peer's iroh `EndpointId` — a 32-byte ed25519 public key — in its
+    /// canonical 64-character lowercase-hex `Display` encoding (migration 0107,
+    /// plan #3464).
+    ///
+    /// Unlike [`Self::cert_hash`], this is not a pin taken *against* an
+    /// identity the peer claims: the key **is** the identity, authenticated by
+    /// the QUIC/TLS 1.3 handshake before any application byte moves.
+    ///
+    /// `None` is a normal, expected state, not an error — every peer paired
+    /// over the pre-iroh transport has no iroh identity, and nothing writes
+    /// this column yet (the write path arrives with the transport cutover).
+    pub endpoint_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -43,7 +55,7 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address
+                  device_name, last_address, endpoint_id
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
@@ -60,7 +72,7 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address
+                  device_name, last_address, endpoint_id
            FROM peer_refs
            WHERE peer_id != ''
            ORDER BY synced_at DESC"#,
@@ -1255,6 +1267,83 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::NotFound(_))),
             "update_loro_vv_bytes_in_tx on a nonexistent peer must return NotFound"
+        );
+    }
+
+    // ── endpoint_id (#3464 stage 1, migration 0107) ────────────────────
+
+    /// The read path carries `endpoint_id` end to end, and `None` is a real,
+    /// expected value rather than an error.
+    ///
+    /// Nothing writes this column yet — the write path arrives with the
+    /// transport cutover — so the row is populated with raw SQL here. What is
+    /// under test is the SELECT column list and the `PeerRef` mapping, which is
+    /// exactly what this stage adds.
+    #[tokio::test]
+    async fn peer_ref_endpoint_id_round_trips_and_defaults_to_none_3464() {
+        let (pool, _dir) = test_pool().await;
+
+        upsert_peer_ref(&pool, "peer-eid").await.unwrap();
+        upsert_peer_ref(&pool, "peer-no-eid").await.unwrap();
+
+        // A fresh row has no iroh identity.
+        let fresh = get_peer_ref(&pool, "peer-eid")
+            .await
+            .unwrap()
+            .expect("peer-eid must exist");
+        assert!(
+            fresh.endpoint_id.is_none(),
+            "a peer row with no iroh identity must read endpoint_id = None"
+        );
+
+        // The canonical `EndpointId::Display` encoding: 64 lowercase hex chars.
+        let eid = "0123456789abcdef".repeat(4);
+        sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            eid,
+            "peer-eid",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-eid")
+            .await
+            .unwrap()
+            .expect("peer-eid must exist");
+        assert_eq!(
+            peer.endpoint_id.as_deref(),
+            Some(eid.as_str()),
+            "get_peer_ref must read endpoint_id back verbatim"
+        );
+
+        let absent = get_peer_ref(&pool, "peer-no-eid")
+            .await
+            .unwrap()
+            .expect("peer-no-eid must exist");
+        assert!(
+            absent.endpoint_id.is_none(),
+            "a peer written without an endpoint_id must read back None"
+        );
+
+        // The list path must carry it too — it is the one the UI consumes.
+        let peers = list_peer_refs(&pool).await.unwrap();
+        let listed = peers
+            .iter()
+            .find(|p| p.peer_id == "peer-eid")
+            .expect("peer-eid must appear in list_peer_refs");
+        assert_eq!(
+            listed.endpoint_id.as_deref(),
+            Some(eid.as_str()),
+            "list_peer_refs must include endpoint_id"
+        );
+        let listed_absent = peers
+            .iter()
+            .find(|p| p.peer_id == "peer-no-eid")
+            .expect("peer-no-eid must appear in list_peer_refs");
+        assert!(
+            listed_absent.endpoint_id.is_none(),
+            "list_peer_refs must report an absent endpoint_id as None"
         );
     }
 }

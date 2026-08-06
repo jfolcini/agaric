@@ -4780,3 +4780,192 @@ async fn loro_sync_inbox_rows_survive_0106_with_a_full_boot_budget_3226() {
         "0106 must not migrate any existing slot into quarantine"
     );
 }
+
+// ----------------------------------------------------------------------
+// 0107 — peer_refs.endpoint_id (#3464 stage 1)
+// ----------------------------------------------------------------------
+
+/// The `endpoint_id` add is append-only-safe: a database that already holds
+/// `peer_refs` rows keeps every one of them, byte for byte, and the new column
+/// reads NULL rather than being invented.
+///
+/// This also pins the two columns plan #3464 says *lose their meaning* but
+/// which this stage must NOT remove — `cert_hash` and `last_address` still
+/// have live readers (`sync_net::connect_to_peer`, the `sync_daemon` mDNS
+/// fallback). Reading them back after 0107 is what makes "do not drop them
+/// yet" a test rather than a comment.
+#[tokio::test]
+async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
+    let (pool, _dir) = unmigrated_pool().await;
+    // 0106 is the last migration before endpoint_id arrives.
+    apply_migrations_through(&pool, 0, 106).await;
+
+    let vv: Vec<u8> = vec![0x00, 0xff, 0x10, 0x42];
+    sqlx::query(
+        "INSERT INTO peer_refs \
+             (peer_id, last_hash, last_sent_hash, synced_at, reset_count, \
+              last_reset_at, cert_hash, device_name, last_address, loro_vv_bytes) \
+             VALUES ('PEER3464A', 'h-recv', 'h-sent', 1700000000000, 3, \
+                     1700000001000, ?, \"Javier's Phone\", '192.168.1.9:7777', ?)",
+    )
+    .bind("a".repeat(64))
+    .bind(&vv)
+    .execute(&pool)
+    .await
+    .expect("seed a fully-populated pre-0107 peer row");
+
+    // A second, sparsely-populated row: the NULL-everywhere shape is the one an
+    // ADD COLUMN is most likely to get wrong by supplying a default.
+    sqlx::query("INSERT INTO peer_refs (peer_id) VALUES ('PEER3464B')")
+        .execute(&pool)
+        .await
+        .expect("seed a bare pre-0107 peer row");
+
+    apply_migrations_to_head(&pool, 106).await;
+
+    let surviving: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM peer_refs WHERE peer_id LIKE 'PEER3464%'")
+            .fetch_one(&pool)
+            .await
+            .expect("count peer_refs after 0107");
+    assert_eq!(
+        surviving, 2,
+        "0107 is an ADD COLUMN — every pre-existing peer_refs row must survive it"
+    );
+
+    #[allow(clippy::type_complexity)]
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<i64>,
+        i64,
+        Option<i64>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<Vec<u8>>,
+        Option<String>,
+    ) = sqlx::query_as(
+        "SELECT last_hash, last_sent_hash, synced_at, reset_count, last_reset_at, \
+                cert_hash, device_name, last_address, loro_vv_bytes, endpoint_id \
+           FROM peer_refs WHERE peer_id = 'PEER3464A'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("read the populated peer row back after 0107");
+
+    assert_eq!(
+        row.0.as_deref(),
+        Some("h-recv"),
+        "last_hash must survive 0107"
+    );
+    assert_eq!(
+        row.1.as_deref(),
+        Some("h-sent"),
+        "last_sent_hash must survive 0107"
+    );
+    assert_eq!(
+        row.2,
+        Some(1_700_000_000_000),
+        "synced_at must survive 0107"
+    );
+    assert_eq!(row.3, 3, "reset_count must survive 0107");
+    assert_eq!(
+        row.4,
+        Some(1_700_000_001_000),
+        "last_reset_at must survive 0107"
+    );
+    assert_eq!(
+        row.5.as_deref(),
+        Some("a".repeat(64).as_str()),
+        "#3464: cert_hash still has live readers (sync_net::connect_to_peer pins \
+         it on reconnect) — 0107 must not drop or clear it"
+    );
+    assert_eq!(
+        row.6.as_deref(),
+        Some("Javier's Phone"),
+        "device_name must survive 0107"
+    );
+    assert_eq!(
+        row.7.as_deref(),
+        Some("192.168.1.9:7777"),
+        "#3464: last_address still has a live reader (the sync_daemon mDNS \
+         fallback) — 0107 must not drop or clear it"
+    );
+    assert_eq!(row.8, Some(vv), "loro_vv_bytes must survive 0107 verbatim");
+    assert_eq!(
+        row.9, None,
+        "0107 must NOT backfill endpoint_id — a peer paired over the old \
+         transport has no iroh identity, and inventing one would forge the \
+         only thing the column exists to make unforgeable"
+    );
+
+    let bare_endpoint_id: Option<String> =
+        sqlx::query_scalar("SELECT endpoint_id FROM peer_refs WHERE peer_id = 'PEER3464B'")
+            .fetch_one(&pool)
+            .await
+            .expect("read the bare peer row back after 0107");
+    assert_eq!(
+        bare_endpoint_id, None,
+        "0107 adds endpoint_id with no DEFAULT — it must read NULL, not ''"
+    );
+}
+
+/// The column-level CHECK is the only validation this stage can offer (there
+/// is no Rust write path yet), so it is worth pinning: the canonical
+/// 64-char lowercase-hex `EndpointId::Display` form is accepted, and the three
+/// near-misses the iroh API invites are rejected.
+#[tokio::test]
+async fn peer_refs_0107_endpoint_id_check_rejects_non_canonical_encodings_3464() {
+    let (pool, _dir) = unmigrated_pool().await;
+    apply_migrations_to_head(&pool, 0).await;
+
+    sqlx::query("INSERT INTO peer_refs (peer_id) VALUES ('PEER3464C')")
+        .execute(&pool)
+        .await
+        .expect("seed peer");
+
+    // Canonical form: 64 lowercase hex characters, exactly what
+    // `EndpointId`'s Display (data_encoding::HEXLOWER over as_bytes()) emits.
+    let canonical = "0123456789abcdef".repeat(4);
+    assert_eq!(canonical.len(), 64);
+    sqlx::query("UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = 'PEER3464C'")
+        .bind(&canonical)
+        .execute(&pool)
+        .await
+        .expect("the canonical Display encoding must be accepted");
+
+    // NULL is the expected absent state and must stay writable.
+    sqlx::query("UPDATE peer_refs SET endpoint_id = NULL WHERE peer_id = 'PEER3464C'")
+        .execute(&pool)
+        .await
+        .expect("NULL must be accepted — absence is a real state, not an error");
+
+    for (bad, why) in [
+        (
+            "0123456789".to_string(),
+            "EndpointId::fmt_short() — 5 bytes, 10 hex chars — is the convenient \
+             thing to reach for when logging, and must not reach the column",
+        ),
+        (
+            "0123456789ABCDEF".repeat(4),
+            "uppercase hex is a second string for the same key, which would break \
+             equality comparison",
+        ),
+        (
+            "a".repeat(52),
+            "the 52-char base32 form FromStr also accepts is likewise a second \
+             string for the same key",
+        ),
+    ] {
+        let err = sqlx::query("UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = 'PEER3464C'")
+            .bind(&bad)
+            .execute(&pool)
+            .await
+            .expect_err(why);
+        assert!(
+            err.to_string().contains("CHECK constraint failed"),
+            "expected a CHECK constraint failure for {bad:?} ({why}), got: {err}"
+        );
+    }
+}

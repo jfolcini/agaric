@@ -51,8 +51,9 @@ use tracing::instrument;
 
 use crate::apply_host::ApplyHost;
 use crate::foreground::LifecycleHooks;
+use crate::mdns::{DiscoveredPeer, MdnsService};
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_net::{self, DiscoveredPeer, MdnsService, SyncCert, SyncConnection, SyncServer};
+use crate::sync_net::{self, SyncCert, SyncConnection, SyncServer};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
 use agaric_core::error::AppError;
@@ -216,12 +217,25 @@ pub(crate) async fn daemon_loop(
     })
     .await?;
 
-    // 3. Announce this device on mDNS (skipped when mDNS is unavailable)
-    if let Some(ref mdns) = mdns {
-        match mdns.announce(&device_id, port) {
-            Ok(_) => tracing::info!(port, "SyncDaemon started, mDNS announced"),
-            Err(e) => tracing::warn!(error = %e, "mDNS announce failed (peer discovery disabled)"),
-        }
+    // 3. Announcing is deferred to the iroh cutover (#3464, #3488).
+    //
+    // `MdnsService::announce` now requires the `EndpointId` a peer would dial, because
+    // discovery that yields only a `device_id` yields a name and no address — nothing
+    // in an iroh world can act on it. This build has no iroh endpoint yet: the
+    // responder above is still the WebSocket `SyncServer`, so there is no key to
+    // advertise. The two ways to announce anyway are both worse than silence — publish
+    // a `_udp` record for a TCP listener, or mint a key that proves nothing (migration
+    // 0107 records why a synthesised identity is worse than an absent one).
+    //
+    // Browsing stays wired below; it simply resolves nothing until peers announce
+    // again, which the cutover restores by passing `endpoint.id()` here. LAN sync in
+    // the interim falls back to `peer_refs.last_address`, exactly as it does today for
+    // peers mDNS cannot see.
+    if mdns.is_some() {
+        tracing::info!(
+            port,
+            "SyncDaemon started; mDNS announce deferred to the iroh cutover"
+        );
     } else {
         tracing::info!(
             port,

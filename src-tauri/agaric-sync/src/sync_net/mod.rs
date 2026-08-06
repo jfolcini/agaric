@@ -1,10 +1,14 @@
 //! Networking primitives for local-network sync.
 //!
-//! This module is self-contained: it provides TLS certificate generation,
-//! mDNS service announcement/discovery, WebSocket server and client, a
-//! unified `SyncConnection` abstraction, and the sync message types.
+//! This module provides TLS certificate generation, the WebSocket server and
+//! client, and a unified `SyncConnection` abstraction.
 //!
 //! The orchestrator (`sync.rs`) wires these into the higher-level sync flow.
+//!
+//! mDNS announcement/discovery used to live here too, in `websocket.rs`. It moved to
+//! [`crate::mdns`] (#3488): everything left in this module is deleted by the iroh
+//! cutover (#3464) and discovery is not — it is the *only* discovery Agaric has once
+//! the port lands, so it must not sit in a module whose other half is on its way out.
 
 pub mod connection;
 pub mod tls;
@@ -33,7 +37,4 @@ pub fn pem_to_der(pem: &str) -> Result<Vec<u8>, AppError> {
 pub use connection::test_connection_pair;
 pub use connection::{SyncConnection, connect_to_peer};
 pub use tls::{SyncCert, generate_self_signed_cert};
-pub use websocket::{
-    DiscoveredPeer, MDNS_BROWSE_TIMEOUT, MDNS_SERVICE_NAME, MDNS_SERVICE_TYPE, MdnsService,
-    ServiceEventKind, SyncServer, parse_service_event,
-};
+pub use websocket::SyncServer;

@@ -226,6 +226,7 @@ dependencies = [
  "blake3",
  "chrono",
  "ciborium",
+ "data-encoding",
  "futures-util",
  "if-addrs",
  "insta",

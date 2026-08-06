@@ -234,7 +234,10 @@ const STABLE_MESSAGES: &[&str] = &[
     // sync_daemon — protocol lifecycle.
     "incoming sync connection received, starting responder session",
     "SyncDaemon started successfully",
-    "SyncDaemon started, mDNS announced",
+    // #3488 replaced "SyncDaemon started, mDNS announced" and "mDNS announce failed
+    // (peer discovery disabled)": announcing now needs an `EndpointId` the daemon does
+    // not have until the iroh cutover wires an endpoint, so neither site exists.
+    "SyncDaemon started; mDNS announce deferred to the iroh cutover",
     "SyncDaemon shut down cleanly",
     "Failed to start SyncDaemon",
     "Sync will work via manual IP entry only",
@@ -247,7 +250,6 @@ const STABLE_MESSAGES: &[&str] = &[
     "could not determine app_data_dir, skipping file transfer",
     "discovered new peer via mDNS",
     "debounced-change peer task panicked",
-    "mDNS announce failed (peer discovery disabled)",
     "mDNS browse failed (peer discovery disabled)",
     "mDNS shutdown error",
     "mDNS initialization failed (peer discovery disabled)",

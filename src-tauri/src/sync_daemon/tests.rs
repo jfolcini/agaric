@@ -3,6 +3,7 @@ use crate::db::init_pool;
 use crate::materializer::Materializer;
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
+use agaric_sync::mdns;
 use agaric_sync::sync_events::RecordingEventSink;
 use agaric_sync::sync_net::{self, SyncCert, SyncConnection, SyncServer};
 use agaric_sync::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator};
@@ -295,17 +296,19 @@ fn stale_mdns_peers_evicted() {
     use std::time::Duration;
     use tokio::time::Instant;
 
-    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
-    let fresh_peer = sync_net::DiscoveredPeer {
+    let fresh_peer = mdns::DiscoveredPeer {
         device_id: "FRESH_PEER".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.10".parse().unwrap()],
         port: 9000,
     };
     discovered.insert("FRESH_PEER".into(), (fresh_peer, Instant::now()));
 
-    let stale_peer = sync_net::DiscoveredPeer {
+    let stale_peer = mdns::DiscoveredPeer {
         device_id: "STALE_PEER".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.20".parse().unwrap()],
         port: 9001,
     };
@@ -537,6 +540,7 @@ fn make_peer_ref(peer_id: &str) -> PeerRef {
         cert_hash: None,
         device_name: None,
         last_address: None,
+        endpoint_id: None,
     }
 }
 
@@ -717,10 +721,11 @@ fn stale_eviction_all_fresh_retains_all() {
     use std::time::Duration;
     use tokio::time::Instant;
 
-    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
     for i in 0..5 {
-        let peer = sync_net::DiscoveredPeer {
+        let peer = mdns::DiscoveredPeer {
             device_id: format!("PEER_{i}"),
+            endpoint_id: None,
             addresses: vec!["10.0.0.1".parse().unwrap()],
             port: 9000 + i,
         };
@@ -743,10 +748,11 @@ fn stale_eviction_all_stale_removes_all() {
     use std::time::Duration;
     use tokio::time::Instant;
 
-    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
     for i in 0..3 {
-        let peer = sync_net::DiscoveredPeer {
+        let peer = mdns::DiscoveredPeer {
             device_id: format!("OLD_{i}"),
+            endpoint_id: None,
             addresses: vec!["10.0.0.1".parse().unwrap()],
             port: 9000,
         };
@@ -828,8 +834,9 @@ async fn try_sync_with_peer_respects_backoff_gate() {
     let cancel = AtomicBool::new(false);
     let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_X".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.100".parse().unwrap()],
         port: 9999,
     };
@@ -888,8 +895,9 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
 
     // Peer with unreachable address (connection will be refused)
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_UNREACHABLE".to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port: 1, // privileged port, no listener → connection refused
     };
@@ -1167,8 +1175,9 @@ async fn try_sync_with_peer_skips_peer_with_no_addresses() {
     let cancel = AtomicBool::new(false);
     let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_NOADDR".to_string(),
+        endpoint_id: None,
         addresses: vec![], // no addresses
         port: 9999,
     };
@@ -1214,8 +1223,9 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     let cancel = AtomicBool::new(false);
     let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_LOCKED".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.1".parse().unwrap()],
         port: 9999,
     };
@@ -1351,8 +1361,9 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
     let cancel = AtomicBool::new(true); // start with cancel set
     let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_FAIL".to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port: 1, // connection will be refused
     };
@@ -1416,8 +1427,9 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
     let cancel = AtomicBool::new(true); // cancel is set
     let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_BACKOFF".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.100".parse().unwrap()],
         port: 9999,
     };
@@ -1464,8 +1476,9 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     let cancel = AtomicBool::new(true); // cancel is set
     let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_LOCKED".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.1".parse().unwrap()],
         port: 9999,
     };
@@ -1507,8 +1520,9 @@ async fn s11_cancel_preserved_on_no_addresses_early_exit() {
     let cancel = AtomicBool::new(true); // cancel is set
     let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_NOADDR".to_string(),
+        endpoint_id: None,
         addresses: vec![], // no addresses → early return
         port: 9999,
     };
@@ -2874,9 +2888,10 @@ async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() 
 fn resolve_peer_address_returns_discovered_peer() {
     use tokio::time::Instant;
 
-    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
-    let dp = sync_net::DiscoveredPeer {
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
+    let dp = mdns::DiscoveredPeer {
         device_id: "PEER_A".into(),
+        endpoint_id: None,
         addresses: vec!["10.0.0.1".parse().unwrap()],
         port: 9443,
     };
@@ -2901,7 +2916,7 @@ fn resolve_peer_address_returns_discovered_peer() {
 fn resolve_peer_address_falls_back_to_cached_address() {
     use tokio::time::Instant;
 
-    let discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
     let result = resolve_peer_address("PEER_B", Some("192.168.1.42:9443"), &discovered);
     assert!(
@@ -2918,7 +2933,7 @@ fn resolve_peer_address_falls_back_to_cached_address() {
 fn resolve_peer_address_returns_none_when_both_unavailable() {
     use tokio::time::Instant;
 
-    let discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
+    let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
     let result = resolve_peer_address("PEER_C", None, &discovered);
     assert!(
@@ -2931,9 +2946,10 @@ fn resolve_peer_address_returns_none_when_both_unavailable() {
 fn resolve_peer_address_prefers_discovered_over_fallback() {
     use tokio::time::Instant;
 
-    let mut discovered: HashMap<String, (sync_net::DiscoveredPeer, Instant)> = HashMap::new();
-    let dp = sync_net::DiscoveredPeer {
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
+    let dp = mdns::DiscoveredPeer {
         device_id: "PEER_D".into(),
+        endpoint_id: None,
         addresses: vec!["10.0.0.99".parse().unwrap()],
         port: 5555,
     };
@@ -2959,8 +2975,9 @@ fn resolve_peer_address_prefers_discovered_over_fallback() {
 
 #[test]
 fn format_peer_address_formats_single_ipv4() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.10".parse().unwrap()],
         port: 9443,
     };
@@ -2974,8 +2991,9 @@ fn format_peer_address_formats_single_ipv4() {
 
 #[test]
 fn format_peer_address_returns_none_for_empty_addresses() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec![],
         port: 9443,
     };
@@ -2985,8 +3003,9 @@ fn format_peer_address_returns_none_for_empty_addresses() {
 
 #[test]
 fn format_peer_address_uses_first_address_when_multiple() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.10".parse().unwrap(), "10.0.0.1".parse().unwrap()],
         port: 8080,
     };
@@ -3005,8 +3024,9 @@ fn format_peer_address_uses_first_address_when_multiple() {
 /// Empty address list ⇒ empty `Vec` (callers can `.is_empty()`).
 #[test]
 fn format_peer_addresses_returns_empty_when_no_addresses() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec![],
         port: 9443,
     };
@@ -3021,8 +3041,9 @@ fn format_peer_addresses_returns_empty_when_no_addresses() {
 /// Fix.
 #[test]
 fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec![
             // IPv6 link-local listed first in the mDNS announcement.
             "fe80::1".parse().unwrap(),
@@ -3044,8 +3065,9 @@ fn format_peer_addresses_prefers_ipv4_over_ipv6_link_local() {
 /// IPv6 unicast non-link-local sits between IPv4 and link-local.
 #[test]
 fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec![
             "fe80::1".parse().unwrap(),
             "2001:db8::1".parse().unwrap(),
@@ -3070,8 +3092,9 @@ fn format_peer_addresses_orders_ipv4_then_ipv6_global_then_linklocal() {
 /// connection sequence.
 #[test]
 fn format_peer_addresses_preserves_within_tier_order() {
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "DEV".into(),
+        endpoint_id: None,
         addresses: vec![
             "192.168.1.20".parse().unwrap(),
             "192.168.1.10".parse().unwrap(),
@@ -3099,8 +3122,9 @@ fn format_peer_addresses_preserves_within_tier_order() {
 #[test]
 fn process_service_removed_drops_entry() {
     let mut discovered = HashMap::new();
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "REMOVED_PEER".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.20".parse().unwrap()],
         port: 9443,
     };
@@ -3136,8 +3160,9 @@ fn process_service_removed_ignores_unknown_peer() {
 #[test]
 fn process_service_removed_ignores_self() {
     let mut discovered = HashMap::new();
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "OTHER_PEER".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.20".parse().unwrap()],
         port: 9443,
     };
@@ -3161,19 +3186,20 @@ fn process_service_removed_ignores_self() {
 #[test]
 fn process_discovery_event_evicts_on_service_removed() {
     let mut discovered = HashMap::new();
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "REMOVED".into(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.42".parse().unwrap()],
         port: 9443,
     };
     discovered.insert("REMOVED".to_string(), (peer, tokio::time::Instant::now()));
 
     let event = mdns_sd::ServiceEvent::ServiceRemoved(
-        sync_net::MDNS_SERVICE_TYPE.to_string(),
+        mdns::MDNS_SERVICE_TYPE.to_string(),
         format!(
             "{name}_REMOVED.{ty}",
-            name = sync_net::MDNS_SERVICE_NAME,
-            ty = sync_net::MDNS_SERVICE_TYPE,
+            name = mdns::MDNS_SERVICE_NAME,
+            ty = mdns::MDNS_SERVICE_TYPE,
         ),
     );
 
@@ -3204,6 +3230,7 @@ fn make_peer_ref_with_cert(peer_id: &str, cert_hash: Option<&str>) -> PeerRef {
         cert_hash: cert_hash.map(String::from),
         device_name: None,
         last_address: None,
+        endpoint_id: None,
     }
 }
 
@@ -3764,12 +3791,22 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
 
 /// Helper to construct a `ServiceEvent::ServiceResolved` event with the
 /// given device_id and port, suitable for unit-testing `process_discovery_event`.
+///
+/// The TXT record carries an `endpoint_id` as well as a `device_id` because
+/// `agaric_sync::mdns::parse_service_event` refuses an announcement it cannot dial
+/// (#3488) — a record with only a `device_id` resolves to `None`, and every test
+/// below that expects a peer would then be asserting on the wrong thing. The key is
+/// derived from `device_id` so distinct devices get distinct identities.
 fn make_resolved_event(device_id: &str, port: u16) -> mdns_sd::ServiceEvent {
     let mut props = HashMap::new();
     props.insert("device_id".to_string(), device_id.to_string());
+    props.insert(
+        "endpoint_id".to_string(),
+        mdns::test_endpoint_id(device_id).to_string(),
+    );
 
     let info = mdns_sd::ServiceInfo::new(
-        "_agaric._tcp.local.",
+        mdns::MDNS_SERVICE_TYPE,
         device_id,
         &format!("{device_id}.local."),
         "127.0.0.1",
@@ -3784,8 +3821,8 @@ fn make_resolved_event(device_id: &str, port: u16) -> mdns_sd::ServiceEvent {
 #[test]
 fn process_discovery_non_resolved_returns_none() {
     let event = mdns_sd::ServiceEvent::ServiceFound(
-        "_agaric._tcp.local.".into(),
-        "test._agaric._tcp.local.".into(),
+        mdns::MDNS_SERVICE_TYPE.into(),
+        format!("test.{}", mdns::MDNS_SERVICE_TYPE),
     );
     let mut discovered = HashMap::new();
     assert!(
@@ -7411,8 +7448,9 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
     let cancel = AtomicBool::new(true); // pre-set; early-exit must still return false
     let cert = sync_net::generate_self_signed_cert("LOCAL_M46").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_M46_FAIL".to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port: 1, // refused
     };
@@ -7464,8 +7502,9 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     let cancel = AtomicBool::new(true); // pre-set, but early-exit must return false
     let cert = sync_net::generate_self_signed_cert("LOCAL_M46_B").unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_M46_BACK".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.99".parse().unwrap()],
         port: 9999,
     };
@@ -7522,8 +7561,9 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
 
     // The early-exiting peer: put it in backoff so `try_sync_with_peer`
     // returns via the no-session early-exit path and drops its CancelGuard.
-    let early_peer = sync_net::DiscoveredPeer {
+    let early_peer = mdns::DiscoveredPeer {
         device_id: "PEER_EARLY_637".to_string(),
+        endpoint_id: None,
         addresses: vec!["192.168.1.50".parse().unwrap()],
         port: 9999,
     };
@@ -7614,8 +7654,9 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
     .await
     .unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_637_OWNS".to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port,
     };
@@ -7705,8 +7746,9 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
     .await
     .unwrap();
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: "PEER_637_NORM".to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port,
     };
@@ -9211,8 +9253,9 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
         conn
     });
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: PEER.to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port,
     };
@@ -9462,8 +9505,9 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
         cancel: &cancel,
         cert: &init_cert,
     };
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: RESP_DEV.to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port,
     };
@@ -9604,8 +9648,9 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
         conn
     });
 
-    let peer = sync_net::DiscoveredPeer {
+    let peer = mdns::DiscoveredPeer {
         device_id: PEER.to_string(),
+        endpoint_id: None,
         addresses: vec!["127.0.0.1".parse().unwrap()],
         port,
     };
