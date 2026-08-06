@@ -36,6 +36,17 @@
 //!   accounting is already written against ("the permit is held for the entire
 //!   responder session … which can live up to `RECV_TIMEOUT` = 180 s").
 //!
+//!   **Its scope did not survive intact, and that is a real difference, not a
+//!   restatement.** On the old path a bulk receive looped over `recv_binary()`, so 180 s
+//!   bounded *one `BINARY_FRAME_CHUNK_SIZE` chunk* (`connection.rs:563`): a slow peer
+//!   that kept delivering never tripped it. Here one timeout wraps a whole frame, which
+//!   `MAX_FRAME_SIZE` caps at 256 MB — so the same number now demands roughly 1.5 MB/s
+//!   sustained to survive a maximum-size frame, against an old rationale that justified
+//!   180 s with "a 10 MB op-batch over a 1 Mbps link is ~80 s". On a LAN, where this
+//!   runs today, the margin is enormous. On Android WiFi it is the kind of thing that
+//!   fails only for the users with the worst links. Tracked for re-derivation against
+//!   measurements rather than guessed at here.
+//!
 //! # Shutdown is a protocol step, not cleanup
 //!
 //! A side reaches its terminal state the moment it *queues* the final message — one
@@ -133,6 +144,8 @@ pub struct SessionEnd {
     pub state: SyncState,
     /// True when this side wrote the final frame, so the peer has not read it yet.
     ///
+    /// See [`SessionEnd::succeeded`] before treating a returned `SessionEnd` as a win.
+    ///
     /// This, not [`Role`], is what decides who waits at shutdown. Role looks like the
     /// right key and is not: the protocol says `SyncComplete` is "sent once by the
     /// puller … in the normal flow that is the initiator; in the empty-registry
@@ -140,6 +153,24 @@ pub struct SessionEnd {
     /// stream". Both sides are the terminal sender in some sessions, so a role-keyed
     /// wait is correct for one shape and drops the last frame in the other.
     pub spoke_last: bool,
+}
+
+impl SessionEnd {
+    /// Whether the session actually succeeded.
+    ///
+    /// Exists because [`run_session`] returns `Ok(SessionEnd { state: Failed(..) })`
+    /// where the loop it replaces returned `Err` (`session_supervisor.rs:1070-1075`).
+    /// That is deliberate — a peer-reported failure is a completed session, not a
+    /// transport error, and collapsing them loses the distinction `ResetRequired`
+    /// depends on. But it means a cutover call site written `run_session(..).await?`
+    /// books a failed sync as a clean one, and the `?` will look right.
+    ///
+    /// Asking through a method rather than matching on `state` is what makes the
+    /// caller confront that.
+    #[must_use]
+    pub fn succeeded(&self) -> bool {
+        matches!(self.state, SyncState::Complete)
+    }
 }
 
 /// How a session's stream was shut down.
@@ -154,6 +185,28 @@ pub enum Shutdown {
     Clean,
     /// The wait elapsed. Our data was sent and finished; the peer never closed.
     PeerDidNotClose,
+}
+
+/// Bound one `handle_message` dispatch, mapping the elapsed case to the same error the
+/// old loops produced.
+///
+/// A free function rather than an inline `timeout` so it can be tested against a future
+/// whose duration is known. Driving it through a live session instead makes the test
+/// depend on how long a real dispatch happens to take — which produced a genuinely
+/// flaky test here: with a zero budget, `timeout` polls the inner future first, so
+/// whether it fires at all depends on whether `handle_message` ever returns `Pending`,
+/// and a warm connection pool means sometimes it does not. The old
+/// `dispatch_with_handshake_timeout` is unit-tested the same way for the same reason.
+async fn dispatch_within<T>(
+    budget: Duration,
+    fut: impl Future<Output = Result<T, AppError>>,
+) -> Result<T, AppError> {
+    tokio::time::timeout(budget, fut).await.map_err(|_| {
+        AppError::InvalidOperation(format!(
+            "handle_message timed out after {}s",
+            budget.as_secs()
+        ))
+    })?
 }
 
 /// Drive `orch` until it reaches a terminal state.
@@ -202,14 +255,7 @@ pub async fn run_session(
                 ))
             })??;
 
-        let reply = tokio::time::timeout(limits.dispatch, orch.handle_message(incoming))
-            .await
-            .map_err(|_| {
-                AppError::InvalidOperation(format!(
-                    "handle_message timed out after {}s",
-                    limits.dispatch.as_secs()
-                ))
-            })??;
+        let reply = dispatch_within(limits.dispatch, orch.handle_message(incoming)).await?;
         spoke_last = false;
 
         if let Some(reply) = reply {
@@ -242,9 +288,16 @@ pub async fn finish_session(
     conn: &Connection,
     limits: SessionLimits,
 ) -> Result<Shutdown, AppError> {
-    send.finish().map_err(|e| {
-        AppError::InvalidOperation(format!("[transport::driver] finish send stream: {e}"))
-    })?;
+    // Every exit from here closes the connection, including the error path. Leaving it
+    // open hands it to QUIC's idle timeout, which is exactly the pinning `close_wait`
+    // exists to bound — and a caller holding a `Connection` clone would keep it alive
+    // past the session that owned it.
+    if let Err(e) = send.finish() {
+        conn.close(0u32.into(), b"sync aborted");
+        return Err(AppError::InvalidOperation(format!(
+            "[transport::driver] finish send stream: {e}"
+        )));
+    }
 
     if spoke_last {
         // We are a round trip ahead of the peer's read. `Connection::close` lets the
@@ -253,7 +306,13 @@ pub async fn finish_session(
         // peer's close is the only available evidence it was consumed.
         match tokio::time::timeout(limits.close_wait, conn.closed()).await {
             Ok(_) => Ok(Shutdown::Clean),
-            Err(_) => Ok(Shutdown::PeerDidNotClose),
+            Err(_) => {
+                // The wait is over and the peer never closed. Close from this side so
+                // the connection does not outlive the session waiting on an idle
+                // timeout — the bound would otherwise only cap how long we *watch* it.
+                conn.close(0u32.into(), b"peer did not close");
+                Ok(Shutdown::PeerDidNotClose)
+            }
         }
     } else {
         // The peer spoke last, so everything we are owed has been read. Closing is
@@ -423,6 +482,11 @@ mod tests {
                 .expect("the responder must not hang")
                 .expect("responder task does not panic");
 
+        assert!(
+            initiator_end.succeeded(),
+            "SessionEnd::succeeded must agree with the orchestrator; got {:?}",
+            initiator_end.state
+        );
         assert!(
             initiator_succeeded,
             "initiator must SUCCEED, not merely reach a terminal state; got {:?}",
@@ -662,94 +726,37 @@ mod tests {
         connector.close().await;
     }
 
-    /// The dispatch clock must bound `handle_message` itself, not just the wait for a
-    /// message. A zero budget makes any dispatch elapse, which is the cheapest way to
-    /// prove the guard is wired at all.
-    #[tokio::test(flavor = "multi_thread")]
-    async fn a_dispatch_that_exceeds_its_budget_fails_the_session() {
-        let (responder_pool, _responder_dir) = test_pool().await;
-        let (initiator_pool, _initiator_dir) = test_pool().await;
-        let responder_host = Arc::new(RecordingApplyHost::new());
-        let initiator_host = Arc::new(RecordingApplyHost::new());
-
-        let listener = lan_builder()
-            .alpns(vec![SYNC_ALPN.to_vec()])
-            .bind()
-            .await
-            .expect("listener binds");
-        let listener_addr = listener.addr();
-        let connector = lan_builder().bind().await.expect("connector binds");
-
-        // A well-behaved initiator, so the responder definitely has a message to
-        // dispatch and the failure can only come from the dispatch clock.
-        let initiator = tokio::spawn({
-            let initiator_pool = initiator_pool.clone();
-            let host = initiator_host.clone();
-            async move {
-                let mut orch = orchestrator(
-                    &initiator_pool,
-                    "device-initiator",
-                    "device-responder",
-                    &host,
-                );
-                let conn = connector
-                    .connect(listener_addr, SYNC_ALPN)
-                    .await
-                    .expect("connects");
-                let (mut send, mut recv) = conn.open_bi().await.expect("bi-stream");
-                let _ = run_session(
-                    Role::Initiator,
-                    &mut orch,
-                    &mut send,
-                    &mut recv,
-                    None,
-                    SessionLimits::default(),
-                )
-                .await;
-                conn.close(0u32.into(), b"done");
-            }
-        });
-
-        let conn = listener
-            .accept()
-            .await
-            .expect("inbound connection")
-            .await
-            .expect("handshake completes");
-        let (mut send, mut recv) = conn.accept_bi().await.expect("bi-stream");
-        let mut orch = orchestrator(
-            &responder_pool,
-            "device-responder",
-            "device-initiator",
-            &responder_host,
-        );
-
-        let limits = SessionLimits {
-            dispatch: Duration::ZERO,
-            ..SessionLimits::default()
-        };
-        let err = tokio::time::timeout(
-            TEST_TIMEOUT,
-            run_session(
-                Role::Responder,
-                &mut orch,
-                &mut send,
-                &mut recv,
-                None,
-                limits,
-            ),
-        )
+    /// The dispatch clock must bound the dispatch itself, and map the elapsed case to
+    /// the error the old loops produced.
+    ///
+    /// Driven against a future of known duration rather than a live session: a real
+    /// dispatch's duration is not controllable, and asserting on it produced a flaky
+    /// test (a zero budget only fires if `handle_message` returns `Pending` at least
+    /// once, which a warm pool makes untrue). This is how the old
+    /// `dispatch_with_handshake_timeout` is tested too.
+    #[tokio::test]
+    async fn a_dispatch_that_exceeds_its_budget_is_mapped_to_a_timeout_error() {
+        let err = dispatch_within(Duration::from_millis(10), async {
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            Ok::<(), AppError>(())
+        })
         .await
-        .expect("the dispatch bound must fire long before the test timeout")
-        .expect_err("a dispatch over budget must fail the session");
+        .expect_err("a dispatch past its budget must fail");
 
         assert!(
             err.to_string().contains("handle_message timed out"),
             "expected the dispatch bound to fire, got: {err}"
         );
+    }
 
-        initiator.abort();
-        listener.close().await;
+    /// The complement: a dispatch inside its budget must pass its value through
+    /// untouched. A guard that always timed out would satisfy the test above.
+    #[tokio::test]
+    async fn a_dispatch_inside_its_budget_passes_its_value_through() {
+        let value = dispatch_within(Duration::from_secs(30), async { Ok::<u8, AppError>(7) })
+            .await
+            .expect("a dispatch inside its budget must succeed");
+        assert_eq!(value, 7, "the guard must not alter the dispatch result");
     }
 
     /// A cancelled session must stop at the next receive, not at the receive clock.
@@ -917,6 +924,15 @@ mod tests {
             limits.close_wait < limits.recv,
             "a close-wait at or above the receive clock doubles the session budget the \
              responder's permit accounting promises"
+        );
+        // `connection.rs:668-685` locks this ordering with a dedicated test, for the
+        // slow-but-progressing peer: if a single dispatch may take up to `dispatch`,
+        // a receive clock at or below it kills sessions that are working. `SessionLimits`
+        // has public fields, so the invariant needs an assertion, not a convention.
+        assert!(
+            limits.dispatch < limits.recv,
+            "the receive clock must exceed the dispatch clock, or a peer that is merely \
+             slow is indistinguishable from one that has stopped"
         );
     }
 }
