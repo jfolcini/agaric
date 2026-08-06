@@ -52,13 +52,25 @@ which discards the in-flight frame, and the initiator fails with `connection los
 having done everything right.
 
 WebSocket's close handshake supplied this for free, which is why nothing in the old
-code looks like it. `finish_session` is role-aware for that reason: the responder
-finishes its stream and waits for the initiator's close, because that close is the only
-available evidence the last frame landed.
+code looks like it. The side that spoke last finishes its stream and waits for the
+peer's close, because that close is the only available evidence the last frame landed.
 
 Falsification confirmed it rather than merely illustrating it — removing the wait
 reproduces `read length prefix: connection lost`, the identical error the first run of
 session-1270's handshake test hit.
+
+**The first version of this keyed the wait on `Role`, and that was wrong.** It read as
+obviously correct — the responder is the one that queues `SyncComplete` — and the
+handshake test agreed, because two empty vaults take the empty-registry short-circuit
+where the responder really is the terminal sender. Review caught that the protocol says
+the opposite for every session that transfers anything: `SyncComplete` is "sent once by
+the puller … in the normal flow that is the initiator". So the role-keyed wait was
+correct for the degenerate shape and dropped the final frame in the normal one.
+
+The fix keys on whether *this* side's last I/O was a write. Recorded at length because
+the failure mode is instructive twice over: the wrong key was the one that looked like
+the invariant, and the test that should have caught it was the test that only ever ran
+the shape the wrong key handles.
 
 ## Where a fix pointed the wrong way
 

@@ -44,8 +44,8 @@
 //!   sustained to survive a maximum-size frame, against an old rationale that justified
 //!   180 s with "a 10 MB op-batch over a 1 Mbps link is ~80 s". On a LAN, where this
 //!   runs today, the margin is enormous. On Android WiFi it is the kind of thing that
-//!   fails only for the users with the worst links. Tracked for re-derivation against
-//!   measurements rather than guessed at here.
+//!   fails only for the users with the worst links. Tracked as #3481 for re-derivation
+//!   against measurements rather than guessed at here.
 //!
 //! # What this module does NOT do, and the cutover must
 //!
@@ -221,10 +221,16 @@ impl SessionEnd {
 
 /// How a session's stream was shut down.
 ///
-/// `PeerDidNotClose` is reported rather than raised: by the time we are waiting, every
-/// byte we owed has been written and finished. A peer that vanishes without closing
-/// politely has not cost us correctness, and failing the whole sync for it would turn
-/// a clean session into a spurious error the scheduler would then back off on.
+/// Reported rather than raised: by the time we are waiting, every byte we owed has been
+/// written and finished, and failing the whole sync because a peer was impolite would
+/// turn a clean session into a spurious error the scheduler then backs off on.
+///
+/// That is a statement about what we *do*, not a claim that nothing was lost. Both
+/// non-`Clean` variants leave the final frame's fate genuinely unknown —
+/// [`Self::PeerDidNotClose`] force-closes when the wait expires, which discards that
+/// frame if the peer was merely slow rather than gone. Only [`Self::Clean`] is evidence
+/// of delivery; the other two are evidence of its absence, which is not the same as
+/// evidence of harmlessness.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shutdown {
     /// The peer closed the connection *at the application layer*, so the final frame
@@ -282,8 +288,16 @@ async fn dispatch_within<T>(
 ///
 /// # Errors
 /// If a frame fails to send or receive, a dispatch exceeds
-/// [`SessionLimits::dispatch`], or the peer goes quiet for longer than
-/// [`SessionLimits::recv`].
+/// [`SessionLimits::dispatch`], the session is cancelled, or the peer goes quiet for
+/// longer than [`SessionLimits::recv`].
+///
+/// **Every one of those paths returns with the connection open and `send` unfinished.**
+/// That is the caller's to clean up: [`finish_session`] runs only on the success path,
+/// so a cutover call site written `run_session(..).await?` leaks the connection to
+/// QUIC's idle timeout on every failure — and failures are exactly when a responder
+/// permit and per-peer lock are worth releasing promptly. Named here because every
+/// other hazard this module hands the cutover is named, and an unnamed one is the one
+/// that gets missed.
 pub async fn run_session(
     role: Role,
     orch: &mut SyncOrchestrator,
