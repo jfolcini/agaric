@@ -578,10 +578,24 @@ describe('AgendaView', () => {
     // The fetch after clear must re-run with the default TODO+DOING filter
     // (DONE excluded), NOT an empty array (which would route to the
     // completed-inclusive unfiltered superset, #1744).
-    expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
-      [{ dimension: 'status', values: ['TODO', 'DOING'] }],
-      null,
-    )
+    //
+    // #3447 — the `agendaFilters` state update (which drives the
+    // `data-has-active-filters`/`data-filter-count` attributes above) commits
+    // synchronously with render, but the `useEffect` that actually invokes
+    // `executeAgendaFilters` is a passive effect that can still be pending
+    // when React flushes that render. `waitFor` above can observe the new
+    // attributes and resolve one microtask before the effect calls the mock,
+    // so asserting on the mock immediately afterwards was flaky — confirmed
+    // by reproducing the failure: the mock's last recorded call was still the
+    // *previous* (TODO-only) filter, not the post-clear default. Poll for the
+    // mock call too instead of assuming the DOM assertions above already
+    // imply it happened.
+    await waitFor(() => {
+      expect(mockedExecuteAgendaFilters).toHaveBeenLastCalledWith(
+        [{ dimension: 'status', values: ['TODO', 'DOING'] }],
+        null,
+      )
+    })
     expect(mockedExecuteAgendaFilters).not.toHaveBeenLastCalledWith([], null)
   })
 

@@ -260,6 +260,32 @@ describe('EmojiPicker — addInputRules (`:shortcode:` closing-colon, #2671)', (
     expect(insertTextCalls).toEqual([{ text: '\u{1F602}', from: 1, to: 6 }])
   })
 
+  // #3436 — #3419 removed the `emojiByShortcode` dead export along with its
+  // test, which was the only coverage of case-insensitive lookup. The
+  // `EMOJI_QUERY_RE`/`find` regex accepts `A-Za-z`, so an uppercase shortcode
+  // like `:JOY:` is a live path, and the `.toLowerCase()` in the handler
+  // (emoji-picker.ts) is what makes it resolve. Pin it explicitly so removing
+  // that call fails a test instead of shipping silently.
+  it('resolves an uppercase shortcode case-insensitively', async () => {
+    const { loadEmojiDataset } = await import('@/editor/emoji-data')
+    await loadEmojiDataset()
+
+    const rule = await loadInputRule()
+    const insertTextCalls: Array<{ text: string; from: number; to: number }> = []
+    const state = {
+      tr: {
+        insertText: (text: string, from: number, to: number) => {
+          insertTextCalls.push({ text, from, to })
+        },
+      },
+    }
+    const match = [' :JOY:', 'JOY'] as unknown as RegExpMatchArray
+    const result = rule.handler({ state, range: { from: 0, to: 6 }, match })
+
+    expect(result).toBeUndefined()
+    expect(insertTextCalls).toEqual([{ text: '\u{1F602}', from: 1, to: 6 }])
+  })
+
   it('returns null (leaves text untouched) for an unknown shortcode once the dataset is cached', async () => {
     const { loadEmojiDataset } = await import('@/editor/emoji-data')
     await loadEmojiDataset()
