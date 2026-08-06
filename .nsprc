@@ -1,7 +1,1 @@
-{
-  "1124334": {
-    "active": true,
-    "expiresOn": "2026-10-23T00:00:00.000Z",
-    "notes": "brace-expansion DoS via unbounded expansion length causing an out-of-memory crash (GHSA-mh99-v99m-4gvg). Reached only through DEV tooling \u2014 @wdio/config, @stryker-mutator/core, archiver-utils, filelist, mocha, readdir-glob \u2014 plus license-checker's glob/minimatch chain. `npm ls brace-expansion --omit=dev` is empty: it is not in the production Tauri app bundle, and the expansion patterns come from the repo's own trusted config, never adversarial input, per the AGENTS.md single-user local-first threat model. Not overridable: bumping brace-expansion to >=5.0.8 fixes the advisory but breaks license-checker with `TypeError: expand is not a function` (5.x changed its export shape), and all three resolved majors (1.1.16 / 2.1.2 / 5.0.7) are inside the vulnerable range so there is no same-major fix. Expires 90d; re-review on expiry."
-  }
-}
+{}
