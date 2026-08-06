@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Sync, Networking, Android
 
-Local-WiFi peer-to-peer sync carrying Loro CRDT messages. No cloud, no relay, no accounts. (Transport: QUIC via `iroh` since #3464; the Transport and Stack sections below still describe the retired mTLS/WebSocket stack.)
+Local-WiFi peer-to-peer sync over QUIC (iroh) carrying Loro CRDT messages. No cloud, no relay, no accounts.
 
 Companion to [`docs/features/sync.md`](../features/sync.md) (user perspective) and [`crdt-and-recovery.md`](crdt-and-recovery.md) (the Loro engine itself + snapshot atomicity).
 
@@ -10,8 +10,8 @@ Companion to [`docs/features/sync.md`](../features/sync.md) (user perspective) a
 | Layer | Choice |
 | --- | --- |
 | Discovery | mDNS via `mdns-sd` (pure Rust, no Avahi/Bonjour daemon required) |
-| Pairing | EFF-wordlist 4-word passphrase OR QR code; ephemeral mTLS session |
-| Transport | self-signed ECDSA P-256, TOFU certificate pinning by SHA-256, WebSocket |
+| Pairing | EFF-wordlist 4-word passphrase OR QR code; the passphrase proof rides inside the first `HeadExchange` (#855) |
+| Transport | iroh QUIC over **UDP**; peer identity is an ed25519 `EndpointId` authenticated by the TLS 1.3 handshake inside the QUIC handshake |
 | Protocol | `SyncMessage` enum carrying `LoroSyncMessage::{Snapshot, Update}` per space |
 | Scheduler | per-peer exponential backoff with jitter, lifecycle-gated |
 
@@ -23,7 +23,7 @@ Both TXT keys are load-bearing and neither is trusted. `endpoint_id` (the ed2551
 
 `_udp`, not `_tcp`, because the advertised service is a QUIC endpoint (#3488). **This is a silent wire break**: a device on either side of the change does not see one on the other — the browse key differs, so no event fires and no error is raised. The ALPN change in the same port already forbids a cross-release *session*, which is what makes the break harmless, but it happens after the dial and so cannot report this one.
 
-Manual fallback: `peer_refs.last_address` (`host:port`) for peers that mDNS can't see (cross-subnet, VPN, firewall). The pairing dialog has a manual-entry path.
+Manual fallback: `peer_refs.last_address` (`host:port`) for peers that mDNS can't see (cross-subnet, VPN, firewall). The pairing dialog has a manual-entry path. Under iroh this fallback needs **both halves** — `resolve_peer_address` (`sync_daemon/discovery.rs`) only builds a dialable peer when the row has a cached address *and* a bound `endpoint_id`, because a dial names a key and addresses are only candidate paths to it. A row with an address and no key resolves a peer nothing can dial, which is worse than resolving nothing: `try_sync_with_peer` then bails before it records a failure or emits an event, so the peer silently never syncs.
 
 **Android mDNS requires a WifiManager `MulticastLock`** — Android disables multicast by default to save battery. `sync_daemon/android_multicast.rs` holds the lock for the daemon's lifetime via RAII (JNI bridge). Without it, Android peers can broadcast but not receive mDNS replies; symptom is "phones don't find each other on the same network".
 
@@ -35,27 +35,41 @@ The required Android manifest permissions are `ACCESS_WIFI_STATE` + `CHANGE_WIFI
 
 1. EFF-wordlist 4-word passphrase displayed on Device A. QR code is the same passphrase encoded.
 2. Device B enters the passphrase (camera scan or manual). Each side computes a domain-separated blake3 *proof* of the passphrase (`pairing::pairing_proof`, #855) — there is no derived symmetric key; the passphrase is never used to encrypt anything.
-3. Devices exchange self-signed ECDSA P-256 certificates as plaintext JSON over the WebSocket, whose confidentiality and authenticity come from the rustls mTLS + TOFU cert-pin layer (not from the passphrase). The responder pins the peer's certificate by SHA-256 into `peer_refs.cert_hash` (TOFU — first contact wins) only after the passphrase proof matches its own stored value, which closes the #855 CN-spoof window.
-4. After pairing, the passphrase is discarded. All subsequent connections use the pinned certs.
+3. There is no certificate exchange any more. The QUIC handshake authenticates both ends' `EndpointId` (an ed25519 public key) before a single application byte moves, so identity is established by the transport rather than claimed in an application message. The initiator carries `HeadExchange.pairing_proof`; the responder admits the unpaired peer only when that proof matches the one it stored when it armed or confirmed the pairing, and *then* binds the handshake-authenticated key into `peer_refs.endpoint_id` (TOFU — first contact wins, `bind_endpoint_id`).
+4. After pairing, the passphrase is discarded. All subsequent connections are recognised by the bound key.
+
+**Identity is not authorization.** The handshake answers *which key is this*; it does not answer *may this key sync my vault* — anyone can generate a keypair. So the #855 proof, the S-1 unpaired gate, the S-5 per-peer lock, #2537 cancel ownership and the #1519 pending-pairing bridge all survive the port unchanged in purpose. What changed is the proof's *job*: from "stop a spoofed `CN=agaric-{victim}` being pinned as the victim" to "authorize a genuine but unknown key". Narrower, still load-bearing.
 
 **Rejected alternatives**: persistent shared passphrase (security: passphrase theft = forever access), SPAKE2 (no good Rust impl; complexity not worth it for the threat model).
 
-If you re-install Agaric on a peer, its certificate hash changes — you'll need to unpair and re-pair. Pairing isn't a recovery flow for "I lost my keys"; it's first-contact establishment.
+If a peer's app data directory is wiped (a clean re-install), `sync-endpoint.key` is regenerated and the device comes back with a different `EndpointId`. The initiator's pinned-identity check (`try_sync_with_peer` step 4) refuses the announcement rather than re-binding, so you'll need to unpair and re-pair. Pairing isn't a recovery flow for "I lost my keys"; it's first-contact establishment.
+
+**Migrated installs re-TOFU once (#3514).** Migration `0107_peer_refs_endpoint_id` adds the column but cannot backfill it — a cert hash does not yield an ed25519 key — so every pre-cutover pair upgrades with `endpoint_id IS NULL`. The responder recognises nobody until a binding exists; the bootstrap is the *initiator's*, which matches an mDNS-announced `device_id` against an existing row and binds the announced key. Both devices dial on the resync tick, so a pair re-binds within one tick. For the length of that window an mDNS record claiming a paired device's `device_id` could be bound instead of the real one. It is currently silent; see [`threat-model.md`](threat-model.md) § B3 for the trust-boundary entry.
 
 ## Transport
 
-> **Stale as of the iroh cutover (#3464).** The sync transport is now QUIC via
-> `iroh` — `src-tauri/agaric-sync/src/transport/`. The mTLS/WebSocket stack this
-> section describes (`sync_net`, `sync_cert`, `sync_daemon::wire`) has been
-> deleted, and `peer_refs.cert_hash` is superseded by `peer_refs.endpoint_id`.
-> The timeout bullet below is current; the rest is retained as a description of
-> the pre-cutover design until this document is rewritten.
+Everything below lives in `src-tauri/agaric-sync/src/transport/`. The retired mTLS/WebSocket stack — the `sync_net` modules, `sync_cert`, and `sync_daemon::wire` — was deleted outright in #3544, so the property "no production module reaches for it" is now enforced by the compiler rather than by a text-scanning guard test.
 
-- **TLS** with self-signed ECDSA P-256 (`CN=agaric-{device_id}`). `rcgen` generates the cert; the cert and its private key are persisted together as a combined PEM file in the app data dir (`sync_cert.rs`, written owner-only `0600` — #1580). There is no OS keychain / `keyring` dependency; OS full-disk encryption is the confidentiality boundary.
-- **Certificate pinning.** `PinningCertVerifier` rejects any cert whose SHA-256 doesn't match `peer_refs.cert_hash`. Also enforces `CN=agaric-{expected_device_id}` so a cert swap with a matching hash but mismatched CN fails.
-- **Self-device guard.** Prevents talking to your own announced service in mDNS loopback scenarios.
-- **WebSocket framing.** `MAX_MSG_SIZE = 10_000_000` bytes per WS frame; `BINARY_FRAME_CHUNK_SIZE = 5_000_000` for snapshot + attachment transfer (the actual chunk unit).
-- **Timeouts.** `HANDSHAKE_TIMEOUT` (per-`handle_message` budget) is shorter than `RECV_TIMEOUT` (overall idle); a `#[test]` (`default_limits_are_the_values_carried_from_the_old_transport` in `src-tauri/agaric-sync/src/transport/driver.rs`) enforces the ordering on `SessionLimits`. Not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range.
+- **Endpoint** (`transport/endpoint.rs`). `lan_only` builds the iroh endpoint with relays disabled, relay transports and IP transports cleared, address lookup cleared, and a DNS resolver that answers nothing — so there is no route by which the endpoint reaches n0's infrastructure. The builder refuses a prefix broader than `MIN_IPV4_PREFIX_LEN` (`/8`) or `MIN_IPV6_PREFIX_LEN` (`/7`), and separately refuses a bind address in publicly-routable space — the prefix bounds how *broad* the confined block is, the second check bounds *where* it sits, and both are needed before "confined to a LAN" is true.
+- **Identity** (`transport/identity.rs`). 32 raw ed25519 secret bytes, hex-encoded, one line, mode `0o600`, at `sync-endpoint.key` in the app data dir. Its own file rather than a field in the old cert PEM, because the identity outlives the transport. Hex rather than raw bytes so a truncated file is *detectable* instead of silently decoding to a different, valid-looking key. There is no OS keychain / `keyring` dependency; OS full-disk encryption is the confidentiality boundary.
+- **Admission control** (`transport/service.rs`). ALPN `agaric/sync/0` — both ends must agree or the handshake fails before any application data moves. `MAX_CONCURRENT_RESPONDER_SESSIONS` (16) is carried unchanged from the old accept loop; its sizing is about the 6-connection DB pool those sessions draw on, not about handshake cost, which is why an over-capacity connection is **refused** (`Incoming::refuse`) rather than queued. The permit is taken *before* the handshake and released by `Drop`. Setup runs off the accept loop in a spawned `AdmittedConnection::establish`, bounded by `CONNECTION_SETUP_TIMEOUT` (10 s, the handshake) and `FIRST_FRAME_TIMEOUT` (180 s, the peer's first frame — which it cannot send until it has read its own heads out of the database).
+- **Self-device guard.** Prevents talking to your own announced service in mDNS loopback scenarios: `should_attempt_sync_with_discovered_peer` drops a `device_id` equal to the local one, and the responder rejects a settled `remote_id` equal to its own.
+- **Framing** (`transport/session.rs`). One `SyncMessage` is a `u32` big-endian length prefix plus a serde-JSON body on a QUIC bi-stream. `MAX_FRAME_SIZE` is `MAX_LORO_SYNC_PAYLOAD_SIZE` (256 MB) and is checked *before* a buffer is created; the buffer then grows in `BINARY_FRAME_CHUNK_SIZE` (5 MB) steps as bytes actually land, so a four-byte prefix cannot commit 256 MB. There is no chunking layer: a QUIC stream is a flow-controlled byte stream, so the only thing the transport still owes the protocol is where one message ends.
+- **Bulk** (`transport/bulk.rs`). Snapshot blobs and attachment files are a plain copy loop on the same stream — one fixed `BULK_COPY_BYTES` (5 MB) buffer, `total_size` bounded against a caller-supplied cap before any read, progress ticked per buffer rather than per read. `BULK_IDLE_TIMEOUT` (180 s) is an **idle** bound reset per read, not a transfer bound.
+- **Timeouts** (`transport/driver.rs`). `SessionLimits` carries three: `recv` (`RECV_TIMEOUT`, 180 s per awaited message), `dispatch` (`HANDSHAKE_TIMEOUT`, per `handle_message`), and `close_wait` (10 s). `dispatch` is deliberately shorter than `recv`, and a `#[test]` (`default_limits_are_the_values_carried_from_the_old_transport` in `transport/driver.rs`) pins the ordering; it is not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range. The old stack's numbers moved with the responsibility rather than with the name — `TLS_HANDSHAKE_TIMEOUT` bounded `TlsAcceptor::accept` plus the WebSocket upgrade, machinery this port deletes, so its value is restated at each new site rather than imported.
+
+### What the port cost
+
+The port is not uniformly an improvement, and the regressions are load-bearing enough to name here rather than only on the issues.
+
+- **No wire compression (#3512).** zstd lived in the retired chunking layer. `HeadExchange.wire_compression` is still on the wire, still advertised as `true`, and is now **ignored by both ends** — nothing reads it. Loro payloads are a `Vec<u8>` inside a serde-JSON envelope, so they cost roughly **4 wire bytes per byte of CRDT state**, and that expansion is now paid in full. Against the 256 MB frame cap that puts the hard offer failure at roughly 64 MB of Loro state in one space — a much larger budget than the old 10 MB message ceiling, so not obviously a regression in reachable capacity, but a hard failure at a threshold nobody has measured, on a value that only grows.
+- **Inbound is single-homed (#3513).** `lan_only` takes **one** bind address, so the daemon accepts on a single interface — the first RFC 1918 IPv4, with the prefix taken from its netmask. A desktop on both WiFi and Ethernet accepts on whichever the enumeration picks first. The *outbound* half genuinely improved: `EndpointAddr` carries every advertised address at once and iroh races them, so one `CONNECT_TIMEOUT` now covers all candidates where the old sequential loop paid one per address.
+- **Dead peers cost 10 s (#3515).** TCP refused a connection to a closed port instantly. UDP gives no response at all, so a dial to a departed peer burns the full `CONNECT_TIMEOUT` (10 s). Branch B awaits its `JoinSet` inline (#490 M3), so an app quit can wait on a doomed dial.
+- **The S-5 lock key is asymmetric during the pairing window (#3511, unresolved).** `HeadExchange` carries no `device_id`, and a fresh joiner with an empty op log advertises no head of its own, so the responder has nothing but the endpoint id to lock on until a binding exists — while the initiator locks on the device id. An inbound and an outbound session with the same device can therefore overlap for exactly the window in which both ends are most likely to dial simultaneously. The old stack did not have this gap: the cert CN supplied a device id unconditionally.
+
+### What the port did not fix
+
+**First-ever pairing is still broken (#3502).** `process_discovery_event`, the three initiation branches and `should_attempt_sync_with_discovered_peer` are daemon *policy*, not transport; the cutover replaces how bytes move and touches none of them. During a first-ever pair `peer_refs` is empty, so only the mDNS-resolve branch can start an outbound session — and its already-discovered short-circuit returns before `pairing_pending` is consulted, giving one initiation opportunity per peer per process lifetime, which the pairing dialog spends on open before the user has typed. Nothing in this document should be read as saying the QUIC port makes pairing work.
 
 ## Protocol
 
@@ -72,7 +86,7 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 3. **Push.** Sender exports `LoroDoc::export(ExportMode::Snapshot | Updates(peer_vv))`, ships as `LoroSyncMessage`.
 4. **Apply.** Receiver imports into per-space `LoroEngine`. Materializer projects engine state into SQL primary state post-import.
 5. **`is_last: true`** transitions both sides to `SyncComplete`.
-6. **File-transfer phase** ships attachment blobs in 5 MB binary frames after op convergence.
+6. **File-transfer phase** streams attachment blobs on the same QUIC stream after op convergence, copied through one 5 MB buffer (`BULK_COPY_BYTES`).
 
 ## Snapshot catch-up
 
@@ -93,7 +107,7 @@ The legacy CBOR path (`SnapshotOffer` / `SnapshotAccept` / `SnapshotReject` → 
 
 ### Dormant mode
 
-If no paired peers exist, the daemon defers mDNS browse + TLS listener entirely. Boot is cheaper on a fresh install; the daemon spawns a lightweight waiter that triggers full startup when the first pairing completes.
+If no paired peers exist, the daemon defers mDNS browse + announce and the endpoint service entirely. Boot is cheaper on a fresh install; the daemon spawns a lightweight waiter that triggers full startup when the first pairing completes. The dormant-mode log line in `sync_daemon/mod.rs` names what is actually deferred — "mDNS and QUIC endpoint" — since #3526; nothing about *what* is deferred, or when, changed with the rename.
 
 ### Lifecycle-aware
 
@@ -112,8 +126,9 @@ The dual layer is deliberate: backend handles failure recovery; frontend handles
 
 One row per paired peer (`device_id` PK):
 
-- `cert_hash` — pinned TLS hash (TOFU on first pair).
-- `last_address` — manual `host:port` override.
+- `endpoint_id` — the peer's iroh `EndpointId`, 64 lowercase hex characters, bound on first successful session (TOFU). This is the pinned identity the responder resolves an inbound peer by (S-1) and the initiator checks an mDNS announcement against. Nullable: migration `0107` could not backfill it, so a migrated install starts with `NULL` here (see the re-TOFU note under Pairing). A column-level CHECK rejects the uppercase, base32 and `fmt_short()` spellings, because `FromStr` is deliberately laxer than `Display`.
+- `cert_hash` — the old pinned TLS hash. **Retained but dead**: nothing in production reads it since the cutover. Migrations are append-only, so deleting the old transport (#3544) did not take the column with it; it outlives the code that gave it meaning until a migration retires it explicitly.
+- `last_address` — manual `host:port` override. Still written and still read, but only as one half of the mDNS-independent fallback: a row needs a bound `endpoint_id` too before it resolves a dialable peer.
 - `last_hash` — content hash from last successful sync; used as snapshot-catch-up watermark.
 - `device_name` — display name.
 - `reset_count` + `last_reset_at` — count + timestamp of how many times the peer issued a `ResetRequired` (forces full re-sync; useful for diagnostics).
@@ -134,11 +149,16 @@ These plus the standard `inner_*` testable bodies live in `sync_cmds.rs`. The ex
 Same Rust backend + WebView shell as desktop (Tauri 2 mobile). Architectural deltas:
 
 - **mDNS multicast lock** as above.
-- **Foreground-only sync** — Android Doze + battery saver kill background WebSocket connections aggressively. The daemon defers all work via `LifecycleHooks` when backgrounded; sync resumes on foreground.
+- **Foreground-only sync** — Android Doze + battery saver kill background network connections aggressively; a QUIC/UDP session is no more survivable than the WebSocket it replaces. The daemon defers all work via `LifecycleHooks` when backgrounded; sync resumes on foreground.
+- **QUIC/UDP on Android and on restrictive WiFi is unverified.** It needs hardware, and nothing in the port is evidence about it. This gates release, not development.
 - **ABI matrix**: ARM64 device + x86_64 emulator. 32-bit ABIs (armv7, i686) are intentionally not supported.
 - **DB path**: `/data/data/com.agaric.app/notes.db` (Android-managed app-private storage; no sdcard).
 - **QR scanner**: `html5-qrcode`; `CAMERA` permission requested at runtime. Manual 4-word passphrase fallback always works.
 
 ## Operator notes
 
-Local firewall must allow inbound TCP on Agaric's port (random on first launch, persisted in `peer_refs`). The user-facing setup snippets live in [`docs/features/sync.md § Pitfalls`](../features/sync.md) and [`docs/BUILD.md`](../BUILD.md).
+Local firewall must allow inbound **UDP** — QUIC is UDP, so a rule written for TCP lets nothing through and the symptom looks like a sync bug rather than a firewall one. mDNS additionally needs UDP 5353.
+
+The port is **not stable across launches**: `lan_bind_target` binds `(interface_ip, 0)`, so the OS assigns an ephemeral port each start and the daemon announces whatever it got over mDNS. A firewall rule therefore has to be written against the application, not against a fixed port number. `lan_bind_target` also picks **one** interface — the first RFC 1918 IPv4 — and falls back to loopback on a machine with no private IPv4 address, which binds and accepts nothing from outside (#3513).
+
+The user-facing setup snippets live in [`docs/features/sync.md § Pitfalls`](../features/sync.md) and [`docs/BUILD.md`](../BUILD.md).

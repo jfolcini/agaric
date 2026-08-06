@@ -25,7 +25,7 @@ Cache rebuild jobs (`tags_cache`, `pages_cache`, `agenda_cache`, `projected_agen
 
 ### Sync streaming over framed pull
 
-Both snapshot transfer (catch-up) and attachment file transfer ship as 5 MB binary frames over the same WebSocket. Receiver applies frame-by-frame; sender holds open a producer task that pulls from a `BufReader`. Memory bounded; back-pressure native to the channel.
+Both snapshot transfer (catch-up) and attachment file transfer stream on the same QUIC bi-stream the control messages use, copied through one fixed 5 MB buffer (`BULK_COPY_BYTES` in `src-tauri/agaric-sync/src/transport/bulk.rs`). Every read is sized from that buffer's own length rather than from the declared total, so allocation stays constant however large the transfer; the declared size is bounded against a caller-supplied cap *before* the first read. Sender holds open a producer task that pulls from a `BufReader`. Memory bounded; back-pressure comes from QUIC's flow-control windows rather than from a hand-rolled chunk loop.
 
 ### Per-page block stores
 
@@ -113,6 +113,6 @@ A v1 peer cannot sync with a v2 peer: the raw Loro bytes are incompatible across
 What's not yet shipped is tracked separately. High-level items today:
 
 - **OS notifications** for due tasks (Org-mode parity; mobile especially).
-- **iroh transport** — scoped, not started. Approved adoption plan replacing the mDNS + WebSocket + TLS + TOFU stack with a higher-level p2p library.
+- **iroh transport** — **shipped** (#78, plan #3464). Both sync roles run over QUIC; `sync_net/`, `sync_cert.rs` and `sync_daemon/wire.rs` are unreferenced from production and are deleted by the follow-up PR. What it did *not* fix: first-ever pairing is still broken (#3502 — daemon policy, not transport), inbound is single-homed (#3513), the S-5 lock key is asymmetric during the pairing window (#3511), and wire compression is gone (#3512).
 - **rmcp migration** — M1 landed (RO tools/list); M2 (`tools/call`) + M3 (delete hand-rolled framing) remain.
 - **`ActiveBlockId` newtype M3** — completes the type-system lift of invariant #9 (recursive-CTE conflict filtering); dispatcher decision pending.
