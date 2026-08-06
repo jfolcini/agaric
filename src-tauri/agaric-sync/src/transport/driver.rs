@@ -47,6 +47,22 @@
 //!   fails only for the users with the worst links. Tracked for re-derivation against
 //!   measurements rather than guessed at here.
 //!
+//! # What this module does NOT do, and the cutover must
+//!
+//! [`run_session`] drives the FSM to a terminal state. It is not the whole session.
+//! Two sub-flows run *after* the loop, on the same live connection, and neither is
+//! driven by the protocol:
+//!
+//! * **Snapshot catch-up**, when the state is `ResetRequired` — `sync_daemon`'s
+//!   `snapshot_transfer` (`session_supervisor.rs:1082`, `server.rs:620`).
+//! * **File transfer**, after a successful session — `sync_files` (F-14).
+//!
+//! So `ResetRequired` is terminal for `is_terminal()` and simultaneously the point at
+//! which the real work begins. A cutover call site written the way this module's own
+//! tests are — run, then [`finish_session`] — closes the connection out from under both
+//! and loses them silently. [`SessionEnd::needs_snapshot_catchup`] exists to make that
+//! ask-able, and this paragraph exists because the tests here cannot show it.
+//!
 //! # Shutdown is a protocol step, not cleanup
 //!
 //! A side reaches its terminal state the moment it *queues* the final message — one
@@ -73,13 +89,13 @@
 
 use std::time::Duration;
 
-use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 
 use agaric_core::error::AppError;
 
 use agaric_store::cancellation::CancellationToken;
 
-use crate::sync_constants::{HANDSHAKE_TIMEOUT, TLS_HANDSHAKE_TIMEOUT};
+use crate::sync_constants::HANDSHAKE_TIMEOUT;
 use crate::sync_protocol::{SyncOrchestrator, SyncState};
 use crate::transport::session::{recv_sync_message, send_sync_message};
 
@@ -126,12 +142,24 @@ pub struct SessionLimits {
 /// guess.
 const RECV_TIMEOUT: Duration = Duration::from_secs(180);
 
+/// How long to wait for the peer's close, restated here rather than borrowed.
+///
+/// The value is `TLS_HANDSHAKE_TIMEOUT`'s, and that constant's rationale describes this
+/// situation exactly — "generous headroom for a slow/loaded device or a brief network
+/// hiccup while still failing a genuinely stalled peer fast enough to keep the 16-slot
+/// pool flowing". But its *scope* is `TlsAcceptor::accept` plus the WebSocket upgrade,
+/// machinery this port deletes. After the cutover it would be an orphan whose only
+/// consumer is this close-wait, and tuning it for the TLS story it is named after would
+/// silently retune shutdown. Same reasoning as [`RECV_TIMEOUT`] above: the number moves
+/// with the responsibility, not the name.
+const CLOSE_WAIT: Duration = Duration::from_secs(10);
+
 impl Default for SessionLimits {
     fn default() -> Self {
         Self {
             recv: RECV_TIMEOUT,
             dispatch: HANDSHAKE_TIMEOUT,
-            close_wait: TLS_HANDSHAKE_TIMEOUT,
+            close_wait: CLOSE_WAIT,
         }
     }
 }
@@ -171,6 +199,24 @@ impl SessionEnd {
     pub fn succeeded(&self) -> bool {
         matches!(self.state, SyncState::Complete)
     }
+
+    /// Whether the peer asked for a snapshot reset, which is **not** an ending.
+    ///
+    /// `is_terminal()` covers `ResetRequired`, so [`run_session`] returns on it — but in
+    /// the old stack this is where the work *starts*: `session_supervisor.rs:1082` and
+    /// `server.rs:620` both run snapshot catch-up **on the live connection**, and the
+    /// file-transfer phase follows. Neither is driven by the FSM.
+    ///
+    /// A caller that treats a returned `SessionEnd` as "the session is over" and calls
+    /// [`finish_session`] will therefore close a connection that still owes two
+    /// sub-flows, and lose both silently — the sync will simply never converge. This
+    /// module's whole thesis is that what a transport supplied invisibly is what a port
+    /// drops silently; this is the same shape one layer up, so it is named here rather
+    /// than left to be rediscovered.
+    #[must_use]
+    pub fn needs_snapshot_catchup(&self) -> bool {
+        matches!(self.state, SyncState::ResetRequired)
+    }
 }
 
 /// How a session's stream was shut down.
@@ -181,10 +227,24 @@ impl SessionEnd {
 /// a clean session into a spurious error the scheduler would then back off on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Shutdown {
-    /// The peer closed the connection, so the final frame was certainly read.
+    /// The peer closed the connection *at the application layer*, so the final frame
+    /// was certainly read.
+    ///
+    /// Only `ConnectionError::ApplicationClosed` earns this. It is the variant our own
+    /// `conn.close(..)` produces, and the only one that means the peer chose to stop
+    /// rather than stopped existing.
     Clean,
     /// The wait elapsed. Our data was sent and finished; the peer never closed.
     PeerDidNotClose,
+    /// The connection ended without an application close — reset, idle timeout,
+    /// transport error, or a stack-level abort.
+    ///
+    /// Distinguished from [`Self::Clean`] because it is the case that would otherwise
+    /// lie: a peer killed before it reads the final frame still emits CONNECTION_CLOSE
+    /// when its endpoint drops, which resolves `closed()` well inside the wait. Folding
+    /// that into `Clean` would report "the final frame was certainly read" about a peer
+    /// that certainly did not read it.
+    PeerVanished,
 }
 
 /// Bound one `handle_message` dispatch, mapping the elapsed case to the same error the
@@ -276,6 +336,25 @@ pub async fn run_session(
     })
 }
 
+/// Decide what the end of a connection tells us about our final frame.
+///
+/// A free function so the distinction can be tested against constructed errors:
+/// producing a genuine reset or idle timeout between two loopback endpoints is not
+/// something a unit test can do deterministically, and an untested branch here is
+/// exactly the one that would quietly report success.
+fn classify_close(reason: &ConnectionError) -> Shutdown {
+    match reason {
+        // The peer chose to stop. This is what our own `conn.close(..)` produces, and
+        // it only happens after the peer's session loop returned — i.e. after it read
+        // what we sent.
+        ConnectionError::ApplicationClosed(_) => Shutdown::Clean,
+        // Everything else means the connection ended without the peer saying so:
+        // killed process, idle timeout, stateless reset, protocol violation. The frame
+        // may or may not have landed, and claiming otherwise is the bug.
+        _ => Shutdown::PeerVanished,
+    }
+}
+
 /// Close down this side's stream, waiting for the peer where that is what proves the
 /// last frame landed. See the module docs for why this is protocol, not cleanup.
 ///
@@ -305,7 +384,16 @@ pub async fn finish_session(
         // application", so closing here is what discards our own final frame. The
         // peer's close is the only available evidence it was consumed.
         match tokio::time::timeout(limits.close_wait, conn.closed()).await {
-            Ok(_) => Ok(Shutdown::Clean),
+            Ok(reason) => {
+                let outcome = classify_close(&reason);
+                if outcome == Shutdown::PeerVanished {
+                    tracing::debug!(
+                        error = %reason,
+                        "peer connection ended without an application close"
+                    );
+                }
+                Ok(outcome)
+            }
             Err(_) => {
                 // The wait is over and the peer never closed. Close from this side so
                 // the connection does not outlive the session waiting on an idle
@@ -917,8 +1005,11 @@ mod tests {
             "the dispatch bound is the crate's existing HANDSHAKE_TIMEOUT"
         );
         assert_eq!(
-            limits.close_wait, TLS_HANDSHAKE_TIMEOUT,
-            "the close-wait is its own, shorter clock"
+            limits.close_wait,
+            Duration::from_secs(10),
+            "the close-wait is its own, shorter clock — asserted as a literal, because \
+             asserting equality with TLS_HANDSHAKE_TIMEOUT would let a tune made for \
+             that constant's own (deleted) scope retune shutdown with every test green"
         );
         assert!(
             limits.close_wait < limits.recv,
@@ -934,5 +1025,35 @@ mod tests {
             "the receive clock must exceed the dispatch clock, or a peer that is merely \
              slow is indistinguishable from one that has stopped"
         );
+    }
+
+    /// Only a deliberate application close proves the final frame was read.
+    ///
+    /// The tempting form is `Ok(_) => Clean`, and it lies in the case that matters: a
+    /// peer killed before it reads the frame still emits CONNECTION_CLOSE when its
+    /// endpoint drops, so `closed()` resolves well inside the wait and the session
+    /// would be reported as cleanly shut down. These errors are constructed rather than
+    /// provoked because a genuine reset or idle timeout between two loopback endpoints
+    /// is not deterministically reachable from a test.
+    /// The `Clean` half is deliberately not asserted here: constructing an
+    /// `ApplicationClose` needs a `bytes::Bytes`, and `bytes` is not a dependency of
+    /// this crate. It is covered for real instead —
+    /// [`one_driver_carries_a_whole_session_for_both_roles`] asserts `Shutdown::Clean`
+    /// after an actual peer `conn.close(..)`, which is the genuine article rather than
+    /// a fixture. Between the two, both arms are exercised.
+    #[test]
+    fn a_connection_that_ends_without_an_application_close_is_not_clean() {
+        for reason in [
+            ConnectionError::TimedOut,
+            ConnectionError::Reset,
+            ConnectionError::LocallyClosed,
+        ] {
+            assert_eq!(
+                classify_close(&reason),
+                Shutdown::PeerVanished,
+                "{reason:?} ends the connection without the peer saying it was done, so \
+                 the final frame's fate is unknown and must not be reported as clean"
+            );
+        }
     }
 }
