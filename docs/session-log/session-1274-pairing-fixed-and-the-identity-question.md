@@ -1,8 +1,8 @@
 # Session 1274 — pairing fixed, and the identity question the port actually raises
 
 **Date:** 2026-08-06 / 07
-**Issues:** #3502 (fixed), #3430 (fixed), #3494 (fixed), #3353 (fixed), #3433 / #3523 / #3450 (fixed), #3529 / #3532 / #3533 (filed), #3510 / #3511 (corrected)
-**PRs:** #3527, #3528, #3530, #3531, and the #3502 fix
+**Issues:** #3502 (fixed), #3430 (fixed), #3494 (fixed), #3353 (fixed), #3433 / #3523 / #3450 (fixed), #3485 (closed), #3526 (fixed), #3529 / #3532 / #3533 / #3538 / #3539 / #3540 (filed), #3120 / #3325 / #3510 / #3511 (corrected)
+**PRs:** #3520, #3521, #3527, #3528, #3530, #3531, #3534, #3537, and the #3502 fix
 
 Continues session-1273, which found *why* pairing never worked. This one fixed it, and
 then spent its blocked time on the question the fix exposed: after the port, what is a
@@ -171,14 +171,118 @@ based on `claude/sync-cutover`. Retargeting them to `main` after #3517 merges is
 hygiene, it is the only way they are ever validated — and a stacked PR does not
 auto-retarget when its parent squash-merges (the #1380/#1323 incident).
 
-## State
+The outage returned later the same night, and the second round was worse: zero check-runs
+on seven freshly force-pushed heads, and queued runs cancelled outright. Worth recording
+the diagnostic that separated "my push failed" from "GitHub is down", because the two look
+identical from `gh pr checks`: compare local `HEAD` against `git ls-remote` per branch. All
+seven matched, so the pushes had landed and the missing runs were upstream. Without that
+check the obvious inference — that force-pushing had silently failed — would have sent the
+session re-pushing in a loop against an outage.
 
-Merged earlier in the port: pairing fix, LAN-only endpoint, snapshot schema pin,
+The second-order cost is subtler. With no CI, **a green checkmark is not available and an
+approving review is the only gate left**, which makes the next section's finding the
+governing one for the night.
+
+## A green rollup is not an approval
+
+Two PRs reported GREEN and both carried `CHANGES_REQUESTED` with substantive findings.
+Merging on the rollup would have landed two known defects. The rule this earns: read the
+review body before merging, every time, including on `--admin` merges — the check status
+and the review verdict answer different questions.
+
+Both findings turned out to be real, and both were more interesting than they looked.
+
+**#3520 — the reviewer was right, and the arithmetic understated it.** `table-fixed` stops
+a column growing but `<td>` overflow stays `visible`, so an unwrappable `<code>` chip
+renders past its column. Measured in a real browser rather than estimated: the table is
+189px at a 360px viewport (the review's 238px omitted `SheetContent`'s `p-6`), and the
+overlap was ~70.7px against a predicted ~60px.
+
+The valuable part was a defect *inside the suggested fix*. `w-1/3`/`w-2/3` on the `th`
+cells is silently ignored by Chromium on two of the four tables, because their
+width-bearing row is not the literal first `<tr>` — a `colSpan={2}` title row precedes it —
+and under `table-layout: fixed` only colspan=1 cells in the first row set widths
+(CSS 2.1 §17.5.2.1). Applied as written it would have looked correct and done nothing on
+half the tables. `<colgroup>` is row-position-independent and does work.
+
+**#3521 — the reviewer was wrong, and only an experiment could show it.** The argument was
+sound: the handler never calls `preventDefault()`, so Chromium should report the
+uncancelled error itself onto a channel the e2e gate reads. Confirmed the premise (no
+`preventDefault()` anywhere in `src/main.tsx:74-87`) and it still did not happen —
+four runs, zero `console:error`, zero `pageerror`.
+
+A clean capture proves nothing on its own, so the same harness was pointed at a genuine
+uncaught error as a **calibration control**; that one did trip the gate. Without the
+control, "nothing detected" and "the detector is blind" are indistinguishable, and the
+honest conclusion would have been unavailable. Chromium's ResizeObserver-loop notification
+is simply not dispatched like a thrown exception.
+
+The first attempt at that reproduction was invalid and nearly produced a confident wrong
+answer: it hit a `vite preview` server on :5173 belonging to a *different* worktree. The
+existing rule (kill :5173 before Playwright) is really a special case of a broader one —
+**verify which code the server is actually serving**, via `/proc/<pid>/cwd`.
+
+## Three issues re-measured against the ported tree
+
+Auditing open sync issues against the tree that now exists, rather than the tree they were
+filed against, changed three of them.
+
+**#3485 is fixed** — `SyncService::accept()` returns a permit-holding `AdmittedConnection`
+and the daemon spawns `establish()` per connection (`session_supervisor.rs:210-254`, citing
+the issue by number), with `impl Drop` on `InboundSession` making the permit
+non-destructurable. Closed.
+
+**#3120's headline number was wrong twice.** Not 25.2K LOC across four modules but ~24.5K
+across three — and the original figure was already stale before any port work, having
+drifted to ~26.7K on `main`. `sync_net` evaporated entirely (2,031 LOC), *more* completely
+than the thread predicted. But the falling number is misleading: `sync_daemon`,
+`sync_protocol` and `sync_files` are essentially untouched and still reference
+`Materializer` directly, so the actual subject of the issue — `agaric-sync` is not
+independently testable — is untouched by the port. An issue whose central number improves
+for the wrong reason is worse than one that is simply stale.
+
+**#3325's re-scoping comment looks mis-aimed**, and was surfaced rather than acted on. It
+marks the op-re-shipping finding "obsoleted — replaced by iroh-blobs", but that code
+(`operations.rs:58`, `session_state_machine.rs:1348`) is the audit op-log path driven by
+`SyncOrchestrator`, which the *new* QUIC driver runs to completion — not the file-transfer
+path iroh-blobs replaces. Convention here is to trust maintainer status comments, so the
+evidence went on the issue as a question.
+
+## A guard assertion that could not fail
+
+#3530's review flagged `parse(...) === undefined || parse(...).version === null`. If the
+parser stopped matching a bare `zizmor` entry, the first disjunct is true and the check
+named "a bare zizmor entry parses as version: null" still reports `ok` — it could not fail
+for the reason it existed. `?.version` is equally safe against the TypeError the disjunct
+was guarding and is falsifiable.
+
+Demonstrated rather than asserted: injecting the defect (requiring `@version` in the entry
+regex) makes the old form report `ok` and the new form report
+`FAIL - a bare zizmor entry parses as version: null: undefined`.
+
+This is the same shape as the vacuous test recorded earlier in this log, from a different
+author on a different day, which suggests it is a systematic trap rather than a lapse:
+**a defensive disjunct added to prevent a crash quietly swallows the failure case too.**
+
+## State
 `SyncMessage` over QUIC, LAN bind locality, error-source hygiene, frame-reservation
 hardening, the session driver, the endpoint service, bulk transfer.
 
 In flight: the cutover (#3517) and everything stacked on it, plus the CI pin batch, the
 undo wedge, the prose repair, and the joiner-wait follow-ups.
+
+Thirteen PRs are open against a nominal cap of five, because the outage removed the ability
+to merge rather than the ability to produce. That is the wrong shape and the session stopped
+opening new work once it was visible: with no CI, more PRs is more unvalidated inventory,
+not more progress. The queue drains when Actions returns — or, for anything whose full
+local CI-equivalent verify passes, on that evidence instead.
+
+One upstream dependency needed fixing before any of it could go green: six advisories
+published after these branches were cut turned `npm audit` red on every open PR at once.
+Identical failure across unrelated diffs is a property of the environment, not of anyone's
+change. mermaid is a production dependency, so validating it meant a real `npm ci` — a
+`--package-lock-only` bump leaves `node_modules` on the old version, and the test run then
+certifies the artifact you did not ship.
 
 **Q2 still gates release, not development** — QUIC/UDP on Android and restrictive WiFi
 needs hardware. #3502 no longer gates it. #3507 does: nothing here has been proven against
