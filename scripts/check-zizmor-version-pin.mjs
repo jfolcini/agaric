@@ -13,6 +13,13 @@
 //     pre-existing `sqruff@0.38.0` pin in the same lists has the identical
 //     blind spot; this is not new with zizmor.
 //
+// A FOURTH site sits outside this guard's scope: `scripts/setup-hooks.sh`'s
+// `cargo_get zizmor`, which installs unpinned. It is not checked here
+// because a `cargo install` invocation is not a version declaration to
+// compare against — the hook wrapper's own runtime `--version` assertion is
+// what catches a wrong binary from that path. Named so the next person
+// pinning a version knows it exists.
+//
 // Nothing connects these. A bump applied to one and missed in another is a
 // SILENT drift: CI still runs a `zizmor` binary, just not the one anyone
 // thinks it's running, and (per #3523's own "mitigating factors") the
@@ -215,8 +222,7 @@ function selfTestExtraction({ check }) {
   )
 
   check(
-    parseZizmorFromToolLine('        tool: prek,zizmor,taplo-cli') === undefined ||
-      parseZizmorFromToolLine('        tool: prek,zizmor,taplo-cli').version === null,
+    parseZizmorFromToolLine('        tool: prek,zizmor,taplo-cli')?.version === null,
     'a bare zizmor entry parses as version: null',
     JSON.stringify(parseZizmorFromToolLine('        tool: prek,zizmor,taplo-cli')),
   )
