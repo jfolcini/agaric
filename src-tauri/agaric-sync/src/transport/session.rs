@@ -156,26 +156,59 @@ impl BodyReader for RecvStream {
 /// `Vec::with_capacity(capacity)` reintroduced at the [`recv_sync_message`] call site
 /// would restore the amplification with every test still green. The buffer is created
 /// empty there for that reason, and this is the only thing that should ever size it.
+///
+/// # Why a scratch buffer instead of `resize`
+///
+/// `payload.resize(capacity, 0)` would write zeros across the whole frame — for a
+/// 256 MB frame, a ~251 MB memset of bytes the very next line overwrites, and worse,
+/// it *touches* every page, committing the resident set up front. That is the cost the
+/// incremental growth exists to avoid, so paying it in the growth itself would defeat
+/// the point on precisely the memory-tight targets that motivated this. The zeroing
+/// cannot simply be skipped: the crate denies `unsafe_code`, so `spare_capacity_mut`
+/// is not available and a `&mut [u8]` to hand the reader must be initialised memory.
+///
+/// So one chunk-sized scratch buffer is initialised once (`vec![0u8; n]` takes the
+/// `alloc_zeroed` path — lazily-mapped zero pages, not a memset), and `payload` is
+/// grown with `extend_from_slice` from the bytes that actually arrive. `payload`'s
+/// *capacity* is reserved ahead in exactly two steps, but its *length* — and so its
+/// resident footprint — only ever advances by delivered bytes. That is also what makes
+/// under-reading detectable: `payload.len()` is now decided by the reader rather than
+/// by this function's own sizing, so a dropped read is a short buffer, not a silently
+/// zero-filled one.
 async fn read_body<R: BodyReader>(
     recv: &mut R,
     capacity: usize,
     payload: &mut Vec<u8>,
 ) -> Result<(), AppError> {
+    if capacity == 0 {
+        // An empty frame is a legal frame (`SyncMessage` never serialises to one, but
+        // the prefix can say zero). Returning here rather than falling through keeps
+        // the reader untouched: a zero-length `fill_exact` is a request for nothing.
+        return Ok(());
+    }
+
     // Reserve one chunk at most, whatever was announced. Until a byte arrives the
     // length is a claim, and this is the only allocation a claim can buy.
     let first = READ_CHUNK_BYTES.min(capacity);
-    payload.resize(first, 0);
-    recv.fill_exact(&mut payload[..]).await?;
+    let mut scratch = vec![0u8; first];
+    payload.reserve_exact(first);
+
+    recv.fill_exact(&mut scratch).await?;
+    payload.extend_from_slice(&scratch);
 
     if capacity > first {
         // A full chunk arrived, so the peer has now paid for the length rather than
-        // merely asserting it. Size the buffer to the remainder in ONE exact step:
-        // letting it grow geometrically from here would end at ~1.25x the frame and
-        // hold both halves live across the final realloc — worse than the eager form
-        // it replaced, on precisely the memory-tight targets that motivated this.
+        // merely asserting it. Reserve the remainder in ONE exact step: letting the
+        // capacity grow geometrically from here would end at ~1.25x the frame and hold
+        // both halves live across the final realloc — worse than the eager form it
+        // replaced. Only the address space is reserved; the pages are dirtied as the
+        // `extend_from_slice`s below actually fill them.
         payload.reserve_exact(capacity - first);
-        payload.resize(capacity, 0);
-        recv.fill_exact(&mut payload[first..]).await?;
+        while payload.len() < capacity {
+            let want = (capacity - payload.len()).min(scratch.len());
+            recv.fill_exact(&mut scratch[..want]).await?;
+            payload.extend_from_slice(&scratch[..want]);
+        }
     }
     Ok(())
 }
@@ -616,18 +649,80 @@ mod tests {
         );
     }
 
-    /// A reader that accepts the first chunk and then refuses, so [`read_body`] is
-    /// driven exactly as a stalled or truncated peer would drive it.
+    /// The byte the synthetic peer sends at `offset` into a frame.
+    ///
+    /// The period is 251 — the largest prime below 256 — and not 256, because
+    /// [`READ_CHUNK_BYTES`] is 5,000,000, a multiple of 256: with a period of 256 every
+    /// chunk would be byte-identical and a skipped, repeated or reordered read would be
+    /// indistinguishable from the right one. A period coprime to the chunk length gives
+    /// every offset in a multi-chunk frame its own phase.
+    fn stream_byte(offset: usize) -> u8 {
+        u8::try_from(offset % 251).expect("a value below 251 fits in a u8")
+    }
+
+    /// Assert `payload` is exactly the first `capacity` bytes of the synthetic stream,
+    /// reporting the first divergence rather than dumping megabytes into the output.
+    fn assert_is_the_delivered_stream(payload: &[u8], capacity: usize) {
+        assert_eq!(
+            payload.len(),
+            capacity,
+            "read_body must fill exactly the announced length"
+        );
+        let expected: Vec<u8> = (0..capacity).map(stream_byte).collect();
+        let divergence = payload
+            .iter()
+            .zip(&expected)
+            .position(|(got, want)| got != want);
+        assert!(
+            divergence.is_none(),
+            "payload diverges from the bytes the peer delivered at offset {:?}: got {:?}, want {:?}",
+            divergence,
+            divergence.map(|i| payload[i]),
+            divergence.map(|i| expected[i]),
+        );
+    }
+
+    /// A reader that delivers a bounded number of chunks and then refuses, so
+    /// [`read_body`] is driven exactly as a stalled or truncated peer would drive it.
+    ///
+    /// It does two things a bare `Ok(())` did not, both load-bearing. It **writes** a
+    /// position-dependent pattern into `buf`, so the bytes a caller ends up with encode
+    /// where in the stream they came from; and it **records** the length of every
+    /// request. Without those, `payload`'s length and contents were decided entirely by
+    /// `read_body`'s own sizing, and deleting one of its reads left the suite green —
+    /// which is exactly the state
+    /// [`read_body_fills_a_multi_chunk_frame_completely`] was in.
     struct StallingReader {
         chunks_before_failing: usize,
+        /// How far into the synthetic stream the peer has already sent.
+        delivered: usize,
+        /// The length of every buffer `fill_exact` was handed, in order.
+        requests: Vec<usize>,
+    }
+
+    impl StallingReader {
+        fn new(chunks_before_failing: usize) -> Self {
+            Self {
+                chunks_before_failing,
+                delivered: 0,
+                requests: Vec::new(),
+            }
+        }
     }
 
     impl BodyReader for StallingReader {
-        async fn fill_exact(&mut self, _buf: &mut [u8]) -> Result<(), AppError> {
+        async fn fill_exact(&mut self, buf: &mut [u8]) -> Result<(), AppError> {
+            // Recorded before the refusal so a request that should never have been
+            // issued is still visible after the failure.
+            self.requests.push(buf.len());
             if self.chunks_before_failing == 0 {
                 return Err(wire_err("read payload: peer stopped sending"));
             }
             self.chunks_before_failing -= 1;
+            for (i, slot) in buf.iter_mut().enumerate() {
+                *slot = stream_byte(self.delivered + i);
+            }
+            self.delivered += buf.len();
             Ok(())
         }
     }
@@ -647,9 +742,7 @@ mod tests {
     #[tokio::test]
     async fn a_frame_at_the_cap_is_not_reserved_before_it_arrives() {
         let capacity = usize::try_from(MAX_FRAME_SIZE).expect("cap fits usize");
-        let mut reader = StallingReader {
-            chunks_before_failing: 0,
-        };
+        let mut reader = StallingReader::new(0);
         let mut payload = Vec::new();
 
         let err = read_body(&mut reader, capacity, &mut payload)
@@ -666,25 +759,104 @@ mod tests {
              be reserved before it arrives",
             payload.capacity()
         );
+        assert_eq!(
+            reader.requests,
+            vec![READ_CHUNK_BYTES],
+            "an unsent frame must be asked for one chunk at a time, not all at once"
+        );
     }
 
     /// The growth policy must still deliver a complete large frame — a bound that only
     /// ever under-reads would satisfy the test above and break every real transfer.
+    ///
+    /// This is the test that could not fail before: the fake reader ignored its buffer
+    /// and `payload.len()` was decided entirely by `read_body`'s own `resize`, so
+    /// deleting the second read left it green. It now asserts over bytes the *reader*
+    /// wrote, so `payload` can only reach `capacity` by being handed `capacity` bytes.
+    ///
+    /// Falsified four ways. Dropping the tail `fill_exact` while keeping the
+    /// `extend_from_slice` fails on content — "payload diverges from the bytes the peer
+    /// delivered at offset Some(5000000): got Some(0), want Some(80)". Dropping the
+    /// whole `capacity > first` block fails on length — "left: 5000000, right:
+    /// 10001234". Dropping the `reserve_exact` of the remainder fails on capacity —
+    /// "left: 20000000, right: 10001234", the geometric 2× this exists to prevent.
+    /// Halving the read step fails on the reader's budget, which is why that budget is
+    /// exactly three.
     #[tokio::test]
     async fn read_body_fills_a_multi_chunk_frame_completely() {
         let capacity = READ_CHUNK_BYTES * 2 + 1234;
-        let mut reader = StallingReader {
-            chunks_before_failing: 3,
-        };
+        // Exactly the number of reads a correct implementation needs: a fourth would
+        // be refused, so over-reading fails here too.
+        let mut reader = StallingReader::new(3);
         let mut payload = Vec::new();
 
         read_body(&mut reader, capacity, &mut payload)
             .await
             .expect("a delivered body must read");
+
+        assert_is_the_delivered_stream(&payload, capacity);
         assert_eq!(
-            payload.len(),
+            reader.requests,
+            vec![READ_CHUNK_BYTES, READ_CHUNK_BYTES, 1234],
+            "the frame must be read as two full chunks and an exact tail"
+        );
+        assert_eq!(
+            payload.capacity(),
             capacity,
-            "read_body must fill exactly the announced length"
+            "a delivered frame must be sized in one exact step, not grown geometrically"
+        );
+    }
+
+    /// A zero-length frame must not turn into a zero-length *read*. `fill_exact` with
+    /// an empty buffer is a request for nothing, and against a reader that refuses —
+    /// the shape a peer that has already stopped sending presents — issuing one turns
+    /// an empty frame into a spurious error.
+    #[tokio::test]
+    async fn an_empty_frame_reads_without_issuing_a_request() {
+        let mut reader = StallingReader::new(0);
+        let mut payload = Vec::new();
+
+        read_body(&mut reader, 0, &mut payload)
+            .await
+            .expect("a zero-length frame is not a read failure");
+
+        assert!(
+            payload.is_empty(),
+            "a zero-length frame produced {} bytes",
+            payload.len()
+        );
+        assert!(
+            reader.requests.is_empty(),
+            "a zero-length frame must issue no read at all; it asked for {:?}",
+            reader.requests
+        );
+    }
+
+    /// A frame smaller than one chunk is a single read of exactly its own length. The
+    /// `min` is what stops a 1,234-byte frame from asking for — and reserving — 5 MB,
+    /// which is the common case: every handshake message is far below one chunk.
+    #[tokio::test]
+    async fn a_sub_chunk_frame_is_read_in_one_exact_request() {
+        let capacity = 1234;
+        // Deliberately more chunks than needed: the reader's budget must not be what
+        // makes this pass.
+        let mut reader = StallingReader::new(4);
+        let mut payload = Vec::new();
+
+        read_body(&mut reader, capacity, &mut payload)
+            .await
+            .expect("a delivered body must read");
+
+        assert_is_the_delivered_stream(&payload, capacity);
+        assert_eq!(
+            reader.requests,
+            vec![capacity],
+            "a sub-chunk frame must be one read of exactly its length"
+        );
+        assert_eq!(
+            payload.capacity(),
+            capacity,
+            "a sub-chunk frame must not reserve a whole chunk"
         );
     }
 }
