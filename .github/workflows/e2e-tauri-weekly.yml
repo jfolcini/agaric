@@ -102,7 +102,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           # Cache `~/.cargo/bin/` so the `cargo install tauri-driver` below
@@ -223,7 +223,7 @@ jobs:
 
       - name: Upload WebdriverIO logs
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-tauri-logs
           path: |
@@ -239,7 +239,7 @@ jobs:
         # page-source/testid/URL/sidebar excerpts are logged to stdout (captured
         # in the run log). SHA pinned byte-identical to the logs step above.
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: e2e-tauri-diagnostics
           path: e2e-tauri/artifacts/

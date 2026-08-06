@@ -270,7 +270,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           # Per-job-class key (issue #813): rust-cache keeps ONE immutable
@@ -355,7 +355,7 @@ jobs:
           dpkg-deb -c "$deb" | grep -E '(^|/)agaric-mcp( |$)'
 
       - name: Upload Linux bundles
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: bundle-linux
           path: |
@@ -423,7 +423,7 @@ jobs:
           targets: aarch64-linux-android,x86_64-linux-android
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           # PEND-39 C6: separate `rust-android` key — Android cross-
@@ -447,7 +447,7 @@ jobs:
           java-version: 17
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
         with:
           packages: >
             platforms;android-36
@@ -544,7 +544,7 @@ jobs:
           NDK_HOME: ${{ env.ANDROID_HOME }}/ndk/27.2.12479018
 
       - name: Upload Android release APK (aarch64, unsigned)
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: agaric-android-aarch64-unsigned
           path: src-tauri/gen/android/app/build/outputs/apk/universal/release/app-universal-release-unsigned.apk

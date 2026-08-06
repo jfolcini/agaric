@@ -432,7 +432,7 @@ jobs:
         # when the cargo hooks + cargo/sqlx steps compile, so it is gated with
         # the toolchain — a backend-less PR skips it.
         if: needs.detect-changes.outputs.backend == 'true'
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           # Cache `~/.cargo/bin/` so cargo-installed plugins (prek, sqlx-cli)
@@ -1073,7 +1073,7 @@ jobs:
         # Kept the `vitest-coverage-merged` name so any downstream Codecov /
         # badge tooling that referenced it keeps working after the merge
         # job was removed.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: vitest-coverage-merged
           path: coverage-merged/
@@ -1254,7 +1254,7 @@ jobs:
 
       - name: Upload Playwright report (on failure)
         if: failure() && steps.playwright.outcome == 'failure'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           # `${{ matrix.shard }}` keeps shard artifacts from colliding —
           # GitHub rejects duplicate artifact names within a workflow run.
@@ -1366,7 +1366,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           cache-bin: 'true'
@@ -1441,7 +1441,7 @@ jobs:
       - name: Upload shard coverage artifact
         # Partial lcov for this shard. Retained 7 days — the merged artifact
         # the `cargo-coverage` job publishes is the long-lived one.
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: rust-coverage-shard-${{ matrix.shard }}
           path: src-tauri/coverage-${{ matrix.shard }}.lcov
@@ -1573,7 +1573,7 @@ jobs:
         run: node scripts/coverage-ratchet.mjs --lcov coverage.lcov --key rust --gate
 
       - name: Upload merged rust coverage artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: hashFiles('coverage.lcov') != ''
         with:
           name: rust-coverage-lcov
@@ -1653,7 +1653,7 @@ jobs:
           toolchain: 1.95.0
 
       - name: Rust cache
-        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: src-tauri
           cache-bin: 'true'
