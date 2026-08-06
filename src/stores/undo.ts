@@ -36,7 +36,7 @@
 import { create } from 'zustand'
 
 import { announce } from '@/lib/announcer'
-import { isValidation } from '@/lib/app-error'
+import { isNonReversible, isNotFound, isValidation } from '@/lib/app-error'
 import { t } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
@@ -374,6 +374,29 @@ function withoutEntry(undoStack: UndoStackEntry[], entry: UndoStackEntry): UndoS
 }
 
 /**
+ * #3353 (follow-up to #3323) — is this a PERMANENT, non-retryable revert
+ * failure? Resubmitting the identical entry against one of these can never
+ * succeed, so `undoByRefs` must drop the dead entry instead of leaving it on
+ * top of the stack (where it would fail identically on every subsequent
+ * Ctrl+Z, wedging undo on the page forever):
+ *
+ * - `validation` (#3323) — oversized batch past `MAX_REVERT_OPS`, a
+ *   duplicate ref, a target that's already reversed.
+ * - `not_found` — the op ref no longer exists (`verify_undo_targets_in_tx`,
+ *   `src-tauri/src/commands/history.rs`); reachable once a session outlives
+ *   the 90-day `op_log_compact` retention.
+ * - `non_reversible` — the reverse-move preflight rejected the revert
+ *   (`src-tauri/src/commands/history.rs`).
+ *
+ * Deliberately narrower than "any AppError": a TRANSIENT failure
+ * (`pool_busy`, `database`, a dropped IPC) deserves a retry with the entry
+ * intact, so only this permanent class is dropped here.
+ */
+function isPermanentRevertFailure(err: unknown): boolean {
+  return isValidation(err) || isNotFound(err) || isNonReversible(err)
+}
+
+/**
  * #2901 — how far back `undoDeleteOf`'s toast-Undo scans page history for its
  * delete op. The delete is the newest op at swipe time; only ops landing in
  * the toast's 5s window (typically the tap's own blur-flush edit) can sit
@@ -494,11 +517,11 @@ export const useUndoStore = create<UndoStore>((set, get) => {
    * On failure, redo/depth are always left untouched, and the atomic-abort
    * contract of `undoOps` guarantees the backend reverted nothing either. For
    * a TRANSIENT failure (`pool_busy`, a dropped IPC) the entry itself is also
-   * left on the stack so a later Ctrl+Z retries it. For a `Validation`
-   * rejection (#3323: oversized batch, duplicate ref, an already-reversed
-   * target) resubmitting would fail identically forever, so the entry is
-   * DROPPED from the stack here (see the `isValidation` branch below) instead
-   * of waiting for it to self-heal on the next `onNewAction` /
+   * left on the stack so a later Ctrl+Z retries it. For a PERMANENT
+   * rejection (#3323/#3353: validation, not_found, or non_reversible)
+   * resubmitting would fail identically forever, so the entry is DROPPED
+   * from the stack here (see the `isPermanentRevertFailure` branch below)
+   * instead of waiting for it to self-heal on the next `onNewAction` /
    * `reanchorAfterRemoteOps` reset.
    */
   async function undoByRefs(pageId: string, entry: UndoStackEntry): Promise<UndoResult | null> {
@@ -517,15 +540,15 @@ export const useUndoStore = create<UndoStore>((set, get) => {
     } catch (err) {
       logger.error('UndoStore', 'undo_op failed', { pageId, refCount: newestFirst.length }, err)
       notify.warning(t('undo.batchUnavailable'))
-      // #3323 — a VALIDATION failure (an oversized batch past the backend's
-      // `MAX_REVERT_OPS`, a duplicate ref, a target that's already reversed)
-      // can never succeed on retry: resubmitting the identical entry fails
-      // identically forever, wedging Ctrl+Z on this page permanently. Drop
-      // the dead entry so the stack can move on to the next one. Narrower
-      // than a blanket drop-on-any-error: a TRANSIENT failure (pool_busy, a
+      // #3323/#3353 — a PERMANENT failure (validation, not_found, or
+      // non_reversible — see `isPermanentRevertFailure`) can never succeed
+      // on retry: resubmitting the identical entry fails identically
+      // forever, wedging Ctrl+Z on this page permanently. Drop the dead
+      // entry so the stack can move on to the next one. Narrower than a
+      // blanket drop-on-any-error: a TRANSIENT failure (pool_busy, a
       // dropped IPC) deserves a retry with the entry intact, so only the
-      // validation class is dropped here.
-      if (isValidation(err)) {
+      // permanent class is dropped here.
+      if (isPermanentRevertFailure(err)) {
         set((state) => ({
           pages: setPageState(state.pages, pageId, (current) =>
             current ? { ...current, undoStack: withoutEntry(current.undoStack, entry) } : current,

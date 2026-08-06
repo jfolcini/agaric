@@ -1474,6 +1474,129 @@ describe('useUndoStore', () => {
         expect(stack?.[0]?.refs).toEqual([ref(5)])
       })
     })
+
+    // #3353 — follow-up to #3323: the drop-dead-entry fix only covered a
+    // `Validation` rejection. `NotFound` (missing op ref past the
+    // `op_log_compact` retention window) and `NonReversible` (reverse-move
+    // preflight failure) are equally PERMANENT — resubmitting the identical
+    // entry fails identically forever — so an entry failing for either
+    // reason must ALSO be dropped, or every subsequent Ctrl+Z on the page
+    // fails identically: the exact pre-#3323 wedge. Each test below asserts
+    // the property that actually defines "wedged": a SUBSEQUENT undo call
+    // (on the entry left underneath) must still succeed — not merely that
+    // the first call didn't throw.
+    describe('#3353 — NotFound and NonReversible revert failures also drop the dead entry', () => {
+      it('undoOp: a "not_found" AppError drops the entry, AND a subsequent undo still works', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(1_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(5)])
+          // Past the coalesce window → a distinct second entry underneath.
+          vi.setSystemTime(1_000_000 + UNDO_GROUP_WINDOW_MS + 1)
+          useUndoStore.getState().onNewAction('page1', [ref(9)])
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(2)
+
+          mockedUndoOp.mockRejectedValueOnce({
+            kind: 'not_found',
+            message: 'op (dev1, 9) not found',
+          })
+
+          const firstResult = await useUndoStore.getState().undo('page1')
+          expect(firstResult).toBeNull()
+
+          // The dead top entry (ref 9) is dropped, NOT the surviving one —
+          // exact depth, no orphan/duplicate, next entry now on top.
+          const afterFirst = useUndoStore.getState().pages.get('page1')
+          expect(afterFirst?.undoStack).toHaveLength(1)
+          expect(afterFirst?.undoStack[0]?.refs).toEqual([ref(5)])
+          expect(afterFirst?.undoDepth).toBe(0)
+          expect(afterFirst?.redoStack).toEqual([])
+
+          // The property a "wedge" violates: Ctrl+Z again must actually
+          // succeed against the entry left underneath, not fail identically.
+          mockedUndoOp.mockResolvedValueOnce(
+            makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 100 }),
+          )
+          const secondResult = await useUndoStore.getState().undo('page1')
+
+          expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(5) })
+          expect(secondResult).not.toBeNull()
+          const afterSecond = useUndoStore.getState().pages.get('page1')
+          expect(afterSecond?.undoStack).toEqual([])
+          expect(afterSecond?.undoDepth).toBe(1)
+          expect(afterSecond?.redoStack).toEqual([{ device_id: 'dev1', seq: 100 }])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('undoOps: a "not_found" AppError (coalesced batch) drops the coalesced entry', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(1), ref(2)])
+
+        mockedUndoOps.mockRejectedValueOnce({
+          kind: 'not_found',
+          message: 'op (dev1, 2) not found',
+        })
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+
+      it('undoOp: a "non_reversible" AppError drops the entry, AND a subsequent undo still works', async () => {
+        vi.useFakeTimers()
+        try {
+          vi.setSystemTime(2_000_000)
+          useUndoStore.getState().onNewAction('page1', [ref(5)])
+          vi.setSystemTime(2_000_000 + UNDO_GROUP_WINDOW_MS + 1)
+          useUndoStore.getState().onNewAction('page1', [ref(9)])
+          expect(useUndoStore.getState().pages.get('page1')?.undoStack).toHaveLength(2)
+
+          mockedUndoOp.mockRejectedValueOnce({
+            kind: 'non_reversible',
+            message: 'reverse move would create a cycle',
+          })
+
+          const firstResult = await useUndoStore.getState().undo('page1')
+          expect(firstResult).toBeNull()
+
+          const afterFirst = useUndoStore.getState().pages.get('page1')
+          expect(afterFirst?.undoStack).toHaveLength(1)
+          expect(afterFirst?.undoStack[0]?.refs).toEqual([ref(5)])
+          expect(afterFirst?.undoDepth).toBe(0)
+          expect(afterFirst?.redoStack).toEqual([])
+
+          mockedUndoOp.mockResolvedValueOnce(
+            makeUndoResult({ deviceId: 'dev1', seq: 5, newSeq: 200 }),
+          )
+          const secondResult = await useUndoStore.getState().undo('page1')
+
+          expect(mockedUndoOp).toHaveBeenLastCalledWith({ opRef: ref(5) })
+          expect(secondResult).not.toBeNull()
+          const afterSecond = useUndoStore.getState().pages.get('page1')
+          expect(afterSecond?.undoStack).toEqual([])
+          expect(afterSecond?.undoDepth).toBe(1)
+          expect(afterSecond?.redoStack).toEqual([{ device_id: 'dev1', seq: 200 }])
+        } finally {
+          vi.useRealTimers()
+        }
+      })
+
+      it('undoOps: a "non_reversible" AppError (coalesced batch) drops the coalesced entry', async () => {
+        useUndoStore.getState().onNewAction('page1', [ref(3), ref(4)])
+
+        mockedUndoOps.mockRejectedValueOnce({
+          kind: 'non_reversible',
+          message: 'reinserted parent no longer exists',
+        })
+
+        const result = await useUndoStore.getState().undo('page1')
+
+        expect(result).toBeNull()
+        expect(useUndoStore.getState().pages.get('page1')?.undoStack).toEqual([])
+      })
+    })
   })
 
   // ---------------------------------------------------------------------------
