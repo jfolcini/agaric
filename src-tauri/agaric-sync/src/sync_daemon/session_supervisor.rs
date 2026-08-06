@@ -66,7 +66,7 @@ use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 
 use super::SharedEventSink;
-use super::discovery::{process_discovery_event, resolve_peer_address};
+use super::discovery::{peers_for_change_round, process_discovery_event, resolve_peer_address};
 use super::server::handle_incoming_sync;
 use super::snapshot_transfer;
 
@@ -376,18 +376,26 @@ pub(crate) async fn daemon_loop(
             // inside `try_sync_with_peer` via `scheduler.try_lock_peer`,
             // so simultaneous dispatch is safe — any contender returns
             // immediately without running a session.
+            //
+            // #3502 Part 2: this branch is also the pairing-window initiation
+            // path. Both pairing commands end in `scheduler.notify_change()`,
+            // so this is the branch that wakes the instant the local pairing
+            // marker is written — including the `confirm_pairing` overwrite
+            // that finally makes the two devices' proofs agree. Branch A can
+            // only fire if the peer re-announces afterwards, which a quiet
+            // network need never do. See `peers_for_change_round` for why the
+            // round is composed the way it is (and why it is not gated on a
+            // `pairing_pending` false→true edge).
             () = scheduler.wait_for_debounced_change() => {
                 let refs = list_peer_refs_or_empty(&pool, "debounced_change").await;
+                // Fail open to `false` exactly as Branch A does: a transient DB
+                // error falls back to the stricter paired-only round.
+                let pairing_pending = peer_refs::is_pending_pairing(&pool)
+                    .await
+                    .unwrap_or(false);
+                let round = peers_for_change_round(&refs, &discovered, pairing_pending);
                 let mut join_set = tokio::task::JoinSet::new();
-                for peer_ref in &refs {
-                    let Some(peer) = resolve_peer_address(
-                        &peer_ref.peer_id,
-                        peer_ref.last_address.as_deref(),
-                        peer_ref.endpoint_id.as_deref(),
-                        &discovered,
-                    ) else {
-                        continue;
-                    };
+                for peer in round {
                     // Each spawned task owns clones of the shared state.
                     // `Materializer`, `SqlitePool`, and `SyncCert` clone
                     // cheaply (Arc-backed); `Vec<PeerRef>` clones once

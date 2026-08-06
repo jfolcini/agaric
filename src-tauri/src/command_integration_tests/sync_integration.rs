@@ -364,12 +364,52 @@ async fn full_pair_then_sync_workflow() {
     .unwrap()
     .passphrase;
 
-    // Local device (the joiner): its dialog also opened a session, then the
-    // user typed the passphrase displayed on the remote device.
+    // Local device (the joiner): its dialog also opened, and — #3502 — the
+    // dialog opens in the HOST role by default and calls `initHost()` on every
+    // open, so the joiner arms *its own* competing proof before the user has
+    // chosen a role or typed anything. This models
+    // `start_pairing_armed_inner`, the command the frontend actually calls;
+    // the test used to model it with `start_pairing_inner`, which touches only
+    // the in-memory slot and therefore skipped the mid-state below entirely.
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
-    start_pairing_inner(&pairing.0, "dev-local").unwrap();
+    let joiner_own_passphrase =
+        crate::commands::start_pairing_armed_inner(&pool, &pairing.0, &scheduler, "dev-local")
+            .await
+            .unwrap()
+            .passphrase;
+
+    // The mid-state that breaks pairing: both devices hold a marker, and the
+    // two markers DISAGREE. The wire-side #855 gate compares the initiator's
+    // offered proof against the responder's own, so every dial in this state
+    // fails with "pairing passphrase proof required" — in both directions —
+    // and each device lands in the other's `discovered` map having achieved
+    // nothing. That is the state #3502's rediscovery guard then made
+    // permanent.
+    assert_ne!(
+        joiner_own_passphrase, host_passphrase,
+        "the two dialogs mint independent passphrases (#3463)"
+    );
+    assert_ne!(
+        peer_refs::get_pending_pairing_proof(&pool).await.unwrap(),
+        peer_refs::get_pending_pairing_proof(&pool_remote)
+            .await
+            .unwrap(),
+        "before the user types, the two markers must disagree — this is the \
+         mid-state in which pairing cannot succeed"
+    );
+    // And the marker is ALREADY armed here, which is why #3502 Part 2 triggers
+    // on "the window is open at this wake" rather than on a `pairing_pending`
+    // false→true edge: the confirm below overwrites the marker's *content*
+    // while the bool stays `true` throughout, so an edge-triggered
+    // re-initiation would never fire in this — the real — flow.
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "the joiner's own dialog-open already armed the window, before confirm"
+    );
+
+    // Now the user types the passphrase displayed on the remote device.
     confirm_pairing_inner(
         &pool,
         &pairing.0,
