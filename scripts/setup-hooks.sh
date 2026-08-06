@@ -199,6 +199,45 @@ cargo_get() {
   fi
 }
 
+# cargo_get_pinned <crate> <version> [binary] — install an EXACT version, and
+# REPLACE a differing one that is already on PATH.
+#
+# `cargo_get` returns early for any binary that exists, which is the right
+# policy for tools where "some recent version" is fine. It is the wrong policy
+# where local/CI version agreement is itself the property being bought
+# (#3476): zizmor's audit SET changes between releases, so a box holding an
+# older build silently gates pushes with fewer rules than CI applies. The
+# version is read from the hook wrapper so this script cannot drift from the
+# constant the wrapper asserts against.
+cargo_get_pinned() {
+  local crate="$1" version="$2" bin="${3:-$1}" current=""
+  if [ -z "$version" ]; then
+    warn "no pinned version found for $crate — falling back to an unpinned install"
+    cargo_get "$crate" "$bin"
+    return
+  fi
+  if have "$bin"; then
+    current="$("$bin" --version 2>/dev/null | awk 'NR == 1 { print $NF }')"
+    if [ "$current" = "$version" ]; then ok "$bin $version (already installed)"; return; fi
+    note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
+  fi
+  if have cargo-binstall && cargo binstall -y "${crate}@${version}" >/dev/null 2>&1; then
+    ok "$bin $version (binstall)"; return
+  fi
+  if cargo install --locked "${crate}@${version}" >/dev/null 2>&1; then
+    ok "$bin $version (cargo install)"; return
+  fi
+  warn "could not install ${crate}@${version} — run: cargo install --locked ${crate}@${version}"
+}
+
+# The pin lives in scripts/zizmor-hook.sh (single source of truth; the same
+# version is pinned in the CI `tool:` lists, and the wrapper hard-fails a CI
+# run whose binary disagrees).
+ZIZMOR_PINNED_VERSION="$(
+  sed -n 's/^ZIZMOR_PINNED_VERSION="\([^"]*\)".*/\1/p' \
+    "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
+)"
+
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
 # prebuilt release tarball instead. macOS prefers brew.
@@ -286,7 +325,7 @@ else
   cargo_get cargo-audit
   cargo_get sqruff
   cargo_get typos-cli typos
-  cargo_get zizmor
+  cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION"
   cargo_get taplo-cli taplo
   cargo_get cargo-nextest cargo-nextest
   cargo_get just

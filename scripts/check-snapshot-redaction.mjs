@@ -38,10 +38,12 @@
 // test doc (§ "For deterministic data, no redaction needed"), they're
 // explicitly allowed.
 //
-// We auto-derive the allowlist by reading every `.rs` file under
-// `src-tauri/src/` once and treating any candidate value that appears
-// as a substring of the concatenated source as a fixture. Pros vs an
-// explicit allowlist:
+// We auto-derive the allowlist by reading every `.rs` file under every
+// workspace member's `src/` once — the member list itself derived from
+// `[workspace] members` in `src-tauri/Cargo.toml`, so it cannot drift as
+// crates are added or modules move between them (#3465) — and treating any
+// candidate value that appears as a substring of the concatenated source as a
+// fixture. Pros vs an explicit allowlist:
 //
 //   - Cannot go stale: the allowlist regenerates from the source on
 //     every run.
@@ -82,13 +84,29 @@
 // once for the allowlist substring index).
 //
 // Usage: node scripts/check-snapshot-redaction.mjs
-// Exit:  0 = clean, 1 = at least one unredacted value.
+//        node scripts/check-snapshot-redaction.mjs --self-test
+//        node scripts/check-snapshot-redaction.mjs --root <dir>   (self-test)
+// Exit:  0 = clean, 1 = at least one unredacted value,
+//        2 = the fixture-source roots could not be derived (fail closed),
+//            or a self-test assertion failed.
 // ─────────────────────────────────────────────────────────────────────
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
-const ROOT = path.resolve(import.meta.dirname, '..')
+const ARGV = process.argv.slice(2)
+
+// `--root <dir>` exists so `--self-test` can drive this script against
+// synthetic trees as a real subprocess and assert the actual exit code
+// (#3465). It defaults to the repo, so every ordinary invocation is
+// unchanged.
+const ROOT_FLAG = ARGV.indexOf('--root')
+const ROOT =
+  ROOT_FLAG === -1
+    ? path.resolve(import.meta.dirname, '..')
+    : path.resolve(ARGV[ROOT_FLAG + 1] ?? '')
 
 // Directories to scan for `.snap` files.
 const SCAN_ROOTS = ['src', 'src-tauri']
@@ -113,27 +131,91 @@ function walk(dir, predicate, results = []) {
   return results
 }
 
-// Build a single concatenated blob of every `.rs` file under the app crate
-// AND the extracted workspace-member crates (`agaric-core`, `agaric-store`,
-// #2621) for the fixture-allowlist substring index. Modules that own
-// snapshot tests (e.g. `op.rs` with its `const TEST_TID` fixtures) move
-// between these crates during the layered split, so the fixture consts must
-// be discoverable wherever the module currently lives. Reading a few hundred
-// small files and joining them takes ~30ms; subsequent `.includes()` calls
-// are O(N) over the blob but N ≈ 5 MB and we run at most ~50 lookups, so
-// total time stays well under the <2s budget.
-const RUST_SOURCE_ROOTS = [
-  'src-tauri/src',
-  'src-tauri/agaric-core/src',
-  'src-tauri/agaric-store/src',
-]
+// Build a single concatenated blob of every `.rs` file under every workspace
+// member for the fixture-allowlist substring index. Modules that own snapshot
+// tests (e.g. `op.rs` with its `const TEST_TID` fixtures) move between crates
+// during the layered split, so the fixture consts must be discoverable
+// wherever the module currently lives. Reading a few hundred small files and
+// joining them takes ~30ms; subsequent `.includes()` calls are O(N) over the
+// blob but N ≈ 5 MB and we run at most ~50 lookups, so total time stays well
+// under the <2s budget.
+//
+// The root list is DERIVED from `[workspace] members` in
+// `src-tauri/Cargo.toml`, never hand-maintained (#3465). The hand-maintained
+// list covered three of the five crates the #2621 split produced, so whether
+// a literal counted as a deliberate fixture depended on which crate the
+// snapshot test happened to live in — the same path-keyed drift that has now
+// bitten three guards in this tree. Deriving it means a new member crate is
+// covered the day it is added to the manifest.
+const WORKSPACE_MANIFEST_REL = 'src-tauri/Cargo.toml'
+
+/**
+ * Fail-closed exit. The allowlist is the guard's only source of leniency, so
+ * a derivation that cannot be trusted must stop the run rather than continue
+ * with a partial list: a partial list is exactly the #3465 defect (a crate
+ * silently held to different rules), and it is invisible in a green run.
+ *
+ * @param {string} why
+ * @returns {never}
+ */
+function derivationFailure(why) {
+  console.error(`ERROR: cannot derive the Rust fixture-source roots — ${why}.`)
+  console.error(`This guard reads \`[workspace] members\` from ${WORKSPACE_MANIFEST_REL}.`)
+  console.error('Refusing to run with a partial allowlist (#3465).')
+  process.exit(2)
+}
+
+/**
+ * `<member>/src` for every workspace member, relative to the repo root.
+ *
+ * @returns {string[]}
+ */
+function deriveRustSourceRoots() {
+  const manifest = path.join(ROOT, WORKSPACE_MANIFEST_REL)
+  if (!fs.existsSync(manifest)) derivationFailure(`${WORKSPACE_MANIFEST_REL} does not exist`)
+  // Strip `#` comments so a commented-out member is not read as a live one.
+  const text = fs
+    .readFileSync(manifest, 'utf8')
+    .split('\n')
+    .map((l) => l.replace(/#.*$/, ''))
+    .join('\n')
+  const workspace = /^\s*\[workspace\]\s*$/m.exec(text)
+  if (workspace === null) derivationFailure('no [workspace] section')
+  // Bounded by the next section header so a `members` key belonging to some
+  // other table cannot be mistaken for the workspace's.
+  const rest = text.slice(workspace.index + workspace[0].length)
+  const nextSection = /^\s*\[/m.exec(rest)
+  const section = nextSection === null ? rest : rest.slice(0, nextSection.index)
+  const members = /\bmembers\s*=\s*\[([^\]]*)\]/.exec(section)
+  if (members === null) derivationFailure('no `members` key in [workspace]')
+  const names = [...members[1].matchAll(/"([^"]+)"/g)].map((m) => m[1])
+  if (names.length === 0) derivationFailure('the `members` list is empty')
+
+  const roots = []
+  for (const name of names) {
+    const rel = name === '.' ? 'src-tauri/src' : `src-tauri/${name}/src`
+    // A declared member with no `src/` means the layout moved under the
+    // guard's feet — the precise condition that produced #3465. Stop, loudly.
+    if (!fs.existsSync(path.join(ROOT, rel))) {
+      derivationFailure(`workspace member \`${name}\` has no \`${rel}\``)
+    }
+    roots.push(rel)
+  }
+  return roots
+}
+
+let RUST_SOURCE_ROOTS = null
+function getRustSourceRoots() {
+  RUST_SOURCE_ROOTS ??= deriveRustSourceRoots()
+  return RUST_SOURCE_ROOTS
+}
+
 let RUST_SOURCE_BLOB = null
 function getRustSourceBlob() {
   if (RUST_SOURCE_BLOB !== null) return RUST_SOURCE_BLOB
   const parts = []
-  for (const root of RUST_SOURCE_ROOTS) {
+  for (const root of getRustSourceRoots()) {
     const dir = path.join(ROOT, root)
-    if (!fs.existsSync(dir)) continue
     for (const f of walk(dir, (n) => n.endsWith('.rs'))) {
       parts.push(fs.readFileSync(f, 'utf8'))
     }
@@ -190,6 +272,10 @@ const CURSOR_RE = /\b(?:next_cursor|prev_cursor|cursor)\s*:\s*"([A-Za-z0-9_-]{17
 // outside the 26-char ULID match), so no separate filter needed.
 
 // ─── main ───────────────────────────────────────────────────────────
+
+// Placed before the scan; `runSelfTest` always exits, so the scan below never
+// runs in self-test mode.
+if (ARGV.includes('--self-test')) runSelfTest()
 
 const violations = []
 let snapFileCount = 0
@@ -307,3 +393,208 @@ console.log(
   `OK: ${snapFileCount} snapshot file(s) scanned, ${totalCandidates} candidate(s) checked, ` +
     `0 unredacted ULID/hash/timestamp/cursor values.`,
 )
+
+// ─── self-test ──────────────────────────────────────────────────────
+//
+// Every strictness property this guard has is a property of a REAL run, so
+// the fixtures below build synthetic repos and spawn this script against them
+// with `--root`, asserting the actual exit code. Each closed hole is a PAIR: a
+// tree the guard must flag and a tree it must not, because a widening with
+// only one of the two cannot tell "now correct" from "now credits everything".
+
+function runSelfTest() {
+  const failures = []
+  const expect = (name, cond, detail) => {
+    if (cond) {
+      console.log(`  ok   - ${name}`)
+    } else {
+      failures.push(name)
+      console.error(`  FAIL - ${name}: ${detail}`)
+    }
+  }
+
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'snapshot-redaction-selftest-'))
+  let n = 0
+  /**
+   * @param {{members?: string[], files: Record<string, string>}} spec
+   * @returns {string} synthetic repo root
+   */
+  const build = ({ members = ['.', 'agaric-engine'], files }) => {
+    const root = path.join(tmp, `fx${(n += 1)}`)
+    for (const [rel, body] of Object.entries(files)) {
+      const full = path.join(root, rel)
+      fs.mkdirSync(path.dirname(full), { recursive: true })
+      fs.writeFileSync(full, body)
+    }
+    if (members !== null) {
+      const list = members.map((m) => `"${m}"`).join(', ')
+      fs.mkdirSync(path.join(root, 'src-tauri'), { recursive: true })
+      fs.writeFileSync(
+        path.join(root, 'src-tauri', 'Cargo.toml'),
+        `[workspace]\nmembers = [${list}]\n\n[package]\nname = "agaric"\n`,
+      )
+      // Every declared member needs a `src/` — its absence is itself an
+      // asserted failure mode below, so it must be deliberate, not incidental.
+      for (const m of members) {
+        const rel = m === '.' ? 'src-tauri/src' : `src-tauri/${m}/src`
+        fs.mkdirSync(path.join(root, rel), { recursive: true })
+      }
+    }
+    return root
+  }
+  const run = (root) =>
+    spawnSync(process.execPath, [import.meta.filename, '--root', root], { encoding: 'utf8' })
+
+  // A ULID-shaped value used as the non-deterministic sample throughout.
+  const ULID = '01HQ8XG5ZK9J2M4N6P8R0TVWXY'
+  const snap = (value) =>
+    ['---', 'source: src.rs', 'expression: resp', '---', `id: ${value}`, ''].join('\n')
+
+  // ── the crate the allowlist never covered (#3465) ──
+  //
+  // `agaric-engine` is one of the three members the hand-maintained list
+  // missed. Both halves of the pair live there, so together they pin that the
+  // crate is now held to EXACTLY the same rule as `src-tauri/src` — neither
+  // stricter (half 2 would fail) nor looser (half 1 would fail).
+  let root = build({
+    files: {
+      'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID),
+      'src-tauri/agaric-engine/src/lib.rs': 'pub fn f() {}\n',
+    },
+  })
+  let res = run(root)
+  expect(
+    'an unredacted ULID in an agaric-engine snapshot is flagged',
+    res.status === 1 && res.stderr.includes(ULID),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  root = build({
+    files: {
+      'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID),
+      'src-tauri/agaric-engine/src/lib.rs': `const TEST_TID: &str = "${ULID}";\n`,
+    },
+  })
+  res = run(root)
+  expect(
+    'a ULID declared as a fixture const IN agaric-engine is allowlisted (the #3465 fix)',
+    res.status === 0,
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // The blob is deliberately workspace-wide: a fixture const may live in a
+  // different crate from the snapshot that renders it.
+  root = build({
+    files: {
+      'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID),
+      'src-tauri/src/fixtures.rs': `const TEST_TID: &str = "${ULID}";\n`,
+    },
+  })
+  res = run(root)
+  expect(
+    'a fixture const in ANOTHER member crate also allowlists the value',
+    res.status === 0,
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // ── the derivation fails CLOSED ──
+  //
+  // A partial allowlist is the #3465 defect itself and is invisible in a green
+  // run, so every way the derivation can come up short must stop the run
+  // (exit 2) rather than quietly scan fewer roots.
+  const failsClosed = (r) => r.status === 2 && r.stderr.includes('cannot derive')
+
+  root = build({
+    members: null,
+    files: { 'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID) },
+  })
+  res = run(root)
+  expect(
+    'a missing src-tauri/Cargo.toml exits 2, not 0',
+    failsClosed(res),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  root = build({ files: { 'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID) } })
+  fs.writeFileSync(path.join(root, 'src-tauri', 'Cargo.toml'), '[package]\nname = "agaric"\n')
+  res = run(root)
+  expect(
+    'a manifest with no [workspace] section exits 2',
+    failsClosed(res),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  root = build({ files: { 'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID) } })
+  fs.writeFileSync(
+    path.join(root, 'src-tauri', 'Cargo.toml'),
+    '[workspace]\nmembers = [".", "agaric-engine", "agaric-ghost"]\n',
+  )
+  res = run(root)
+  expect(
+    'a declared member with no `src/` exits 2 (the layout moved under the guard)',
+    failsClosed(res) && res.stderr.includes('agaric-ghost'),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  root = build({ files: { 'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID) } })
+  fs.writeFileSync(
+    path.join(root, 'src-tauri', 'Cargo.toml'),
+    '[workspace]\n# members = [".", "agaric-engine"]\n',
+  )
+  res = run(root)
+  expect(
+    'a COMMENTED-OUT members list is not read as a live one',
+    failsClosed(res),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // A `members` key in a different table must not be mistaken for the
+  // workspace's — the section scan is bounded by the next header.
+  root = build({ files: { 'src-tauri/agaric-engine/src/snapshots/x.snap': snap(ULID) } })
+  fs.writeFileSync(
+    path.join(root, 'src-tauri', 'Cargo.toml'),
+    '[workspace]\n\n[package.metadata.thing]\nmembers = ["not-a-crate"]\n',
+  )
+  res = run(root)
+  expect(
+    "a `members` key in another table is not read as the workspace's",
+    failsClosed(res),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // ── the LIVE derivation covers every member ──
+  //
+  // The whole point of #3465: not "three roots" or "five roots" but "exactly
+  // the workspace members, whatever they are today".
+  const liveRoots = deriveRustSourceRoots()
+  const liveMembers = [
+    ...fs
+      .readFileSync(path.join(ROOT, WORKSPACE_MANIFEST_REL), 'utf8')
+      .split('\n')
+      .map((l) => l.replace(/#.*$/, ''))
+      .join('\n')
+      .match(/\bmembers\s*=\s*\[([^\]]*)\]/)[1]
+      .matchAll(/"([^"]+)"/g),
+  ].map((m) => m[1])
+  expect(
+    'the live roots are exactly one `src` per workspace member',
+    liveRoots.length === liveMembers.length && new Set(liveRoots).size === liveRoots.length,
+    `${JSON.stringify(liveRoots)} vs members ${JSON.stringify(liveMembers)}`,
+  )
+  for (const crate of ['agaric-sync', 'agaric-engine', 'agaric-observability']) {
+    expect(
+      `the live roots include \`${crate}\` (missing before #3465)`,
+      liveRoots.includes(`src-tauri/${crate}/src`),
+      JSON.stringify(liveRoots),
+    )
+  }
+
+  fs.rmSync(tmp, { recursive: true, force: true })
+
+  if (failures.length > 0) {
+    console.error(`\nself-test: ${failures.length} assertion(s) failed`)
+    process.exit(2)
+  }
+  console.log('self-test: all assertions passed')
+  process.exit(0)
+}

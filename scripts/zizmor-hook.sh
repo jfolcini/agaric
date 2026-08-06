@@ -30,11 +30,195 @@
 #     same way on the retry (nothing is masked); this only rescues the
 #     network/auth case. Local pushes stay usable; CI still catches
 #     anything an offline-only local run would miss.
+#
+# What #3476 added on top of that policy — the degradation stays, its
+# INVISIBILITY does not:
+#
+#   * Every degradation now prints a block naming the audits that did not
+#     run, written to the terminal when there is one. That matters because
+#     prek prints `zizmor...Passed` and swallows a passing hook's output
+#     entirely: before this, a degraded local run and a full one were
+#     indistinguishable, so a green pre-push read as full coverage when an
+#     entire audit class had been skipped.
+#   * The zizmor VERSION is pinned and asserted. It used to float on both
+#     sides (`cargo install zizmor --locked` locally, `zizmor` unpinned in
+#     taiki-e/install-action in CI), so local and CI routinely ran different
+#     binaries with different audit sets — how ten `ref-version-mismatch`
+#     findings reached every open PR (#3475) from an audit that did not
+#     exist in the local build. Note that `ref-version-mismatch` is an
+#     OFFLINE audit (docs.zizmor.sh marks "Works offline: ✅"), so the
+#     online degradation was never what hid it; the version drift was.
 set -uo pipefail
+
+# ─── version pin ───────────────────────────────────────────────────────
+# The single source of truth for which zizmor this repo runs. Three places
+# must agree, and the assertion below is what proves they do rather than
+# assuming it:
+#   1. this constant                       (what the gate asserts)
+#   2. `tool: …,zizmor@<v>,…` in .github/workflows/_validate.yml and
+#      .github/workflows/scheduled-deep-checks.yml   (what CI installs)
+#   3. `cargo_get_pinned zizmor …` in scripts/setup-hooks.sh (what a dev box
+#      installs)
+# A mismatch is a hard error in CI — CI is the run whose result everyone
+# trusts, and a CI binary that is not the pinned one voids the pin — and a
+# loud, visible warning locally, where hard-failing a push over a tool
+# version would recreate exactly the #2535 breakage this wrapper exists to
+# prevent.
+ZIZMOR_PINNED_VERSION="1.28.0"
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# `--self-test` drives this wrapper as a subprocess against stub `zizmor` and
+# `curl` binaries on PATH, asserting the real exit codes and the real output.
+# Defined (and dispatched) before anything else runs, because everything after
+# this point either execs zizmor or exits.
+if [ "${1:-}" = "--self-test" ]; then
+  SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
+  fails=0
+  tmp="$(mktemp -d)"
+  trap 'rm -rf "$tmp"' EXIT
+
+  cat > "$tmp/zizmor" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$ZIZMOR_STUB_LOG"
+if [ "${1:-}" = "--version" ]; then echo "zizmor ${ZIZMOR_STUB_VERSION}"; exit 0; fi
+# Reproduce the "collection phase never finished" failure the wrapper's
+# runtime fallback exists for — but only for the ONLINE invocation.
+case " $* " in
+  *" --no-online-audits "*) echo "No findings to report. Good job!"; exit 0 ;;
+esac
+if [ "${ZIZMOR_STUB_FATAL:-0}" = "1" ]; then
+  echo "error: fatal: no audit was performed" >&2
+  exit 1
+fi
+echo "No findings to report. Good job!"
+STUB
+  cat > "$tmp/curl" <<'STUB'
+#!/usr/bin/env bash
+exit "${ZIZMOR_STUB_CURL_RC:-0}"
+STUB
+  chmod +x "$tmp/zizmor" "$tmp/curl"
+
+  # HOME is redirected at a temp dir so the wrapper's `. "$HOME/.cargo/env"`
+  # is a silent no-op and cannot prepend a real zizmor ahead of the stub.
+  run_stub() { # <expected-version> [env assignments...] → output + [exit N]
+    local out rc
+    : > "$tmp/stub.log"
+    set +e
+    if have setsid; then
+      # No controlling terminal, so `notify`'s tty mirror cannot escape the
+      # capture and duplicate itself onto the developer's screen.
+      out=$(env HOME="$tmp" PATH="$tmp:$PATH" ZIZMOR_STUB_LOG="$tmp/stub.log" "$@" \
+        setsid bash "$SELF" .github/workflows/ci.yml 2>&1)
+    else
+      out=$(env HOME="$tmp" PATH="$tmp:$PATH" ZIZMOR_STUB_LOG="$tmp/stub.log" "$@" \
+        bash "$SELF" .github/workflows/ci.yml 2>&1)
+    fi
+    rc=$?
+    set -e
+    printf '%s\n[exit %s]' "$out" "$rc"
+  }
+  assert_out() { # <label> <needle> <output>
+    if printf '%s' "$3" | grep -qF -- "$2"; then
+      echo "  ✓ $1"
+    else
+      echo "  ✗ $1 (expected output to contain: $2)" >&2
+      fails=$((fails + 1))
+    fi
+  }
+  refute_out() { # <label> <needle> <output>
+    if printf '%s' "$3" | grep -qF -- "$2"; then
+      echo "  ✗ $1 (unexpected output: $2)" >&2
+      fails=$((fails + 1))
+    else
+      echo "  ✓ $1"
+    fi
+  }
+
+  # (1) A local run on a DIFFERENT version says so, and still runs.
+  out=$(run_stub ZIZMOR_STUB_VERSION=0.0.0 CI=)
+  assert_out "local version drift is announced" "LOCAL VERSION DRIFT" "$out"
+  assert_out "local version drift names the pinned version" \
+    "$ZIZMOR_PINNED_VERSION" "$out"
+  assert_out "local version drift does not block the push" "[exit 0]" "$out"
+
+  # (2) The same drift in CI is a hard error: CI running an unpinned binary is
+  #     what makes a green local run unpredictive (#3475).
+  out=$(run_stub ZIZMOR_STUB_VERSION=0.0.0 CI=1)
+  assert_out "CI version drift fails the run" "[exit 1]" "$out"
+  assert_out "CI version drift explains itself" "zizmor version drift" "$out"
+
+  # (3) The pinned version is silent — the assertion must not cry wolf.
+  out=$(run_stub "ZIZMOR_STUB_VERSION=$ZIZMOR_PINNED_VERSION" CI=1)
+  refute_out "a matching version says nothing about drift" "VERSION DRIFT" "$out"
+  assert_out "a matching version passes" "[exit 0]" "$out"
+
+  # (4) #3476's core claim: a degraded local run SAYS an audit class was
+  #     skipped, and says which. A silent degradation is a green run that
+  #     checked less than CI will.
+  out=$(run_stub "ZIZMOR_STUB_VERSION=$ZIZMOR_PINNED_VERSION" CI= ZIZMOR_STUB_CURL_RC=1)
+  assert_out "an unreachable API announces the skip" "AUDITS SKIPPED" "$out"
+  assert_out "the skipped audits are named" "impostor-commit" "$out"
+  assert_out "the weaker-than-CI consequence is stated" "LESS than CI" "$out"
+  assert_out "the degraded run really passed --no-online-audits" \
+    "--no-online-audits" "$(cat "$tmp/stub.log")"
+
+  # (5) Same for the runtime fallback: probe passes, the online audit dies
+  #     with zizmor's fatal-collection signature, the retry is offline-only.
+  out=$(run_stub "ZIZMOR_STUB_VERSION=$ZIZMOR_PINNED_VERSION" CI= ZIZMOR_STUB_FATAL=1)
+  assert_out "a fatal online audit announces the skip" "AUDITS SKIPPED" "$out"
+  assert_out "the fallback still exits 0" "[exit 0]" "$out"
+  assert_out "the fallback retried offline" "--no-online-audits" "$(cat "$tmp/stub.log")"
+
+  if [ "$fails" -gt 0 ]; then
+    echo "self-test: $fails assertion(s) failed" >&2
+    exit 1
+  fi
+  echo "self-test: all assertions passed"
+  exit 0
+fi
+
 . "$HOME/.cargo/env" 2>/dev/null || true
+
+# Announce something the developer must see even on a PASSING hook run.
+# prek captures a passing hook's stdout/stderr and prints only `Passed`, so
+# stderr alone is not visibility: the message goes to stderr (where a direct
+# invocation and the self-test can read it) and, when stderr is NOT a
+# terminal, is mirrored to the controlling terminal so it survives capture.
+notify() {
+  printf '%s\n' "$@" >&2
+  if [ ! -t 2 ] && { : >/dev/tty; } 2>/dev/null; then
+    printf '%s\n' "$@" >/dev/tty
+  fi
+}
+
+# The audits that cannot run without GitHub API access, per
+# docs.zizmor.sh/audits ("Works offline: ❌"). Named explicitly so a degraded
+# run says WHAT went unchecked instead of "some online audits".
+ONLINE_ONLY_AUDITS='impostor-commit, known-vulnerable-actions, ref-confusion, stale-action-refs (and typosquat-uses drops to low confidence)'
+
+# ─── version assertion ────────────────────────────────────────────────
+installed_version() {
+  # `zizmor --version` prints `zizmor <semver>`.
+  zizmor --version 2>/dev/null | awk 'NR == 1 { print $2 }'
+}
+
+if have zizmor; then
+  actual="$(installed_version)"
+  if [ "$actual" != "$ZIZMOR_PINNED_VERSION" ]; then
+    if [ -n "${CI:-}" ]; then
+      echo "ERROR: zizmor version drift — CI has '${actual:-unknown}', the repo pins ${ZIZMOR_PINNED_VERSION}." >&2
+      echo "A CI binary that is not the pinned one makes the local gate's guarantee meaningless:" >&2
+      echo "audits appear and disappear between versions (#3475). Update the \`tool: …,zizmor@<v>\`" >&2
+      echo "pins in .github/workflows/ and ZIZMOR_PINNED_VERSION in scripts/zizmor-hook.sh together." >&2
+      exit 1
+    fi
+    notify \
+      "zizmor: LOCAL VERSION DRIFT — you have ${actual:-unknown}, CI runs ${ZIZMOR_PINNED_VERSION}." \
+      "  Audits differ between versions, so a green local run does NOT predict a green CI." \
+      "  Fix: cargo install --locked zizmor@${ZIZMOR_PINNED_VERSION}"
+  fi
+fi
 
 # CI always runs the real, online audit — never degrade there.
 if [ -n "${CI:-}" ]; then
@@ -68,7 +252,11 @@ probe_github_api() {
 }
 
 degrade_note() {
-  echo "zizmor: $1 — degrading to offline audits only (--no-online-audits). Online-only rules (e.g. artipacked) still run in CI." >&2
+  notify \
+    "zizmor: AUDITS SKIPPED — running with --no-online-audits." \
+    "  Reason: $1." \
+    "  Not checked locally: ${ONLINE_ONLY_AUDITS}." \
+    "  These still run in CI, so this push is gated by LESS than CI will apply."
 }
 
 if ! probe_github_api; then

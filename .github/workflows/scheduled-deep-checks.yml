@@ -1611,7 +1611,9 @@ jobs:
         with:
           # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
           # pins 1.95.0 — bump in lockstep with the lint job / `full-suite`.
-          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+          # zizmor pinned (#3476) to `ZIZMOR_PINNED_VERSION` in
+          # scripts/zizmor-hook.sh; the wrapper fails the run on a mismatch.
+          tool: prek,zizmor@1.28.0,taplo-cli,typos-cli,sqruff@0.38.0
 
       - name: Install cargo plugins via prebuilt binaries
         # Back the `cargo-deny` / `cargo-machete` pre-commit hooks.
@@ -1791,7 +1793,9 @@ jobs:
         with:
           # sqruff pinned to 0.38.x: >=0.39 needs rustc 1.96 while this repo
           # pins 1.95.0 (see the lint job in _validate.yml). Bump in lockstep.
-          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+          # zizmor pinned (#3476) to `ZIZMOR_PINNED_VERSION` in
+          # scripts/zizmor-hook.sh; the wrapper fails the run on a mismatch.
+          tool: prek,zizmor@1.28.0,taplo-cli,typos-cli,sqruff@0.38.0
 
       - name: Install cargo plugins via prebuilt binaries
         # cargo-deny/cargo-machete are invoked by prek Rust hooks; cargo-nextest

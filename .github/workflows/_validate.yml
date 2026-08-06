@@ -499,7 +499,15 @@ jobs:
           # from-source fallback, and sqruff >=0.39 requires rustc 1.96 while
           # this repo pins 1.95.0 (rust-toolchain.toml) — reds the whole lint
           # job. 0.38.x supports rustc 1.94/1.95. Bump when the rustc pin moves.
-          tool: prek,zizmor,taplo-cli,typos-cli,sqruff@0.38.0
+          #
+          # zizmor pinned (#3476): unpinned, CI floated to whatever was latest
+          # while a dev box kept whatever `cargo install` last fetched, so the
+          # two ran different AUDIT SETS — #3475 reddened every open PR with
+          # findings from an audit that did not exist locally, unreproducible
+          # by construction. Must match `ZIZMOR_PINNED_VERSION` in
+          # scripts/zizmor-hook.sh (the wrapper fails this job if it does not)
+          # and the same pin in scheduled-deep-checks.yml.
+          tool: prek,zizmor@1.28.0,taplo-cli,typos-cli,sqruff@0.38.0
 
       # ci/path-conditional-jobs: the cargo-* plugins are invoked only by the
       # Rust prek hooks (cargo-deny/cargo-machete) + the cargo-audit step below,
