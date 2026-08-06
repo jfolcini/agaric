@@ -282,7 +282,7 @@ pub async fn ensure_accent_color_property(
 ///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
 ///   the op_log contract. Batching the op_log writes is a separate,
 ///   larger refactor and is out of scope here.
-/// - ** predicate.** [`pages_without_space`] already
+/// - **`is_conflict = 0` predicate.** [`pages_without_space`] already
 ///   filters to live, non-conflict pages with `block_type = 'page'`, so
 ///   the per-page block-existence probe in `set_property_in_tx` is
 ///   redundant and is intentionally skipped here.
