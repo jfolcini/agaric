@@ -61,7 +61,7 @@ beforeEach(() => {
   // Default to the desktop path so existing test bodies keep their semantics.
   mockedUseIsMobile.mockReturnValue(false)
   useBootStore.setState({ state: 'ready', error: null, boot: noopBoot })
-  // / H-3b — WelcomeModal routes onboarding sample-page creation
+  // H-3b — WelcomeModal routes onboarding sample-page creation
   // through `createPageInSpace`, which reads
   // `useSpaceStore.getState().currentSpaceId`. On a fresh first boot the
   // SpaceStore has hydrated to whichever space sorts first
@@ -171,7 +171,7 @@ describe('WelcomeModal', () => {
     expect(localStorage.getItem('agaric-onboarding-done')).toBe('true')
   })
 
-  // / H-3b — page creation routes through `create_page_in_space`
+  // H-3b — page creation routes through `create_page_in_space`
   // (returns the new ULID as a plain string). Content blocks still use
   // `create_block`. So the sequence is:
   //   2× `create_page_in_space` (Getting Started + Quick Tips)

@@ -1336,7 +1336,7 @@ async fn draft_for_soft_deleted_block_is_skipped_and_cleaned_up() {
 }
 
 // `draft_for_nonexistent_block_is_skipped_and_cleaned_up` was deleted in
-// / migration 0038 — the FK `block_drafts.block_id REFERENCES blocks(id)
+// migration 0038 — the FK `block_drafts.block_id REFERENCES blocks(id)
 // ON DELETE CASCADE` prevents any orphan-draft state from being staged.
 // See note above `recovery_when_op_log_is_empty_draft_for_never_created_block`
 // (deleted at the same time) for the full rationale.
@@ -2296,7 +2296,7 @@ async fn perf26_block_id_index_exists() {
 /// "too many SQL variables". This test seeds ~1100 drafts and asserts
 /// `recover_at_boot` returns Ok and processes every draft.
 ///
-/// / migration 0038 added a FK from `block_drafts.block_id` to
+/// migration 0038 added a FK from `block_drafts.block_id` to
 /// `blocks(id) ON DELETE CASCADE`, so each draft now needs a real
 /// parent block — the historical "no `blocks` rows so everything lands
 /// in the F07 already-flushed bucket" shape can't be staged anymore.

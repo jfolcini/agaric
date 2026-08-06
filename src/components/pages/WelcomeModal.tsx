@@ -40,7 +40,7 @@ const FEATURES = [
 ] as const
 
 async function createSamplePages(t: TFunction): Promise<void> {
-  // / H-3b — onboarding sample pages must land with a `space`
+  // H-3b — onboarding sample pages must land with a `space`
   // ref property so they show up in the PageBrowser. At first boot
   // the bootstrap has just seeded Personal + Work; the active space
   // is whichever one the SpaceStore reconciled to (Personal by

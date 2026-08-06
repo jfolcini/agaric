@@ -2471,7 +2471,7 @@ async fn export_page_markdown_inner_with_non_page_block_returns_validation() {
     );
 }
 
-/// / Pin that a soft-deleted page is no longer
+/// Pin that a soft-deleted page is no longer
 /// exportable. Pre-fix, `export_page_markdown_inner` called
 /// `get_block_inner` (no `deleted_at` filter) so a soft-deleted page
 /// exported as `# Title\n\n` with no descendants — title-only

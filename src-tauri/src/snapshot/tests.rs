@@ -668,7 +668,7 @@ async fn apply_snapshot_drops_drafts_observably_m66() {
     .unwrap();
     let snap_data = snap_row.data;
 
-    // / migration 0038: `block_drafts.block_id` now has a FK to
+    // migration 0038: `block_drafts.block_id` now has a FK to
     // `blocks(id) ON DELETE CASCADE`. Seed parent rows for each draft
     // before staging them — the drafts themselves are still wiped
     // unconditionally by `apply_snapshot`, which is what this test

@@ -119,7 +119,7 @@ pub async fn restore_block(
 /// [`crate::materializer::dispatch::invalidations_for_op`] from the
 /// test/bench-only [`restore_block`].
 ///
-/// / decision-b: this primitive is *not* a command — it does
+/// decision-b: this primitive is *not* a command — it does
 /// not append to `op_log`, so it has no real `OpRecord`. The
 /// `restore_block` arm of `invalidations_for_op` reads **only**
 /// `record.op_type` and `record.block_id` (it ignores `seq`, `hash`,

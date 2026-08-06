@@ -56,8 +56,7 @@ use agaric_engine::spaces::{
 /// `pages_without_space` backfill, however, runs on EVERY boot so any
 /// page that arrives without a `space` property — via a misbehaving
 /// frontend, sync replay from a peer that bypassed the invariant, or
-/// any other path — is captured and assigned to the Personal space
-/// .
+/// any other path — is captured and assigned to the Personal space.
 ///
 /// The backfill is naturally idempotent: only fires for pages WITHOUT
 /// a `space` property, so steady-state boots emit zero new ops. The
@@ -74,7 +73,7 @@ pub async fn bootstrap_spaces(
     device_id: &str,
     materializer: &Materializer,
 ) -> Result<(), AppError> {
-    // / split the seeded-block creation fast-path from
+    // Split the seeded-block creation fast-path from
     // the `pages_without_space` backfill. The seeded-block path stays
     // gated on `is_bootstrap_complete` (so we don't re-emit `is_space`
     // / `accent_color` ops every boot); the backfill runs every boot
@@ -155,7 +154,7 @@ pub async fn bootstrap_spaces(
         )
     };
 
-    // / always run, even when the seeded-block fast-path
+    // Always run, even when the seeded-block fast-path
     // skipped above. Naturally idempotent (only fires for pages
     // WITHOUT a `space` property). Index `idx_block_properties_space`
     // keeps the cost bounded.
@@ -201,7 +200,7 @@ pub async fn bootstrap_spaces(
 /// One-shot migration: move every pre-existing Personal page
 /// into the Work space.
 ///
-/// # Kill-date plan ((e))
+/// # Kill-date plan
 ///
 /// **REMOVE AFTER `0.3.0`.** This entire function (plus
 /// [`agaric_engine::spaces::migration_marker_set`] and

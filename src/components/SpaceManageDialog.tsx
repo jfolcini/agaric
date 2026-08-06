@@ -7,13 +7,13 @@
  * - **Rename** — inline-editable name. Blur or Enter saves via the
  *   shared `editBlock` IPC (spaces are page blocks, so the existing
  *   block-content edit op is the natural fit — no new op type).
- * **Accent color** — small swatch grid (consumer). Click
+ * - **Accent color** — small swatch grid. Click
  *   writes a `setProperty(accent_color, …)` op. Storage is plain
  *   `value_text` so the palette token (`accent-emerald`, `accent-blue`,
  *   …) survives unchanged.
  * - **Delete** — `deleteBlock` op, but only allowed when the space is
  *   empty. We probe emptiness via `listBlocks({ spaceId, blockType:
- * 'page', limit: 1 })`; the existing Phase 2 query scoping
+ *   'page', limit: 1 })`; the existing Phase 2 query scoping
  *   already returns just pages whose `space` property points at the
  *   target. Disabled state shows a tooltip explaining why. Always
  *   disabled on the last remaining space.
@@ -26,10 +26,10 @@
  * exactly the two seeded spaces (`availableSpaces.length <= 2`) and
  * the `agaric:space-onboarding-seen-v1` localStorage flag is unset, an
  * inline banner explains what spaces are. Dismissal sets the flag so
- * The hint never reappears. Owned by `SpaceOnboardingHint` (
- * D-2) — hoisted out of the per-row editor since it is dialog-wide.
+ * the hint never reappears. Owned by `SpaceOnboardingHint` — hoisted
+ * out of the per-row editor since it is dialog-wide.
  *
- * ** D-2 decomposition** — the per-row editor used to mix five
+ * **Per-row editor decomposition** — the per-row editor used to mix five
  * orthogonal concerns (rename / accent / journal-template / delete /
  * onboarding-hint) in a 600-line `SpaceRowEditor`. Each concern now
  * lives in its own file under `./SpaceManageDialog/`. The dialog

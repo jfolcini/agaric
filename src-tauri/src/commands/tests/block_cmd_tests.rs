@@ -5829,7 +5829,7 @@ async fn save_and_flush_draft() {
 async fn delete_draft_removes_entry() {
     let (pool, _dir) = test_pool().await;
 
-    // / migration 0038: seed the parent block so save_draft satisfies
+    // migration 0038: seed the parent block so save_draft satisfies
     // the FK from block_drafts.block_id to blocks(id).
     sqlx::query(
         "INSERT INTO blocks (id, block_type, content, parent_id, position) \

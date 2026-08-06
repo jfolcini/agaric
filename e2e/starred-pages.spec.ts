@@ -1,14 +1,14 @@
 import { expect, test, waitForBoot } from './helpers'
 
 /**
- * E2E coverage for + PageBrowser unified
+ * E2E coverage for the PageBrowser's unified
  * `Starred` + `Pages` model.
  *
  * The PageBrowser used to ship a toolbar Star toggle that filtered the
- * List down to starred pages only. replaced that filter with
+ * list down to starred pages only. That toggle was replaced with
  * always-visible grouping: starred pages render on top under a
  * `Starred` section header, non-starred under `Other pages`, and sort
- * Applies independently within each group. then unified the
+ * applies independently within each group. A later change then unified the
  * two organising axes (favourites vs hierarchy) into a stable
  * two-section model: `Starred` (flat, conditional) + `Pages` (single
  * section interleaving top-level flat pages and namespace roots). A

@@ -568,7 +568,7 @@ describe('SearchPanel', () => {
       expect(mockedInvoke).toHaveBeenCalledOnce()
     })
 
-    // / E2E-2 — generic errors now render a visible error state
+    // E2E-2 — generic errors now render a visible error state
     // (the raw message reaches `error` so the regex parser can work; no
     // toast clobbering it).
     await waitFor(() => {

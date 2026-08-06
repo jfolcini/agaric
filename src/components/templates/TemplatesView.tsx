@@ -118,7 +118,7 @@ export function TemplatesView(): React.ReactElement {
     if (!name) return
     setIsCreating(true)
     try {
-      // / H-3b — route page creation through `createPageInSpace`
+      // H-3b — route page creation through `createPageInSpace`
       // so templates land with their `space` ref property set
       // atomically. The legacy `createBlock({ blockType: 'page' })`
       // call leaked unscoped templates that disappeared from the
