@@ -412,6 +412,7 @@ mod tests {
     //!   by a permit that was never taken; together they are not.
 
     use std::{
+        error::Error as _,
         net::{Ipv4Addr, SocketAddrV4},
         time::Duration,
     };
@@ -440,18 +441,43 @@ mod tests {
 
     /// The connection-setup bound these tests drive, in place of the production 10 s.
     ///
-    /// Short enough that the stalled-peer test costs milliseconds, and far above a
-    /// loopback handshake (measured at 0.07 s in the #3462 spike) so the *well-behaved*
-    /// peers in every other test are never caught by it.
-    const TEST_SETUP_TIMEOUT: Duration = Duration::from_millis(300);
+    /// **This bounds the well-behaved peer too**, not just the stalled one, and that is
+    /// what sizes it. If a loaded runner ever pushed a healthy peer's setup past this,
+    /// the healthy peer would be dropped during its *own* setup and the test would fail
+    /// announcing that the accept loop was parked on the stalled peer — a confidently
+    /// wrong diagnosis, which is worse than a plain failure.
+    ///
+    /// So it is sized against the measurement, not against convenience: a LAN handshake
+    /// was measured at **0.07 s** in the #3462 spike, and 1 s is ~14x that. The
+    /// production [`CONNECTION_SETUP_TIMEOUT`] is 10 s, or ~143x the same measurement;
+    /// this trades some of that margin for a test that costs ~1 s instead of ~10 s, and
+    /// keeps enough that the healthy peer is not the thing under time pressure.
+    const TEST_SETUP_TIMEOUT: Duration = Duration::from_secs(1);
 
     /// How long a well-behaved peer gets to be admitted past a stalled one.
     ///
-    /// Deliberately far below [`TEST_TIMEOUT`] and far above [`TEST_SETUP_TIMEOUT`]:
-    /// with the bound in place the admission costs one [`TEST_SETUP_TIMEOUT`], and
-    /// without it the admission never happens at all. A tight value means a missing
-    /// bound fails as *this* assertion rather than as the hang detector.
+    /// Sits between the two clocks it has to separate. With the bound in place the
+    /// admission costs one [`TEST_SETUP_TIMEOUT`] plus a handshake (~1.07 s by the
+    /// measurement above), so 5 s leaves ~4.7x margin; without the bound the admission
+    /// never happens at all, so any finite value discriminates. Well below
+    /// [`TEST_TIMEOUT`] so a missing bound fails as *this* assertion, with its diagnosis,
+    /// rather than as the bare hang detector.
     const ADMISSION_DEADLINE: Duration = Duration::from_secs(5);
+
+    /// How long a closed endpoint gets to report itself closed.
+    ///
+    /// `accept` on a closed endpoint does no I/O — it observes an already-closed
+    /// endpoint and returns — so this is generous by orders of magnitude. It catches an
+    /// `accept` that *parks* on a closed endpoint, i.e. awaits something that will never
+    /// resolve.
+    ///
+    /// It deliberately does **not** claim to catch a `continue` in that branch, and
+    /// forcing that swap proved it cannot: `Endpoint::accept` returns `None` immediately
+    /// once closed, so the loop never yields, `tokio::time::timeout` never gets to
+    /// observe its own deadline, and the failure surfaces as the harness's hard timeout
+    /// instead. No in-process deadline can preempt a non-yielding loop. Recorded here
+    /// rather than left looking like coverage.
+    const CLOSED_ACCEPT_DEADLINE: Duration = Duration::from_secs(5);
 
     fn lan_bind() -> SocketAddr {
         SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 0))
@@ -471,6 +497,19 @@ mod tests {
 
     async fn service() -> SyncService {
         service_with(&RecordingResolver::new()).await
+    }
+
+    /// The loopback port a bound service actually landed on, so a second bind can
+    /// collide with it deliberately. Port 0 everywhere else means these tests never
+    /// depend on a hard-coded port being free.
+    fn bound_port(service: &SyncService) -> u16 {
+        service
+            .addr()
+            .ip_addrs()
+            .copied()
+            .find(|sa| sa.ip().is_loopback())
+            .map(|sa| sa.port())
+            .expect("a loopback-bound service publishes its loopback socket address")
     }
 
     /// A peer endpoint built the same way, so nothing in these tests reaches the
@@ -730,7 +769,7 @@ mod tests {
         peer.close().await;
     }
 
-    // -- 6: a stalled peer cannot park the accept loop --------------------------
+    // -- 5: a stalled peer cannot park the accept loop --------------------------
 
     /// A peer that completes the handshake and never opens a stream must not stop the
     /// next peer being admitted.
@@ -825,6 +864,32 @@ mod tests {
         peer.close().await;
     }
 
+    // -- 6: the two constants that are contracts, not tuning --------------------
+
+    /// The ALPN on the wire must not change by accident.
+    ///
+    /// `driver`'s limits test pins its timeouts as literals for the same reason, and
+    /// here the stakes are wire compatibility: two peers that disagree on this byte
+    /// string fail the QUIC handshake outright, so a bump strands every device that has
+    /// not upgraded. `SYNC_ALPN`'s own doc names it as the place to say so on an
+    /// incompatible protocol change — this test is what makes saying so deliberate.
+    ///
+    /// It is also the only assertion that can see such a bump at all. Every other test
+    /// in this crate builds *both* ends from this one constant, so they agree with each
+    /// other whatever its value is. That is exactly why the copies that used to live in
+    /// `driver`'s and `session`'s test modules were deleted rather than left in sync by
+    /// hand: with a single definition, tests and production cannot drift apart, and with
+    /// this test, the definition cannot move silently.
+    #[test]
+    fn the_sync_alpn_is_the_value_on_the_wire_today() {
+        assert_eq!(
+            SYNC_ALPN, b"agaric/sync/0",
+            "changing the sync ALPN is a wire-compatibility break: peers that disagree \
+             on it fail the QUIC handshake before any application byte moves. Bump it \
+             deliberately, with a migration story, not as a side effect"
+        );
+    }
+
     /// The setup bound must be the value the old transport shipped.
     ///
     /// Asserted as a literal rather than as equality with `TLS_HANDSHAKE_TIMEOUT`, for
@@ -851,7 +916,101 @@ mod tests {
         );
     }
 
-    // -- 5: the service's endpoint is the LAN-only one --------------------------
+    // -- 7: the endpoint-closed contract ----------------------------------------
+
+    /// A closed endpoint is the one and only `None`.
+    ///
+    /// This is the signal a caller's accept loop terminates on, so getting it wrong has
+    /// no quiet failure mode: raising an error instead turns an ordinary shutdown into a
+    /// logged fault, and looping instead spins forever on an endpoint that will never
+    /// produce another connection.
+    ///
+    /// The error case is the one this test discriminates — see
+    /// [`CLOSED_ACCEPT_DEADLINE`] for why the spin case necessarily surfaces as the
+    /// harness timeout instead, which forcing it confirmed.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn accept_returns_none_once_the_endpoint_is_closed() {
+        let service = service().await;
+        service.close().await;
+
+        let outcome = tokio::time::timeout(CLOSED_ACCEPT_DEADLINE, service.accept())
+            .await
+            .expect(
+                "accept on a closed endpoint must return promptly: it is still inside \
+                 the accept loop, which is what spinning on a closed endpoint looks like",
+            )
+            .expect("a closed endpoint is an ordinary shutdown, not an accept failure");
+
+        assert!(
+            outcome.is_none(),
+            "a closed endpoint is the ONE case that yields None — it is how a caller's \
+             accept loop learns to stop; got {outcome:?}"
+        );
+    }
+
+    // -- 8: the two bind failures -----------------------------------------------
+
+    /// A prefix that cannot confine egress must surface as a *configuration* error.
+    ///
+    /// The variant carries meaning beyond "bind failed": `Configuration` says no socket
+    /// was ever opened and the LAN-only posture was rejected up front. A `bind` that
+    /// quietly repaired the prefix would be the worst outcome — a service that looks
+    /// bound and confines nothing — so the test asserts the rejection, not just an error.
+    #[tokio::test]
+    async fn a_prefix_that_cannot_confine_egress_fails_as_a_configuration_error() {
+        // `map(|_| ())` before `expect_err`: on the failing path the Ok value is a whole
+        // bound `SyncService`, whose Debug dump is ~30 KB of iroh internals and buries
+        // the message. Discarding it keeps the diagnosis readable.
+        let err = SyncService::bind(lan_bind(), 0, DnsResolver::custom(RecordingResolver::new()))
+            .await
+            .map(|_| ())
+            .expect_err("a /0 prefix confines nothing and must be rejected");
+
+        assert!(
+            matches!(
+                err,
+                ServiceBindError::Configuration(LanBindError::PrefixTooBroad { .. })
+            ),
+            "a prefix too broad to confine egress must be rejected before any socket is \
+             opened, and say so; got {err:?}"
+        );
+        assert!(
+            err.source().is_some(),
+            "the underlying LanBindError must stay reachable through the error chain, \
+             since Display deliberately does not restate it"
+        );
+    }
+
+    /// A port already in use must surface as a *socket* error.
+    ///
+    /// The complement of the test above, and the reason [`ServiceBindError`] has two
+    /// variants at all: here the configuration was perfectly valid and the operating
+    /// system refused. Collapsing the two would tell an operator to check their LAN
+    /// settings when the real answer is that the port is taken.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_port_already_in_use_fails_as_a_socket_error() {
+        let first = service().await;
+        let taken = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, bound_port(&first)));
+
+        let err = SyncService::bind(
+            taken,
+            LAN_PREFIX,
+            DnsResolver::custom(RecordingResolver::new()),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("binding a port that is already in use must fail");
+
+        assert!(
+            matches!(err, ServiceBindError::Socket(_)),
+            "a port collision is the operating system refusing, not a rejected \
+             configuration — the LAN-only posture was valid; got {err:?}"
+        );
+
+        first.close().await;
+    }
+
+    // -- 9: the service's endpoint is the LAN-only one --------------------------
 
     /// The service must be built on [`lan_only`], not on a plain iroh endpoint.
     ///

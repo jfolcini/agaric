@@ -271,8 +271,11 @@ mod tests {
     use crate::apply_host::test_support::RecordingApplyHost;
     use crate::sync_protocol::{SyncOrchestrator, SyncState};
     use crate::transport::endpoint::{RecordingResolver, lan_only};
-
-    const SYNC_ALPN: &[u8] = b"agaric/sync/0";
+    // The canonical constant, not a copy of its value. A local copy would let a bump to
+    // `service::SYNC_ALPN` leave every test here green: each test builds *both* ends
+    // from the same local copy, so the two would simply agree with each other while
+    // disagreeing with production.
+    use crate::transport::service::SYNC_ALPN;
 
     /// Whole-handshake budget. A LAN handshake was measured at 0.07 s in the #3462
     /// spike; 30 s is a hang detector, not a performance bound, and exists so a
