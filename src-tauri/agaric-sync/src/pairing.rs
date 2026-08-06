@@ -2,39 +2,35 @@
 //!
 //! # Place in the pairing flow
 //!
-//! Pairing is split across three modules with distinct responsibilities:
+//! - **This module (`pairing`)** — pure helpers: EFF wordlist passphrase
+//!   generation, QR payload encoding ([`crate::pairing::pairing_qr_payload`];
+//!   the TS side parses it, see that function's doc comment), and
+//!   [`crate::pairing::pairing_proof`], a domain-separated hash of the
+//!   passphrase carried on the wire (#855).
+//! - `crate::commands::sync_cmds` — Tauri-IPC orchestration: generates the
+//!   QR payload via this module and arms the pending-pairing marker (see
+//!   [`agaric_store::peer_refs::set_pending_pairing`]) with
+//!   [`crate::pairing::pairing_proof`] of the confirmed passphrase.
+//! - [`crate::sync_cert`] — owns the persistent self-signed TLS certificate
+//!   and its hash.
 //!
-//! - `crate::commands::sync_cmds` — Tauri-IPC orchestration: generates
-//!   the QR payload via this module, opens the pairing WebSocket via
-//!   [`crate::sync_net`], drives the peer through `DeviceOffer` /
-//!   `DeviceAccept`, and on success calls
-//!   [`agaric_store::peer_refs::upsert_peer_ref_with_cert`] to persist the
-//!   peer's TOFU-pinned cert hash.
-//! - **This module (`pairing`)** — pure helpers + message types: EFF
-//!   wordlist passphrase generation, QR payload encoding/parsing
-//!   ([`pairing_qr_payload`] / [`parse_pairing_qr`]), the
-//!   [`PairingMessage`] wire type, and [`verify_device_exchange`] which
-//!   matches the inbound `DeviceOffer`/`DeviceAccept`'s passphrase and
-//!   `device_id` against the local `PairingSession`'s expectations.
-//! - [`crate::sync_cert`] — owns the persistent self-signed TLS
-//!   certificate and its hash; the hash that `verify_device_exchange`
-//!   returns is the value [`agaric_store::peer_refs`] stores for the peer's
-//!   subsequent TOFU pin.
+//! There is no application-layer pairing handshake: cert pinning is pure
+//! TLS-level TOFU. On the first authenticated mTLS connection to an
+//! unpinned peer, [`agaric_store::peer_refs::upsert_peer_ref_with_cert`]
+//! stores the observed leaf-cert hash (`sync_daemon::server` on the
+//! responder side, `sync_daemon::session_supervisor` on the initiator
+//! side); [`crate::sync_net::tls::PinningCertVerifier`] enforces it on
+//! every subsequent connection. A two-device `PairingMessage` exchange
+//! existed here previously but was never reachable in production (#3463)
+//! and has been removed.
 //!
-//! Pairing messages travel as plaintext JSON over the WebSocket
-//! established by [`crate::sync_net::connection`], which is already
-//! mTLS-secured and TOFU-cert-pinned. Confidentiality and authenticity
-//! of the pairing exchange come from that rustls + cert-pin layer, not
-//! from a derived session key — there is no application-layer crypto
-//! in this module. Once `verify_device_exchange` returns
-//! `(device_id, cert_hash)`, the orchestration layer hands the hash to
-//! [`peer_refs`](agaric_store::peer_refs) so the next reconnection can pin the
-//! peer cert (TOFU model — see `sync_net::tls::PinningCertVerifier`).
+//! Confidentiality and authenticity of the pairing exchange come from the
+//! rustls + cert-pin layer, not from a derived session key — there is no
+//! application-layer crypto in this module.
 
 use agaric_core::error::AppError;
 
 use rand::seq::IndexedRandom;
-use serde::{Deserialize, Serialize};
 use std::sync::LazyLock;
 
 // ---------------------------------------------------------------------------
@@ -94,60 +90,19 @@ pub const PAIRING_QR_VERSION: u32 = 1;
 /// The QR carries only the passphrase. Discovery and address
 /// resolution are owned end-to-end by mDNS — there is no scan-bootstrap
 /// path, so the QR never embeds host/port.
+///
+/// This payload is parsed on the TS side
+/// (`src/components/dialogs/PairingDialog.tsx`, `JSON.parse(data)`), not
+/// in Rust — there is no `parse_pairing_qr` counterpart here. The two
+/// were never equivalent: the TS parser also accepts a bare non-JSON
+/// string as a plain passphrase and does not check `v`, so do not assume
+/// a Rust round-trip of this exact shape exists.
 pub fn pairing_qr_payload(passphrase: &str) -> String {
     serde_json::json!({
         "v": PAIRING_QR_VERSION,
         "passphrase": passphrase,
     })
     .to_string()
-}
-
-/// Decoded payload extracted from a pairing QR code.
-///
-/// Only the passphrase travels in the QR — mDNS owns discovery and
-/// address resolution end-to-end, so no host/port fields exist here.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PairingQrPayload {
-    pub passphrase: String,
-}
-
-/// Parse a pairing QR JSON payload, validating its schema version.
-///
-/// Returns [`AppError::InvalidOperation`] tagged with
-/// `pairing_qr.unsupported_version` when `v` is missing or not equal to
-/// [`PAIRING_QR_VERSION`], so the joining device can surface a
-/// "regenerate the QR on the host device" message rather than silently
-/// dropping fields the parser does not understand.
-pub fn parse_pairing_qr(json: &str) -> Result<PairingQrPayload, AppError> {
-    let value: serde_json::Value = serde_json::from_str(json).map_err(|e| {
-        AppError::InvalidOperation(format!("[pairing] invalid pairing QR JSON: {e}"))
-    })?;
-
-    let object = value.as_object().ok_or_else(|| {
-        AppError::InvalidOperation("[pairing] pairing QR payload must be a JSON object".into())
-    })?;
-
-    // Version gate: missing or unrecognised `v` is a fatal error so we
-    // never half-parse a future schema.
-    let version = object
-        .get("v")
-        .and_then(serde_json::Value::as_u64)
-        .ok_or_else(|| AppError::InvalidOperation("pairing_qr.unsupported_version".into()))?;
-    if version != u64::from(PAIRING_QR_VERSION) {
-        return Err(AppError::InvalidOperation(
-            "pairing_qr.unsupported_version".into(),
-        ));
-    }
-
-    let passphrase = object
-        .get("passphrase")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| {
-            AppError::InvalidOperation("[pairing] pairing QR missing 'passphrase' field".into())
-        })?
-        .to_string();
-
-    Ok(PairingQrPayload { passphrase })
 }
 
 /// Render `data` as a QR code and return the SVG markup.
@@ -185,19 +140,15 @@ pub fn generate_qr_svg(data: &str) -> Result<String, AppError> {
 /// an abandoned pairing must stop driving the daemon into pairing-mode.
 pub use agaric_store::peer_refs::PAIRING_TIMEOUT;
 
-/// Maximum number of failed passphrase attempts permitted within a single
-/// pairing session before it is invalidated and the user must re-initiate
-/// pairing (regenerate the QR / restart the flow).
-///
-/// #1603: previously the *only* bound on retries was the session time limit
-/// ([`PAIRING_TIMEOUT`]), so guesses could be sprayed for the whole window.
-/// The passphrase has ~51.7 bits of entropy, so a handful of guesses is
-/// statistically harmless; the cap exists to convert "unbounded within the
-/// window" into "bounded", not to defend a low-entropy secret. 5 mirrors the
-/// common lock-screen / PIN-entry convention — small enough to be obviously
-/// safe, large enough to absorb a couple of genuine typos before forcing a
-/// restart.
-pub const MAX_PASSPHRASE_ATTEMPTS: u32 = 5;
+// #3463: `MAX_PASSPHRASE_ATTEMPTS` and `PairingSession::{failed_attempts,
+// attempts_exhausted, record_failed_attempt}` were removed here. They bounded
+// repeated *local* guesses against the local `pairing_state` slot in
+// `confirm_pairing_inner` (#1603). That comparison is gone — it made two-device
+// pairing structurally impossible and authenticated nothing — so nothing was
+// left for the counter to count, and an unreachable counter that reads like a
+// security control is worse than none. The bound that matters is the wire-side
+// one: the pending-pairing marker expires after [`PAIRING_TIMEOUT`], so a
+// remote guesser has 5 minutes, one connection per try, against ~51.7 bits.
 
 /// Domain-separation tag for [`pairing_proof`] (#855). Bumping it invalidates
 /// every proof from an older peer, so keep it stable across compatible releases.
@@ -238,156 +189,22 @@ pub fn pairing_proof(passphrase: &str) -> String {
 pub struct PairingSession {
     pub passphrase: String,
     pub created_at: std::time::Instant,
-    /// #1603: count of failed passphrase verifications observed for this
-    /// session. Bounded by [`MAX_PASSPHRASE_ATTEMPTS`]; once the cap is hit
-    /// the session refuses further attempts until re-initiated.
-    pub failed_attempts: u32,
 }
 
 impl PairingSession {
     /// Create a new pairing session with a freshly generated passphrase.
     ///
     /// `local_device_id` / `remote_device_id` are kept on the signature
-    /// for API symmetry with [`Self::from_passphrase`] but are unused —
-    /// the pairing exchange relies on the underlying mTLS + cert-pin
-    /// layer for confidentiality, so no per-session key is derived.
+    /// for API symmetry with other pairing-related constructors but are
+    /// unused — the pairing exchange relies on the underlying mTLS +
+    /// cert-pin layer for confidentiality, so no per-session key is
+    /// derived.
     pub fn new(_local_device_id: &str, _remote_device_id: &str) -> Self {
         Self {
             passphrase: generate_passphrase(),
             created_at: std::time::Instant::now(),
-            failed_attempts: 0,
         }
     }
-
-    /// Create a pairing session from an existing passphrase (e.g. scanned
-    /// from the other device's QR code).
-    ///
-    /// `local_device_id` / `remote_device_id` are kept on the signature
-    /// for API symmetry with [`Self::new`] but are unused — see that
-    /// constructor's doc comment.
-    pub fn from_passphrase(
-        passphrase: &str,
-        _local_device_id: &str,
-        _remote_device_id: &str,
-    ) -> Self {
-        Self {
-            passphrase: passphrase.to_owned(),
-            created_at: std::time::Instant::now(),
-            failed_attempts: 0,
-        }
-    }
-
-    /// #1603: `true` once the session has burned through
-    /// [`MAX_PASSPHRASE_ATTEMPTS`] failed passphrase verifications. The
-    /// caller must drop the session (refuse further confirms) when this
-    /// returns `true`.
-    pub fn attempts_exhausted(&self) -> bool {
-        self.failed_attempts >= MAX_PASSPHRASE_ATTEMPTS
-    }
-
-    /// #1603: record one failed passphrase attempt and report whether the
-    /// session is now exhausted. Saturates so the counter never wraps.
-    pub fn record_failed_attempt(&mut self) -> bool {
-        self.failed_attempts = self.failed_attempts.saturating_add(1);
-        self.attempts_exhausted()
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Pairing message types for device verification (ADR-pending)
-// ---------------------------------------------------------------------------
-
-/// Messages exchanged during the device verification step of pairing.
-///
-/// After passphrase confirmation, both peers exchange their device ID and
-/// TLS certificate hash so that each side can pin the other's identity.
-///
-/// H-1: each device-bearing variant also carries the supplied
-/// `passphrase` so [`verify_device_exchange`] can confirm the joining
-/// device typed the same passphrase that was generated on the host
-/// device. Before H-1 the passphrase was never compared and any string
-/// passed `confirm_pairing_inner`.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum PairingMessage {
-    /// Initiator sends their identity + the passphrase they typed from
-    /// the QR display on the responder device.
-    DeviceOffer {
-        device_id: String,
-        cert_hash: String,
-        passphrase: String,
-    },
-    /// Responder confirms with their identity + the passphrase they
-    /// generated and showed in the QR.
-    DeviceAccept {
-        device_id: String,
-        cert_hash: String,
-        passphrase: String,
-    },
-    /// Error during pairing.
-    PairingError { message: String },
-}
-
-/// Extract and verify the remote device info from a [`PairingMessage`].
-///
-/// Verification is layered:
-///
-/// - `expected_peer_id` (when `Some`): the message's `device_id` must
-///   match or `AppError::InvalidOperation` is returned.
-/// - `expected_passphrase` (when `Some`): H-1 — the message's
-///   `passphrase` must match the passphrase stored in the active
-///   `pairing_state` slot. A mismatch returns
-///   `AppError::validation("pairing.passphrase.mismatch")`. This is
-///   the one place inside the local trust boundary where input from
-///   outside (the user typing what they read off the QR display) is
-///   checked, so the error is surfaced with a stable, machine-readable
-///   tag the frontend can match on.
-///
-/// Returns `(device_id, cert_hash)` on success.
-pub fn verify_device_exchange(
-    msg: &PairingMessage,
-    expected_peer_id: Option<&str>,
-    expected_passphrase: Option<&str>,
-) -> Result<(String, String), agaric_core::error::AppError> {
-    let (device_id, cert_hash, msg_passphrase) = match msg {
-        PairingMessage::DeviceOffer {
-            device_id,
-            cert_hash,
-            passphrase,
-        }
-        | PairingMessage::DeviceAccept {
-            device_id,
-            cert_hash,
-            passphrase,
-        } => (device_id.clone(), cert_hash.clone(), passphrase.clone()),
-        PairingMessage::PairingError { message } => {
-            return Err(agaric_core::error::AppError::InvalidOperation(format!(
-                "remote pairing error: {message}"
-            )));
-        }
-    };
-
-    if let Some(expected) = expected_peer_id
-        && device_id != expected
-    {
-        return Err(agaric_core::error::AppError::InvalidOperation(format!(
-            "device ID mismatch: expected {expected}, got {device_id}"
-        )));
-    }
-
-    // H-1: passphrase comparison. AGENTS.md threat model treats sync
-    // peers as the user's own devices, so a constant-time compare is
-    // not required — a wrong passphrase is the user mistyping or
-    // scanning the wrong QR, not an adversary probing timing.
-    if let Some(expected_pass) = expected_passphrase
-        && msg_passphrase != expected_pass
-    {
-        return Err(agaric_core::error::AppError::validation(
-            "pairing.passphrase.mismatch".into(),
-        ));
-    }
-
-    Ok((device_id, cert_hash))
 }
 
 // ---------------------------------------------------------------------------
@@ -501,62 +318,6 @@ mod tests {
         assert_eq!(parsed["v"].as_u64(), Some(u64::from(PAIRING_QR_VERSION)));
     }
 
-    /// `parse_pairing_qr` must accept the encoder's own output —
-    /// round-trip safety is the primary contract.
-    #[test]
-    fn parse_pairing_qr_round_trips_encoded_payload() {
-        let payload = pairing_qr_payload("alpha bravo charlie delta");
-        let decoded =
-            parse_pairing_qr(&payload).expect("encoded payload must round-trip through parser");
-        assert_eq!(decoded.passphrase, "alpha bravo charlie delta");
-    }
-
-    /// A payload missing `v` must be rejected with the
-    /// `pairing_qr.unsupported_version` tag so the joiner can show a
-    /// version-mismatch message instead of silently parsing unknown
-    /// fields.
-    #[test]
-    fn parse_pairing_qr_rejects_missing_version() {
-        let payload = serde_json::json!({
-            "passphrase": "a b c d",
-        })
-        .to_string();
-        let err =
-            parse_pairing_qr(&payload).expect_err("missing 'v' must surface as version error");
-        match err {
-            AppError::InvalidOperation(msg) => {
-                assert_eq!(
-                    msg, "pairing_qr.unsupported_version",
-                    "error tag must be pairing_qr.unsupported_version, got {msg}"
-                );
-            }
-            other => panic!("expected InvalidOperation, got {other:?}"),
-        }
-    }
-
-    /// An unknown future `"v":2` must be rejected with the same
-    /// `pairing_qr.unsupported_version` tag, matching the missing-version
-    /// case above.
-    #[test]
-    fn parse_pairing_qr_rejects_unknown_version() {
-        let payload = serde_json::json!({
-            "v": 2,
-            "passphrase": "a b c d",
-        })
-        .to_string();
-        let err =
-            parse_pairing_qr(&payload).expect_err("unknown 'v':2 must surface as version error");
-        match err {
-            AppError::InvalidOperation(msg) => {
-                assert_eq!(
-                    msg, "pairing_qr.unsupported_version",
-                    "error tag must be pairing_qr.unsupported_version, got {msg}"
-                );
-            }
-            other => panic!("expected InvalidOperation, got {other:?}"),
-        }
-    }
-
     #[test]
     fn generate_qr_svg_contains_svg_tag() {
         let svg = generate_qr_svg("test data").expect("QR generation should succeed");
@@ -643,110 +404,5 @@ mod tests {
             !object.contains_key("port"),
             "QR payload must not contain 'port' — mDNS owns address resolution"
         );
-    }
-
-    #[test]
-    fn pairing_message_serialization_roundtrip() {
-        let msg = PairingMessage::DeviceOffer {
-            device_id: "DEVICE01".to_string(),
-            cert_hash: "abc123".to_string(),
-            passphrase: "alpha bravo charlie delta".to_string(),
-        };
-        let json = serde_json::to_string(&msg).unwrap();
-        let parsed: PairingMessage = serde_json::from_str(&json).unwrap();
-        assert_eq!(msg, parsed);
-        assert!(json.contains("\"type\":\"device_offer\""));
-    }
-
-    #[test]
-    fn verify_device_exchange_accepts_matching_id() {
-        let msg = PairingMessage::DeviceOffer {
-            device_id: "DEV123".to_string(),
-            cert_hash: "hash456".to_string(),
-            passphrase: "any phrase will do".to_string(),
-        };
-        let (id, hash) = verify_device_exchange(&msg, Some("DEV123"), None).unwrap();
-        assert_eq!(id, "DEV123");
-        assert_eq!(hash, "hash456");
-    }
-
-    #[test]
-    fn verify_device_exchange_rejects_mismatch() {
-        let msg = PairingMessage::DeviceAccept {
-            device_id: "WRONG".to_string(),
-            cert_hash: "hash".to_string(),
-            passphrase: "any phrase will do".to_string(),
-        };
-        let err = verify_device_exchange(&msg, Some("EXPECTED"), None).unwrap_err();
-        assert!(err.to_string().contains("device ID mismatch"));
-    }
-
-    #[test]
-    fn verify_device_exchange_no_expected_always_passes() {
-        let msg = PairingMessage::DeviceOffer {
-            device_id: "ANY".to_string(),
-            cert_hash: "hash".to_string(),
-            passphrase: "any phrase will do".to_string(),
-        };
-        assert!(verify_device_exchange(&msg, None, None).is_ok());
-    }
-
-    #[test]
-    fn verify_device_exchange_returns_error_on_pairing_error() {
-        let msg = PairingMessage::PairingError {
-            message: "timeout".to_string(),
-        };
-        let err = verify_device_exchange(&msg, None, None).unwrap_err();
-        assert!(err.to_string().contains("remote pairing error"));
-    }
-
-    /// H-1: when `expected_passphrase` matches the message passphrase,
-    /// verification succeeds and returns the (device_id, cert_hash) pair.
-    #[test]
-    fn verify_device_exchange_accepts_matching_passphrase() {
-        let msg = PairingMessage::DeviceOffer {
-            device_id: "DEV1".to_string(),
-            cert_hash: "h".to_string(),
-            passphrase: "alpha bravo charlie delta".to_string(),
-        };
-        let (id, hash) = verify_device_exchange(&msg, None, Some("alpha bravo charlie delta"))
-            .expect("matching passphrase must succeed");
-        assert_eq!(id, "DEV1");
-        assert_eq!(hash, "h");
-    }
-
-    /// H-1: a passphrase mismatch must surface as
-    /// `AppError::validation("pairing.passphrase.mismatch")` so the
-    /// frontend can match on the tag without parsing free-text.
-    #[test]
-    fn verify_device_exchange_rejects_passphrase_mismatch() {
-        let msg = PairingMessage::DeviceOffer {
-            device_id: "DEV1".to_string(),
-            cert_hash: "h".to_string(),
-            passphrase: "wrong wrong wrong wrong".to_string(),
-        };
-        let err = verify_device_exchange(&msg, None, Some("alpha bravo charlie delta"))
-            .expect_err("mismatched passphrase must fail");
-        match err {
-            AppError::Validation { message: msg, .. } => assert_eq!(
-                msg, "pairing.passphrase.mismatch",
-                "H-1 error tag must be pairing.passphrase.mismatch"
-            ),
-            other => panic!("expected Validation, got {other:?}"),
-        }
-    }
-
-    /// H-1: when `expected_passphrase` is `None`, the function must
-    /// not look at the message's passphrase at all — preserves the
-    /// pre-H-1 behaviour for callers that only need device_id checks.
-    #[test]
-    fn verify_device_exchange_skips_passphrase_check_when_none() {
-        let msg = PairingMessage::DeviceAccept {
-            device_id: "DEV1".to_string(),
-            cert_hash: "h".to_string(),
-            passphrase: "wrong wrong wrong wrong".to_string(),
-        };
-        verify_device_exchange(&msg, None, None)
-            .expect("no expected_passphrase => no passphrase check");
     }
 }

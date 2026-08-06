@@ -204,27 +204,227 @@ fn sync_start_pairing_replaces_existing_session() {
 }
 
 // ======================================================================
-// Sync — confirm_pairing (#275)
+// Sync — confirm_pairing (#275, #3463)
 // ======================================================================
+//
+// #3463: pairing is asymmetric. The HOST calls `start_pairing_armed_inner`,
+// which mints a passphrase and arms this device's pending-pairing marker with
+// its proof. The JOINER types that same passphrase into
+// `confirm_pairing_inner`, which arms the joiner's marker with the proof of
+// what was TYPED. Both devices then hold a marker for the SAME passphrase —
+// exactly the precondition the wire-side #855 gate enforces:
+// `sync_daemon::server` admits an unpaired peer during the pairing window only
+// if the `pairing_proof` it offers constant-time-matches the responder's own
+// marker, and `session_state_machine::start` sources that offered proof from
+// the initiator's own marker.
+//
+// Every test below therefore models TWO devices — two `pairing_state` slots and
+// two pools. Feeding a session's own passphrase back into
+// `confirm_pairing_inner` on the same slot (what these tests used to do) is not
+// a pairing; it is a device confirming itself, and it stays green no matter how
+// broken the real two-device flow is. That is precisely why #3463 shipped.
+
+/// Passphrase + proof of a device acting as pairing HOST.
+///
+/// Uses `start_pairing_armed_inner` (what the `start_pairing` command calls),
+/// so the host's own marker is armed — without it the joiner's first connection
+/// is rejected as "peer not paired".
+async fn host_offers_pairing(
+    pool: &SqlitePool,
+    pairing_state: &Mutex<Option<agaric_sync::pairing::PairingSession>>,
+    scheduler: &SyncScheduler,
+    device_id: &str,
+) -> String {
+    start_pairing_armed_inner(pool, pairing_state, scheduler, device_id)
+        .await
+        .expect("host start_pairing must succeed")
+        .passphrase
+}
+
+// ----------------------------------------------------------------------
+// #3463 falsification pair
+// ----------------------------------------------------------------------
+//
+// (a) below MUST fail on a tree where `confirm_pairing_inner` still compares
+//     the typed passphrase against the local slot: device B's slot holds
+//     B's own random passphrase, so confirming with A's returns
+//     `pairing.passphrase.mismatch` and B never arms its marker.
+// (b) is its opposite and MUST stay green either way for (a) to mean anything —
+//     it pins that the proofs are derived from the passphrase rather than
+//     being some constant both devices trivially agree on.
+
+/// (a) #3463: two devices, each with its own pairing state and its own DB, must
+/// converge on the SAME pending-pairing proof when B confirms with A's
+/// passphrase — including the realistic case where B's pairing dialog already
+/// minted a competing passphrase of its own.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_two_devices_converge_on_same_proof_3463() {
+    // Device A — the host.
+    let (pool_a, _dir_a) = test_pool().await;
+    let state_a = Mutex::new(None);
+    let sched_a = SyncScheduler::new();
+    let passphrase_a = host_offers_pairing(&pool_a, &state_a, &sched_a, "device-A").await;
+
+    // Device B — the joiner. Its dialog unconditionally starts a session too,
+    // so B holds a *different* passphrase. This is the real-world state and the
+    // exact reason the old local comparison could never succeed.
+    let (pool_b, _dir_b) = test_pool().await;
+    let state_b = Mutex::new(None);
+    let sched_b = SyncScheduler::new();
+    let passphrase_b = host_offers_pairing(&pool_b, &state_b, &sched_b, "device-B").await;
+    assert_ne!(
+        passphrase_a, passphrase_b,
+        "precondition: the two devices must hold independently-random passphrases"
+    );
+
+    // B's user types the passphrase shown on A.
+    confirm_pairing_inner(
+        &pool_b,
+        &state_b,
+        &sched_b,
+        "device-B",
+        passphrase_a.clone(),
+        String::new(),
+    )
+    .await
+    .expect("#3463: the joiner must accept the HOST's passphrase");
+
+    let proof_a = peer_refs::get_pending_pairing_proof(&pool_a)
+        .await
+        .unwrap()
+        .expect("host must hold a pending-pairing marker after start_pairing");
+    let proof_b = peer_refs::get_pending_pairing_proof(&pool_b)
+        .await
+        .unwrap()
+        .expect("joiner must hold a pending-pairing marker after confirm");
+
+    assert_eq!(
+        proof_a, proof_b,
+        "#3463: both devices must end up holding the SAME pairing proof — this is \
+         the precondition of the wire-side #855 gate, and without it no first \
+         connection can ever be admitted"
+    );
+    assert_eq!(
+        proof_a,
+        agaric_sync::pairing::pairing_proof(&passphrase_a),
+        "the shared proof must be the proof of the HOST's passphrase"
+    );
+
+    // B is a joiner now, not a host: its competing offer is withdrawn.
+    assert!(
+        state_b.lock().unwrap().is_none(),
+        "confirming makes this device a joiner; its own offer session must be cleared"
+    );
+    // Neither side writes a peer_ref at confirm time (#855) — TOFU does, on the
+    // first proof-verified connection.
+    assert!(
+        peer_refs::list_peer_refs(&pool_b).await.unwrap().is_empty(),
+        "confirm must not create a peer_ref row directly (#855)"
+    );
+}
+
+/// (b) #3463, the opposite: a passphrase neither device ever generated must NOT
+/// produce matching proofs. Confirm still succeeds locally — arming a marker is
+/// a local act with no remote knowledge to validate against — but the marker it
+/// arms disagrees with the host's, so the wire-side gate rejects the peer.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn confirm_pairing_foreign_passphrase_yields_no_matching_proof_3463() {
+    let (pool_a, _dir_a) = test_pool().await;
+    let state_a = Mutex::new(None);
+    let sched_a = SyncScheduler::new();
+    let passphrase_a = host_offers_pairing(&pool_a, &state_a, &sched_a, "device-A").await;
+
+    let (pool_b, _dir_b) = test_pool().await;
+    let state_b = Mutex::new(None);
+    let sched_b = SyncScheduler::new();
+    let passphrase_b = host_offers_pairing(&pool_b, &state_b, &sched_b, "device-B").await;
+
+    // A typo / a guess: four words that neither device minted.
+    let typed = "correct horse battery staple";
+    assert_ne!(typed, passphrase_a);
+    assert_ne!(typed, passphrase_b);
+
+    confirm_pairing_inner(
+        &pool_b,
+        &state_b,
+        &sched_b,
+        "device-B",
+        typed.into(),
+        String::new(),
+    )
+    .await
+    .expect("arming a local marker is a local act and cannot fail on content");
+
+    let proof_a = peer_refs::get_pending_pairing_proof(&pool_a)
+        .await
+        .unwrap()
+        .unwrap();
+    let proof_b = peer_refs::get_pending_pairing_proof(&pool_b)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(
+        proof_a, proof_b,
+        "a passphrase neither device generated must NOT produce matching proofs — \
+         otherwise the #855 gate would admit anyone"
+    );
+
+    // And the degenerate self-confirm is equally useless. B confirming with its
+    // OWN passphrase now *succeeds* locally — arming a marker is a local act and
+    // #3463 removed the session precondition that used to make this error — but
+    // succeeding locally buys nothing, because the resulting proof still
+    // disagrees with the host's. Asserting it this way is stronger than asserting
+    // a local error: it pins that the security boundary is the wire-side proof
+    // comparison, not any local bookkeeping we could later relax again.
+    confirm_pairing_inner(
+        &pool_b,
+        &state_b,
+        &sched_b,
+        "device-B",
+        passphrase_b.clone(),
+        String::new(),
+    )
+    .await
+    .expect("arming a local marker is a local act and cannot fail on content");
+
+    let proof_b_self = peer_refs::get_pending_pairing_proof(&pool_b)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        proof_b_self,
+        agaric_sync::pairing::pairing_proof(&passphrase_b),
+        "the self-confirm armed B's own passphrase"
+    );
+    assert_ne!(
+        proof_a, proof_b_self,
+        "a device's own passphrase can never match the host's proof, so the #855 \
+         gate rejects it on connection"
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session() {
+    // Two devices: the joiner types the HOST's passphrase.
+    let (pool_host, _dir_host) = test_pool().await;
+    let state_host = Mutex::new(None);
+    let sched_host = SyncScheduler::new();
+    let host_passphrase =
+        host_offers_pairing(&pool_host, &state_host, &sched_host, "device-host").await;
+
     let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
+    start_pairing_inner(&pairing_state, "device-local").unwrap();
 
-    // Start pairing first
-    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
-    let passphrase = info.passphrase.clone();
-
-    // Confirm with the passphrase (a non-empty remote id, exercising the path
-    // that pre-#855 took the now-deleted peer_ref else-branch).
+    // A non-empty remote id, exercising the path that pre-#855 took the
+    // now-deleted peer_ref else-branch.
     confirm_pairing_inner(
         &pool,
         &pairing_state,
         &scheduler,
         "device-local",
-        info.passphrase,
+        host_passphrase.clone(),
         "device-remote".into(),
     )
     .await
@@ -243,8 +443,9 @@ async fn sync_confirm_pairing_sets_pending_marker_with_proof_and_clears_session(
             .await
             .unwrap()
             .as_deref(),
-        Some(agaric_sync::pairing::pairing_proof(&passphrase).as_str()),
-        "the pending marker stores the passphrase proof for the responder gate (#855)"
+        Some(agaric_sync::pairing::pairing_proof(&host_passphrase).as_str()),
+        "the pending marker stores the proof of the TYPED passphrase for the \
+         responder gate (#855, #3463)"
     );
 
     // Pairing session should be cleared
@@ -261,17 +462,23 @@ async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
     // know the peer's id at confirm time — mDNS + TOFU establish it later). That
     // must set the pending-pairing marker (so the dormant daemon wakes to accept
     // the first connection) and NOT write a junk empty-string peer_refs row.
+    let (pool_host, _dir_host) = test_pool().await;
+    let state_host = Mutex::new(None);
+    let sched_host = SyncScheduler::new();
+    let host_passphrase =
+        host_offers_pairing(&pool_host, &state_host, &sched_host, "device-host").await;
+
     let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
 
-    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
+    start_pairing_inner(&pairing_state, "device-local").unwrap();
     confirm_pairing_inner(
         &pool,
         &pairing_state,
         &scheduler,
         "device-local",
-        info.passphrase,
+        host_passphrase,
         String::new(),
     )
     .await
@@ -287,229 +494,71 @@ async fn confirm_pairing_empty_remote_id_sets_pending_marker_not_peer() {
     );
 }
 
-// ----------------------------------------------------------------------
-// H-1 — Pairing passphrase verification against the active slot
-// ----------------------------------------------------------------------
-//
-// `confirm_pairing_inner` must reject any passphrase that does not match
-// the active `pairing_state` slot. Before H-1 the function accepted any
-// string; the entire `PairingMessage` + `verify_device_exchange`
-// machinery in `pairing.rs` was dead code. These tests pin down the
-// post-H-1 contract:
-//
-// 1. Wrong passphrase → `Err(AppError::Validation { .. })` tagged
-//    `pairing.passphrase.mismatch`.
-// 2. Correct passphrase → `Ok(())`, peer persisted, session cleared.
-// 3. No active slot → `Err(AppError::Validation { .. })` tagged
-//    `pairing.no_active_session`.
-//
-// Per the threat model in AGENTS.md, the pairing passphrase is the one
-// place where input from outside the local trust boundary matters: the
-// user has typed it from the QR display on the source device, so a
-// mismatch means we are talking to the wrong peer.
-
+/// #3463 (replaces the #1603 attempt-cap tests): a mistyped passphrase must be
+/// correctable by simply typing it again.
+///
+/// `MAX_PASSPHRASE_ATTEMPTS` / `pairing.attempts_exhausted` bounded repeated
+/// guesses against the *local* slot. With the local comparison gone there is no
+/// local guess to count, so the cap was removed rather than left as unreachable
+/// code that reads like a security control. What replaces it is (i) the marker's
+/// `PAIRING_TIMEOUT` TTL, and (ii) the fact that a wrong passphrase simply
+/// arms a proof the host will not accept. This test pins the user-visible
+/// consequence: retrying is not rationed, and the last value typed wins.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_rejects_wrong_passphrase() {
+async fn confirm_pairing_retry_after_typo_is_not_rationed_3463() {
+    let (pool_host, _dir_host) = test_pool().await;
+    let state_host = Mutex::new(None);
+    let sched_host = SyncScheduler::new();
+    let host_passphrase =
+        host_offers_pairing(&pool_host, &state_host, &sched_host, "device-host").await;
+
     let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
 
-    // Start pairing — generates a fresh passphrase stored in the slot.
-    let _info = start_pairing_inner(&pairing_state, "device-local").unwrap();
-
-    // Confirm with a deliberately-wrong passphrase. Use 4 words so the
-    // shape matches what a real user would type, ruling out any stray
-    // length/format check masking a real mismatch.
-    let result = confirm_pairing_inner(
-        &pool,
-        &pairing_state,
-        &scheduler,
-        "device-local",
-        "wrong wrong wrong wrong".into(),
-        "device-remote".into(),
-    )
-    .await;
-
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
-        "wrong passphrase must surface as Validation(\"pairing.passphrase.mismatch\"), got {result:?}"
-    );
-
-    // Peer must NOT have been persisted.
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
+    // Six typos — one more than the retired cap of 5 — each re-opening the
+    // dialog (which is what re-arms the slot in production).
+    for attempt in 0..6 {
+        start_pairing_inner(&pairing_state, "device-local").unwrap();
+        confirm_pairing_inner(
+            &pool,
+            &pairing_state,
+            &scheduler,
+            "device-local",
+            format!("wrong wrong wrong {attempt}"),
+            String::new(),
+        )
         .await
-        .unwrap();
-    assert!(
-        peer.is_none(),
-        "peer ref must NOT be persisted after a passphrase mismatch"
-    );
+        .unwrap_or_else(|e| panic!("typo {attempt} must not be rationed, got {e:?}"));
+    }
 
-    // Pairing slot must remain populated so the user can retry without
-    // re-displaying the QR.
-    assert!(
-        pairing_state.lock().unwrap().is_some(),
-        "active pairing slot must survive a failed confirmation"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_accepts_correct_passphrase() {
-    let (pool, _dir) = test_pool().await;
-    let pairing_state = Mutex::new(None);
-    let scheduler = SyncScheduler::new();
-
-    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
-
-    // Confirm with the exact passphrase from the active slot.
+    // Now the correct passphrase, well past the retired budget.
+    start_pairing_inner(&pairing_state, "device-local").unwrap();
     confirm_pairing_inner(
         &pool,
         &pairing_state,
         &scheduler,
         "device-local",
-        info.passphrase,
-        "device-remote".into(),
+        host_passphrase.clone(),
+        String::new(),
     )
     .await
-    .expect("correct passphrase must succeed");
+    .expect("the correct passphrase must succeed however many typos preceded it");
 
-    // #855: confirm sets the pending-pairing marker (carrying the proof), not a
-    // peer_ref — the peer is established by proof-verified TOFU on first connect.
+    assert_eq!(
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(agaric_sync::pairing::pairing_proof(&host_passphrase).as_str()),
+        "the last confirm wins: the marker must hold the correct proof"
+    );
     assert!(
         peer_refs::get_peer_ref(&pool, "device-remote")
             .await
             .unwrap()
             .is_none(),
         "confirm must not persist a peer_ref directly (#855)"
-    );
-    assert!(
-        peer_refs::is_pending_pairing(&pool).await.unwrap(),
-        "confirm must set the pending-pairing marker on success"
-    );
-    assert!(
-        pairing_state.lock().unwrap().is_none(),
-        "active pairing slot must be cleared on successful confirmation"
-    );
-}
-
-// #1603: a pairing session must bound the number of failed passphrase
-// attempts. After `MAX_PASSPHRASE_ATTEMPTS` mismatches the session is
-// invalidated (slot dropped) and further confirms are refused with
-// `pairing.attempts_exhausted` until the user re-initiates pairing. The
-// session time limit still applies independently; this is an *additional*
-// bound.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_invalidates_session_after_max_attempts() {
-    let (pool, _dir) = test_pool().await;
-    let pairing_state = Mutex::new(None);
-    let scheduler = SyncScheduler::new();
-
-    let _info = start_pairing_inner(&pairing_state, "device-local").unwrap();
-
-    // Burn through MAX_PASSPHRASE_ATTEMPTS wrong guesses. Each returns the
-    // mismatch tag and (until the last) leaves the slot populated for retry.
-    for attempt in 1..agaric_sync::pairing::MAX_PASSPHRASE_ATTEMPTS {
-        let result = confirm_pairing_inner(
-            &pool,
-            &pairing_state,
-            &scheduler,
-            "device-local",
-            "wrong wrong wrong wrong".into(),
-            "device-remote".into(),
-        )
-        .await;
-        assert!(
-            matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
-            "attempt {attempt} must surface mismatch, got {result:?}"
-        );
-        assert!(
-            pairing_state.lock().unwrap().is_some(),
-            "slot must survive while attempts remain (attempt {attempt})"
-        );
-    }
-
-    // The MAX_PASSPHRASE_ATTEMPTS-th failure exhausts the budget: the slot is
-    // dropped and the error flips to the exhausted tag.
-    let exhausting = confirm_pairing_inner(
-        &pool,
-        &pairing_state,
-        &scheduler,
-        "device-local",
-        "wrong wrong wrong wrong".into(),
-        "device-remote".into(),
-    )
-    .await;
-    assert!(
-        matches!(exhausting, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.attempts_exhausted"),
-        "the final failed attempt must surface as attempts_exhausted, got {exhausting:?}"
-    );
-    assert!(
-        pairing_state.lock().unwrap().is_none(),
-        "the session slot must be invalidated once attempts are exhausted"
-    );
-
-    // No peer was ever persisted across the failed attempts.
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
-    assert!(
-        peer.is_none(),
-        "no peer may be persisted after exhausting passphrase attempts"
-    );
-}
-
-// #1603: the happy path must survive the attempt counter — a correct
-// passphrase entered within the attempt budget (here on the first try, and
-// again after some failures) still succeeds.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
-    let (pool, _dir) = test_pool().await;
-    let pairing_state = Mutex::new(None);
-    let scheduler = SyncScheduler::new();
-
-    let info = start_pairing_inner(&pairing_state, "device-local").unwrap();
-
-    // A couple of genuine typos (strictly fewer than the cap) must not lock
-    // the session.
-    for _ in 0..(agaric_sync::pairing::MAX_PASSPHRASE_ATTEMPTS - 1) {
-        let bad = confirm_pairing_inner(
-            &pool,
-            &pairing_state,
-            &scheduler,
-            "device-local",
-            "wrong wrong wrong wrong".into(),
-            "device-remote".into(),
-        )
-        .await;
-        assert!(
-            matches!(bad, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.passphrase.mismatch"),
-            "pre-cap typo must be a plain mismatch, got {bad:?}"
-        );
-    }
-
-    // The correct passphrase, still within the budget, succeeds.
-    confirm_pairing_inner(
-        &pool,
-        &pairing_state,
-        &scheduler,
-        "device-local",
-        info.passphrase,
-        "device-remote".into(),
-    )
-    .await
-    .expect("correct passphrase within the attempt budget must succeed");
-
-    // #855: success arms the pending-pairing window (proof stored), not a
-    // peer_ref — TOFU establishes the peer on the first proof-verified connect.
-    assert!(
-        peer_refs::get_peer_ref(&pool, "device-remote")
-            .await
-            .unwrap()
-            .is_none(),
-        "confirm must not persist a peer_ref directly (#855)"
-    );
-    assert!(
-        peer_refs::is_pending_pairing(&pool).await.unwrap(),
-        "success within the attempt budget must arm the pending-pairing window"
     );
     assert!(
         pairing_state.lock().unwrap().is_none(),
@@ -517,35 +566,59 @@ async fn confirm_pairing_inner_succeeds_within_attempt_budget_after_typos() {
     );
 }
 
+/// #3463: a device that never generated a passphrase — a *pure joiner* — must be
+/// able to confirm.
+///
+/// This inverts the previous `confirm_pairing_inner_errors_when_no_pairing_in_flight`,
+/// and the inversion is the point. That test asserted a local pairing session was
+/// required, which reads like a safety check but could only ever be satisfied by a
+/// device in the wrong role: a correct joiner was handed a passphrase, it did not
+/// mint one, so it has no session. Requiring one forced every joiner to first
+/// become a competing host, which is the role confusion behind #3463.
+///
+/// With the UI now demanding an explicit host/joiner choice, this is the exact
+/// shape of the joiner path, and it must work with an empty slot.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_pairing_inner_errors_when_no_pairing_in_flight() {
+async fn confirm_pairing_pure_joiner_with_no_local_session_succeeds_3463() {
     let (pool, _dir) = test_pool().await;
-    // Empty slot — start_pairing_inner was never called.
+    // Empty slot: this device chose the joiner role and never called
+    // `start_pairing_inner`. It is not a degenerate state — it is the norm.
     let pairing_state = Mutex::new(None);
     let scheduler = SyncScheduler::new();
 
-    let result = confirm_pairing_inner(
+    let host_passphrase = "correct horse battery staple";
+
+    confirm_pairing_inner(
         &pool,
         &pairing_state,
         &scheduler,
         "device-local",
-        "any pass phrase here".into(),
-        "device-remote".into(),
+        host_passphrase.into(),
+        String::new(),
     )
-    .await;
+    .await
+    .expect("#3463: a joiner with no local session must be able to confirm");
 
-    assert!(
-        matches!(result, Err(AppError::Validation { message: ref msg, .. }) if msg == "pairing.no_active_session"),
-        "missing slot must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
+    // The marker must carry the proof of the passphrase the user typed, which is
+    // what lets this device and the host converge.
+    let proof = peer_refs::get_pending_pairing_proof(&pool)
+        .await
+        .unwrap()
+        .expect("joiner must arm a pending-pairing marker");
+    assert_eq!(
+        proof,
+        agaric_sync::pairing::pairing_proof(host_passphrase),
+        "the armed proof must be of the TYPED passphrase"
     );
 
-    // No peer should have been persisted.
-    let peer = peer_refs::get_peer_ref(&pool, "device-remote")
-        .await
-        .unwrap();
+    // Still no peer_ref — TOFU establishes it on the first authenticated
+    // connection, not here (#855).
     assert!(
-        peer.is_none(),
-        "peer ref must NOT be persisted when no pairing is in flight"
+        peer_refs::get_peer_ref(&pool, "device-remote")
+            .await
+            .unwrap()
+            .is_none(),
+        "confirm must not persist a peer_ref directly (#855)"
     );
 }
 

@@ -139,8 +139,6 @@ export const common: Record<string, string> = {
   'announce.pairingCountdown': 'Pairing session expires in {{seconds}} seconds',
   'announce.pairingCountdownMinute': 'Pairing session expires in 1 minute',
   'announce.pairingExpired': 'Pairing session expired',
-  'announce.pairingCountdownPaused': 'Pairing countdown paused while typing',
-  'announce.pairingCountdownResumed': 'Pairing countdown resumed',
   'announce.undone': 'Undone',
   'announce.undoFailed': 'Undo failed',
   'announce.redone': 'Redone',

@@ -13,9 +13,7 @@ use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::device::DeviceId;
 use agaric_sync::pairing::PairingSession;
-use agaric_sync::pairing::{
-    PairingMessage, generate_qr_svg, pairing_qr_payload, verify_device_exchange,
-};
+use agaric_sync::pairing::{generate_qr_svg, pairing_qr_payload};
 use agaric_sync::sync_events::{MdnsStatus, MdnsStatusState};
 use agaric_sync::sync_scheduler::SyncScheduler;
 
@@ -196,86 +194,93 @@ pub async fn start_pairing_armed_inner(
     Ok(info)
 }
 
-/// Confirm pairing with a remote device.
+/// Confirm pairing with a remote device — the **joiner** half of the flow.
 ///
-/// H-1: validates the supplied `passphrase` against the active
-/// `pairing_state` slot via [`verify_device_exchange`]. Before H-1 the
-/// passphrase was accepted as-is and the entire `PairingMessage` +
-/// `verify_device_exchange` machinery was dead code.
+/// The user typed the passphrase displayed on the *other* device. This arms
+/// **this** device's TTL-bounded pending-pairing marker with
+/// `pairing_proof(typed)` and clears the local offer session, because a device
+/// that accepts someone else's passphrase is a joiner, not a host.
 ///
-/// Failure modes (all use `AppError::Validation` so they pass through
-/// `sanitize_internal_error` unchanged and reach the frontend with a
-/// stable, machine-readable tag in `message`):
+/// # #3463 — why there is no local comparison any more
 ///
-/// - `pairing.no_active_session` — the user pressed Confirm without an
-///   active pairing session (slot is empty, e.g. cancelled or expired).
-/// - `pairing.passphrase.mismatch` — the typed passphrase does not
-///   match the one stored in the active slot. The slot is preserved so
-///   the user can retry without re-displaying the QR.
+/// Before #3463 this compared the typed passphrase against the passphrase in
+/// *this* device's own `pairing_state` slot. Two-device pairing therefore could
+/// never succeed: the pairing dialog starts a session on every device that
+/// opens it, so the two devices hold independently-random passphrases and the
+/// joiner's comparison mismatched with probability ~1.
 ///
-/// On success: stores the peer reference and clears the slot.
+/// Removing it costs nothing, because it never authenticated anything: the slot
+/// is local state the local user created seconds earlier, so "matches the local
+/// slot" is a statement about this device only. The check that actually gates
+/// trust is on the wire and is untouched — `sync_daemon::server` admits an
+/// unpaired device during the pairing window only if the `pairing_proof` it
+/// offers constant-time-matches the proof in the responder's own marker (#855),
+/// and the initiator sources that offered proof from its own marker
+/// (`session_state_machine::start`). The protocol's precondition is thus
+/// "both devices hold a marker for the SAME passphrase", and establishing that
+/// is exactly this function's job.
 ///
-/// After persisting the peer, signals the scheduler so the
-/// dormant sync daemon (if any) transitions to active mode without
-/// waiting for the next poll interval.
-#[instrument(skip(pool, pairing_state, scheduler), err)]
+/// # Attempt limiting (#1603) is gone — deliberately
+///
+/// `MAX_PASSPHRASE_ATTEMPTS` / `pairing.attempts_exhausted` bounded repeated
+/// *local* guesses against the local slot. With no local comparison there is no
+/// local guess to count, so keeping the counter would be dead code that reads
+/// like a security control. The bound that matters is on the wire and already
+/// exists: the pending-pairing marker expires after
+/// `agaric_store::peer_refs::PAIRING_TIMEOUT` (5 minutes), after which
+/// `get_pending_pairing_proof` reads as absent and an unpaired peer is rejected
+/// outright. A remote guesser must produce `pairing_proof(P)` for a ~51.7-bit
+/// passphrase inside that window, one TLS connection per try.
+///
+/// # Errors
+///
+/// No longer fails on passphrase content. #3463 removed both the local
+/// comparison and the "a pairing session must exist" precondition, so this
+/// function is infallible apart from DB and lock failures — it arms a local
+/// marker, which is a local act that cannot be wrong about a value the user
+/// just typed. In particular `pairing.no_active_session` is **not** returned
+/// here any more; a correct joiner has no local session by construction.
+///
+/// The consequence is that a mistyped passphrase succeeds here and only fails
+/// later, at the wire-side proof check. The UI must not claim success on the
+/// strength of this returning `Ok` — see #3469.
+///
+/// On success the pending-pairing marker is armed and the scheduler is
+/// signalled so a dormant sync daemon transitions to active mode without
+/// waiting for its next poll interval.
+#[instrument(skip(pool, pairing_state, scheduler, passphrase), err)]
 pub async fn confirm_pairing_inner(
     pool: &SqlitePool,
     pairing_state: &Mutex<Option<PairingSession>>,
     scheduler: &SyncScheduler,
     _device_id: &str,
     passphrase: String,
-    remote_device_id: String,
+    _remote_device_id: String,
 ) -> Result<(), AppError> {
-    // H-1: pull the expected passphrase out of the active slot before
-    // any await. Holding a std `Mutex` across `.await` is unsound under
-    // tokio's single-threaded scheduler and would also be lock-order
-    // hostile — so we clone the field and drop the guard before the
-    // network/db call below.
-    let expected_passphrase = {
-        let guard = lock_pairing_state(pairing_state)?;
-        let session = guard
-            .as_ref()
-            .ok_or_else(|| AppError::validation("pairing.no_active_session".into()))?;
-        // #1603: a session that already burned through
-        // `MAX_PASSPHRASE_ATTEMPTS` is dead — refuse before comparing so a
-        // late-arriving guess can't slip in on the exhausted slot. The slot
-        // is cleared on the failure path below, so in steady state we only
-        // reach here with attempts remaining; this guards the racy retry.
-        if session.attempts_exhausted() {
-            return Err(AppError::validation("pairing.attempts_exhausted".into()));
-        }
-        session.passphrase.clone()
-    };
-
-    // H-1: build the device-exchange message representing the joining
-    // device's response and route it through `verify_device_exchange`.
-    // `cert_hash` is empty here — the actual TLS cert pin happens later
-    // in the daemon path; this layer only authenticates "the typed
-    // passphrase matches what we generated".
-    let msg = PairingMessage::DeviceOffer {
-        device_id: remote_device_id.clone(),
-        cert_hash: String::new(),
-        passphrase: passphrase.clone(),
-    };
-    if let Err(verify_err) = verify_device_exchange(&msg, None, Some(&expected_passphrase)) {
-        // #1603: a failed passphrase verification counts against the bounded
-        // attempt budget. Record it on the live slot; if that exhausts the
-        // session, drop the slot entirely so all further confirms hit the
-        // `no_active_session` / `attempts_exhausted` path and the user must
-        // re-initiate pairing (regenerate the QR).
-        let mut guard = lock_pairing_state(pairing_state)?;
-        if let Some(session) = guard.as_mut() {
-            let exhausted = session.record_failed_attempt();
-            if exhausted {
-                *guard = None;
-                return Err(AppError::validation("pairing.attempts_exhausted".into()));
-            }
-        }
-        return Err(verify_err);
-    }
-
-    // No session state persisted at confirm time.
+    // #3463: there is deliberately NO "a local pairing session must exist" guard
+    // here, and removing it is part of the fix rather than a relaxation of it.
+    //
+    // A correct joiner never has a local session. It did not generate a
+    // passphrase — it was handed one. Requiring a session would mean requiring
+    // the joiner to first mint a competing passphrase of its own, which is
+    // exactly the role confusion that made two-device pairing impossible: both
+    // devices offering, neither accepting.
+    //
+    // The guard that used to live here read like a safety check but could only
+    // ever be satisfied by a device in the *wrong* role, so it was not
+    // protecting an invariant — it was enforcing the defect.
+    //
+    // Nothing security-relevant is lost. It tested state this same frontend had
+    // written seconds earlier via `start_pairing`, so it authenticated nothing;
+    // and arming the marker is inert without a passphrase the user typed. The
+    // real bound is the marker's 5-minute TTL plus the wire-side constant-time
+    // proof check in `sync_daemon::server`.
+    //
+    // Role exclusivity now lives where the roles actually are: the UI, which
+    // requires an explicit host/joiner choice before either path can run. Making
+    // that unrepresentable in the *backend* type (a `PairingRole` enum replacing
+    // `Option<PairingSession>`) is the right end state and is scoped into the
+    // pairing rewrite on plan #3464, where the passphrase becomes an iroh ticket.
 
     // The FE has no remote device_id at confirm time — the QR carries only the
     // passphrase, and mDNS + TOFU establish the real peer on the first
@@ -283,17 +288,17 @@ pub async fn confirm_pairing_inner(
     // that wakes the dormant daemon to *accept* that first connection, instead
     // of writing a junk empty-string `peer_refs` row (which used to be the only
     // thing tripping `should_start_active`, but showed as a blank ghost peer and
-    // lingered forever).
+    // lingered forever). `_remote_device_id` is consequently always `""` from
+    // the FE; the old branch that pre-created a NULL-`cert_hash` `peer_ref` for
+    // a supplied device id was the CN-spoof pinning surface removed by #855.
     //
-    // #855: the marker carries the passphrase proof so both the joiner (as a
-    // future responder) and the host require the peer to prove knowledge of the
-    // passphrase before TOFU-pinning it. `remote_device_id` is always empty from
-    // the FE (`PairingDialog` passes `''`); the old `else` branch that
-    // pre-created a NULL-`cert_hash` `peer_ref` for a supplied device id was the
-    // CN-spoof pinning surface #855 removes — it is deleted here.
+    // #855/#3463: the marker carries `pairing_proof` of the TYPED passphrase, so
+    // this device and the host end up holding the same proof — each can then
+    // both offer it (as initiator) and require it (as responder).
     peer_refs::set_pending_pairing(pool, &agaric_sync::pairing::pairing_proof(&passphrase)).await?;
 
-    // Clear pairing session
+    // Clear the local offer session: this device is a joiner, and leaving its
+    // own competing passphrase on display invites the role confusion of #3463.
     *lock_pairing_state(pairing_state)? = None;
 
     // Wake a dormant daemon (if any). Harmless if the daemon is

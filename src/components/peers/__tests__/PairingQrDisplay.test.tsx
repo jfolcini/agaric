@@ -19,7 +19,6 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import { PairingQrDisplay } from '@/components/peers/PairingQrDisplay'
-import { announce } from '@/lib/announcer'
 import { writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
 
@@ -27,12 +26,6 @@ vi.mock('@/lib/clipboard', () => ({
   writeText: vi.fn().mockResolvedValue(undefined),
 }))
 const mockedWriteText = vi.mocked(writeText)
-
-// Capture announce() calls fired by the pause/resume transition effect
-vi.mock('@/lib/announcer', () => ({
-  announce: vi.fn(),
-}))
-const announceMock = vi.mocked(announce)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -240,19 +233,6 @@ describe('PairingQrDisplay', () => {
     })
   })
 
-  it('renders the visible pause indicator with text-foreground emphasis', () => {
-    const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
-
-    const paused = container.querySelector('.pairing-countdown-paused')
-    expect(paused).toBeTruthy()
-    // Bumped the indicator from muted italic to text-foreground +
-    // medium weight + Pause icon.
-    expect(paused?.className).toContain('text-foreground')
-    expect(paused?.className).toContain('font-medium')
-    // Inline Pause icon (lucide-react renders as <svg>).
-    expect(paused?.querySelector('svg')).toBeTruthy()
-  })
-
   it('has no a11y violations when expired', async () => {
     const { container } = render(
       <PairingQrDisplay {...defaultProps} countdownDisplay={null} countdown={0} isExpired />,
@@ -262,40 +242,18 @@ describe('PairingQrDisplay', () => {
     expect(results).toHaveNoViolations()
   })
 
-  // ── pause/resume transitions are announced to SR users ──────
-  describe('SR pause/resume announcements', () => {
-    it('does not announce on initial mount when not paused', () => {
-      render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
+  it('keeps the visual countdown paragraph aria-hidden', () => {
+    // #3463 (review): the countdown-pause-while-typing feature (#294) was
+    // removed as dead code — it was only reachable when the countdown
+    // (host-only) and the passphrase inputs (joiner-only) could render on
+    // the same screen, which the implicit-role split makes impossible. The
+    // countdown paragraph itself stays aria-hidden; SR users get the
+    // interval-crossing announcements from PairingDialog's separate,
+    // still-live announcer effect (`announce.pairingCountdown*`), not from
+    // this component.
+    const { container } = render(<PairingQrDisplay {...defaultProps} />)
 
-      expect(announceMock).not.toHaveBeenCalled()
-    })
-
-    it('announces "paused" when pausedByTyping flips false → true', () => {
-      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
-      announceMock.mockClear()
-
-      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping />)
-
-      expect(announceMock).toHaveBeenCalledWith('Pairing countdown paused while typing')
-    })
-
-    it('announces "resumed" when pausedByTyping flips true → false', () => {
-      const { rerender } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
-      announceMock.mockClear()
-
-      rerender(<PairingQrDisplay {...defaultProps} pausedByTyping={false} />)
-
-      expect(announceMock).toHaveBeenCalledWith('Pairing countdown resumed')
-    })
-
-    it('keeps the visual countdown paragraph aria-hidden', () => {
-      // Don't regress: the inline pause indicator stays inside the
-      // aria-hidden countdown <p>; the SR channel is the announce()
-      // helper, not this paragraph.
-      const { container } = render(<PairingQrDisplay {...defaultProps} pausedByTyping />)
-
-      const countdown = container.querySelector('.pairing-countdown')
-      expect(countdown).toHaveAttribute('aria-hidden', 'true')
-    })
+    const countdown = container.querySelector('.pairing-countdown')
+    expect(countdown).toHaveAttribute('aria-hidden', 'true')
   })
 })

@@ -1,10 +1,24 @@
 /**
  * PairingDialog -- modal dialog for device pairing (#219).
  *
- * Three sections (each extracted as a sub-component for testability):
- *  1. QR code + passphrase display (PairingQrDisplay)
- *  2. Passphrase entry (PairingEntryForm)
- *  3. List of already-paired devices (PairingPeersList)
+ * #3463 — pairing only works when exactly one of the two devices shows a
+ * code (the "host") and the other enters it (the "joiner"). The dialog
+ * opens directly on the host path (this device's own code, no upfront
+ * question) because that is the common case and a device is pairable the
+ * moment the dialog is open. Choosing to enter a code instead — via the
+ * "Have a code from the other device?" affordance on the host screen — is
+ * what declares the joiner role; that switch cancels the host's own
+ * session first (`cancelPairing`) so this device stops offering a code it
+ * is no longer showing. The two roles' UI stays mutually exclusive by
+ * construction — `role` is a single value, not two booleans, so "both at
+ * once" (the #3463 shape) is not representable. Only the host path calls
+ * `commands.startPairing()`; only the joiner path renders the entry
+ * form/QR-scanner and calls `commands.confirmPairing()`.
+ *
+ * Sections (each extracted as a sub-component for testability):
+ *  1. QR code + passphrase display (PairingQrDisplay) — host only
+ *  2. Passphrase entry (PairingEntryForm) — joiner only
+ *  3. List of already-paired devices (PairingPeersList) — either role
  *
  * Props: open (boolean), onOpenChange (callback), triggerRef (optional).
  *
@@ -33,7 +47,7 @@ import { useIpcCommand } from '@/hooks/useIpcCommand'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
-import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import type { PairingInfo, PeerRef as PeerRefRow } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
@@ -48,15 +62,20 @@ interface PairingDialogProps {
 
 const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
 
+// #3463 — a single union value (rather than e.g. `isHost: boolean` +
+// `isJoiner: boolean`) so "both roles at once" — the bug this fix
+// addresses — is not representable in the type. Only the entry point
+// changed (host by default, no chooser step); this exclusivity property
+// is what actually prevents the bug and is preserved unchanged.
+type PairingRole = 'host' | 'joiner'
+
 export function PairingDialog({
   open,
   onOpenChange,
   triggerRef,
 }: PairingDialogProps): React.ReactElement | null {
-  const [pairingInfo, setPairingInfo] = useState<{
-    passphrase: string
-    qr_svg: string
-  } | null>(null)
+  const [role, setRole] = useState<PairingRole>('host')
+  const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [words, setWords] = useState<[string, string, string, string]>(['', '', '', ''])
   const [peers, setPeers] = useState<PeerRefRow[]>([])
   const [loading, setLoading] = useState(false)
@@ -67,11 +86,6 @@ export function PairingDialog({
   const [entryMode, setEntryMode] = useState<'manual' | 'scan'>('manual')
   // Guard against accidentally closing the dialog mid-handshake.
   const [confirmCloseOpen, setConfirmCloseOpen] = useState(false)
-  // Pause the countdown while the user is mid-keystroke in the
-  // passphrase inputs so an in-flight handshake doesn't fail to a tick
-  // boundary. PairingEntryForm enforces a 5s idle debounce so an idle
-  // user with focus can't keep this true forever.
-  const [pausedByTyping, setPausedByTyping] = useState(false)
 
   const { t } = useTranslation()
   const dialogRef = useRef<HTMLDivElement>(null)
@@ -79,6 +93,12 @@ export function PairingDialog({
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
   // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
+  // True only once `startPairing` has actually succeeded (host path). Gates
+  // every `cancelPairing` call (close/unmount cleanup, explicit Cancel,
+  // switching to the joiner path) so we never cancel a session that was
+  // never started — required because the joiner path never calls
+  // `startPairing` at all.
+  const sessionStartedRef = useRef(false)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
   // detached DOM node after the dialog closes.
@@ -105,26 +125,17 @@ export function PairingDialog({
 
   const syncSetState = useSyncStore((s) => s.setState)
 
-  // Bootstrap the pairing session via the shared useIpcCommand
-  // hook. The error template literal mirrors the existing inline format
-  // so the error banner copy stays byte-equivalent.
-  const { execute: executeInit } = useIpcCommand<
-    void,
-    [{ passphrase: string; qr_svg: string }, PeerRefRow[]]
-  >({
-    call: () =>
-      Promise.all([
-        commands.startPairing().then((r) => unwrap(r)),
-        commands.listPeerRefs().then((r) => unwrap(r)),
-      ]),
+  // Host-only: mint a passphrase + QR code via the shared useIpcCommand
+  // hook. The error template literal mirrors the existing inline format so
+  // the error banner copy stays byte-equivalent regardless of which of the
+  // two calls in `initHost` below fails.
+  const { execute: executeStartPairing } = useIpcCommand<void, PairingInfo>({
+    call: () => commands.startPairing().then((r) => unwrap(r)),
     module: 'PairingDialog',
-    errorLogMessage: 'Failed to initialize pairing',
-    onSuccess: ([info, peerList]) => {
+    errorLogMessage: 'Failed to start pairing',
+    onSuccess: (info) => {
+      sessionStartedRef.current = true
       setPairingInfo(info)
-      setPeers(peerList)
-      // #1076: keep the shared sync store in step with the dialog's local
-      // peer list so StatusPanel / sidebar dot stay correct.
-      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
     onError: (err) => {
@@ -136,18 +147,60 @@ export function PairingDialog({
     },
   })
 
-  // init function extracted so it can be called for retry (#282)
-  const init = useCallback(async () => {
+  // Shared by both roles: refresh the paired-devices list. Never calls
+  // `startPairing` — read-only, so it's safe for the joiner path too.
+  const { execute: executeLoadPeers } = useIpcCommand<void, PeerRefRow[]>({
+    call: () => commands.listPeerRefs().then((r) => unwrap(r)),
+    module: 'PairingDialog',
+    errorLogMessage: 'Failed to load paired devices',
+    onSuccess: (peerList) => {
+      setPeers(peerList)
+      // #1076: keep the shared sync store in step with the dialog's local
+      // peer list so StatusPanel / sidebar dot stay correct.
+      useSyncStore.getState().setPeers(peerList.map(mapPeerRefToInfo))
+    },
+    onError: (err) => {
+      setError(
+        t('pairing.startFailed', {
+          message: String(err instanceof Error ? err.message : err),
+        }),
+      )
+    },
+  })
+
+  // Host path: only entry point that calls `startPairing`.
+  const initHost = useCallback(async () => {
+    setRole('host')
     setLoading(true)
     setError(null)
-    await executeInit()
+    await Promise.all([executeStartPairing(), executeLoadPeers()])
     setLoading(false)
-  }, [executeInit])
+  }, [executeStartPairing, executeLoadPeers])
 
-  // Cleanup-side cancelPairing — fires when the dialog closes
-  // or unmounts. Logger.warn + notify.error matches the original inline
-  // shape (handleCancel uses a different logger.error-only flavor that
-  // stays inline because it has no toast).
+  // Joiner path: never calls `startPairing` — only refreshes the peers list
+  // so the paired-devices section still has something to show.
+  const initJoiner = useCallback(async () => {
+    setRole('joiner')
+    setLoading(true)
+    setError(null)
+    await executeLoadPeers()
+    setLoading(false)
+  }, [executeLoadPeers])
+
+  // Retry button (#282) re-runs whichever role's init failed.
+  const handleRetry = useCallback(() => {
+    if (role === 'host') {
+      void initHost()
+    } else if (role === 'joiner') {
+      void initJoiner()
+    }
+  }, [role, initHost, initJoiner])
+
+  // Cleanup-side cancelPairing — fires when the dialog closes or unmounts,
+  // but ONLY if a host session was actually started (`sessionStartedRef`).
+  // Logger.warn + notify.error matches the original inline shape
+  // (handleCancel uses a different logger.error-only flavor that stays
+  // inline because it has no toast).
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
     call: () =>
       commands.cancelPairing().then((r) => {
@@ -161,54 +214,47 @@ export function PairingDialog({
     },
   })
 
-  // Load pairing info and peer list when dialog opens;
-  // cancel the pairing session on close/unmount to avoid leaking the listener.
+  // #3463 — opening the dialog resets local state and starts a fresh host
+  // session every time `open` flips true: this device shows its own code
+  // immediately (no upfront role question). This DOES fire a backend call
+  // on every open (`start_pairing`, which arms the 5-minute pending-pairing
+  // marker and wakes the sync daemon) — a deliberate change from the
+  // chooser design, and an accepted trade: the host must be pairable the
+  // moment the dialog is open. Switching to the joiner path cancels this
+  // session (see `handleSwitchToJoiner`) so it never runs uncancelled
+  // alongside a joiner attempt.
   useEffect(() => {
     if (!open) return
+    setPairingInfo(null)
+    setWords(['', '', '', ''])
+    setPeers([])
+    setError(null)
+    setCountdown(null)
+    setEntryMode('manual')
+    sessionStartedRef.current = false
+    void initHost()
+  }, [open, initHost])
 
-    let cancelled = false
-
-    async function doInit() {
-      await init()
-    }
-
-    doInit()
-      .then(() => {
-        if (cancelled) {
-          // Component closed before init finished — clean up
-        }
-      })
-      .catch((err) => {
-        logger.warn('PairingDialog', 'init failed', undefined, err)
-      })
-
+  // Cancel the pairing session on the backend when the dialog closes or
+  // unmounts — but only if a session was actually started (host path that
+  // successfully called `startPairing`). The joiner path never starts a
+  // session, so this is a correct no-op for it.
+  useEffect(() => {
+    if (!open) return
     return () => {
-      cancelled = true
-      // Cancel the pairing session on the backend when the dialog closes or
-      // unmounts. The in-flight IPC payload itself may already have crossed
-      // the bridge; this only invalidates the server-side session state.
-      void executeCancelPairingCleanup()
+      if (sessionStartedRef.current) {
+        sessionStartedRef.current = false
+        void executeCancelPairingCleanup()
+      }
     }
-  }, [open, init, executeCancelPairingCleanup])
+  }, [open, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
-  // Read the pause flag through a ref inside the interval so flipping
-  // pausedByTyping does NOT tear down and recreate the interval (which would
-  // also reset its 1s phase and skew the displayed countdown). The interval
-  // simply skips the decrement while paused.
-  //
-  // The ref is written synchronously in handleTypingStateChange (below) — not
-  // via a useEffect that mirrors the state — because under fake timers a
-  // burst of timer callbacks (e.g. interval tick + debounce expiry) runs
-  // back-to-back before React commits, so a deferred ref-sync would still
-  // see the stale value at the next tick.
   const countdownActive = countdown !== null && countdown > 0
-  const pausedByTypingRef = useRef(false)
   useEffect(() => {
     if (!countdownActive) return
 
     const interval = setInterval(() => {
-      if (pausedByTypingRef.current) return
       setCountdown((prev) => {
         if (prev === null || prev <= 1) {
           clearInterval(interval)
@@ -220,25 +266,6 @@ export function PairingDialog({
 
     return () => clearInterval(interval)
   }, [countdownActive])
-
-  // Single setter that updates both the ref (read by the interval)
-  // and the state (drives the `t('pairing.countdownPaused')` indicator render).
-  // Announces the pause / resume transition so screen-reader users — who
-  // can't see the inline `t('pairing.countdownPaused')` indicator (it sits inside
-  // an aria-hidden countdown <p>) — still hear the state change.
-  const handleTypingStateChange = useCallback(
-    (isTyping: boolean) => {
-      const wasPaused = pausedByTypingRef.current
-      pausedByTypingRef.current = isTyping
-      setPausedByTyping(isTyping)
-      if (isTyping && !wasPaused) {
-        announce(t('announce.pairingCountdownPaused'))
-      } else if (!isTyping && wasPaused) {
-        announce(t('announce.pairingCountdownResumed'))
-      }
-    },
-    [t],
-  )
 
   // Announce countdown crossings at SR-relevant thresholds only.
   // We deliberately avoid announcing every tick — only the meaningful
@@ -255,13 +282,16 @@ export function PairingDialog({
     }
   }, [countdown, t])
 
-  // Focus first word input when pairing info is loaded
+  // Focus first word input once the joiner's entry form is rendered. Was
+  // previously keyed off `pairingInfo` (a HOST-only value) as a proxy for
+  // "the entry form is visible" — a symptom of the original bug, since both
+  // widgets used to mount together. Now keyed directly on the joiner role.
   useEffect(() => {
-    if (open && pairingInfo) {
+    if (open && role === 'joiner' && !loading) {
       const inputs = getWordInputs()
       inputs[0]?.focus()
     }
-  }, [open, pairingInfo, getWordInputs])
+  }, [open, role, loading, getWordInputs])
 
   // #279: Paste support — when pasting multi-word text, split and distribute across inputs
   const handleWordChange = useCallback(
@@ -304,7 +334,8 @@ export function PairingDialog({
   // the same "Pairing failed:" banner — matches existing behavior where
   // a post-confirm `listPeerRefs()` rejection is reported under the same
   // label. `setWords` / success toast / dialog close run only on full
-  // success via `onSuccess`.
+  // success via `onSuccess`. Joiner-only — the host never renders the form
+  // that calls this.
   const { execute: executePair } = useIpcCommand<{ passphrase: string }, void>({
     call: async ({ passphrase }) => {
       // remoteDeviceId is derived from the passphrase in the pairing protocol
@@ -321,7 +352,15 @@ export function PairingDialog({
     errorLogMessage: 'Pairing failed',
     onSuccess: () => {
       setWords(['', '', '', ''])
-      notify.success(t('pairing.successMessage'))
+      // #3463 (review): `confirm_pairing` only arms a local proof — it does
+      // NOT validate the passphrase against the other device. A typo (or a
+      // stale/expired code) reaches this success path just as cleanly as a
+      // correct entry; the mismatch only surfaces later, as a generic sync
+      // error disconnected from this dialog. Claiming "paired successfully"
+      // here would be confidently wrong, which is worse than no feedback at
+      // all. This copy claims only what this device actually knows: that it
+      // armed its side of the handshake and is waiting on the peer.
+      notify.success(t('pairing.awaitingPeerMessage'))
       onOpenChange(false)
     },
     onError: (err) => {
@@ -384,27 +423,69 @@ export function PairingDialog({
     [t],
   )
 
-  const handleCancel = useCallback(() => {
-    // Cancel any in-progress pairing session
-    commands
-      .cancelPairing()
-      .then((r) => unwrap(r))
-      .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
+  // Resets role/session-scoped local state back to a clean shape when the
+  // dialog is closed via `handleCancel`. (The `open` effect performs the
+  // equivalent reset — plus re-starting a fresh host session — the next
+  // time the dialog opens, so this mostly matters for the brief window
+  // before that effect re-runs.)
+  const resetRoleState = useCallback(() => {
+    setRole('host')
     setPairingInfo(null)
     setWords(['', '', '', ''])
+    setPeers([])
     setError(null)
     setCountdown(null)
     setEntryMode('manual')
-    // Clear any stale paused state (ref + render state) so a
-    // future re-open starts fresh.
-    handleTypingStateChange(false)
+  }, [])
+
+  const handleCancel = useCallback(() => {
+    // Cancel any in-progress pairing session — only if one was actually
+    // started (host path). The joiner path never calls `startPairing`, so
+    // there is nothing on the backend to cancel for it.
+    if (sessionStartedRef.current) {
+      sessionStartedRef.current = false
+      commands
+        .cancelPairing()
+        .then((r) => unwrap(r))
+        .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
+    }
+    resetRoleState()
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
-  }, [onOpenChange, triggerRef, handleTypingStateChange])
+  }, [onOpenChange, triggerRef, resetRoleState])
+
+  // #3463 — switching to the joiner path is what DECLARES the joiner role
+  // (replacing the removed upfront chooser question). Crucially, this
+  // cancels the host's own session first (`cancelPairing` clears the
+  // backend's in-memory `pairing_state` slot — see sync_cmds.rs
+  // `cancel_pairing_inner`) so this device stops offering a code it is no
+  // longer showing. Without this, a device could simultaneously be
+  // offering its own code (host) and entering another's (joiner) — the
+  // #3463 shape wearing a different hat.
+  const handleSwitchToJoiner = useCallback(async () => {
+    if (sessionStartedRef.current) {
+      sessionStartedRef.current = false
+      await executeCancelPairingCleanup()
+    }
+    setPairingInfo(null)
+    setCountdown(null)
+    setWords(['', '', '', ''])
+    setEntryMode('manual')
+    setError(null)
+    await initJoiner()
+  }, [executeCancelPairingCleanup, initJoiner])
+
+  // Reversible: switching back to the host path re-initialises a fresh
+  // host session (this device had none while it was a joiner).
+  const handleSwitchToHost = useCallback(async () => {
+    setWords(['', '', '', ''])
+    setEntryMode('manual')
+    await initHost()
+  }, [initHost])
 
   // Unpair a peer device. Same template-literal error format
-  // as `handlePair` / `init` so the existing inline banner is preserved.
+  // as `handlePair` / `initHost` so the existing inline banner is preserved.
   const { execute: executeUnpair } = useIpcCommand<{ peerId: string }, void>({
     call: ({ peerId }) =>
       commands.deletePeerRef(peerId).then((r) => {
@@ -514,7 +595,7 @@ export function PairingDialog({
                     variant="outline"
                     size="sm"
                     ref={retryBtnRef}
-                    onClick={() => init()}
+                    onClick={handleRetry}
                     className="pairing-retry-btn shrink-0"
                   >
                     {t('pairing.retryButton')}
@@ -541,21 +622,52 @@ export function PairingDialog({
                 </div>
               )}
 
-              {/* QR + Passphrase display and Entry form */}
-              {!loading && pairingInfo && (
-                <>
-                  <PairingQrDisplay
-                    qrSvg={pairingInfo.qr_svg}
-                    passphrase={pairingInfo.passphrase}
-                    countdownDisplay={countdownDisplay}
-                    countdown={countdown}
-                    isExpired={isExpired}
-                    error={error}
-                    onRetry={() => init()}
-                    retryBtnRef={retryBtnRef}
-                    pausedByTyping={pausedByTyping}
-                  />
+              {/* QR + Passphrase display — host only. Gated on `pairingInfo`
+                  because it has nothing to render without a session. */}
+              {!loading && role === 'host' && pairingInfo && (
+                <PairingQrDisplay
+                  qrSvg={pairingInfo.qr_svg}
+                  passphrase={pairingInfo.passphrase}
+                  countdownDisplay={countdownDisplay}
+                  countdown={countdown}
+                  isExpired={isExpired}
+                  error={error}
+                  onRetry={handleRetry}
+                  retryBtnRef={retryBtnRef}
+                />
+              )}
 
+              {/* The affordance (#3463) that switches to the joiner path.
+                  Choosing this is what DECLARES the joiner role — see
+                  `handleSwitchToJoiner`. Deliberately NOT gated on
+                  `pairingInfo`: it must stay reachable even when the host
+                  session failed to start (error banner above) or resolved
+                  with no data, so a user can always get to the joiner path
+                  regardless of whether this device's own code loaded. */}
+              {!loading && role === 'host' && (
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="pairing-switch-to-joiner-btn self-start px-0 h-auto"
+                  onClick={() => void handleSwitchToJoiner()}
+                >
+                  {t('pairing.switchToJoinerLink')}
+                </Button>
+              )}
+
+              {/* Passphrase entry — joiner only, plus the affordance
+                  (#3463) that switches back to the host path. Reversible by
+                  design — see `handleSwitchToHost`. */}
+              {!loading && role === 'joiner' && (
+                <>
+                  <Button
+                    variant="link"
+                    size="sm"
+                    className="pairing-switch-to-host-btn self-start px-0 h-auto mb-2"
+                    onClick={() => void handleSwitchToHost()}
+                  >
+                    {t('pairing.switchToHostLink')}
+                  </Button>
                   <PairingEntryForm
                     words={words}
                     entryMode={entryMode}
@@ -567,8 +679,7 @@ export function PairingDialog({
                     onCancel={handleCancel}
                     onPair={handlePair}
                     pairLoading={pairLoading}
-                    isExpired={isExpired}
-                    onTypingStateChange={handleTypingStateChange}
+                    isExpired={false}
                   />
                 </>
               )}

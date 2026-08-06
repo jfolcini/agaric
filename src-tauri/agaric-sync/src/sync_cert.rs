@@ -14,11 +14,17 @@
 //!
 //! # Place in the pairing flow
 //!
-//! - [`crate::pairing`] sends the local cert hash inside `DeviceOffer` /
-//!   `DeviceAccept`; the peer side calls [`verify_device_exchange`]
-//!   ([`crate::pairing::verify_device_exchange`]) and receives the
-//!   remote `(device_id, cert_hash)` pair.
-//! - `crate::commands::sync_cmds` then hands that `cert_hash` to
+//! There is no application-layer exchange of cert hashes — pinning is pure
+//! TLS-level TOFU, gated by [`crate::pairing::pairing_proof`] (#855) rather
+//! than a device-identity handshake:
+//!
+//! - [`crate::pairing`] only produces the passphrase / QR payload and the
+//!   [`crate::pairing::pairing_proof`] hash used to admit an unpaired peer
+//!   during the pairing window. It never sees or moves a cert hash.
+//! - On the first authenticated mTLS connection to an unpinned peer whose
+//!   offered `pairing_proof` matches, `sync_daemon::server` (responder
+//!   side) or `sync_daemon::session_supervisor` (initiator side) hands the
+//!   observed leaf-cert hash to
 //!   [`agaric_store::peer_refs::upsert_peer_ref_with_cert`], persisting the
 //!   pin in `peer_refs.cert_hash` for use by the verifier on every
 //!   subsequent reconnection (TOFU model — Trust On First Use).
@@ -28,9 +34,8 @@
 //!
 //! In short: this module owns the *local* identity (cert + hash);
 //! [`agaric_store::peer_refs`] owns the *remote* identity (peer cert hashes
-//! pinned via TOFU); [`crate::pairing`] is the one-shot bridge that
-//! moves the latter from peer-to-peer over an already-mTLS-protected
-//! WebSocket.
+//! pinned via TOFU); [`crate::pairing`] only supplies the out-of-band
+//! secret (the passphrase) that gates the first pin.
 
 use std::fs::{self, OpenOptions};
 use std::io::Write;

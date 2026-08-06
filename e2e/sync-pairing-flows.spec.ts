@@ -63,6 +63,20 @@ async function openPairNewDevice(page: import('@playwright/test').Page) {
   return dialog
 }
 
+/**
+ * #3463: the dialog now opens directly on the host path (this device's own
+ * code) — no upfront chooser question. Pairing is still asymmetric — one
+ * device shows a code, the other enters it — and the old symmetric UI (both
+ * at once) is why two-device pairing could never succeed. That exclusivity
+ * is now enforced by switching roles via this affordance instead of an
+ * upfront choice: choosing "Have a code from the other device?" cancels the
+ * host's own session and declares the joiner role. Every joiner-path test
+ * therefore has to make that switch explicitly, exactly as a user does.
+ */
+async function chooseJoinerRole(dialog: ReturnType<typeof activeDialog>) {
+  await dialog.getByRole('button', { name: /have a code from the other device/i }).click()
+}
+
 async function fillPassphrase(
   dialog: ReturnType<typeof activeDialog>,
   words: [string, string, string, string],
@@ -77,10 +91,11 @@ async function fillPassphrase(
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync pairing flows', () => {
-  test('entering the correct passphrase completes pairing: confirm_pairing fires, success toast, dialog closes', async ({
+  test('entering a passphrase submits confirm_pairing, shows the honest "waiting" toast, dialog closes', async ({
     page,
   }) => {
     const dialog = await openPairNewDevice(page)
+    await chooseJoinerRole(dialog)
     // Install AFTER boot — `installIpcRecorder` wraps
     // `window.__TAURI_INTERNALS__.invoke`, which the mock only installs
     // once the app has navigated/booted (helpers.ts:584-600); calling it
@@ -94,7 +109,10 @@ test.describe('Sync pairing flows', () => {
     const calls = await getInvokeCalls(page, 'confirm_pairing')
     expect(calls.at(-1)?.['passphrase']).toBe('alpha bravo charlie delta')
 
-    await expect(page.getByText('Device paired successfully')).toBeVisible()
+    // #3463 (review): confirm_pairing only arms a local proof — it does not
+    // validate the passphrase against the peer — so the toast must not claim
+    // pairing succeeded, only that this device is waiting on the other one.
+    await expect(page.getByText('Waiting for the other device…')).toBeVisible()
     await expect(activeDialog(page)).toHaveCount(0)
   })
 
@@ -112,6 +130,7 @@ test.describe('Sync pairing flows', () => {
       page,
     }) => {
       const dialog = await openPairNewDevice(page)
+      await chooseJoinerRole(dialog)
 
       await page.evaluate(() => {
         ;(
@@ -132,18 +151,36 @@ test.describe('Sync pairing flows', () => {
       const retryBtn = dialog.locator('.pairing-retry-btn')
       await expect(retryBtn).toBeFocused()
 
-      // Clear the injection and retry — re-runs `init()` (start_pairing +
-      // listPeerRefs), which succeeds again and re-shows the QR/passphrase.
+      // Clear the injection and retry. #3463: this used to assert the
+      // passphrase text `/alpha/i` became visible again, because retry re-ran
+      // an `init()` that called `start_pairing` and re-displayed the generated
+      // passphrase. That was the symmetric UI — a joiner has no generated
+      // passphrase to display, and re-running `start_pairing` here is exactly
+      // the role confusion the fix removes. The role-appropriate observable is
+      // that the failure clears and the entry form is usable again.
       await page.evaluate(() => {
         ;(window as unknown as { __clearMockErrors?: () => void }).__clearMockErrors?.()
       })
       await retryBtn.click()
-      await expect(dialog.getByText(/alpha/i)).toBeVisible()
       await expect(errorBanner).toHaveCount(0)
+      const wordInputs = dialog.locator('input[aria-label*="Passphrase word"]')
+      await expect(wordInputs).toHaveCount(4)
+      await expect(wordInputs.first()).toBeEnabled()
     })
   })
 
-  test('pairing session expiry shows "Session expired" and disables the form', async ({ page }) => {
+  test('pairing session expiry on the host path shows "Session expired" and offers retry', async ({
+    page,
+  }) => {
+    // #3463: this test used to assert a countdown AND the passphrase word
+    // inputs on one screen. That screen no longer exists, and its absence is
+    // the fix: the countdown belongs to the host (it owns the session being
+    // timed) and the word inputs belong to the joiner (it has no session), so
+    // asserting both together was asserting the symmetric UI that made pairing
+    // impossible. Rescoped to the host path, where the countdown actually lives
+    // (`PairingQrDisplay`). The joiner has no local session to expire; what a
+    // joiner experiences when the host's code lapses is a wire-level rejection,
+    // not a local countdown, and is not covered here.
     await waitForBoot(page)
     await page.getByRole('button', { name: 'Settings', exact: true }).click()
     await expect(page.locator('header').getByText('Settings')).toBeVisible()
@@ -158,22 +195,20 @@ test.describe('Sync pairing flows', () => {
     await page.getByRole('button', { name: /pair new device/i }).click()
     const dialog = activeDialog(page)
     await expect(dialog.getByText('Pair Device')).toBeVisible()
+    // #3463: the dialog opens directly on the host path — no chooser click
+    // needed before the countdown appears.
     await expect(dialog.locator('.pairing-countdown')).toContainText('5:00')
 
-    // PAIRING_TIMEOUT_SECONDS is 300 (PairingDialog.tsx:54); run past it.
+    // PAIRING_TIMEOUT_SECONDS is 300 (PairingDialog.tsx); run past it.
     // `runFor` (not `fastForward`) is required: the countdown decrements
     // via a 1000ms `setInterval` tick-by-tick, and `fastForward` only fires
     // a given due timer AT MOST ONCE (it "jumps" time, simulating a laptop
-    // reopened later) — under it the interval fires exactly once and the
+    // reopened later) -- under it the interval fires exactly once and the
     // countdown only drops by one second. `runFor` replays every due tick,
     // matching real elapsed time.
     await page.clock.runFor('05:01')
 
     await expect(dialog.locator('.pairing-expired').getByText('Session expired')).toBeVisible()
-
-    const wordInputs = dialog.locator('input[aria-label*="Passphrase word"]')
-    await expect(wordInputs.first()).toBeDisabled()
-    await expect(dialog.locator('.pairing-pair-btn')).toBeDisabled()
     await expect(dialog.locator('.pairing-retry-expired-btn')).toBeVisible()
   })
 

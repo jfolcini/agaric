@@ -259,37 +259,56 @@ async fn pairing_start_then_cancel_clears_session() {
     );
 }
 
-/// H-1 regression: `confirm_pairing_inner` must refuse to persist a peer
-/// when no pairing session is active. Before H-1 the function happily
-/// created a peer ref for any string and any caller; the post-H-1
-/// contract is that the joining device must produce the passphrase
-/// that was generated on the host side, which requires an active
-/// `pairing_state` slot to compare against.
+/// #3463: confirming without a prior `start_pairing` is the **normal joiner
+/// path**, and must succeed while still creating no `peer_ref`.
+///
+/// This test previously asserted the opposite. Its rationale read: "the joining
+/// device must produce the passphrase that was generated on the host side, which
+/// requires an active `pairing_state` slot to compare against." The first clause
+/// is correct; the second does not follow from it, and is the whole defect. The
+/// joiner's own slot holds the joiner's own passphrase, so comparing the host's
+/// passphrase against it can never match — which is why two-device pairing never
+/// worked.
+///
+/// The half worth keeping is the H-1 property that a confirm must not conjure a
+/// `peer_ref` for an arbitrary string. That is asserted below and is unchanged:
+/// the real peer arrives via TOFU on the first authenticated connection (#855),
+/// gated on the proof this call arms.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn confirm_without_prior_start_returns_no_active_session() {
+async fn confirm_without_prior_start_arms_proof_and_creates_no_peer_3463() {
     let (pool, _dir) = test_pool().await;
+    // No prior `start_pairing`: this device chose the joiner role.
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
 
-    let result = confirm_pairing_inner(
+    let host_passphrase = "some random phrase";
+
+    confirm_pairing_inner(
         &pool,
         &pairing.0,
         &scheduler,
         "dev-1",
-        "some random phrase".into(),
-        "dev-remote".into(),
+        host_passphrase.into(),
+        String::new(),
     )
-    .await;
+    .await
+    .expect("#3463: the joiner path has no local session and must still confirm");
 
-    assert!(
-        matches!(&result, Err(AppError::Validation { message: msg, .. }) if msg == "pairing.no_active_session"),
-        "confirm without prior start must surface as Validation(\"pairing.no_active_session\"), got {result:?}"
+    let proof = agaric_store::peer_refs::get_pending_pairing_proof(&pool)
+        .await
+        .unwrap()
+        .expect("joiner must arm a pending-pairing marker");
+    assert_eq!(
+        proof,
+        agaric_sync::pairing::pairing_proof(host_passphrase),
+        "the marker must carry proof of the TYPED passphrase, so joiner and host converge"
     );
 
     let peers = crate::commands::list_peer_refs_inner(&pool).await.unwrap();
     assert!(
         peers.is_empty(),
-        "no peer_ref must be created when no pairing is in flight"
+        "confirm must not conjure a peer_ref — TOFU establishes it on the first \
+         authenticated connection (#855)"
     );
 }
 
@@ -326,18 +345,37 @@ async fn start_sync_rejects_peer_in_backoff() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn full_pair_then_sync_workflow() {
+    // #3463: two devices with independent pairing state and independent DBs.
+    // This test used to feed one device's own passphrase back into
+    // `confirm_pairing_inner` on the same `PairingState`, which models a device
+    // confirming itself and is green regardless of whether real pairing works.
+    //
+    // Remote device (the host): mints the passphrase and arms its own marker.
+    let (pool_remote, _dir_remote) = test_pool().await;
+    let pairing_remote = PairingState(Mutex::new(None));
+    let scheduler_remote = SyncScheduler::new();
+    let host_passphrase = crate::commands::start_pairing_armed_inner(
+        &pool_remote,
+        &pairing_remote.0,
+        &scheduler_remote,
+        "dev-remote",
+    )
+    .await
+    .unwrap()
+    .passphrase;
+
+    // Local device (the joiner): its dialog also opened a session, then the
+    // user typed the passphrase displayed on the remote device.
     let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
     let scheduler = SyncScheduler::new();
-
-    // Pair
-    let info = start_pairing_inner(&pairing.0, "dev-local").unwrap();
+    start_pairing_inner(&pairing.0, "dev-local").unwrap();
     confirm_pairing_inner(
         &pool,
         &pairing.0,
         &scheduler,
         "dev-local",
-        info.passphrase,
+        host_passphrase.clone(),
         "dev-remote".into(),
     )
     .await
@@ -358,6 +396,15 @@ async fn full_pair_then_sync_workflow() {
     assert!(
         peer_refs::is_pending_pairing(&pool).await.unwrap(),
         "the pending-pairing window must be armed after confirm"
+    );
+    // #3463: and the two devices agree on the proof, which is what the
+    // wire-side #855 gate actually checks.
+    assert_eq!(
+        peer_refs::get_pending_pairing_proof(&pool).await.unwrap(),
+        peer_refs::get_pending_pairing_proof(&pool_remote)
+            .await
+            .unwrap(),
+        "#3463: host and joiner must hold the same pairing proof"
     );
 }
 
