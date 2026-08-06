@@ -78,22 +78,34 @@ vi.mock('@/lib/logger', () => ({
 // to mirror the dialog's local peer list into the shared store. The mock
 // must expose `getState` in addition to the selector-call form. Hoisted
 // so the same state object is reachable from the (also-hoisted) factory.
-const { mockSyncStoreState } = vi.hoisted(() => ({
-  mockSyncStoreState: {
+// #3495 — `setState` must mirror the real reducer (`src/stores/sync.ts`:
+// `set({ state, error: error ?? null })`), not be a bare no-op. A no-op
+// can't exercise the stale-error-in-the-store regression at all: the
+// component's `call` (PairingDialog.tsx) calls `syncSetState('idle')`
+// synchronously right after `confirm_pairing` resolves, and it's THAT call
+// clearing the store's `error` that keeps a stale rejection from failing a
+// fresh wait. A no-op mock would silently pass tests regardless of whether
+// the component actually clears the error.
+const { mockSyncStoreState } = vi.hoisted(() => {
+  const state = {
     state: 'idle',
     error: null as string | null,
     peers: [],
     lastSyncedAt: null,
     opsReceived: 0,
     opsSent: 0,
-    setState: vi.fn(),
+    setState: vi.fn((newState: string, error?: string | null) => {
+      state.state = newState
+      state.error = error ?? null
+    }),
     setPeers: vi.fn(),
     updateLastSynced: vi.fn(),
     incrementOpsReceived: vi.fn(),
     incrementOpsSent: vi.fn(),
     reset: vi.fn(),
-  },
-}))
+  }
+  return { mockSyncStoreState: state }
+})
 
 vi.mock('@/stores/sync', () => {
   const useSyncStore = (selector: (s: Record<string, unknown>) => unknown) =>
@@ -1058,7 +1070,14 @@ describe('PairingDialog', () => {
     await user.click(pairBtn)
 
     expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
-    await waitFor(() => expect(listCallCount).toBeGreaterThanOrEqual(3))
+    // #3495 — `toBeGreaterThanOrEqual(3)` was vacuous: that condition is
+    // already true the instant `findByTestId` above resolves (per the
+    // comment on `listCallCount <= 3`), so it never forced a later poll
+    // tick to actually happen. Capture a baseline here and require the
+    // count to move PAST it, which does force the wait to span a real
+    // poll tick.
+    const baselineListCallCount = listCallCount
+    await waitFor(() => expect(listCallCount).toBeGreaterThan(baselineListCallCount))
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
     expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
   })
@@ -1450,6 +1469,38 @@ describe('PairingDialog', () => {
       expect(results).toHaveNoViolations()
     })
 
+    // #3495 — a rejection string already sitting in the shared sync store
+    // from an EARLIER, unrelated `sync:error` event must not be mistaken
+    // for THIS attempt's rejection and immediately fail a fresh wait. The
+    // protection is `syncSetState('idle')` in `executePair`'s `call`
+    // (PairingDialog.tsx), which clears the store's error before waiting
+    // begins; there used to be a second, dead-code guard
+    // (`waitErrorBaselineRef`, removed by #3495) that could never fire
+    // because of it.
+    it('a stale rejection already sitting in the sync store does not immediately fail a fresh wait', async () => {
+      const user = userEvent.setup()
+      mockInvokeByCommand({ list_peer_refs: [], confirm_pairing: undefined })
+
+      try {
+        // A leftover rejection from BEFORE this attempt even starts.
+        mockSyncStoreState.error = 'pairing passphrase proof required'
+
+        render(<PairingDialog open onOpenChange={vi.fn()} />)
+        await enterWaitingState(user)
+
+        // Still waiting — not kicked straight back to the entry form by
+        // the stale error.
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+        expect(screen.queryByLabelText('Passphrase word 1')).not.toBeInTheDocument()
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        // `syncSetState('idle')` in `call` is what neutralises the stale
+        // error — confirm it actually ran.
+        expect(mockSyncStoreState.error).toBeNull()
+      } finally {
+        mockSyncStoreState.error = null
+      }
+    })
+
     it('surfaces a timeout with a retry path when the TTL elapses with no success or rejection', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_peer_refs') return []
@@ -1493,6 +1544,53 @@ describe('PairingDialog', () => {
       // real timers are restored (see the success test above for details).
       const results = await axe(container)
       expect(results).toHaveNoViolations()
+    })
+
+    // #3496 — the issue's stated cause ("polling leaks on parent unmount")
+    // is misleading: `usePollingQuery` cleans up correctly on a genuine
+    // unmount. The real defect is that a parent-driven `open={false}` does
+    // NOT unmount this component — `if (!open) return null` sits after
+    // every hook, and `joinerPhase` is untouched by the close (only
+    // `handleCancel`, the success effect, and the open effect reset it) —
+    // so without gating the poll on `open` too, `list_peer_refs` keeps
+    // firing every `PAIRING_PEER_POLL_INTERVAL_MS` indefinitely on a
+    // closed dialog.
+    it('list_peer_refs polling stops once `open` flips to false, even though `joinerPhase` stays "waiting"', async () => {
+      let listCallCount = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') {
+          listCallCount++
+          return []
+        }
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+        await enterWaitingStateFake()
+        // Sanity: polling is genuinely active before the close, so a flat
+        // "unchanged count" assertion below can't pass vacuously because
+        // nothing was ever polling in the first place.
+        expect(listCallCount).toBeGreaterThan(0)
+
+        // Parent-driven close WITHOUT unmounting — the documented
+        // "intentional escape hatch" (see `handleAttemptClose`'s comment
+        // in PairingDialog.tsx).
+        rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+        const countAtClose = listCallCount
+
+        // Advance well past one poll boundary
+        // (PAIRING_PEER_POLL_INTERVAL_MS = 2000ms).
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2500)
+        })
+
+        expect(listCallCount).toBe(countAtClose)
+      } finally {
+        vi.useRealTimers()
+      }
     })
   })
 
