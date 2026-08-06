@@ -58,6 +58,32 @@ export const attachments = new Map<string, Record<string, unknown>>()
 // content so the FE upload→render flow is exercisable under the web mock.
 export const attachmentBytes = new Map<string, number[]>()
 
+// Peer refs store: peer_id → PeerRef-like object (see `PeerRef` in
+// `src/lib/bindings.ts` for the field shape). #3469 — a peer row lands here
+// some time AFTER `confirm_pairing` (mimicking the real TOFU-pin, which
+// happens on the first authenticated connection and never inside the
+// confirm call itself), so the joiner's post-confirm `list_peer_refs` poll
+// has something to observe under the mock instead of a static `[]`.
+// See the scope note above `confirm_pairing` in `handlers/sync.ts` for why
+// a wrong-passphrase / proof-rejection failure is deliberately NOT modeled
+// here — there is no peer transport in this single-process mock for a
+// proof comparison to fail against.
+export const peerRefs = new Map<string, Record<string, unknown>>()
+
+// #3469 (review) — the "how much longer until the pinned peer shows up"
+// counter that keeps `confirm_pairing` from materializing a peer
+// synchronously. Held here rather than as a module-local in
+// `handlers/sync.ts` for one reason: `seedBlocks()` below must be able to
+// reset it along with every other mock store, so a leftover pending reveal
+// from one test can't leak a phantom peer into the next.
+//
+// `readsRemaining > 0` means "a confirm is in flight; materialize the peer
+// once this many further `list_peer_refs` reads have happened". Counting
+// READS rather than using a `setTimeout` is deliberate: a real timer
+// desyncs from Playwright's `page.clock`, so a spec that installs the fake
+// clock could never observe the reveal.
+export const pairingPeerReveal = { readsRemaining: 0 }
+
 // Per-page last-edited timestamp (page_id → ISO-8601 string). The backend
 // computes `last_modified_at` as `MAX(op_log.created_at)` over the page block
 // (it is NOT a `blocks` column), so the mock keeps it in a dedicated store
@@ -197,10 +223,19 @@ export function seedBlocks(): void {
   blocks.clear()
   properties.clear()
   blockTags.clear()
+  blockTagRefs.clear()
   propertyDefs.clear()
   pageAliases.clear()
   attachments.clear()
+  attachmentBytes.clear()
   pageLastModified.clear()
+  // #3469 (review) — `peerRefs` (and its pending-reveal counter) were added
+  // as mock stores but never reset here, so a peer pinned by one seeded
+  // session survived into the next one and every later `list_peer_refs`
+  // reported a device that this run never paired with. `blockTagRefs` /
+  // `attachmentBytes` had the same pre-existing leak; cleared alongside.
+  peerRefs.clear()
+  pairingPeerReveal.readsRemaining = 0
   counter = 0
   opLog.length = 0
   opSeqCounter = 0

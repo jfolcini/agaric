@@ -18,45 +18,69 @@ import {
  * completes a pairing, never exercises failure/expiry, and never touches
  * unpair/rename/manual-address.
  *
- * ## Mock-blocked: peer management (list, unpair, rename, manual address)
+ * ## The peer surface is stateful now (#3469)
  *
- * `src/lib/tauri-mock/handlers.ts` backs the entire peer surface with
- * STATELESS stubs, confirmed by direct inspection — there is no peer `Map`
- * anywhere in `src/lib/tauri-mock/seed.ts` (unlike `blocks`/`properties`/
- * `blockTags`/etc, which are all real, reseeded stores):
+ * This header used to record the peer surface as STATELESS — `list_peer_refs:
+ * () => []` with no backing store, `confirm_pairing: returnUndefined, // no-op
+ * — never adds a peer` — and concluded that a `PeerListItem` row could never
+ * render, so "a peer appears in the device list" was unassertable here. That
+ * is no longer true: `src/lib/tauri-mock/seed.ts` now owns a real `peerRefs`
+ * Map (reseeded like `blocks`/`properties`), and `handlers/sync.ts` reads and
+ * writes it.
+ *
+ * What the mock models, precisely:
  *
  * ```
- * list_peer_refs: () => [],        // ALWAYS empty, never mutated
- * get_peer_ref: returnNull,
- * delete_peer_ref: returnUndefined,   // no-op
- * confirm_pairing: returnUndefined,   // no-op — never adds a peer
- * update_peer_name: returnUndefined,  // no-op
- * set_peer_address: returnNull,       // no-op
+ * list_peer_refs: reads the peerRefs store, and advances a pending reveal
+ * get_peer_ref / delete_peer_ref: read / remove from that same store
+ * confirm_pairing: arms a pending reveal — adds NO peer synchronously
+ * update_peer_name / set_peer_address: still no-ops
  * ```
  *
- * `DeviceManagement.tsx:111-130` and `PairingDialog.tsx:113-138,306-317`
- * both source their peer list EXCLUSIVELY from `listPeerRefs()`. Since that
- * handler is hardcoded to return `[]` and nothing in the mock ever populates
- * a backing store, a `PeerListItem` row can never render — there is no
- * "peer that appears in the device list" to assert on after a successful
- * pairing, and no row to unpair/rename/set an address on, regardless of how
- * pairing is driven. This is genuinely unreachable on the current mock, not
- * a missed test — see the `test.skip` at the bottom of this file. It is
- * already covered extensively at the unit layer (`PairingDialog.test.tsx`,
- * `DeviceManagement.test.tsx`, `PeerListItem.test.tsx`).
+ * The reveal timing is the load-bearing part, and it is COUNTED IN READS,
+ * not scheduled on a timer (a `setTimeout` would desync from the
+ * `page.clock` this file's tests install). A `confirm_pairing` arms a
+ * three-read countdown; the peer materializes on the third subsequent
+ * `list_peer_refs`. The first two are the joiner's own pre-tick reads —
+ * `PairingDialog`'s authoritative baseline snapshot (taken inside
+ * `executePair`'s `call`, right after `confirm_pairing` resolves) and
+ * `usePollingQuery`'s immediate fetch when polling is enabled — and BOTH
+ * must come back empty, or the flow breaks: a peer in the baseline can
+ * never read as "new", so the wait would deadlock for the full 5-minute
+ * TTL; a peer in the immediate fetch would resolve the wait in the frame it
+ * opened, which is the pre-#3469 false success wearing a poll's clothes.
+ * The peer therefore appears on the first real 2s poll tick.
  *
- * What IS fully drivable and asserted below instead of "peer appears":
- * the `confirm_pairing` IPC call fires with the entered passphrase, the
- * success toast fires, and the dialog closes — the honest, observable
- * proxy for "pairing completed" under this mock.
+ * What the mock still does NOT model: a WRONG passphrase. There is no peer
+ * transport in a single-process browser mock for a proof comparison to fail
+ * against, so every input reaches the same success path. Rejection is
+ * covered at the unit layer (`PairingDialog.test.tsx`, via the
+ * `useSyncStore` error signal); what this file drives is the joiner's
+ * confirm → honest wait → success resolution, end to end, including the
+ * `PeerListItem` row that now really does render afterwards.
  */
 
-async function openPairNewDevice(page: import('@playwright/test').Page) {
+async function openSyncSettings(page: import('@playwright/test').Page) {
   await waitForBoot(page)
   await page.getByRole('button', { name: 'Settings', exact: true }).click()
   await expect(page.locator('header').getByText('Settings')).toBeVisible()
   await page.getByRole('tab', { name: /Sync.*Devices/i }).click()
   await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
+}
+
+/**
+ * `beforeOpen` runs after the Sync settings panel is up but before the
+ * dialog opens — the only safe window to install `page.clock`, since the
+ * seed data's `today` must already be computed from real time (see the
+ * expiry test) while every interval the dialog itself creates still has to
+ * land on the fake clock.
+ */
+async function openPairNewDevice(
+  page: import('@playwright/test').Page,
+  beforeOpen?: () => Promise<void>,
+) {
+  await openSyncSettings(page)
+  await beforeOpen?.()
   await page.getByRole('button', { name: /pair new device/i }).click()
   const dialog = activeDialog(page)
   await expect(dialog.getByText('Pair Device')).toBeVisible()
@@ -91,10 +115,22 @@ async function fillPassphrase(
 test.describe.configure({ mode: 'serial' })
 
 test.describe('Sync pairing flows', () => {
-  test('entering a passphrase submits confirm_pairing, shows the honest "waiting" toast, dialog closes', async ({
+  // #3469 — this test used to end `await expect(activeDialog(page))
+  // .toHaveCount(0)`: submit the passphrase, dialog closes. That assertion
+  // WAS the bug. `confirm_pairing` only arms this device's local proof; it
+  // cannot tell a correct passphrase from a typo, because the mismatch is
+  // only discoverable later, on the wire. A dialog that closes there has
+  // claimed an outcome it has no evidence for. The contract now is the
+  // opposite: the dialog STAYS OPEN in a waiting state, and closes only when
+  // a peer that was absent at confirm time actually shows up.
+  test('entering a passphrase submits confirm_pairing and holds the honest waiting state until a peer actually appears', async ({
     page,
   }) => {
-    const dialog = await openPairNewDevice(page)
+    // The fake clock makes "still waiting" an assertion about elapsed time
+    // rather than a race: while it is frozen, the joiner's 2s
+    // `list_peer_refs` poll cannot tick, so the only reads that can have
+    // happened are the two the mock deliberately keeps peer-free.
+    const dialog = await openPairNewDevice(page, () => page.clock.install())
     await chooseJoinerRole(dialog)
     // Install AFTER boot — `installIpcRecorder` wraps
     // `window.__TAURI_INTERNALS__.invoke`, which the mock only installs
@@ -102,18 +138,47 @@ test.describe('Sync pairing flows', () => {
     // pre-navigation is a silent no-op.
     await installIpcRecorder(page)
 
-    // Mock's start_pairing always returns this passphrase (handlers.ts ~3522).
+    // Mock's start_pairing always returns this passphrase.
     await fillPassphrase(dialog, ['alpha', 'bravo', 'charlie', 'delta'])
     await dialog.getByRole('button', { name: 'Pair', exact: true }).click()
 
     const calls = await getInvokeCalls(page, 'confirm_pairing')
     expect(calls.at(-1)?.['passphrase']).toBe('alpha bravo charlie delta')
 
-    // #3463 (review): confirm_pairing only arms a local proof — it does not
-    // validate the passphrase against the peer — so the toast must not claim
-    // pairing succeeded, only that this device is waiting on the other one.
-    await expect(page.getByText('Waiting for the other device…')).toBeVisible()
+    // The waiting state, not a success claim.
+    const waiting = dialog.getByTestId('pairing-waiting-state')
+    await expect(waiting).toBeVisible()
+    await expect(waiting.getByText('Waiting for the other device…')).toBeVisible()
+
+    // ...and it PERSISTS. Both of the joiner's pre-tick reads have already
+    // resolved by now (the baseline snapshot and the poll's immediate
+    // fetch — neither is timer-driven, so the frozen clock does not hold
+    // them back), and neither produced a peer. Nothing further can happen
+    // until time moves, so a dialog still open here is open on purpose.
+    await expect(activeDialog(page)).toHaveCount(1)
+    await expect(page.locator('[data-sonner-toast]')).toHaveCount(0)
+
+    // One poll interval (PAIRING_PEER_POLL_INTERVAL_MS = 2000 in
+    // PairingDialog.tsx) later, the mock materializes the pinned peer on
+    // the third read and the wait resolves — for the first time with actual
+    // evidence behind it.
+    await page.clock.runFor(2000)
+
+    await expect(
+      page.locator('[data-sonner-toast]').getByText('Device paired successfully'),
+    ).toBeVisible()
     await expect(activeDialog(page)).toHaveCount(0)
+
+    // The peer is real mock state now, not a toast: closing the dialog
+    // re-runs DeviceManagement's `loadData` (DeviceManagement.tsx:225-231)
+    // and the row renders in the Sync settings device list — the "peer
+    // appears in the device list" assertion this file's header used to
+    // record as structurally unreachable.
+    // Scoped to the row's own name element: an unscoped text match also
+    // hits the "Paired Devices (1)" section heading.
+    await expect(page.locator('[data-testid="settings-panel-sync"] .device-peer-name')).toHaveText(
+      'Paired Device',
+    )
   })
 
   test.describe('confirm_pairing failure', () => {
@@ -217,9 +282,10 @@ test.describe('Sync pairing flows', () => {
   }) => {
     await waitForBoot(page)
 
-    // list_peer_refs is always [] (see file header) — the sidebar Sync
-    // click guard (App.tsx:329-348) therefore ALWAYS opens NoPeersDialog
-    // rather than silently syncing, on every run of this mock.
+    // The `peerRefs` store starts empty on every fresh page and only ever
+    // gains a row via `confirm_pairing` (see file header), which this test
+    // never performs — so the sidebar Sync click guard (App.tsx:329-348)
+    // still opens NoPeersDialog rather than silently syncing.
     const syncBtn = page
       .locator('[data-slot="sidebar"]')
       .getByRole('button', { name: 'Sync', exact: true })
@@ -242,14 +308,20 @@ test.describe('Sync pairing flows', () => {
     await expect(page.locator('[data-testid="settings-panel-sync"]')).toBeVisible()
   })
 
-  // See the file-header note: `list_peer_refs` (handlers.ts ~3517) and
-  // `confirm_pairing`/`delete_peer_ref`/`update_peer_name`/`set_peer_address`
-  // (handlers.ts ~3519,3526,4067,4472) are all stateless no-op stubs with no
-  // backing store, so a peer row can never render in DeviceManagement or the
-  // PairingDialog's own peers list under this mock — there is nothing to
-  // unpair, rename, or set a manual address on. Covered at the unit layer
-  // instead (DeviceManagement.test.tsx:249/829, PeerListItem.test.tsx:155).
+  // #3469 — this skip used to claim peer management was *structurally*
+  // unreachable, because no mock handler could ever produce a peer row.
+  // That is no longer the reason: `confirm_pairing` + three
+  // `list_peer_refs` reads now produce a real row, and the pairing test
+  // above asserts it renders in DeviceManagement. `delete_peer_ref` is
+  // backed by the store too, so unpair is drivable here.
+  //
+  // Rename and manual address are NOT: `update_peer_name` and
+  // `set_peer_address` remain no-op stubs that never touch `peerRefs`, so
+  // the row's name/address can't change no matter what the UI submits.
+  // Kept skipped as one unit rather than split, since the remaining gap is
+  // a mock gap and not a coverage decision — all three are covered at the
+  // unit layer (DeviceManagement.test.tsx:249/829, PeerListItem.test.tsx:155).
   test.skip('peer management (unpair / rename / manual address)', () => {
-    // Structurally unreachable on the web+mock harness — see file header.
+    // Rename/address are unobservable on the web+mock harness — see file header.
   })
 })

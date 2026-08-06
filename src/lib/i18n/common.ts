@@ -139,6 +139,12 @@ export const common: Record<string, string> = {
   'announce.pairingCountdown': 'Pairing session expires in {{seconds}} seconds',
   'announce.pairingCountdownMinute': 'Pairing session expires in 1 minute',
   'announce.pairingExpired': 'Pairing session expired',
+  // #3469 — waiting-state transitions, announced once per transition (not
+  // per tick) so screen-reader users learn the outcome without being spammed.
+  'announce.pairingWaiting': 'Waiting for the other device to confirm pairing',
+  'announce.pairingSucceeded': 'Device paired successfully',
+  'announce.pairingProofRejected': 'Pairing passphrase did not match',
+  'announce.pairingWaitTimedOut': 'Pairing timed out waiting for the other device',
   'announce.undone': 'Undone',
   'announce.undoFailed': 'Undo failed',
   'announce.redone': 'Redone',
