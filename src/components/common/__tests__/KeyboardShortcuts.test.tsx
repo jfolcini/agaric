@@ -195,6 +195,50 @@ describe('KeyboardShortcuts', () => {
     expect(table.dataset['slot']).toBe('scroll-area')
   })
 
+  // #3520 review (blocking): `table-fixed` alone stops a column growing,
+  // but `<td>` overflow is `visible` — it does NOT clip, so an unwrappable
+  // cell (e.g. the deep-links `<code>` chips) renders past its column
+  // boundary and overlaps the next column's text instead. The e2e
+  // overflow guard (`e2e/mobile-overflow.spec.ts`) can't see this because
+  // the overlap stays inside the sheet's own right edge — and that file
+  // stays `test.skip(!!process.env.CI, …)` regardless, so nothing in CI
+  // enforces the class pairing. Assert both invariants directly here so a
+  // future edit that drops either class fails a real CI test, not just a
+  // code comment. jsdom does not run layout, so we assert on classes
+  // (which are what actually control the CSS rules), never on measured
+  // pixel geometry.
+  it('all four shortcut tables keep table-fixed, and their unwrappable code chips keep break-all', () => {
+    render(<KeyboardShortcuts open onOpenChange={vi.fn()} />)
+
+    const container = screen.getByTestId('shortcuts-table')
+    const tableTestIds = [
+      'essential-table',
+      'shortcuts-list-table',
+      'syntax-table',
+      'deep-links-table',
+    ]
+    for (const testId of tableTestIds) {
+      const table = container.querySelector(`table[data-testid="${testId}"]`)
+      expect(table, `expected a <table data-testid="${testId}">`).toBeTruthy()
+      expect(
+        table?.className,
+        `${testId} must keep table-fixed (#3501) — dropping it lets an unwrappable cell inflate the column`,
+      ).toContain('table-fixed')
+    }
+
+    // Every deep-link / syntax `<code>` chip must keep `break-all` — the
+    // fix that lets a table-fixed column actually shrink an unwrappable
+    // cell instead of letting it overlap the next column (#3520 review).
+    const codeChips = container.querySelectorAll('table code')
+    expect(codeChips.length).toBeGreaterThan(0)
+    for (const chip of Array.from(codeChips)) {
+      expect(
+        chip.className,
+        `code chip "${chip.textContent}" must keep break-all so it can shrink to its table-fixed column width`,
+      ).toContain('break-all')
+    }
+  })
+
   // Category headers stick to the top of the scroll viewport so the
   // user keeps category context mid-list. Pin the Tailwind classes that
   // implement the sticky behavior + opaque background + layering.

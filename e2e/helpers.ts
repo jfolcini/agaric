@@ -192,6 +192,15 @@ export async function expectNoHorizontalOverflow(
     const scrollWidth = root.scrollWidth
     const clientWidth = root.clientWidth
 
+    // #3540: this walk only skips descendants of an `overflow-x: auto|scroll`
+    // ancestor below — NOT `overflow: hidden` (e.g. Tailwind `truncate`, or a
+    // deliberately hard-clipped column like the mobile icon rail). That's a
+    // known latent false-positive surface: if a legitimately-clipped
+    // sub-container is ever nested inside a `target`, a descendant whose own
+    // box (not just its text) genuinely extends past the clip would be
+    // flagged even though it's invisible/unreachable on a real phone. Not
+    // fixed inline — see #3540 for why a blanket `overflow: hidden` skip
+    // would blunt the exact protection this unconditional walk exists for.
     const offenders: OverflowOffender[] = []
     for (const node of Array.from(root.querySelectorAll('*'))) {
       const style = getComputedStyle(node)
