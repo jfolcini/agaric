@@ -29,5 +29,11 @@ pub mod endpoint;
 /// module docs for why the chunking layer does not come along.
 pub mod session;
 
+/// Driving a [`SyncOrchestrator`](crate::sync_protocol::SyncOrchestrator) to a terminal
+/// state over a bi-stream. One loop for both roles — see the module docs for why the
+/// old transport needed two.
+pub mod driver;
+
+pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
 pub use session::{MAX_FRAME_SIZE, recv_sync_message, send_sync_message};
