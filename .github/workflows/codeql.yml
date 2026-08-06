@@ -92,10 +92,11 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          # security-and-quality = security-extended + maintainability/reliability
-          # queries. The marginal noise on a small repo is acceptable; flip to
-          # security-extended if the maintainability queries become noisy.
-          queries: security-and-quality
+          # Query suite AND per-query filters live in the config file. Do not
+          # re-add a `queries:` input here: a bare value REPLACES the config
+          # file's selection (only a `+` prefix merges), which would silently
+          # strip the filters that file exists to apply.
+          config-file: ./.github/codeql/codeql-config.yml
 
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4

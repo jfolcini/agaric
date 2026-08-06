@@ -1,0 +1,52 @@
+name: 'Agaric CodeQL config'
+
+# Query selection lives HERE rather than in the workflow's `queries:` input,
+# because a `queries:` value in the workflow *replaces* the config file's
+# (only a `+` prefix merges them) — and `query-filters` below can only filter
+# queries that this file actually selected. One source of truth avoids a
+# filter that silently matches nothing.
+#
+# security-and-quality = security-extended + maintainability/reliability
+# queries. The marginal noise on a small repo is acceptable; flip to
+# security-extended if the maintainability queries become noisy as a whole.
+queries:
+  - uses: security-and-quality
+
+# Filter order matters: the FIRST filter after the query selection sets the
+# default. Leading with `exclude` keeps "include everything else" as the
+# default, so this subtracts one query rather than allow-listing.
+query-filters:
+  # rust/unused-variable does not model Rust 2021 inline format-arg captures.
+  # A variable used only as `{i}` inside format!/panic!/tracing! reads as
+  # unused to the extractor, so idiomatic code is flagged:
+  #
+  #     for i in 0..cap {
+  #         sockets.push(TcpStream::connect(&addr).await
+  #             .unwrap_or_else(|e| panic!("peer {i} must connect: {e}")));
+  #     }
+  #
+  # Measured: 135 alerts of this rule — 4x the next-largest and more than half
+  # of every alert this repo has ever produced. 132 were dismissed by hand as
+  # false positives, all citing this same cause. The remaining 3 were the
+  # entire open-alert list, i.e. the Security tab's false-positive rate was
+  # 100%, which is what makes this worth a config change: a scanner that is
+  # always wrong trains the reader to dismiss on reflex, and the next real
+  # rust/cleartext-logging or rust/hard-coded-cryptographic-value gets waved
+  # through with it. Excluding the query restores signal rather than hiding it.
+  #
+  # Excluding it loses NO coverage, which is the load-bearing part of this
+  # decision and the thing to re-check before trusting it:
+  #   * rustc's own `unused_variables` lint answers the same question exactly —
+  #     it is name resolution, and the compiler is ground truth. Verified: a
+  #     variable used only in `panic!("{i}")` draws no rustc warning, while a
+  #     genuinely unused one in the same file does.
+  #   * CI denies it. `_validate.yml` runs the prek `cargo-clippy` hook as
+  #     `cargo clippy --workspace --all-targets -- -D warnings` on every
+  #     backend PR, and `--all-targets` covers the tests/ and benches/ targets
+  #     where every one of these 135 alerts lived.
+  #
+  # So this exclusion is conditional on that clippy gate. If `-D warnings` is
+  # ever dropped, or clippy stops running `--all-targets`, this filter starts
+  # costing real coverage and should be removed with it.
+  - exclude:
+      id: rust/unused-variable
