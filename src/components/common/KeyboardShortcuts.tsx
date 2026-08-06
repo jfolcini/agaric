@@ -240,9 +240,24 @@ export function KeyboardShortcuts({
           />
         </SheetHeader>
         <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
+          {/* #3501 — every `<table>` below MUST keep `table-fixed`. Radix's
+              ScrollArea Viewport wraps its children in an internal
+              `display: table; min-width: 100%` div so it can measure content
+              size; that wrapper shrink-to-fits its widest child. With the
+              default `table-layout: auto`, an unwrappable cell (e.g. the
+              deep-links table's `agaric://settings/<tab>` code span, which
+              has no space to wrap at) forces this table's column to its
+              *minimum content width*, which the wrapper then adopts — and
+              because the viewport's `overflow-x` is `hidden` (this
+              ScrollArea is vertical-only), the excess silently clips instead
+              of scrolling. `table-fixed` makes each table honour its `w-full`
+              constraint instead of inflating to fit content, so the sheet
+              stays within its 360px surface on a phone. Verified via
+              `expectNoHorizontalOverflow` in `e2e/mobile-overflow.spec.ts`.
+          */}
           {/* #214 Phase 3 — "Essential" group: the five core triggers a new
               user needs first, surfaced above the full catalog-driven list. */}
-          <table className="w-full text-sm" data-testid="essential-table">
+          <table className="w-full table-fixed text-sm" data-testid="essential-table">
             <thead>
               <tr>
                 <th
@@ -275,7 +290,7 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-          <table className="w-full text-sm mt-6">
+          <table className="w-full table-fixed text-sm mt-6">
             <thead>
               <tr className="border-b">
                 <th className="pb-2 text-left font-semibold text-foreground">
@@ -335,7 +350,7 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-          <table className="w-full text-sm mt-6" data-testid="syntax-table">
+          <table className="w-full table-fixed text-sm mt-6" data-testid="syntax-table">
             <thead>
               <tr className="border-b">
                 <th className="pb-2 text-left font-semibold text-foreground">
@@ -363,7 +378,7 @@ export function KeyboardShortcuts({
               Listed so power users discover the scheme without grepping
               the codebase. Hosts must mirror `parse_deep_link` in
               `src-tauri/src/deeplink/mod.rs`. */}
-          <table className="w-full text-sm mt-6" data-testid="deep-links-table">
+          <table className="w-full table-fixed text-sm mt-6" data-testid="deep-links-table">
             <thead>
               <tr className="border-b">
                 <th
