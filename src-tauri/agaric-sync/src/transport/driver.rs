@@ -239,11 +239,16 @@ pub enum Shutdown {
     /// The connection ended without an application close — reset, idle timeout,
     /// transport error, or a stack-level abort.
     ///
-    /// Distinguished from [`Self::Clean`] because it is the case that would otherwise
-    /// lie: a peer killed before it reads the final frame still emits CONNECTION_CLOSE
-    /// when its endpoint drops, which resolves `closed()` well inside the wait. Folding
-    /// that into `Clean` would report "the final frame was certainly read" about a peer
-    /// that certainly did not read it.
+    /// Distinguished from [`Self::Clean`] because folding these into it would report
+    /// "the final frame was certainly read" about a peer whose reading we know nothing
+    /// about.
+    ///
+    /// Note what this does *not* cover, since an earlier version of this doc got it
+    /// wrong: a peer whose endpoint shuts down emits an **application** close, so that
+    /// case maps to [`Self::Clean`] — correctly, since the peer's session loop had to
+    /// return before its endpoint could be dropped. What lands here is the connection
+    /// ending without either side saying so: stateless reset, idle timeout, transport
+    /// error, version mismatch.
     PeerVanished,
 }
 
@@ -976,11 +981,18 @@ mod tests {
             Shutdown::PeerDidNotClose,
             "the peer never closed, and that must be reported rather than raised"
         );
+        // Deliberately NOT `elapsed < limits.recv`: the enclosing TEST_TIMEOUT already
+        // guarantees that, so such an assertion cannot fail and the property this test
+        // is named for would go uncovered. The bound here is tight enough that a
+        // close-wait accidentally charged to a *plausible* wrong clock — the 10 s
+        // production default, say — trips this assertion rather than the outer hang
+        // detector.
+        let ceiling = Duration::from_secs(5);
         assert!(
-            elapsed < limits.recv,
-            "the close-wait must be its own clock: waited {elapsed:?}, which is not \
-             clearly below the {:?} receive clock",
-            limits.recv
+            elapsed < ceiling,
+            "the close-wait must be its own clock: waited {elapsed:?} against a \
+             {:?} budget, which is past the {ceiling:?} ceiling",
+            limits.close_wait
         );
 
         squatter.abort();
