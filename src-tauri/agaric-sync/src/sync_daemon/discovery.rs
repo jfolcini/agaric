@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 
+use iroh::EndpointId;
+
 use crate::mdns::{self, DiscoveredPeer, ServiceEventKind};
 use agaric_store::peer_refs::PeerRef;
 
@@ -59,12 +61,16 @@ pub fn should_attempt_sync_with_discovered_peer(
 /// together.
 ///
 /// Extracted from `daemon_loop` Branches B/C for independent testing.
-pub fn build_fallback_peer(peer_id: &str, last_address: &str) -> Option<DiscoveredPeer> {
+pub fn build_fallback_peer(
+    peer_id: &str,
+    last_address: &str,
+    endpoint_id: Option<EndpointId>,
+) -> Option<DiscoveredPeer> {
     // Fast path: addresses without IPv6 scope IDs parse directly.
     if let Ok(socket_addr) = last_address.parse::<std::net::SocketAddr>() {
         return Some(DiscoveredPeer {
             device_id: peer_id.to_string(),
-            endpoint_id: None,
+            endpoint_id,
             addresses: vec![socket_addr.ip()],
             port: socket_addr.port(),
         });
@@ -77,7 +83,7 @@ pub fn build_fallback_peer(peer_id: &str, last_address: &str) -> Option<Discover
     match scrubbed.parse::<std::net::SocketAddr>() {
         Ok(socket_addr) => Some(DiscoveredPeer {
             device_id: peer_id.to_string(),
-            endpoint_id: None,
+            endpoint_id,
             addresses: vec![socket_addr.ip()],
             port: socket_addr.port(),
         }),
@@ -132,12 +138,30 @@ fn strip_ipv6_scope_id(addr: &str) -> Option<String> {
 pub fn resolve_peer_address(
     peer_id: &str,
     last_address: Option<&str>,
+    endpoint_id: Option<&str>,
     discovered: &std::collections::HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
 ) -> Option<DiscoveredPeer> {
     discovered
         .get(peer_id)
         .map(|(dp, _)| dp.clone())
-        .or_else(|| last_address.and_then(|addr| build_fallback_peer(peer_id, addr)))
+        .or_else(|| {
+            // The mDNS-independent path. It needs BOTH halves under iroh, which is why
+            // `endpoint_id` is threaded here rather than left to the caller: a dial names
+            // a *key*, and the addresses are only candidate paths to it. A row with an
+            // address and no bound key resolves a peer nothing can dial — which is worse
+            // than resolving nothing, because `try_sync_with_peer` then bails before it
+            // records a failure or emits an event, so the peer silently never syncs.
+            //
+            // This is why `peer_refs.last_address` is still written. Plan #3464 expected
+            // iroh's own per-endpoint path state to replace it; that holds within one
+            // process, and this fallback is for the case where it does not exist —
+            // a fresh start with a peer that has not announced yet. The LAN-only endpoint
+            // calls `clear_address_lookup()`, so mDNS is the only discovery there is, and
+            // without a cached address a restart cannot reach a paired peer until one
+            // arrives.
+            let key = endpoint_id?.parse::<EndpointId>().ok()?;
+            build_fallback_peer(peer_id, last_address?, Some(key))
+        })
 }
 
 /// Format a peer's first address as "ip:port" for connection.

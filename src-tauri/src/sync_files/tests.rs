@@ -1,6 +1,9 @@
 use super::*;
 use crate::db::init_pool;
 use agaric_sync::sync_events::{RecordingEventSink, SyncEvent, SyncEventSink};
+use agaric_sync::transport::bulk::{recv_bulk, send_bulk};
+use agaric_sync::transport::session::{recv_sync_message, send_sync_message};
+use agaric_sync::transport::test_support::quic_pair;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -460,13 +463,19 @@ fn write_and_read_large_file() {
 
 // ── BINARY_FRAME_CHUNK_SIZE constant ────────────────────────────────
 
+/// The constant is no longer a frame budget: QUIC has no frames and there is
+/// no `MAX_MSG_SIZE` for it to stay under. What it *is* now is the size of
+/// `transport::bulk`'s copy buffer, and the file-transfer progress callback
+/// ticks exactly once per filled buffer. So the property worth pinning is that
+/// the two constants stay equal — if `BULK_COPY_BYTES` drifted, every
+/// per-buffer progress assertion in this file would silently change cadence
+/// without any of them failing.
 #[test]
-fn file_chunk_size_is_under_max_msg_size() {
-    // MAX_MSG_SIZE in SyncConnection is 10_000_000 (10 MB).
-    // The shared chunk-size constant lives in `agaric_sync::sync_constants`.
-    const _: () = assert!(
-        BINARY_FRAME_CHUNK_SIZE < 10_000_000,
-        "BINARY_FRAME_CHUNK_SIZE must be under the 10 MB WebSocket frame limit"
+fn file_chunk_size_matches_the_bulk_copy_buffer() {
+    assert_eq!(
+        agaric_sync::transport::bulk::BULK_COPY_BYTES,
+        BINARY_FRAME_CHUNK_SIZE,
+        "progress ticks once per copy buffer; the two constants must stay equal"
     );
     assert_eq!(
         BINARY_FRAME_CHUNK_SIZE, 5_000_000,
@@ -657,41 +666,14 @@ fn missing_attachment_is_cloneable_and_debuggable() {
 
 // ── File transfer protocol integration tests ─────────────────────────
 
-/// Install the `ring` CryptoProvider for rustls (idempotent).
-fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
-}
-
-/// Set up a TLS server/client pair and return both connections + server handle.
-async fn setup_tls_pair() -> (
-    SyncConnection,
-    SyncConnection,
-    agaric_sync::sync_net::SyncServer,
-) {
-    use agaric_sync::sync_net::{SyncServer, connect_to_peer, generate_self_signed_cert};
-
-    install_crypto_provider();
-    let server_cert = generate_self_signed_cert("responder").unwrap();
-    let client_cert = generate_self_signed_cert("initiator").unwrap();
-
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    let tx = std::sync::Mutex::new(Some(tx));
-
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        if let Some(sender) = tx.lock().unwrap().take() {
-            let _ = sender.send(conn);
-        }
-    })
-    .await
-    .unwrap();
-
-    let client_conn = connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
-        .await
-        .unwrap();
-
-    let server_conn = rx.await.unwrap();
-    (server_conn, client_conn, server)
-}
+// Both fixtures these tests used to build on are gone: `setup_tls_pair`
+// (mTLS + `SyncServer` + `connect_to_peer`) and `sync_net::test_connection_pair`
+// (in-memory duplex). Both are replaced by `transport::test_support::quic_pair`,
+// a live QUIC bi-stream between two loopback iroh endpoints. `pair.client` is
+// the initiator (the old `client_conn`) and `pair.server` the responder (the old
+// `server_conn`) — note the old tuple returned the *server* first. The pair owns
+// both endpoints, so it must outlive the transfer; dropping it closes the
+// connection, which is why nothing here calls a `shutdown` any more.
 
 /// Insert a block + attachment record for protocol tests.
 async fn insert_test_attachment(pool: &SqlitePool, att_id: &str, fs_path: &str, size: i64) {
@@ -813,20 +795,22 @@ async fn protocol_initiator_requests_and_receives_files() {
     write_attachment_file(responder_dir.path(), "attachments/photo.jpg", file_data).unwrap();
     assert!(!initiator_dir.path().join("attachments/photo.jpg").exists());
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
 
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (responder_result, initiator_result) = tokio::join!(
         receive_request_and_send_files(
-            &mut server_conn,
+            &mut pair.server.send,
+            &mut pair.server.recv,
             &responder_pool,
             responder_dir.path(),
             &cancel_resp,
             None,
         ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -854,27 +838,30 @@ async fn protocol_initiator_requests_and_receives_files() {
         u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
     );
     // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
-
-    server.shutdown().await;
 }
 
-/// Per-frame file-transfer progress emission.
+/// Per-copy-buffer file-transfer progress emission.
 ///
 /// Pins the contract that `run_file_transfer_*` emits
 /// [`SyncEvent::FileProgress`] events through the supplied event sink:
 /// - one initial tick when the phase starts (so the UI gets a
 ///   denominator immediately),
 /// - at least one tick mid-stream whose `bytes_done` is strictly
-///   between 0 and `bytes_total` for a multi-frame attachment,
+///   between 0 and `bytes_total` for an attachment larger than one
+///   copy buffer,
 /// - a terminal tick after the file finishes whose
 ///   `files_done == files_total` and `bytes_done == bytes_total`,
 /// - a final `phase: "complete"` tick from the top-level
 ///   `run_file_transfer_initiator` so the UI can reset.
 ///
-/// Uses a >1-frame file so the per-frame loop fires at least twice;
-/// the captured events let us pin "bytes_done grows monotonically."
+/// The tick cadence is unchanged by the QUIC cutover: the old transport
+/// ticked once per binary frame, `transport::bulk` ticks once per filled
+/// copy buffer, and `BULK_COPY_BYTES == BINARY_FRAME_CHUNK_SIZE` (see
+/// `file_chunk_size_matches_the_bulk_copy_buffer`). So a >1-buffer file
+/// still fires the callback at least twice; the captured events let us
+/// pin "bytes_done grows monotonically."
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn protocol_run_file_transfer_emits_per_frame_progress() {
+async fn protocol_run_file_transfer_emits_per_buffer_progress() {
     use agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 
     let initiator_dir = TempDir::new().unwrap();
@@ -886,11 +873,11 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
         .await
         .unwrap();
 
-    // Build a file that spans more than one frame (1.5 × chunk size)
-    // so the per-frame callback fires at least twice — that's the
-    // whole point of the streaming progress contract.
-    let multi_frame_size = BINARY_FRAME_CHUNK_SIZE + BINARY_FRAME_CHUNK_SIZE / 2;
-    let file_data: Vec<u8> = (0..multi_frame_size)
+    // Build a file that spans more than one copy buffer (1.5 × buffer
+    // size) so the callback fires at least twice — that's the whole
+    // point of the streaming progress contract.
+    let multi_buffer_size = BINARY_FRAME_CHUNK_SIZE + BINARY_FRAME_CHUNK_SIZE / 2;
+    let file_data: Vec<u8> = (0..multi_buffer_size)
         .map(|i| u8::try_from(i % 251).expect("i % 251 < 256 fits in u8"))
         .collect();
     insert_test_attachment(
@@ -910,7 +897,7 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
     write_attachment_file(responder_dir.path(), "attachments/big.bin", &file_data).unwrap();
     assert!(!initiator_dir.path().join("attachments/big.bin").exists());
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
 
     // Capture every SyncEvent emitted on the initiator (receiving) side.
     // Keep the concrete handle for assertions; clone-coerce a trait
@@ -927,14 +914,16 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
     let (responder_result, initiator_result) = tokio::join!(
         // Responder side: not under test for emission, no progress hook.
         receive_request_and_send_files(
-            &mut server_conn,
+            &mut pair.server.send,
+            &mut pair.server.recv,
             &responder_pool,
             responder_dir.path(),
             &cancel_resp,
             None,
         ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -972,7 +961,7 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
     // ── Contract assertions ───────────────────────────────────────────
     assert!(
         file_events.len() >= 3,
-        "expected at least an initial tick + ≥1 per-frame tick + terminal file tick, got {}",
+        "expected at least an initial tick + ≥1 per-buffer tick + terminal file tick, got {}",
         file_events.len()
     );
 
@@ -1002,14 +991,14 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
     }
 
     // At least one mid-stream tick (bytes_done > 0 AND < bytes_total).
-    // This is what proves the per-frame callback ran rather than just
+    // This is what proves the per-buffer callback ran rather than just
     // pre/post.
     let saw_midstream = file_events
         .iter()
         .any(|(_, _, _, b, total)| *b > 0 && b < total);
     assert!(
         saw_midstream,
-        "expected at least one per-frame mid-stream tick, got {file_events:?}"
+        "expected at least one per-buffer mid-stream tick, got {file_events:?}"
     );
 
     // Terminal file tick: files_done == files_total and bytes_done == bytes_total.
@@ -1022,8 +1011,6 @@ async fn protocol_run_file_transfer_emits_per_frame_progress() {
         last.3, last.4,
         "terminal file tick: bytes_done == bytes_total"
     );
-
-    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1059,20 +1046,22 @@ async fn protocol_empty_transfer_when_no_missing_files() {
     write_attachment_file(initiator_dir.path(), "attachments/photo.jpg", file_data).unwrap();
     write_attachment_file(responder_dir.path(), "attachments/photo.jpg", file_data).unwrap();
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
 
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (responder_result, initiator_result) = tokio::join!(
         receive_request_and_send_files(
-            &mut server_conn,
+            &mut pair.server.send,
+            &mut pair.server.recv,
             &responder_pool,
             responder_dir.path(),
             &cancel_resp,
             None,
         ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1088,8 +1077,6 @@ async fn protocol_empty_transfer_when_no_missing_files() {
     assert_eq!(sender_stats.files_sent, 0);
     assert_eq!(sender_stats.bytes_sent, 0);
     // receiver never increments skipped_hash_mismatch/skipped_not_found; drop assertion
-
-    server.shutdown().await;
 }
 
 /// Hash mismatch must NOT ACK and must surface an Err so the
@@ -1114,14 +1101,16 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
+
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
     // Responder side: manually drive the protocol with a bad hash and
     // assert that no FileReceived ACK is delivered before the
-    // connection drops.
+    // receiver gives up on the transfer.
     let server_side = async move {
         // 1. Receive FileRequest
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert_eq!(attachment_ids, vec!["ATT01".to_string()]);
@@ -1130,28 +1119,38 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
         }
 
         // 2. Send FileOffer with WRONG blake3_hash
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT01".into(),
                 size_bytes: u64::try_from(file_data.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: wrong_hash,
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-
-        // 3. Send binary data
-        server_conn.send_binary(file_data).await.unwrap();
-
-        // 4. Confirm we never receive a FileReceived ACK — the
-        //    receiver must drop the connection (or we'll time out).
-        let ack: Result<SyncMessage, _> = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            server_conn.recv_json::<SyncMessage>(),
+            },
         )
         .await
-        .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
+        .unwrap();
+
+        // 3. Send the payload. The offer told the peer exactly how many
+        //    bytes to expect, so the count must match it exactly.
+        send_bulk(
+            &mut server.send,
+            &file_data[..],
+            u64::try_from(file_data.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
+
+        // 4. Confirm we never receive a FileReceived ACK — the receiver
+        //    must abandon the transfer instead (or we'll time out).
+        let ack: Result<SyncMessage, _> = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            recv_sync_message(&mut server.recv),
+        )
+        .await
+        .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv timed out".into())));
         assert!(
             !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
             "receiver must NOT send FileReceived ACK on hash mismatch (got {ack:?})"
@@ -1162,7 +1161,8 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
     let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1188,8 +1188,6 @@ async fn protocol_hash_mismatch_no_ack_returns_err() {
         !initiator_dir.path().join("attachments/photo.jpg").exists(),
         "corrupt file must not be written to disk"
     );
-
-    server.shutdown().await;
 }
 
 /// A `FileOffer` whose `size_bytes` disagrees with the local
@@ -1213,10 +1211,12 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
+
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
     let server_side = async move {
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert_eq!(attachment_ids, vec!["ATT_SIZE".to_string()]);
@@ -1227,26 +1227,34 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
         // Lie about the size — DB has 100 bytes, peer claims 200.
         // Hash is correct for the (truthful) bytes but it doesn't
         // matter because the size check rejects the offer first.
+        //
+        // Note the bytes are never put on the wire: the receiver rejects
+        // the offer before reading a single one of them. Under QUIC that
+        // over-sized announcement would *also* be refused by `recv_bulk`
+        // (200 > the row's 100-byte cap), but the cross-check below the
+        // offer parse gets there first, which is what this test pins.
         let bytes = vec![0xAAu8; 200];
         let hash = blake3::hash(&bytes).to_hex().to_string();
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_SIZE".into(),
                 size_bytes: 200,
                 blake3_hash: hash,
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-
-        // Confirm no ACK arrives — the receiver returns Err before
-        // touching the stream so the connection drops.
-        let ack: Result<SyncMessage, _> = tokio::time::timeout(
-            std::time::Duration::from_millis(500),
-            server_conn.recv_json::<SyncMessage>(),
+            },
         )
         .await
-        .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv_json timed out".into())));
+        .unwrap();
+
+        // Confirm no ACK arrives — the receiver returns Err before
+        // touching the stream.
+        let ack: Result<SyncMessage, _> = tokio::time::timeout(
+            std::time::Duration::from_millis(500),
+            recv_sync_message(&mut server.recv),
+        )
+        .await
+        .unwrap_or_else(|_| Err(AppError::InvalidOperation("recv timed out".into())));
         assert!(
             !matches!(ack, Ok(SyncMessage::FileReceived { .. })),
             "receiver must NOT send FileReceived ACK on size mismatch (got {ack:?})"
@@ -1257,7 +1265,8 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
     let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1280,15 +1289,13 @@ async fn protocol_size_mismatch_no_ack_returns_err() {
             .exists(),
         "rejected size-mismatched file must not be written to disk"
     );
-
-    server.shutdown().await;
 }
 
 /// #638: an offer for an attachment with no local DB row must NOT stall
 /// the sender. The receiver drains the offered bytes and ALWAYS sends a
 /// `FileReceived` ACK on the skip path; the sender then unblocks and the
 /// *next* file in the same round still transfers. Without the fix the
-/// sender would block on `recv_json` until the 180s `RECV_TIMEOUT`,
+/// sender would block on its receive until the 180s `RECV_TIMEOUT`,
 /// erroring the file phase and losing the round's remaining files.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn protocol_unknown_attachment_acks_and_round_continues() {
@@ -1310,11 +1317,13 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
+
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
     let server_side = async move {
         // 1. Receive FileRequest (only ATT_KNOWN is missing locally).
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert_eq!(attachment_ids, vec!["ATT_KNOWN".to_string()]);
@@ -1324,28 +1333,37 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
 
         // 2. Offer a file the receiver has no row for, then ship bytes.
         let unknown_bytes = b"bytes for a file the receiver does not track";
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_UNKNOWN".into(),
                 size_bytes: u64::try_from(unknown_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: blake3::hash(unknown_bytes).to_hex().to_string(),
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-        server_conn.send_binary(unknown_bytes).await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            &unknown_bytes[..],
+            u64::try_from(unknown_bytes.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
         // 3. The fix: the receiver MUST ACK the skipped file promptly so
         //    we don't block here until RECV_TIMEOUT. Bound the wait so a
         //    regression fails fast instead of hanging the test.
-        let ack: SyncMessage = tokio::time::timeout(
+        let ack = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            server_conn.recv_json::<SyncMessage>(),
+            recv_sync_message(&mut server.recv),
         )
         .await
         .expect("#638: receiver must ACK the skipped unknown attachment (no stall)")
-        .expect("recv_json for skip ACK failed");
+        .expect("receiving the skip ACK failed");
         assert!(
             matches!(
                 ack,
@@ -1355,20 +1373,32 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
         );
 
         // 4. Now offer the known file — it must still transfer in the
-        //    same round (the sender was not derailed by the skip).
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        //    same round (the sender was not derailed by the skip). This is
+        //    also the alignment check: the receiver's drain must have
+        //    consumed exactly the unknown file's bytes, or this offer's
+        //    length prefix would be read from the wrong stream offset.
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_KNOWN".into(),
                 size_bytes: u64::try_from(known_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: known_hash,
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-        server_conn.send_binary(known_bytes).await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            &known_bytes[..],
+            u64::try_from(known_bytes.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
-        let ack2: SyncMessage = server_conn.recv_json().await.unwrap();
+        let ack2 = recv_sync_message(&mut server.recv).await.unwrap();
         assert!(
             matches!(
                 ack2,
@@ -1378,8 +1408,7 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
         );
 
         // 5. Conclude this half of the round.
-        server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
     };
@@ -1388,7 +1417,8 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
     let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1405,8 +1435,6 @@ async fn protocol_unknown_attachment_acks_and_round_continues() {
     let (data, hash) = read_attachment_file(initiator_dir.path(), "attachments/known.bin").unwrap();
     assert_eq!(data, known_bytes);
     assert_eq!(hash, blake3::hash(known_bytes).to_hex().to_string());
-
-    server.shutdown().await;
 }
 
 /// #638: the temp-writer reject path (writer open fails, e.g. a
@@ -1453,13 +1481,15 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
     )
     .unwrap();
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
+
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
     let server_side = async move {
         // 1. Receive FileRequest. Both files are missing locally; the
         //    order is DB-driven, so accept either ordering and remember
         //    which we'll offer first.
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         let ids = match msg {
             SyncMessage::FileRequest { attachment_ids } => attachment_ids,
             other => panic!("expected FileRequest, got {other:?}"),
@@ -1468,26 +1498,35 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
         assert!(ids.contains(&"ATT_GOOD".to_string()));
 
         // 2. Always offer ATT_BAD (the writer-reject) FIRST.
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_BAD".into(),
                 size_bytes: u64::try_from(bad_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: blake3::hash(bad_bytes).to_hex().to_string(),
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-        server_conn.send_binary(bad_bytes).await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            &bad_bytes[..],
+            u64::try_from(bad_bytes.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
         // 3. The fix: ACK must arrive promptly (no RECV_TIMEOUT stall).
-        let ack: SyncMessage = tokio::time::timeout(
+        let ack = tokio::time::timeout(
             std::time::Duration::from_secs(5),
-            server_conn.recv_json::<SyncMessage>(),
+            recv_sync_message(&mut server.recv),
         )
         .await
         .expect("#638: receiver must ACK after a temp-writer reject (no stall)")
-        .expect("recv_json for writer-reject ACK failed");
+        .expect("receiving the writer-reject ACK failed");
         assert!(
             matches!(
                 ack,
@@ -1496,20 +1535,31 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
             "#638: expected FileReceived ACK for the writer-rejected offer, got {ack:?}"
         );
 
-        // 4. Offer the good file — it must still transfer.
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        // 4. Offer the good file — it must still transfer. Reading this
+        //    offer at the right stream offset also proves the reject path
+        //    drained exactly ATT_BAD's bytes, no more and no fewer.
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_GOOD".into(),
                 size_bytes: u64::try_from(good_bytes.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: good_hash,
                 content_hash: None,
-            })
-            .await
-            .unwrap();
-        server_conn.send_binary(good_bytes).await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            &good_bytes[..],
+            u64::try_from(good_bytes.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
-        let ack2: SyncMessage = server_conn.recv_json().await.unwrap();
+        let ack2 = recv_sync_message(&mut server.recv).await.unwrap();
         assert!(
             matches!(
                 ack2,
@@ -1518,8 +1568,7 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
             "expected FileReceived ACK for the good file, got {ack2:?}"
         );
 
-        server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
     };
@@ -1528,7 +1577,8 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
     let ((), initiator_result) = tokio::join!(
         server_side,
         request_and_receive_files(
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1544,8 +1594,6 @@ async fn protocol_temp_writer_reject_acks_and_round_continues() {
     let (data, hash) = read_attachment_file(initiator_dir.path(), "attachments/good.bin").unwrap();
     assert_eq!(data, good_bytes);
     assert_eq!(hash, blake3::hash(good_bytes).to_hex().to_string());
-
-    server.shutdown().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1560,8 +1608,8 @@ async fn protocol_large_file_chunking() {
         .await
         .unwrap();
 
-    // File larger than BINARY_FRAME_CHUNK_SIZE (5 MB) → will be chunked.
-    // 6 MB total guarantees at least one extra chunk.
+    // File larger than one copy buffer (5 MB) → the bulk copy loop runs
+    // more than once. 6 MB total guarantees at least one extra pass.
     let file_size = BINARY_FRAME_CHUNK_SIZE + 1_000_000;
     // `i % 256` is always in 0..256 so the `as u8` cast is exact, but
     // clippy can't prove that through the modulo on `usize`. Allow the
@@ -1589,20 +1637,22 @@ async fn protocol_large_file_chunking() {
     write_attachment_file(responder_dir.path(), "attachments/large.bin", &file_data).unwrap();
     assert!(!initiator_dir.path().join("attachments/large.bin").exists());
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
 
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (responder_result, initiator_result) = tokio::join!(
         receive_request_and_send_files(
-            &mut server_conn,
+            &mut pair.server.send,
+            &mut pair.server.recv,
             &responder_pool,
             responder_dir.path(),
             &cancel_resp,
             None,
         ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -1630,8 +1680,6 @@ async fn protocol_large_file_chunking() {
         sender_stats.bytes_sent,
         u64::try_from(file_data.len()).expect("invariant: test fixture file size fits in u64")
     );
-
-    server.shutdown().await;
 }
 
 // ── find_missing_attachments with all files present ──────────────────
@@ -1852,68 +1900,89 @@ fn write_attachment_file_creates_deeply_nested_parent_dirs() {
     assert_eq!(std::fs::read(&full_path).unwrap(), content);
 }
 
-// ── In-memory WebSocket file transfer integration tests ──────────────
+// ── File transfer integration tests against a hand-driven peer ───────
+//
+// One side runs the production helper; the other is driven message by
+// message so the test can put shapes on the wire the production sender
+// would never emit. Both sides are real QUIC halves of one bi-stream.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_receive_request_empty_request() {
+async fn receive_request_empty_request() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
-    let client_task = tokio::spawn(async move {
-        client_conn
-            .send_json(&SyncMessage::FileRequest {
+    let client_side = async move {
+        send_sync_message(
+            &mut client.send,
+            &SyncMessage::FileRequest {
                 attachment_ids: vec![],
-            })
-            .await
-            .unwrap();
-        let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+            },
+        )
+        .await
+        .unwrap();
+        let msg = recv_sync_message(&mut client.recv).await.unwrap();
         assert!(matches!(msg, SyncMessage::FileTransferComplete));
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats =
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
-            .await
-            .unwrap();
-    client_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        client_side,
+        receive_request_and_send_files(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_sent, 0);
     assert_eq!(stats.bytes_sent, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_receive_request_transfer_complete_instead() {
+async fn receive_request_transfer_complete_instead() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
 
-    let client_task = tokio::spawn(async move {
+    let client_side = async move {
         // Send FileTransferComplete instead of FileRequest
-        client_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut client.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
-        // Expect FileTransferComplete back from server
-        let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+        // Expect FileTransferComplete back from the responder
+        let msg = recv_sync_message(&mut client.recv).await.unwrap();
         assert!(matches!(msg, SyncMessage::FileTransferComplete));
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats =
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
-            .await
-            .unwrap();
-    client_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        client_side,
+        receive_request_and_send_files(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_sent, 0);
     assert_eq!(stats.bytes_sent, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_receive_request_sends_one_file() {
+async fn receive_request_sends_one_file() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
@@ -1933,19 +2002,23 @@ async fn inmem_receive_request_sends_one_file() {
     .await;
     write_attachment_file(dir.path(), "attachments/send1.bin", file_data).unwrap();
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
-    let client_task = tokio::spawn(async move {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
+    let client_side = async move {
         // Send FileRequest requesting one attachment
-        client_conn
-            .send_json(&SyncMessage::FileRequest {
+        send_sync_message(
+            &mut client.send,
+            &SyncMessage::FileRequest {
                 attachment_ids: vec!["ATT_S1".into()],
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         // Receive FileOffer
-        let offer: SyncMessage = client_conn.recv_json().await.unwrap();
+        let offer = recv_sync_message(&mut client.recv).await.unwrap();
         match offer {
             SyncMessage::FileOffer {
                 attachment_id,
@@ -1960,36 +2033,55 @@ async fn inmem_receive_request_sends_one_file() {
             other => panic!("expected FileOffer, got {other:?}"),
         }
 
-        // Receive binary data
-        let data = client_conn.recv_binary().await.unwrap();
+        // Receive the payload. The offer's `size_bytes` is both the length
+        // to read and — being the only figure we have — our own cap.
+        let mut data: Vec<u8> = Vec::new();
+        recv_bulk(
+            &mut client.recv,
+            &mut data,
+            expected_size,
+            expected_size,
+            |_| {},
+        )
+        .await
+        .unwrap();
         assert_eq!(data, file_data);
 
         // Send FileReceived
-        client_conn
-            .send_json(&SyncMessage::FileReceived {
+        send_sync_message(
+            &mut client.send,
+            &SyncMessage::FileReceived {
                 attachment_id: "ATT_S1".into(),
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
         // Receive FileTransferComplete
-        let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut client.recv).await.unwrap();
         assert!(matches!(msg, SyncMessage::FileTransferComplete));
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats =
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel, None)
-            .await
-            .unwrap();
-    client_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        client_side,
+        receive_request_and_send_files(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_sent, 1);
     assert_eq!(stats.bytes_sent, expected_size);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_request_receive_no_missing() {
+async fn request_receive_no_missing() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
@@ -2005,11 +2097,13 @@ async fn inmem_request_receive_no_missing() {
     .await;
     write_attachment_file(dir.path(), "attachments/present.bin", file_data).unwrap();
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
-    let server_task = tokio::spawn(async move {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
+    let server_side = async move {
         // Receive empty FileRequest
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert!(attachment_ids.is_empty());
@@ -2017,24 +2111,31 @@ async fn inmem_request_receive_no_missing() {
             other => panic!("expected FileRequest, got {other:?}"),
         }
         // Send FileTransferComplete
-        server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
-        .await
-        .unwrap();
-    server_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        server_side,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_received, 0);
     assert_eq!(stats.bytes_received, 0);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_request_receive_one_file() {
+async fn request_receive_one_file() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
@@ -2054,12 +2155,14 @@ async fn inmem_request_receive_one_file() {
     .await;
     assert!(!dir.path().join("attachments/recv1.bin").exists());
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     let hash_for_offer = expected_hash.clone();
-    let server_task = tokio::spawn(async move {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
+    let server_side = async move {
         // Receive FileRequest
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert_eq!(attachment_ids, vec!["ATT_R1".to_string()]);
@@ -2068,38 +2171,49 @@ async fn inmem_request_receive_one_file() {
         }
 
         // Send FileOffer
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_R1".into(),
                 size_bytes: expected_size,
                 blake3_hash: hash_for_offer,
                 content_hash: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+
+        // Send the payload
+        send_bulk(&mut server.send, &file_data[..], expected_size, |_| {})
             .await
             .unwrap();
 
-        // Send binary data
-        server_conn.send_binary(file_data).await.unwrap();
-
         // Receive FileReceived
-        let ack: SyncMessage = server_conn.recv_json().await.unwrap();
+        let ack = recv_sync_message(&mut server.recv).await.unwrap();
         assert!(matches!(
             ack,
             SyncMessage::FileReceived { attachment_id } if attachment_id == "ATT_R1"
         ));
 
         // Send FileTransferComplete
-        server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
-        .await
-        .unwrap();
-    server_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        server_side,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_received, 1);
     assert_eq!(stats.bytes_received, expected_size);
@@ -2110,29 +2224,36 @@ async fn inmem_request_receive_one_file() {
     assert_eq!(hash, expected_hash);
 }
 
-/// Chaos / partial-transfer recovery. The sender drops the
-/// connection mid-binary-frame after delivering an unprocessable
-/// partial chunk; the receiver must:
+/// Chaos / partial-transfer recovery. The sender announces a payload,
+/// delivers only a fraction of it, then finishes its half of the stream;
+/// the receiver must:
 ///
 /// (a) return `Err` from `request_and_receive_files`,
 /// (b) leave NO file on disk at the offered `fs_path`
-///     (write happens only after the full payload + hash verify),
+///     (the temp writer is unlinked on drop, and the rename only ever
+///     happens after the full payload has hashed clean),
 /// (c) keep the attachment row visible to `find_missing_attachments`
 ///     so the next sync cycle re-tries.
 ///
 /// This pins the contract that ACK-after-write means a partial
 /// transfer is fully recoverable on the next cycle, not silently
 /// committed as a half-baked file.
+///
+/// The shortfall is expressed differently than it was under WebSocket:
+/// there is no "frame" to be cut in half. The mock writes raw bytes
+/// straight onto the stream and then calls `finish()`, so the receiver's
+/// `recv_bulk` sees a clean end-of-stream while it is still owed bytes —
+/// which `copy_exact` reports as `peer stopped sending at N bytes`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
+async fn request_receive_partial_transfer_sender_stops_short_l72() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
 
-    // Offer an attachment whose declared size is much larger than the
-    // single chunk we'll actually send. The receiver expects more
-    // bytes than the sender will deliver before dropping; the next
-    // `recv_binary` after the partial chunk surfaces EOF as Err.
+    // Offer an attachment whose declared size is much larger than what
+    // we'll actually put on the wire. The receiver is owed more bytes
+    // than the sender will deliver before finishing its stream, so
+    // `recv_bulk` surfaces the end-of-stream as Err.
     let declared_size: u64 = 64 * 1024; // 64 KiB
     let partial_chunk: Vec<u8> = vec![0u8; 4 * 1024]; // only 4 KiB delivered
 
@@ -2154,11 +2275,13 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
         "pre-condition: file must be missing on disk"
     );
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
-    let server_task = tokio::spawn(async move {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
+    let server_side = async move {
         // Receive FileRequest from the receiver.
-        let msg: SyncMessage = server_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut server.recv).await.unwrap();
         match msg {
             SyncMessage::FileRequest { attachment_ids } => {
                 assert_eq!(attachment_ids, vec!["ATT_L72".to_string()]);
@@ -2167,34 +2290,45 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
         }
 
         // Send a FileOffer that promises more bytes than we'll ever
-        // deliver — the receiver will loop on `recv_binary` waiting
-        // for the rest, and observe EOF when we drop below.
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        // deliver — the receiver will sit in `recv_bulk` still owed the
+        // rest, and see the stream end instead.
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_L72".into(),
                 size_bytes: declared_size,
                 blake3_hash: placeholder_hash,
                 content_hash: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
-        // Send only the partial chunk, then drop the sender side.
-        server_conn.send_binary(&partial_chunk).await.unwrap();
-        // `drop(server_conn)` happens on task exit, closing the
-        // duplex stream and surfacing EOF on the receiver's next
-        // `recv_binary`.
-    });
+        // Write only the partial payload — deliberately NOT via
+        // `send_bulk`, which would refuse to under-deliver — then finish
+        // the stream so the receiver observes a clean end rather than
+        // waiting out `BULK_IDLE_TIMEOUT`.
+        server.send.write_all(&partial_chunk).await.unwrap();
+        server.send.finish().expect("the sender's stream finishes");
+    };
 
     let cancel = AtomicBool::new(false);
-    let result =
-        request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None).await;
-    server_task.await.unwrap();
+    let ((), result) = tokio::join!(
+        server_side,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
 
-    // (a) Receive surfaces the disconnection as Err.
+    // (a) Receive surfaces the truncated transfer as Err.
     assert!(
         result.is_err(),
-        "mid-frame disconnect must surface as Err; got {result:?}"
+        "a sender that stops short of the declared size must surface as Err; got {result:?}"
     );
 
     // (b) No half-written file on disk. guarantees the write
@@ -2202,8 +2336,8 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
     // memory; an interrupted transfer must leave the path empty.
     assert!(
         !final_path.exists(),
-        "no half-written file may appear on disk after a mid-frame \
-         disconnect; found unexpected file at {final_path:?}"
+        "no half-written file may appear on disk after a truncated \
+         transfer; found unexpected file at {final_path:?}"
     );
 
     // (c) The attachment is still classified as missing so the next
@@ -2220,48 +2354,59 @@ async fn inmem_request_receive_partial_transfer_disconnects_mid_frame_l72() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_responder_bidirectional_no_files() {
+async fn responder_bidirectional_no_files() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     // Mock the initiator side.
     // Responder does: receive_request_and_send_files then request_and_receive_files
     // So initiator must:
     //   Phase 1: send FileRequest [] -> receive FileTransferComplete
     //   Phase 2: receive FileRequest [] -> send FileTransferComplete
-    let initiator_task = tokio::spawn(async move {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
+    let initiator_side = async move {
         // Phase 1: Initiator sends FileRequest (no missing files)
-        client_conn
-            .send_json(&SyncMessage::FileRequest {
+        send_sync_message(
+            &mut client.send,
+            &SyncMessage::FileRequest {
                 attachment_ids: vec![],
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
         // Responder receives it, has nothing to send, sends FileTransferComplete
-        let msg: SyncMessage = client_conn.recv_json().await.unwrap();
+        let msg = recv_sync_message(&mut client.recv).await.unwrap();
         assert!(matches!(msg, SyncMessage::FileTransferComplete));
 
         // Phase 2: Responder sends its own FileRequest (no missing files)
-        let msg2: SyncMessage = client_conn.recv_json().await.unwrap();
+        let msg2 = recv_sync_message(&mut client.recv).await.unwrap();
         assert!(matches!(
             msg2,
             SyncMessage::FileRequest { attachment_ids } if attachment_ids.is_empty()
         ));
         // Initiator sends FileTransferComplete
-        client_conn
-            .send_json(&SyncMessage::FileTransferComplete)
+        send_sync_message(&mut client.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let stats = run_file_transfer_responder(&mut server_conn, &pool, &app_data_dir, &cancel, None)
-        .await
-        .unwrap();
-    initiator_task.await.unwrap();
+    let ((), stats) = tokio::join!(
+        initiator_side,
+        run_file_transfer_responder(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.unwrap();
 
     assert_eq!(stats.files_sent, 0);
     assert_eq!(stats.files_received, 0);
@@ -2284,8 +2429,10 @@ async fn inmem_responder_bidirectional_no_files() {
 /// iteration 2. The responder then sends NOTHING further, so the
 /// receiver breaks via either the top-of-loop check (if the store is
 /// already visible) or the cancel-aware wait in `request_and_receive_files`
-/// (#317 fix): a bare `recv_json` would otherwise block forever here
-/// because the peer never sends another message.
+/// (#317 fix): a bare `recv_sync_message` would otherwise block forever
+/// here because the peer never sends another message. Under QUIC that
+/// "forever" is literal — the old transport's per-receive `RECV_TIMEOUT`
+/// is gone, and the cancel-poll loop now carries the only clock.
 ///
 /// (The old version stored cancel *between* `FileOffer1` and the file1
 /// binary and claimed a happens-before against iteration 1's top check.
@@ -2327,22 +2474,24 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     let cancel = Arc::new(AtomicBool::new(false));
     let cancel_responder = cancel.clone();
 
+    let (client, server) = (&mut pair.client, &mut pair.server);
+
     // Mock responder: drives the protocol manually. It sets `cancel`
     // only AFTER receiving ACK1, so the cancel store is causally after
-    // the receiver has finished iteration 1 (recv_binary, write, ACK).
+    // the receiver has finished iteration 1 (payload read, write, ACK).
     // The receiver therefore cannot observe cancel before iteration 2,
     // and `files_received` is deterministically 1.
-    let responder_task = tokio::spawn(async move {
+    let responder_side = async move {
         // 1. Receive FileRequest for both files. `find_missing_attachments`
         //    fans the per-row metadata probe through `buffer_unordered(16)`
         //    (sync_files.rs:237) so the request order is non-deterministic
         //    in concurrent runs — assert set membership, not order (#162).
-        let req: SyncMessage = server_conn.recv_json().await.unwrap();
+        let req = recv_sync_message(&mut server.recv).await.unwrap();
         match req {
             SyncMessage::FileRequest { mut attachment_ids } => {
                 attachment_ids.sort();
@@ -2356,24 +2505,33 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
         }
 
         // 2. Send FileOffer for file 1.
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_M47_1".into(),
                 size_bytes: u64::try_from(file1.len())
                     .expect("invariant: test fixture file size fits in u64"),
                 blake3_hash: hash1.clone(),
                 content_hash: None,
-            })
-            .await
-            .unwrap();
+            },
+        )
+        .await
+        .unwrap();
 
-        // 3. Send file 1 binary — receiver processes iteration 1.
-        server_conn.send_binary(file1).await.unwrap();
+        // 3. Send file 1's payload — receiver processes iteration 1.
+        send_bulk(
+            &mut server.send,
+            file1,
+            u64::try_from(file1.len()).expect("test fixture size fits in u64"),
+            |_| {},
+        )
+        .await
+        .unwrap();
 
         // 4. Receive ACK for file 1. The receiver sends this at the END
         //    of iteration 1, so everything below is causally after the
         //    receiver fully processed file 1.
-        let ack: SyncMessage = server_conn.recv_json().await.unwrap();
+        let ack = recv_sync_message(&mut server.recv).await.unwrap();
         assert!(
             matches!(
                 ack,
@@ -2394,15 +2552,26 @@ async fn run_file_transfer_initiator_breaks_on_cancel_m47() {
         //    wait in `request_and_receive_files` (#317). Sending a second
         //    FileOffer here would reintroduce a race, so we deliberately
         //    leave the connection idle until the receiver returns and the
-        //    test drops it.
-    });
+        //    test drops it. Because this side is a plain future joined with
+        //    the receiver (rather than a spawned task holding an owned
+        //    connection), going idle here really does mean silence: the
+        //    stream halves stay open and un-finished, so the receiver's only
+        //    way out is the cancel poll.
+    };
 
     // Initiator (receiver) side: run the production code path.
-    let stats = request_and_receive_files(&mut client_conn, &pool, &app_data_dir, &cancel, None)
-        .await
-        .expect("receive must return Ok with partial stats on cancel");
-
-    let _ = responder_task.await;
+    let ((), stats) = tokio::join!(
+        responder_side,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            &pool,
+            &app_data_dir,
+            &cancel,
+            None,
+        ),
+    );
+    let stats = stats.expect("receive must return Ok with partial stats on cancel");
 
     // Contract:
     // (a) file 1 was successfully received,
@@ -2639,9 +2808,9 @@ fn write_attachment_file_rejects_empty_path() {
 //
 // These tests pin the low-memory streaming path introduced in:
 //
-//   • Sender uses `read_attachment_file_metadata` + streaming
-//     `send_binary_streaming` (no `Vec<u8>` of the full file on the
-//     heap).
+//   • Sender uses `read_attachment_file_metadata` +
+//     `transport::bulk::send_bulk` (no `Vec<u8>` of the full file on
+//     the heap; peak heap is one `BULK_COPY_BYTES` buffer).
 //   • Receiver uses `TempAttachmentWriter` (writes to
 //     `<final>.tmp-<rand>`, hashes mid-write, atomic rename on
 //     `commit`, drop unlinks the temp).
@@ -2650,7 +2819,7 @@ fn write_attachment_file_rejects_empty_path() {
 // `write_attachment_file`) are still around for utility callers; the
 // existing tests above continue to exercise them.
 
-/// Sender streams a 50 MB attachment frame-by-frame to the
+/// Sender streams a 50 MB attachment buffer-by-buffer onto the
 /// wire and the receiver lands the bytes via a temp-file writer.
 /// Asserts streaming byte-equality (received bytes match sent bytes),
 /// correct transfer stats (files/bytes counts), and that the
@@ -2661,8 +2830,8 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
 
-    // 50 MB attachment — large enough to span ~10 binary frames at
-    // BINARY_FRAME_CHUNK_SIZE = 5 MB. Deterministic byte pattern so
+    // 50 MB attachment — large enough to span ~10 copy buffers at
+    // BULK_COPY_BYTES = 5 MB. Deterministic byte pattern so
     // the hash check is exact.
     let file_size: usize = 50 * 1024 * 1024;
     #[allow(clippy::cast_possible_truncation)]
@@ -2690,7 +2859,7 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     assert_eq!(meta_size, expected_size);
     assert_eq!(meta_hash, expected_hash);
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     // Initiator: request the file, drive the receive side.
     let init_dir = TempDir::new().unwrap();
@@ -2707,8 +2876,22 @@ async fn attachment_send_streams_without_full_vec_materialization_m51() {
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (resp_result, init_result) = tokio::join!(
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp, None),
-        request_and_receive_files(&mut client_conn, &init_pool, &init_app, &cancel_init, None),
+        receive_request_and_send_files(
+            &mut pair.server.send,
+            &mut pair.server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel_resp,
+            None,
+        ),
+        request_and_receive_files(
+            &mut pair.client.send,
+            &mut pair.client.recv,
+            &init_pool,
+            &init_app,
+            &cancel_init,
+            None,
+        ),
     );
     let send_stats = resp_result.expect(" streaming send must succeed");
     let recv_stats = init_result.expect(" streaming receive must succeed");
@@ -2890,12 +3073,33 @@ async fn attachment_receive_drop_unlinks_temp_m51() {
     );
 }
 
-/// Empty (zero-byte) attachments must still round-trip via a
-/// single empty binary frame, matching the
-/// `send_binary_streaming` / `receive_binary_streaming` zero-byte
-/// contract.
+/// Empty (zero-byte) attachments must still round-trip, and must do so
+/// by putting **nothing at all** on the wire.
+///
+/// The old transport sent one empty binary frame as a sentinel, and this
+/// test used to assert that frame existed. It does not exist any more:
+/// QUIC is a byte stream, and `send_bulk` with `total_size == 0` writes
+/// zero bytes. So the sentinel is not a property to relax — it is gone,
+/// and what replaces it is the property the sentinel used to buy:
+/// *framing stays aligned across a zero-byte payload*. If the sender
+/// wrote a stray byte, or the receiver's `recv_bulk` consumed one it was
+/// not owed, the very next length prefix would be read at the wrong
+/// offset.
+///
+/// Two things assert that here. The primary one is that the round
+/// completes at all: the receiver reads the sender's
+/// `FileTransferComplete` immediately after the empty payload, and the
+/// sender reads the receiver's `FileReceived` ACK. Forced red by making
+/// `send_bulk` emit one stray byte when `total_size == 0` — the receive
+/// then fails with `peer announced a 1476395008-byte message`, i.e. a
+/// length prefix read one byte off.
+///
+/// The trailing `SyncMessage` exchange covers the residue the round
+/// itself cannot see: a stray byte emitted *after* the phase's last
+/// message would leave both halves happy and the next phase on the same
+/// stream misaligned.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
+async fn attachment_send_empty_file_moves_no_bytes_and_keeps_framing_m51() {
     let dir = TempDir::new().unwrap();
     let pool = init_pool(&dir.path().join("test.db")).await.unwrap();
     let app_data_dir = dir.path().to_path_buf();
@@ -2908,14 +3112,22 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     let init_pool = init_pool(&init_dir.path().join("init.db")).await.unwrap();
     insert_test_attachment(&init_pool, "ATT_M51_EMPTY", "attachments/empty.bin", 0).await;
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (resp_result, init_result) = tokio::join!(
-        receive_request_and_send_files(&mut server_conn, &pool, &app_data_dir, &cancel_resp, None),
+        receive_request_and_send_files(
+            &mut pair.server.send,
+            &mut pair.server.recv,
+            &pool,
+            &app_data_dir,
+            &cancel_resp,
+            None,
+        ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &init_pool,
             init_dir.path(),
             &cancel_init,
@@ -2935,6 +3147,25 @@ async fn attachment_send_empty_file_uses_single_empty_frame_m51() {
     assert!(path.exists());
     let received = std::fs::read(&path).unwrap();
     assert_eq!(received.len(), 0);
+
+    // The alignment probe. A stray byte written or consumed anywhere in
+    // the zero-byte path shifts this frame's length prefix and the
+    // receive fails to deserialise.
+    send_sync_message(&mut pair.server.send, &SyncMessage::SnapshotAccept)
+        .await
+        .expect("the responder can still frame a message after a zero-byte payload");
+    let after = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        recv_sync_message(&mut pair.client.recv),
+    )
+    .await
+    .expect("the follow-on message arrives promptly")
+    .expect("the stream is still aligned on a message boundary");
+    assert_eq!(
+        after,
+        SyncMessage::SnapshotAccept,
+        "a zero-byte attachment must leave the stream exactly where it found it"
+    );
 }
 
 /// Verifies `TempAttachmentWriter`'s running hasher matches
@@ -2983,14 +3214,20 @@ async fn attachment_streaming_writer_hasher_matches_file_metadata_m51() {
     );
 }
 
-/// The wire-level streaming helpers in `SyncConnection`
-/// (`send_binary_streaming` / `receive_binary_streaming`) must
-/// round-trip an `AsyncRead` source straight into an `AsyncWrite`
-/// sink without ever materialising the full payload as a Vec on
-/// the heap. Probe with a `tokio::io::Cursor` source + `Vec<u8>`
-/// sink and confirm exact byte equality.
+/// The wire-level bulk helpers this module's attachment path is built on
+/// (`transport::bulk::send_bulk` / `recv_bulk`, replacing `SyncConnection`'s
+/// `send_binary_streaming` / `receive_binary_streaming`) must round-trip an
+/// `AsyncRead` source straight into an `AsyncWrite` sink. Probe with a
+/// `std::io::Cursor` source + `Vec<u8>` sink at a size that is neither a
+/// whole number of copy buffers nor smaller than one, so both the loop and
+/// the short tail pass run, and confirm exact byte equality.
+///
+/// Note: this is now transport-layer coverage held at the caller's layer.
+/// `transport::bulk`'s own tests cover the same shape over a real QUIC pair
+/// (`a_multi_buffer_payload_survives_a_real_quic_round_trip`), including a
+/// trailing marker that this test does not check.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn wire_helpers_streaming_round_trip_m51() {
+async fn bulk_helpers_streaming_round_trip_m51() {
     let payload: Vec<u8> = (0..(BINARY_FRAME_CHUNK_SIZE * 2 + 7))
         // wrap-around byte pattern; clippy-narrowed truncation per the
         // existing protocol_large_file_chunking convention.
@@ -3002,23 +3239,27 @@ async fn wire_helpers_streaming_round_trip_m51() {
         .collect();
     let expected_size = u64::try_from(payload.len()).unwrap();
 
-    let (mut server_conn, mut client_conn) = agaric_sync::sync_net::test_connection_pair().await;
+    let mut pair = quic_pair().await;
 
     let payload_clone = payload.clone();
-    let server_task = tokio::spawn(async move {
-        let cursor = std::io::Cursor::new(payload_clone);
-        server_conn
-            .send_binary_streaming(cursor, expected_size, BINARY_FRAME_CHUNK_SIZE)
-            .await
-            .unwrap();
-    });
-
     let mut sink: Vec<u8> = Vec::with_capacity(payload.len());
-    client_conn
-        .receive_binary_streaming(&mut sink, expected_size)
-        .await
-        .unwrap();
-    server_task.await.unwrap();
+    let (send_result, recv_result) = tokio::join!(
+        send_bulk(
+            &mut pair.server.send,
+            std::io::Cursor::new(payload_clone),
+            expected_size,
+            |_| {},
+        ),
+        recv_bulk(
+            &mut pair.client.recv,
+            &mut sink,
+            expected_size,
+            expected_size,
+            |_| {},
+        ),
+    );
+    send_result.unwrap();
+    recv_result.unwrap();
 
     assert_eq!(sink.len(), payload.len());
     assert_eq!(sink, payload);
@@ -3304,19 +3545,21 @@ async fn sync_skip_transfer_when_receiver_has_blob_1993() {
     std::fs::write(initiator_dir.path().join(blob_path), &file_data).unwrap();
     insert_blob_row(&initiator_pool, &hash, blob_path, size).await;
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
     let cancel_resp = AtomicBool::new(false);
     let cancel_init = AtomicBool::new(false);
     let (responder_result, initiator_result) = tokio::join!(
         receive_request_and_send_files(
-            &mut server_conn,
+            &mut pair.server.send,
+            &mut pair.server.recv,
             &responder_pool,
             responder_dir.path(),
             &cancel_resp,
             None
         ),
         request_and_receive_files(
-            &mut client_conn,
+            &mut pair.client.send,
+            &mut pair.client.recv,
             &initiator_pool,
             initiator_dir.path(),
             &cancel_init,
@@ -3335,8 +3578,6 @@ async fn sync_skip_transfer_when_receiver_has_blob_1993() {
         "receiver must receive NO files"
     );
     assert_eq!(receiver_stats.bytes_received, 0);
-
-    server.shutdown().await;
 }
 
 /// #1993 back-compat: a `FileOffer` WITHOUT `content_hash` (old-peer
@@ -3360,49 +3601,54 @@ async fn file_offer_without_content_hash_still_transfers_1993() {
     )
     .await;
 
-    let (mut server_conn, mut client_conn, server) = setup_tls_pair().await;
+    let mut pair = quic_pair().await;
 
     // Old-peer sender: send a FileOffer with content_hash explicitly None,
-    // then stream the bytes, then await the ack.
+    // then stream the bytes, then await the ack. It never reads the
+    // receiver's `FileRequest` — that is deliberate and harmless, the
+    // message just sits unread in the stream.
     let data_clone = file_data.clone();
     let hash_clone = hash.clone();
-    let sender = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::FileOffer {
+    let (client, server) = (&mut pair.client, &mut pair.server);
+    let sender = async move {
+        send_sync_message(
+            &mut server.send,
+            &SyncMessage::FileOffer {
                 attachment_id: "ATT_OLD".into(),
                 size_bytes: size_u64,
                 blake3_hash: hash_clone,
                 content_hash: None,
-            })
+            },
+        )
+        .await
+        .unwrap();
+        send_bulk(
+            &mut server.send,
+            std::io::Cursor::new(data_clone),
+            size_u64,
+            |_| {},
+        )
+        .await
+        .unwrap();
+        let _ack = recv_sync_message(&mut server.recv).await.unwrap();
+        send_sync_message(&mut server.send, &SyncMessage::FileTransferComplete)
             .await
             .unwrap();
-        let cursor = std::io::Cursor::new(data_clone);
-        server_conn
-            .send_binary_streaming(
-                cursor,
-                size_u64,
-                agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE,
-            )
-            .await
-            .unwrap();
-        let _ack: SyncMessage = server_conn.recv_json().await.unwrap();
-        server_conn
-            .send_json(&SyncMessage::FileTransferComplete)
-            .await
-            .unwrap();
-    });
+    };
 
     let cancel = AtomicBool::new(false);
-    let recv_stats = request_and_receive_files(
-        &mut client_conn,
-        &initiator_pool,
-        initiator_dir.path(),
-        &cancel,
-        None,
-    )
-    .await
-    .unwrap();
-    sender.await.unwrap();
+    let ((), recv_stats) = tokio::join!(
+        sender,
+        request_and_receive_files(
+            &mut client.send,
+            &mut client.recv,
+            &initiator_pool,
+            initiator_dir.path(),
+            &cancel,
+            None,
+        ),
+    );
+    let recv_stats = recv_stats.unwrap();
 
     assert_eq!(
         recv_stats.files_received, 1,
@@ -3412,6 +3658,4 @@ async fn file_offer_without_content_hash_still_transfers_1993() {
         read_attachment_file(initiator_dir.path(), "attachments/old.bin").unwrap();
     assert_eq!(data, file_data);
     assert_eq!(got_hash, hash);
-
-    server.shutdown().await;
 }

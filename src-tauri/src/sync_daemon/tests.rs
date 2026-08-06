@@ -5,9 +5,11 @@ use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 use agaric_sync::mdns;
 use agaric_sync::sync_events::RecordingEventSink;
-use agaric_sync::sync_net::{self, SyncCert, SyncConnection, SyncServer};
 use agaric_sync::sync_protocol::{DeviceHead, SyncMessage, SyncOrchestrator};
 use agaric_sync::sync_scheduler::SyncScheduler;
+use agaric_sync::transport::SecretKey;
+use agaric_sync::transport::session::{recv_sync_message, send_sync_message};
+use agaric_sync::transport::test_support::{ServiceHarness, TestSide, quic_pair};
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -22,9 +24,175 @@ async fn test_pool() -> (SqlitePool, TempDir) {
     (pool, dir)
 }
 
-/// Install the `ring` CryptoProvider for TLS tests (idempotent).
-fn install_crypto_provider() {
-    let _ = rustls::crypto::ring::default_provider().install_default();
+// ── the responder fixture (#78, plan #3464) ────────────────────────────────
+//
+// `handle_incoming_sync` takes an `InboundSession`, and that type has no public
+// constructor: the only way to obtain one is to run the real admission path
+// (bind → accept → establish). That is precisely the property that makes "a
+// handler cannot name an unauthenticated peer" hold, so every responder test
+// below stands up two real loopback endpoints instead of handing the responder
+// a fabricated connection whose identity the test chose — which is what the old
+// `test_connection_pair` + `set_test_cert` pair did.
+
+/// Spawn the production responder against the next inbound session of `harness`.
+///
+/// `establish` resolves on the peer's FIRST frame, so the returned handle stays
+/// parked until the caller's first [`send_sync_message`] — deliberately, because
+/// that is what production does and because a fixture byte here would be
+/// dispatched as a protocol frame.
+fn spawn_responder(
+    harness: &ServiceHarness,
+    pool: SqlitePool,
+    device_id: &str,
+    materializer: Materializer,
+    scheduler: Arc<SyncScheduler>,
+    event_sink: Arc<dyn SyncEventSink>,
+    cancel: Arc<AtomicBool>,
+) -> tokio::task::JoinHandle<Result<(), AppError>> {
+    let service = harness.service.clone();
+    let device_id = device_id.to_string();
+    tokio::spawn(async move {
+        let session = service
+            .accept()
+            .await
+            .expect("the accept loop does not error")
+            .expect("an inbound connection is admitted")
+            .establish()
+            .await
+            .expect("the peer completes the handshake and opens its stream");
+        handle_incoming_sync(
+            session,
+            pool,
+            device_id,
+            materializer,
+            scheduler,
+            event_sink,
+            cancel,
+        )
+        .await
+    })
+}
+
+/// The dialling endpoint's authenticated key, in the canonical `Display` spelling
+/// `peer_refs.endpoint_id` stores (64 lowercase hex — `fmt_short` is rejected).
+fn client_key(harness: &ServiceHarness) -> String {
+    harness.client_endpoint.id().to_string()
+}
+
+/// Make the responder resolve the dialling endpoint as `peer_id`.
+///
+/// This is what `set_test_cert(Some(peer_id), _)` used to do, and the difference
+/// is the whole identity model: the old transport let a peer *claim* an identity
+/// in a certificate CN it minted itself, so a test could assign one from either
+/// side. Here identity is the ed25519 key the QUIC handshake authenticated, and
+/// the responder resolves it through `peer_refs` — so "the responder sees this
+/// peer as X" is a row this device wrote, and a test that wants it has to write
+/// that row.
+async fn bind_client_as(pool: &SqlitePool, peer_id: &str, harness: &ServiceHarness) {
+    peer_refs::upsert_peer_ref(pool, peer_id).await.unwrap();
+    peer_refs::bind_endpoint_id(pool, peer_id, &client_key(harness))
+        .await
+        .unwrap();
+}
+
+/// A `HeadExchange` advertising exactly `heads`, with every negotiable feature
+/// left off — the shape all the responder-gate tests below send.
+fn head_exchange(heads: Vec<DeviceHead>, pairing_proof: Option<String>) -> SyncMessage {
+    SyncMessage::HeadExchange {
+        heads,
+        loro_vvs: vec![],
+        engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
+        op_log_replication: false,
+        wire_compression: false,
+        op_log_batch_chunked: false,
+        pairing_proof,
+    }
+}
+
+/// One synthetic head for `device_id`: what a device with a single op advertises.
+fn fake_head(device_id: &str) -> DeviceHead {
+    DeviceHead {
+        device_id: device_id.to_string(),
+        seq: 0,
+        hash: "fakehash".to_string(),
+    }
+}
+
+/// The `DiscoveredPeer` an mDNS announcement of `harness`'s service produces.
+///
+/// A dial names a key now, so the key is the load-bearing field and the
+/// addresses are candidate paths iroh races. `endpoint_id` is taken from the
+/// service itself rather than derived, for the reason `SyncService::endpoint_id`
+/// documents: a record advertising a key nobody is listening on is worse than no
+/// record at all.
+fn discovered_service_peer(device_id: &str, harness: &ServiceHarness) -> mdns::DiscoveredPeer {
+    let sa = harness
+        .service
+        .addr()
+        .ip_addrs()
+        .copied()
+        .find(|sa: &std::net::SocketAddr| sa.ip().is_loopback())
+        .expect("a loopback-bound service publishes its loopback socket address");
+    mdns::DiscoveredPeer {
+        device_id: device_id.to_string(),
+        endpoint_id: Some(harness.service.endpoint_id()),
+        addresses: vec![sa.ip()],
+        port: sa.port(),
+    }
+}
+
+/// A peer announcing a well-formed key that nobody is listening on, at a
+/// loopback port nothing is bound to.
+///
+/// This is the "connection refused" case restated for a transport that dials
+/// keys: there is no socket to refuse the connection, so the dial fails by
+/// exhausting its own budget rather than by an immediate RST. Every caller wraps
+/// it in a `tokio::time::timeout` for that reason.
+fn unreachable_peer(device_id: &str) -> mdns::DiscoveredPeer {
+    mdns::DiscoveredPeer {
+        device_id: device_id.to_string(),
+        endpoint_id: Some(mdns::test_endpoint_id(device_id)),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port: 1,
+    }
+}
+
+/// Tear down a *rejected* session's client side, then reap the responder.
+///
+/// A rejection ends in `finish_session(spoke_last = true)`, which waits up to
+/// `SessionLimits::close_wait` for the peer to close — the responder is a round
+/// trip ahead of our read and the peer's close is its only evidence the
+/// rejection landed. Closing from here resolves that wait at once instead of
+/// letting every rejection test burn the full budget.
+///
+/// Also asserts the invariant every rejection path shares: a rejection is not an
+/// error, so `handle_incoming_sync` returns `Ok(())`.
+async fn close_and_join_ok(
+    client: TestSide,
+    handle: tokio::task::JoinHandle<Result<(), AppError>>,
+) {
+    client.conn.close(0u32.into(), b"test done");
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), handle)
+        .await
+        .expect("the responder must resolve once the peer closes")
+        .expect("the responder task must not panic");
+    assert!(
+        result.is_ok(),
+        "a rejection is not an error — handle_incoming_sync must return Ok, got {result:?}"
+    );
+}
+
+/// Assert `response` is the wire rejection the responder sends for `rejection`.
+///
+/// Asserted through [`Rejection::peer_message`] rather than against a duplicated
+/// literal, so a reworded rejection cannot leave a test green while asserting on
+/// text nothing sends any more.
+fn assert_rejected(response: &SyncMessage, rejection: &Rejection) {
+    let expected = rejection.peer_message();
+    assert!(
+        matches!(response, SyncMessage::Error { message } if message == expected),
+        "expected the responder's {rejection:?} rejection ({expected:?}), got: {response:?}"
+    );
 }
 
 /// Generic polling barrier for `SyncDaemon` / `SyncScheduler` tests.
@@ -334,195 +502,21 @@ fn stale_mdns_peers_evicted() {
     );
 }
 
-// ── B-33: responder rejects cert hash mismatch ─────────────────────
-
-#[test]
-fn b33_cert_hash_mismatch_rejected() {
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"), // CN matches
-        Some("aaaa"),     // observed hash
-        Some("bbbb"),     // stored hash — MISMATCH
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::HashMismatch {
-            remote_id: "device-A".into()
-        },
-        "B-33: mismatched cert hash must be rejected"
-    );
-}
-
-#[test]
-fn b33_cert_hash_match_accepted() {
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"), // CN matches
-        Some("aaaa"),     // observed hash
-        Some("aaaa"),     // stored hash — MATCH
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "B-33: matching cert hash must be accepted"
-    );
-}
-
-#[test]
-fn b33_no_stored_hash_accepted() {
-    // No stored hash (not yet paired with cert) — skip hash check
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"),
-        Some("aaaa"),
-        None, // no stored hash
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "B-33: no stored hash means hash check is skipped"
-    );
-}
-
-#[test]
-fn issue800_certless_claim_of_pinned_peer_rejected() {
-    // #800: a cert-less connection (no cert CN, no observed hash) claiming
-    // a peer that IS already cert-pinned (stored hash exists) must be
-    // rejected — not silently accepted. Pre-#800 this returned `Ok`
-    // because B-33's hash check requires BOTH observed AND stored, so the
-    // absent observed hash skipped the pin entirely, granting a full
-    // session under a stolen identity.
-    let result = verify_peer_cert(
-        "device-A",
-        None,         // no cert CN (cert-less / anonymous)
-        None,         // no observed hash (no client cert presented)
-        Some("aaaa"), // stored hash exists → peer is cert-pinned
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::MissingCert {
-            remote_id: "device-A".into()
-        },
-        "#800: cert-less connection claiming a cert-pinned peer must be rejected"
-    );
-}
-
-#[test]
-fn issue800_no_stored_hash_allows_certless_pairing() {
-    // #800 control: when the peer is NOT yet pinned (no stored hash —
-    // initial pairing / pre-TOFU first connect), a cert-less connection is
-    // still allowed through the cert gate. This is the only legitimate
-    // anonymous flow and must not be broken by the #800 rejection.
-    let result = verify_peer_cert(
-        "device-A", None, // no cert CN
-        None, // no observed hash
-        None, // NOT pinned yet
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "#800: a not-yet-pinned peer may connect anonymously (pairing / TOFU first connect)"
-    );
-}
-
-#[test]
-fn issue800_pinned_peer_with_matching_cert_accepted() {
-    // #800 control: an existing paired device that DOES present its cert
-    // (observed hash matches the pinned stored hash) is accepted — the
-    // rejection targets *missing* certs, never legitimate reconnections.
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"),
-        Some("aaaa"), // observed cert hash present
-        Some("aaaa"), // matches the pinned stored hash
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "#800: a pinned peer presenting its matching cert must still be accepted"
-    );
-}
-
-// ── B-34: responder rejects CN mismatch ────────────────────────────
-
-#[test]
-fn b34_cn_mismatch_rejected() {
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-B"), // CN does NOT match claimed device_id
-        Some("aaaa"),
-        Some("aaaa"),
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::CnMismatch {
-            remote_id: "device-A".into(),
-            cert_cn: "device-B".into(),
-        },
-        "B-34: CN mismatch must be rejected"
-    );
-}
-
-#[test]
-fn b34_cn_match_accepted() {
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"), // CN matches claimed device_id
-        Some("aaaa"),
-        Some("aaaa"),
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "B-34: matching CN must be accepted"
-    );
-}
-
-#[test]
-fn b34_no_cert_cn_accepted() {
-    // No client cert presented (anonymous/pairing) — skip CN check
-    let result = verify_peer_cert(
-        "device-A", None, // no cert CN
-        None, None,
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "B-34: no cert CN means CN check is skipped"
-    );
-}
-
-// ── Happy path: both CN and hash match ─────────────────────────────
-
-#[test]
-fn happy_path_cn_and_hash_match() {
-    let result = verify_peer_cert(
-        "device-X",
-        Some("device-X"), // CN matches
-        Some("deadbeef"), // observed hash
-        Some("deadbeef"), // stored hash matches
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "happy path: matching CN + hash must be accepted"
-    );
-}
-
-#[test]
-fn b34_cn_checked_before_b33_hash() {
-    // Both CN mismatch and hash mismatch — CN should be checked first
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-B"), // CN mismatch
-        Some("aaaa"),     // observed hash
-        Some("bbbb"),     // stored hash mismatch
-    );
-    assert!(
-        matches!(result, CertVerifyResult::CnMismatch { .. }),
-        "B-34 CN check must run before B-33 hash check"
-    );
-}
+// ── the cert-verification unit tests are gone with the mechanism ──────
+//
+// `verify_peer_cert` / `CertVerifyResult` answered "is this claimed identity
+// really the peer's". Under the old transport the answer had to be computed in
+// the app layer, because identity arrived as a certificate CN the peer minted
+// for itself (`CN=agaric-{victim}` was one `rcgen` call away). The B-33 hash
+// pin, B-34's CN check and #800's missing-cert rejection were all compensation
+// for that one fact.
+//
+// The QUIC handshake now answers it, before a single application byte moves, so
+// the functions are gone from production and their unit tests with them. What
+// those tests were ultimately protecting — that an unrecognised peer cannot sync
+// this vault — did not go anywhere; it is the S-1 / #855 / #800 responder tests
+// further down, which exercise the real admission path rather than a pure
+// function over four `Option<&str>`s.
 
 // ======================================================================
 // T-41 — Peer discovery filtering logic
@@ -623,7 +617,7 @@ fn should_attempt_sync_rejects_already_discovered_even_while_pairing_pending() {
 
 #[test]
 fn build_fallback_peer_parses_valid_ipv4_socket_addr() {
-    let peer = build_fallback_peer("DEV_A", "192.168.1.42:9443");
+    let peer = build_fallback_peer("DEV_A", "192.168.1.42:9443", None);
     assert!(peer.is_some(), "valid IPv4 socket addr must parse");
     let peer = peer.unwrap();
     assert_eq!(peer.device_id, "DEV_A", "device_id must match input");
@@ -634,11 +628,20 @@ fn build_fallback_peer_parses_valid_ipv4_socket_addr() {
         "192.168.1.42",
         "IP must match"
     );
+    // The consequence of this being the one constructor that yields no key: a
+    // peer built from `last_address` alone cannot be dialled at all, because a
+    // dial names a key now. `try_sync_with_peer_skips_peer_it_cannot_dial` is
+    // what that costs. Pinned here so the two facts sit next to each other —
+    // see the note above `daemon_branch_c_resync_timer_attempts_overdue_peer`.
+    assert!(
+        peer.endpoint_id.is_none(),
+        "a peer synthesised from last_address carries no key to dial"
+    );
 }
 
 #[test]
 fn build_fallback_peer_parses_valid_ipv6_socket_addr() {
-    let peer = build_fallback_peer("DEV_B", "[::1]:8080");
+    let peer = build_fallback_peer("DEV_B", "[::1]:8080", None);
     assert!(peer.is_some(), "valid IPv6 socket addr must parse");
     let peer = peer.unwrap();
     assert_eq!(peer.device_id, "DEV_B", "device_id must match input");
@@ -649,15 +652,15 @@ fn build_fallback_peer_parses_valid_ipv6_socket_addr() {
 #[test]
 fn build_fallback_peer_returns_none_for_invalid_address() {
     assert!(
-        build_fallback_peer("DEV_X", "not-an-address").is_none(),
+        build_fallback_peer("DEV_X", "not-an-address", None).is_none(),
         "garbage input must return None"
     );
     assert!(
-        build_fallback_peer("DEV_X", "192.168.1.1").is_none(),
+        build_fallback_peer("DEV_X", "192.168.1.1", None).is_none(),
         "IP without port must return None (not a SocketAddr)"
     );
     assert!(
-        build_fallback_peer("DEV_X", "").is_none(),
+        build_fallback_peer("DEV_X", "", None).is_none(),
         "empty string must return None"
     );
 }
@@ -665,7 +668,7 @@ fn build_fallback_peer_returns_none_for_invalid_address() {
 #[test]
 fn build_fallback_peer_parses_ipv6_link_local_with_scope_id() {
     // Bracketed form — the canonical IPv6+port syntax with a scope ID.
-    let peer = build_fallback_peer("DEV_LINK_LOCAL", "[fe80::1%eth0]:8080");
+    let peer = build_fallback_peer("DEV_LINK_LOCAL", "[fe80::1%eth0]:8080", None);
     assert!(
         peer.is_some(),
         "bracketed IPv6 with scope ID (%eth0) must parse; got None"
@@ -690,7 +693,7 @@ fn build_fallback_peer_parses_unbracketed_ipv6_with_scope_id() {
     // though the result is ambiguous without them. Best-effort parse:
     // everything before '%' is the IPv6 literal, ':' after the scope is
     // the port boundary.
-    let peer = build_fallback_peer("DEV_LINK_LOCAL_2", "fe80::1%eth0:8080");
+    let peer = build_fallback_peer("DEV_LINK_LOCAL_2", "fe80::1%eth0:8080", None);
     assert!(
         peer.is_some(),
         "un-bracketed IPv6 with scope ID must still parse; got None"
@@ -707,7 +710,7 @@ fn build_fallback_peer_parses_unbracketed_ipv6_with_scope_id() {
 #[test]
 fn build_fallback_peer_handles_numeric_scope_id() {
     // Numeric scope IDs are valid on some platforms (e.g. Windows).
-    let peer = build_fallback_peer("DEV_NUM_SCOPE", "[fe80::1%2]:8080");
+    let peer = build_fallback_peer("DEV_NUM_SCOPE", "[fe80::1%2]:8080", None);
     assert!(peer.is_some(), "numeric scope ID must also parse");
     assert_eq!(peer.unwrap().addresses[0].to_string(), "fe80::1");
 }
@@ -770,47 +773,6 @@ fn stale_eviction_all_stale_removes_all() {
 }
 
 // ======================================================================
-// T-41 — verify_peer_cert additional edge cases
-// ======================================================================
-
-#[test]
-fn verify_peer_cert_empty_cn_string_is_mismatch() {
-    // An empty-string CN should still be compared against the remote_id
-    let result = verify_peer_cert(
-        "device-A",
-        Some(""), // CN is empty string — doesn't match "device-A"
-        Some("aaaa"),
-        Some("aaaa"),
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::CnMismatch {
-            remote_id: "device-A".into(),
-            cert_cn: String::new(),
-        },
-        "empty CN string must trigger CnMismatch"
-    );
-}
-
-#[test]
-fn verify_peer_cert_empty_hash_strings_mismatch() {
-    // Empty-string observed hash vs non-empty stored hash → mismatch
-    let result = verify_peer_cert(
-        "device-A",
-        Some("device-A"),
-        Some(""),         // observed hash is empty
-        Some("deadbeef"), // stored hash is non-empty
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::HashMismatch {
-            remote_id: "device-A".into(),
-        },
-        "empty observed hash must not match non-empty stored hash"
-    );
-}
-
-// ======================================================================
 // T-41 — Tests for daemon async functions (now pub(crate))
 //
 // Tests 1-2 exercise try_sync_with_peer without a live connection:
@@ -832,14 +794,9 @@ async fn try_sync_with_peer_respects_backoff_gate() {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(false);
-    let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_X".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.100".parse().unwrap()],
-        port: 9999,
-    };
+    let peer = unreachable_peer("PEER_X");
     let refs = vec![make_peer_ref("PEER_X")];
 
     // Put peer in backoff
@@ -858,7 +815,7 @@ async fn try_sync_with_peer_respects_backoff_gate() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
@@ -884,23 +841,16 @@ async fn try_sync_with_peer_respects_backoff_gate() {
 /// one failure on the scheduler.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(false);
-    let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
+    let harness = ServiceHarness::new().await;
 
     // Peer with unreachable address (connection will be refused)
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_UNREACHABLE".to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port: 1, // privileged port, no listener → connection refused
-    };
+    let peer = unreachable_peer("PEER_UNREACHABLE");
     let refs = vec![make_peer_ref("PEER_UNREACHABLE")];
 
     let apply_host_ctx_896: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
@@ -912,11 +862,11 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
-    // Wrap in timeout to prevent test from hanging if connect blocks
+    // Wrap in a timeout to prevent the test from hanging if the dial blocks.
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await;
@@ -975,167 +925,50 @@ async fn try_sync_with_peer_emits_error_event_on_connection_failure() {
     materializer.shutdown();
 }
 
-/// Test 3: When the connecting client's TLS certificate CN is the
-/// responder's OWN device_id, the responder sends
-/// `SyncMessage::Error("cannot sync with self")` and returns Ok.
+// The old `handle_incoming_sync_rejects_sync_with_self` lived here. It was the
+// real-loopback-TLS twin of the in-memory self-sync test, and the two collapsed
+// into one when the fixtures did: there is now a single responder fixture (a
+// real admitted QUIC session), so `handle_incoming_sync_rejects_self` further
+// down is both. Its setup changed with the identity model — a device that dials
+// itself is recognised by its key resolving to our own `peer_refs` row, not by a
+// certificate CN it minted saying so.
+
+/// Test 4: When the cancel flag is set before (or during) a sync session,
+/// `run_sync_session` returns Err("sync cancelled by user") after sending the
+/// initial `HeadExchange`.
 ///
-/// #778: identity now comes from the verified cert CN, not from the
-/// advertised heads — so the self-sync case is "the cert CN IS our own
-/// device", not "the heads only mention our own device".
-///
-/// Uses a real loopback TLS WebSocket connection pair.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn handle_incoming_sync_rejects_sync_with_self() {
-    install_crypto_provider();
-
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // Generate certs for server (responder) and client (initiator).
-    // The client presents a cert whose CN is the responder's OWN
-    // device_id — a genuine self-sync (e.g. a device connecting to
-    // itself through a stale mDNS record).
-    let server_cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
-    let client_cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
-
-    // Start TLS WebSocket server; forward incoming connections via channel
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    // Connect from client side
-    let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
-            .await
-            .unwrap();
-
-    // Get the server-side connection
-    let server_conn = tokio::time::timeout(std::time::Duration::from_secs(5), conn_rx.recv())
-        .await
-        .expect("timed out waiting for server connection")
-        .unwrap();
-
-    // Spawn the responder handler
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // Send HeadExchange with only LOCAL_DEV. The heads claim no
-    // foreign identity, so the cert CN ("LOCAL_DEV" — our own
-    // device_id) is the identity → self-sync rejection (#778).
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "LOCAL_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // Receive the rejection response — `SyncMessage::Error.message` is
-    // unstructured `String`, so combine the variant pin (matches!) with a
-    // substring check for the rejection reason.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("cannot sync with self")
-        ),
-        "expected SyncMessage::Error mentioning 'cannot sync with self', got: {response:?}"
-    );
-
-    // Handler should complete without error
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting self-sync"
-    );
-
-    server.shutdown().await;
-    materializer.shutdown();
-}
-
-/// Test 4: When the cancel flag is set before (or during) a sync
-/// session, run_sync_session returns Err("sync cancelled by user")
-/// after sending the initial HeadExchange.
-///
-/// Uses a real loopback TLS WebSocket connection pair.
+/// Runs over a real loopback QUIC bi-stream. The peer is never driven: the
+/// point is that the initiator gives up on its own signal, not that anyone
+/// answered. `quic_pair` owns both endpoints, so the connection stays up for as
+/// long as the fixture is held.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn run_sync_session_respects_cancel_flag() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
 
-    let server_cert = sync_net::generate_self_signed_cert("RESPONDER_DEV").unwrap();
-    let client_cert = sync_net::generate_self_signed_cert("INITIATOR_DEV").unwrap();
+    let mut pair = quic_pair().await;
 
-    // Start server and connect
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
-            .await
-            .unwrap();
-
-    // Keep server-side connection alive so the client send doesn't fail
-    let _server_conn = tokio::time::timeout(std::time::Duration::from_secs(5), conn_rx.recv())
-        .await
-        .expect("timed out waiting for server connection")
-        .unwrap();
-
-    // Set up initiator-side orchestrator
     let mut orch = SyncOrchestrator::new(
         pool.clone(),
         "INITIATOR_DEV".to_string(),
         materializer.clone(),
     );
 
-    // Set cancel flag BEFORE calling run_sync_session
+    // Set the cancel flag BEFORE calling run_sync_session.
     let cancel = AtomicBool::new(true);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     // run_sync_session:
     // 1. orch.start() → HeadExchange  (succeeds)
-    // 2. conn.send_json(...)           (succeeds, message is buffered)
-    // 3. while !is_terminal():
-    //      cancel.load() → true → return Err("sync cancelled by user")
+    // 2. send_sync_message(...)        (succeeds — the frame is written)
+    // 3. the driver loop's pre-recv cancel check → Err("sync cancelled by user")
     let run_session_host: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
     let result = run_sync_session(
         &mut orch,
-        &mut client_conn,
+        &mut pair.client.send,
+        &mut pair.client.recv,
+        &pair.client.conn,
         &cancel,
         &pool,
         &run_session_host,
@@ -1145,17 +978,20 @@ async fn run_sync_session_respects_cancel_flag() {
 
     assert!(
         result.is_err(),
-        "run_sync_session should return error when cancelled"
+        "run_sync_session should return an error when cancelled"
     );
-    // `AppError::InvalidOperation` carries an unstructured `String`, so combine
-    // the variant pin (matches!) with a substring check for the cancellation reason.
+    // The cancellation error moved with the loop. It used to read "sync cancelled
+    // by user" and be produced by `run_sync_session`'s own loop; the one driver
+    // that replaced both loops produces this one instead. Pinned exactly, not by
+    // substring: `try_sync_with_peer` distinguishes a cancel from a failure by
+    // reading the shared flag rather than by matching this text (#2537), so this
+    // string is what a user and a log see and nothing else keeps it honest.
     let err = result.unwrap_err();
     assert!(
-        matches!(&err, AppError::InvalidOperation(msg) if msg.contains("sync cancelled by user")),
-        "expected AppError::InvalidOperation mentioning 'sync cancelled by user', got: {err:?}"
+        matches!(&err, AppError::InvalidOperation(msg) if msg == "[transport::driver] session cancelled"),
+        "expected AppError::InvalidOperation(\"[transport::driver] session cancelled\"), got: {err:?}"
     );
 
-    server.shutdown().await;
     materializer.shutdown();
 }
 
@@ -1163,22 +999,31 @@ async fn run_sync_session_respects_cancel_flag() {
 // T-41 — Additional edge-case tests for daemon async functions
 // ======================================================================
 
-/// When a DiscoveredPeer has an empty address list, try_sync_with_peer
-/// returns early with no events and no failure recorded.
+/// When a DiscoveredPeer cannot be dialled at all, try_sync_with_peer returns
+/// early with no events and no failure recorded.
+///
+/// The undiallable case moved. It used to be an empty address list, because a
+/// dial named a socket; under iroh a dial names a KEY and the addresses are only
+/// candidate paths to it, so the peer that cannot be dialled is the one with no
+/// `endpoint_id` — the shape `build_fallback_peer` still synthesises from a
+/// pre-iroh `peer_refs.last_address` row. An empty address list is no longer an
+/// early exit at all: iroh is handed a keyed `EndpointAddr` with no paths and
+/// fails the connect, which is a *failure*, not a skip.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn try_sync_with_peer_skips_peer_with_no_addresses() {
+async fn try_sync_with_peer_skips_peer_it_cannot_dial() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(false);
-    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+    let harness = ServiceHarness::new().await;
 
     let peer = mdns::DiscoveredPeer {
         device_id: "PEER_NOADDR".to_string(),
+        // No key: nothing to dial, whatever the addresses say.
         endpoint_id: None,
-        addresses: vec![], // no addresses
+        addresses: vec!["192.168.1.1".parse().unwrap()],
         port: 9999,
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
@@ -1192,20 +1037,20 @@ async fn try_sync_with_peer_skips_peer_with_no_addresses() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
-    // No events — address resolution fails before "connecting" event
+    // No events — the peer is skipped before the "connecting" event
     assert_eq!(
         sink.events().len(),
         0,
-        "no events should be emitted when peer has no addresses"
+        "no events should be emitted for a peer that cannot be dialled"
     );
     assert_eq!(
         scheduler.failure_count("PEER_NOADDR"),
         0,
-        "no failure should be recorded for empty address list"
+        "no failure should be recorded for a peer that was never dialled"
     );
 
     materializer.shutdown();
@@ -1221,14 +1066,9 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(false);
-    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_LOCKED".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.1".parse().unwrap()],
-        port: 9999,
-    };
+    let peer = unreachable_peer("PEER_LOCKED");
     let refs = vec![make_peer_ref("PEER_LOCKED")];
 
     // Acquire the per-peer lock before calling try_sync_with_peer
@@ -1243,7 +1083,7 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
@@ -1256,93 +1096,12 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     materializer.shutdown();
 }
 
-/// When a HeadExchange arrives from an unpaired device, the responder
-/// sends `Error("peer not paired")` and returns Ok.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn handle_incoming_sync_rejects_unpaired_device() {
-    install_crypto_provider();
-
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    let server_cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
-    let client_cert = sync_net::generate_self_signed_cert("UNKNOWN_DEV").unwrap();
-
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    let mut client_conn =
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, &client_cert)
-            .await
-            .unwrap();
-
-    let server_conn = tokio::time::timeout(std::time::Duration::from_secs(5), conn_rx.recv())
-        .await
-        .expect("timed out waiting for server connection")
-        .unwrap();
-
-    // No peer_refs entries → UNKNOWN_DEV is not paired
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // Send HeadExchange from an unpaired device
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "UNKNOWN_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // Receive rejection response — `SyncMessage::Error.message` is unstructured
-    // `String`, so combine the variant pin (matches!) with a substring check.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("not paired")
-        ),
-        "expected SyncMessage::Error mentioning 'not paired' for unpaired device, got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting unpaired device"
-    );
-
-    server.shutdown().await;
-    materializer.shutdown();
-}
+// The old `handle_incoming_sync_rejects_unpaired_device` lived here — the
+// real-loopback-TLS twin of the in-memory S-1 test. Like the self-sync pair
+// above, the two collapsed into one when the fixtures did:
+// `handle_incoming_sync_rejects_unpaired` further down runs the real admission
+// path, so there is no longer an "in-memory" version for it to be the socket
+// counterpart of.
 
 /// S-11 / #637: When `try_sync_with_peer` exits via the connection-failure
 /// path it runs NO real session, so it does NOT own the cancel and must
@@ -1351,22 +1110,15 @@ async fn handle_incoming_sync_rejects_unpaired_device() {
 /// only clears the flag once a real session was reached (`owns == true`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // start with cancel set
-    let cert = sync_net::generate_self_signed_cert("LOCAL_DEV").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_FAIL".to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port: 1, // connection will be refused
-    };
+    let peer = unreachable_peer("PEER_FAIL");
     let refs = vec![make_peer_ref("PEER_FAIL")];
 
     let apply_host_ctx_1351: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
@@ -1378,10 +1130,10 @@ async fn try_sync_with_peer_preserves_cancel_flag_after_connection_failure() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await;
@@ -1425,14 +1177,9 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // cancel is set
-    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_BACKOFF".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.100".parse().unwrap()],
-        port: 9999,
-    };
+    let peer = unreachable_peer("PEER_BACKOFF");
     let refs = vec![make_peer_ref("PEER_BACKOFF")];
 
     // Put peer in backoff so the gate triggers
@@ -1451,7 +1198,7 @@ async fn s11_cancel_preserved_on_backoff_early_exit() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
@@ -1474,14 +1221,9 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // cancel is set
-    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_LOCKED".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.1".parse().unwrap()],
-        port: 9999,
-    };
+    let peer = unreachable_peer("PEER_LOCKED");
     let refs = vec![make_peer_ref("PEER_LOCKED")];
 
     // Hold the per-peer lock so the function returns early
@@ -1496,7 +1238,7 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
@@ -1508,22 +1250,23 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     materializer.shutdown();
 }
 
-/// S-11 / #637: the no-addresses early return runs no session, so it must
+/// S-11 / #637: the undiallable-peer early return runs no session, so it must
 /// PRESERVE a pre-set user cancel rather than clear a sibling's cancel.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn s11_cancel_preserved_on_no_addresses_early_exit() {
+async fn s11_cancel_preserved_on_undiallable_peer_early_exit() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // cancel is set
-    let cert = sync_net::generate_self_signed_cert("LOCAL").unwrap();
+    let harness = ServiceHarness::new().await;
 
     let peer = mdns::DiscoveredPeer {
         device_id: "PEER_NOADDR".to_string(),
+        // No key → the early return, before anything is dialled.
         endpoint_id: None,
-        addresses: vec![], // no addresses → early return
+        addresses: vec!["192.168.1.1".parse().unwrap()],
         port: 9999,
     };
     let refs = vec![make_peer_ref("PEER_NOADDR")];
@@ -1537,491 +1280,329 @@ async fn s11_cancel_preserved_on_no_addresses_early_exit() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
     assert!(
         cancel.load(Ordering::Acquire),
-        "#637: no-addresses early-exit must PRESERVE a pre-set cancel flag"
+        "#637: the undiallable-peer early-exit must PRESERVE a pre-set cancel flag"
     );
 
     materializer.shutdown();
 }
 
 // ======================================================================
-// T-16 — verify_peer_cert unit tests
+// T-16 — responder gate tests, over a real admitted QUIC session
 // ======================================================================
+//
+// These were "in-memory WebSocket tests": a `test_connection_pair` plus
+// `set_test_cert(Some(id), _)`, which let the test hand the responder whatever
+// identity it liked — because the old transport let the *peer* do exactly the
+// same, with a self-signed `CN=agaric-{id}`. The port removes both halves.
+// `handle_incoming_sync` takes an `InboundSession`, which only the real
+// admission path can produce, and the identity it reads is the ed25519 key the
+// QUIC handshake authenticated. So a test that wants the responder to see
+// `REMOTE_DEV` now binds the dialling key to that row (`bind_client_as`),
+// exactly as `confirm_pairing` and the initiator's TOFU do in production.
 
-#[test]
-fn verify_peer_cert_both_none_returns_ok() {
-    let result = verify_peer_cert("any-device", None, None, None);
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "both cert_cn and stored_hash None → Ok"
-    );
-}
-
-#[test]
-fn verify_peer_cert_cn_match_returns_ok() {
-    let result = verify_peer_cert("dev-1", Some("dev-1"), None, None);
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "matching CN with no hash check → Ok"
-    );
-}
-
-#[test]
-fn verify_peer_cert_cn_mismatch_returns_cn_mismatch() {
-    let result = verify_peer_cert("dev-1", Some("dev-2"), None, None);
-    assert_eq!(
-        result,
-        CertVerifyResult::CnMismatch {
-            remote_id: "dev-1".into(),
-            cert_cn: "dev-2".into(),
-        },
-        "mismatching CN → CnMismatch"
-    );
-}
-
-#[test]
-fn verify_peer_cert_hash_match_returns_ok() {
-    let result = verify_peer_cert("dev-1", None, Some("hash123"), Some("hash123"));
-    assert_eq!(
-        result,
-        CertVerifyResult::Ok,
-        "matching hash with no CN → Ok"
-    );
-}
-
-#[test]
-fn verify_peer_cert_hash_mismatch_returns_hash_mismatch() {
-    let result = verify_peer_cert("dev-1", None, Some("hash_a"), Some("hash_b"));
-    assert_eq!(
-        result,
-        CertVerifyResult::HashMismatch {
-            remote_id: "dev-1".into(),
-        },
-        "mismatching hash with no CN → HashMismatch"
-    );
-}
-
-#[test]
-fn verify_peer_cert_cn_match_but_hash_mismatch() {
-    let result = verify_peer_cert(
-        "dev-1",
-        Some("dev-1"),    // CN matches
-        Some("observed"), // observed hash
-        Some("stored"),   // stored hash — different
-    );
-    assert_eq!(
-        result,
-        CertVerifyResult::HashMismatch {
-            remote_id: "dev-1".into(),
-        },
-        "CN match + hash mismatch → HashMismatch"
-    );
-}
-
-// ======================================================================
-// T-16 — In-memory WebSocket tests for handle_incoming_sync
-// ======================================================================
-
-/// T-16 Test 1 (#778): A connection whose TLS certificate CN equals the
-/// local device_id triggers the self-sync rejection branch — identity
-/// comes from the verified cert CN, not from the advertised heads.
+/// #778, now key-derived: a connection whose authenticated key resolves to our
+/// OWN device id is refused as a self-sync.
+///
+/// The mechanism moved; the guarantee did not. Identity used to be a certificate
+/// CN, so a device that dialled itself through a stale mDNS record presented
+/// `CN=agaric-LOCAL_DEV` and the responder compared that string. Now the key is
+/// resolved through `peer_refs` and the resulting `peer_id` is compared — so the
+/// case is set up by binding the dialling key to a row named after this device,
+/// not by minting a certificate.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_self() {
+async fn handle_incoming_sync_rejects_self() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    let harness = ServiceHarness::new().await;
+    // The dialling endpoint resolves to LOCAL_DEV — this device's own id.
+    bind_client_as(&pool, "LOCAL_DEV", &harness).await;
 
-    // The "remote" presents a cert whose CN is our OWN device_id.
-    server_conn.set_test_cert(Some("LOCAL_DEV".to_string()), None);
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
 
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("LOCAL_DEV")], None),
+    )
+    .await
+    .unwrap();
 
-    // The heads claim no foreign identity (only the local device's
-    // head), so the cert CN "LOCAL_DEV" is the identity → self-sync.
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "LOCAL_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Self_);
+
+    close_and_join_ok(client, handle).await;
+    materializer.shutdown();
+}
+
+/// S-1: a key with no `peer_refs` row and no pairing in progress is a stranger,
+/// however well the handshake authenticated it.
+///
+/// This is the gate the whole cert apparatus used to sit in front of. QUIC now
+/// proves *which key* dialled and proves it cryptographically — which is exactly
+/// why this test still matters: anyone can generate a keypair, so "authenticated"
+/// and "authorized to sync this vault" remain different questions.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_incoming_sync_rejects_unpaired() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // No peer_refs row for the dialling key, and no pairing window open.
+    let harness = ServiceHarness::new().await;
+
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("UNKNOWN_DEVICE")], None),
+    )
+    .await
+    .unwrap();
+
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Unpaired);
+
+    close_and_join_ok(client, handle).await;
+    materializer.shutdown();
+}
+
+/// #800's surviving guarantee: a key that is NOT bound to the target row is
+/// refused even though a row for that device id exists with a *different* key.
+///
+/// The original attack shape — an anonymous, cert-less TLS socket claiming a
+/// cert-pinned device id in its `HeadExchange` heads — is unrepresentable now:
+/// there is no anonymous connection (the handshake names a key) and the heads
+/// are not an identity input at all. What is still representable, and is what
+/// #800 was ultimately about, is a peer that presents *some* authenticated key
+/// and wants to be treated as `REMOTE_PAIRED`. It is refused, and refused at
+/// S-1 rather than by a hash comparison, because the lookup runs on the key the
+/// handshake proved and finds nothing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_incoming_sync_rejects_a_key_not_bound_to_the_claimed_peer_800() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+
+    // The victim is fully paired AND already key-bound — to somebody else's key.
+    peer_refs::upsert_peer_ref(&pool, "REMOTE_PAIRED")
         .await
         .unwrap();
+    peer_refs::bind_endpoint_id(
+        &pool,
+        "REMOTE_PAIRED",
+        &mdns::test_endpoint_id("the real REMOTE_PAIRED").to_string(),
+    )
+    .await
+    .unwrap();
 
-    // `SyncMessage::Error.message` is unstructured `String`, so combine the
-    // variant pin (matches!) with a substring check for the rejection reason.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("self")
+    // The attacker dials with its own key and claims the victim's id in its heads.
+    let harness = ServiceHarness::new().await;
+    assert_ne!(
+        client_key(&harness),
+        mdns::test_endpoint_id("the real REMOTE_PAIRED").to_string(),
+        "test premise: the attacker must not hold the victim's key"
+    );
+
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("REMOTE_PAIRED")], None),
+    )
+    .await
+    .unwrap();
+
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Unpaired);
+
+    close_and_join_ok(client, handle).await;
+
+    // And the claim left no trace: the victim's binding is untouched, so the
+    // legitimate device can still connect.
+    let victim = peer_refs::get_peer_ref(&pool, "REMOTE_PAIRED")
+        .await
+        .unwrap()
+        .expect("the victim row must survive the refused claim");
+    assert_eq!(
+        victim.endpoint_id.as_deref(),
+        Some(
+            mdns::test_endpoint_id("the real REMOTE_PAIRED")
+                .to_string()
+                .as_str()
         ),
-        "expected SyncMessage::Error mentioning self-sync, got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting self-sync"
+        "#800: a refused claim must not re-point the victim's key binding"
     );
 
     materializer.shutdown();
 }
 
-/// T-16 Test 1b (#778): degenerate case — no client certificate AND no
-/// foreign head (empty heads list). The session cannot be attributed to
-/// any peer, so the responder sends `Error("cannot identify remote
-/// device")` and returns Ok. Before #778 this case was misreported as
-/// "cannot sync with self".
+/// S-5: a second concurrent session with the same peer is refused.
+///
+/// The per-peer lock keys on the resolved device id, so an inbound session
+/// cannot run alongside an outbound one to the same device.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_unidentifiable_peer() {
+async fn handle_incoming_sync_rejects_busy_peer() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // In-memory pair → no TLS cert → `peer_cert_cn()` is None.
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&pool, "REMOTE_DEV", &harness).await;
 
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // Empty heads (a fresh device's HeadExchange) + no cert: there is
-    // nothing to identify the peer by.
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("cannot identify")
-        ),
-        "expected SyncMessage::Error mentioning 'cannot identify', got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting unidentifiable peer"
-    );
-
-    materializer.shutdown();
-}
-
-/// T-16 Test 2: Sending a HeadExchange from a device not present in
-/// the peer_refs table triggers the unpaired-device rejection branch.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_unpaired() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // No peer_refs entries → any remote device is "unpaired"
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "UNKNOWN_DEVICE".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // `SyncMessage::Error.message` is unstructured `String`, so combine the
-    // variant pin (matches!) with a substring check for the rejection reason.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("not paired")
-        ),
-        "expected SyncMessage::Error mentioning 'not paired' for unpaired device, got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting unpaired device"
-    );
-
-    materializer.shutdown();
-}
-
-/// T-16 Test 3: When the per-peer lock is already held (e.g. an outbound
-/// session is in progress), the responder sends "busy" and returns Ok.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_busy_peer() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // Insert a peer ref so the device is "paired"
-    peer_refs::upsert_peer_ref(&pool, "REMOTE_DEV")
-        .await
-        .unwrap();
-
-    // Pre-acquire the per-peer lock to simulate a concurrent session
+    // Pre-acquire the per-peer lock to simulate a concurrent outbound session.
     let _guard = scheduler.try_lock_peer("REMOTE_DEV").unwrap();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "REMOTE_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // `SyncMessage::Error.message` is unstructured `String`, so combine the
-    // variant pin (matches!) with a substring check for the rejection reason.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("busy")
-        ),
-        "expected SyncMessage::Error mentioning 'busy' for already-locked peer, got: {response:?}"
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
     );
 
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting busy peer"
-    );
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("REMOTE_DEV")], None),
+    )
+    .await
+    .unwrap();
 
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Busy);
+
+    close_and_join_ok(client, handle).await;
     materializer.shutdown();
 }
 
-/// #1519: the documented pairing flow leaves the responder with NO
-/// `peer_refs` row at confirm time — `confirm_pairing_inner` only writes a
-/// `set_pending_pairing` marker, because the joiner's real `device_id` is
-/// unknown until it connects (the QR carries only the passphrase). The first
-/// post-pair connection therefore arrives from a device with no `peer_ref`.
+/// #1519: the documented pairing flow leaves the responder with NO `peer_refs`
+/// row at confirm time — `confirm_pairing_inner` only writes the
+/// `set_pending_pairing` marker, because the QR carries a passphrase and not the
+/// joiner's identity. The first post-pair connection therefore arrives from a
+/// device this side has never heard of.
 ///
-/// Before the fix, the S-1 unpaired gate rejected that first connection
-/// outright ("not paired") with no exception for a pending pairing, so the
-/// TOFU upsert that would establish the `peer_ref` never ran and the
-/// initiator was stuck with no forward path.
+/// The port did not change that. `peer_refs.endpoint_id` cannot be written
+/// before the key that fills it has connected, so an unbound key during the
+/// pairing window is still the normal case and S-1 would still deadlock pairing
+/// without this exception.
 ///
-/// After the fix, an active `set_pending_pairing` marker admits that first
-/// connection PAST the S-1 gate. We prove the new transition by pre-acquiring
-/// the per-peer lock: the device now reaches the busy-peer branch (it got
-/// past S-1) instead of being rejected as unpaired — i.e. the gate accepted
-/// a device with no `peer_ref` because pairing was pending.
+/// The transition is proven by pre-acquiring the per-peer lock: a device that
+/// gets past S-1 lands on the busy branch, an observably different answer from
+/// the "not paired" rejection.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending() {
+async fn handle_incoming_sync_admits_first_connection_while_pairing_pending() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // The responder just confirmed pairing: no `peer_ref` row exists yet, only
-    // the pending-pairing marker that bridges to the first TOFU connection.
-    assert!(
-        peer_refs::get_peer_ref(&pool, "JOINING_DEV")
-            .await
-            .unwrap()
-            .is_none(),
-        "precondition: joining device must be unpaired"
-    );
-    // #855: the marker stores the passphrase proof; the connecting device must
-    // present a matching proof to be admitted past S-1.
+    // The responder has just confirmed pairing: no peer_refs row exists yet,
+    // only the marker, which is what admits an unbound key past S-1.
     let expected_proof = agaric_sync::pairing::pairing_proof("pass one two three four");
     peer_refs::set_pending_pairing(&pool, &expected_proof)
         .await
         .unwrap();
     assert!(
         peer_refs::is_pending_pairing(&pool).await.unwrap(),
-        "precondition: pairing must be pending"
+        "precondition: a pairing must be pending"
     );
 
-    // Pre-acquire the per-peer lock so that, if (and only if) the connection
-    // gets PAST the S-1 unpaired gate, it lands on the busy-peer branch — a
-    // distinct, observable response from the "not paired" rejection.
+    // Pre-acquire the per-peer lock so that — and only if — the connection gets
+    // PAST the S-1 unpaired gate, it lands on the busy branch.
     let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "JOINING_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            // #855: a matching proof, so the device is admitted past S-1.
-            pairing_proof: Some(expected_proof.clone()),
-        })
-        .await
-        .unwrap();
-
-    // The fix: with pairing pending, the unpaired device is admitted past the
-    // S-1 gate and (because the lock is held) reaches the busy branch. A "not
-    // paired" response here would mean the gate still rejected it — the bug.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
+    let harness = ServiceHarness::new().await;
     assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("busy")
-        ),
-        "expected the first post-pair connection to pass the S-1 gate while \
-         pairing is pending (landing on the held-lock 'busy' branch), got: {response:?}"
-    );
-    assert!(
-        !matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("not paired")
-        ),
-        "first post-pair connection must NOT be rejected as unpaired while pairing is pending"
+        peer_refs::get_peer_ref_by_endpoint_id(&pool, &client_key(&harness))
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: the joiner's key must be unknown to this device"
     );
 
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after admitting the pending-pairing connection"
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
     );
 
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        // #855: the matching proof is what admits the device past S-1.
+        &head_exchange(vec![fake_head("JOINING_DEV")], Some(expected_proof.clone())),
+    )
+    .await
+    .unwrap();
+
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Busy);
+    assert_ne!(
+        &response,
+        &SyncMessage::Error {
+            message: Rejection::Unpaired.peer_message().to_owned()
+        },
+        "#1519: the first post-pair connection must NOT be rejected as unpaired \
+         while a pairing is pending"
+    );
+
+    close_and_join_ok(client, handle).await;
     materializer.shutdown();
 }
 
-/// #855 driver: with a pairing pending (marker holds the proof of
+/// #855 driver: with a pairing pending (the marker holding the proof for
 /// `"the real passphrase"`), drive `handle_incoming_sync` against a first
-/// connection from unpaired `VICTIM_DEV` that offers `offered_proof`, and return
-/// `(response, victim_was_pinned, still_pending)`.
+/// connection from an unbound key that offers `offered_proof`, and return
+/// `(response, victim_was_bound, still_pending)`.
+///
+/// The per-peer lock for `VICTIM_DEV` is pre-held throughout, so an ADMITTED
+/// connection has a distinct observable — the busy rejection — rather than
+/// running a whole session. That makes one driver serve the reject cases and
+/// the admit case alike.
 #[cfg(test)]
 async fn run_pairing_proof_scenario_855(
     offered_proof: Option<String>,
@@ -2036,68 +1617,63 @@ async fn run_pairing_proof_scenario_855(
         .await
         .unwrap();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
+    let _guard = scheduler.try_lock_peer("VICTIM_DEV").unwrap();
 
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "VICTIM_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: offered_proof,
-        })
-        .await
-        .unwrap();
+    let harness = ServiceHarness::new().await;
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
 
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    handle.await.unwrap().unwrap();
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("VICTIM_DEV")], offered_proof),
+    )
+    .await
+    .unwrap();
 
-    let victim_pinned = peer_refs::get_peer_ref(&pool, "VICTIM_DEV")
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    close_and_join_ok(client, handle).await;
+
+    // Did the connection get TOFU-bound as the victim device? Under the old
+    // stack the question was "was a cert hash pinned"; the key binding is what
+    // replaced it, and it is the thing an admitted attacker would walk away with.
+    let victim_was_bound = peer_refs::get_peer_ref(&pool, "VICTIM_DEV")
         .await
         .unwrap()
         .is_some();
     let still_pending = peer_refs::is_pending_pairing(&pool).await.unwrap();
+
     materializer.shutdown();
-    (response, victim_pinned, still_pending)
+    (response, victim_was_bound, still_pending)
 }
 
-/// #855 (security): a device that connects during the pairing window with NO
-/// passphrase proof — e.g. a CN-spoofing attacker that minted
-/// `CN=agaric-{victim}` but does not know the out-of-band passphrase — is
-/// REJECTED at the S-1 gate and NEVER TOFU-pinned. The pairing window is not
-/// consumed (marker stays pending) so the legitimate device can still pair.
+/// #855 (security): an unpaired device that connects during the pairing window
+/// with NO passphrase proof is REJECTED at the S-1 gate, is never bound, and
+/// does not consume the pairing window.
+///
+/// **This is the most important test in this file, and the one this port was
+/// most likely to delete by mistake.** The comment it used to carry called the
+/// attacker a "CN-spoofer", which reads like the proof was part of the
+/// certificate defence — it was not. QUIC proves *which key* dialled; it says
+/// nothing about whether that key may touch this vault, and anyone can generate
+/// a keypair. Without the proof, the pairing window would admit *and bind*
+/// whichever endpoint happened to connect during it. Cryptographic identity
+/// narrowed the proof's job — from "defend against a forged identity" to
+/// "authorize a genuine but unknown one" — it did not retire it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_pairing_without_proof_855() {
-    let (response, victim_pinned, still_pending) = run_pairing_proof_scenario_855(None).await;
+async fn handle_incoming_sync_rejects_pairing_without_proof_855() {
+    let (response, victim_bound, still_pending) = run_pairing_proof_scenario_855(None).await;
+    assert_rejected(&response, &Rejection::PairingProofMissing);
     assert!(
-        matches!(&response, SyncMessage::Error { message } if message.contains("pairing passphrase proof")),
-        "a proofless pairing connection must be rejected with the #855 proof error, got: {response:?}"
-    );
-    assert!(
-        !victim_pinned,
-        "#855: a proofless attacker must never be TOFU-pinned as the victim device"
+        !victim_bound,
+        "#855: a proofless connection must never be bound as the victim device"
     );
     assert!(
         still_pending,
@@ -2105,21 +1681,17 @@ async fn inmem_handle_incoming_sync_rejects_pairing_without_proof_855() {
     );
 }
 
-/// #855 (security): the same, but the attacker offers a WRONG proof (it guessed
-/// / minted a value without knowing the passphrase). Constant-time-mismatched →
-/// rejected, never pinned, window preserved.
+/// #855 (security): the same, but the peer offers a WRONG proof — a value it
+/// guessed or minted without knowing the passphrase. Constant-time-mismatched →
+/// rejected, never bound, window preserved.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
+async fn handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
     let wrong = agaric_sync::pairing::pairing_proof("a wrong passphrase guess");
-    let (response, victim_pinned, still_pending) =
-        run_pairing_proof_scenario_855(Some(wrong)).await;
+    let (response, victim_bound, still_pending) = run_pairing_proof_scenario_855(Some(wrong)).await;
+    assert_rejected(&response, &Rejection::PairingProofMissing);
     assert!(
-        matches!(&response, SyncMessage::Error { message } if message.contains("pairing passphrase proof")),
-        "a wrong-proof pairing connection must be rejected, got: {response:?}"
-    );
-    assert!(
-        !victim_pinned,
-        "#855: an attacker with a wrong proof must never be TOFU-pinned"
+        !victim_bound,
+        "#855: an attacker with a wrong proof must never be bound as the victim device"
     );
     assert!(
         still_pending,
@@ -2127,34 +1699,43 @@ async fn inmem_handle_incoming_sync_rejects_pairing_with_wrong_proof_855() {
     );
 }
 
+/// #855 (the positive half): the SAME unbound key, during the SAME pairing
+/// window, offering the RIGHT proof is admitted past S-1 — landing on the
+/// pre-held lock's busy branch rather than on either rejection.
+///
+/// Without this the two tests above would be satisfied by a responder that
+/// refuses everything, which is not the property #855 describes.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn handle_incoming_sync_admits_pairing_with_correct_proof_855() {
+    let right = agaric_sync::pairing::pairing_proof("the real passphrase");
+    let (response, _victim_bound, still_pending) =
+        run_pairing_proof_scenario_855(Some(right)).await;
+    assert_rejected(&response, &Rejection::Busy);
+    assert!(
+        still_pending,
+        "the pairing window is consumed by a completed session, not by admission"
+    );
+}
+
 /// #3463 (end-to-end): drive the real command layer on TWO devices, then feed
 /// the joiner's resulting proof into the responder's #855 gate.
 ///
-/// This closes the loop the unit tests can only assert half of. The host runs
+/// This closes a loop the unit tests can only assert half of. The host runs
 /// `start_pairing_armed_inner` (what the `start_pairing` command calls) and the
 /// joiner runs `start_pairing_inner` + `confirm_pairing_inner` with the host's
-/// passphrase — the exact production call sequence, on two independent pools and
-/// two independent `pairing_state` slots. The proof the joiner would put on the
-/// wire is read the same way `sync_protocol::session_state_machine::start` reads
-/// it (`get_pending_pairing_proof` on the initiator's own DB), and the host's DB
-/// is the one `handle_incoming_sync` consults.
+/// passphrase — the exact production call sequence, on two independent pools.
 ///
-/// Before #3463 the joiner's `confirm_pairing_inner` failed with
-/// `pairing.passphrase.mismatch`, so it never armed a marker and had no proof to
-/// offer at all — this connection was rejected as "peer not paired".
-///
-/// As in `inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending`,
-/// the per-peer lock is pre-acquired so that passing the S-1 gate produces the
-/// distinct, observable "busy" response rather than falling through into a full
-/// sync session.
+/// As in `handle_incoming_sync_admits_first_connection_while_pairing_pending`,
+/// the per-peer lock is pre-held so admission has an observable that is not a
+/// whole sync session.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_pairing_proof_from_two_device_command_flow_is_admitted_3463() {
-    // --- Device JOINER: real command-layer pairing against HOST's passphrase.
+async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
+    // --- Device JOINER: real command-layer pairing with the HOST's passphrase.
     let (joiner_pool, _joiner_dir) = test_pool().await;
     let joiner_state = std::sync::Mutex::new(None);
     let joiner_sched = SyncScheduler::new();
 
-    // --- Device HOST: this test's responder. Its pool is the daemon's pool.
+    // --- Device HOST: the test's responder. Its pool is the daemon's pool.
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -2170,8 +1751,8 @@ async fn inmem_pairing_proof_from_two_device_command_flow_is_admitted_3463() {
     .unwrap()
     .passphrase;
 
-    // The joiner's dialog mints a competing passphrase of its own (#3463's
-    // root cause), then the user types the host's.
+    // The joiner's dialog mints a competing passphrase of its own (#3463's root
+    // cause), but the user types the host's.
     crate::commands::start_pairing_inner(&joiner_state, "JOINING_DEV").unwrap();
     crate::commands::confirm_pairing_inner(
         &joiner_pool,
@@ -2182,7 +1763,7 @@ async fn inmem_pairing_proof_from_two_device_command_flow_is_admitted_3463() {
         String::new(),
     )
     .await
-    .expect("#3463: the joiner must accept the host's passphrase");
+    .expect("#3463: the joiner accepts the host's passphrase");
 
     // What the initiator puts on the wire (`session_state_machine::start`).
     let offered_proof = peer_refs::get_pending_pairing_proof(&joiner_pool)
@@ -2195,153 +1776,108 @@ async fn inmem_pairing_proof_from_two_device_command_flow_is_admitted_3463() {
             .await
             .unwrap()
             .is_none(),
-        "precondition: joining device must still be unpaired on the host"
+        "precondition: the joining device must still be unpaired on the host"
     );
     let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
+    let harness = ServiceHarness::new().await;
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
 
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "JOINING_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: Some(offered_proof),
-        })
-        .await
-        .unwrap();
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("JOINING_DEV")], Some(offered_proof)),
+    )
+    .await
+    .unwrap();
 
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    handle.await.unwrap().unwrap();
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    close_and_join_ok(client, handle).await;
     materializer.shutdown();
 
-    assert!(
-        matches!(&response, SyncMessage::Error { message } if message.contains("busy")),
-        "#3463: a proof produced by the real two-device command flow must pass the \
-         #855 gate (landing on the held-lock 'busy' branch), got: {response:?}"
-    );
-    assert!(
-        !matches!(&response, SyncMessage::Error { message } if message.contains("not paired")),
+    assert_rejected(&response, &Rejection::Busy);
+    assert_ne!(
+        &response,
+        &SyncMessage::Error {
+            message: Rejection::Unpaired.peer_message().to_owned()
+        },
         "#3463: the joiner must not be rejected as unpaired"
     );
-    assert!(
-        !matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("pairing passphrase proof")
-        ),
+    assert_ne!(
+        &response,
+        &SyncMessage::Error {
+            message: Rejection::PairingProofMissing.peer_message().to_owned()
+        },
         "#3463: the joiner's proof must satisfy the #855 constant-time check"
     );
 }
 
 /// #1519 (control): the pending-pairing exception is gated on the marker — an
-/// unpaired device with NO active pending-pairing marker is still rejected at
-/// the S-1 gate. This guards against the fix accidentally admitting every
-/// unpaired device. Mirrors `inmem_handle_incoming_sync_admits_first_connection_while_pairing_pending`
+/// unbound key with NO active marker is still rejected at the S-1 gate. This
+/// guards against the exception accidentally admitting every unknown key.
+/// Mirrors `handle_incoming_sync_admits_first_connection_while_pairing_pending`
 /// but with no marker set.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_unpaired_without_pending_marker() {
+async fn handle_incoming_sync_rejects_unpaired_without_pending_marker() {
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // No peer_ref AND no pending-pairing marker.
+    // No peer_refs row for the dialling key AND no pending-pairing marker.
     assert!(
         !peer_refs::is_pending_pairing(&pool).await.unwrap(),
-        "precondition: pairing must NOT be pending"
+        "precondition: no pairing may be pending"
     );
 
-    // Hold the lock too: if the gate were (wrongly) bypassed we'd see "busy";
-    // the correct behaviour is the "not paired" rejection before the lock.
+    // Hold the lock too: if the gate were (wrongly) bypassed we would see
+    // "busy"; the correct behaviour is the "not paired" rejection before it.
     let _guard = scheduler.try_lock_peer("UNKNOWN_DEV").unwrap();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "UNKNOWN_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("not paired")
-        ),
-        "an unpaired device with no pending-pairing marker must still be rejected, got: {response:?}"
+    let harness = ServiceHarness::new().await;
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
     );
 
-    let result = handle.await.unwrap();
-    assert!(result.is_ok(), "handle_incoming_sync should return Ok");
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("UNKNOWN_DEV")], None),
+    )
+    .await
+    .unwrap();
 
+    let response = recv_sync_message(&mut client.recv).await.unwrap();
+    assert_rejected(&response, &Rejection::Unpaired);
+
+    close_and_join_ok(client, handle).await;
     materializer.shutdown();
 }
 
-/// #1605: When the daemon's shared cancel flag is set, the responder
-/// session aborts at the top of its message loop — PROMPTLY, well before
-/// the 180 s `RECV_TIMEOUT` it would otherwise block on while waiting for
-/// the next message from a slow/hung initiator — and releases the per-peer
-/// lock (and, in production, the #1581 concurrency permit dropped by the
-/// caller when this fn resolves).
+/// #1605: when the daemon's shared cancel flag is set, the responder session
+/// aborts PROMPTLY — well before the 180 s receive bound it would otherwise
+/// block on while waiting for the next message from a slow/hung initiator — and
+/// releases the per-peer lock.
 ///
-/// Reproduces the bug fixed here: previously the responder threaded a
-/// fresh, never-set `AtomicBool`, so a flipped shutdown/user-cancel signal
-/// was invisible to it. The client sends a single HeadExchange and then
-/// goes silent; without the cancel check the responder would block on
-/// `recv` for the full `RECV_TIMEOUT`. With the real flag threaded in, the
-/// loop's pre-recv `cancel.load()` returns the cancellation error at once.
+/// Reproduces the bug fixed here: the responder used to thread a fresh,
+/// never-set `AtomicBool`, so a flipped shutdown/user-cancel signal was
+/// invisible to it. The client sends a single `HeadExchange` and then goes
+/// silent; without the cancel check the responder would block for the full
+/// receive budget.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
     let (pool, _dir) = test_pool().await;
@@ -2349,81 +1885,56 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
     let scheduler = Arc::new(SyncScheduler::new());
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Pair the peer so the session reaches the message loop (an unpaired
-    // peer is rejected before the orchestrator is even built).
-    peer_refs::upsert_peer_ref(&pool, "REMOTE_DEV")
-        .await
-        .unwrap();
+    // Bind the peer so the session reaches the message loop (an unbound key is
+    // rejected before the orchestrator is even built).
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&pool, "REMOTE_DEV", &harness).await;
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    // The daemon's REAL shared cancel flag, flipped to simulate a
-    // shutdown / user-cancel that arrives while the session is in flight.
+    // The daemon's REAL shared cancel flag, flipped to simulate a shutdown /
+    // user-cancel that arrives while the session is in flight.
     let cancel = Arc::new(AtomicBool::new(true));
 
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let cancel_clone = cancel.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            cancel_clone,
-        )
-        .await
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        event_sink,
+        cancel.clone(),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        &head_exchange(vec![fake_head("REMOTE_DEV")], None),
+    )
+    .await
+    .unwrap();
+
+    // Drain whatever the responder managed to send and then close, so its
+    // shutdown is never waiting on our read. The assertion is the timeout: a
+    // responder that ignored the cancel would sit on the receive bound instead.
+    tokio::spawn(async move {
+        while recv_sync_message(&mut client.recv).await.is_ok() {}
+        client.conn.close(0u32.into(), b"test done");
     });
 
-    // Send a single HeadExchange, then stay silent. The responder processes
-    // this first message (acquiring the per-peer lock), enters the message
-    // loop, and — because cancel is set — must bail BEFORE blocking on the
-    // next recv (which would otherwise stall for RECV_TIMEOUT = 180 s).
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "REMOTE_DEV".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
+    let _result = tokio::time::timeout(std::time::Duration::from_secs(20), handle)
         .await
-        .unwrap();
-
-    // Prompt-abort assertion: the handler must resolve far inside the
-    // 180 s RECV_TIMEOUT. A single HeadExchange against an empty paired
-    // peer completes op-sync, so the cancel is observed at the
-    // file-transfer phase's pre-recv check (`run_file_transfer_responder`),
-    // which — like the message loop — short-circuits before its blocking
-    // recv. The 10 s budget is generous yet still proves a recv that would
-    // otherwise stall for RECV_TIMEOUT was cut short by the cancel signal.
-    let _result = tokio::time::timeout(std::time::Duration::from_secs(10), handle)
-        .await
-        .expect("cancelled responder session must abort promptly, not block on RECV_TIMEOUT")
-        .expect("responder task must not panic");
+        .expect("a cancelled responder session must abort promptly, not sit on the recv bound")
+        .expect("the responder task must not panic");
 
     // The per-peer lock must have been released when the session aborted —
     // otherwise a cancelled/hung responder would strand the peer as "busy".
-    // (In production the #1581 permit is likewise freed by the caller when
-    // this fn resolves; here the scheduler lock is the in-test proxy.)
     assert!(
         scheduler.try_lock_peer("REMOTE_DEV").is_some(),
-        "per-peer lock must be released after the responder aborts on cancel"
+        "the per-peer lock must be released after the responder aborts on cancel"
     );
 
-    // #2537: the responder session that consumed the cancel is now a
-    // legitimate resetter (mirrors the initiator's CancelGuard owns-path):
-    // the flag must be cleared on session teardown, not latched forever.
+    // #2537: the responder session that consumed the cancel is a legitimate
+    // resetter (mirroring the initiator's CancelGuard owns-path) — the flag must
+    // be cleared on teardown, not latched forever.
     assert!(
         !cancel.load(Ordering::Acquire),
         "#2537: a responder session that consumed the cancel must clear the \
@@ -2434,21 +1945,30 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
 }
 
 /// #3324 shared harness: drive `handle_incoming_sync` with `first_msg` as the
-/// responder's FIRST wire message and assert the connection is refused before
-/// the orchestrator — and therefore before
+/// responder's FIRST frame and assert the connection is refused before the
+/// orchestrator — and therefore before
 /// `snapshot_transfer::try_offer_loro_snapshot_catchup` — ever sees it.
 ///
-/// The cert-less in-memory `test_connection_pair` is the attacker's exact
-/// position: production TLS accepts anonymous clients
-/// (`sync_net::tls::AllowAnyCert`, `client_auth_mandatory() == false`), so
-/// pre-#3324 no certificate at all was needed to reach the export.
+/// The port changed the shape of the guarantee. Under the old stack this check
+/// was the *authorization* gate: everything (the self-sync check, S-1, #855,
+/// S-5, the cert pin) lived inside an `if let SyncMessage::HeadExchange { .. }`
+/// block, so any other first frame fell through it and a single `ResetRequired`
+/// reached the snapshot export. Now nothing is dispatched until the checks below
+/// have run, AND `Role::Responder { opening }` carries the frame, so the driver
+/// cannot dispatch a frame this function did not hand it. The rejection stays
+/// because it is still load-bearing for something else: the #855 proof rides
+/// *inside* `HeadExchange`, so admitting any other variant during the pairing
+/// window would be #3324 wearing different clothes.
+///
+/// No key is bound and no pairing is pending, which is deliberate: the frame is
+/// refused ahead of the peer lookup, so an authorized peer would fare no better.
 ///
 /// Asserts, in order:
 /// 1. the responder's reply is `Error` naming `HeadExchange`;
 /// 2. nothing follows it on the wire (no snapshot / `SyncComplete` — the
 ///    catch-up sub-flow was never entered);
-/// 3. the task returns `Ok` and does not panic (the file-transfer variants
-///    trip a `debug_assert!` if they reach `handle_message`);
+/// 3. the task returns `Ok` and does not panic (the file-transfer variants trip
+///    a `debug_assert!` if they reach `handle_message`);
 /// 4. NO sync event was emitted — the orchestrator was never constructed.
 async fn assert_non_head_exchange_first_msg_rejected(first_msg: SyncMessage) {
     let (pool, _dir) = test_pool().await;
@@ -2457,75 +1977,53 @@ async fn assert_non_head_exchange_first_msg_rejected(first_msg: SyncMessage) {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
 
-    let (server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    client_conn.send_json(&first_msg).await.unwrap();
-
-    // (1) `SyncMessage::Error.message` is an unstructured `String`, so combine
-    // the variant pin (matches!) with a substring check, as the other
-    // rejection tests in this file do.
-    let response: SyncMessage = tokio::time::timeout(
-        std::time::Duration::from_secs(5),
-        client_conn.recv_json::<SyncMessage>(),
-    )
-    .await
-    .expect("responder must reply within timeout")
-    .expect("responder must send a rejection before closing");
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("HeadExchange")
-        ),
-        "expected SyncMessage::Error naming HeadExchange for first message \
-         {first_msg:?}, got: {response:?}"
+    let harness = ServiceHarness::new().await;
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler,
+        event_sink,
+        Arc::new(AtomicBool::new(false)),
     );
 
-    // (2) Nothing else on the wire: the connection is closed right after the
-    // rejection, so this recv fails (Close frame / EOF) rather than yielding a
+    let mut client = harness.dial().await;
+    send_sync_message(&mut client.send, &first_msg)
+        .await
+        .unwrap();
+
+    // (1)
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        recv_sync_message(&mut client.recv),
+    )
+    .await
+    .expect("the responder must reply within the timeout")
+    .expect("the responder must send a rejection before closing");
+    assert_rejected(&response, &Rejection::NotHeadExchange);
+
+    // (2) Nothing else on the wire: the responder finishes its send stream right
+    // after the rejection, so the next receive fails rather than yielding a
     // `LoroSync` snapshot or the catch-up's terminal `SyncComplete`.
     let after = tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        client_conn.recv_json::<SyncMessage>(),
+        recv_sync_message(&mut client.recv),
     )
     .await
-    .expect("responder must close the connection promptly after rejecting");
+    .expect("the responder must close promptly after rejecting");
     assert!(
         after.is_err(),
-        "responder must send NOTHING after the rejection (no vault snapshot \
+        "the responder must send NOTHING after the rejection (no vault snapshot \
          export) for first message {first_msg:?}, got: {after:?}"
     );
 
-    // (3) No panic, and the rejection is a normal `Ok(())` return like every
-    // other identity-rejection path.
-    let joined = tokio::time::timeout(std::time::Duration::from_secs(5), handle)
-        .await
-        .expect("handle_incoming_sync must complete within timeout");
-    let result = joined.expect("spawned task must not panic (JoinError would indicate a panic)");
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync must return Ok after refusing the connection, got: {result:?}"
-    );
+    // (3)
+    close_and_join_ok(client, handle).await;
 
-    // (4) Pre-#3324 a `ResetRequired` first message emitted `SyncEvent::Error`
-    // from the orchestrator plus the catch-up's `loro_snapshot_offered`
-    // progress event; a refused connection must emit neither.
+    // (4) Pre-#3324 a `ResetRequired` first message emitted a `SyncEvent::Error`
+    // from the orchestrator plus the catch-up's `loro_snapshot_offered` progress
+    // event; a refused connection must emit neither.
     assert_eq!(
         sink.events().len(),
         0,
@@ -2536,349 +2034,86 @@ async fn assert_non_head_exchange_first_msg_rejected(first_msg: SyncMessage) {
     materializer.shutdown();
 }
 
-/// T-16 Test 4 / #3324: a `SyncComplete` first message is refused up front.
+/// #3324: `SyncComplete` as a first frame is refused up front.
 ///
-/// This variant was always harmless (the state table rejects it in `Idle`),
-/// which is precisely why the original version of this test did not catch
-/// #3324; it now asserts the same explicit rejection as its dangerous
-/// siblings below.
+/// This variant is always harmless (the state table rejects it in `Idle`), which
+/// is precisely why the original version of this test did not catch #3324.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_non_head_exchange_first_msg() {
+async fn handle_incoming_sync_rejects_sync_complete_first_msg() {
     assert_non_head_exchange_first_msg_rejected(SyncMessage::SyncComplete {
         last_hash: "fakehash".to_string(),
     })
     .await;
 }
 
-/// #3324 (HIGH) regression: `ResetRequired` is the exploit primitive. The
-/// state machine accepts it in ANY state, its dispatch arm sets
-/// `SyncState::ResetRequired`, and `is_terminal()` counts that as terminal —
-/// so pre-fix a single anonymous `{"type":"ResetRequired","reason":"x"}` text
-/// frame skipped the message loop and fell straight into
+/// #3324 (HIGH) regression: `ResetRequired` was the exploit primitive. The state
+/// machine accepts it in ANY state, its dispatch arm sets
+/// `SyncState::ResetRequired`, and `is_terminal()` counts it terminal — so
+/// pre-fix a single anonymous `{"type":"ResetRequired","reason":"x"}` frame
+/// skipped the message loop and fell straight into
 /// `try_offer_loro_snapshot_catchup`, which exports every registered space's
-/// full LoroDoc with no identity check of its own. The whole authorization
-/// block (self-sync check, S-1 unpaired gate + #855 pairing proof, S-5
-/// per-peer lock, B-33/#800 cert pin) was skipped because it lived inside the
-/// `if let SyncMessage::HeadExchange { .. }` block.
+/// full `LoroDoc`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_reset_required_first_msg() {
+async fn handle_incoming_sync_rejects_reset_required_first_msg() {
     assert_non_head_exchange_first_msg_rejected(SyncMessage::ResetRequired {
         reason: "x".to_string(),
     })
     .await;
 }
 
-/// #3324 regression: `Error` is `ResetRequired`'s nearest miss. It is the only
-/// OTHER variant the state table accepts in *any* state
-/// (`session_state_machine.rs`, the `(_, SyncMessage::Error { .. } |
-/// SyncMessage::ResetRequired { .. })` arm) and whose dispatch returns
-/// `Ok(None)` after moving the session into a state `is_terminal()` accepts —
-/// so pre-fix it too skipped the message loop entirely. It happened not to
-/// export anything only because the catch-up is gated on
-/// `matches!(state, SyncState::ResetRequired)` (`server.rs`) rather than on
-/// `is_terminal()`; widening that gate would have made `Error` a second
-/// exfiltration primitive. Pinned here so the guard, not that one `matches!`,
-/// is what keeps it out.
+/// #3324 regression: `Error` is `ResetRequired`'s nearest miss — the only OTHER
+/// variant the state table accepts in *any* state (`session_state_machine.rs`,
+/// the `(_, SyncMessage::Error { .. } | SyncMessage::ResetRequired { .. })` arm)
+/// and the only other one whose dispatch returns `Ok(None)` while moving the
+/// session into a state `is_terminal()` accepts. Pinned here so the guard, and
+/// not one `matches!`, is what keeps it out.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_error_first_msg() {
+async fn handle_incoming_sync_rejects_error_first_msg() {
     assert_non_head_exchange_first_msg_rejected(SyncMessage::Error {
         message: "x".to_string(),
     })
     .await;
 }
 
-/// #3324 regression: `FileRequest` passes the state-validation table in any
-/// state (file-transfer variants are only supposed to be read off the wire by
-/// `sync_files`), so pre-fix an unauthenticated first message reached
-/// `handle_message`'s file-transfer dispatch arm and tripped its
-/// `debug_assert!`. It must now be refused before the orchestrator exists.
+/// #3324 regression: `FileRequest` passes state-validation in any state, so
+/// pre-fix an unauthenticated first message reached `handle_message`'s
+/// file-transfer dispatch arm and tripped its `debug_assert!`. It must be
+/// refused before the orchestrator exists.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_file_request_first_msg() {
+async fn handle_incoming_sync_rejects_file_request_first_msg() {
     assert_non_head_exchange_first_msg_rejected(SyncMessage::FileRequest {
         attachment_ids: vec!["att-1".to_string()],
     })
     .await;
 }
 
-/// #3324 regression: same as the `FileRequest` case for the unit-variant
-/// `FileTransferComplete`, which is reachable with a two-field-free frame
+/// #3324 regression: the same as `FileRequest` but for the unit variant
+/// `FileTransferComplete`, reachable as a two-field-free frame
 /// (`{"type":"FileTransferComplete"}`) thanks to `#[serde(tag = "type")]`.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_file_transfer_complete_first_msg() {
+async fn handle_incoming_sync_rejects_file_transfer_complete_first_msg() {
     assert_non_head_exchange_first_msg_rejected(SyncMessage::FileTransferComplete).await;
 }
 
-/// T-16c Test 5 (B-34): When the TLS certificate CN doesn't match the
-/// remote device ID claimed in HeadExchange, the responder sends an
-/// error about "certificate" and closes the connection.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_cert_cn_mismatch() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // Insert peer ref so the device is "paired"
-    peer_refs::upsert_peer_ref(&pool, "REMOTE_PAIRED")
-        .await
-        .unwrap();
-
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    // Set CN to a WRONG value — doesn't match remote_id "REMOTE_PAIRED"
-    server_conn.set_test_cert(Some("wrong-device".to_string()), None);
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // Send HeadExchange from REMOTE_PAIRED (include local head too)
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![
-                DeviceHead {
-                    device_id: "REMOTE_PAIRED".to_string(),
-                    seq: 0,
-                    hash: "fakehash".to_string(),
-                },
-                DeviceHead {
-                    device_id: "LOCAL_DEV".to_string(),
-                    seq: 0,
-                    hash: "fakehash".to_string(),
-                },
-            ],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // Receive rejection response. #2481: the cert CN ("wrong-device") is the
-    // authoritative identity (the advertised heads are frontier ads, not an
-    // identity claim), so the mismatch is now caught by the S-1 unpaired-device
-    // gate — "wrong-device" is not in `peer_refs` — rather than the retired
-    // heads-vs-cert pre-check. The security outcome is identical: a peer whose
-    // cert does not correspond to a paired device is rejected before any sync.
-    // `SyncMessage::Error.message` is unstructured, so pin the variant and
-    // check the substring.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("paired")
-        ),
-        "expected SyncMessage::Error rejecting the unpaired cert-CN identity, got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting the mismatched peer"
-    );
-
-    materializer.shutdown();
-}
-
-/// T-16c Test 6 (B-33): When the TLS certificate hash doesn't match the
-/// stored cert_hash for this peer, the responder sends an error about
-/// "hash mismatch" and closes the connection.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_cert_hash_mismatch() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // Insert peer ref WITH a stored cert hash (#1602: must be 64-char hex).
-    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", &"a".repeat(64))
-        .await
-        .unwrap();
-
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-
-    // Set CN to match (passes B-34) but hash to a DIFFERENT value (fails B-33)
-    server_conn.set_test_cert(
-        Some("REMOTE_PAIRED".to_string()),
-        Some("different_hash_xyz".to_string()),
-    );
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // Send HeadExchange from REMOTE_PAIRED
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![
-                DeviceHead {
-                    device_id: "REMOTE_PAIRED".to_string(),
-                    seq: 0,
-                    hash: "fakehash".to_string(),
-                },
-                DeviceHead {
-                    device_id: "LOCAL_DEV".to_string(),
-                    seq: 0,
-                    hash: "fakehash".to_string(),
-                },
-            ],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // Receive rejection response — `SyncMessage::Error.message` is unstructured
-    // `String`, so combine the variant pin (matches!) with a substring check.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("hash mismatch")
-        ),
-        "expected SyncMessage::Error mentioning 'hash mismatch', got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting hash mismatch"
-    );
-
-    materializer.shutdown();
-}
-
-/// #800 (security): a connection presenting NO client certificate
-/// (cert-less / anonymous) that claims a paired device id whose
-/// `cert_hash` is already pinned must be rejected before any session
-/// runs.
-///
-/// Attack shape (pre-#800): the acceptor allows anonymous TLS
-/// (`client_auth_mandatory = false`), so a cert-less socket reaches
-/// `handle_incoming_sync`. Identity falls back to the heads-claimed
-/// device id; the pairing lookup passes (it IS a paired peer), and
-/// B-33's hash check is silently skipped because the *observed* hash is
-/// `None` without a cert — even though a `cert_hash` is stored. Result:
-/// a full session under a stolen identity.
-///
-/// This drives the REAL `handle_incoming_sync` responder over an
-/// in-memory wire with `set_test_cert(None, None)` — exactly the
-/// `peer_cert_cn() == None` / `peer_cert_hash() == None` shape that
-/// `SyncServer` produces for a genuinely cert-less TLS connection (see
-/// `sync_net::tests::mtls_server_extracts_peer_cert_hash` for the real
-/// extraction) — and asserts the responder refuses with a "client
-/// certificate required" error instead of proceeding.
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn inmem_handle_incoming_sync_rejects_certless_claim_of_pinned_peer_800() {
-    let (pool, _dir) = test_pool().await;
-    let materializer = Materializer::new(pool.clone());
-    let scheduler = Arc::new(SyncScheduler::new());
-    let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-
-    // The victim peer is fully paired AND cert-pinned (a stored cert_hash
-    // exists from a prior authenticated connection).
-    peer_refs::upsert_peer_ref_with_cert(&pool, "REMOTE_PAIRED", &"b".repeat(64))
-        .await
-        .unwrap();
-
-    // Cert-less attacker: no client cert → both CN and hash are None,
-    // exactly as `SyncServer` reports for an anonymous TLS socket.
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    server_conn.set_test_cert(None, None);
-
-    let pool_clone = pool.clone();
-    let mat_clone = materializer.clone();
-    let sched_clone = scheduler.clone();
-    let sink_clone = event_sink.clone();
-    let handle = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            pool_clone,
-            "LOCAL_DEV".to_string(),
-            mat_clone,
-            sched_clone,
-            sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
-        .await
-    });
-
-    // The attacker claims the victim's paired identity through the heads.
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
-            heads: vec![DeviceHead {
-                device_id: "REMOTE_PAIRED".to_string(),
-                seq: 0,
-                hash: "fakehash".to_string(),
-            }],
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        })
-        .await
-        .unwrap();
-
-    // Must be rejected — pre-#800 this returned an `OpBatch`/`Snapshot`
-    // (a live session), bypassing pinning.
-    let response: SyncMessage = client_conn.recv_json().await.unwrap();
-    assert!(
-        matches!(
-            &response,
-            SyncMessage::Error { message } if message.contains("client certificate required")
-        ),
-        "#800: cert-less claim of a pinned peer must be rejected with a \
-         'client certificate required' error, got: {response:?}"
-    );
-
-    let result = handle.await.unwrap();
-    assert!(
-        result.is_ok(),
-        "handle_incoming_sync should return Ok after rejecting the cert-less claim"
-    );
-
-    materializer.shutdown();
-}
-
-// TOFU coverage: cert verification runs before protocol dispatch and
-// is exercised by
-// `inmem_handle_incoming_sync_rejects_cert_cn_mismatch` /
-// `inmem_handle_incoming_sync_rejects_cert_hash_mismatch`.
+// ── B-34 / B-33 responder tests are gone with their mechanism ─────────
+//
+// `inmem_handle_incoming_sync_rejects_cert_cn_mismatch` fed the responder a
+// certificate CN that disagreed with the device id claimed in the heads, and
+// `..._rejects_cert_hash_mismatch` fed it an observed cert hash that disagreed
+// with the pinned one. Both questions were artefacts of identity arriving as a
+// self-asserted string next to a separately self-asserted claim; the handshake
+// answers them now, and there is no second claim left to disagree with. The
+// third, `..._rejects_certless_claim_of_pinned_peer_800`, could not be ported at
+// all — its whole premise was an anonymous connection, which the ALPN + TLS 1.3
+// handshake no longer produces. Its surviving guarantee is
+// `handle_incoming_sync_rejects_a_key_not_bound_to_the_claimed_peer_800` above.
+//
+// `inmem_handle_incoming_sync_rejects_unidentifiable_peer` went the same way:
+// the "cannot identify remote device" rejection no longer exists, because
+// identity is no longer derived from the wire at all. A peer that advertises
+// empty heads is now simply resolved by its key — which is a property worth
+// pinning, and `issue778_fresh_device_empty_heads_completes_session_against_seeded_responder`
+// pins it end to end.
 
 // ======================================================================
 // T-16e — resolve_peer_address tests
@@ -2897,7 +2132,7 @@ fn resolve_peer_address_returns_discovered_peer() {
     };
     discovered.insert("PEER_A".into(), (dp, Instant::now()));
 
-    let result = resolve_peer_address("PEER_A", Some("192.168.1.1:8080"), &discovered);
+    let result = resolve_peer_address("PEER_A", Some("192.168.1.1:8080"), None, &discovered);
     assert!(result.is_some(), "must return discovered peer");
     let peer = result.unwrap();
     assert_eq!(peer.device_id, "PEER_A");
@@ -2918,7 +2153,12 @@ fn resolve_peer_address_falls_back_to_cached_address() {
 
     let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
-    let result = resolve_peer_address("PEER_B", Some("192.168.1.42:9443"), &discovered);
+    let result = resolve_peer_address(
+        "PEER_B",
+        Some("192.168.1.42:9443"),
+        Some(&"a".repeat(64)),
+        &discovered,
+    );
     assert!(
         result.is_some(),
         "must fall back to cached address when not discovered"
@@ -2935,7 +2175,7 @@ fn resolve_peer_address_returns_none_when_both_unavailable() {
 
     let discovered: HashMap<String, (mdns::DiscoveredPeer, Instant)> = HashMap::new();
 
-    let result = resolve_peer_address("PEER_C", None, &discovered);
+    let result = resolve_peer_address("PEER_C", None, None, &discovered);
     assert!(
         result.is_none(),
         "must return None when neither discovered nor cached"
@@ -2955,7 +2195,7 @@ fn resolve_peer_address_prefers_discovered_over_fallback() {
     };
     discovered.insert("PEER_D".into(), (dp, Instant::now()));
 
-    let result = resolve_peer_address("PEER_D", Some("192.168.1.1:8080"), &discovered);
+    let result = resolve_peer_address("PEER_D", Some("192.168.1.1:8080"), None, &discovered);
     assert!(result.is_some(), "must return discovered peer");
     let peer = result.unwrap();
     assert_eq!(
@@ -3307,7 +2547,6 @@ fn should_store_cert_hash_false_when_both_present() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_start_and_shutdown() {
-    install_crypto_provider();
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
@@ -3315,8 +2554,7 @@ async fn daemon_start_and_shutdown() {
     let cancel = Arc::new(AtomicBool::new(false));
 
     // Generate a real self-signed cert for the test
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV")
-        .expect("cert generation should succeed");
+    let endpoint_secret = SecretKey::generate();
 
     // Start the daemon — this binds a TLS server on a random port
     // and may or may not start mDNS (depends on test environment)
@@ -3325,7 +2563,7 @@ async fn daemon_start_and_shutdown() {
         "TEST_DEV".to_string(),
         mat.clone(),
         scheduler,
-        cert,
+        endpoint_secret,
         sink,
         cancel,
     )
@@ -3361,22 +2599,20 @@ async fn daemon_start_and_shutdown() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn daemon_cancel_does_not_trigger_shutdown() {
-    install_crypto_provider();
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
 
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV2")
-        .expect("cert generation should succeed");
+    let endpoint_secret = SecretKey::generate();
 
     let daemon = SyncDaemon::start(
         pool.clone(),
         "TEST_DEV2".to_string(),
         mat.clone(),
         scheduler,
-        cert,
+        endpoint_secret,
         sink,
         cancel,
     )
@@ -3420,23 +2656,15 @@ async fn daemon_cancel_does_not_trigger_shutdown() {
     mat.shutdown();
 }
 
-#[test]
-fn generate_cert_produces_valid_pem() {
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("TEST_DEV3")
-        .expect("cert generation should succeed");
-
-    assert!(cert.cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
-    assert!(cert.key_pem.starts_with("-----BEGIN PRIVATE KEY-----"));
-    assert_eq!(
-        cert.cert_hash.len(),
-        64,
-        "SHA-256 hash should be 64 hex chars"
-    );
-}
+// `generate_cert_produces_valid_pem` lived here. It asserted the PEM shape of
+// the self-signed certificate the daemon used to be started with; the daemon is
+// now started with an ed25519 `SecretKey` and there is no PEM. The identity that
+// replaced it — its stable spelling and its persistence across restarts, which
+// is what actually makes `peer_refs.endpoint_id` a pin — is owned by
+// `agaric_sync::transport::identity`, where its tests live.
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn two_daemons_start_on_different_ports() {
-    install_crypto_provider();
     let (pool1, _dir1) = test_pool().await;
     let (pool2, _dir2) = test_pool().await;
     let mat1 = Materializer::new(pool1.clone());
@@ -3448,15 +2676,15 @@ async fn two_daemons_start_on_different_ports() {
     let cancel1 = Arc::new(AtomicBool::new(false));
     let cancel2 = Arc::new(AtomicBool::new(false));
 
-    let cert1 = agaric_sync::sync_net::generate_self_signed_cert("DEV_A").unwrap();
-    let cert2 = agaric_sync::sync_net::generate_self_signed_cert("DEV_B").unwrap();
+    let endpoint_secret1 = SecretKey::generate();
+    let endpoint_secret2 = SecretKey::generate();
 
     let d1 = SyncDaemon::start(
         pool1,
         "DEV_A".into(),
         mat1.clone(),
         sched1,
-        cert1,
+        endpoint_secret1,
         sink1,
         cancel1,
     )
@@ -3467,7 +2695,7 @@ async fn two_daemons_start_on_different_ports() {
         "DEV_B".into(),
         mat2.clone(),
         sched2,
-        cert2,
+        endpoint_secret2,
         sink2,
         cancel2,
     )
@@ -3505,19 +2733,90 @@ async fn two_daemons_start_on_different_ports() {
 // T-16f — Test daemon_loop select! branches B and C
 // ======================================================================
 
-/// Branch B: A local-change notification triggers the debounced change
-/// path in daemon_loop, which resolves paired peers by last_address and
-/// calls try_sync_with_peer.  With an unreachable address the connection
-/// fails and the scheduler records a failure.
+// ── the three Branch B / Branch C dispatch tests below FAIL after the port ──
+//
+// They are left failing deliberately, because the failure is real and is not
+// theirs. All three prove "the daemon dispatched this peer" by pointing it at an
+// unreachable `peer_refs.last_address` and waiting for a recorded failure. That
+// probe no longer fires, and the reason is upstream of the tests:
+//
+//   * `daemon_loop`'s Branch B and Branch C resolve a peer with
+//     `resolve_peer_address`, which falls back to `build_fallback_peer` when
+//     mDNS has not announced it;
+//   * `build_fallback_peer` is documented as the one constructor that yields
+//     `endpoint_id: None`, because `last_address` is a pre-iroh column with no
+//     key in it;
+//   * `try_sync_with_peer` step 3 returns `false` for a peer with no key,
+//     before the "connecting" event and before any `record_failure`.
+//
+// So the fallback path resolves a peer that can never be dialled, and does it
+// silently. `resolve_peer_address` never consults `peer_refs.endpoint_id`, which
+// means a peer that IS key-bound — one this device has already synced with and
+// TOFU-bound — still cannot be reached from Branch B or Branch C unless mDNS
+// announced it in this process's lifetime. Under the old transport
+// `last_address` was exactly the mDNS-independent bootstrap for that case.
+//
+// Making these tests green would mean either weakening them to assert the
+// silent skip, or reaching for the mDNS path they were written to avoid.
+// Neither is a test-file decision.
+
+/// Give a `peer_refs` row the two things a dial now needs: a cached candidate address
+/// **and** a bound key.
 ///
-/// Approach: start the daemon with NO peer refs (so Branch C's immediate
-/// first tick finds nothing), then insert a peer ref with an unreachable
-/// last_address, fire notify_change(), and verify that a failure is
-/// recorded for the peer.
+/// Under the old transport an address was enough — `connect_to_peer` dialled it. Under
+/// iroh a dial names a *key*, and addresses are only candidate paths to it, so a row with
+/// one and not the other resolves a peer nothing can reach. `resolve_peer_address`
+/// therefore requires both, and these branch tests exist to prove the daemon *dispatches*
+/// a due peer, which it cannot do for a peer it cannot resolve.
+///
+/// The key is freshly generated, so nothing is listening on it. That is deliberate: the
+/// dial must fail, and it must fail as a recorded failure rather than a silent skip.
+async fn seed_unreachable_peer(pool: &sqlx::SqlitePool, peer_id: &str) {
+    peer_refs::upsert_peer_ref(pool, peer_id).await.unwrap();
+    sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = ?")
+        .bind(peer_id)
+        .execute(pool)
+        .await
+        .unwrap();
+    peer_refs::bind_endpoint_id(pool, peer_id, &SecretKey::generate().public().to_string())
+        .await
+        .unwrap();
+}
+
+/// How long a branch test waits for an unreachable peer's failure to be recorded.
+///
+/// Sized from the bound the dial is actually charged to, not guessed: `try_sync_with_peer`
+/// wraps `Endpoint::connect` in `sync_constants::CONNECT_TIMEOUT` (10 s), and a key with
+/// nothing listening on it burns the whole budget before failing. 15 s is that plus 50 %
+/// for a loaded runner. The previous 3.2 s was sized against a TCP connection refused,
+/// which returned in milliseconds — the same number against a different wait.
+const BRANCH_DISPATCH_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// How long the daemon gets to shut down after a round that dialled an unreachable peer.
+///
+/// Was 800 ms, and that number was right for the transport it was written against: a TCP
+/// connect to a closed port returns `ECONNREFUSED` in microseconds, so a round against a
+/// dead peer ended immediately and the shutdown branch of the `select!` was reached at
+/// once. QUIC runs over UDP, where a closed port produces **no response at all**, so the
+/// dial has nothing to fail fast on and burns its whole `CONNECT_TIMEOUT`. Branch B
+/// awaits its `JoinSet` inline (a `KNOWN:` in `daemon_loop`, #490 M3), so shutdown is not
+/// observed until that round finishes.
+///
+/// This is a real change in shutdown latency for a dead peer — 0 ms to up to 10 s — and
+/// it is inherent to UDP rather than to anything this port chose. Sized from
+/// `CONNECT_TIMEOUT` plus 50 % for a loaded runner, the same way
+/// [`BRANCH_DISPATCH_DEADLINE`] is.
+const BRANCH_SHUTDOWN_DEADLINE: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// Branch B: A local-change notification triggers the debounced-change path in
+/// `daemon_loop`, which resolves paired peers and calls `try_sync_with_peer`. With an
+/// unreachable peer the dial fails and the scheduler records a failure.
+///
+/// Approach: start the daemon with NO peer refs (so Branch C's immediate first tick
+/// finds nothing), then insert a peer ref that is resolvable but unreachable (see
+/// [`seed_unreachable_peer`]), fire `notify_change()`, and verify a failure is recorded.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_branch_b_local_change_triggers_sync_attempt() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     // Use a short debounce window (100 ms) so the test doesn't wait 3 s.
@@ -3528,7 +2827,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_B_DEV").unwrap();
+    let endpoint_secret = SecretKey::generate();
 
     // Start daemon with NO peer refs — Branch C's first tick finds nothing.
     let daemon = SyncDaemon::start(
@@ -3536,7 +2835,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
         "BRANCH_B_DEV".into(),
         mat.clone(),
         scheduler.clone(),
-        cert,
+        endpoint_secret,
         sink_dyn,
         cancel,
     )
@@ -3552,13 +2851,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     // Insert a peer ref with an unreachable last_address (port 1).
-    peer_refs::upsert_peer_ref(&pool, "REMOTE_PEER")
-        .await
-        .unwrap();
-    sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = 'REMOTE_PEER'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    seed_unreachable_peer(&pool, "REMOTE_PEER").await;
 
     // Trigger Branch B by notifying a local change.
     scheduler.notify_change();
@@ -3569,7 +2862,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
         let sched = scheduler.clone();
         wait_for(
             move || sched.failure_count("REMOTE_PEER") >= 1,
-            std::time::Duration::from_millis(3200),
+            BRANCH_DISPATCH_DEADLINE,
             "branch_b: REMOTE_PEER failure_count >= 1",
         )
         .await;
@@ -3592,7 +2885,7 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
                 .as_ref()
                 .is_none_or(tokio::task::JoinHandle::is_finished)
         },
-        std::time::Duration::from_millis(800),
+        BRANCH_SHUTDOWN_DEADLINE,
         "branch_b: handle.is_finished()",
     )
     .await;
@@ -3616,8 +2909,6 @@ async fn daemon_branch_b_local_change_triggers_sync_attempt() {
 /// that the new code dispatches every peer rather than dropping any.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::with_intervals(
@@ -3627,14 +2918,14 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_B_L61_DEV").unwrap();
+    let endpoint_secret = SecretKey::generate();
 
     let daemon = SyncDaemon::start(
         pool.clone(),
         "BRANCH_B_L61_DEV".into(),
         mat.clone(),
         scheduler.clone(),
-        cert,
+        endpoint_secret,
         sink_dyn,
         cancel,
     )
@@ -3654,12 +2945,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
     // JoinSet visits them concurrently.  Either way, both must
     // accumulate a failure.
     for peer_id in ["REMOTE_PEER_1", "REMOTE_PEER_2"] {
-        peer_refs::upsert_peer_ref(&pool, peer_id).await.unwrap();
-        sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = ?")
-            .bind(peer_id)
-            .execute(&pool)
-            .await
-            .unwrap();
+        seed_unreachable_peer(&pool, peer_id).await;
     }
 
     // Trigger Branch B by notifying a local change.
@@ -3674,7 +2960,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
                 sched.failure_count("REMOTE_PEER_1") >= 1
                     && sched.failure_count("REMOTE_PEER_2") >= 1
             },
-            std::time::Duration::from_millis(3200),
+            BRANCH_DISPATCH_DEADLINE,
             "branch_b_l61: both peers failure_count >= 1",
         )
         .await;
@@ -3701,7 +2987,7 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
                 .as_ref()
                 .is_none_or(tokio::task::JoinHandle::is_finished)
         },
-        std::time::Duration::from_millis(800),
+        BRANCH_SHUTDOWN_DEADLINE,
         "branch_b_l61: handle.is_finished()",
     )
     .await;
@@ -3717,25 +3003,17 @@ async fn daemon_branch_b_dispatches_all_peers_in_round_l61() {
 /// the immediate first tick triggers a sync attempt (failure recorded).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let sink_dyn: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("BRANCH_C_DEV").unwrap();
+    let endpoint_secret = SecretKey::generate();
 
     // Insert a peer ref that has NEVER synced (synced_at IS NULL → always due)
     // with a last_address so resolve_peer_address can find it.
-    peer_refs::upsert_peer_ref(&pool, "OVERDUE_PEER")
-        .await
-        .unwrap();
-    sqlx::query("UPDATE peer_refs SET last_address = '127.0.0.1:1' WHERE peer_id = 'OVERDUE_PEER'")
-        .execute(&pool)
-        .await
-        .unwrap();
+    seed_unreachable_peer(&pool, "OVERDUE_PEER").await;
 
     // Start daemon — the first resync tick fires immediately.
     let daemon = SyncDaemon::start(
@@ -3743,7 +3021,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
         "BRANCH_C_DEV".into(),
         mat.clone(),
         scheduler.clone(),
-        cert,
+        endpoint_secret,
         sink_dyn,
         cancel,
     )
@@ -3756,7 +3034,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
         let sched = scheduler.clone();
         wait_for(
             move || sched.failure_count("OVERDUE_PEER") >= 1,
-            std::time::Duration::from_millis(3200),
+            BRANCH_DISPATCH_DEADLINE,
             "branch_c: OVERDUE_PEER failure_count >= 1",
         )
         .await;
@@ -3778,7 +3056,7 @@ async fn daemon_branch_c_resync_timer_attempts_overdue_peer() {
                 .as_ref()
                 .is_none_or(tokio::task::JoinHandle::is_finished)
         },
-        std::time::Duration::from_millis(800),
+        BRANCH_SHUTDOWN_DEADLINE,
         "branch_c: handle.is_finished()",
     )
     .await;
@@ -4032,12 +3310,11 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
     // random-port TLS listener and attempted mDNS init — both of which
     // are side effects we want to avoid. The dormant task has no such
     // side effects; it just polls `peer_refs`.
-    install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4047,7 +3324,7 @@ async fn start_if_peers_exist_spawns_dormant_when_empty() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -4084,7 +3361,6 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
     // marker's whole TTL. On Android that path can crash the process
     // (`panic = "abort"`), turning a one-off pairing crash into a boot
     // crash-loop where reopening the app crashes it again.
-    install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
 
@@ -4100,7 +3376,7 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
 
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4110,7 +3386,7 @@ async fn start_if_peers_exist_clears_orphaned_pending_pairing_at_startup() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -4149,14 +3425,13 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
     // mDNS support emits `SyncEvent::MdnsDisabled` via the event sink.
     // If the dormant waiter ran instead, no such event would be emitted
     // because mDNS init is deferred.
-    install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
     peer_refs::upsert_peer_ref(&pool, "PEER_X").await.unwrap();
 
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> = sink.clone();
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4166,7 +3441,7 @@ async fn start_if_peers_exist_starts_actively_when_peers_present() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -4210,12 +3485,11 @@ async fn dormant_daemon_wakes_on_pair_notification() {
     // daemon remaining alive and shutting down cleanly — the dormant
     // path only hits `peers_appeared` in the DB, and after the peer is
     // inserted the transition proceeds into `daemon_loop`).
-    install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4225,7 +3499,7 @@ async fn dormant_daemon_wakes_on_pair_notification() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler.clone(),
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -4289,7 +3563,6 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
     // `should_start_active` mid-run. This is the documented behaviour:
     // "graceful degradation" — the daemon stays up after initial
     // activation so future re-pairs don't require a restart.
-    install_crypto_provider();
 
     let (pool, _dir) = test_pool().await;
     peer_refs::upsert_peer_ref(&pool, "PEER_TRANSIENT")
@@ -4298,7 +3571,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
 
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -4308,7 +3581,7 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -4354,13 +3627,12 @@ async fn dormant_daemon_unaffected_when_last_peer_removed() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
-    install_crypto_provider();
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_A").unwrap();
+    let endpoint_secret = SecretKey::generate();
 
     let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     lifecycle.mark_backgrounded();
@@ -4374,7 +3646,7 @@ async fn start_with_lifecycle_accepts_backgrounded_initial_state() {
         device_id: "DEV_LIFECYCLE_A".into(),
         materializer: mat.clone().into(),
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink: sink,
         cancel,
         lifecycle: lifecycle.clone(),
@@ -4407,13 +3679,12 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
     // must not panic or leak the daemon when the wake fires while
     // foregrounded. We notify once and assert the daemon keeps running
     // until the explicit shutdown.
-    install_crypto_provider();
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
-    let cert = agaric_sync::sync_net::generate_self_signed_cert("DEV_LIFECYCLE_B").unwrap();
+    let endpoint_secret = SecretKey::generate();
 
     let lifecycle = agaric_sync::foreground::LifecycleHooks::new();
     let daemon = SyncDaemon::start_with_lifecycle(SyncDaemonContext {
@@ -4421,7 +3692,7 @@ async fn start_with_lifecycle_wake_notify_does_not_crash_daemon() {
         device_id: "DEV_LIFECYCLE_B".into(),
         materializer: mat.clone().into(),
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink: sink,
         cancel,
         lifecycle: lifecycle.clone(),
@@ -4507,7 +3778,6 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
     use agaric_store::op::{CreateBlockPayload, OpPayload};
     use agaric_store::op_log::append_local_op_at;
     use agaric_sync::snapshot::create_snapshot;
-    use agaric_sync::sync_net::test_connection_pair;
 
     // ── Responder side: one materialized block + snapshot ────────────
     let (resp_pool, _resp_dir) = test_pool().await;
@@ -4606,36 +3876,35 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         .await
         .unwrap();
 
-    // ── Wire the two sides together with an in-memory WebSocket ──────
-    let (server_conn, mut client_conn) = test_connection_pair().await;
-
-    // Responder: handle_incoming_sync. Needs a peer match on HeadExchange.
-    let resp_pool_clone = resp_pool.clone();
-    let resp_mat_clone = resp_mat.clone();
-    let resp_scheduler_clone = resp_scheduler.clone();
-    let resp_sink_clone = resp_sink.clone();
-    let server_task = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            resp_pool_clone,
-            "FEAT6_RESP".to_string(),
-            resp_mat_clone,
-            resp_scheduler_clone,
-            resp_sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
+    // ── Wire the two sides together over a real admitted QUIC session ──
+    let harness = ServiceHarness::new().await;
+    // The responder resolves the initiator by its authenticated key. The
+    // `upsert_peer_ref` above is no longer sufficient on its own: a row with no
+    // key bound to it is a row no inbound connection can match.
+    peer_refs::bind_endpoint_id(&resp_pool, "FEAT6_INIT", &client_key(&harness))
         .await
-    });
+        .unwrap();
+
+    let server_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        "FEAT6_RESP",
+        resp_mat.clone(),
+        resp_scheduler.clone(),
+        resp_sink.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut client = harness.dial().await;
 
     // Initiator side: we drive a minimal client manually through the
     // wire protocol to exercise the same code path as
     // `run_sync_session` without the full daemon scaffolding.
     //
-    // #602/#2502: the initiator advertises its own device at seq 0 (it has
-    // no local ops — its DB is empty; the head also serves as the wire-level
-    // peer identification that production additionally gets from the TLS cert
-    // CN) plus a STALE op-log claim on the responder's history at seq 1 (for
-    // the covering check). #2502 retired the op-log-seq reset lookup: the
+    // #602/#2502: the initiator advertises its own device at seq 0 (it has no
+    // local ops — its DB is empty) plus a STALE op-log claim on the responder's
+    // history at seq 1 (for the covering check). The head no longer doubles as
+    // peer identification: that comes from the handshake now, which is why the
+    // key binding above had to be written. #2502 retired the op-log-seq reset lookup: the
     // reset is now driven by a Loro-VV own-lineage check, so the initiator
     // also advertises a crafted `loro_vvs` claiming MORE FEAT6_RESP-authored
     // ops than the responder's engine holds — the responder's engine cannot
@@ -4671,8 +3940,9 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
         }
         craft.version_vector()
     };
-    client_conn
-        .send_json(&SyncMessage::HeadExchange {
+    send_sync_message(
+        &mut client.send,
+        &SyncMessage::HeadExchange {
             heads: vec![init_self_head, stale_resp_head],
             loro_vvs: vec![agaric_sync::sync_protocol::types::SpaceVersionVector {
                 space_id: resp_space.clone(),
@@ -4683,29 +3953,30 @@ async fn feat6_end_to_end_compact_then_snapshot_catchup() {
             wire_compression: false,
             op_log_batch_chunked: false,
             pairing_proof: None,
-        })
-        .await
-        .unwrap();
+        },
+    )
+    .await
+    .unwrap();
 
     // Responder must reply with ResetRequired.
-    let reset: SyncMessage = client_conn.recv_json().await.unwrap();
+    let reset = recv_sync_message(&mut client.recv).await.unwrap();
     match reset {
         SyncMessage::ResetRequired { .. } => {}
         other => panic!("expected ResetRequired, got {other:?}"),
     }
 
-    // Now emulate what `run_sync_session` does after seeing
-    // ResetRequired: run the initiator-side catch-up helper. We use
-    // the public helper directly so the test does not depend on the
-    // mDNS / TLS scaffolding; the wiring in `run_sync_session` is
-    // covered by the shorter sub-flow tests in the snapshot_transfer
-    // module.
+    // Now emulate what `run_sync_session` does after seeing ResetRequired: run
+    // the initiator-side catch-up helper. We use the public helper directly so
+    // the test does not depend on the mDNS / daemon scaffolding; the wiring in
+    // `run_sync_session` is covered by the shorter sub-flow tests in the
+    // snapshot_transfer module.
     // #2503: the responder now streams a Loro snapshot (engine truth); the
     // initiator MERGES it into its own engine and reprojects SQL. Thread the
     // initiator's live registry so `apply_remote` has an engine to merge into.
     let init_state = init_mat.loro_state();
     let outcome = agaric_sync::sync_daemon::snapshot_transfer::try_receive_snapshot_catchup(
-        &mut client_conn,
+        &mut client.send,
+        &mut client.recv,
         &init_pool,
         &init_mat,
         &init_sink,
@@ -5376,97 +4647,74 @@ async fn issue2536_puller_rests_in_streaming_ops_between_loro_messages() {
 }
 
 // ======================================================================
-// #2129 — two-instance convergence over a REAL loopback TLS socket
+// #2129 — two-instance convergence over a REAL loopback QUIC socket
 // ======================================================================
 
-/// #2129: drive ONE full sync session — initiator → responder — over a
-/// genuine loopback TLS WebSocket connection pair.
+/// #2129: drive ONE full sync session — initiator → responder — over a genuine
+/// loopback QUIC connection.
 ///
 /// This is the real-transport analog of #602's in-memory
-/// `pump_full_session_602`. Where that helper hand-pumps two
-/// orchestrators through an in-process `VecDeque` (no socket, no TLS, no
-/// WebSocket framing, no binary chunking), this stands up the responder's
-/// `SyncServer` (a real `rustls` TLS endpoint), an initiator
-/// `connect_to_peer` (real TLS handshake + mTLS cert exchange), the
-/// production responder loop (`handle_incoming_sync*`) on the server-side
-/// connection, and the production initiator loop (`run_sync_session`) on
-/// the client connection, then runs the initiator to completion. Every
-/// message therefore rides `wire::{send,recv}_sync_message` over the
-/// socket — exercising the `tokio-tungstenite` frame path (and the #611
-/// chunked-binary path for over-threshold `LoroSync` payloads) that the
-/// in-memory test cannot reach.
+/// `pump_full_session_602`. Where that helper hand-pumps two orchestrators
+/// through an in-process `VecDeque` (no socket, no handshake, no framing), this
+/// stands up a real `SyncService` and a real dialling endpoint, runs the
+/// production responder (`handle_incoming_sync`, over an `InboundSession` the
+/// service's own admission path produced) and the production initiator
+/// (`run_sync_session`) against each other, and drives the initiator to
+/// completion. Every message therefore rides the length-prefixed QUIC framing in
+/// `transport::session`.
 ///
-/// Both orchestrators receive a PER-DEVICE leaked `LoroState` (the #602
-/// two-registry test seam): the initiator via `with_loro_state`, the
-/// responder via the `handle_incoming_sync_with_loro_state` test seam.
-/// This is required because the single process-global Loro registry
-/// (`loro::shared::GLOBAL`) cannot represent two distinct devices in one
-/// test process.
+/// Both orchestrators carry a PER-DEVICE `LoroState` (the #602 two-registry test
+/// seam), which is required because one process-global registry cannot represent
+/// two distinct devices in one test process.
 ///
-/// Returns the initiator orchestrator's terminal `SyncState` so the
-/// caller can assert it reached `Complete` (NOT `ResetRequired` —
-/// i.e. no snapshot fallback was taken; this is an
-/// incremental-reachable session).
-#[allow(clippy::too_many_arguments)]
+/// # Why the key is bound here and not once per device
+///
+/// The old helper took one STABLE identity cert per device, because the
+/// responder pinned its hash on first connection and a fresh cert per session
+/// would have tripped "certificate hash mismatch" on the second. The equivalent
+/// stable thing here would be a per-device `SecretKey` threaded into a
+/// per-device endpoint, but `ServiceHarness` mints its own — so instead each
+/// session binds the dialling key to the initiator's `peer_refs` row before it
+/// dials. `bind_endpoint_id` is `ON CONFLICT(peer_id) DO UPDATE`, so re-binding
+/// the same peer to a new key preserves its `last_hash` / `synced_at` /
+/// `reset_count`, which is what these multi-session convergence tests depend on.
+/// It refuses only the other direction — one key pointed at two peers — which
+/// two freshly generated keys never hit.
+///
+/// Returns the initiator orchestrator's terminal `SyncState` so the caller can
+/// assert it reached `Complete` (NOT `ResetRequired` — i.e. no snapshot fallback
+/// was taken; this is an incremental-reachable session).
 async fn run_one_real_loopback_session_2129(
     init_pool: &SqlitePool,
     init_mat: &Materializer,
     init_device: &str,
-    init_cert: &SyncCert,
     resp_pool: &SqlitePool,
     resp_mat: &Materializer,
     resp_device: &str,
-    resp_cert: &SyncCert,
 ) -> agaric_sync::sync_protocol::SyncState {
     use agaric_sync::sync_protocol::SyncOrchestrator;
 
-    let timeout = std::time::Duration::from_secs(5);
+    let timeout = std::time::Duration::from_secs(20);
 
-    // Each device carries ONE STABLE identity cert (CN = its device id),
-    // reused across every session — exactly as a real device does. mTLS
-    // identity derives from the verified cert CN (#778), and the
-    // responder's TOFU pins the cert hash on first connection (B-33), so a
-    // fresh cert per session would trip "certificate hash mismatch" on the
-    // second session. Passing the same cert in keeps the pinned hash stable.
+    let harness = ServiceHarness::new().await;
+    // The responder resolves its peer from the handshake-authenticated key, so
+    // the initiator's key has to be bound to its device id before it dials.
+    bind_client_as(resp_pool, init_device, &harness).await;
 
-    // Stand up the responder's TLS WebSocket server and forward the
-    // accepted server-side connection out via a channel.
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(resp_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    // Initiator connects (real TLS handshake).
-    let mut client_conn = tokio::time::timeout(
-        timeout,
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, init_cert),
-    )
-    .await
-    .expect("timed out connecting to peer")
-    .unwrap();
-
-    // Receive the server-side connection.
-    let server_conn = tokio::time::timeout(timeout, conn_rx.recv())
-        .await
-        .expect("timed out waiting for server connection")
-        .unwrap();
-
-    // Spawn the production responder loop with device B's own registry.
-    let resp_scheduler = Arc::new(SyncScheduler::new());
-    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let resp_handle = tokio::spawn(handle_incoming_sync(
-        server_conn,
+    let resp_handle = spawn_responder(
+        &harness,
         resp_pool.clone(),
-        resp_device.to_string(),
+        resp_device,
         resp_mat.clone(),
-        resp_scheduler,
-        resp_sink,
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()),
         Arc::new(AtomicBool::new(false)),
-    ));
+    );
 
-    // Run the production initiator loop with device A's own registry.
+    // The initiator dials; its first `HeadExchange` is what completes the
+    // responder's `establish`.
+    let mut client = harness.dial().await;
+
     let mut init_orch =
         SyncOrchestrator::new(init_pool.clone(), init_device.into(), init_mat.clone())
             .with_expected_remote_id(resp_device.into());
@@ -5479,7 +4727,9 @@ async fn run_one_real_loopback_session_2129(
         timeout,
         run_sync_session(
             &mut init_orch,
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
+            &client.conn,
             &init_cancel,
             init_pool,
             &init_run_host,
@@ -5497,7 +4747,6 @@ async fn run_one_real_loopback_session_2129(
         .expect("responder task panicked");
     resp_result.expect("responder handle_incoming_sync must not error");
 
-    server.shutdown().await;
     init_orch.session().state.clone()
 }
 
@@ -5557,8 +4806,8 @@ async fn issue2481_op_authored_on_a_replicates_into_b_op_log_over_real_socket() 
 
     // B pulls from A: B initiator (puller), A responder (streamer).
     let init_state = run_one_real_loopback_session_2129(
-        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
-        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+        &b.pool, &b.mat, &b.id, // init = B (puller)
+        &a.pool, &a.mat, &a.id, // resp = A (streamer)
     )
     .await;
     assert_eq!(
@@ -5638,8 +4887,8 @@ async fn issue2593_oversized_op_record_replicates_chunked_over_real_socket() {
 
     // B pulls from A over a real TLS socket: B initiator (puller), A streamer.
     let init_state = run_one_real_loopback_session_2129(
-        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
-        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+        &b.pool, &b.mat, &b.id, // init = B (puller)
+        &a.pool, &a.mat, &a.id, // resp = A (streamer)
     )
     .await;
     assert_eq!(
@@ -5719,8 +4968,8 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
 
     // Session 1: B pulls from A → B now holds A's op as an audit record.
     let s1 = run_one_real_loopback_session_2129(
-        &b.pool, &b.mat, &b.id, &b.cert, // init = B (puller)
-        &a.pool, &a.mat, &a.id, &a.cert, // resp = A (streamer)
+        &b.pool, &b.mat, &b.id, // init = B (puller)
+        &a.pool, &a.mat, &a.id, // resp = A (streamer)
     )
     .await;
     assert_eq!(s1, SyncState::Complete);
@@ -5757,8 +5006,8 @@ async fn issue2481_device_recovers_own_lost_op_history_from_peer_over_real_socke
 
     // Session 2: A pulls from B → B streams A's op back; A re-ingests it.
     let s2 = run_one_real_loopback_session_2129(
-        &a.pool, &a.mat, &a.id, &a.cert, // init = A (puller)
-        &b.pool, &b.mat, &b.id, &b.cert, // resp = B (streamer)
+        &a.pool, &a.mat, &a.id, // init = A (puller)
+        &b.pool, &b.mat, &b.id, // resp = B (streamer)
     )
     .await;
     assert_eq!(s2, SyncState::Complete);
@@ -5825,8 +5074,6 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     };
     use agaric_sync::sync_protocol::SyncState;
 
-    install_crypto_provider();
-
     const DEV_A: &str = "DEV2129A";
     const DEV_B: &str = "DEV2129B";
     // Device A's blocks: a content block (kept), a property carrier, and
@@ -5852,13 +5099,6 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     // Devices are mutually paired (responder rejects unpaired peers).
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
-
-    // One STABLE identity cert per device (CN = device id), reused as both
-    // server (when responding) and client (when initiating) cert across
-    // every session — so the responder's TOFU-pinned cert hash (B-33)
-    // stays consistent and later sessions don't trip a hash mismatch.
-    let cert_a = sync_net::generate_self_signed_cert(DEV_A).unwrap();
-    let cert_b = sync_net::generate_self_signed_cert(DEV_B).unwrap();
 
     // ── Device A's divergent local edits ─────────────────────────────
     // 1. A content block.
@@ -5974,10 +5214,8 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     .await;
 
     // ── Session 1: A initiates, B responds (B's state flows to A) ────
-    let state1 = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
-    )
-    .await;
+    let state1 =
+        run_one_real_loopback_session_2129(&pool_a, &mat_a, DEV_A, &pool_b, &mat_b, DEV_B).await;
     assert_eq!(
         state1,
         SyncState::Complete,
@@ -5987,10 +5225,8 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     );
 
     // ── Session 2: B initiates, A responds (A's state flows to B) ────
-    let state2 = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
-    )
-    .await;
+    let state2 =
+        run_one_real_loopback_session_2129(&pool_b, &mat_b, DEV_B, &pool_a, &mat_a, DEV_A).await;
     assert_eq!(
         state2,
         SyncState::Complete,
@@ -6078,10 +5314,8 @@ async fn two_edited_devices_converge_over_real_loopback_tls() {
     // ── Idempotence: a third session changes nothing ─────────────────
     // Re-running A→B against already-converged devices must complete
     // without error and leave both version vectors stable.
-    let state3 = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
-    )
-    .await;
+    let state3 =
+        run_one_real_loopback_session_2129(&pool_a, &mat_a, DEV_A, &pool_b, &mat_b, DEV_B).await;
     assert_eq!(
         state3,
         SyncState::Complete,
@@ -6138,8 +5372,6 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     };
     use agaric_sync::sync_protocol::SyncState;
 
-    install_crypto_provider();
-
     const DEV_A: &str = "DEV2129MA";
     const DEV_B: &str = "DEV2129MB";
     // Parent container, child-to-move, restore-target, purge-target.
@@ -6161,9 +5393,6 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     peer_refs::upsert_peer_ref(&pool_a, DEV_B).await.unwrap();
     peer_refs::upsert_peer_ref(&pool_b, DEV_A).await.unwrap();
 
-    let cert_a = sync_net::generate_self_signed_cert(DEV_A).unwrap();
-    let cert_b = sync_net::generate_self_signed_cert(DEV_B).unwrap();
-
     // ── Shared base: A creates P, C, D, E (all top-level content blocks) ──
     let mut ts = 1_736_950_000_000_i64;
     for (block, content) in [
@@ -6177,19 +5406,15 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     }
 
     // Sync the base both directions so B holds every base block.
-    let s = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
-    )
-    .await;
+    let s =
+        run_one_real_loopback_session_2129(&pool_a, &mat_a, DEV_A, &pool_b, &mat_b, DEV_B).await;
     assert_eq!(
         s,
         SyncState::Complete,
         "#2129 mvp: base sync A->B must complete"
     );
-    let s = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
-    )
-    .await;
+    let s =
+        run_one_real_loopback_session_2129(&pool_b, &mat_b, DEV_B, &pool_a, &mat_a, DEV_A).await;
     assert_eq!(
         s,
         SyncState::Complete,
@@ -6285,19 +5510,15 @@ async fn issue2129_move_restore_purge_converge_over_real_loopback_tls() {
     .await;
 
     // ── Final bidirectional sync ─────────────────────────────────────────
-    let s = run_one_real_loopback_session_2129(
-        &pool_a, &mat_a, DEV_A, &cert_a, &pool_b, &mat_b, DEV_B, &cert_b,
-    )
-    .await;
+    let s =
+        run_one_real_loopback_session_2129(&pool_a, &mat_a, DEV_A, &pool_b, &mat_b, DEV_B).await;
     assert_eq!(
         s,
         SyncState::Complete,
         "#2129 mvp: final sync A->B must complete"
     );
-    let s = run_one_real_loopback_session_2129(
-        &pool_b, &mat_b, DEV_B, &cert_b, &pool_a, &mat_a, DEV_A, &cert_a,
-    )
-    .await;
+    let s =
+        run_one_real_loopback_session_2129(&pool_b, &mat_b, DEV_B, &pool_a, &mat_a, DEV_A).await;
     assert_eq!(
         s,
         SyncState::Complete,
@@ -7095,27 +6316,25 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
         .unwrap();
 
     // ── Wire the two sides together ──────────────────────────────────
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    // Production shape: the verified TLS client cert identifies the
-    // fresh initiator (its heads cannot — they are empty).
-    server_conn.set_test_cert(Some(FRESH_DEV.to_string()), None);
-
-    let resp_pool_clone = resp_pool.clone();
-    let resp_mat_clone = resp_mat.clone();
-    let resp_scheduler_clone = resp_scheduler.clone();
-    let resp_sink_clone = resp_sink.clone();
-    let server_task = tokio::spawn(async move {
-        handle_incoming_sync(
-            server_conn,
-            resp_pool_clone,
-            RESP_DEV.to_string(),
-            resp_mat_clone,
-            resp_scheduler_clone,
-            resp_sink_clone,
-            Arc::new(AtomicBool::new(false)),
-        )
+    let harness = ServiceHarness::new().await;
+    // Production shape: the handshake-authenticated key identifies the fresh
+    // initiator, because its heads cannot — they are empty. This is the same
+    // role the verified client-cert CN used to play, on a key the peer cannot
+    // choose for itself.
+    peer_refs::bind_endpoint_id(&resp_pool, FRESH_DEV, &client_key(&harness))
         .await
-    });
+        .unwrap();
+
+    let server_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
+        resp_scheduler.clone(),
+        resp_sink.clone(),
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut client = harness.dial().await;
 
     // ── Drive the initiator (mirrors `run_sync_session`'s loop) ──────
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
@@ -7135,12 +6354,12 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
         }
         other => panic!("initiator must start with HeadExchange, got {other:?}"),
     }
-    client_conn.send_json(&first).await.unwrap();
+    send_sync_message(&mut client.send, &first).await.unwrap();
 
     while !init_orch.is_terminal() {
-        let incoming: SyncMessage = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            client_conn.recv_json::<SyncMessage>(),
+        let incoming = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            recv_sync_message(&mut client.recv),
         )
         .await
         .expect("initiator timed out waiting for responder message")
@@ -7155,9 +6374,9 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
             .await
             .expect("initiator handle_message")
         {
-            client_conn.send_json(&resp).await.unwrap();
+            send_sync_message(&mut client.send, &resp).await.unwrap();
             while let Some(m) = init_orch.next_message() {
-                client_conn.send_json(&m).await.unwrap();
+                send_sync_message(&mut client.send, &m).await.unwrap();
             }
         }
     }
@@ -7172,8 +6391,13 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
     // waits for the initiator's FileRequest; closing the client side
     // ends that sub-flow (non-fatal by design) and lets the handler
     // return.
-    let _ = client_conn.close().await;
-    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), server_task)
+    // `finish` and not `conn.close`, for the reason `finish_session` documents:
+    // closing would discard our own final frame before the peer read it.
+    client
+        .send
+        .finish()
+        .expect("the initiator finishes its stream");
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(20), server_task)
         .await
         .expect("responder task timed out")
         .expect("responder task panicked");
@@ -7194,18 +6418,21 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
         "#778: the responder's seeded block must reach the fresh initiator's DB"
     );
 
-    // ── fallback: the responder identified the session under the
-    //    cert-CN identity (the heads never identified the peer), so the
-    //    peer row exists under FRESH_DEV (pinned during cert TOFU). ─────
+    // ── the responder identified the session by the peer's key, not by its
+    //    heads (which were empty), so the peer row is the one that key is
+    //    bound to. ────────────────────────────────────────────────────────
     let peer = peer_refs::get_peer_ref(&resp_pool, FRESH_DEV)
         .await
         .unwrap()
         .expect("peer_refs row for the fresh device must exist on the responder");
+    assert_eq!(
+        peer.endpoint_id.as_deref(),
+        Some(client_key(&harness).as_str()),
+        "#778: the session must have been resolved through the bound key"
+    );
     // #610: the responder STREAMED its seeded block to the fresh initiator
     // and pulled nothing back, so it must NOT advance synced_at for that
-    // peer — only the puller (here the initiator) records synced_at. The
-    // row existing above is the cert-CN identity signal; synced_at staying
-    // NULL keeps the reverse direction schedulable.
+    // peer — only the puller (here the initiator) records synced_at.
     assert!(
         peer.synced_at.is_none(),
         "#610: the responder (streamer) must NOT record synced_at for the \
@@ -7323,23 +6550,24 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
         .unwrap();
 
     // ── Wire the two sides together ──────────────────────────────────
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    server_conn.set_test_cert(Some(INIT_DEV.to_string()), None);
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(&resp_pool, INIT_DEV, &client_key(&harness))
+        .await
+        .unwrap();
 
-    let resp_pool_clone = resp_pool.clone();
-    let resp_mat_clone = resp_mat.clone();
-    let server_task = tokio::spawn(handle_incoming_sync(
-        server_conn,
-        resp_pool_clone,
-        RESP_DEV.to_string(),
-        resp_mat_clone,
+    let server_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
         resp_scheduler.clone(),
         resp_sink.clone(),
         Arc::new(AtomicBool::new(false)),
-    ));
+    );
+    let mut client = harness.dial().await;
 
-    // ── Drive the initiator through the SAME wire helpers
-    //    `run_sync_session` uses (#611 reassembly on receive) ─────────
+    // ── Drive the initiator through the SAME framing helpers
+    //    `run_sync_session` uses ───────────────────────────────────────
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
     let mut init_orch = SyncOrchestrator::new(init_pool.clone(), INIT_DEV.into(), init_mat.clone())
@@ -7347,14 +6575,12 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
         .with_expected_remote_id(RESP_DEV.into());
 
     let first = init_orch.start().await.expect("initiator start");
-    super::wire::send_sync_message(&mut client_conn, &first)
-        .await
-        .unwrap();
+    send_sync_message(&mut client.send, &first).await.unwrap();
 
     while !init_orch.is_terminal() {
-        let incoming: SyncMessage = tokio::time::timeout(
+        let incoming = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            super::wire::recv_sync_message(&mut client_conn),
+            recv_sync_message(&mut client.recv),
         )
         .await
         .expect("initiator timed out waiting for responder message")
@@ -7367,13 +6593,9 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
             .await
             .expect("initiator handle_message")
         {
-            super::wire::send_sync_message(&mut client_conn, &resp)
-                .await
-                .unwrap();
+            send_sync_message(&mut client.send, &resp).await.unwrap();
             while let Some(m) = init_orch.next_message() {
-                super::wire::send_sync_message(&mut client_conn, &m)
-                    .await
-                    .unwrap();
+                send_sync_message(&mut client.send, &m).await.unwrap();
             }
         }
     }
@@ -7385,9 +6607,13 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
          payload exceeds the old inline cap"
     );
 
-    // Close the client side to end the responder's post-Complete
-    // file-transfer phase (non-fatal by design), then reap it.
-    let _ = client_conn.close().await;
+    // Finish the client's stream to end the responder's post-Complete
+    // file-transfer phase (non-fatal by design), then reap it. Finishing rather
+    // than closing, so the final frame we wrote is not discarded under us.
+    client
+        .send
+        .finish()
+        .expect("the initiator finishes its stream");
     let resp_result = tokio::time::timeout(std::time::Duration::from_secs(30), server_task)
         .await
         .expect("responder task timed out")
@@ -7438,22 +6664,15 @@ async fn issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path() {
 /// lets run_sync_session start before cancel is observed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_preflagged_m46() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // pre-set; early-exit must still return false
-    let cert = sync_net::generate_self_signed_cert("LOCAL_M46").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_M46_FAIL".to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port: 1, // refused
-    };
+    let peer = unreachable_peer("PEER_M46_FAIL");
     let refs = vec![make_peer_ref("PEER_M46_FAIL")];
 
     let apply_host_ctx_7140: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
@@ -7465,10 +6684,10 @@ async fn try_sync_with_peer_returns_false_when_connect_refused_even_if_cancel_pr
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     let result = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(60),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
@@ -7500,14 +6719,9 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
     let cancel = AtomicBool::new(true); // pre-set, but early-exit must return false
-    let cert = sync_net::generate_self_signed_cert("LOCAL_M46_B").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_M46_BACK".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.99".parse().unwrap()],
-        port: 9999,
-    };
+    let peer = unreachable_peer("PEER_M46_BACK");
     let refs = vec![make_peer_ref("PEER_M46_BACK")];
     scheduler.record_failure("PEER_M46_BACK");
     assert!(!scheduler.may_retry("PEER_M46_BACK"));
@@ -7521,7 +6735,7 @@ async fn try_sync_with_peer_returns_false_on_backoff_early_exit_m46() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
     let result = try_sync_with_peer(&ctx, &peer, &refs).await;
 
@@ -7553,7 +6767,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cert = sync_net::generate_self_signed_cert("LOCAL_637").unwrap();
+    let harness = ServiceHarness::new().await;
 
     // The user has cancelled the round; the cancel is aimed at the still-
     // running sibling. This is the SHARED flag every per-peer task observes.
@@ -7561,12 +6775,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
 
     // The early-exiting peer: put it in backoff so `try_sync_with_peer`
     // returns via the no-session early-exit path and drops its CancelGuard.
-    let early_peer = mdns::DiscoveredPeer {
-        device_id: "PEER_EARLY_637".to_string(),
-        endpoint_id: None,
-        addresses: vec!["192.168.1.50".parse().unwrap()],
-        port: 9999,
-    };
+    let early_peer = unreachable_peer("PEER_EARLY_637");
     let early_refs = vec![make_peer_ref("PEER_EARLY_637")];
     scheduler.record_failure("PEER_EARLY_637");
     assert!(
@@ -7582,7 +6791,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
         let scheduler = scheduler.clone();
         let event_sink = event_sink.clone();
         let cancel = cancel.clone();
-        let cert = cert.clone();
+        let endpoint = harness.client_endpoint.clone();
         tokio::spawn(async move {
             let apply_host_ctx_7262: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
                 std::sync::Arc::new(materializer.clone());
@@ -7593,7 +6802,7 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
                 scheduler: &scheduler,
                 event_sink: &event_sink,
                 cancel: &cancel,
-                cert: &cert,
+                endpoint: &endpoint,
             };
             try_sync_with_peer(&ctx, &early_peer, &early_refs).await
         })
@@ -7635,31 +6844,35 @@ async fn cancel_637_early_exiter_does_not_swallow_sibling_cancel() {
 /// TODO(#497): a real session ran AND the cancel was observed.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_637_owns_path_clears_flag_after_real_session() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cert = sync_net::generate_self_signed_cert("LOCAL_637_OWNS").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    // Live loopback responder so `try_connect_each_address` succeeds and the
-    // function commits to a real session (sets `owns = true`).
-    let server_cert = sync_net::generate_self_signed_cert("PEER_637_OWNS").unwrap();
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_637_OWNS".to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port,
+    // A live loopback responder so the dial succeeds and the function commits to
+    // a real session (sets `owns = true`). It reads the initiator's opening frame
+    // and answers nothing: what is under test is the initiator giving up on its
+    // own cancel flag, not anything the peer says.
+    let responder = {
+        let service = harness.service.clone();
+        tokio::spawn(async move {
+            let mut session = service
+                .accept()
+                .await
+                .expect("the accept loop does not error")
+                .expect("an inbound connection is admitted")
+                .establish()
+                .await
+                .expect("the peer completes the handshake and opens its stream");
+            let _ = recv_sync_message(&mut session.recv).await;
+            // Hold the session open until the initiator has returned.
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        })
     };
+
+    let peer = discovered_service_peer("PEER_637_OWNS", &harness);
     let refs = vec![make_peer_ref("PEER_637_OWNS")];
 
     // Cancel pre-set: once `run_sync_session` starts, its first loop iteration's
@@ -7675,19 +6888,18 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
 
     let was_cancelled = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
 
-    // Keep the server-side connection alive until after the call returns so
-    // the initiator's first send doesn't fail before the cancel check.
-    drop(conn_rx.try_recv());
+    // The responder was only ever holding the connection open; reclaim it.
+    responder.abort();
 
     // A real session ran and observed the cancel → true (true-path / #497).
     assert!(
@@ -7714,7 +6926,6 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
         "#2537: a cancelled session must NOT push the peer into backoff"
     );
 
-    server.shutdown().await;
     materializer.shutdown();
 }
 
@@ -7724,34 +6935,39 @@ async fn cancel_637_owns_path_clears_flag_after_real_session() {
 /// legitimate reset is preserved and nothing spuriously sets it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cert = sync_net::generate_self_signed_cert("LOCAL_637_NORM").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    // Live loopback responder that accepts the connection and immediately
-    // drops it (the closure's `conn` falls out of scope). With cancel clear,
-    // `run_sync_session` sends its first message then errors on the first
-    // recv against the closed connection — a real session ran and FAILED,
-    // which is still the owns-path. This is deterministic (the initiator's
-    // recv returns an error promptly rather than blocking).
-    let server_cert = sync_net::generate_self_signed_cert("PEER_637_NORM").unwrap();
-    let (server, port) = SyncServer::start(&server_cert, move |_conn, _permit| {
-        // drop `_conn` immediately → initiator's recv fails fast
-    })
-    .await
-    .unwrap();
-
-    let peer = mdns::DiscoveredPeer {
-        device_id: "PEER_637_NORM".to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port,
+    // A live loopback responder that establishes the session and immediately
+    // drops it. With cancel clear, `run_sync_session` sends its first message
+    // then errors on the first recv against the closed connection — a real
+    // session ran and FAILED, which is still the owns-path. It is deterministic:
+    // the initiator's recv returns an error promptly rather than blocking.
+    //
+    // The session is *established* rather than refused on purpose. Dropping an
+    // `AdmittedConnection` before `establish` is an implicit reject, which would
+    // fail the initiator's dial instead — the connect-failure path, not the one
+    // this test is about.
+    let responder = {
+        let service = harness.service.clone();
+        tokio::spawn(async move {
+            let session = service
+                .accept()
+                .await
+                .expect("the accept loop does not error")
+                .expect("an inbound connection is admitted")
+                .establish()
+                .await
+                .expect("the peer completes the handshake and opens its stream");
+            drop(session);
+        })
     };
+
+    let peer = discovered_service_peer("PEER_637_NORM", &harness);
     let refs = vec![make_peer_ref("PEER_637_NORM")];
 
     // No cancel pending.
@@ -7766,11 +6982,11 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
 
     let was_cancelled = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(30),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
@@ -7787,7 +7003,7 @@ async fn cancel_637_owns_path_normal_reset_leaves_flag_clear() {
         "#637 normal-reset: the post-run reset must leave the flag clear"
     );
 
-    server.shutdown().await;
+    responder.abort();
     materializer.shutdown();
 }
 
@@ -7894,12 +7110,10 @@ async fn daemon_loop_visits_all_peers_when_no_cancel_observed_m46() {
 /// `peers_appeared_*`) cover the happy paths but not this exact interleaving.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
-    install_crypto_provider();
-
     let (pool, _dir) = test_pool().await;
     let materializer = Materializer::new(pool.clone());
     let scheduler = Arc::new(SyncScheduler::new());
-    let cert = sync_net::generate_self_signed_cert("DEV_LOCAL").unwrap();
+    let endpoint_secret = SecretKey::generate();
     let event_sink: Arc<dyn agaric_sync::sync_events::SyncEventSink> =
         Arc::new(RecordingEventSink::new());
     let cancel = Arc::new(AtomicBool::new(false));
@@ -7916,7 +7130,7 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
         "DEV_LOCAL".into(),
         materializer,
         scheduler.clone(),
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
     )
@@ -7960,23 +7174,28 @@ async fn dormant_waiter_races_pair_with_immediate_shutdown_l75() {
 }
 
 // ======================================================================
-// #2141 — N-device convergence over a REAL loopback TLS socket
+// #2141 — N-device convergence over a REAL loopback QUIC socket
 // ======================================================================
 
-/// #2141: a single device's real-loopback fixture — its DB pool,
-/// materializer, leaked per-device Loro registry (the #602 two-registry
-/// test seam: the process-global registry cannot represent more than one
-/// device in one test process), and its ONE stable identity cert (CN =
-/// device id, reused across every session so the responder's TOFU-pinned
-/// cert hash stays consistent — B-33).
+/// #2141: a single device's real-loopback fixture — its DB pool, materializer
+/// and per-device Loro registry (the #602 two-registry test seam: the
+/// process-global registry cannot represent more than one device in one test
+/// process).
 ///
-/// The materializer is dropped via [`Device2141::teardown`] at test end.
+/// The stable identity cert this used to carry is gone. It existed because the
+/// responder pinned a cert hash on first connection, so a per-session cert would
+/// have tripped a hash mismatch on the second session. Its replacement is not a
+/// field here: `run_one_real_loopback_session_2129` binds the dialling key to
+/// the initiator's `peer_refs` row per session, which is a re-bind the store
+/// explicitly permits and which preserves every other column.
+///
+/// The materializer is shut down via [`Device2141::flush_and_shutdown`] at test
+/// end.
 struct Device2141 {
     id: String,
     pool: SqlitePool,
     mat: Materializer,
     state: std::sync::Arc<agaric_engine::loro::shared::LoroState>,
-    cert: SyncCert,
     // Held only to keep the temp DB directory alive for the test's
     // lifetime; never read.
     _dir: TempDir,
@@ -7989,20 +7208,18 @@ impl Device2141 {
     }
 }
 
-/// #2141: build N mutually-paired devices for real-loopback convergence
-/// tests. Each device gets its own DB pool, materializer, leaked
-/// `&'static LoroState` registry (the #602 seam), and a stable identity
-/// cert. Every ORDERED pair is paired via `upsert_peer_ref` so any device
-/// can act as responder for any other (the responder rejects unpaired
-/// peers).
+/// #2141: build N mutually-paired devices for real-loopback convergence tests.
+/// Each device gets its own DB pool, materializer and `LoroState` registry (the
+/// #602 seam). Every ORDERED pair is paired via `upsert_peer_ref` so any device
+/// can act as responder for any other (the responder rejects unknown peers); the
+/// per-session key binding that row then needs is done by
+/// `run_one_real_loopback_session_2129`.
 ///
 /// This generalises the two-device setup that
 /// `two_edited_devices_converge_over_real_loopback_tls` open-codes into an
 /// N-device fixture, the reusable building block for the round-robin and
 /// concurrent-role tests below.
 async fn make_n_devices_2141(ids: &[&str]) -> Vec<Device2141> {
-    install_crypto_provider();
-
     let mut devices = Vec::with_capacity(ids.len());
     for id in ids {
         let (pool, dir) = test_pool().await;
@@ -8010,13 +7227,11 @@ async fn make_n_devices_2141(ids: &[&str]) -> Vec<Device2141> {
         // #602/#2249: the device's registry is its materializer's own
         // per-instance state (the process global is gone).
         let state = std::sync::Arc::clone(mat.loro_state());
-        let cert = sync_net::generate_self_signed_cert(id).unwrap();
         devices.push(Device2141 {
             id: (*id).to_string(),
             pool,
             mat,
             state,
-            cert,
             _dir: dir,
         });
     }
@@ -8048,11 +7263,9 @@ async fn run_session_2141(
         &initiator.pool,
         &initiator.mat,
         &initiator.id,
-        &initiator.cert,
         &responder.pool,
         &responder.mat,
         &responder.id,
-        &responder.cert,
     )
     .await
 }
@@ -8375,45 +7588,13 @@ async fn issue2141_device_acts_as_responder_and_initiator_concurrently() {
 // #2140 — failure-mode E2E over real loopback TLS
 // ======================================================================
 
-/// #2140: stand up a responder `SyncServer` and connect an initiator,
-/// returning the client connection, the accepted server-side connection,
-/// and the server handle. Mirrors the connection setup of
-/// `run_one_real_loopback_session_2129` but hands BOTH raw connections
-/// back to the caller so a failure-mode test can drive them directly
-/// (drop one mid-stream, inject a corrupt frame, etc.) instead of running
-/// the full session loop.
-async fn connect_real_pair_2140(
-    init_cert: &SyncCert,
-    resp_cert: &SyncCert,
-) -> (
-    SyncConnection,
-    SyncConnection,
-    agaric_sync::sync_net::SyncServer,
-) {
-    let timeout = std::time::Duration::from_secs(5);
-
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(resp_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    let client_conn = tokio::time::timeout(
-        timeout,
-        sync_net::connect_to_peer(&format!("127.0.0.1:{port}"), None, None, init_cert),
-    )
-    .await
-    .expect("timed out connecting to peer")
-    .unwrap();
-
-    let server_conn = tokio::time::timeout(timeout, conn_rx.recv())
-        .await
-        .expect("timed out waiting for server connection")
-        .unwrap();
-
-    (client_conn, server_conn, server)
-}
+// #2140's harness is now the `ServiceHarness` itself. The old
+// `connect_real_pair_2140` handed BOTH raw `SyncConnection`s back so a
+// failure-mode test could drive them directly; under QUIC the responder side is
+// an `InboundSession` that only the service's admission path can mint, and it
+// only exists once the peer has spoken. So the tests below spawn the real
+// responder and keep the client side, which is the same freedom for everything
+// they actually do: drop the connection mid-stream, or write a hand-built frame.
 
 /// #2140 — a connection dropped MID-STREAM surfaces as a bounded FAILURE,
 /// not a hang, and a fresh session afterward recovers and converges.
@@ -8457,22 +7638,21 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
     )
     .await;
 
-    let timeout = std::time::Duration::from_secs(5);
+    let timeout = std::time::Duration::from_secs(20);
 
     // ── Drop mid-stream: A opens, sends HeadExchange, then disconnects ──
-    let (mut client_conn, server_conn, server) = connect_real_pair_2140(&a.cert, &b.cert).await;
-
-    let resp_scheduler = Arc::new(SyncScheduler::new());
-    let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let resp_handle = tokio::spawn(handle_incoming_sync(
-        server_conn,
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&b.pool, &a.id, &harness).await;
+    let resp_handle = spawn_responder(
+        &harness,
         b.pool.clone(),
-        b.id.clone(),
+        &b.id,
         b.mat.clone(),
-        resp_scheduler,
-        resp_sink,
+        Arc::new(SyncScheduler::new()),
+        Arc::new(RecordingEventSink::new()),
         Arc::new(AtomicBool::new(false)),
-    ));
+    );
+    let mut client = harness.dial().await;
 
     // Send a valid opening HeadExchange so the responder is mid-session,
     // then drop the client connection.
@@ -8481,21 +7661,20 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
         .unwrap();
     tokio::time::timeout(
         timeout,
-        client_conn.send_json(&SyncMessage::HeadExchange {
-            heads,
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        }),
+        send_sync_message(&mut client.send, &head_exchange(heads, None)),
     )
     .await
     .expect("send HeadExchange timed out")
     .expect("send HeadExchange");
-    // Abruptly drop the socket mid-stream (no graceful close handshake).
-    drop(client_conn);
+    // Wait for the responder to answer before pulling the wire. `establish`
+    // resolves on our FIRST frame, so a drop that races it is a dropped
+    // handshake, not a dropped session — and this test is about the latter.
+    let _first_reply = tokio::time::timeout(timeout, recv_sync_message(&mut client.recv))
+        .await
+        .expect("the responder must answer the HeadExchange")
+        .expect("the responder's first reply");
+    // Abruptly drop the connection mid-stream (no graceful close handshake).
+    drop(client);
 
     // The responder must terminate with an Err (bounded), NOT hang.
     let resp_join = tokio::time::timeout(timeout, resp_handle)
@@ -8507,7 +7686,7 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
         "#2140: a mid-stream connection drop must surface as a session \
          failure (Err), got Ok"
     );
-    server.shutdown().await;
+    drop(harness);
 
     // ── Recovery: a fresh full session must converge cleanly ────────────
     let state1 = run_session_2141(a, b).await;
@@ -8542,127 +7721,115 @@ async fn issue2140_connection_drop_mid_stream_fails_then_recovers() {
     }
 }
 
-/// #2140 — an OVERSIZED binary frame is rejected with a bounded error, no
-/// panic and no hang.
+/// #2140 — an OVERSIZED frame is rejected with a bounded error, no panic and no
+/// hang.
 ///
-/// `ws_config()` caps the transport at `MAX_MSG_SIZE` (10 MB) at the frame
-/// header (#611), so a `send_binary` of an over-cap payload fails at the
-/// SENDER. We assert the sender's `send_binary` returns an `Err` (the
-/// frame is refused before it ever buffers a runaway payload), bounded by a
-/// test timeout. The receiver REJECTS the over-cap frame on read (#611's
-/// `ws_config` enforces `max_message_size`/`max_frame_size` at the read
-/// path), so the load-bearing guarantee is that the RECEIVER returns a
-/// bounded error rather than buffering a runaway payload, panicking, or
-/// hanging.
+/// The cap moved with the transport: the old test wrote an over-`MAX_MSG_SIZE`
+/// WebSocket binary frame and relied on `ws_config()` refusing it at the frame
+/// header. QUIC has no frames of its own at this layer, so the cap is
+/// `transport::session`'s own four-byte length prefix, and the guarantee is
+/// stated where it matters: the announced length is checked BEFORE anything is
+/// allocated for it. This test therefore announces an over-cap length and sends
+/// no body at all — a receiver that allocated first would have to be reached
+/// through the allocation to fail, and this one fails without it.
 ///
-/// This is driven through `test_connection_pair()` rather than a live
-/// `SyncServer` socket: per its contract (`sync_net::connection`), the
-/// in-memory pair runs under the IDENTICAL `ws_config()` transport caps as
-/// the real transport, so the `MAX_MSG_SIZE` rejection path is exercised
-/// byte-for-byte the same — while avoiding pumping a 10 MB+ frame through a
-/// live loopback-TLS transfer that, under parallel CI load, starves the
-/// timing-sensitive chunked-binary transfer of the neighbouring #611 test.
+/// Now duplicated one layer down by
+/// `transport::session::tests::an_oversized_length_prefix_is_refused_before_allocating`,
+/// which owns the framing contract post-cutover. Kept because #2140 is a
+/// failure-mode acceptance issue and its list is what it is, not because this
+/// layer adds anything the other test does not already prove.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_oversized_frame_is_rejected_with_bounded_error() {
-    let (mut sender, mut receiver) = sync_net::test_connection_pair().await;
+    use agaric_sync::transport::MAX_FRAME_SIZE;
 
+    let mut pair = quic_pair().await;
     let timeout = std::time::Duration::from_secs(5);
 
-    // One byte over the cap. The sender's write is fire-and-forget in a
-    // spawned task (it may block on the duplex buffer once the receiver
-    // tears the stream down — that is not what we are asserting). The
-    // RECEIVER must reject the over-cap frame with a bounded error: #611's
-    // `ws_config` enforces `max_frame_size` at the frame header on read, so
-    // the rejection fires without buffering the runaway payload.
-    let oversize = vec![0u8; SyncConnection::MAX_MSG_SIZE + 1];
-    let send_task = tokio::spawn(async move {
-        let _ = sender.send_binary(&oversize).await;
-        sender
-    });
-
-    let recv_result = tokio::time::timeout(timeout, receiver.recv_binary())
+    // One byte over the cap, announced and never delivered.
+    let announced = u32::try_from(MAX_FRAME_SIZE + 1).expect("the cap fits the frame prefix");
+    pair.client
+        .send
+        .write_all(&announced.to_be_bytes())
         .await
-        .expect("#2140: oversized recv must not hang");
+        .expect("the length prefix is written");
+
+    let recv_result = tokio::time::timeout(timeout, recv_sync_message(&mut pair.server.recv))
+        .await
+        .expect("#2140: an oversized recv must not hang");
     assert!(
         recv_result.is_err(),
-        "#2140: the receiver must reject a frame larger than MAX_MSG_SIZE \
+        "#2140: the receiver must reject an announced length above MAX_FRAME_SIZE \
          with a bounded error, got Ok"
     );
-
-    // Reclaim the sender task so it does not leak past the test. It may
-    // still be blocked on the doomed write, so abort it.
-    send_task.abort();
 }
 
-/// #2140 — garbage / non-JSON bytes are rejected by the receiver with a
+/// #2140 — garbage / non-`SyncMessage` bytes are rejected by the receiver with a
 /// bounded deserialize error, no panic and no hang.
 ///
-/// The sender ships a valid (in-cap) TEXT frame whose body is not valid
-/// `SyncMessage` JSON. `recv_json` must surface a bounded "deserialize"
-/// error rather than panicking or hanging.
+/// The sender ships a correctly framed, in-cap payload whose body is not a
+/// `SyncMessage`. `recv_sync_message` must surface a bounded error rather than
+/// panicking or hanging. Written as a hand-built frame because
+/// `send_sync_message` takes a `&SyncMessage` and so cannot express this — which
+/// is itself the reason the receiver still has to.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_garbage_frame_is_rejected_with_bounded_error() {
-    install_crypto_provider();
-    let cert_a = sync_net::generate_self_signed_cert("DEV2140GA").unwrap();
-    let cert_b = sync_net::generate_self_signed_cert("DEV2140GB").unwrap();
-
-    let (mut client_conn, mut server_conn, server) = connect_real_pair_2140(&cert_a, &cert_b).await;
-
+    let mut pair = quic_pair().await;
     let timeout = std::time::Duration::from_secs(5);
 
-    // `send_json` of a raw string serialises to a JSON string literal
-    // (`"not a sync message …"`), which is valid JSON but NOT a
-    // `SyncMessage` — so the receiver's typed deserialize must reject it.
-    tokio::time::timeout(
-        timeout,
-        client_conn.send_json(&"not a sync message {{{ garbage"),
-    )
-    .await
-    .expect("send garbage timed out")
-    .expect("send garbage frame");
-
-    let recv_result = tokio::time::timeout(timeout, server_conn.recv_json::<SyncMessage>())
+    let body = br#""not a sync message {{{ garbage""#;
+    let mut frame = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
+    frame.extend_from_slice(body);
+    pair.client
+        .send
+        .write_all(&frame)
         .await
-        .expect("#2140: garbage recv must not hang");
+        .expect("the garbage frame is written");
+
+    let recv_result = tokio::time::timeout(timeout, recv_sync_message(&mut pair.server.recv))
+        .await
+        .expect("#2140: a garbage recv must not hang");
     assert!(
         recv_result.is_err(),
-        "#2140: a non-SyncMessage JSON frame must be rejected with a \
+        "#2140: a well-framed non-SyncMessage payload must be rejected with a \
          bounded deserialize error, got Ok"
     );
-
-    server.shutdown().await;
 }
 
-/// #2140 — a PARTIAL message (peer closes after sending nothing / half a
-/// frame) surfaces as a bounded error, not a hang.
+/// #2140 — a PARTIAL message (the peer stops mid-frame and closes) surfaces as a
+/// bounded error, not a hang.
 ///
-/// The sender opens the connection and immediately drops it without ever
-/// sending a complete frame. The receiver's `recv_json`, blocked on the
-/// next frame, must observe the closed stream and return a bounded
-/// "connection closed" error rather than hanging.
+/// The sender announces a frame and then writes half of it before finishing the
+/// stream. The receiver, blocked on the rest, must observe the end of the stream
+/// and return a bounded error. The half-write is the point: an EOF before the
+/// length prefix is the easy case, and the old test only covered that one.
+///
+/// Now duplicated one layer down by
+/// `transport::session::tests::a_truncated_frame_is_an_error_not_a_partial_message`
+/// — see the note on the oversized-frame test above.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn issue2140_partial_message_then_close_is_bounded_error() {
-    install_crypto_provider();
-    let cert_a = sync_net::generate_self_signed_cert("DEV2140PA").unwrap();
-    let cert_b = sync_net::generate_self_signed_cert("DEV2140PB").unwrap();
-
-    let (client_conn, mut server_conn, server) = connect_real_pair_2140(&cert_a, &cert_b).await;
-
+    let mut pair = quic_pair().await;
     let timeout = std::time::Duration::from_secs(5);
 
-    // Drop the client without sending any complete frame (EOF / close).
-    drop(client_conn);
-
-    let recv_result = tokio::time::timeout(timeout, server_conn.recv_json::<SyncMessage>())
+    let mut frame = 64_u32.to_be_bytes().to_vec();
+    frame.extend_from_slice(&[b'{'; 8]);
+    pair.client
+        .send
+        .write_all(&frame)
         .await
-        .expect("#2140: recv after partial/EOF must not hang");
+        .expect("the partial frame is written");
+    pair.client
+        .send
+        .finish()
+        .expect("the sender finishes early");
+
+    let recv_result = tokio::time::timeout(timeout, recv_sync_message(&mut pair.server.recv))
+        .await
+        .expect("#2140: a recv after a partial frame must not hang");
     assert!(
         recv_result.is_err(),
-        "#2140: a closed connection with no complete frame must yield a \
-         bounded error, got Ok"
+        "#2140: a stream that ends mid-frame must yield a bounded error, got Ok"
     );
-
-    server.shutdown().await;
 }
 
 /// #2140 — a REAL `ResetRequired` → snapshot catch-up fires OVER THE REAL
@@ -8918,39 +8085,39 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
     .await;
 
     let scheduler = SyncScheduler::new();
-    let timeout = std::time::Duration::from_secs(5);
+    let timeout = std::time::Duration::from_secs(20);
 
     // ── A broken session: initiator drops mid-stream → the session fails,
     //    so we record a failure for the peer on the scheduler.
-    let (mut client_conn, server_conn, server) = connect_real_pair_2140(&a.cert, &b.cert).await;
-    let resp_handle = tokio::spawn(handle_incoming_sync(
-        server_conn,
+    let harness = ServiceHarness::new().await;
+    bind_client_as(&b.pool, &a.id, &harness).await;
+    let resp_handle = spawn_responder(
+        &harness,
         b.pool.clone(),
-        b.id.clone(),
+        &b.id,
         b.mat.clone(),
         Arc::new(SyncScheduler::new()),
-        Arc::new(RecordingEventSink::new()) as Arc<dyn SyncEventSink>,
+        Arc::new(RecordingEventSink::new()),
         Arc::new(AtomicBool::new(false)),
-    ));
+    );
+    let mut client = harness.dial().await;
     let heads = agaric_sync::sync_protocol::get_local_heads(&a.pool)
         .await
         .unwrap();
     tokio::time::timeout(
         timeout,
-        client_conn.send_json(&SyncMessage::HeadExchange {
-            heads,
-            loro_vvs: vec![],
-            engine_format_version: agaric_engine::loro::engine::ENGINE_FORMAT_VERSION,
-            op_log_replication: false,
-            wire_compression: false,
-            op_log_batch_chunked: false,
-            pairing_proof: None,
-        }),
+        send_sync_message(&mut client.send, &head_exchange(heads, None)),
     )
     .await
     .expect("send HeadExchange timed out")
     .expect("send HeadExchange");
-    drop(client_conn);
+    // As above: let the responder answer first, so the drop lands mid-session
+    // rather than mid-handshake.
+    let _first_reply = tokio::time::timeout(timeout, recv_sync_message(&mut client.recv))
+        .await
+        .expect("the responder must answer the HeadExchange")
+        .expect("the responder's first reply");
+    drop(client);
     let resp_join = tokio::time::timeout(timeout, resp_handle)
         .await
         .expect("#2140 backoff: responder must not hang on the failed session")
@@ -8959,7 +8126,7 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
         resp_join.is_err(),
         "#2140 backoff: the broken session must fail so a failure is recorded"
     );
-    server.shutdown().await;
+    drop(harness);
 
     // The failed session advances backoff for this peer.
     scheduler.record_failure(&b.id);
@@ -9012,8 +8179,8 @@ async fn issue2140_backoff_advances_on_failure_and_clears_on_success() {
 /// recorded, backoff-doubling failure just to clear the flag.
 ///
 /// This test (a) cancels with nothing running, (b) drives a REAL inbound
-/// responder session (`handle_incoming_sync`) over an in-memory wire with
-/// the SAME shared cancel flag + scheduler, and asserts the session
+/// responder session (`handle_incoming_sync`) over a real admitted QUIC session
+/// with the SAME shared cancel flag + scheduler, and asserts the session
 /// completes and data flows — plus that the cancel never bumped any
 /// scheduler backoff/failure state.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -9080,20 +8247,21 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
         .await
         .unwrap();
 
-    let (mut server_conn, mut client_conn) = sync_net::test_connection_pair().await;
-    server_conn.set_test_cert(Some(INIT_DEV.to_string()), None);
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(&resp_pool, INIT_DEV, &client_key(&harness))
+        .await
+        .unwrap();
 
-    let resp_pool_clone = resp_pool.clone();
-    let resp_mat_clone = resp_mat.clone();
-    let server_task = tokio::spawn(handle_incoming_sync(
-        server_conn,
-        resp_pool_clone,
-        RESP_DEV.to_string(),
-        resp_mat_clone,
+    let server_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
         scheduler.clone(),
         resp_sink.clone(),
         cancel.clone(),
-    ));
+    );
+    let mut client = harness.dial().await;
 
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink_box: Box<dyn SyncEventSink> = Box::new(SharedEventSink(init_sink.clone()));
@@ -9102,14 +8270,12 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
         .with_expected_remote_id(RESP_DEV.into());
 
     let first = init_orch.start().await.expect("initiator start");
-    super::wire::send_sync_message(&mut client_conn, &first)
-        .await
-        .unwrap();
+    send_sync_message(&mut client.send, &first).await.unwrap();
 
     while !init_orch.is_terminal() {
-        let incoming: SyncMessage = tokio::time::timeout(
-            std::time::Duration::from_secs(10),
-            super::wire::recv_sync_message(&mut client_conn),
+        let incoming = tokio::time::timeout(
+            std::time::Duration::from_secs(20),
+            recv_sync_message(&mut client.recv),
         )
         .await
         .expect("initiator timed out waiting for responder message")
@@ -9124,13 +8290,9 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
             .await
             .expect("initiator handle_message")
         {
-            super::wire::send_sync_message(&mut client_conn, &resp)
-                .await
-                .unwrap();
+            send_sync_message(&mut client.send, &resp).await.unwrap();
             while let Some(m) = init_orch.next_message() {
-                super::wire::send_sync_message(&mut client_conn, &m)
-                    .await
-                    .unwrap();
+                send_sync_message(&mut client.send, &m).await.unwrap();
             }
         }
     }
@@ -9142,8 +8304,17 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
     );
 
     // End the responder's post-Complete file-transfer phase and reap it.
-    let _ = client_conn.close().await;
-    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), server_task)
+    //
+    // `finish` and not `conn.close`: `Connection::close` lets the remote drop data
+    // it has received but not yet delivered to the application, so closing here
+    // would discard the `SyncComplete` we just wrote and the responder would fail
+    // its next read instead of completing. Finishing the stream delivers what is
+    // already written and then signals the end.
+    client
+        .send
+        .finish()
+        .expect("the initiator finishes its stream");
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(20), server_task)
         .await
         .expect("responder task timed out")
         .expect("responder task panicked");
@@ -9197,10 +8368,13 @@ async fn cancel_2537_no_session_cancel_does_not_poison_inbound_session() {
 /// and asserts: a failure (with backoff — the peer is NOT immediately
 /// re-due), NO Complete event, NO peer_refs success bookkeeping, and an
 /// actionable error event.
+///
+/// **This test fails after the port**, on its last assertion only, and it is a
+/// race: measured 1 pass in 6 runs on loopback. See that assertion for the cause
+/// — the initiator closes the connection immediately after writing
+/// `SnapshotReject`, and `Connection::close` may discard it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn catchup_2538_oversize_rejection_records_failure_not_success() {
-    install_crypto_provider();
-
     const PEER: &str = "PEER_2538";
 
     let (pool, _dir) = test_pool().await;
@@ -9208,57 +8382,58 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cert = sync_net::generate_self_signed_cert("LOCAL_2538").unwrap();
+    let harness = ServiceHarness::new().await;
 
-    // Live loopback responder whose accepted connection is scripted by a
-    // test task (same harness shape as the #637 owns-path tests).
-    let server_cert = sync_net::generate_self_signed_cert(PEER).unwrap();
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    // Scripted responder: force the snapshot catch-up path, then offer an
-    // over-cap legacy CBOR snapshot; expect the initiator's SnapshotReject.
-    let script = tokio::spawn(async move {
-        let mut conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
+    // A live loopback responder whose admitted session is scripted by a test
+    // task (the same harness shape as the #637 owns-path tests). It drives raw
+    // frames rather than `handle_incoming_sync`, because what is under test is
+    // the INITIATOR's bookkeeping for an offer no real responder would make.
+    let script = {
+        let service = harness.service.clone();
+        tokio::spawn(async move {
+            let mut session = service
+                .accept()
+                .await
+                .expect("the accept loop does not error")
+                .expect("an inbound connection is admitted")
+                .establish()
+                .await
+                .expect("the peer completes the handshake and opens its stream");
+            let first = recv_sync_message(&mut session.recv)
+                .await
+                .expect("script recv HeadExchange");
+            assert!(
+                matches!(first, SyncMessage::HeadExchange { .. }),
+                "initiator must open with HeadExchange, got {first:?}"
+            );
+            send_sync_message(
+                &mut session.send,
+                &SyncMessage::ResetRequired {
+                    reason: "test: force snapshot catch-up".into(),
+                },
+            )
             .await
-            .expect("responder accept timed out")
-            .expect("responder connection channel closed");
-        let first: SyncMessage = conn.recv_json().await.expect("script recv HeadExchange");
-        assert!(
-            matches!(first, SyncMessage::HeadExchange { .. }),
-            "initiator must open with HeadExchange, got {first:?}"
-        );
-        conn.send_json(&SyncMessage::ResetRequired {
-            reason: "test: force snapshot catch-up".into(),
+            .expect("script send ResetRequired");
+            send_sync_message(
+                &mut session.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: super::snapshot_transfer::MAX_SNAPSHOT_SIZE + 1,
+                    // Rejected on size before any bytes/checksum are exchanged.
+                    blob_blake3: String::new(),
+                },
+            )
+            .await
+            .expect("script send SnapshotOffer");
+            // Returned rather than asserted in the task: a panic here would abort
+            // the whole test and take the initiator-side bookkeeping assertions
+            // — the actual subject of #2538 — down with it. The assertion is
+            // made at the end, unchanged.
+            let reply = recv_sync_message(&mut session.recv).await;
+            (session, reply)
         })
-        .await
-        .expect("script send ResetRequired");
-        conn.send_json(&SyncMessage::SnapshotOffer {
-            size_bytes: super::snapshot_transfer::MAX_SNAPSHOT_SIZE + 1,
-            // Rejected on size before any bytes/checksum are exchanged.
-            blob_blake3: String::new(),
-        })
-        .await
-        .expect("script send SnapshotOffer");
-        let reply: SyncMessage = conn.recv_json().await.expect("script recv reject");
-        assert_eq!(
-            reply,
-            SyncMessage::SnapshotReject,
-            "initiator must reject the over-cap offer"
-        );
-        conn
-    });
-
-    let peer = mdns::DiscoveredPeer {
-        device_id: PEER.to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port,
     };
+
+    let peer = discovered_service_peer(PEER, &harness);
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
@@ -9271,19 +8446,19 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
 
     let was_cancelled = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(30),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
     assert!(!was_cancelled, "no cancel was issued");
 
-    // Keep the scripted connection alive until the session returned.
-    let _conn = tokio::time::timeout(std::time::Duration::from_secs(10), script)
+    // Keep the scripted session alive until the initiator returned.
+    let (_session, peer_reply) = tokio::time::timeout(std::time::Duration::from_secs(20), script)
         .await
         .expect("script task timed out")
         .expect("script task panicked");
@@ -9331,11 +8506,34 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
     let row = peer_refs::get_peer_ref(&pool, PEER).await.unwrap();
     assert!(
         row.is_none(),
-        "#2538: rejected catch-up must skip last_address/TOFU/synced_at \
-         bookkeeping, got {row:?}"
+        "#2538: a rejected catch-up must skip the TOFU key binding and the \
+         synced_at bookkeeping, got {row:?}"
     );
 
-    server.shutdown().await;
+    // ── The peer was TOLD why ─────────────────────────────────────────
+    //
+    // Asserted last, after every initiator-side assertion above has run, because
+    // this one FAILS after the port and the rest do not. The rejection is a
+    // message and not just a local outcome: a responder that never receives it
+    // cannot tell "your snapshot is over my cap" from "the link died", and
+    // re-offers the same blob on the next tick — the loop #2538 exists to break.
+    //
+    // The cause is in `run_sync_session`'s `CatchupOutcome::Rejected` arm, which
+    // calls `finish_session(false, ..)` immediately after
+    // `try_receive_snapshot_catchup` wrote `SnapshotReject`. `spoke_last = false`
+    // means "the peer spoke last and owes us nothing", so `finish_session` closes
+    // the connection at once — and `Connection::close` lets the remote drop data
+    // it received but has not yet delivered to the application. On this path WE
+    // spoke last, so the close discards the very frame that was just written.
+    // `server.rs`'s `reject()` documents this exact hazard and avoids it; this
+    // call site does not. Not fixed here: production is out of scope for this
+    // file.
+    assert_eq!(
+        peer_reply.as_ref().ok(),
+        Some(&SyncMessage::SnapshotReject),
+        "#2538: the offering peer must receive the initiator's SnapshotReject, got: {peer_reply:?}"
+    );
+
     materializer.shutdown();
 }
 
@@ -9425,13 +8623,11 @@ async fn dispatch_guard_2539_passes_through_prompt_results() {
 ///
 /// Drives the REAL daemon-level initiator entry point (`try_sync_with_peer`
 /// — the layer that used to duplicate) against a live `handle_incoming_sync`
-/// responder over a real loopback TLS socket, with a seeded responder edit so
+/// responder over a real loopback QUIC socket, with a seeded responder edit so
 /// the session takes the streamed-ops path, and counts Complete events on
 /// BOTH roles' sinks.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn complete_2539_full_session_emits_single_complete_per_role() {
-    install_crypto_provider();
-
     const INIT_DEV: &str = "INIT2539";
     const RESP_DEV: &str = "RESP2539";
     const BLOCK: &str = "01HZ2539BLKXXXXXXXXXXXXXXX";
@@ -9457,40 +8653,27 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
     .await;
 
     let resp_sink = Arc::new(RecordingEventSink::new());
-    let resp_cert = sync_net::generate_self_signed_cert(RESP_DEV).unwrap();
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&resp_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
-
-    let resp_pool_clone = resp_pool.clone();
-    let resp_mat_clone = resp_mat.clone();
-    let resp_sink_dyn: Arc<dyn SyncEventSink> = resp_sink.clone();
-    let resp_task = tokio::spawn(async move {
-        let conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
-            .await
-            .expect("responder accept timed out")
-            .expect("responder connection channel closed");
-        handle_incoming_sync(
-            conn,
-            resp_pool_clone,
-            RESP_DEV.to_string(),
-            resp_mat_clone,
-            Arc::new(SyncScheduler::new()),
-            resp_sink_dyn,
-            Arc::new(AtomicBool::new(false)),
-        )
+    let harness = ServiceHarness::new().await;
+    peer_refs::bind_endpoint_id(&resp_pool, INIT_DEV, &client_key(&harness))
         .await
-    });
+        .unwrap();
+
+    let resp_sink_dyn: Arc<dyn SyncEventSink> = resp_sink.clone();
+    let resp_task = spawn_responder(
+        &harness,
+        resp_pool.clone(),
+        RESP_DEV,
+        resp_mat.clone(),
+        Arc::new(SyncScheduler::new()),
+        resp_sink_dyn,
+        Arc::new(AtomicBool::new(false)),
+    );
 
     // ── Initiator: the REAL daemon layer (try_sync_with_peer) ─────────
     let (init_pool, _init_dir) = test_pool().await;
     let init_mat = Materializer::new(init_pool.clone());
     let init_sink = Arc::new(RecordingEventSink::new());
     let init_sink_dyn: Arc<dyn SyncEventSink> = init_sink.clone();
-    let init_cert = sync_net::generate_self_signed_cert(INIT_DEV).unwrap();
     let scheduler = Arc::new(SyncScheduler::new());
     let cancel = AtomicBool::new(false);
 
@@ -9503,14 +8686,9 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
         scheduler: &scheduler,
         event_sink: &init_sink_dyn,
         cancel: &cancel,
-        cert: &init_cert,
+        endpoint: &harness.client_endpoint,
     };
-    let peer = mdns::DiscoveredPeer {
-        device_id: RESP_DEV.to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port,
-    };
+    let peer = discovered_service_peer(RESP_DEV, &harness);
     let refs = vec![make_peer_ref(RESP_DEV)];
 
     let was_cancelled = tokio::time::timeout(
@@ -9521,12 +8699,11 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
     .expect("try_sync_with_peer timed out");
     assert!(!was_cancelled, "no cancel was issued");
 
-    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(10), resp_task)
+    let resp_result = tokio::time::timeout(std::time::Duration::from_secs(20), resp_task)
         .await
         .expect("responder task timed out")
         .expect("responder task panicked");
     resp_result.expect("responder session must succeed");
-    server.shutdown().await;
 
     // The session really succeeded end-to-end (data flowed, no failure).
     let content: Option<String> = sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
@@ -9587,8 +8764,6 @@ async fn complete_2539_full_session_emits_single_complete_per_role() {
 /// snapshot frame (`LoroSync { is_last: true }`, the #2503 merge flow).
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn complete_2539_snapshot_catchup_emits_single_complete() {
-    install_crypto_provider();
-
     const PEER: &str = "PEER2539CU";
     const BLOCK: &str = "01HZ2539CBLKXXXXXXXXXXXXXX";
     let space = agaric_store::space::SpaceId::from_trusted("01HZ2539CSPACEXXXXXXXXXXXX");
@@ -9598,62 +8773,64 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
     let scheduler = Arc::new(SyncScheduler::new());
     let sink = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = sink.clone();
-    let cert = sync_net::generate_self_signed_cert("LOCAL2539CU").unwrap();
-
-    let server_cert = sync_net::generate_self_signed_cert(PEER).unwrap();
-    let (conn_tx, mut conn_rx) = tokio::sync::mpsc::channel::<SyncConnection>(1);
-    let (server, port) = SyncServer::start(&server_cert, move |conn, _permit| {
-        let _ = conn_tx.try_send(conn);
-    })
-    .await
-    .unwrap();
+    let harness = ServiceHarness::new().await;
 
     // Scripted responder: force the catch-up, then stream ONE valid Loro
     // space snapshot so the initiator's merge path (#2503) applies it.
     let script_space = space.clone();
-    let script = tokio::spawn(async move {
-        let mut conn = tokio::time::timeout(std::time::Duration::from_secs(10), conn_rx.recv())
+    let script = {
+        let service = harness.service.clone();
+        tokio::spawn(async move {
+            let mut session = service
+                .accept()
+                .await
+                .expect("the accept loop does not error")
+                .expect("an inbound connection is admitted")
+                .establish()
+                .await
+                .expect("the peer completes the handshake and opens its stream");
+            let first = recv_sync_message(&mut session.recv)
+                .await
+                .expect("script recv HeadExchange");
+            assert!(
+                matches!(first, SyncMessage::HeadExchange { .. }),
+                "initiator must open with HeadExchange, got {first:?}"
+            );
+            send_sync_message(
+                &mut session.send,
+                &SyncMessage::ResetRequired {
+                    reason: "test: force snapshot catch-up (#2539)".into(),
+                },
+            )
             .await
-            .expect("responder accept timed out")
-            .expect("responder connection channel closed");
-        let first: SyncMessage = conn.recv_json().await.expect("script recv HeadExchange");
-        assert!(
-            matches!(first, SyncMessage::HeadExchange { .. }),
-            "initiator must open with HeadExchange, got {first:?}"
-        );
-        conn.send_json(&SyncMessage::ResetRequired {
-            reason: "test: force snapshot catch-up (#2539)".into(),
-        })
-        .await
-        .expect("script send ResetRequired");
+            .expect("script send ResetRequired");
 
-        let bytes = {
-            let mut e =
-                agaric_engine::loro::engine::LoroEngine::with_peer_id(PEER).expect("script engine");
-            e.apply_create_block(BLOCK, "content", "caught-up content (#2539)", None, 0)
-                .expect("script create block");
-            e.export_snapshot().expect("script export snapshot")
-        };
-        conn.send_json(&SyncMessage::LoroSync {
-            msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
-                protocol_version:
-                    agaric_sync::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
-                space_id: script_space,
-                bytes,
-            },
-            is_last: true,
+            let bytes = {
+                let mut e = agaric_engine::loro::engine::LoroEngine::with_peer_id(PEER)
+                    .expect("script engine");
+                e.apply_create_block(BLOCK, "content", "caught-up content (#2539)", None, 0)
+                    .expect("script create block");
+                e.export_snapshot().expect("script export snapshot")
+            };
+            send_sync_message(
+                &mut session.send,
+                &SyncMessage::LoroSync {
+                    msg: agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage::Snapshot {
+                        protocol_version:
+                            agaric_sync::sync_protocol::loro_sync_types::LORO_SYNC_PROTOCOL_VERSION,
+                        space_id: script_space,
+                        bytes,
+                    },
+                    is_last: true,
+                },
+            )
+            .await
+            .expect("script send LoroSync snapshot");
+            session
         })
-        .await
-        .expect("script send LoroSync snapshot");
-        conn
-    });
-
-    let peer = mdns::DiscoveredPeer {
-        device_id: PEER.to_string(),
-        endpoint_id: None,
-        addresses: vec!["127.0.0.1".parse().unwrap()],
-        port,
     };
+
+    let peer = discovered_service_peer(PEER, &harness);
     let refs = vec![make_peer_ref(PEER)];
     let cancel = AtomicBool::new(false);
 
@@ -9666,23 +8843,22 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
         scheduler: &scheduler,
         event_sink: &event_sink,
         cancel: &cancel,
-        cert: &cert,
+        endpoint: &harness.client_endpoint,
     };
 
     let was_cancelled = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
+        std::time::Duration::from_secs(30),
         try_sync_with_peer(&ctx, &peer, &refs),
     )
     .await
     .expect("try_sync_with_peer must complete within timeout");
     assert!(!was_cancelled, "no cancel was issued");
 
-    // Keep the scripted connection alive until the session returned.
-    let _conn = tokio::time::timeout(std::time::Duration::from_secs(10), script)
+    // Keep the scripted session alive until the initiator returned.
+    let _session = tokio::time::timeout(std::time::Duration::from_secs(20), script)
         .await
         .expect("script task timed out")
         .expect("script task panicked");
-    server.shutdown().await;
 
     // The catch-up genuinely applied: merged block projected into SQL and
     // the session recorded as a success (no backoff).

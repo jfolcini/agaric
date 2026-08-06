@@ -63,31 +63,37 @@
 //! deliberately absent here. An identity this module invented would be an identity the
 //! transport did not authenticate.
 //!
-//! # Connection setup is bounded; concurrency of setup is not
+//! # Connection setup is bounded, and it is no longer serialized
 //!
-//! [`SyncService::accept`] drives the handshake and `Connection::accept_bi` *inline*,
-//! so a peer that stalls in either would park the accept loop and make the other
-//! 15 slots unreachable — defeating the cap above with a single connection.
+//! Setup is two waits with two legitimate durations: [`CONNECTION_SETUP_TIMEOUT`] for
+//! the handshake, and [`FIRST_FRAME_TIMEOUT`] for the peer's first frame, which it
+//! cannot send until it has read its own heads out of the database. See that second
+//! constant for why budgeting them together understated the first-message window by an
+//! order of magnitude.
 //!
-//! Both are bounded, with **different** budgets, because they are different waits:
-//! [`CONNECTION_SETUP_TIMEOUT`] for the handshake, and [`FIRST_FRAME_TIMEOUT`] for the
-//! peer's first frame, which it cannot send until it has read its own heads out of the
-//! database. See that second constant for why budgeting them together understated the
-//! first-message window by an order of magnitude.
+//! Bounding them was not enough, and what was left over is worth stating because the
+//! fix (#3485) is the shape this API now has. Driving both waits *inline* in the accept
+//! loop made the bound a **per-queue** one rather than a per-peer one: N stalled peers
+//! ahead of you cost N budgets, not one, and while the loop sat in them the other 15
+//! slots were unreachable. Splitting the single 10 s budget into 10 s + 180 s — the
+//! right change for the *durations* — made that blast radius 18x worse, because the
+//! queue then stalls for the longer of the two.
 //!
-//! What remains is narrower, and stays out of scope deliberately: **accepts are
-//! serialized**. This service admits one connection at a time and spawns nothing, so
-//! two peers arriving together are set up one after the other rather than concurrently.
-//! Note that this makes the wait a *per-queue* bound and not a per-peer one: N stalled
-//! peers ahead of you cost N budgets, not one. The old stack spawned a task per
-//! connection instead. Whether to do that here, and what supervises the spawned task, is
-//! a call-site shape rather than a property of admission control, so it belongs to the
-//! cutover and not to this slice — tracked as #3485.
+//! So [`SyncService::accept`] no longer performs setup. It returns an
+//! [`AdmittedConnection`] as soon as a peer has been admitted (a permit taken *before*
+//! the handshake, exactly where the old accept loop took it), and the caller spawns
+//! [`AdmittedConnection::establish`] to do the waiting. One stalled peer now costs one
+//! task and one slot, which is what the 16-slot cap has always claimed to bound.
+//!
+//! The permit rides in the [`AdmittedConnection`] and moves into the [`InboundSession`]
+//! on success, so the slot is released by a `Drop` on every path — including a caller
+//! that never calls `establish` at all, and a spawned task aborted or unwound
+//! mid-handshake.
 
 use std::{net::SocketAddr, sync::Arc, time::Duration};
 
 use iroh::{
-    Endpoint, EndpointAddr, EndpointId,
+    Endpoint, EndpointAddr, EndpointId, SecretKey,
     endpoint::{BindError, Connection, Incoming, RecvStream, SendStream},
 };
 use iroh_dns::dns::DnsResolver;
@@ -110,10 +116,14 @@ pub const SYNC_ALPN: &[u8] = b"agaric/sync/0";
 ///
 /// Without it the cap this module exists to enforce is defeated by one peer. The permit
 /// is taken before the handshake, so a peer that opens a connection and then stalls
-/// mid-handshake holds a slot *and*, because [`SyncService::accept`] drives setup
-/// inline, parks the accept loop — the remaining 15 slots are unreachable no matter how
-/// well-behaved the peers waiting behind it are. The old stack described the same
-/// failure in TLS terms: "16 such stalls wedge every responder slot".
+/// mid-handshake holds a slot for as long as the stall lasts. The old stack described
+/// the same failure in TLS terms: "16 such stalls wedge every responder slot".
+///
+/// **Its scope is now one peer's handshake, not the accept loop's.** Since #3485 the
+/// wait happens inside [`AdmittedConnection::establish`], which the caller spawns, so
+/// this bounds how long *that peer* holds *its* slot. Before the split the same number
+/// also bounded how long every peer queued behind it waited to be admitted at all —
+/// a second, unstated scope, and the one that made 16 slots reachable only in theory.
 ///
 /// # Why the number is restated here rather than imported
 ///
@@ -164,8 +174,13 @@ const CONNECTION_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 /// The slot is still released on elapse, and a stalled peer is still bounded. What it
 /// costs is that a peer stalled *after* the handshake now holds its slot for up to
 /// 180 s rather than 10 s — which is precisely what the old responder did, so it is not
-/// a regression this port introduces. The real fix for a stalled peer blocking *other*
-/// peers' admission is per-connection spawning (#3485), not under-budgeting a wait that
+/// a regression this port introduces.
+///
+/// **The scope that made this expensive is gone.** When the wait ran in the accept loop
+/// it was charged to every peer behind it, so raising 10 s to 180 s multiplied the queue
+/// stall by 18. Since #3485 it runs in [`AdmittedConnection::establish`], off the accept
+/// loop, so it bounds one peer's hold on one slot and nothing else — which is what the
+/// per-connection spawn was the real fix for, rather than under-budgeting a wait that
 /// legitimately needs the time.
 const FIRST_FRAME_TIMEOUT: Duration = Duration::from_secs(180);
 
@@ -212,7 +227,7 @@ pub struct SyncService {
 /// impl, this compiles:
 ///
 /// ```ignore
-/// let InboundSession { conn, send, recv, remote, .. } = service.accept().await?;
+/// let InboundSession { conn, send, recv, remote, .. } = admitted.establish().await?;
 /// ```
 ///
 /// — and it is a slot leak in the shape most likely to be written, because it reads
@@ -275,6 +290,113 @@ impl Drop for InboundSession {
             remote = %self.remote,
             "transport.service.session_dropped: releasing the concurrency slot"
         );
+    }
+}
+
+/// A peer that has been admitted but not yet set up: it holds a slot, and nothing has
+/// been waited on.
+///
+/// This is the whole of #3485's fix. Admission is cheap and must stay in the accept
+/// loop, because refusing an over-capacity peer *before* the handshake is what stops
+/// excess peers from costing CPU and file descriptors. Setup is not cheap and must not:
+/// a peer that completes the handshake and then says nothing legitimately holds its
+/// budget for [`FIRST_FRAME_TIMEOUT`], and doing that in the accept loop charges every
+/// peer behind it for the wait.
+///
+/// Splitting the two makes the caller's `spawn` the thing that separates them, which is
+/// why this type exists rather than an internal task: what supervises a spawned session
+/// is a call-site decision (the daemon already has a supervisor, a cancel flag and a
+/// per-peer lock), and a service that spawned its own would have to reinvent all three.
+///
+/// # The permit is not lost by not calling [`Self::establish`]
+///
+/// Dropping an `AdmittedConnection` drops [`Self::permit`], releasing the slot, and
+/// drops `incoming`, which `noq` turns into an implicit reject so the peer is told. So
+/// a caller that admits and then decides not to proceed — a shutdown between the two
+/// steps, a spawn that is aborted — costs nothing and leaks nothing.
+#[derive(Debug)]
+pub struct AdmittedConnection {
+    /// The un-handshaken connection. Consumed by [`Self::establish`].
+    incoming: Incoming,
+    /// The slot this peer occupies, taken before the handshake and released by
+    /// whichever of this type or [`InboundSession`] is dropped last.
+    permit: OwnedSemaphorePermit,
+    /// Copied from the service at admission so setup can be spawned without borrowing
+    /// it. See [`CONNECTION_SETUP_TIMEOUT`].
+    setup_timeout: Duration,
+    /// Copied from the service at admission. See [`FIRST_FRAME_TIMEOUT`].
+    first_frame_timeout: Duration,
+}
+
+impl AdmittedConnection {
+    /// Complete the QUIC handshake, then take the bi-stream the peer speaks on.
+    ///
+    /// Each phase carries its own budget, and they are not the same number. The first is
+    /// a handshake and nothing else; the second waits on the peer's first frame, which
+    /// it cannot send until `orch.start()` has read its heads and version vectors out of
+    /// the database. [`FIRST_FRAME_TIMEOUT`] documents why collapsing the two was wrong.
+    ///
+    /// Returns `None` when the connection failed for a reason already logged here — the
+    /// caller only needs to know it did not become a session. The slot is released on
+    /// every one of those paths, by `self` being consumed.
+    pub async fn establish(self) -> Option<InboundSession> {
+        let Self {
+            incoming,
+            permit,
+            setup_timeout,
+            first_frame_timeout,
+        } = self;
+
+        let conn = match tokio::time::timeout(setup_timeout, incoming).await {
+            Ok(Ok(conn)) => conn,
+            Ok(Err(e)) => {
+                tracing::debug!(error = %e, "inbound QUIC handshake failed");
+                return None;
+            }
+            Err(_elapsed) => {
+                // The half-built `Connection` is dropped inside the cancelled future,
+                // and `noq`'s implicit close means the peer is told rather than left
+                // hanging.
+                tracing::warn!(
+                    timeout_ms = setup_timeout.as_millis(),
+                    "transport.service.handshake_timeout: peer did not complete the QUIC \
+                     handshake; dropping it and releasing its slot"
+                );
+                return None;
+            }
+        };
+
+        // From the peer's TLS certificate, established by the handshake above.
+        let remote = conn.remote_id();
+
+        match tokio::time::timeout(first_frame_timeout, conn.accept_bi()).await {
+            Ok(Ok((send, recv))) => Some(InboundSession {
+                conn,
+                send,
+                recv,
+                remote,
+                _permit: permit,
+            }),
+            Ok(Err(e)) => {
+                tracing::debug!(
+                    %remote,
+                    error = %e,
+                    "peer connected but opened no sync bi-stream"
+                );
+                conn.close(0u32.into(), b"no sync stream");
+                None
+            }
+            Err(_elapsed) => {
+                tracing::warn!(
+                    %remote,
+                    timeout_ms = first_frame_timeout.as_millis(),
+                    "transport.service.first_frame_timeout: peer completed the handshake \
+                     but never sent its first frame; dropping it and releasing its slot"
+                );
+                conn.close(0u32.into(), b"no first frame");
+                None
+            }
+        }
     }
 }
 
@@ -342,8 +464,13 @@ impl SyncService {
         bind: SocketAddr,
         prefix_len: u8,
         resolver: DnsResolver,
+        secret: SecretKey,
     ) -> Result<Self, ServiceBindError> {
         let endpoint = lan_only(bind, prefix_len, resolver)?
+            // Without this the endpoint mints a fresh identity on every bind, which is
+            // harmless for a test that dials itself and fatal for anything that stores
+            // an `EndpointId` — see [`identity`](super::identity).
+            .secret_key(secret)
             .alpns(vec![SYNC_ALPN.to_vec()])
             .bind()
             .await?;
@@ -381,23 +508,46 @@ impl SyncService {
         self.endpoint.addr()
     }
 
-    /// Accept the next inbound session, refusing anything past the cap.
+    /// This endpoint's identity: the key a peer dials, and the key mDNS announces.
     ///
-    /// Returns `None` — and only `None` — when the endpoint has been closed. Every
-    /// other non-session outcome (an over-capacity peer, a failed handshake, a peer
-    /// that never opened a stream) is handled internally and the loop continues, so a
-    /// caller's accept loop is not torn down by one bad connection. iroh's own
-    /// `Incoming::accept` docs make the case for the handshake half: a QUIC endpoint
-    /// "listens on a normal UDP socket" and errors there are "likely not caused by the
-    /// application or remote".
+    /// The announcing caller must take it from **here** rather than from anywhere it
+    /// derived a key of its own. A record advertising a key nobody is listening on is
+    /// worse than no record: peers spend a dial budget on it and learn nothing, and
+    /// they cannot tell that outcome from a peer that is merely asleep.
+    #[must_use]
+    pub fn endpoint_id(&self) -> EndpointId {
+        self.endpoint.id()
+    }
+
+    /// The endpoint itself, so an initiator dials from the same socket we accept on.
     ///
-    /// See the module docs for why the permit is taken *before* the handshake and why
-    /// an over-capacity peer is refused rather than made to wait.
+    /// Sharing one endpoint between the two roles is not a shortcut: iroh keeps per-peer
+    /// path state on the endpoint, and a second endpoint would hold a second identity —
+    /// which is precisely the thing `peer_refs.endpoint_id` pins. Two identities for one
+    /// device would make an inbound connection unrecognisable to the peer that just
+    /// synced with us outbound.
+    #[must_use]
+    pub fn endpoint(&self) -> &Endpoint {
+        &self.endpoint
+    }
+
+    /// Admit the next inbound peer, refusing anything past the cap.
+    ///
+    /// Returns as soon as a peer has been *admitted* — a permit taken, nothing waited
+    /// on. The handshake and the first-frame wait belong to
+    /// [`AdmittedConnection::establish`], which the caller is expected to spawn; see the
+    /// module docs for why doing them here made the cap's own bound a per-queue one.
+    ///
+    /// Returns `None` — and only `None` — when the endpoint has been closed. An
+    /// over-capacity peer is refused and the loop continues, so a caller's accept loop
+    /// is not torn down by one bad connection. iroh's own `Incoming::accept` docs make
+    /// the case: a QUIC endpoint "listens on a normal UDP socket" and errors there are
+    /// "likely not caused by the application or remote".
     ///
     /// # Errors
     /// Currently never returns `Err`; the fallible signature is the caller-facing
     /// contract, since the recoverable-vs-fatal line moves once this has a supervisor.
-    pub async fn accept(&self) -> Result<Option<InboundSession>, AppError> {
+    pub async fn accept(&self) -> Result<Option<AdmittedConnection>, AppError> {
         loop {
             let Some(incoming) = self.endpoint.accept().await else {
                 // The endpoint was closed. This is the only `None`.
@@ -418,87 +568,14 @@ impl SyncService {
                 continue;
             };
 
-            // Bounded in two phases, because they are two different waits with two
-            // different legitimate durations — see `CONNECTION_SETUP_TIMEOUT` and
-            // `FIRST_FRAME_TIMEOUT`. Either way, a stalled peer must not park the accept
-            // loop, because that would make the other 15 slots unreachable.
-            let setup = Self::set_up(incoming, self.setup_timeout, self.first_frame_timeout);
-
-            // Every non-session arm below drops `permit` on the way out, freeing the
-            // slot — which is the half that makes the bound worth having.
-            let Some(parts) = setup.await else {
-                // `set_up` has already logged which phase failed and why.
-                continue;
-            };
-            let (conn, send, recv, remote) = parts;
-
-            return Ok(Some(InboundSession {
-                conn,
-                send,
-                recv,
-                remote,
-                _permit: permit,
+            // The budgets are copied out now rather than read at `establish` time, so a
+            // spawned setup cannot outlive a borrow of the service.
+            return Ok(Some(AdmittedConnection {
+                incoming,
+                permit,
+                setup_timeout: self.setup_timeout,
+                first_frame_timeout: self.first_frame_timeout,
             }));
-        }
-    }
-
-    /// Complete the QUIC handshake, then take the bi-stream the peer speaks on.
-    ///
-    /// Each phase carries its own budget, and they are not the same number. The first is
-    /// a handshake and nothing else; the second waits on the peer's first frame, which
-    /// it cannot send until `orch.start()` has read its heads and version vectors out of
-    /// the database. [`FIRST_FRAME_TIMEOUT`] documents why collapsing the two was wrong.
-    ///
-    /// Returns `None` when the connection failed for a reason already logged here — the
-    /// caller only needs to know it did not become a session.
-    async fn set_up(
-        incoming: Incoming,
-        handshake_budget: Duration,
-        first_frame_budget: Duration,
-    ) -> Option<(Connection, SendStream, RecvStream, EndpointId)> {
-        let conn = match tokio::time::timeout(handshake_budget, incoming).await {
-            Ok(Ok(conn)) => conn,
-            Ok(Err(e)) => {
-                tracing::debug!(error = %e, "inbound QUIC handshake failed");
-                return None;
-            }
-            Err(_elapsed) => {
-                // The half-built `Connection` is dropped inside the cancelled future,
-                // and `noq`'s implicit close means the peer is told rather than left
-                // hanging.
-                tracing::warn!(
-                    timeout_ms = handshake_budget.as_millis(),
-                    "transport.service.handshake_timeout: peer did not complete the QUIC \
-                     handshake; dropping it and releasing its slot"
-                );
-                return None;
-            }
-        };
-
-        // From the peer's TLS certificate, established by the handshake above.
-        let remote = conn.remote_id();
-
-        match tokio::time::timeout(first_frame_budget, conn.accept_bi()).await {
-            Ok(Ok((send, recv))) => Some((conn, send, recv, remote)),
-            Ok(Err(e)) => {
-                tracing::debug!(
-                    %remote,
-                    error = %e,
-                    "peer connected but opened no sync bi-stream"
-                );
-                conn.close(0u32.into(), b"no sync stream");
-                None
-            }
-            Err(_elapsed) => {
-                tracing::warn!(
-                    %remote,
-                    timeout_ms = first_frame_budget.as_millis(),
-                    "transport.service.first_frame_timeout: peer completed the handshake \
-                     but never sent its first frame; dropping it and releasing its slot"
-                );
-                conn.close(0u32.into(), b"no first frame");
-                None
-            }
         }
     }
 
@@ -620,9 +697,27 @@ mod tests {
             lan_bind(),
             LAN_PREFIX,
             DnsResolver::custom(recorder.clone()),
+            SecretKey::generate(),
         )
         .await
         .expect("a loopback /8 sync service binds")
+    }
+
+    /// Admit **and** set up the next inbound peer, the way the daemon does minus the
+    /// spawn.
+    ///
+    /// Every test below that wants a session wants both halves; keeping the two calls
+    /// together here is what stops each test from having to decide whether it is
+    /// testing admission or setup.
+    async fn accept_session(service: &SyncService) -> InboundSession {
+        service
+            .accept()
+            .await
+            .expect("accept does not fail")
+            .expect("the endpoint is open, so accept must yield an admitted connection")
+            .establish()
+            .await
+            .expect("a well-behaved peer completes setup")
     }
 
     async fn service() -> SyncService {
@@ -694,16 +789,14 @@ mod tests {
 
         for i in 0..MAX_CONCURRENT_RESPONDER_SESSIONS {
             let dialing = dial(peer, service.addr());
-            let session = tokio::time::timeout(TEST_TIMEOUT, service.accept())
+            let session = tokio::time::timeout(TEST_TIMEOUT, accept_session(service))
                 .await
                 .unwrap_or_else(|_| {
                     panic!(
                         "session {i} is inside the cap of {MAX_CONCURRENT_RESPONDER_SESSIONS} \
                          and must be admitted, not made to wait"
                     )
-                })
-                .expect("accept does not fail")
-                .expect("the endpoint is open, so accept must yield a session");
+                });
             sessions.push(session);
             peers.push(
                 tokio::time::timeout(TEST_TIMEOUT, dialing)
@@ -737,11 +830,9 @@ mod tests {
         );
 
         let dialing = dial(&peer, service.addr());
-        let session = tokio::time::timeout(TEST_TIMEOUT, service.accept())
+        let session = tokio::time::timeout(TEST_TIMEOUT, accept_session(&service))
             .await
-            .expect("the accept must not hang")
-            .expect("accept does not fail")
-            .expect("the endpoint is open, so accept must yield a session");
+            .expect("the accept must not hang");
 
         assert_eq!(
             session.remote, expected,
@@ -899,26 +990,30 @@ mod tests {
         peer.close().await;
     }
 
-    // -- 5: a stalled peer cannot park the accept loop --------------------------
+    // -- 5: a stalled peer costs one slot, and nobody else's admission ----------
 
-    /// A peer that completes the handshake and never opens a stream must not stop the
-    /// next peer being admitted.
+    /// A peer stalled mid-setup must not delay the *next* peer's admission at all.
     ///
-    /// This is the failure that defeats the cap with a *single* connection: the permit
-    /// is taken before the handshake and the setup is awaited inline, so without
-    /// [`CONNECTION_SETUP_TIMEOUT`] one stalled peer holds a slot *and* parks the loop,
-    /// making the other 15 slots unreachable no matter how well-behaved the peers
-    /// waiting behind it are. The old stack said the same thing in TLS terms: "16 such
-    /// stalls wedge every responder slot" — except here one suffices.
+    /// # Why this is driven at the production budgets
+    ///
+    /// The previous version of this test set both setup bounds to
+    /// [`TEST_SETUP_TIMEOUT`] (1 s) and asserted the next peer got in afterwards. That
+    /// asserted the bound, not the fix: it passed while setup was still inline, because
+    /// with a 1 s budget "parked on the stalled peer" and "admitted promptly" are a
+    /// second apart. The real cost of inline setup is the *production* budget —
+    /// [`FIRST_FRAME_TIMEOUT`], 180 s — charged to everyone queued behind.
+    ///
+    /// So this one leaves the budgets alone. With setup off the accept loop the second
+    /// peer is admitted in milliseconds; with setup inline it waits 180 s, and
+    /// [`ADMISSION_DEADLINE`] fails long before that. That gap is what makes the
+    /// assertion about #3485's fix rather than about the constant.
     ///
     /// The load-bearing assertion is that the *second* peer is admitted. Asserting only
     /// that the stalled peer is dropped would be satisfiable by a service that had
     /// stopped accepting entirely, which is the very thing this is about.
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_peer_that_stalls_before_opening_a_stream_does_not_park_the_accept_loop() {
-        let mut service = service().await;
-        service.set_setup_budgets(TEST_SETUP_TIMEOUT);
-        let service = Arc::new(service);
+    async fn a_stalled_peers_setup_does_not_delay_the_next_peers_admission() {
+        let service = Arc::new(service().await);
         let peer = peer_endpoint().await;
 
         // The stalled peer: completes the handshake, opens no stream, and holds the
@@ -940,11 +1035,28 @@ mod tests {
             }
         });
 
-        // The service has to be pumping for the stalled peer's handshake to complete at
-        // all — which is what puts the accept loop inside the window under test.
-        let accepting = tokio::spawn({
-            let service = Arc::clone(&service);
-            async move { service.accept().await }
+        // The daemon's shape, all of it inside one task and one deadline: admit the
+        // stalled peer, spawn its setup, then admit the next peer.
+        //
+        // Timing the *whole* sequence rather than only the second `accept` is what makes
+        // the assertion about the fix. A deadline around the second accept alone cannot
+        // see inline setup at all: the stall would elapse before the timeout was even
+        // armed, and the accept it wraps would then return promptly. Forcing that
+        // version red proved it — it passed with the spawn removed.
+        let service_for_loop = Arc::clone(&service);
+        let peer_for_loop = peer.clone();
+        let sequence = tokio::spawn(async move {
+            let first = service_for_loop
+                .accept()
+                .await
+                .expect("accept does not fail")
+                .expect("the endpoint is open, so accept must yield an admitted connection");
+            let stalled_setup = tokio::spawn(async move { first.establish().await });
+
+            let dialing = dial(&peer_for_loop, service_for_loop.addr());
+            let session = accept_session(&service_for_loop).await;
+            let held = dialing.await.expect("the dialing task does not panic");
+            (session, held, stalled_setup)
         });
 
         tokio::time::timeout(TEST_TIMEOUT, handshaked_rx)
@@ -952,44 +1064,97 @@ mod tests {
             .expect("the stalled peer's handshake must complete")
             .expect("the handshake signal is not dropped");
 
-        // Only now dial the well-behaved peer, so it is unambiguously behind the
-        // stalled one in the single serialized accept loop.
-        let dialing = dial(&peer, service.addr());
-
-        let session = tokio::time::timeout(ADMISSION_DEADLINE, accepting)
+        let (session, held, stalled_setup) = tokio::time::timeout(ADMISSION_DEADLINE, sequence)
             .await
             .expect(
-                "a well-behaved peer must be admitted while a stalled one is timed out: \
-                 the accept loop was still parked on the stalled peer after the \
+                "a well-behaved peer must be admitted while a stalled one is still in \
+                 setup: the accept loop was parked on the stalled peer past the \
                  admission deadline, so one connection has made every remaining slot \
-                 unreachable",
+                 unreachable for as long as its first-frame budget lasts",
             )
-            .expect("the accept task does not panic")
-            .expect("accept does not fail")
-            .expect("the endpoint is open, so accept must yield a session");
-
-        let held = tokio::time::timeout(TEST_TIMEOUT, dialing)
-            .await
-            .expect("the well-behaved peer's dial completes")
-            .expect("the dialing task does not panic");
+            .expect("the responder sequence does not panic");
 
         assert_eq!(
             session.remote,
             peer.id(),
             "the admitted session must be the well-behaved peer's"
         );
-        // The stalled peer's slot must have come back. If the elapsed path leaked its
-        // permit this reads one lower, and no timeout in this test would say so.
-        assert_eq!(
-            service.available_permits(),
-            MAX_CONCURRENT_RESPONDER_SESSIONS - 1,
-            "only the one live session may hold a slot: the stalled peer's permit must \
-             be released when its setup times out, not leaked"
-        );
 
+        stalled_setup.abort();
         stalled.abort();
         drop(held);
         drop(session);
+        service.close().await;
+        peer.close().await;
+    }
+
+    /// A stalled peer's slot comes back when its setup budget elapses.
+    ///
+    /// The companion to the test above, and separate from it on purpose: that one runs
+    /// at the production budgets so the *queue* claim is honest, and no test can wait
+    /// out 180 s to see the release. This one drives the bound short and asserts only
+    /// the release. Both halves are needed — a service that never releases passes the
+    /// first, and a service that never accepts passes the second.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_stalled_peers_slot_comes_back_when_its_setup_budget_elapses() {
+        let mut service = service().await;
+        service.set_setup_budgets(TEST_SETUP_TIMEOUT);
+        let service = Arc::new(service);
+        let peer = peer_endpoint().await;
+
+        let (handshaked_tx, handshaked_rx) = tokio::sync::oneshot::channel();
+        let stalled = tokio::spawn({
+            let peer = peer.clone();
+            let addr = service.addr();
+            async move {
+                let conn = peer
+                    .connect(addr, SYNC_ALPN)
+                    .await
+                    .expect("the stalled peer completes its handshake");
+                let _ = handshaked_tx.send(());
+                tokio::time::sleep(TEST_TIMEOUT).await;
+                drop(conn);
+            }
+        });
+
+        let admitted = service
+            .accept()
+            .await
+            .expect("accept does not fail")
+            .expect("the endpoint is open, so accept must yield an admitted connection");
+        assert_eq!(
+            service.available_permits(),
+            MAX_CONCURRENT_RESPONDER_SESSIONS - 1,
+            "admission takes the permit before the handshake, so the slot must already \
+             be spoken for here"
+        );
+
+        let setup = tokio::spawn(async move { admitted.establish().await });
+
+        tokio::time::timeout(TEST_TIMEOUT, handshaked_rx)
+            .await
+            .expect("the stalled peer's handshake must complete")
+            .expect("the handshake signal is not dropped");
+
+        let outcome = tokio::time::timeout(TEST_TIMEOUT, setup)
+            .await
+            .expect("the stalled setup must give up on its own budget, not hang")
+            .expect("the setup task does not panic");
+        assert!(
+            outcome.is_none(),
+            "a peer that never opens a stream must not become a session"
+        );
+
+        // Read synchronously, right after the task that held the permit resolved. If the
+        // elapsed path leaked it this reads one lower, and no timeout would say so.
+        assert_eq!(
+            service.available_permits(),
+            MAX_CONCURRENT_RESPONDER_SESSIONS,
+            "the stalled peer's permit must be released when its setup budget elapses, \
+             not held until the connection eventually dies"
+        );
+
+        stalled.abort();
         service.close().await;
         peer.close().await;
     }
@@ -1108,10 +1273,15 @@ mod tests {
         // `map(|_| ())` before `expect_err`: on the failing path the Ok value is a whole
         // bound `SyncService`, whose Debug dump is ~30 KB of iroh internals and buries
         // the message. Discarding it keeps the diagnosis readable.
-        let err = SyncService::bind(lan_bind(), 0, DnsResolver::custom(RecordingResolver::new()))
-            .await
-            .map(|_| ())
-            .expect_err("a /0 prefix confines nothing and must be rejected");
+        let err = SyncService::bind(
+            lan_bind(),
+            0,
+            DnsResolver::custom(RecordingResolver::new()),
+            SecretKey::generate(),
+        )
+        .await
+        .map(|_| ())
+        .expect_err("a /0 prefix confines nothing and must be rejected");
 
         assert!(
             matches!(
@@ -1143,6 +1313,7 @@ mod tests {
             taken,
             LAN_PREFIX,
             DnsResolver::custom(RecordingResolver::new()),
+            SecretKey::generate(),
         )
         .await
         .map(|_| ())
@@ -1176,11 +1347,9 @@ mod tests {
         let peer = peer_endpoint().await;
 
         let dialing = dial(&peer, service.addr());
-        let session = tokio::time::timeout(TEST_TIMEOUT, service.accept())
+        let session = tokio::time::timeout(TEST_TIMEOUT, accept_session(&service))
             .await
-            .expect("the accept must not hang")
-            .expect("accept does not fail")
-            .expect("the endpoint is open, so accept must yield a session");
+            .expect("the accept must not hang");
         let held = tokio::time::timeout(TEST_TIMEOUT, dialing)
             .await
             .expect("the dial completes")

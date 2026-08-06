@@ -45,8 +45,31 @@ pub mod driver;
 /// drive them — see [`driver`] for that.
 pub mod service;
 
+/// This device's long-lived iroh secret key, and its persistence.
+///
+/// Separate from [`endpoint`] because the key outlives any one endpoint and, unlike
+/// everything else here, is a thing on disk: `peer_refs.endpoint_id` is only a pin if
+/// the key behind it survives a restart.
+pub mod identity;
+
+/// A live QUIC bi-stream between two loopback endpoints, for tests.
+///
+/// Gated rather than `#[cfg(test)]` so the app crate's own sync tests — which live
+/// across a crate boundary — can build on it, the same way they built on
+/// `sync_net::test_connection_pair`.
+#[cfg(any(test, feature = "test-util"))]
+pub mod test_support;
+
 pub use bulk::{BULK_COPY_BYTES, recv_bulk, send_bulk};
 pub use driver::{Role, SessionEnd, SessionLimits, Shutdown, finish_session, run_session};
 pub use endpoint::{RecordingResolver, is_publicly_routable, lan_only};
-pub use service::{InboundSession, SYNC_ALPN, ServiceBindError, SyncService};
+pub use identity::get_or_create_endpoint_secret;
+/// This device's iroh secret key type, re-exported so the app crate can thread one
+/// through boot without taking a direct `iroh` dependency — the whole point of
+/// `agaric-sync` owning the transport.
+pub use iroh::SecretKey;
+pub use service::{AdmittedConnection, InboundSession, SYNC_ALPN, ServiceBindError, SyncService};
 pub use session::{MAX_FRAME_SIZE, recv_sync_message, send_sync_message};
+pub use session::{RECV_TIMEOUT, recv_sync_message_within};
+#[cfg(any(test, feature = "test-util"))]
+pub use test_support::{QuicPair, ServiceHarness, TestSide, quic_pair};

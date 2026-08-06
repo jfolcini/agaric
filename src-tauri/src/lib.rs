@@ -743,14 +743,14 @@ fn init_logging<R: tauri::Runtime>(app: &tauri::App<R>, app_data_dir: &std::path
 /// Boot-phase 3 — open the read/write SQLite pools and resolve the persistent
 /// device UUID + sync TLS certificate.
 ///
-/// Returns the owned `(pools, device_id, sync_cert)` triple; the caller
+/// Returns the owned `(pools, device_id, endpoint_secret)` triple; the caller
 /// threads these (by reference, via cheap `Arc` clones) through the rest of
 /// boot and finally moves the originals into managed state.
 #[allow(clippy::type_complexity)]
 fn init_persistence(
     db_path: &std::path::Path,
     app_data_dir: &std::path::Path,
-) -> Result<(db::DbPools, String, agaric_sync::sync_net::SyncCert), Box<dyn std::error::Error>> {
+) -> Result<(db::DbPools, String, agaric_sync::transport::SecretKey), Box<dyn std::error::Error>> {
     // Initialize separated read/write pools
     let pools = tauri::async_runtime::block_on(db::init_pools(db_path))?;
 
@@ -766,12 +766,25 @@ fn init_persistence(
         "app started"
     );
 
-    // Read or generate a persistent TLS certificate for sync (#380)
-    let cert_path = app_data_dir.join("sync-cert");
-    let sync_cert = agaric_sync::sync_cert::get_or_create_sync_cert(&cert_path, &device_id)?;
-    tracing::info!(cert_hash = %sync_cert.cert_hash, "TLS cert loaded");
+    // The self-signed TLS certificate this used to load is gone with the transport that
+    // needed it (#3464). Nothing reads it any more: the QUIC handshake authenticates the
+    // peer's ed25519 key, so there is no CN to check and no hash to pin. The file itself
+    // is left on disk rather than deleted — removing a key file is not something a
+    // version bump should do silently, and the PR that retires `sync_net` is where that
+    // decision belongs.
 
-    Ok((pools, device_id, sync_cert))
+    // This device's iroh identity (#78, plan #3464). Loaded rather than generated: it
+    // is what `peer_refs.endpoint_id` pins, so a key that changed at boot would make
+    // every paired peer stop recognising this device.
+    //
+    // Its own file rather than another field in the cert, because the cert is deleted
+    // by the PR that retires `sync_net` and an identity must not outlive its file.
+    let endpoint_key_path = app_data_dir.join("sync-endpoint.key");
+    let endpoint_secret =
+        agaric_sync::transport::get_or_create_endpoint_secret(&endpoint_key_path)?;
+    tracing::info!(endpoint_id = %endpoint_secret.public(), "sync endpoint identity loaded");
+
+    Ok((pools, device_id, endpoint_secret))
 }
 
 /// Boot-phase 4 — construct the lifecycle hooks + materializer and bind the
@@ -1434,7 +1447,7 @@ fn spawn_background_tasks(
 /// Boot-phase 12 — move every still-owned shared piece into Tauri managed
 /// state and install the window-focus → lifecycle listener.
 ///
-/// This consumes `pools`, `device_id`, `sync_cert`, `materializer`, and
+/// This consumes `pools`, `device_id`, `materializer`, and
 /// `scheduler` by value: it is the single point where the originals are
 /// moved, which is why every prior phase took them by reference (cloning the
 /// cheap `Arc`s it needed). The returned `cancel_flag` is shared with the
@@ -1443,13 +1456,11 @@ fn register_managed_state<R: tauri::Runtime>(
     app: &tauri::App<R>,
     pools: db::DbPools,
     device_id: String,
-    sync_cert: agaric_sync::sync_net::SyncCert,
     materializer: materializer::Materializer,
     scheduler: Arc<agaric_sync::sync_scheduler::SyncScheduler>,
     lifecycle: &agaric_sync::foreground::LifecycleHooks,
 ) -> Arc<AtomicBool> {
     use agaric_sync::device::DeviceId;
-    use agaric_sync::sync_cert::PersistedCert;
     use db::{ReadPool, WriteCtx, WritePool};
     use lifecycle::AppLifecycle;
     use tauri::Manager;
@@ -1472,7 +1483,6 @@ fn register_managed_state<R: tauri::Runtime>(
     // in-flight search IPCs. See `cancellation.rs`.
     app.manage(agaric_store::cancellation::CancellationRegistry::new());
     app.manage(device_id);
-    app.manage(PersistedCert::new(sync_cert));
     app.manage(materializer);
 
     // Sync state (#275, #278)
@@ -1577,7 +1587,7 @@ struct SyncDaemonWiring {
     device_id: String,
     materializer: materializer::Materializer,
     scheduler: Arc<agaric_sync::sync_scheduler::SyncScheduler>,
-    cert: agaric_sync::sync_net::SyncCert,
+    endpoint_secret: agaric_sync::transport::SecretKey,
     sink: Arc<dyn agaric_sync::sync_events::SyncEventSink>,
     app_handle: tauri::AppHandle,
     lifecycle: agaric_sync::foreground::LifecycleHooks,
@@ -1617,7 +1627,7 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
                 // context never names `Materializer`.
                 materializer: Arc::new(w.materializer),
                 scheduler: w.scheduler,
-                cert: w.cert,
+                endpoint_secret: w.endpoint_secret,
                 event_sink: w.sink,
                 cancel: w.cancel_flag,
                 lifecycle: w.lifecycle,
@@ -2110,7 +2120,8 @@ pub fn run() {
                 deeplink::register_deeplink_handlers(app.handle());
 
                 // Open the read/write pools and resolve device-id + sync cert.
-                let (pools, device_id, sync_cert) = init_persistence(&db_path, &app_data_dir)?;
+                let (pools, device_id, endpoint_secret) =
+                    init_persistence(&db_path, &app_data_dir)?;
 
                 // C-2b: build the materializer BEFORE recovery so the boot-time
                 // op-log replay can drive ApplyOp tasks through the foreground queue.
@@ -2159,7 +2170,7 @@ pub fn run() {
                     device_id: device_id.clone(),
                     materializer: materializer.clone(),
                     scheduler: scheduler.clone(),
-                    cert: sync_cert.clone(),
+                    endpoint_secret,
                     sink: std::sync::Arc::new(sync_event_sinks::TauriEventSink(
                         app.handle().clone(),
                     )),
@@ -2188,7 +2199,6 @@ pub fn run() {
                     app,
                     pools,
                     device_id,
-                    sync_cert,
                     materializer,
                     scheduler,
                     &lifecycle,

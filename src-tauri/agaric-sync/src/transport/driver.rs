@@ -87,29 +87,55 @@
 //! so losing it re-ships a full snapshot next session and books a clean sync as a
 //! failure the scheduler backs off on.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use iroh::endpoint::{Connection, ConnectionError, RecvStream, SendStream};
 
 use agaric_core::error::AppError;
 
-use agaric_store::cancellation::CancellationToken;
-
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
-use crate::sync_protocol::{SyncOrchestrator, SyncState};
+use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
 use crate::transport::session::{recv_sync_message, send_sync_message};
 
-/// Which end of a session this side drives.
+/// Which end of a session this side drives, and — for the responder — the frame it has
+/// already been handed.
 ///
-/// The only behavioural difference is who speaks first and who waits at the end. It is
-/// deliberately not a capability or a permission — authorization happens at the QUIC
-/// handshake, above this module.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// # Why the responder's opening frame is a field and not a `recv`
+///
+/// An earlier shape had this as a plain `Responder` and let [`run_session`] receive the
+/// opening frame itself, symmetrically with the initiator's `orch.start()`. That is
+/// wrong in a way that reintroduces the exact bug this port was meant to retire.
+///
+/// Authorization does not fully precede the first receive. It does for a *paired* peer:
+/// the QUIC handshake names the key, and the key resolves a `peer_refs` row. It does
+/// **not** for a peer in the pairing window, because the #855 pairing proof rides inside
+/// `HeadExchange` — there is nothing to authorize against until that frame has arrived.
+/// So the responder's order is `recv` → authorize → dispatch, with only the first two
+/// reordered relative to the old stack.
+///
+/// A driver that received *and dispatched* the opening frame collapses those three steps
+/// into two, and the frame reaches `orch.handle_message` before anyone has checked the
+/// proof. That is #3324's bug class: a single unauthenticated frame reaching the
+/// orchestrator, whose `ResetRequired` arm is terminal in any state and leads straight
+/// to a full-vault Loro export.
+///
+/// Carrying the frame in the variant makes the hazard unrepresentable rather than
+/// guarded. The driver cannot dispatch a frame it was not given, and the only way to
+/// give it one is to have received it — which is the point at which a caller has the
+/// frame in hand and can authorize it. No ordering comment can be forgotten, because
+/// there is no ordering left to get wrong.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Role {
     /// Opens the bi-stream and sends the opening `HeadExchange`.
     Initiator,
-    /// Accepts the bi-stream and answers.
-    Responder,
+    /// Answers on a bi-stream the peer opened, starting from the frame the caller has
+    /// already received **and authorized**. See the type's docs.
+    Responder {
+        /// The peer's first frame. [`run_session`] dispatches this before its first
+        /// receive, so whatever authorization the caller owes has already run.
+        opening: SyncMessage,
+    },
 }
 
 /// The two clocks a session runs on.
@@ -303,15 +329,36 @@ pub async fn run_session(
     orch: &mut SyncOrchestrator,
     send: &mut SendStream,
     recv: &mut RecvStream,
-    cancel: Option<&CancellationToken>,
+    cancel: Option<&AtomicBool>,
     limits: SessionLimits,
 ) -> Result<SessionEnd, AppError> {
     let mut spoke_last = false;
 
-    if role == Role::Initiator {
-        let opening = orch.start().await?;
-        send_sync_message(send, &opening).await?;
-        spoke_last = true;
+    match role {
+        Role::Initiator => {
+            let opening = orch.start().await?;
+            send_sync_message(send, &opening).await?;
+            spoke_last = true;
+        }
+        Role::Responder { opening } => {
+            // The caller received this frame and authorized it. Dispatching it here
+            // rather than receiving it here is what makes an unauthorized opening frame
+            // unable to reach `handle_message` at all — see [`Role`].
+            //
+            // It rides the same dispatch budget as every later frame. Under the old
+            // stack this dispatch ran bare until #2539, and it is the heaviest of the
+            // session: per-space Loro exports, a vault-wide soft-deleted read and VV
+            // decodes, all while holding a responder permit and the per-peer lock.
+            let reply = dispatch_within(limits.dispatch, orch.handle_message(opening)).await?;
+            if let Some(reply) = reply {
+                send_sync_message(send, &reply).await?;
+                spoke_last = true;
+            }
+            while let Some(queued) = orch.next_message() {
+                send_sync_message(send, &queued).await?;
+                spoke_last = true;
+            }
+        }
     }
 
     while !orch.is_terminal() {
@@ -319,7 +366,13 @@ pub async fn run_session(
         // (`server.rs:590`, `session_supervisor.rs:1054`, #1605). Without it a
         // shutdown does not land until the recv clock expires, pinning the responder
         // permit and the per-peer lock for up to 180 s instead of one recv cycle.
-        if cancel.is_some_and(CancellationToken::is_cancelled) {
+        // The daemon's own shared flag, not a wrapper around it. `sync_daemon` keys
+        // #2537's cancel-ownership proof on this exact `AtomicBool` and on `SeqCst`
+        // specifically ("a release store does not join the SC total order, which would
+        // let a racing cancel's buffered `true` become visible after `false`"). A second
+        // representation bridged to it would be one more thing to keep in step, and the
+        // failure of that bridge would be a cancel that silently does not land.
+        if cancel.is_some_and(|c| c.load(Ordering::Acquire)) {
             return Err(AppError::InvalidOperation(
                 "[transport::driver] session cancelled".to_owned(),
             ));
@@ -496,6 +549,118 @@ mod tests {
             .with_expected_remote_id(peer_device_id.to_owned())
     }
 
+    /// The barrier: a responder driver dispatches the frame it was **given**, and never
+    /// reads one for itself.
+    ///
+    /// # Why this is the test that matters
+    ///
+    /// The property is negative — "no code path lets an unauthorized opening frame reach
+    /// `orch.handle_message`" — and negative properties are the ones that pass
+    /// vacuously. Asserting that the happy path still works would not see the
+    /// regression: a driver that received its own opening frame produces a *correct*
+    /// session for a well-behaved peer. What it also produces is #3324, because the
+    /// caller's authorization no longer sits between the receive and the dispatch.
+    ///
+    /// So the fixture makes the two orders distinguishable. The peer sends exactly one
+    /// frame, the caller consumes it (standing in for `server.rs`, which authorizes it
+    /// there), and the driver is handed a *different* message. Then the peer goes quiet.
+    ///
+    /// * With the barrier, the driver dispatches what it was given, reaches a terminal
+    ///   state, and never receives at all.
+    /// * Without it, the driver receives — and there is nothing left on the wire, so it
+    ///   sits until [`SessionLimits::recv`] elapses and returns an error.
+    ///
+    /// The receive bound is driven at 250 ms so the failure is a fast, specific
+    /// assertion rather than the harness's hang detector.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_responder_dispatches_the_opening_it_was_given_and_never_recvs_one() {
+        let (responder_pool, _responder_dir) = test_pool().await;
+        let responder_host = Arc::new(RecordingApplyHost::new());
+
+        let listener = lan_builder()
+            .alpns(vec![SYNC_ALPN.to_vec()])
+            .bind()
+            .await
+            .expect("responder endpoint binds");
+        let listener_addr = listener.addr();
+        let connector = lan_builder().bind().await.expect("peer endpoint binds");
+
+        let responder_task = tokio::spawn({
+            let listener = listener.clone();
+            let host = responder_host.clone();
+            async move {
+                let mut orch =
+                    orchestrator(&responder_pool, "device-responder", "device-peer", &host);
+                let conn = listener
+                    .accept()
+                    .await
+                    .expect("an inbound connection")
+                    .await
+                    .expect("QUIC handshake completes");
+                let (mut send, mut recv) = conn.accept_bi().await.expect("peer opens a bi-stream");
+
+                // Stand-in for the responder's own recv + authorize. The frame is
+                // consumed here and deliberately NOT the one handed to the driver, so
+                // "dispatched the given frame" and "dispatched the wire's frame" have
+                // different observable outcomes.
+                let _authorized = recv_sync_message(&mut recv)
+                    .await
+                    .expect("the peer's one frame arrives");
+
+                run_session(
+                    Role::Responder {
+                        opening: SyncMessage::ResetRequired {
+                            reason: "handed in by the caller, not read off the wire".to_owned(),
+                        },
+                    },
+                    &mut orch,
+                    &mut send,
+                    &mut recv,
+                    None,
+                    SessionLimits {
+                        recv: Duration::from_millis(250),
+                        ..SessionLimits::default()
+                    },
+                )
+                .await
+            }
+        });
+
+        let conn = connector
+            .connect(listener_addr, SYNC_ALPN)
+            .await
+            .expect("the peer dials the responder");
+        let (mut send, _recv) = conn.open_bi().await.expect("the peer opens a bi-stream");
+        // One frame, then silence. A locally-opened QUIC stream is invisible to the peer
+        // until something is written on it, so this write is also what makes the
+        // responder's `accept_bi` resolve.
+        send_sync_message(
+            &mut send,
+            &SyncMessage::Error {
+                message: "the frame the driver must not dispatch".to_owned(),
+            },
+        )
+        .await
+        .expect("the peer's one frame is sent");
+
+        let end = tokio::time::timeout(TEST_TIMEOUT, responder_task)
+            .await
+            .expect("the responder task finishes well inside the hang detector")
+            .expect("the responder task does not panic")
+            .expect(
+                "the driver must reach a terminal state from the frame it was handed; an \
+                 error here means it went to the wire for an opening frame instead, which \
+                 is the barrier being gone",
+            );
+
+        assert!(
+            end.needs_snapshot_catchup(),
+            "the terminal state must be the one the *given* opening produces \
+             (ResetRequired), not whatever the wire's frame would have produced; got {:?}",
+            end.state
+        );
+    }
+
     /// The module's whole claim: one function, both ends, a real session between them.
     #[tokio::test(flavor = "multi_thread")]
     async fn one_driver_carries_a_whole_session_for_both_roles() {
@@ -533,8 +698,15 @@ mod tests {
                     .expect("QUIC handshake completes");
                 let (mut send, mut recv) = conn.accept_bi().await.expect("peer opens a bi-stream");
 
+                // The production responder receives this frame, authorizes the peer
+                // behind it, and only then hands it to the driver. The test does the
+                // first and third steps; `server.rs` owns the second.
+                let opening = recv_sync_message(&mut recv)
+                    .await
+                    .expect("the initiator's opening frame arrives");
+
                 let end = run_session(
-                    Role::Responder,
+                    Role::Responder { opening },
                     &mut orch,
                     &mut send,
                     &mut recv,
@@ -911,9 +1083,9 @@ mod tests {
         let (mut send, mut recv) = conn.open_bi().await.expect("bi-stream");
         let mut orch = orchestrator(&pool, "device-initiator", "device-responder", &host);
 
-        let guard = agaric_store::cancellation::CancellationGuard::new();
-        let token = guard.token();
-        guard.cancel();
+        // The daemon's shape: one shared `AtomicBool` that a user cancel sets and a
+        // `CancelGuard` clears. Pre-set here so the first loop iteration observes it.
+        let cancel = AtomicBool::new(true);
 
         // `recv` stays at its production 180 s. If cancellation is not consulted this
         // cannot finish inside the test budget, which is the point.
@@ -924,7 +1096,7 @@ mod tests {
                 &mut orch,
                 &mut send,
                 &mut recv,
-                Some(&token),
+                Some(&cancel),
                 SessionLimits::default(),
             ),
         )

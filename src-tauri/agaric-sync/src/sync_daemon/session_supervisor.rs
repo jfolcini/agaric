@@ -52,21 +52,23 @@ use tracing::instrument;
 use crate::apply_host::ApplyHost;
 use crate::foreground::LifecycleHooks;
 use crate::mdns::{DiscoveredPeer, MdnsService};
+use crate::sync_constants::CONNECT_TIMEOUT;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_net::{self, SyncCert, SyncConnection, SyncServer};
-use crate::sync_protocol::{SyncMessage, SyncOrchestrator, SyncState};
+use iroh::endpoint::{Connection, RecvStream, SendStream};
+use iroh::{Endpoint, EndpointAddr, SecretKey};
+use iroh_dns::dns::DnsResolver;
+
+use crate::sync_protocol::{SyncOrchestrator, SyncState};
 use crate::sync_scheduler::SyncScheduler;
+use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
+use crate::transport::service::{SYNC_ALPN, SyncService};
 use agaric_core::error::AppError;
 use agaric_store::peer_refs::{self, PeerRef};
 
 use super::SharedEventSink;
-use super::discovery::{
-    format_peer_addresses, get_peer_cert_hash, process_discovery_event, resolve_peer_address,
-    should_store_cert_hash,
-};
+use super::discovery::{process_discovery_event, resolve_peer_address};
 use super::server::handle_incoming_sync;
 use super::snapshot_transfer;
-use super::wire;
 
 // ---------------------------------------------------------------------------
 // SyncDaemonContext — owned bundle of daemon-wide startup state
@@ -96,7 +98,14 @@ pub struct SyncDaemonContext {
     // field name is kept for call-site stability.
     pub materializer: Arc<dyn ApplyHost>,
     pub scheduler: Arc<SyncScheduler>,
-    pub cert: SyncCert,
+    /// This device's long-lived iroh identity, loaded from disk by
+    /// [`get_or_create_endpoint_secret`](crate::transport::identity::get_or_create_endpoint_secret).
+    ///
+    /// Replaces `cert: SyncCert`. Not a rename: the certificate proved a *claim* the app
+    /// layer then had to check, while this key **is** the identity a peer pins in
+    /// `peer_refs.endpoint_id`. It must be the same key across restarts or every paired
+    /// peer stops recognising this device.
+    pub endpoint_secret: SecretKey,
     pub event_sink: Arc<dyn SyncEventSink>,
     pub cancel: Arc<AtomicBool>,
     pub lifecycle: LifecycleHooks,
@@ -126,7 +135,7 @@ pub(crate) async fn daemon_loop(
         device_id,
         materializer,
         scheduler,
-        cert,
+        endpoint_secret,
         event_sink,
         cancel,
         lifecycle,
@@ -157,85 +166,123 @@ pub(crate) async fn daemon_loop(
     // The select! loop is simply never triggered. See.
     let mdns = handle_mdns_init_result(MdnsService::new(), &event_sink);
 
-    // 2. Start TLS WebSocket server (responder mode — #615)
-    let resp_pool = pool.clone();
-    let resp_device_id = device_id.clone();
-    let resp_materializer = materializer.clone();
-    let resp_scheduler = scheduler.clone();
-    let resp_event_sink = event_sink.clone();
-    // #1605: clone the daemon's shared cancel flag into the responder
-    // factory so every spawned responder session observes the SAME
-    // shutdown/user-cancel signal the initiator path uses. A flipped flag
-    // aborts an in-progress responder within one recv cycle, freeing its
-    // per-peer lock and #1581 concurrency permit.
-    let resp_cancel = cancel.clone();
-    let (server, port) = SyncServer::start(&cert, move |conn, permit| {
-        let pool = resp_pool.clone();
-        let device_id = resp_device_id.clone();
-        let mat = resp_materializer.clone();
-        let sched = resp_scheduler.clone();
-        let sink = resp_event_sink.clone();
-        let cancel = resp_cancel.clone();
+    // 2. Bind the LAN-only QUIC endpoint (responder mode — #615, #78).
+    //
+    // One endpoint serves both roles: it accepts here and `try_sync_with_peer` dials
+    // from it. Two endpoints would mean two identities, and `peer_refs.endpoint_id`
+    // pins exactly one.
+    let (bind_addr, prefix_len) = lan_bind_target();
+    let service = Arc::new(
+        SyncService::bind(
+            bind_addr,
+            prefix_len,
+            DnsResolver::default(),
+            endpoint_secret,
+        )
+        .await
+        .map_err(|e| AppError::InvalidOperation(format!("[sync_daemon] sync endpoint: {e}")))?,
+    );
+    let endpoint_id = service.endpoint_id();
+    let port = service
+        .addr()
+        .ip_addrs()
+        .next()
+        .map_or(0, std::net::SocketAddr::port);
 
-        // Spawn the responder session, then spawn a lightweight watcher
-        // that awaits the handle. The watcher surfaces both graceful
-        // `AppError` failures and fatal `JoinError` (panic / cancel)
-        // outcomes — without it, a responder task could vanish silently.
-        //
-        // #1581: `permit` (the concurrency-cap slot acquired before the TLS
-        // handshake) is moved into the responder task and dropped when
-        // `handle_incoming_sync` resolves, so the slot is held for the whole
-        // session lifetime (up to `RECV_TIMEOUT` = 180 s) and freed on
-        // completion — graceful, error, or panic.
-        let handle: tokio::task::JoinHandle<Result<(), AppError>> = tokio::spawn(async move {
-            let result =
-                handle_incoming_sync(conn, pool, device_id, mat, sched, sink, cancel).await;
-            drop(permit);
-            result
-        });
-        tokio::spawn(async move {
-            match handle.await {
-                Ok(Ok(())) => {}
-                Ok(Err(e)) => {
-                    tracing::warn!(error = %e, "responder sync session failed");
-                }
-                Err(join_err) => {
-                    if join_err.is_panic() {
-                        tracing::error!(
-                            error = %join_err,
-                            "responder sync session panicked"
-                        );
-                    } else {
-                        tracing::error!(
-                            error = %join_err,
-                            "responder sync session was cancelled unexpectedly"
-                        );
+    // #1605: clone the daemon's shared cancel flag into the accept loop so every
+    // spawned responder session observes the SAME shutdown/user-cancel signal the
+    // initiator path uses. A flipped flag aborts an in-progress responder within one
+    // recv cycle, freeing its per-peer lock and its concurrency permit.
+    let accept_task = tokio::spawn({
+        let service = Arc::clone(&service);
+        let pool = pool.clone();
+        let device_id = device_id.clone();
+        let materializer = materializer.clone();
+        let scheduler = scheduler.clone();
+        let event_sink = event_sink.clone();
+        let cancel = cancel.clone();
+        async move {
+            // `accept` returns as soon as a peer is *admitted* — a permit taken, before
+            // the handshake, nothing waited on. The handshake and the first-frame wait
+            // happen in the task spawned below, which is #3485: doing them inline made
+            // one stalled peer park the accept loop for the longer of the two budgets
+            // (now 180 s), so the 16-slot cap was reachable only in theory.
+            while let Ok(Some(admitted)) = service.accept().await {
+                let pool = pool.clone();
+                let device_id = device_id.clone();
+                let mat = materializer.clone();
+                let sched = scheduler.clone();
+                let sink = event_sink.clone();
+                let cancel = cancel.clone();
+
+                // Spawn the session, then spawn a lightweight watcher that awaits the
+                // handle. The watcher surfaces both graceful `AppError` failures and
+                // fatal `JoinError` (panic / cancel) outcomes — without it a responder
+                // task could vanish silently.
+                //
+                // The concurrency permit needs no handling here, unlike the loop this
+                // replaces. It lives inside `AdmittedConnection` and moves into the
+                // `InboundSession`, so it is released by a `Drop` on every path: a setup
+                // that times out, a session that fails, a task that panics, and a task
+                // aborted at shutdown. There is no `drop(permit)` to forget.
+                let handle: tokio::task::JoinHandle<Result<(), AppError>> =
+                    tokio::spawn(async move {
+                        let Some(session) = admitted.establish().await else {
+                            // `establish` has already logged which phase failed.
+                            return Ok(());
+                        };
+                        handle_incoming_sync(session, pool, device_id, mat, sched, sink, cancel)
+                            .await
+                    });
+                tokio::spawn(async move {
+                    match handle.await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(e)) => {
+                            tracing::warn!(error = %e, "responder sync session failed");
+                        }
+                        Err(join_err) => {
+                            if join_err.is_panic() {
+                                tracing::error!(
+                                    error = %join_err,
+                                    "responder sync session panicked"
+                                );
+                            } else {
+                                tracing::error!(
+                                    error = %join_err,
+                                    "responder sync session was cancelled unexpectedly"
+                                );
+                            }
+                        }
                     }
-                }
+                });
             }
-        });
-    })
-    .await?;
+        }
+    });
 
-    // 3. Announcing is deferred to the iroh cutover (#3464, #3488).
+    // 3. Announce over mDNS.
     //
-    // `MdnsService::announce` now requires the `EndpointId` a peer would dial, because
-    // discovery that yields only a `device_id` yields a name and no address — nothing
-    // in an iroh world can act on it. This build has no iroh endpoint yet: the
-    // responder above is still the WebSocket `SyncServer`, so there is no key to
-    // advertise. The two ways to announce anyway are both worse than silence — publish
-    // a `_udp` record for a TCP listener, or mint a key that proves nothing (migration
-    // 0107 records why a synthesised identity is worse than an absent one).
+    // Restored by this cutover. The announce was deferred while `transport` had no
+    // production caller, because `MdnsService::announce` requires the `EndpointId` a
+    // peer would dial and the daemon had none: discovery that yields only a `device_id`
+    // yields a name and no address, which nothing in an iroh world can act on.
     //
-    // Browsing stays wired below; it simply resolves nothing until peers announce
-    // again, which the cutover restores by passing `endpoint.id()` here. LAN sync in
-    // the interim falls back to `peer_refs.last_address`, exactly as it does today for
-    // peers mDNS cannot see.
-    if mdns.is_some() {
-        tracing::info!(
-            port,
-            "SyncDaemon started; mDNS announce deferred to the iroh cutover"
-        );
+    // The key announced is `service.endpoint_id()` — read back from the service that is
+    // actually accepting, not from the secret we handed it and not from any other
+    // derivation. A record advertising a key nobody is listening on is worse than no
+    // record: peers spend a dial budget on it and cannot tell that outcome from a peer
+    // that is merely asleep.
+    if let Some(ref mdns) = mdns {
+        match mdns.announce(&device_id, endpoint_id, port) {
+            Ok(_) => tracing::info!(
+                port,
+                %endpoint_id,
+                "SyncDaemon started; announced over mDNS"
+            ),
+            Err(e) => tracing::warn!(
+                error = %e,
+                "mDNS announce failed; peers must discover this device another way"
+            ),
+        }
     } else {
         tracing::info!(
             port,
@@ -306,7 +353,7 @@ pub(crate) async fn daemon_loop(
                         scheduler: &scheduler,
                         event_sink: &event_sink,
                         cancel: &cancel,
-                        cert: &cert,
+                        endpoint: service.endpoint(),
                     };
                     // KNOWN: the sync session is awaited inline; a slow peer
                     // (bounded by HANDSHAKE_TIMEOUT) blocks the select loop
@@ -336,6 +383,7 @@ pub(crate) async fn daemon_loop(
                     let Some(peer) = resolve_peer_address(
                         &peer_ref.peer_id,
                         peer_ref.last_address.as_deref(),
+                        peer_ref.endpoint_id.as_deref(),
                         &discovered,
                     ) else {
                         continue;
@@ -350,7 +398,7 @@ pub(crate) async fn daemon_loop(
                     let scheduler = scheduler.clone();
                     let event_sink = event_sink.clone();
                     let cancel = cancel.clone();
-                    let cert = cert.clone();
+                    let task_endpoint = service.endpoint().clone();
                     let refs_for_task = refs.clone();
                     join_set.spawn(async move {
                         let ctx = SyncSessionContext {
@@ -360,7 +408,7 @@ pub(crate) async fn daemon_loop(
                             scheduler: &scheduler,
                             event_sink: &event_sink,
                             cancel: &cancel,
-                            cert: &cert,
+                            endpoint: &task_endpoint,
                         };
                         let was_cancelled =
                             try_sync_with_peer(&ctx, &peer, &refs_for_task).await;
@@ -434,7 +482,7 @@ pub(crate) async fn daemon_loop(
                     scheduler: &scheduler,
                     event_sink: &event_sink,
                     cancel: &cancel,
-                    cert: &cert,
+                    endpoint: service.endpoint(),
                 };
                 // KNOWN: sequential inline awaits; shutdown may be delayed
                 // by up to HANDSHAKE_TIMEOUT per due peer. See Branch B's
@@ -453,10 +501,12 @@ pub(crate) async fn daemon_loop(
                     let ctx = &ctx;
                     let refs = &refs;
                     async move {
-                        let last_addr = refs_by_id
-                            .get(pid.as_str())
-                            .and_then(|r| r.last_address.as_deref());
-                        if let Some(peer) = resolve_peer_address(&pid, last_addr, discovered) {
+                        let stored = refs_by_id.get(pid.as_str());
+                        let last_addr = stored.and_then(|r| r.last_address.as_deref());
+                        let bound_key = stored.and_then(|r| r.endpoint_id.as_deref());
+                        if let Some(peer) =
+                            resolve_peer_address(&pid, last_addr, bound_key, discovered)
+                        {
                             let cancelled = try_sync_with_peer(ctx, &peer, refs).await;
                             if cancelled {
                                 tracing::info!(
@@ -492,7 +542,8 @@ pub(crate) async fn daemon_loop(
     }
 
     // Cleanup
-    server.shutdown().await;
+    accept_task.abort();
+    service.close().await;
     if let Some(mdns) = mdns
         && let Err(e) = mdns.shutdown()
     {
@@ -500,6 +551,65 @@ pub(crate) async fn daemon_loop(
     }
     tracing::info!("SyncDaemon shut down cleanly");
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// lan_bind_target — where the QUIC endpoint binds
+// ---------------------------------------------------------------------------
+
+/// The local address and subnet prefix the sync endpoint binds to.
+///
+/// [`lan_only`](crate::transport::endpoint::lan_only) confines egress by binding one
+/// subnet with `is_default_route(false)`, so it needs a real interface address and that
+/// interface's prefix length — not a wildcard. A `0.0.0.0` bind with an invented prefix
+/// would satisfy every check in `lan_only` and install a route for a block that does not
+/// exist, turning the layer-3 confinement into a no-op while all four of its guards
+/// stayed green.
+///
+/// The address policy is `mdns::filter_announceable_addrs`', deliberately: the endpoint
+/// we bind and the addresses we announce must be the same set, or peers dial an address
+/// nothing is listening on. The prefix comes from the interface's own netmask rather
+/// than being guessed per RFC 1918 range, because a /24 subnet inside `10.0.0.0/8` is
+/// the common home-network shape and binding it as a /8 would confine nothing useful.
+///
+/// # The narrowing this leaves, stated rather than hidden
+///
+/// It returns **one** interface. A device on both WiFi and Ethernet accepts on only one
+/// of them, which is the very multi-homed case the initiator's dial-racing improves. The
+/// outbound half genuinely got better; the inbound half did not, because `lan_only`
+/// takes a single bind address. Widening it means letting `lan_only` take a set, and its
+/// four LAN-posture guards are written against a single bind — so that is a change with
+/// its own test story, not a line here.
+///
+/// The loopback fallback is what a machine with no private IPv4 interface gets. It binds
+/// and accepts nothing from outside, which is the honest answer to "there is no LAN":
+/// failing to start the daemon would take the rest of it (scheduler, discovery,
+/// dormancy) down with it.
+fn lan_bind_target() -> (std::net::SocketAddr, u8) {
+    let interfaces = if_addrs::get_if_addrs().unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "if_addrs::get_if_addrs failed; binding loopback only");
+        Vec::new()
+    });
+    for iface in &interfaces {
+        let if_addrs::IfAddr::V4(v4) = &iface.addr else {
+            continue;
+        };
+        if !v4.ip.is_private() {
+            continue;
+        }
+        let prefix = u8::try_from(u32::from(v4.netmask).count_ones()).unwrap_or(24);
+        return (
+            std::net::SocketAddr::from((v4.ip, 0)),
+            prefix.max(crate::transport::endpoint::MIN_IPV4_PREFIX_LEN),
+        );
+    }
+    tracing::warn!(
+        "no RFC 1918 private IPv4 interface found; the sync endpoint binds loopback only"
+    );
+    (
+        std::net::SocketAddr::from((std::net::Ipv4Addr::LOCALHOST, 0)),
+        crate::transport::endpoint::MIN_IPV4_PREFIX_LEN,
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -585,50 +695,6 @@ async fn list_peer_refs_or_empty(pool: &SqlitePool, cycle: &'static str) -> Vec<
 }
 
 // ---------------------------------------------------------------------------
-// Try_connect_each_address — multi-address connect helper
-// ---------------------------------------------------------------------------
-
-/// Attempt `sync_net::connect_to_peer` against each address in
-/// `addresses` in order, returning the first successful connection
-/// together with the address that worked (so the caller can persist it
-/// as `last_address`). If every attempt fails, the returned `Err`
-/// concatenates the individual error strings so logs / events surface
-/// exactly which addresses failed and why.
-///
-/// Empty `addresses` is the caller's responsibility — this function
-/// returns a generic "no addresses tried" error rather than panicking.
-async fn try_connect_each_address(
-    addresses: &[String],
-    cert_hash: Option<&str>,
-    cert: &SyncCert,
-    peer_id: &str,
-) -> Result<(SyncConnection, String), AppError> {
-    let mut errors: Vec<String> = Vec::with_capacity(addresses.len());
-    for addr in addresses {
-        match sync_net::connect_to_peer(addr, cert_hash, Some(peer_id), cert).await {
-            Ok(conn) => return Ok((conn, addr.clone())),
-            Err(e) => {
-                tracing::debug!(
-                    peer_id,
-                    addr,
-                    error = %e,
-                    "connect_to_peer failed; trying next advertised address"
-                );
-                errors.push(format!("{addr}: {e}"));
-            }
-        }
-    }
-    Err(AppError::InvalidOperation(if errors.is_empty() {
-        format!("[sync_daemon] {peer_id}: no addresses tried")
-    } else {
-        format!(
-            "[sync_daemon] {peer_id}: all addresses failed — {}",
-            errors.join("; ")
-        )
-    }))
-}
-
-// ---------------------------------------------------------------------------
 // SyncSessionContext — bundle of session-wide state shared across calls
 // ---------------------------------------------------------------------------
 
@@ -660,7 +726,14 @@ pub struct SyncSessionContext<'a> {
     pub scheduler: &'a SyncScheduler,
     pub event_sink: &'a Arc<dyn SyncEventSink>,
     pub cancel: &'a AtomicBool,
-    pub cert: &'a SyncCert,
+    /// The endpoint the daemon accepts on, dialled from for outbound sessions too.
+    ///
+    /// Deliberately the *same* endpoint rather than a second one: iroh keeps per-peer
+    /// path state on it, and a second endpoint would carry a second identity — which is
+    /// exactly what `peer_refs.endpoint_id` pins. Two identities for one device would
+    /// make our inbound connection unrecognisable to the peer we just synced with
+    /// outbound.
+    pub endpoint: &'a Endpoint,
 }
 
 // ---------------------------------------------------------------------------
@@ -744,7 +817,7 @@ impl Drop for CancelGuard<'_> {
 /// peer in the round should still be attempted on its own merits. The
 /// only path that returns `true` is the one where `run_sync_session`
 /// actually executed and the cancel flag was observed (typically because
-/// `run_sync_session` returned `Err("sync cancelled by user")`).
+/// `run_sync_session` returned `Err("[transport::driver] session cancelled")`).
 ///
 /// The `_cancel_guard` (a Drop scope guard, S-11) clears the flag on
 /// Drop — but only when this task actually ran a real session and thus
@@ -805,18 +878,57 @@ pub async fn try_sync_with_peer(
         return false;
     };
 
-    // 3. Resolve all addresses from discovered peer info, in connection
-    // Priority order. Empty list ⇒ no useable address.
-    let addrs = format_peer_addresses(peer);
-    if addrs.is_empty() {
-        tracing::warn!(peer_id, "peer has no addresses, skipping sync");
+    // 3. The peer's key. Under iroh this is what a dial names; addresses are only
+    //    candidate paths to an already-named endpoint.
+    //
+    //    A discovered peer without one cannot be dialled at all, which is why
+    //    `mdns::parse_service_event` refuses an announcement whose TXT record has no
+    //    parseable `endpoint_id`: "we discovered a peer" and "we can attempt a session"
+    //    have to stay the same statement.
+    let Some(endpoint_id) = peer.endpoint_id else {
+        tracing::warn!(
+            peer_id,
+            "peer announced no endpoint id, skipping sync (nothing to dial)"
+        );
         // No real session ran, cancellation is moot for this peer.
         // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
-    }
+    };
 
-    // 4. Look up cert hash for TLS certificate pinning
-    let cert_hash = get_peer_cert_hash(peer_id, peer_refs);
+    // 4. The pinned-identity check, which replaces the B-33 cert-hash pin.
+    //
+    //    If we have already bound a key to this peer and the announcement carries a
+    //    different one, refuse. Under the old stack this was a hash compared against a
+    //    separately-claimed identity; here the key *is* the identity, so a mismatch is
+    //    not "wrong certificate for the right device" but "a different device using
+    //    this device's name" — an mDNS TXT record is a claim like any other.
+    //
+    //    An unbound peer falls through to bind on success below. That TOFU is the same
+    //    one the old initiator performed with `upsert_peer_ref_with_cert`, and after an
+    //    upgrade it is the path by which every migrated pair re-acquires a binding,
+    //    since `0107` could not backfill a key from a certificate hash.
+    let announced_key = endpoint_id.to_string();
+    let pinned = peer_refs
+        .iter()
+        .find(|p| p.peer_id == *peer_id)
+        .and_then(|p| p.endpoint_id.clone());
+    if let Some(ref pinned_key) = pinned
+        && *pinned_key != announced_key
+    {
+        tracing::warn!(
+            peer_id,
+            pinned = %pinned_key,
+            announced = %announced_key,
+            "refusing to sync: the announced endpoint id does not match the one bound \
+             to this peer"
+        );
+        ctx.scheduler.record_failure(peer_id);
+        ctx.event_sink.on_sync_event(SyncEvent::Error {
+            message: "peer identity does not match the one paired with this device".into(),
+            remote_device_id: peer_id.clone(),
+        });
+        return false;
+    }
 
     // 5. Emit "connecting" progress event
     ctx.event_sink.on_sync_event(SyncEvent::Progress {
@@ -826,33 +938,84 @@ pub async fn try_sync_with_peer(
         ops_sent: 0,
     });
 
-    // 6. try every advertised address in order (IPv4 → IPv6
-    //    non-link-local → IPv6 link-local). The first successful TLS
-    //    handshake wins; if all fail, surface a combined error so the
-    //    user can see exactly which addresses were attempted instead of
-    //    wondering why a dual-stacked peer entered backoff.
-    let (mut conn, addr) =
-        match try_connect_each_address(&addrs, cert_hash.as_deref(), ctx.cert, peer_id).await {
-            Ok((conn, addr)) => (conn, addr),
-            Err(combined) => {
-                tracing::warn!(
-                    peer_id,
-                    attempts = addrs.len(),
-                    error = %combined,
-                    "failed to connect to peer at any advertised address"
-                );
-                ctx.scheduler.record_failure(peer_id);
-                ctx.event_sink.on_sync_event(SyncEvent::Error {
-                    message: format!("Connection failed: {combined}"),
-                    remote_device_id: peer_id.clone(),
-                });
-                // Connection never established, no real session ran.
-                // #637: guard.owns is still false → don't clear a sibling's
-                // cancel; this early-exit must not swallow a pending user
-                // cancel aimed at a still-running peer.
-                return false;
-            }
-        };
+    // 6. Dial.
+    //
+    //    Every advertised address goes in at once and iroh races them. The sequential
+    //    loop this replaces paid a full connect timeout on a dead path before trying a
+    //    live one, which is exactly the multi-homed LAN case — a device on both WiFi and
+    //    Ethernet — that the address list exists for. `peer_refs.last_address` goes with
+    //    the loop: iroh keeps its own per-endpoint path state, so a column the daemon
+    //    writes and nothing reads is worse than no column.
+    let mut addr = EndpointAddr::new(endpoint_id);
+    for ip in &peer.addresses {
+        addr = addr.with_ip_addr(std::net::SocketAddr::new(*ip, peer.port));
+    }
+    // Bounded, because iroh's own dial budget is ~30 s and this runs while holding the
+    // per-peer lock and a slot in the round's `JoinSet`.
+    //
+    // The value is `sync_constants::CONNECT_TIMEOUT`'s and its **scope is re-derived,
+    // not inherited**. It used to bound one `connect_async_tls_with_config` — TCP
+    // connect plus TLS handshake plus WebSocket upgrade against *one* address — with
+    // `try_connect_each_address` paying it again per candidate, so N dead addresses cost
+    // N budgets. Here it bounds the whole dial, because iroh races every candidate path
+    // itself: one budget covers all of them. Same number, strictly narrower scope, and
+    // the multi-homed case it was worst for (WiFi plus Ethernet, one path dead) now
+    // costs one budget rather than two.
+    let dialed = tokio::time::timeout(CONNECT_TIMEOUT, ctx.endpoint.connect(addr, SYNC_ALPN)).await;
+    let conn = match dialed {
+        Err(_elapsed) => {
+            tracing::warn!(
+                peer_id,
+                candidates = peer.addresses.len(),
+                timeout_s = CONNECT_TIMEOUT.as_secs(),
+                "peer did not answer the dial within the connect budget"
+            );
+            ctx.scheduler.record_failure(peer_id);
+            ctx.event_sink.on_sync_event(SyncEvent::Error {
+                message: format!(
+                    "Connection failed: peer did not answer within {}s",
+                    CONNECT_TIMEOUT.as_secs()
+                ),
+                remote_device_id: peer_id.clone(),
+            });
+            return false;
+        }
+        Ok(Ok(conn)) => conn,
+        Ok(Err(e)) => {
+            tracing::warn!(
+                peer_id,
+                candidates = peer.addresses.len(),
+                error = %e,
+                "failed to connect to peer"
+            );
+            ctx.scheduler.record_failure(peer_id);
+            ctx.event_sink.on_sync_event(SyncEvent::Error {
+                message: format!("Connection failed: {e}"),
+                remote_device_id: peer_id.clone(),
+            });
+            // Connection never established, no real session ran.
+            // #637: guard.owns is still false → don't clear a sibling's cancel; this
+            // early-exit must not swallow a pending user cancel aimed at a
+            // still-running peer.
+            return false;
+        }
+    };
+
+    // The initiator opens the bi-stream. Note a locally-opened QUIC stream is invisible
+    // to the peer until something is written on it, so it is `run_session`'s opening
+    // `HeadExchange` — not this call — that makes the responder's `accept_bi` resolve.
+    let (mut send, mut recv) = match conn.open_bi().await {
+        Ok(halves) => halves,
+        Err(e) => {
+            tracing::warn!(peer_id, error = %e, "failed to open a sync stream to peer");
+            ctx.scheduler.record_failure(peer_id);
+            ctx.event_sink.on_sync_event(SyncEvent::Error {
+                message: format!("Connection failed: {e}"),
+                remote_device_id: peer_id.clone(),
+            });
+            return false;
+        }
+    };
 
     // 7. Run sync protocol through the orchestrator
     //
@@ -892,7 +1055,9 @@ pub async fn try_sync_with_peer(
 
     match run_sync_session(
         &mut orch,
-        &mut conn,
+        &mut send,
+        &mut recv,
+        &conn,
         ctx.cancel,
         ctx.pool,
         ctx.materializer,
@@ -902,20 +1067,44 @@ pub async fn try_sync_with_peer(
     {
         Ok(()) => {
             ctx.scheduler.record_success(peer_id);
-            // Save the peer's address for future direct connections
-            if let Err(e) = peer_refs::update_last_address(ctx.pool, peer_id, &addr).await {
+            // Remember one address that worked, alongside the key.
+            //
+            // Plan #3464 expected this column to lose its meaning, on the reasoning that
+            // iroh keeps its own per-`EndpointId` path state. That holds *within a
+            // process*. It does not survive a restart, and the LAN-only endpoint calls
+            // `clear_address_lookup()`, so mDNS is the only discovery there is — which
+            // makes this the only way a fresh start reaches a paired peer that has not
+            // announced yet. It is no longer a dial *order* (iroh races candidates, so
+            // the sequential loop and its "try this one first" optimisation are both
+            // gone); it is a cached candidate path, and it is only usable in company
+            // with the bound key. See `discovery::resolve_peer_address`.
+            if let Err(e) = peer_refs::update_last_address(
+                ctx.pool,
+                peer_id,
+                &format!(
+                    "{}:{}",
+                    peer.addresses
+                        .first()
+                        .map_or_else(|| std::net::IpAddr::from([0, 0, 0, 0]), |ip| *ip),
+                    peer.port
+                ),
+            )
+            .await
+            {
                 tracing::warn!(peer_id, error = %e, "failed to save peer address");
             }
-            // TOFU: Store observed cert hash if none was stored (initiator side)
-            if should_store_cert_hash(cert_hash.as_deref(), conn.peer_cert_hash().as_deref())
-                && let Some(ref observed) = conn.peer_cert_hash()
-                && let Err(e) =
-                    peer_refs::upsert_peer_ref_with_cert(ctx.pool, peer_id, observed).await
+            //
+            // `bind_endpoint_id` touches only its own column, so re-binding preserves
+            // this peer's version vectors and sync state — a device that merely
+            // re-paired must not be reset.
+            if pinned.is_none()
+                && let Err(e) = peer_refs::bind_endpoint_id(ctx.pool, peer_id, &announced_key).await
             {
                 tracing::warn!(
                     peer_id,
+                    endpoint_id = %announced_key,
                     error = %e,
-                    "failed to store peer cert hash (TOFU)"
+                    "failed to bind the peer's endpoint id (TOFU)"
                 );
             }
             // #2539 (item 2): NO daemon-level `SyncEvent::Complete` here —
@@ -971,8 +1160,7 @@ pub async fn try_sync_with_peer(
     // Capture the cancel flag's live state BEFORE `_cancel_guard`
     // clears it on Drop. The guard is the *first* local declared in this
     // function so it drops *last* (Rust drops locals in reverse declaration
-    // order); both `conn.close()` below and this read therefore observe
-    // the still-set flag. The returned bool tells the daemon-loop caller
+    // order); this read therefore observes the still-set flag. The returned bool tells the daemon-loop caller
     // whether the user cancelled mid-session so it can break out of the
     // current peer round (see Branch B / Branch C in `daemon_loop`).
     //
@@ -984,9 +1172,11 @@ pub async fn try_sync_with_peer(
 
     // Cancel flag is cleared by `_cancel_guard` (Drop) because we own it.
 
-    let _ = conn.close().await.map_err(|e| {
-        tracing::debug!(error = %e, "failed to close sync connection");
-    });
+    // The connection is closed by `run_sync_session`, which owns the shutdown wait —
+    // the side that spoke last has to hear the peer's close before dropping, or its
+    // final frame is discarded. Dropping `conn` here is the backstop for the paths that
+    // returned before that (a dial that succeeded and a session that never started).
+    drop(conn);
 
     was_cancelled
 }
@@ -1046,9 +1236,16 @@ where
 // records the terminating error; `skip_all` (#632) because the orchestrator
 // + connection carry sync payloads (op/note content).
 #[instrument(name = "sync.run_session", skip_all, err)]
+// Splitting the bi-stream into its two halves is what pushed this past the 7-argument
+// lint, and bundling them back into a struct would undo exactly the thing that makes the
+// borrows work: `&mut side.send` and `&mut side.recv` are disjoint *field* borrows, which
+// a wrapper with two accessors could not hand out simultaneously.
+#[allow(clippy::too_many_arguments)]
 pub async fn run_sync_session(
     orch: &mut SyncOrchestrator,
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
+    conn: &Connection,
     cancel: &AtomicBool,
     pool: &SqlitePool,
     materializer: &Arc<dyn ApplyHost>,
@@ -1059,43 +1256,57 @@ pub async fn run_sync_session(
     // #611: all session-loop sends/recvs go through `wire::{send,recv}_sync_message`
     // so over-threshold LoroSync payloads ride the chunked binary path instead of
     // blowing the 10 MB JSON text-frame cap.
-    let first_msg = orch.start().await?;
-    wire::send_sync_message(conn, &first_msg).await?;
-
-    // Exchange messages until terminal state
-    while !orch.is_terminal() {
-        // Check cancellation before waiting for the next message
-        if cancel.load(Ordering::Acquire) {
-            return Err(AppError::InvalidOperation("sync cancelled by user".into()));
+    // One driver, both roles. The loop this replaces was written twice — here and in
+    // `server.rs` — and the only thing the two shared was the dispatch guard, whose own
+    // doc called itself "the ONE guard shared by all three dispatch sites": an admission
+    // that they had already drifted far enough to need a named remedy.
+    //
+    // `run_session` returns `Ok(SessionEnd { state: Failed(..) })` where this loop
+    // returned `Err`, because a peer-reported failure is a completed session rather than
+    // a transport error. Written out rather than `?`-ed for exactly that reason: a
+    // cutover call site that wrote `run_session(..).await?` would book a failed sync as
+    // a clean one, and the `?` would look right.
+    let end = match run_session(
+        Role::Initiator,
+        orch,
+        send,
+        recv,
+        Some(cancel),
+        SessionLimits::default(),
+    )
+    .await
+    {
+        Ok(end) => end,
+        Err(e) => {
+            // Every failure path out of `run_session` leaves the connection open and
+            // `send` unfinished, which hands it to QUIC's idle timeout. Close it here so
+            // the peer's responder permit and per-peer lock come back promptly.
+            if let Err(close_err) =
+                finish_session(false, send, conn, SessionLimits::default()).await
+            {
+                tracing::debug!(error = %close_err, "failed to close a failed sync session");
+            }
+            return Err(e);
         }
-
-        let incoming: SyncMessage = wire::recv_sync_message(conn).await?;
-        // #2539: same `HANDSHAKE_TIMEOUT` dispatch guard as the responder's
-        // first-message dispatch and message loop (`server.rs`).
-        let response =
-            super::server::dispatch_with_handshake_timeout(orch.handle_message(incoming)).await?;
-        if let Some(response) = response {
-            wire::send_sync_message(conn, &response).await?;
-            // Drain any pending op batches (B-3)
-            while let Some(batch) = orch.next_message() {
-                wire::send_sync_message(conn, &batch).await?;
-            }
-        } else {
-            let state = &orch.session().state;
-            if matches!(state, SyncState::Failed(_)) {
-                return Err(AppError::InvalidOperation(format!(
-                    "sync ended in terminal state: {state:?}"
-                )));
-            }
-            // `ResetRequired` is no longer a terminal failure —
-            // break out of the delta-sync loop and attempt snapshot
-            // catch-up below. Any other `None` branch falls through
-            // and the loop re-checks `is_terminal()`.
-            if matches!(state, SyncState::ResetRequired) {
-                break;
-            }
+    };
+    if let SyncState::Failed(ref reason) = end.state {
+        if let Err(e) = finish_session(false, send, conn, SessionLimits::default()).await {
+            tracing::debug!(error = %e, "failed to close a failed sync session");
         }
+        return Err(AppError::InvalidOperation(format!(
+            "sync ended in terminal state: {reason:?}"
+        )));
     }
+
+    // Who owes the shutdown wait, tracked across the two post-loop phases.
+    //
+    // Keyed on who spoke last, never on the role — the protocol says `SyncComplete` is
+    // "sent once by the puller … in the normal flow that is the initiator; in the
+    // empty-registry short-circuit the responder sends it directly because it had
+    // nothing to stream", so both sides are the terminal sender in some sessions. The
+    // phases below move the answer, which is why it is a variable rather than a field
+    // read at the end.
+    let mut spoke_last = end.spoke_last;
 
     // Snapshot-driven catch-up (post-ResetRequired).
     //
@@ -1125,7 +1336,8 @@ pub async fn run_sync_session(
             device_id: &local_device_id,
         });
         match snapshot_transfer::try_receive_snapshot_catchup(
-            conn,
+            send,
+            recv,
             pool,
             materializer.as_ref(),
             event_sink,
@@ -1149,9 +1361,25 @@ pub async fn run_sync_session(
                     peer_id = %peer_id,
                     "snapshot-driven catch-up complete"
                 );
+                // The receiver of a snapshot answers last (`SnapshotAccept`, then the
+                // bytes flow the other way), so the offering side is a round trip
+                // ahead of us and there is nothing of ours left in flight.
+                if let Err(e) = finish_session(false, send, conn, SessionLimits::default()).await {
+                    tracing::debug!(error = %e, "failed to close after snapshot catch-up");
+                }
                 return Ok(());
             }
             Ok(snapshot_transfer::CatchupOutcome::Rejected { size_bytes }) => {
+                // `spoke_last = true`: rejecting means *we* wrote the last frame
+                // (`SnapshotReject`), so we are a round trip ahead of the peer's read.
+                // Closing without waiting discards it — `Connection::close` lets the
+                // remote "drop any data it received but is as yet undelivered to the
+                // application" — and the offering peer then cannot tell "over your cap"
+                // from "the link died", so it re-offers the same blob on the next tick.
+                // That loop is exactly what #2538 exists to break.
+                if let Err(e) = finish_session(true, send, conn, SessionLimits::default()).await {
+                    tracing::debug!(error = %e, "failed to close after a rejected offer");
+                }
                 // Surface as a session failure so the caller records it
                 // (exponential backoff — the peer is NOT immediately re-due)
                 // and skips the success bookkeeping. The sub-flow already
@@ -1168,6 +1396,11 @@ pub async fn run_sync_session(
                 // (decode/apply failure, unexpected message). Surface the
                 // error here so the scheduler records the failure and
                 // backs off.
+                if let Err(close_err) =
+                    finish_session(false, send, conn, SessionLimits::default()).await
+                {
+                    tracing::debug!(error = %close_err, "failed to close after a failed catch-up");
+                }
                 return Err(e);
             }
         }
@@ -1197,7 +1430,8 @@ pub async fn run_sync_session(
                     remote_device_id: &remote_device_id,
                 };
                 match crate::sync_files::run_file_transfer_initiator(
-                    conn,
+                    send,
+                    recv,
                     pool,
                     &app_data_dir,
                     cancel,
@@ -1219,11 +1453,22 @@ pub async fn run_sync_session(
                         tracing::warn!(error = %e, "initiator file transfer failed (non-fatal)");
                     }
                 }
+                // The initiator's second file-transfer phase ends by *sending*
+                // `FileTransferComplete` (`receive_request_and_send_files`), so it is a
+                // round trip ahead of the responder's read whether the phase succeeded
+                // or failed part-way. The responder's mirror image ends by receiving
+                // one, which is why `server.rs` sets this the other way.
+                spoke_last = true;
             }
             _ => {
                 tracing::warn!("could not determine app_data_dir, skipping file transfer");
             }
         }
+    }
+
+    match finish_session(spoke_last, send, conn, SessionLimits::default()).await {
+        Ok(shutdown) => tracing::debug!(?shutdown, "initiator connection shut down"),
+        Err(e) => tracing::debug!(error = %e, "failed to close initiator connection"),
     }
 
     Ok(())

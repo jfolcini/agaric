@@ -38,10 +38,10 @@ use tokio::task::JoinHandle;
 use crate::apply_host::ApplyHost;
 use crate::foreground::LifecycleHooks;
 use crate::sync_events::{SyncEvent, SyncEventSink};
-use crate::sync_net::SyncCert;
 use crate::sync_scheduler::SyncScheduler;
 use agaric_core::error::AppError;
 use agaric_store::peer_refs;
+use iroh::SecretKey;
 
 // Re-export submodule items
 pub use discovery::{
@@ -64,7 +64,7 @@ pub use session_supervisor::{
 };
 // Same rationale as above: only the test sibling reaches into these.
 #[allow(unused_imports)]
-pub use server::{CertVerifyResult, handle_incoming_sync, verify_peer_cert};
+pub use server::{Rejection, handle_incoming_sync};
 // #2696 — boot-time cleanup of orphaned `snapshot-recv-*.tmp` files,
 // called from the app `setup` hook before the daemon accepts connections.
 pub use snapshot_transfer::sweep_orphaned_snapshot_temps;
@@ -180,7 +180,7 @@ impl SyncDaemon {
         device_id: String,
         materializer: impl Into<Arc<dyn ApplyHost>>,
         scheduler: Arc<SyncScheduler>,
-        cert: SyncCert,
+        endpoint_secret: SecretKey,
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
@@ -189,7 +189,7 @@ impl SyncDaemon {
             device_id,
             materializer: materializer.into(),
             scheduler,
-            cert,
+            endpoint_secret,
             event_sink,
             cancel,
             lifecycle: LifecycleHooks::default(),
@@ -323,7 +323,7 @@ impl SyncDaemon {
         device_id: String,
         materializer: impl Into<Arc<dyn ApplyHost>>,
         scheduler: Arc<SyncScheduler>,
-        cert: SyncCert,
+        endpoint_secret: SecretKey,
         event_sink: Arc<dyn SyncEventSink>,
         cancel: Arc<AtomicBool>,
     ) -> Result<Self, AppError> {
@@ -332,7 +332,7 @@ impl SyncDaemon {
             device_id,
             materializer: materializer.into(),
             scheduler,
-            cert,
+            endpoint_secret,
             event_sink,
             cancel,
             lifecycle: LifecycleHooks::default(),

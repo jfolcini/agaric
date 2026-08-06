@@ -4789,11 +4789,15 @@ async fn loro_sync_inbox_rows_survive_0106_with_a_full_boot_budget_3226() {
 /// `peer_refs` rows keeps every one of them, byte for byte, and the new column
 /// reads NULL rather than being invented.
 ///
-/// This also pins the two columns plan #3464 says *lose their meaning* but
-/// which this stage must NOT remove — `cert_hash` and `last_address` still
-/// have live readers (`sync_net::connect_to_peer`, the `sync_daemon` mDNS
-/// fallback). Reading them back after 0107 is what makes "do not drop them
-/// yet" a test rather than a comment.
+/// This also pins the two columns plan #3464 says *lose their meaning* but which no
+/// migration may remove. Their readers are gone as of the cutover — `cert_hash` was
+/// pinned by `sync_net::connect_to_peer`, which QUIC's handshake replaces, and
+/// `last_address` fed the sequential multi-address dial, which iroh's path racing
+/// replaces — so what this now pins is the stronger claim: **a column losing its last
+/// reader is not a reason to drop it.** Migrations here are append-only, an existing
+/// install's rows are the only record of what was paired before the upgrade, and the
+/// `cert_hash` value is what a downgrade would need. Reading them back after 0107 is
+/// what makes "do not drop them" a test rather than a comment.
 #[tokio::test]
 async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
     let (pool, _dir) = unmigrated_pool().await;
@@ -4878,8 +4882,9 @@ async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
     assert_eq!(
         row.5.as_deref(),
         Some("a".repeat(64).as_str()),
-        "#3464: cert_hash still has live readers (sync_net::connect_to_peer pins \
-         it on reconnect) — 0107 must not drop or clear it"
+        "#3464: cert_hash has no readers after the cutover, which is not a licence \
+         to drop it — migrations here are append-only and an existing row is the \
+         only record of what this install had paired"
     );
     assert_eq!(
         row.6.as_deref(),
@@ -4889,8 +4894,9 @@ async fn peer_refs_0107_endpoint_id_add_preserves_existing_rows_3464() {
     assert_eq!(
         row.7.as_deref(),
         Some("192.168.1.9:7777"),
-        "#3464: last_address still has a live reader (the sync_daemon mDNS \
-         fallback) — 0107 must not drop or clear it"
+        "#3464: last_address stopped being written at the cutover (iroh races \
+         candidate paths and keeps its own per-endpoint state), which is not a \
+         licence to drop the column"
     );
     assert_eq!(row.8, Some(vv), "loro_vv_bytes must survive 0107 verbatim");
     assert_eq!(

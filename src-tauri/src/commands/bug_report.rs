@@ -219,7 +219,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "log directory initialized",
     "running database migrations",
     "database migrations complete",
-    "TLS cert loaded",
+    "sync endpoint identity loaded",
     "boot count query failed; treating as 0",
     "PANIC",
     "failed to build Tauri application",
@@ -234,17 +234,18 @@ const STABLE_MESSAGES: &[&str] = &[
     // sync_daemon — protocol lifecycle.
     "incoming sync connection received, starting responder session",
     "SyncDaemon started successfully",
-    // #3488 replaced "SyncDaemon started, mDNS announced" and "mDNS announce failed
-    // (peer discovery disabled)": announcing now needs an `EndpointId` the daemon does
-    // not have until the iroh cutover wires an endpoint, so neither site exists.
-    "SyncDaemon started; mDNS announce deferred to the iroh cutover",
+    // #3464 restored the announce that #3488 had to defer: the daemon now owns an iroh
+    // endpoint, so it has the `EndpointId` a peer would dial and the record it publishes
+    // names the key it is actually accepting on.
+    "SyncDaemon started; announced over mDNS",
+    "mDNS announce failed; peers must discover this device another way",
     "SyncDaemon shut down cleanly",
     "Failed to start SyncDaemon",
     "Sync will work via manual IP entry only",
-    "rejecting sync with self (remote_id matches local device_id)",
-    "rejecting sync from unpaired device",
+    "rejecting sync with self",
+    "rejecting sync from an unpaired device: no pairing is in progress",
     "responder locked peer for sync",
-    "responder sync ended in non-complete state",
+    "responder sync session finished",
     "responder file transfer failed (non-fatal)",
     "responder sync session failed",
     "could not determine app_data_dir, skipping file transfer",
@@ -253,7 +254,7 @@ const STABLE_MESSAGES: &[&str] = &[
     "mDNS browse failed (peer discovery disabled)",
     "mDNS shutdown error",
     "mDNS initialization failed (peer discovery disabled)",
-    "peer has no addresses, skipping sync",
+    "peer announced no endpoint id, skipping sync (nothing to dial)",
     "failed to save peer address",
     "sync session failed",
     "initiator file transfer failed (non-fatal)",

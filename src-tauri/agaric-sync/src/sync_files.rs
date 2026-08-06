@@ -3,19 +3,31 @@
 //! After the op-sync phase completes (heads exchange → op streaming → merge),
 //! both peers may have `AddAttachment` ops pointing to `fs_path` values that
 //! don't exist locally.  This module provides the file transfer phase that
-//! sends the actual attachment bytes over the existing WebSocket connection.
+//! sends the actual attachment bytes over the session's already-open iroh
+//! QUIC bi-stream (#3464): framed [`SyncMessage`]s via
+//! [`crate::transport::session`], attachment payloads via
+//! [`crate::transport::bulk`].
 //!
 //! **Protocol flow** (after `SyncComplete` exchange):
 //!
 //! 1. **Initiator** computes missing attachments, sends `FileRequest`.
-//! 2. **Responder** sends `FileOffer` + binary data for each, then
+//! 2. **Responder** sends `FileOffer` + payload bytes for each, then
 //!    `FileTransferComplete`.
 //! 3. **Responder** computes missing attachments, sends `FileRequest`.
-//! 4. **Initiator** sends `FileOffer` + binary data for each, then
+//! 4. **Initiator** sends `FileOffer` + payload bytes for each, then
 //!    `FileTransferComplete`.
 //!
-//! Files ≤ 5 MB are sent in a single binary frame; larger files are chunked
-//! into 5 MB frames.  Integrity is verified via blake3 hash.
+//! A file's bytes are one uninterrupted run on the stream — there is no
+//! chunking layer, because a QUIC stream has no message boundary and no
+//! length ceiling to chunk around, and its flow-control window supplies the
+//! backpressure the old 5 MB frame loop was hand-rolling. A zero-byte
+//! attachment therefore puts **zero bytes** on the wire; under the old
+//! transport it was one empty frame. Integrity is still verified via blake3
+//! hash, unchanged.
+//!
+//! Both halves of the bi-stream are borrowed, never opened, finished or
+//! closed here: the file phase runs inside a session that continues with
+//! framed messages on the same stream.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -27,14 +39,18 @@ use futures_util::stream::{self, StreamExt};
 use sqlx::SqlitePool;
 use tokio::io::{AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
-use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
-use crate::sync_net::SyncConnection;
+use iroh::endpoint::{RecvStream, SendStream};
+
 use crate::sync_protocol::SyncMessage;
+use crate::transport::bulk::{recv_bulk, send_bulk};
+use crate::transport::session::{
+    RECV_TIMEOUT, recv_sync_message, recv_sync_message_within, send_sync_message,
+};
 use agaric_core::error::AppError;
 
-// The binary-frame chunk size used by chunked sends/receives lives in
-// `crate::sync_constants::BINARY_FRAME_CHUNK_SIZE` so this module and
-// `sync_daemon::snapshot_transfer` cannot drift apart.
+// There is no chunk size here any more. The copy granularity now lives inside
+// `transport::bulk` as `BULK_COPY_BYTES` — a progress/memory knob, not a wire
+// property, so nothing in this module has to agree with a peer about it.
 
 // ---------------------------------------------------------------------------
 // Types
@@ -62,7 +78,8 @@ pub struct FileTransferStats {
 ///
 /// When `Some(_)`, the file-transfer loops emit
 /// [`SyncEvent::FileProgress`](crate::sync_events::SyncEvent::FileProgress)
-/// before each file and after each 5 MB binary frame so the active
+/// before each file and after each copy buffer that
+/// [`transport::bulk`](crate::transport::bulk) moves so the active
 /// sync's `Channel<SyncProgressUpdate>` (set up by `start_sync`) carries
 /// a real bytes-done signal to the UI. `None` is the test default — no
 /// emission, no `Arc` clone.
@@ -642,8 +659,8 @@ async fn register_received_blob(
 /// callers (and the existing test suite). The production sync sender
 /// path no longer goes through here — see
 /// [`read_attachment_file_metadata`] (path-validate + size + hash via
-/// streaming) and [`open_attachment_for_read`] (async file handle for
-/// frame-by-frame send) for the low-memory path.
+/// streaming) and [`open_attachment_for_read`] (async file handle the
+/// bulk sender copies straight to the stream) for the low-memory path.
 pub fn read_attachment_file(
     app_data_dir: &Path,
     fs_path: &str,
@@ -819,9 +836,10 @@ pub fn write_attachment_file(
 //     materialised.
 //   • `open_attachment_for_read` is the sender's transmit pass: open
 //     the same file as a `tokio::fs::File` and feed it to
-//     `SyncConnection::send_binary_streaming(file, size, chunk_size)`,
-//     which reads frame-sized chunks off disk and ships them straight
-//     to the wire.
+//     `transport::bulk::send_bulk(send, file, size, on_progress)`,
+//     which copies it to the stream through one fixed-size buffer.
+//     There is no chunk size to pass any more: the payload is one
+//     uninterrupted run of bytes and the buffer is bulk's own.
 //   • `write_attachment_streaming` returns a `TempAttachmentWriter` —
 //     an `AsyncWrite` sink that lands chunks in a `<final>.tmp-<rand>`
 //     file under `app_data_dir`, updates a `blake3::Hasher` per
@@ -904,9 +922,9 @@ pub async fn read_attachment_file_metadata(
 /// Path-validates `fs_path`, opens the file as a `tokio::fs::File`,
 /// queries `metadata().len()` for the size, and returns both. The
 /// caller passes the `File` to
-/// [`SyncConnection::send_binary_streaming`](crate::sync_net::SyncConnection::send_binary_streaming)
-/// alongside the size so frames are pulled off disk and pushed to
-/// the wire one at a time.
+/// [`send_bulk`](crate::transport::bulk::send_bulk) alongside the size,
+/// so the bytes are pulled off disk one copy buffer at a time and
+/// written to the stream as one uninterrupted run.
 ///
 /// Returning the size again (despite [`read_attachment_file_metadata`]
 /// already returning it in pass-1) lets the caller assert the file
@@ -1168,7 +1186,7 @@ impl AsyncWrite for TempAttachmentWriter {
 /// concurrent transfers of the same attachment cannot collide.
 ///
 /// The returned writer is an `AsyncWrite` sink — callers feed it via
-/// [`SyncConnection::receive_binary_streaming`] then call
+/// [`recv_bulk`](crate::transport::bulk::recv_bulk) then call
 /// [`TempAttachmentWriter::commit`] to atomically publish the file.
 pub async fn write_attachment_streaming(
     app_data_dir: &Path,
@@ -1243,7 +1261,8 @@ pub async fn write_attachment_streaming(
 /// granularity at the file boundary already lets a multi-gigabyte
 /// transfer be aborted before the *next* file starts.
 pub async fn receive_request_and_send_files(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
@@ -1251,14 +1270,17 @@ pub async fn receive_request_and_send_files(
 ) -> Result<FileTransferStats, AppError> {
     let mut stats = FileTransferStats::default();
 
-    // 1. Receive FileRequest
-    let msg: SyncMessage = conn.recv_json().await?;
+    // 1. Receive FileRequest. Bounded explicitly: the old transport wrapped
+    // every receive in its own `RECV_TIMEOUT`, and QUIC supplies no such
+    // clock — a peer that opened the stream and then went silent would hang
+    // this phase forever.
+    let msg: SyncMessage = recv_sync_message_within(recv, RECV_TIMEOUT).await?;
     let attachment_ids = match msg {
         SyncMessage::FileRequest { attachment_ids } => attachment_ids,
         SyncMessage::FileTransferComplete => {
             // Remote has no missing files — nothing to do.
             // But we still need to send our own FileTransferComplete.
-            conn.send_json(&SyncMessage::FileTransferComplete).await?;
+            send_sync_message(send, &SyncMessage::FileTransferComplete).await?;
             return Ok(stats);
         }
         other => {
@@ -1335,21 +1357,26 @@ pub async fn receive_request_and_send_files(
         // with the same content-addressed digest as `blake3_hash` so a
         // forward peer can reason about content-addressing explicitly. The
         // wire stays back-compatible (the field is `#[serde(default)]`).
-        conn.send_json(&SyncMessage::FileOffer {
-            attachment_id: attachment_id.clone(),
-            size_bytes,
-            blake3_hash: hash.clone(),
-            content_hash: Some(hash),
-        })
+        send_sync_message(
+            send,
+            &SyncMessage::FileOffer {
+                attachment_id: attachment_id.clone(),
+                size_bytes,
+                blake3_hash: hash.clone(),
+                content_hash: Some(hash),
+            },
+        )
         .await?;
 
-        // Pass-2: re-open the file and stream it frame-by-frame to
-        // the wire. Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
-        // buffer regardless of file size — replaces the old
-        // `Vec<u8>`-of-the-whole-file pattern that OOMed on large
-        // attachments. Empty payload is still delivered as a single
-        // empty frame (zero-byte contract preserved by
-        // `send_binary_streaming`).
+        // Pass-2: re-open the file and copy it onto the stream as one
+        // uninterrupted run of bytes. Peak Rust-heap is one
+        // `transport::bulk::BULK_COPY_BYTES` buffer regardless of file
+        // size — replaces the old `Vec<u8>`-of-the-whole-file pattern
+        // that OOMed on large attachments. An empty payload now puts
+        // ZERO bytes on the wire: the old transport's single empty
+        // sentinel frame has no counterpart under QUIC, and the
+        // receiver's drain is matched to that (see
+        // `consume_binary_data`).
         let (file, reopen_size) = match open_attachment_for_read(app_data_dir, &fs_path).await {
             Ok(handle) => handle,
             Err(e) => {
@@ -1381,35 +1408,34 @@ pub async fn receive_request_and_send_files(
                  hash_pass={size_bytes} bytes, stream_pass={reopen_size} bytes"
             )));
         }
-        // Per-frame progress: capture the running
-        // bytes-shipped tally for this file so the UI sees movement
-        // mid-transfer on multi-frame attachments. The `bytes_total`
-        // tally above is the denominator across the whole `sending`
-        // phase; we add `bytes_so_far_in_file` to the per-file base.
+        // Per-copy-buffer progress: capture the running bytes-shipped
+        // tally for this file so the UI sees movement mid-transfer on
+        // attachments larger than one buffer. The tick cadence is
+        // unchanged from the old per-frame one — `BULK_COPY_BYTES` is
+        // `BINARY_FRAME_CHUNK_SIZE` precisely so it stays that way. The
+        // `bytes_total` tally above is the denominator across the whole
+        // `sending` phase; we add `bytes_so_far_in_file` to the per-file
+        // base.
         let bytes_base = stats.bytes_sent;
         if let Some(p) = progress {
-            conn.send_binary_streaming_with_progress(
-                file,
-                size_bytes,
-                BINARY_FRAME_CHUNK_SIZE,
-                |bytes_in_file| {
-                    p.emit(
-                        "sending",
-                        stats.files_sent as u64,
-                        files_total,
-                        bytes_base + bytes_in_file,
-                        bytes_total,
-                    );
-                },
-            )
+            send_bulk(send, file, size_bytes, |bytes_in_file| {
+                p.emit(
+                    "sending",
+                    stats.files_sent as u64,
+                    files_total,
+                    bytes_base + bytes_in_file,
+                    bytes_total,
+                );
+            })
             .await?;
         } else {
-            conn.send_binary_streaming(file, size_bytes, BINARY_FRAME_CHUNK_SIZE)
-                .await?;
+            send_bulk(send, file, size_bytes, |_| {}).await?;
         }
 
-        // Wait for FileReceived acknowledgment
-        let ack: SyncMessage = conn.recv_json().await?;
+        // Wait for FileReceived acknowledgment. Bounded for the same
+        // reason as the `FileRequest` receive above: QUIC has no
+        // per-receive clock of its own.
+        let ack: SyncMessage = recv_sync_message_within(recv, RECV_TIMEOUT).await?;
         match ack {
             SyncMessage::FileReceived {
                 attachment_id: ref ack_id,
@@ -1437,7 +1463,7 @@ pub async fn receive_request_and_send_files(
     }
 
     // 3. Send FileTransferComplete
-    conn.send_json(&SyncMessage::FileTransferComplete).await?;
+    send_sync_message(send, &SyncMessage::FileTransferComplete).await?;
 
     Ok(stats)
 }
@@ -1454,15 +1480,16 @@ pub async fn receive_request_and_send_files(
 /// 4. Until `FileTransferComplete` is received.
 ///
 /// At the start of every iteration of the receive loop (before
-/// `recv_json()` for the next `FileOffer`/`FileTransferComplete`), the
+/// receiving the next `FileOffer`/`FileTransferComplete`), the
 /// cancel flag is checked. If set, we break and return the partial
-/// stats. The remote sender will hit a broken-pipe / connection-close
-/// when its next `send_json` or `send_binary` attempt fails — that
-/// surfaces as a non-fatal warning on the sender side; the next sync
-/// cycle re-attempts the missing files. The wire format is unchanged
-/// (no new message variants).
+/// stats. The remote sender will hit a stream-reset / connection-close
+/// when its next send attempt fails — that surfaces as a non-fatal
+/// warning on the sender side; the next sync cycle re-attempts the
+/// missing files. The wire format is unchanged (no new message
+/// variants).
 pub async fn request_and_receive_files(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
@@ -1499,9 +1526,12 @@ pub async fn request_and_receive_files(
     }
 
     // 2. Send FileRequest
-    conn.send_json(&SyncMessage::FileRequest {
-        attachment_ids: ids,
-    })
+    send_sync_message(
+        send,
+        &SyncMessage::FileRequest {
+            attachment_ids: ids,
+        },
+    )
     .await?;
 
     // 3. Receive files until FileTransferComplete
@@ -1514,10 +1544,10 @@ pub async fn request_and_receive_files(
     // outcomes, never optimistic ACKs.
     loop {
         // Check cancel before reading the next FileOffer. Granularity
-        // is per-file (not per-chunk) because the per-chunk inner read
-        // Lives in `SyncConnection::receive_binary_streaming`;
-        // aborting between files lets multi-gigabyte transfers be
-        // interrupted before the *next* file starts streaming.
+        // is per-file (not per-buffer) because the inner copy loop
+        // lives in `transport::bulk::recv_bulk`; aborting between files
+        // lets multi-gigabyte transfers be interrupted before the
+        // *next* file starts streaming.
         if cancel.load(Ordering::Acquire) {
             tracing::info!(
                 files_received = stats.files_received,
@@ -1528,7 +1558,7 @@ pub async fn request_and_receive_files(
         // (#317): the top-of-loop check above only observes a cancel
         // that is *already* visible when we re-enter the loop. If the peer
         // has also cancelled and will therefore never send the next
-        // message, a bare `conn.recv_json().await` would block until the
+        // message, a bare unbounded receive would block until the
         // connection closes (up to the nextest 60s timeout — the source of
         // the flake). Poll cancel while we wait for the next message: wrap
         // the receive in a short timeout and re-check `cancel` on each
@@ -1540,9 +1570,27 @@ pub async fn request_and_receive_files(
         // yet long enough that, on the common path where the next message
         // is already in flight, we wake at most a handful of times per
         // multi-gigabyte transfer (no busy-polling).
+        //
+        // The inner receive is `recv_sync_message` — the UNBOUNDED form —
+        // because this loop supplies its own clock and a nested
+        // `recv_sync_message_within` would restart its 180 s budget on
+        // every 150 ms tick, i.e. never fire.
+        //
+        // `WAIT_DEADLINE` is what replaces the bound the old transport
+        // supplied for free. `conn.recv_json()` was itself wrapped in
+        // `SyncConnection::RECV_TIMEOUT`, so a peer that neither sends nor
+        // cancels used to fail this loop after 180 s; QUIC has no such
+        // clock, and without a deadline here the poll loop would spin
+        // against a silent peer forever, holding the session open. Same
+        // value, restated scope: OLD = 180 s per WebSocket frame,
+        // NEW = 180 s per awaited `SyncMessage`. It bounds the wait for
+        // ONE message and is re-armed per outer-loop iteration, so a peer
+        // delivering files steadily never trips it however long the whole
+        // phase takes.
         const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+        let wait_deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
         let msg: SyncMessage = loop {
-            match tokio::time::timeout(CANCEL_POLL_INTERVAL, conn.recv_json()).await {
+            match tokio::time::timeout(CANCEL_POLL_INTERVAL, recv_sync_message(recv)).await {
                 Ok(Ok(msg)) => break msg,
                 Ok(Err(e)) => {
                     // The receive itself failed. If we're cancelling, a
@@ -1571,7 +1619,17 @@ pub async fn request_and_receive_files(
                         );
                         return Ok(stats);
                     }
-                    // Not cancelled — keep waiting for the next message.
+                    // Not cancelled — but the wait is not unbounded. See
+                    // `wait_deadline` above: this is the 180 s the old
+                    // transport applied to every receive, restated at the
+                    // one call site that now owns it.
+                    if tokio::time::Instant::now() >= wait_deadline {
+                        return Err(AppError::InvalidOperation(format!(
+                            "[sync_files] peer sent no file-transfer message for {}s",
+                            RECV_TIMEOUT.as_secs()
+                        )));
+                    }
+                    // Keep waiting for the next message.
                 }
             }
         };
@@ -1588,9 +1646,9 @@ pub async fn request_and_receive_files(
                 // hash whose file is present on disk, we do not need these
                 // bytes: link this attachment row to the existing blob file
                 // (repoint `fs_path` at the blob's `on_disk_path`) and ACK
-                // without writing a duplicate. We still drain the offered binary
-                // frames to keep the wire aligned with the sender's frame
-                // pointer (the protocol streams immediately after the offer with
+                // without writing a duplicate. We still drain the offered bytes
+                // to keep the stream aligned with the sender's write position
+                // (the protocol streams immediately after the offer with
                 // no accept step). `content_hash` falls back to `blake3_hash` so
                 // an old peer's offer (no `content_hash`) still benefits.
                 let offered_hash = content_hash.as_deref().unwrap_or(blake3_hash.as_str());
@@ -1611,10 +1669,16 @@ pub async fn request_and_receive_files(
                         content_hash = offered_hash,
                         "FileOffer skipped: local blob already present; linked row, draining bytes"
                     );
-                    // Drain the offered bytes (alignment) then ACK.
-                    consume_binary_data(conn, size_bytes).await?;
-                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
-                        .await?;
+                    // Drain the offered bytes (alignment) then ACK. The cap
+                    // inside `consume_binary_data` is `size_bytes` itself,
+                    // i.e. degenerate — there is no DB row size to check the
+                    // offer against on a drain path (we never looked one up;
+                    // the blob matched by hash). That is sound because these
+                    // bytes are discarded rather than stored, so what needs
+                    // bounding is memory, and `recv_bulk` bounds that with a
+                    // fixed copy buffer whatever `total_size` says.
+                    consume_binary_data(recv, size_bytes).await?;
+                    send_sync_message(send, &SyncMessage::FileReceived { attachment_id }).await?;
                     continue;
                 }
 
@@ -1624,11 +1688,17 @@ pub async fn request_and_receive_files(
                         attachment_id,
                         "received file offer for unknown attachment, skipping binary data"
                     );
-                    // Still need to consume the binary data so the stream
-                    // stays aligned with the sender's frame pointer.
-                    consume_binary_data(conn, size_bytes).await?;
+                    // Still need to consume the offered bytes so the stream
+                    // stays aligned with the sender's write position. The cap
+                    // is `size_bytes` itself, i.e. degenerate: there is no DB
+                    // row here to bound the offer against — that is precisely
+                    // why we are declining it. Sound because the bytes are
+                    // discarded rather than stored, so what needs bounding is
+                    // memory, and `recv_bulk` bounds that with a fixed copy
+                    // buffer regardless of `total_size`.
+                    consume_binary_data(recv, size_bytes).await?;
                     // #638: ALWAYS ACK after draining the bytes. Without this
-                    // the sender blocks on its `recv_json` for this offer's
+                    // the sender blocks on its receive for this offer's
                     // `FileReceived` until the 180s `RECV_TIMEOUT`, which then
                     // errors the whole file phase and loses the round's
                     // remaining files. The protocol has no skip/declined
@@ -1639,8 +1709,7 @@ pub async fn request_and_receive_files(
                     // have a row for it), but the *next* sync cycle re-derives
                     // missing attachments from the DB, so nothing is lost by
                     // ACKing a file we deliberately discarded.
-                    conn.send_json(&SyncMessage::FileReceived { attachment_id })
-                        .await?;
+                    send_sync_message(send, &SyncMessage::FileReceived { attachment_id }).await?;
                     continue;
                 };
 
@@ -1663,10 +1732,10 @@ pub async fn request_and_receive_files(
                     )));
                 }
 
-                // Stream the binary frames straight to a temp
+                // Stream the offered bytes straight to a temp
                 // file under `app_data_dir`, hashing in-place via
                 // `TempAttachmentWriter`'s built-in `blake3::Hasher`.
-                // Peak Rust-heap is one `BINARY_FRAME_CHUNK_SIZE`
+                // Peak Rust-heap is one `transport::bulk::BULK_COPY_BYTES`
                 // buffer regardless of file size — no `Vec<u8>` of
                 // the full payload anywhere. On any error we open
                 // the writer (so its `Drop` unlinks the temp) BEFORE
@@ -1691,20 +1760,41 @@ pub async fn request_and_receive_files(
                         // `RECV_TIMEOUT`. We did NOT write the file, so the
                         // next sync cycle re-requests it (it's still missing
                         // on disk) — no data is lost by ACKing here.
-                        consume_binary_data(conn, size_bytes).await?;
-                        conn.send_json(&SyncMessage::FileReceived { attachment_id })
+                        //
+                        // Unlike the other two drain sites this one *does*
+                        // have the DB row's size, and `size_bytes` was just
+                        // proven equal to `expected_size_u64` by the
+                        // cross-check above — so the cap is the authoritative
+                        // one either way.
+                        consume_binary_data(recv, expected_size_u64).await?;
+                        send_sync_message(send, &SyncMessage::FileReceived { attachment_id })
                             .await?;
                         continue;
                     }
                 };
-                // Per-frame progress on the receive
-                // path: capture the running bytes-received tally so a
-                // multi-frame attachment ticks the UI mid-transfer.
+                // Per-copy-buffer progress on the receive path: capture
+                // the running bytes-received tally so an attachment
+                // larger than one buffer ticks the UI mid-transfer.
+                //
+                // The receive cap is `expected_size_u64` — the
+                // `attachments` row's own `size_bytes`, the number the
+                // offer was just cross-checked against. It is the
+                // tightest bound available (tighter than any constant:
+                // it is exactly this file's length) and it is already
+                // the authority for this transfer, so a peer that lies
+                // about `total_size` is refused by `recv_bulk` before
+                // the first read rather than after the first byte. The
+                // old WebSocket receive had no explicit cap at all — it
+                // leaned on the per-frame `MAX_MSG_SIZE`, which a QUIC
+                // stream does not have, so the caller must name its own
+                // bound and this is it.
                 let bytes_base = stats.bytes_received;
                 let recv_result = if let Some(p) = progress {
-                    conn.receive_binary_streaming_with_progress(
+                    recv_bulk(
+                        recv,
                         &mut writer,
                         size_bytes,
+                        expected_size_u64,
                         |bytes_in_file| {
                             p.emit(
                                 "receiving",
@@ -1717,7 +1807,7 @@ pub async fn request_and_receive_files(
                     )
                     .await
                 } else {
-                    conn.receive_binary_streaming(&mut writer, size_bytes).await
+                    recv_bulk(recv, &mut writer, size_bytes, expected_size_u64, |_| {}).await
                 };
                 if let Err(e) = recv_result {
                     tracing::error!(
@@ -1766,8 +1856,7 @@ pub async fn request_and_receive_files(
                 }
 
                 // Only after successful write + hash verify do we ACK.
-                conn.send_json(&SyncMessage::FileReceived { attachment_id })
-                    .await?;
+                send_sync_message(send, &SyncMessage::FileReceived { attachment_id }).await?;
             }
             SyncMessage::FileTransferComplete => {
                 tracing::debug!("received FileTransferComplete from remote");
@@ -1786,23 +1875,39 @@ pub async fn request_and_receive_files(
     Ok(stats)
 }
 
-/// Consume and discard binary data for a file we don't need.
+/// Consume and discard the payload of a `FileOffer` we are declining, so the
+/// stream stays aligned for the next framed message.
 ///
-/// Mirrors [`SyncConnection::send_binary_chunked`]: a zero-byte payload
-/// is delivered as a single empty frame, so when `size_bytes == 0` we
-/// still drain exactly one frame off the wire to keep the receiver's
-/// frame pointer aligned with the sender's.
-async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Result<(), AppError> {
-    if size_bytes == 0 {
-        let _ = conn.recv_binary().await?;
-        return Ok(());
-    }
-    let mut received = 0u64;
-    while received < size_bytes {
-        let chunk = conn.recv_binary().await?;
-        received += chunk.len() as u64;
-    }
-    Ok(())
+/// # Where the drain went
+///
+/// The loop is gone. Draining is now exactly a [`recv_bulk`] into
+/// [`tokio::io::sink`]: same "read precisely `size_bytes` and no more"
+/// contract, same fixed copy buffer, same idle clock — the only difference
+/// from a real receive is where the bytes land. Keeping the function is
+/// purely for the call sites, which read better naming what they do.
+///
+/// # Why the zero-byte special case is gone
+///
+/// The old body drained one frame when `size_bytes == 0`, because
+/// `SyncConnection::send_binary_chunked` delivered an empty payload as a
+/// single empty *frame* and the receiver's per-frame loop needed something
+/// to terminate on. Under QUIC there are no frames and
+/// [`send_bulk`](crate::transport::bulk::send_bulk) puts **zero bytes** on
+/// the wire for an empty payload. Draining a frame that does not exist would
+/// consume the next message's length prefix and desync the stream for the
+/// rest of the session, so the case is deleted rather than translated:
+/// `recv_bulk` with `total_size == 0` correctly reads nothing at all.
+///
+/// # The cap
+///
+/// `size_bytes` is passed as its own cap, which bounds nothing — it is the
+/// peer's own number checked against itself. That is deliberate and safe
+/// here: these bytes are discarded rather than stored, so the resource to
+/// bound is memory, and `recv_bulk` bounds that with a fixed copy buffer
+/// whatever `total_size` claims. Call sites that *do* hold the
+/// DB-authoritative size pass it instead.
+async fn consume_binary_data(recv: &mut RecvStream, size_bytes: u64) -> Result<(), AppError> {
+    recv_bulk(recv, &mut tokio::io::sink(), size_bytes, size_bytes, |_| {}).await
 }
 
 // ---------------------------------------------------------------------------
@@ -1821,7 +1926,8 @@ async fn consume_binary_data(conn: &mut SyncConnection, size_bytes: u64) -> Resu
 /// existing `FileTransferComplete` sentinel — both without changing the
 /// wire format.
 pub async fn run_file_transfer_initiator(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
@@ -1830,7 +1936,8 @@ pub async fn run_file_transfer_initiator(
     let mut stats = FileTransferStats::default();
 
     // Phase 1: Request our missing files from responder
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
+    let recv_stats =
+        request_and_receive_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;
@@ -1838,7 +1945,7 @@ pub async fn run_file_transfer_initiator(
 
     // Phase 2: Respond to responder's file request
     let send_stats =
-        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
+        receive_request_and_send_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
@@ -1880,7 +1987,8 @@ pub async fn run_file_transfer_initiator(
 /// the matching docs on [`run_file_transfer_initiator`] for the rationale
 /// and protocol-compatibility notes.
 pub async fn run_file_transfer_responder(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     app_data_dir: &Path,
     cancel: &AtomicBool,
@@ -1902,14 +2010,15 @@ pub async fn run_file_transfer_responder(
 
     // Phase 1: Respond to initiator's file request
     let send_stats =
-        receive_request_and_send_files(conn, pool, app_data_dir, cancel, progress).await?;
+        receive_request_and_send_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_sent += send_stats.files_sent;
     stats.bytes_sent += send_stats.bytes_sent;
     stats.skipped_not_found += send_stats.skipped_not_found;
     stats.skipped_hash_mismatch += send_stats.skipped_hash_mismatch;
 
     // Phase 2: Request our missing files from initiator
-    let recv_stats = request_and_receive_files(conn, pool, app_data_dir, cancel, progress).await?;
+    let recv_stats =
+        request_and_receive_files(send, recv, pool, app_data_dir, cancel, progress).await?;
     stats.files_received += recv_stats.files_received;
     stats.bytes_received += recv_stats.bytes_received;
     stats.skipped_hash_mismatch += recv_stats.skipped_hash_mismatch;

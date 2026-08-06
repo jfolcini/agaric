@@ -38,6 +38,8 @@
 //! *before* the buffer is created — the same discipline `wire.rs` applies to
 //! `LoroSyncChunkedHeader::size_bytes`, and the same constant.
 
+use std::time::Duration;
+
 use iroh::endpoint::{RecvStream, SendStream};
 
 use agaric_core::error::AppError;
@@ -213,7 +215,54 @@ async fn read_body<R: BodyReader>(
     Ok(())
 }
 
+/// The wait the old transport applied to every receive, and QUIC does not.
+///
+/// `SyncConnection::RECV_TIMEOUT` wrapped *every* `recv_json` and `recv_binary` on the
+/// WebSocket stream, so no caller ever had to think about a peer that simply stopped
+/// talking. There is no equivalent under QUIC: `RecvStream::read_exact` on a silent
+/// peer waits forever, and the failure is a task that never resolves while holding a
+/// responder permit and a per-peer lock.
+///
+/// [`driver::run_session`](super::driver::run_session) carries this as
+/// [`SessionLimits::recv`](super::driver::SessionLimits::recv) for the message loop. It
+/// is restated here because the message loop is not the only place messages are
+/// received: the snapshot catch-up and file-transfer phases run *after* the loop, on
+/// the same stream, with their own recvs — and those are exactly the recvs a port drops
+/// silently, because the old code has no timeout at their call sites to port.
+///
+/// # Scope, re-derived
+///
+/// Old: one WebSocket frame, which for a bulk transfer meant one
+/// `BINARY_FRAME_CHUNK_SIZE` chunk — a slow-but-delivering peer never tripped it.
+/// New: one framed [`SyncMessage`], capped by [`MAX_FRAME_SIZE`]. Same value, wider
+/// scope, tracked in #3481. The bulk path keeps the *old* scope explicitly — see
+/// [`BULK_IDLE_TIMEOUT`](super::bulk::BULK_IDLE_TIMEOUT).
+pub const RECV_TIMEOUT: Duration = Duration::from_secs(180);
+
+/// [`recv_sync_message`] under an explicit wall-clock bound.
+///
+/// Every post-loop phase should use this rather than the bare form. The budget is a
+/// parameter and not [`RECV_TIMEOUT`] directly for the reason
+/// [`SessionLimits`](super::driver::SessionLimits) exists: a 180 s bound that no test
+/// drives is a bound no test asserts, and an unasserted bound is how the receive clock
+/// went missing in the first place.
+///
+/// # Errors
+/// Everything [`recv_sync_message`] errors on, plus an `InvalidOperation` naming the
+/// elapsed budget when the peer sends nothing within it.
+pub async fn recv_sync_message_within(
+    recv: &mut RecvStream,
+    budget: Duration,
+) -> Result<SyncMessage, AppError> {
+    tokio::time::timeout(budget, recv_sync_message(recv))
+        .await
+        .map_err(|_| wire_err(format!("peer sent nothing for {}s", budget.as_secs())))?
+}
+
 /// Read one [`SyncMessage`] from `recv`, the inverse of [`send_sync_message`].
+///
+/// Unbounded: see [`recv_sync_message_within`] for the wait the old transport supplied
+/// for free, and why every caller outside a driver loop owes it explicitly.
 ///
 /// # Errors
 /// If the peer closed the stream mid-frame, the announced length exceeds

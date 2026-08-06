@@ -19,10 +19,12 @@ use agaric_store::peer_refs;
 use agaric_sync::snapshot::{SCHEMA_VERSION, apply_snapshot, get_latest_snapshot_with_frontier};
 use agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use agaric_sync::sync_events::{SyncEvent, SyncEventSink};
-use agaric_sync::sync_net::SyncConnection;
 use agaric_sync::sync_protocol::loro_sync::{self, ApplyOutcome};
 use agaric_sync::sync_protocol::loro_sync_types::LoroSyncMessage;
 use agaric_sync::sync_protocol::{DeviceHead, SyncMessage};
+use agaric_sync::transport::bulk::{BULK_COPY_BYTES, recv_bulk, send_bulk};
+use agaric_sync::transport::session::{recv_sync_message, send_sync_message};
+use agaric_sync::transport::test_support::quic_pair;
 
 #[path = "snapshot_transfer_tests.rs"]
 mod snapshot_transfer_tests;
