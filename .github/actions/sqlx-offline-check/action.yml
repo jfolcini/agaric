@@ -46,7 +46,9 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         DATABASE_URL: ${{ inputs.database-url }}
+        PREPARE_ARGS: ${{ inputs.prepare-args }}
       run: |
         cargo sqlx database create
         cargo sqlx migrate run
-        cargo sqlx prepare --check ${{ inputs.prepare-args }}
+        read -r -a prepare_args <<< "$PREPARE_ARGS"
+        cargo sqlx prepare --check "${prepare_args[@]}"

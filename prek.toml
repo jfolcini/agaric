@@ -1711,7 +1711,7 @@ id = "zizmor"
 name = "zizmor"
 entry = "bash scripts/zizmor-hook.sh"
 language = "system"
-files = "^\\.github/workflows/.*\\.ya?ml$"
+files = "^\\.github/(workflows/.*\\.ya?ml|actions/.*/action\\.ya?ml)$"
 stages = ["pre-commit"]
 
 # Self-test the wrapper's own behaviour whenever it changes: that a version
