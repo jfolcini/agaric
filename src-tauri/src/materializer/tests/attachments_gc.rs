@@ -399,6 +399,102 @@ async fn cleanup_orphaned_attachments_keeps_shared_blob_until_last_ref_1993() {
     assert_eq!(blob_n, 0, "orphaned blob row must be pruned");
 }
 
+/// #3371 — the GC must destroy a blob MAPPING before it destroys the BYTES
+/// that mapping points at, never the other way round.
+///
+/// `add_attachment` dedups fresh bytes onto an existing blob via
+/// `SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?`. If the
+/// GC unlinks the file first and prunes the row afterwards, a concurrent
+/// re-add of the same bytes in between resolves that row, dedups onto the
+/// path, and commits an `attachments` row pointing at a file that is already
+/// gone. The reverse order is benign: a missing row while the file survives
+/// only costs one redundant re-copy on the next ingest.
+///
+/// Driving the real interleaving from a test would be timing-dependent, so
+/// this pins the ordering deterministically instead: a `BEFORE DELETE` trigger
+/// on `attachment_blobs` makes the prune fail, freezing the mapping in place
+/// for the whole pass. The GC may then NOT unlink the bytes — the post-state
+/// "blob row present, file gone" is exactly the broken reference the ordering
+/// exists to prevent, and it is unreachable only if the prune is attempted
+/// before the unlink and gates it.
+///
+/// Phase 2 drops the trigger and re-runs so the assertion cannot pass merely
+/// because the GC has stopped collecting: with the prune unblocked, both the
+/// row and the bytes must go.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn cleanup_orphaned_attachments_never_unlinks_bytes_a_live_blob_row_maps_3371() {
+    let (pool, dir) = test_pool().await;
+    let attachments = dir.path().join("attachments");
+    tokio::fs::create_dir_all(&attachments).await.unwrap();
+
+    // Unreferenced bytes: a file on disk plus the blob row that maps its
+    // content hash to it. No `attachments` row references either, so the GC
+    // regards the file as a collectable orphan.
+    let rel = "attachments/dedup_target.bin".to_string();
+    tokio::fs::write(dir.path().join(&rel), b"dedup me")
+        .await
+        .unwrap();
+    insert_blob_row(&pool, "hash_3371", &rel).await;
+
+    // Freeze the mapping: any DELETE that would remove a blob row aborts.
+    // (A DELETE matching zero rows still succeeds — the trigger is per-row —
+    // so this only fires when the GC actually tries to prune this mapping.)
+    sqlx::query(
+        "CREATE TRIGGER block_blob_prune_3371 BEFORE DELETE ON attachment_blobs \
+         BEGIN SELECT RAISE(ABORT, 'blob prune blocked by test'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    // The mapping is still live (the trigger guaranteed it)…
+    let blob_path: Option<String> =
+        sqlx::query_scalar("SELECT on_disk_path FROM attachment_blobs WHERE content_hash = ?")
+            .bind("hash_3371")
+            .fetch_optional(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        blob_path.as_deref(),
+        Some(rel.as_str()),
+        "test precondition: the trigger must have kept the blob mapping alive"
+    );
+
+    // …so the bytes it points at must NOT have been reclaimed. A concurrent
+    // `add_attachment` for these bytes would dedup onto this very path.
+    assert!(
+        dir.path().join(&rel).exists(),
+        "GC unlinked bytes while a live attachment_blobs row still maps a \
+         content_hash onto them — a concurrent re-add would dedup onto this \
+         deleted file (#3371)"
+    );
+
+    // Phase 2: unblock the prune. The same pass must now reclaim BOTH, proving
+    // the assertion above is not passing because collection is simply off.
+    sqlx::query("DROP TRIGGER block_blob_prune_3371")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    super::super::handlers::cleanup_orphaned_attachments(&pool, None, dir.path())
+        .await
+        .unwrap();
+
+    let blob_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM attachment_blobs")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(blob_n, 0, "orphaned blob row must be pruned once unblocked");
+    assert!(
+        !dir.path().join(&rel).exists(),
+        "orphaned bytes must be reclaimed once the mapping can be pruned"
+    );
+}
+
 #[cfg(unix)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn cleanup_orphaned_attachments_unlink_error_is_non_fatal() {

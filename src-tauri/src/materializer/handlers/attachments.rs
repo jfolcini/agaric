@@ -81,9 +81,25 @@ pub(super) const CLEANUP_BATCH_SLEEP_MS: u64 = 10;
 /// `SELECT 1 FROM attachments WHERE fs_path = ?` on the **write** pool
 /// before unlinking — this is the authoritative decision and closes the
 /// #2032 race where a concurrently-added attachment is missing from the
-/// bulk snapshot. The blob-prune `DELETE` below runs on the same write
-/// pool against the same `attachments` table, so the orphan decision and
-/// the blob prune share one consistent view.
+/// bulk snapshot. The blob-prune `DELETE`s run on the same write pool
+/// against the same `attachments` table, so the orphan decision and the
+/// blob prune share one consistent view.
+///
+/// # Prune-before-unlink ordering (#3371)
+///
+/// An `attachment_blobs` row maps a `content_hash` to an `on_disk_path`,
+/// and `add_attachment` dedups fresh bytes onto that path. Every blob-row
+/// prune therefore happens **before** the corresponding file is unlinked,
+/// never after: a row that outlives its bytes is a permanently broken
+/// reference, whereas a row pruned while its file still exists merely
+/// costs one redundant re-copy on the next ingest of those bytes. The
+/// prune happens in two places, both ahead of any `remove_file`: a bulk
+/// sweep before the walk (covering rows whose path is not on disk at all)
+/// and a guarded per-file `DELETE ... WHERE on_disk_path = ? AND ... NOT
+/// IN (SELECT fs_path FROM attachments)` immediately before each
+/// candidate's write-pool re-check. If the per-file prune fails, the
+/// unlink is skipped — bytes are never removed while a mapping to them
+/// may still resolve.
 ///
 /// Semantics are preserved exactly: the old query had **no**
 /// `deleted_at IS NULL` predicate, so it matched soft-deleted rows too;
@@ -227,6 +243,53 @@ pub(crate) async fn cleanup_orphaned_attachments(
     let mut unlinked: u64 = 0;
     let mut errors: u64 = 0;
 
+    // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk below
+    // already implements the refcount-on-demand contract for BYTES: a blob
+    // file is unlinked only when NO `attachments` row references its
+    // `fs_path` (membership test against `referenced_paths`). A shared blob
+    // (N rows → 1 file) survives until the last referencing row is gone, then
+    // becomes an unreferenced file and is unlinked. Here we additionally prune
+    // any `attachment_blobs` row whose `on_disk_path` is no longer referenced
+    // by a live `attachments` row so the blob store does not accumulate
+    // dangling entries. Done on the write pool (the table is small; the delete
+    // is a single statement). Best-effort: a failure is logged, not
+    // propagated, matching the "partial GC beats no GC" contract.
+    //
+    // #3371 — this sweep runs BEFORE any unlink, not after. A blob row maps a
+    // `content_hash` to an `on_disk_path`, and `add_attachment` dedups new
+    // bytes onto that path (`SELECT on_disk_path FROM attachment_blobs WHERE
+    // content_hash = ?`). Unlinking first and pruning afterwards leaves a
+    // window in which the mapping resolves to a path whose bytes are already
+    // gone, so a concurrent re-add of the same bytes commits an `attachments`
+    // row pointing at a deleted file. The two directions are NOT symmetric:
+    //   * row pruned while the file still exists → the next ingest of those
+    //     bytes re-copies them once (a wasted write, self-healing);
+    //   * row present while the file is gone → a permanently broken reference.
+    // So we always destroy the mapping before the bytes. The per-file guarded
+    // prune inside the loop below covers rows that appear (or become
+    // unreferenced) after this sweep; this bulk pass additionally covers rows
+    // whose `on_disk_path` is not on disk at all and therefore never walked.
+    //
+    // The attachment_blobs table (migration 0094) is not yet in the offline
+    // .sqlx cache, so use the runtime form here.
+    // dynamic-sql: static SQL; attachment_blobs is absent from the .sqlx cache.
+    let mut pruned_blobs = match sqlx::query(
+        "DELETE FROM attachment_blobs \
+         WHERE on_disk_path NOT IN (SELECT fs_path FROM attachments)",
+    )
+    .execute(pool)
+    .await
+    {
+        Ok(r) => r.rows_affected(),
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "cleanup_orphaned_attachments: failed to prune orphaned attachment_blobs rows"
+            );
+            0
+        }
+    };
+
     for chunk in files.chunks(CLEANUP_BATCH_SIZE) {
         for full_path in chunk {
             scanned += 1;
@@ -261,6 +324,51 @@ pub(crate) async fn cleanup_orphaned_attachments(
                 continue;
             }
 
+            // #3371: this file is an unlink CANDIDATE. Before we can remove
+            // its bytes we must first remove any `attachment_blobs` mapping
+            // that would let a concurrent `add_attachment` dedup onto them.
+            // The `NOT IN` guard makes the decision atomic against the single
+            // SQLite writer: if a row already references this path (a
+            // concurrent add that raced the bulk snapshot) the DELETE matches
+            // nothing and the live mapping is preserved — the write-pool
+            // re-check below then keeps the file. Running the prune BEFORE
+            // that re-check (rather than after it) is deliberate: once the
+            // mapping is gone, no later dedup can point a fresh row at this
+            // path, so the only remaining way to acquire a reference is an
+            // explicit `fs_path` from a remote op, which the re-check sees.
+            //
+            // This statement runs only for files that MISS the bulk snapshot
+            // (orphans and concurrent adds), not for every walked file, so it
+            // costs no extra writes on a healthy vault.
+            //
+            // attachment_blobs (migration 0094) is absent from the offline
+            // .sqlx cache, so use the runtime form here.
+            // dynamic-sql: static SQL; attachment_blobs is not in .sqlx.
+            match sqlx::query(
+                "DELETE FROM attachment_blobs \
+                 WHERE on_disk_path = ? \
+                   AND on_disk_path NOT IN (SELECT fs_path FROM attachments)",
+            )
+            .bind(&relative_str)
+            .execute(pool)
+            .await
+            {
+                Ok(r) => pruned_blobs += r.rows_affected(),
+                Err(e) => {
+                    // The mapping may still resolve to this path. Unlinking
+                    // now would leave exactly the dangling `hash → deleted
+                    // path` reference this ordering exists to prevent, so be
+                    // conservative and leave the bytes for the next pass.
+                    errors += 1;
+                    tracing::warn!(
+                        path = %full_path.display(),
+                        error = %e,
+                        "cleanup_orphaned_attachments: blob-mapping prune failed; skipping unlink to avoid leaving a blob row pointing at deleted bytes"
+                    );
+                    continue;
+                }
+            }
+
             // #2032: a MISS in the bulk snapshot is not authoritative —
             // the snapshot may have been loaded (a) before a concurrent
             // foreground `AddAttachment` committed, or (b) from a
@@ -271,9 +379,9 @@ pub(crate) async fn cleanup_orphaned_attachments(
             // orphan. This closes the TOCTOU window for a just-added
             // attachment whose file is already on disk.
             //
-            // dynamic-sql: static SQL; runtime form (not `query!`) keeps
-            // this off the offline `.sqlx` cache, matching the blob-prune
-            // DELETE below.
+            // The runtime form (not `query!`) keeps this off the offline
+            // `.sqlx` cache, matching the blob-prune DELETEs.
+            // dynamic-sql: static SQL; kept off the offline `.sqlx` cache.
             match sqlx::query("SELECT 1 FROM attachments WHERE fs_path = ?")
                 .bind(&relative_str)
                 .fetch_optional(pool)
@@ -335,43 +443,6 @@ pub(crate) async fn cleanup_orphaned_attachments(
         // attachments cannot starve the rest of the materializer.
         tokio::time::sleep(std::time::Duration::from_millis(CLEANUP_BATCH_SLEEP_MS)).await;
     }
-
-    // #1993 Phase 1 — refcount-aware blob reconciliation. The file walk above
-    // already implements the refcount-on-demand contract for BYTES: a blob
-    // file is unlinked only when NO `attachments` row references its
-    // `fs_path` (membership test against `referenced_paths`). A shared blob
-    // (N rows → 1 file) survives until the last referencing row is gone, then
-    // becomes an unreferenced file and is unlinked. Here we additionally prune
-    // any `attachment_blobs` row whose `on_disk_path` is no longer referenced
-    // by a live `attachments` row so the blob store does not accumulate
-    // dangling entries. Done on the write pool (the table is small; the delete
-    // is a single statement). Best-effort: a failure is logged, not
-    // propagated, matching the "partial GC beats no GC" contract.
-    //
-    // #2032: this DELETE evaluates its `SELECT fs_path FROM attachments`
-    // subquery on the SAME write pool the per-file unlink re-check uses,
-    // so the orphan decision (keep file iff a row references it) and the
-    // blob prune (drop blob row iff no row references it) share one
-    // consistent view — a row added concurrently is visible to both, so
-    // we never unlink a file while keeping its blob row, or vice versa.
-    // dynamic-sql: static SQL; the attachment_blobs table (migration 0094) is
-    // not yet in the offline .sqlx cache, so use the runtime form here.
-    let pruned_blobs = match sqlx::query(
-        "DELETE FROM attachment_blobs \
-         WHERE on_disk_path NOT IN (SELECT fs_path FROM attachments)",
-    )
-    .execute(pool)
-    .await
-    {
-        Ok(r) => r.rows_affected(),
-        Err(e) => {
-            tracing::warn!(
-                error = %e,
-                "cleanup_orphaned_attachments: failed to prune orphaned attachment_blobs rows"
-            );
-            0
-        }
-    };
 
     tracing::info!(
         scanned,
