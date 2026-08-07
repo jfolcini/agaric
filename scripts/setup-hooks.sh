@@ -218,7 +218,15 @@ cargo_get() {
 # `$NF` (last field) for any future caller that has no shared extraction to
 # pass.
 cargo_get_pinned() {
-  local crate="$1" version="$2" bin="${3:-$1}" field="${4:-NR == 1 { print \$NF }}" current=""
+  local crate="$1" version="$2" bin="${3:-$1}" field="${4-}" current=""
+  # NOT `${4:-NR == 1 { print $NF }}`: bash ends `${param:-word}` at the first
+  # unquoted `}` — a bare `{` does not increment the nesting count, only `${`
+  # does. That form parses as the expansion up to the first `}` plus a LITERAL
+  # trailing `}`, so a supplied $4 becomes `<field>}` and awk dies of a syntax
+  # error. Its stderr is not redirected below, `current` comes back empty, the
+  # version comparison fails, and the crate reinstalls on every run — which is
+  # the exact failure this file was being changed to prevent (#3545).
+  [ -n "$field" ] || field='NR == 1 { print $NF }'
   if [ -z "$version" ]; then
     warn "no pinned version found for $crate — falling back to an unpinned install"
     cargo_get "$crate" "$bin"
@@ -254,6 +262,14 @@ ZIZMOR_VERSION_AWK="$(
   sed -n "s/^ZIZMOR_VERSION_AWK='\([^']*\)'.*/\1/p" \
     "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
 )"
+# Fail loud rather than falling back. Rename the constant, move the file or
+# break the pattern and this comes back empty; a silent `:-` default would
+# quietly restore `$NF` here while the wrapper kept using `$2` — which is the
+# divergence this sourcing exists to prevent. Mirrors the
+# `ZIZMOR_PINNED_VERSION` guard above.
+if [ -z "$ZIZMOR_VERSION_AWK" ]; then
+  warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — the two version parsers may have diverged (#3545)"
+fi
 
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official

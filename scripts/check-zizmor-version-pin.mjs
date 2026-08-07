@@ -102,7 +102,12 @@ export function extractHookPin(hookText) {
  * lives on the FOLLOWING indented lines, which this single-line scanner
  * cannot see.
  */
-const BLOCK_SCALAR_RE = /^[|>][+-]?\d*$/
+// YAML permits the chomping and indentation indicators in EITHER order, so
+// both `|2-` and `|-2` are valid. Matching only one order left the other
+// parsing as a single entry that matches no `zizmor` pattern and returns
+// `undefined` — the silent false negative this throw exists to eliminate.
+// The docstring's own `>1-` example did not match the previous pattern.
+const BLOCK_SCALAR_RE = /^[|>](?:[+-]\d*|\d+[+-]?)?$/
 
 /**
  * Given ONE `tool:` line's value (e.g. `prek,zizmor,taplo-cli,sqruff@0.38.0`),
@@ -315,7 +320,17 @@ function selfTestExtraction({ check }) {
   // LOUD, not return `undefined`. `undefined` is indistinguishable from "no
   // tool: on this line at all", which is exactly how a drifted pin inside
   // the block would go completely unseen.
-  for (const blockValue of ['tool: |', 'tool: >', 'tool: |-', 'tool: >2']) {
+  // `|2-` / `>1-` / `|3+` put the indentation indicator FIRST, which YAML
+  // allows and the original pattern missed.
+  for (const blockValue of [
+    'tool: |',
+    'tool: >',
+    'tool: |-',
+    'tool: >2',
+    'tool: |2-',
+    'tool: >1-',
+    'tool: |3+',
+  ]) {
     let threw = null
     try {
       parseZizmorFromToolLine(`        ${blockValue}`)
