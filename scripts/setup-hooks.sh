@@ -262,13 +262,25 @@ ZIZMOR_VERSION_AWK="$(
   sed -n "s/^ZIZMOR_VERSION_AWK='\([^']*\)'.*/\1/p" \
     "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
 )"
-# Fail loud rather than falling back. Rename the constant, move the file or
-# break the pattern and this comes back empty; a silent `:-` default would
-# quietly restore `$NF` here while the wrapper kept using `$2` — which is the
-# divergence this sourcing exists to prevent. Mirrors the
-# `ZIZMOR_PINNED_VERSION` guard above.
+# Warn loudly and NAME the consequence — this does not abort. Rename the
+# constant, move the file or break the pattern and this comes back empty,
+# `cargo_get_pinned` then applies its `$NF` default (see the `[ -n "$field" ]`
+# line above), and the two parsers are silently back to the `$NF` vs. `$2`
+# split #3545 exists to prevent. Warning rather than exiting is deliberate and
+# matches this script's contract (see the header): it is best-effort, has no
+# `set -e`, runs from session/VM bootstrap, and must never sink the whole
+# provisioning flow over one tool — the same reason `cargo_get_pinned` warns
+# and installs unpinned when ZIZMOR_PINNED_VERSION comes back empty. A
+# degraded zizmor pin is a slow reinstall-every-run, not a broken box; a hard
+# exit here is taken BEFORE every installer below, so it would take the other
+# fourteen hook binaries down with it — HOOK_BINS names fourteen and sqlx-cli
+# is checked separately, so fifteen in all, of which zizmor is one; none of
+# the cargo tools, shellcheck, go or python3 would be reached. The cost of the
+# warning being missed is bounded because scripts/zizmor-hook.sh --self-test
+# executes THIS statement and reddens on it (#3545, finding 1) — the guard
+# below is the runtime notice, that self-test is the enforcement.
 if [ -z "$ZIZMOR_VERSION_AWK" ]; then
-  warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — the two version parsers may have diverged (#3545)"
+  warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — falling back to cargo_get_pinned's \$NF default, which can disagree with the wrapper's \$2 and reinstall zizmor on every run (#3545)"
 fi
 
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls

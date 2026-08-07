@@ -1718,13 +1718,19 @@ stages = ["pre-commit"]
 # mismatch fails CI and warns locally, and that every degradation path names
 # the audits it skipped. Drives the wrapper against stub `zizmor`/`curl`
 # binaries, so it needs no network and no real zizmor.
+# scripts/setup-hooks.sh is in the pattern too (#3545): the self-test also
+# cross-checks setup-hooks.sh — it executes that file's own
+# `ZIZMOR_VERSION_AWK=$( … )` sourcing statement and its empty-value guard, and
+# greps its `cargo_get_pinned` wiring. Matching only zizmor-hook.sh meant the
+# guard did not fire locally on the very file it guards, so a commit touching
+# setup-hooks.sh alone reached CI (`--all-files`) before anything complained.
 [[repos.hooks]]
 id = "zizmor-hook-self-test"
 name = "zizmor wrapper self-test"
 entry = "bash scripts/zizmor-hook.sh --self-test"
 language = "system"
 pass_filenames = false
-files = "^scripts/zizmor-hook\\.sh$"
+files = "^scripts/(zizmor-hook|setup-hooks)\\.sh$"
 stages = ["pre-commit"]
 
 # taplo: TOML lint + format. The `check-toml` builtin only validates

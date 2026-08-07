@@ -130,21 +130,33 @@ STUB
     set -e
     printf '%s\n[exit %s]' "$out" "$rc"
   }
+  # Substring tests are done with `case`, NOT `printf … | grep -qF`. This file
+  # runs under `set -o pipefail` (line 51), and `grep -q` exits 0 the instant
+  # it matches — closing the pipe while `printf` may still have bytes to
+  # write. `printf` then takes SIGPIPE and exits 141, and pipefail reports the
+  # PIPELINE as 141 even though grep matched, so the `if` takes the else
+  # branch: a phantom ✗ plus a phantom `fails` increment, on an assertion
+  # whose own error message contradicts the output it just printed.
+  # Measured: a 200 KB haystack reproduces it 300/300 with pipefail and 0/300
+  # without; at the self-test's haystack sizes it is a scheduling race that
+  # fired once in ~1700 runs here. That is the "self-test that reports wrong"
+  # failure mode — it can over-count as easily as it could under-count.
+  # `case "$hay" in *"$needle"*)` is the same fixed-string semantics as
+  # `grep -F` (quoting $needle makes glob metacharacters literal, which is why
+  # needles like `[exit 0]` still match), with no subprocess and no pipe.
   assert_out() { # <label> <needle> <output>
-    if printf '%s' "$3" | grep -qF -- "$2"; then
-      echo "  ✓ $1"
-    else
-      echo "  ✗ $1 (expected output to contain: $2)" >&2
-      fails=$((fails + 1))
-    fi
+    case "$3" in
+      *"$2"*) echo "  ✓ $1" ;;
+      *) echo "  ✗ $1 (expected output to contain: $2)" >&2
+         fails=$((fails + 1)) ;;
+    esac
   }
   refute_out() { # <label> <needle> <output>
-    if printf '%s' "$3" | grep -qF -- "$2"; then
-      echo "  ✗ $1 (unexpected output: $2)" >&2
-      fails=$((fails + 1))
-    else
-      echo "  ✓ $1"
-    fi
+    case "$3" in
+      *"$2"*) echo "  ✗ $1 (unexpected output: $2)" >&2
+              fails=$((fails + 1)) ;;
+      *) echo "  ✓ $1" ;;
+    esac
   }
 
   # (1) A local run on a DIFFERENT version says so, and still runs.
@@ -189,28 +201,108 @@ STUB
   #     program. Prove that on a version string with a TRAILING TOKEN — the
   #     shape that made the old `$NF` vs. `$2` split diverge — both the
   #     wrapper's own extraction and setup-hooks.sh's sourced copy of it
-  #     land on the same field. If setup-hooks.sh ever regresses to its own
-  #     hard-coded `$NF`, this line would extract "(deadbeef)" instead of
-  #     the version and the two would disagree.
+  #     land on the same field.
   sample_version_line="zizmor ${ZIZMOR_PINNED_VERSION} (deadbeef)"
   wrapper_field="$(printf '%s\n' "$sample_version_line" | awk "$ZIZMOR_VERSION_AWK")"
   setup_hooks="$(dirname "$SELF")/setup-hooks.sh"
-  # setup-hooks.sh does not hard-code the awk program — it extracts it from
-  # THIS file at runtime with the sed command below. Run that exact command
-  # (copy-pasted, not re-derived) to prove the sourcing itself still works,
-  # then apply the result to the same sample line the wrapper used.
-  installer_awk="$(
-    sed -n 's/^ZIZMOR_VERSION_AWK='"'"'\([^'"'"']*\)'"'"'.*/\1/p' \
-      "$SELF" 2>/dev/null | head -n 1
+  # The value under test has to come from setup-hooks.sh's OWN code, not from
+  # a copy of its sed pasted here. A pasted copy re-derives the answer from
+  # THIS file and so passes no matter what setup-hooks.sh contains: the
+  # original form of this check ran its sed against "$SELF", so breaking
+  # setup-hooks.sh's sed outright still went green while `cargo_get_pinned`
+  # silently fell back to `$NF`. Instead, lift setup-hooks.sh's verbatim
+  # `ZIZMOR_VERSION_AWK=$( … )` statement out of the file and EXECUTE it,
+  # with `$0` bound to setup-hooks.sh so its `$(dirname "$0")` resolves the
+  # same way it does in a real run. Any regression there — a broken sed, a
+  # renamed constant, a hard-coded `$NF` written back in place of the
+  # sourcing — now reddens this assertion.
+  # The extractor must FAIL CLOSED. It buffers instead of streaming and emits
+  # nothing unless it actually saw the statement's terminator within a small
+  # line budget, because both failure directions of an unbounded "print until
+  # the closing line" loop are worse than an empty result:
+  #   * it swallows the rest of setup-hooks.sh and hands ~190 lines of the
+  #     PROVISIONER to `bash -c` below — top-level code that echoes, and that
+  #     would call `cargo install` / `sudo apt-get install` / `curl` the
+  #     moment the swallowed range happens to contain a definition of `have`;
+  #   * and the sibling guard check then still finds its needle in that
+  #     runaway output and goes GREEN — a guard that passes on a cosmetic
+  #     refactor, which is the exact bug #3545 is about.
+  # Verified: with the streaming form, adding a trailing comment to the
+  # guard's `fi` made the extraction grab 98 lines and the self-test still
+  # printed "all assertions passed". The terminator match is a prefix (`^)`),
+  # not `^)"`, so the equally-valid unquoted `VAR=$( … )` spelling is accepted
+  # rather than spuriously reddened; anything the budget does not close comes
+  # back empty and reddens the assertion below.
+  installer_stmt="$(
+    awk '
+      /^ZIZMOR_VERSION_AWK=/ && !grab {
+        grab = 1; buf = $0
+        # Single-line form: the statement is this line and nothing else.
+        if ($0 !~ /\$\($/) { print buf; exit }
+        next
+      }
+      grab {
+        buf = buf "\n" $0
+        if ($0 ~ /^\)/) { print buf; exit }
+        if (++n >= 20)  { exit }   # runaway — print NOTHING, fail loud
+      }
+    ' "$setup_hooks" 2>/dev/null
   )"
-  installer_field="$(printf '%s\n' "$sample_version_line" | awk "$installer_awk")"
-  if [ -n "$installer_awk" ] && [ "$wrapper_field" = "$installer_field" ] \
+  installer_awk="$(
+    bash -c 'set -u
+'"$installer_stmt"'
+printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>/dev/null
+  )"
+  installer_field="$(printf '%s\n' "$sample_version_line" | awk "$installer_awk" 2>/dev/null)"
+  if [ -n "$installer_stmt" ] && [ -n "$installer_awk" ] \
+    && [ "$wrapper_field" = "$installer_field" ] \
     && [ "$wrapper_field" = "$ZIZMOR_PINNED_VERSION" ]; then
-    echo "  ✓ setup-hooks.sh's sourced field extraction agrees with the wrapper's own on a trailing-token version string"
+    echo "  ✓ setup-hooks.sh's own sourcing statement, executed, agrees with the wrapper's extraction on a trailing-token version string"
   else
-    echo "  ✗ the two extractions disagree on a trailing-token version string (wrapper: '$wrapper_field', installer: '$installer_field', installer_awk: '$installer_awk')" >&2
+    echo "  ✗ setup-hooks.sh's own sourcing statement does not reproduce the wrapper's extraction (wrapper: '$wrapper_field', installer: '$installer_field', installer_awk: '$installer_awk', statement found: $([ -n "$installer_stmt" ] && echo yes || echo no))" >&2
     fails=$((fails + 1))
   fi
+  # The statement above CAN come back empty (renamed constant, moved file).
+  # setup-hooks.sh deliberately warns instead of exiting in that case — it is
+  # a best-effort bootstrap that must not sink the other fourteen hook
+  # binaries it installs (HOOK_BINS's fourteen names plus sqlx-cli, less
+  # zizmor itself) — so
+  # the warning is the only runtime notice a developer gets, and it has to
+  # name the `$NF` fallback that silently takes over. Execute setup-hooks.sh's
+  # own guard with an empty value (stubbing only `warn`) and assert it
+  # actually says so; a guard that warns nothing, or warns without naming the
+  # consequence, is the silent degradation this whole cluster is about.
+  # Same fail-closed, line-budgeted shape as the extractor above, and for the
+  # same reason — this one is the case that actually went green on a runaway.
+  # `^fi` is matched with a delimiter alternation so `fi  # end guard` still
+  # terminates the block; an `fi` that moves (indented, renamed) yields an
+  # empty statement and reddens rather than swallowing the installer.
+  guard_stmt="$(
+    awk '
+      /^if \[ -z "\$ZIZMOR_VERSION_AWK" \]; then/ && !grab { grab = 1; buf = $0; next }
+      grab {
+        buf = buf "\n" $0
+        if ($0 ~ /^fi([ \t;#]|$)/) { print buf; exit }
+        if (++n >= 20)             { exit }   # runaway — print NOTHING
+      }
+    ' "$setup_hooks" 2>/dev/null
+  )"
+  guard_out="$(
+    bash -c 'warn() { printf "%s\n" "$*"; }
+ZIZMOR_VERSION_AWK=""
+'"$guard_stmt" 2>&1
+  )"
+  # `case`, not `printf … | grep -qF` — same pipefail/SIGPIPE phantom-failure
+  # hazard documented on assert_out above.
+  guard_names_nf=no
+  case "$guard_out" in *'$NF'*) guard_names_nf=yes ;; esac
+  if [ -n "$guard_stmt" ] && [ "$guard_names_nf" = yes ]; then
+    echo "  ✓ setup-hooks.sh's empty-ZIZMOR_VERSION_AWK guard fires and names the \$NF fallback it degrades to"
+  else
+    echo "  ✗ setup-hooks.sh's empty-ZIZMOR_VERSION_AWK guard is missing or does not name the \$NF fallback (guard found: $([ -n "$guard_stmt" ] && echo yes || echo no), output: '$guard_out')" >&2
+    fails=$((fails + 1))
+  fi
+
   # And the wiring in setup-hooks.sh must actually PASS that sourced value
   # into cargo_get_pinned's zizmor call — sourcing it into an unused
   # variable would satisfy the check above while still leaving the old
