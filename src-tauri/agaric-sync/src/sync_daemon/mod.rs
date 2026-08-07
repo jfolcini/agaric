@@ -118,6 +118,59 @@ pub fn peer_lock_key(endpoint_id: iroh::EndpointId) -> String {
     endpoint_id.to_string()
 }
 
+/// [`peer_lock_key`] for a caller holding the *stored* spelling of an `EndpointId`
+/// — i.e. a `peer_refs.endpoint_id` column value — rather than the parsed type.
+///
+/// # Why this exists rather than callers comparing strings
+///
+/// The app crate's `start_sync` command wants to answer "is the daemon syncing this
+/// peer right now?", and the only honest way to ask is with the key the daemon
+/// actually locked on. It reads the peer's `endpoint_id` out of SQLite as a `String`
+/// and does not depend on `iroh`, so it cannot call [`peer_lock_key`] directly.
+///
+/// The tempting shortcut is for it to use the stored string as the key: today that is
+/// byte-identical, because migration `0107`'s CHECK admits only the 64-char lowercase
+/// hex `Display` form and [`peer_lock_key`] is `Display`. But "identical today" is the
+/// property that quietly stopped holding once before — #3511 moved the lock's key and
+/// the probe in `start_sync_inner` kept comparing a `device_id`, so the collision it
+/// screened for became unrepresentable and its user-visible error unreachable. Routing
+/// through here means the probe and the daemon derive their key from the same function
+/// by construction: any future change to [`peer_lock_key`]'s shape is picked up on both
+/// sides or compiles on neither.
+///
+/// # Why a parse failure is logged and not silently `None`
+///
+/// Returning `None` is the right *behaviour* for an unparseable value: a caller that
+/// cannot name the peer's endpoint has nothing to compare against and must skip the
+/// probe, exactly as it does for a peer whose `endpoint_id` is `NULL` (every peer
+/// paired before the iroh cutover). But the two are not the same event, and a bare
+/// `.ok()` would make them indistinguishable — which is #3550's own failure mode: a
+/// guard that looks present and cannot fire, with nothing in the log to say so.
+///
+/// The gap is real, not hypothetical. `peer_refs::validate_endpoint_id` and migration
+/// `0107`'s CHECK both admit *any* 64-char lowercase hex string, while an `EndpointId`
+/// is a compressed Edwards point — roughly half of those 32-byte values are not on the
+/// curve and fail `FromStr`. So the column can hold a value that passes every write-side
+/// check and still has no lock key: `"deadbeef".repeat(8)` is one. A row in that state
+/// means the write side and the key side disagree about what an endpoint id is, which
+/// is worth a `warn!` on the way past — see the test below that pins it.
+#[must_use]
+pub fn peer_lock_key_for_stored(endpoint_id: &str) -> Option<String> {
+    match endpoint_id.parse::<iroh::EndpointId>() {
+        Ok(parsed) => Some(peer_lock_key(parsed)),
+        Err(e) => {
+            tracing::warn!(
+                stored = %endpoint_id,
+                error = %e,
+                "peer_refs.endpoint_id does not parse as an iroh EndpointId; the \
+                 daemon's per-peer lock has no key for this peer and the busy probe \
+                 is skipped"
+            );
+            None
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound
 // ---------------------------------------------------------------------------
@@ -459,6 +512,67 @@ pub async fn peers_appeared(pool: &SqlitePool) -> bool {
                 "peer_refs query failed in dormant waiter; remaining dormant"
             );
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{peer_lock_key, peer_lock_key_for_stored};
+    use crate::mdns::test_endpoint_id;
+
+    /// The stored spelling and the parsed type must land on the *same* key —
+    /// this is the whole reason `start_sync_inner`'s busy probe routes through
+    /// here instead of comparing the column value directly (#3550).
+    #[test]
+    fn peer_lock_key_for_stored_agrees_with_the_key_the_daemon_locks_on() {
+        let endpoint_id = test_endpoint_id("agreement");
+
+        assert_eq!(
+            peer_lock_key_for_stored(&endpoint_id.to_string()),
+            Some(peer_lock_key(endpoint_id)),
+            "the stored spelling must resolve to the key `try_sync_with_peer` and \
+             `handle_incoming_sync` take, or the probe screens for a collision that \
+             cannot happen"
+        );
+    }
+
+    /// The write side (`peer_refs::validate_endpoint_id`, migration `0107`'s CHECK)
+    /// admits any 64-char lowercase hex string; an `EndpointId` is a curve point, so
+    /// about half of those are unparseable. This pins that the gap exists — if a
+    /// future tightening of the write side closes it, this test fails and says so,
+    /// rather than the `None` arm quietly becoming dead code.
+    #[test]
+    fn peer_lock_key_for_stored_rejects_hex_the_column_check_would_accept() {
+        let admitted_by_the_column = "deadbeef".repeat(8);
+        assert_eq!(
+            admitted_by_the_column.len(),
+            64,
+            "fixture must be the shape migration 0107's CHECK admits"
+        );
+        assert!(
+            admitted_by_the_column
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "fixture must be lowercase hex, as the CHECK requires"
+        );
+
+        assert_eq!(
+            peer_lock_key_for_stored(&admitted_by_the_column),
+            None,
+            "a stored value that is not a point on the curve has no lock key; \
+             `validate_endpoint_id` would still have written it"
+        );
+    }
+
+    #[test]
+    fn peer_lock_key_for_stored_rejects_values_that_are_not_hex_at_all() {
+        for garbage in ["", "not-an-endpoint-id", &"z".repeat(64)] {
+            assert_eq!(
+                peer_lock_key_for_stored(garbage),
+                None,
+                "{garbage:?} must not yield a lock key"
+            );
         }
     }
 }

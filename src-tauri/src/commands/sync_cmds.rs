@@ -320,55 +320,76 @@ pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Re
 
 /// Start a sync session with a remote peer.
 ///
-/// Checks the backoff schedule, acquires the per-peer lock, and wakes
+/// Checks the backoff schedule, probes the daemon's per-peer lock, and wakes
 /// the SyncDaemon (#382) to sync now.  Actual network sync happens in
 /// the daemon; this returns immediately with a "complete" status to
 /// indicate the trigger was accepted.
-#[instrument(skip(scheduler), err)]
-pub fn start_sync_inner(
+///
+/// Takes the read pool solely to resolve the peer's bound `endpoint_id`, which
+/// is what the daemon's per-peer lock is keyed on — see the probe below.
+#[instrument(skip(pool, scheduler), err)]
+pub async fn start_sync_inner(
+    pool: &SqlitePool,
     scheduler: &SyncScheduler,
     device_id: &str,
     peer_id: String,
 ) -> Result<SyncSessionInfo, AppError> {
-    // Check backoff
+    // Check backoff. Keyed on `peer_id` (a device id) deliberately: backoff,
+    // events and `peer_refs` rows are all device-id keyed. Only the *lock*
+    // moved to the endpoint id in #3511, and only because the responder
+    // cannot key on a device id it has not been told yet.
     if !scheduler.may_retry(&peer_id) {
         return Err(AppError::InvalidOperation(
             "Peer is in backoff, try again later".into(),
         ));
     }
 
-    // HEALTH CHECK ONLY — this is *not* a real exclusion lock, and since
-    // #3511 it is not a working probe either. Left in place, documented
-    // rather than quietly kept, because removing it changes a
-    // user-visible error and that is a separate call.
+    // PROBE, NOT EXCLUSION. Asks "is the daemon syncing this peer right
+    // now?" so the user gets a real answer instead of a trigger that
+    // silently no-ops; the guard is released on the next line.
     //
-    // The `Some` vs `None` result of `try_lock_peer` was a probe for "is
-    // the daemon currently syncing this peer?", and the early return
-    // surfaced a user-visible error when the daemon already held the
-    // per-peer lock. That probe no longer observes anything: S-5's lock
-    // is keyed on the peer's `EndpointId` in both roles now
-    // (`agaric_sync::sync_daemon::peer_lock_key`), because the responder
-    // cannot key on a `device_id` it has not been told yet — so a probe
-    // keyed on `peer_id`, a device id, can never collide with the
-    // daemon's guard and the `Err` arm below is unreachable in practice.
-    // Making it work again means resolving the peer's bound endpoint id,
-    // which needs the pool this synchronous wrapper does not take.
+    // It must ask with the key the daemon actually locked on. Since #3511
+    // that is the peer's `EndpointId`
+    // (`agaric_sync::sync_daemon::peer_lock_key`, taken by
+    // `session_supervisor::try_sync_with_peer` on the initiator and
+    // `server::handle_incoming_sync` on the responder), not `peer_id`.
+    // Probing with `peer_id` — as this did between #3511 and #3550 — could
+    // never collide with the daemon's guard, so the error below was
+    // unreachable: a guard that looked present, read as protective, and
+    // could not fire. Deriving the key through
+    // `peer_lock_key_for_stored` rather than reusing the stored string
+    // keeps the two spellings the same function's output by construction.
     //
-    // The returned guard (`_health_check_only_guard`) falls out of scope
-    // when `start_sync_inner` returns microseconds later — it does NOT
-    // serialise concurrent wrapper calls. Two back-to-back `start_sync`
-    // invocations can both observe `Some(...)` here, both drop their
-    // guards immediately, and both call `notify_change()` below.
-    //
-    // Real per-peer exclusion lives in the daemon, where
-    // `try_sync_with_peer` and `handle_incoming_sync` take the same
-    // endpoint-keyed lock for the duration of the actual network sync.
-    //
-    // Do not lean on this guard for correctness; it is named
-    // `_health_check_only_guard` to make that misreading harder.
-    let _health_check_only_guard = scheduler.try_lock_peer(&peer_id).ok_or_else(|| {
-        AppError::InvalidOperation("Sync already in progress for this peer".into())
-    })?;
+    // `None` from either step means we cannot name this peer's endpoint —
+    // no row, or `endpoint_id IS NULL` because the peer was paired before
+    // the iroh cutover — so there is nothing to compare against and the
+    // probe is skipped rather than guessed at.
+    if let Some(lock_key) = peer_refs::get_peer_ref(pool, &peer_id)
+        .await?
+        .and_then(|peer| peer.endpoint_id)
+        .and_then(|endpoint_id| agaric_sync::sync_daemon::peer_lock_key_for_stored(&endpoint_id))
+    {
+        // The guard drops at the end of this block — microseconds later —
+        // so it does NOT serialise concurrent wrapper calls. Two racing
+        // `start_sync` invocations can both observe `Some(..)`, both drop,
+        // and both `notify_change()`. Real per-peer exclusion is the
+        // daemon's, held for the duration of the actual network sync; this
+        // only reports on it.
+        //
+        // The cost of asking with the daemon's own key, stated: this now
+        // *takes* that lock, where the pre-#3550 device-id probe could not.
+        // A daemon `try_lock_peer` landing inside this block sees `None` and
+        // skips a round (`try_sync_with_peer` returns false;
+        // `handle_incoming_sync` answers `Rejection::Busy`). The window is a
+        // few instructions with no `.await` in it, and both outcomes are
+        // retried, so the trade is worth making — but it is a trade, and it
+        // is why nothing may be added between the lock and the end of this
+        // block. `sync_start_sync_releases_the_probe_lock_before_returning`
+        // pins the guard's lifetime.
+        let _probe_guard = scheduler.try_lock_peer(&lock_key).ok_or_else(|| {
+            AppError::InvalidOperation("Sync already in progress for this peer".into())
+        })?;
+    }
 
     // Wake the SyncDaemon to sync now (#382). The wrapper does NOT
     // pre-credit `record_success` — the daemon's own success path calls
@@ -530,6 +551,7 @@ pub async fn cancel_pairing(pairing_state: State<'_, PairingState>) -> Result<()
 #[specta::specta]
 pub async fn start_sync(
     peer_id: String,
+    pool: State<'_, ReadPool>,
     device_id: State<'_, DeviceId>,
     scheduler: State<'_, Arc<SyncScheduler>>,
     progress: tauri::ipc::Channel<agaric_sync::sync_events::SyncProgressUpdate>,
@@ -548,7 +570,9 @@ pub async fn start_sync(
             })
         }),
     );
-    start_sync_inner(&scheduler, device_id.as_str(), peer_id).map_err(sanitize_internal_error)
+    start_sync_inner(&pool.0, &scheduler, device_id.as_str(), peer_id)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: cancel an active sync session.
