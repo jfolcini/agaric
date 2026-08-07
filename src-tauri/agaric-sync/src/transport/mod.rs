@@ -2,7 +2,8 @@
 //!
 //! # Why this exists
 //!
-//! This module replaces the hand-rolled WebSocket-over-mTLS stack in `sync_net`.
+//! This module replaced the hand-rolled WebSocket-over-mTLS stack (`sync_net`,
+//! `sync_cert`, `sync_daemon::wire`), which the cutover then deleted.
 //! The decision, the measurements behind it, and the rejected alternatives live on
 //! #78 and in the architecture plan #3464. In short: iroh retires roughly three
 //! times as much code as plain `quinn` would, because `quinn` supplies QUIC

@@ -8,19 +8,15 @@
 //! Supports **both** initiator and responder modes:
 //! - **Initiator:** discovers peers via mDNS, connects outbound, sends
 //!   HeadExchange first, and receives ops from the responder.
-//! - **Responder (#615):** accepts inbound TLS WebSocket connections,
-//!   receives the initiator's HeadExchange, computes and sends missing
-//!   ops, and completes the session.  Per-peer mutual exclusion prevents
-//!   concurrent sync sessions with the same device.
+//! - **Responder (#615):** accepts inbound QUIC connections on the sync
+//!   ALPN, receives the initiator's HeadExchange, computes and sends
+//!   missing ops, and completes the session.  Per-peer mutual exclusion
+//!   prevents concurrent sync sessions with the same device.
 
 mod discovery;
 pub mod server;
 mod session_supervisor;
 pub mod snapshot_transfer;
-// #611: transport-level SyncMessage encode/decode — splits large
-// LoroSync payloads onto the chunked binary path and reassembles them
-// on receive. Both session loops route every send/recv through it.
-pub mod wire;
 
 // Android-only: acquire WifiManager.MulticastLock at daemon start so the
 // `mdns-sd` crate's UDP multicast sockets receive packets.
@@ -95,8 +91,8 @@ impl SyncEventSink for SharedEventSink {
 /// Handle to the background sync daemon task.
 ///
 /// Call [`shutdown`](Self::shutdown) to signal the daemon to stop.  The
-/// task will clean up mDNS announcements and the WebSocket server before
-/// exiting.
+/// task will clean up mDNS announcements and close the QUIC endpoint
+/// before exiting.
 pub struct SyncDaemon {
     // #2621 Sync-D: `pub` so the app-hosted daemon tests can construct a
     // `SyncDaemon { … }` directly across the crate boundary.
@@ -132,9 +128,9 @@ impl SyncDaemon {
     /// enter active mode on startup.
     ///
     /// Returns `Ok(true)` when at least one paired peer exists — the
-    /// daemon must initialize mDNS and the TLS listener right away.
+    /// daemon must initialize mDNS and the QUIC endpoint right away.
     /// Returns `Ok(false)` when no peers exist — the daemon can skip mDNS
-    /// multicast traffic and TCP listening until the user pairs a device.
+    /// multicast traffic and endpoint binding until the user pairs a device.
     ///
     /// On query failure, returns the underlying error; callers should fail
     /// open (start the full daemon) rather than silently staying dormant,
@@ -161,7 +157,7 @@ impl SyncDaemon {
     /// Spawn the daemon only if peers exist, otherwise start a
     /// dormant waiter that transitions to active once peers appear.
     ///
-    /// This avoids mDNS announce/browse, TLS listener binding, and the
+    /// This avoids mDNS announce/browse, QUIC endpoint binding, and the
     /// 30s resync tick for users who have not yet paired a device. On
     /// first-launch (the common case), it is a pure overhead save.
     ///
@@ -212,7 +208,7 @@ impl SyncDaemon {
         // Tauri-managed state and never survives a process restart, so any
         // marker still present at *startup* is orphaned — there is no
         // interactive pairing it could belong to. Left in place it drives
-        // `should_start_active` straight into the active mDNS + TLS-listener
+        // `should_start_active` straight into the active mDNS + QUIC-endpoint
         // path on every launch until the marker's TTL elapses. On Android
         // that startup path can crash the process (release builds use
         // `panic = "abort"`, and a native JNI fault is uncatchable either
@@ -236,10 +232,10 @@ impl SyncDaemon {
             }
             Ok(false) => {
                 // No paired peers — spawn a lightweight waiter. The mDNS
-                // service and TLS listener are NOT initialized here; they
+                // service and QUIC endpoint are NOT initialized here; they
                 // are created only once the user pairs a device.
                 tracing::info!(
-                    "SyncDaemon starting in dormant mode (no paired peers, mDNS and TLS listener deferred)"
+                    "SyncDaemon starting in dormant mode (no paired peers, mDNS and QUIC endpoint deferred)"
                 );
                 Self::spawn_dormant_waiter(ctx)
             }
@@ -314,7 +310,7 @@ impl SyncDaemon {
     /// Spawn the background daemon task.
     ///
     /// The daemon will:
-    /// 1. Start a TLS WebSocket server for incoming connections.
+    /// 1. Bind the QUIC endpoint and accept incoming connections.
     /// 2. Announce this device via mDNS.
     /// 3. Browse for peers and sync with any that are already paired.
     /// 4. React to local-change notifications from the scheduler.

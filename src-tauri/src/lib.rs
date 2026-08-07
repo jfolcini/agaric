@@ -44,11 +44,11 @@ pub mod sync_daemon;
 // `ChannelEventSink`) live here; `sync_events` (the pure event types +
 // `SyncEventSink` trait) moved into `agaric-sync` and is re-exported below.
 pub mod sync_event_sinks;
-// #2621 Sync-D: `sync_files` / `sync_net` / `sync_protocol` production moved
-// into `agaric-sync`; each `pub mod` is now a shim re-exporting it and hosting
-// the app-coupled tests.
+// #2621 Sync-D: `sync_files` / `sync_protocol` production moved into
+// `agaric-sync`; each `pub mod` is now a shim re-exporting it and hosting the
+// app-coupled tests. (`sync_net` was the third; it went with the old TCP+TLS
+// transport in the iroh cutover, #3464.)
 pub mod sync_files;
-pub mod sync_net;
 pub mod sync_protocol;
 pub mod ulid;
 
@@ -1610,7 +1610,7 @@ fn wire_sync_daemon(w: SyncDaemonWiring) {
     //
     // Use `start_if_peers_exist` so the daemon enters
     // dormant mode when no peers are paired. mDNS announce/browse
-    // and the TLS listener are deferred until the user pairs a
+    // and the QUIC endpoint are deferred until the user pairs a
     // device. The dormant waiter wakes on `scheduler.notify_change`
     // (called by `confirm_pairing`) and on a periodic poll.
     //

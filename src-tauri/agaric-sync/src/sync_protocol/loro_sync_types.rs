@@ -111,33 +111,32 @@ pub enum LoroSyncMessage {
 /// Header-only mirror of [`LoroSyncMessage`] for the chunked binary
 /// transport path (#611).
 ///
+/// # Why it existed
+///
 /// `LoroSyncMessage.bytes` serialises as a JSON number array (~3.6×
-/// inflation, worst case 4 chars/byte), and a single text frame is
-/// capped at `SyncConnection::MAX_MSG_SIZE` (10 MB) — so a growing
-/// space snapshot would eventually exceed the cap and permanently
-/// break sync. Payloads larger than
-/// [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] therefore travel
-/// out-of-band: the sender emits a
-/// `SyncMessage::LoroSyncChunked { header, is_last }` JSON envelope
-/// carrying this header, followed by exactly `size_bytes` of raw Loro
-/// bytes in chunked binary frames (the same machinery used by the
-/// snapshot-blob and attachment-file sub-flows). The receiver's
-/// transport layer (`sync_daemon::wire::recv_sync_message`)
-/// reassembles the header + bytes back into a plain
-/// [`LoroSyncMessage`] before the protocol orchestrator ever sees it.
+/// inflation, worst case 4 chars/byte), and the WebSocket transport
+/// capped a message at 10 MB — so any vault past ~2.5 MB of Loro state
+/// produced an over-cap message and sync broke permanently. Payloads
+/// larger than [`crate::sync_constants::LORO_INLINE_MAX_BYTES`] therefore
+/// travelled out-of-band: a `SyncMessage::LoroSyncChunked { header,
+/// is_last }` envelope carrying this header, followed by exactly
+/// `size_bytes` of raw Loro bytes in binary frames, reassembled before
+/// the orchestrator saw it.
+///
+/// # Why nothing sends it now
+///
+/// The iroh port (#3464) removed the chunking layer with the transport
+/// that needed it. A QUIC frame is bounded by
+/// [`MAX_FRAME_SIZE`](crate::transport::session::MAX_FRAME_SIZE) (256 MB),
+/// which the inflated encoding fits comfortably, so an over-threshold
+/// payload ships as one ordinary [`LoroSyncMessage`]. The type is kept
+/// because the variant is still on the wire: a peer running the chunking
+/// build can send one, and decoding it is what lets this side reject it
+/// with a diagnosis instead of an unknown-tag deserialize error.
 ///
 /// Field-for-field this mirrors [`LoroSyncMessage`] minus `bytes`
 /// (replaced by `size_bytes`); `from_vv` stays inline in the header —
 /// version vectors are tiny (a few bytes per device).
-///
-/// # Compatibility
-///
-/// A pre-#611 peer does not know the `LoroSyncChunked` envelope and
-/// fails the session with a deserialize error when it receives one.
-/// That is strictly no worse than the status quo: the chunked path is
-/// only taken for payloads whose inline JSON would have blown the old
-/// peer's 10 MB receive cap anyway. Every payload an old peer could
-/// successfully receive still rides the unchanged inline shape.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum LoroSyncChunkedHeader {
@@ -223,9 +222,11 @@ impl LoroSyncChunkedHeader {
     }
 
     /// Reassemble the full [`LoroSyncMessage`] from this header plus
-    /// the received payload bytes (receiver side). The wire layer
-    /// guarantees `bytes.len() == self.size_bytes()` (exact-count
-    /// chunked receive), so no length re-validation happens here.
+    /// the received payload bytes (receiver side). The chunked receive that
+    /// guaranteed `bytes.len() == self.size_bytes()` went with the WebSocket
+    /// transport (#3464), so this has no production caller; it is retained
+    /// with the type as the inverse of [`Self::split`], which the round-trip
+    /// test pins.
     pub fn into_message(self, bytes: Vec<u8>) -> LoroSyncMessage {
         match self {
             Self::Snapshot {

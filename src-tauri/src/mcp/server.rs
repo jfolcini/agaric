@@ -63,19 +63,29 @@ pub(crate) const MCP_DISCONNECT_GRACE_PERIOD: std::time::Duration =
     std::time::Duration::from_secs(2);
 
 /// #636 — maximum back-off for consecutive `accept()` failures.
-/// Mirrors the sync daemon's accept-loop hardening
-/// (`sync_net/websocket.rs::ACCEPT_BACKOFF_CAP`, 30 s) — that helper
-/// lives in a private module, so the schedule is mirrored here rather
-/// than imported.
+///
+/// 30 s is the ceiling because the failure this bounds is the app's own
+/// (FD exhaustion, a sysctl limit, address-family weirdness), not a
+/// peer's: the loop must keep retrying so the socket recovers on its own
+/// once the condition clears, and 30 s is short enough that recovery is
+/// unnoticeable to a user who has just closed some file handles, while
+/// long enough that a permanently broken listener costs two log lines a
+/// minute instead of a spinning core.
+///
+/// The sync daemon's accept loop carried the identical schedule for the
+/// identical reason. That module has been deleted (#3464), so the
+/// rationale is stated here rather than cross-referenced.
 const ACCEPT_BACKOFF_CAP: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// #636 — back-off duration before the *next* accept attempt after a
 /// run of consecutive `accept()` failures.
 ///
-/// Schedule mirrors the sync daemon's `compute_accept_backoff_duration`:
-/// `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where `n` is the
-/// 1-based count of consecutive failures; `0` means "no recent
-/// failure" and yields zero so a healthy loop never sleeps.
+/// Schedule: `100ms × 2^(n-1)` capped at [`ACCEPT_BACKOFF_CAP`], where
+/// `n` is the 1-based count of consecutive failures; `0` means "no
+/// recent failure" and yields zero so a healthy loop never sleeps. The
+/// first step is 100 ms so a single transient error costs no visible
+/// latency, and doubling means a genuinely wedged listener reaches the
+/// cap in nine failures rather than logging thousands of times.
 ///
 /// Rationale: a transient `accept()` error (EMFILE / ENFILE /
 /// ECONNABORTED) used to propagate out of the serve loop via `?`,
@@ -578,7 +588,7 @@ async fn run_connection<S, R>(
 }
 
 // ---------------------------------------------------------------------------
-// #636 — accept-loop back-off tests (mirrors sync_net coverage)
+// #636 — accept-loop back-off tests
 // ---------------------------------------------------------------------------
 
 #[cfg(test)]

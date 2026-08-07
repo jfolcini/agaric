@@ -12,6 +12,14 @@ machine.
 This is an extraction of the implementation as it stands; it does not
 propose new behavior. The canonical source is the code, primarily:
 
+> **Partially stale as of the iroh cutover (#3464).** The message variants,
+> state machine and exchange orders below are current. The transport sections
+> — WebSocket framing, `SyncConnection` limits, and the chunked
+> `LoroSyncChunked` / `OpLogBatchChunked` encodings — describe the retired
+> mTLS/WebSocket stack. Framing is now a length prefix on a QUIC bi-stream
+> (`transport::session`), the chunked encodings have no producer, and the
+> per-message cap is `MAX_FRAME_SIZE` (256 MB).
+
 - `src-tauri/agaric-sync/src/sync_protocol/types.rs` — the `SyncMessage` envelope and
   `SyncState`.
 - `src-tauri/agaric-sync/src/sync_protocol/loro_sync_types.rs` — the `LoroSyncMessage`
@@ -27,7 +35,7 @@ propose new behavior. The canonical source is the code, primarily:
 - `src-tauri/agaric-sync/src/sync_daemon/snapshot_transfer.rs` — the snapshot catch-up
   sub-flow.
 - `src-tauri/agaric-sync/src/sync_files.rs` — the attachment-transfer sub-protocol.
-- `src-tauri/agaric-sync/src/sync_constants.rs` and `src-tauri/agaric-sync/src/sync_net/connection.rs`
+- `src-tauri/agaric-sync/src/sync_constants.rs` and `src-tauri/agaric-sync/src/transport/session.rs`
   — shared transport constants.
 
 ## Envelope encoding
@@ -53,8 +61,10 @@ each frame at most `BINARY_FRAME_CHUNK_SIZE` (5 MB) — see
 
 ### Transport limits
 
-Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-connection) in
-`src-tauri/agaric-sync/src/sync_net/connection.rs`:
+Defined in `src-tauri/agaric-sync/src/sync_constants.rs` and (per-frame) in
+`src-tauri/agaric-sync/src/transport/session.rs`. The `MAX_MSG_SIZE` row below
+is the retired WebSocket cap; its successor is
+`transport::session::MAX_FRAME_SIZE` (256 MB):
 
 | Constant | Value | Meaning |
 | --- | --- | --- |
@@ -857,13 +867,17 @@ Mechanics:
 
 ### Binary-frame transfer
 
-Both the snapshot blob and attachment files use the shared chunked-binary
-path on `SyncConnection` (`src-tauri/agaric-sync/src/sync_net/connection.rs`):
-`send_binary_chunked` splits the payload into frames of at most
-`BINARY_FRAME_CHUNK_SIZE` and the receiver reassembles by frame accounting
-against the advertised `size_bytes`. Frames are raw WebSocket binary frames
-(no JSON), each bounded by `MAX_MSG_SIZE`. A zero-byte payload is always
-delivered as one empty frame so the receiver loop terminates cleanly.
+Both the snapshot blob and attachment files use the shared bulk path
+(`src-tauri/agaric-sync/src/transport/bulk.rs`): `send_bulk` / `recv_bulk` copy
+exactly `size_bytes` through a fixed `BULK_COPY_BYTES` (5 MB) buffer on the
+session's bi-stream, which also sets the progress-tick cadence. There are no
+frames — a QUIC stream is a byte stream — so a zero-byte payload is zero bytes
+rather than the one empty frame the WebSocket path had to send.
+
+Before #3464 this was `SyncConnection::send_binary_chunked`, which split the
+payload into WebSocket binary frames of at most `BINARY_FRAME_CHUNK_SIZE`, each
+bounded by `MAX_MSG_SIZE`, reassembled by frame accounting against the
+advertised `size_bytes`.
 
 ## See also
 

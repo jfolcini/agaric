@@ -127,17 +127,18 @@ pub const SYNC_ALPN: &[u8] = b"agaric/sync/0";
 ///
 /// # Why the number is restated here rather than imported
 ///
-/// The value is `TLS_HANDSHAKE_TIMEOUT`'s, and that constant's sizing rationale
-/// describes this situation exactly — "a handshake between two LAN devices completes in
+/// The value is the old stack's `TLS_HANDSHAKE_TIMEOUT`, whose sizing rationale
+/// describes this situation exactly — a handshake between two LAN devices completes in
 /// well under a second; 10 s is generous headroom for a slow/loaded device or a brief
 /// network hiccup while still failing a genuinely stalled peer fast enough to keep the
-/// 16-slot pool flowing".
+/// 16-slot pool flowing.
 ///
-/// But its documented *scope* is `TlsAcceptor::accept` plus the WebSocket upgrade,
-/// machinery this port deletes. After the cutover it would be an orphan whose only
-/// consumer is this bound, and tuning it for the TLS story it is named after would
-/// silently retune QUIC connection setup. Same reasoning as `driver`'s `RECV_TIMEOUT`
-/// and `CLOSE_WAIT`: the number moves with the responsibility, not with the name.
+/// But its documented *scope* was `TlsAcceptor::accept` plus the WebSocket upgrade,
+/// machinery this port deleted. Carrying the constant forward would have left an orphan
+/// whose only consumer is this bound, and tuning it for the TLS story it was named after
+/// would silently retune QUIC connection setup — so it went with the transport and the
+/// number is stated here. Same reasoning as `driver`'s `RECV_TIMEOUT` and `CLOSE_WAIT`:
+/// the number moves with the responsibility, not with the name.
 const CONNECTION_SETUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Wall-clock budget for the peer's *first frame*, which is what makes `accept_bi`

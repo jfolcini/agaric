@@ -1,7 +1,7 @@
 <!-- markdownlint-disable MD060 -->
 # Sync, Networking, Android
 
-Local-WiFi peer-to-peer sync over TLS-pinned WebSocket carrying Loro CRDT messages. No cloud, no relay, no accounts.
+Local-WiFi peer-to-peer sync carrying Loro CRDT messages. No cloud, no relay, no accounts. (Transport: QUIC via `iroh` since #3464; the Transport and Stack sections below still describe the retired mTLS/WebSocket stack.)
 
 Companion to [`docs/features/sync.md`](../features/sync.md) (user perspective) and [`crdt-and-recovery.md`](crdt-and-recovery.md) (the Loro engine itself + snapshot atomicity).
 
@@ -44,11 +44,18 @@ If you re-install Agaric on a peer, its certificate hash changes — you'll need
 
 ## Transport
 
+> **Stale as of the iroh cutover (#3464).** The sync transport is now QUIC via
+> `iroh` — `src-tauri/agaric-sync/src/transport/`. The mTLS/WebSocket stack this
+> section describes (`sync_net`, `sync_cert`, `sync_daemon::wire`) has been
+> deleted, and `peer_refs.cert_hash` is superseded by `peer_refs.endpoint_id`.
+> The timeout bullet below is current; the rest is retained as a description of
+> the pre-cutover design until this document is rewritten.
+
 - **TLS** with self-signed ECDSA P-256 (`CN=agaric-{device_id}`). `rcgen` generates the cert; the cert and its private key are persisted together as a combined PEM file in the app data dir (`sync_cert.rs`, written owner-only `0600` — #1580). There is no OS keychain / `keyring` dependency; OS full-disk encryption is the confidentiality boundary.
 - **Certificate pinning.** `PinningCertVerifier` rejects any cert whose SHA-256 doesn't match `peer_refs.cert_hash`. Also enforces `CN=agaric-{expected_device_id}` so a cert swap with a matching hash but mismatched CN fails.
 - **Self-device guard.** Prevents talking to your own announced service in mDNS loopback scenarios.
 - **WebSocket framing.** `MAX_MSG_SIZE = 10_000_000` bytes per WS frame; `BINARY_FRAME_CHUNK_SIZE = 5_000_000` for snapshot + attachment transfer (the actual chunk unit).
-- **Timeouts.** `HANDSHAKE_TIMEOUT` (per-`handle_message` budget) is shorter than `RECV_TIMEOUT` (overall idle); a `#[test]` (`recv_timeout_invariant::recv_timeout_exceeds_handshake_timeout` in `src-tauri/agaric-sync/src/sync_net/connection.rs`) enforces the ordering. Not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range.
+- **Timeouts.** `HANDSHAKE_TIMEOUT` (per-`handle_message` budget) is shorter than `RECV_TIMEOUT` (overall idle); a `#[test]` (`default_limits_are_the_values_carried_from_the_old_transport` in `src-tauri/agaric-sync/src/transport/driver.rs`) enforces the ordering on `SessionLimits`. Not a `const_assert!` because both values come from `Duration::from_secs`, which isn't usable in const context on the supported rustc range.
 
 ## Protocol
 

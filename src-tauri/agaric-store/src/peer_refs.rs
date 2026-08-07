@@ -313,8 +313,9 @@ pub async fn upsert_peer_ref_with_cert(
     peer_id: &str,
     cert_hash: &str,
 ) -> Result<(), AppError> {
-    // #1602 — symmetric with `sync_cert::read_existing_cert`: never persist a
-    // TOFU pin that isn't exactly 64 chars of hex (a SHA-256 hex digest).
+    // #1602 — never persist a TOFU pin that isn't exactly 64 chars of hex (a
+    // SHA-256 hex digest). The same shape check ran on the read side, so a
+    // value this column accepts is a value the pin comparison can use.
     // Callers derive `cert_hash` from the presented TLS cert (well-formed
     // today), but rejecting a malformed pin keeps the write path from
     // silently storing garbage that the read/pin path would later reject.
@@ -1107,8 +1108,8 @@ mod tests {
 
     #[tokio::test]
     async fn upsert_with_cert_accepts_uppercase_hex() {
-        // #1602 — `is_ascii_hexdigit` (matching read_existing_cert) accepts
-        // either case, so an uppercase 64-char hex pin must upsert cleanly.
+        // #1602 — the guard uses `is_ascii_hexdigit`, which accepts either
+        // case, so an uppercase 64-char hex pin must upsert cleanly.
         let (pool, _dir) = test_pool().await;
         let hash = "A".repeat(64);
 
@@ -1126,8 +1127,7 @@ mod tests {
     #[tokio::test]
     async fn upsert_with_cert_rejects_malformed_hash_and_persists_nothing() {
         // #1602 — a too-short, too-long, or non-hex pin must be rejected with
-        // an AppError::Validation, and the row must not be written at all
-        // (symmetric with sync_cert::read_existing_cert's hash guard).
+        // an AppError::Validation, and the row must not be written at all.
         let (pool, _dir) = test_pool().await;
 
         let bad_hashes = [

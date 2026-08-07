@@ -18,17 +18,19 @@
 //! * `bind_endpoint_id` would rewrite the column on every boot, so a pin that is
 //!   rewritten unconditionally pins nothing.
 //!
-//! The old stack had the same requirement and met it the same way, one layer down:
-//! `sync_cert::get_or_create_sync_cert` persists the TLS keypair precisely so
-//! `cert_hash` stays stable across restarts. This is that guarantee, carried across
-//! the transport swap to the thing that now carries identity.
+//! The requirement is not new — it is the one every pinned-identity scheme has. The
+//! retired mTLS stack met it one layer down, by persisting the TLS keypair on first run
+//! and reloading it thereafter so `cert_hash` stayed stable across restarts. Nothing
+//! about that reasoning was specific to TLS: whatever the peer pins, the local side has
+//! to keep. This module is that guarantee restated for the thing that now carries
+//! identity.
 //!
-//! # Format, and why it is not the cert file
+//! # Format, and why it is its own file
 //!
 //! 32 raw ed25519 secret bytes, hex-encoded, one line, mode `0o600`. Deliberately its
-//! own file rather than another field in the cert PEM: the cert file is deleted by the
-//! PR that retires `sync_net`, and an identity that outlives the transport must not
-//! live inside the transport it outlives.
+//! own file rather than a field inside some larger transport artefact: the identity
+//! outlives any single transport — the previous one's key material was deleted whole
+//! with it — so it must not be stored inside one.
 //!
 //! Hex rather than raw bytes so a truncated or partially-written file is *detectable*
 //! (wrong length, or a non-hex byte) instead of silently decoding to a different,
@@ -53,8 +55,11 @@ fn identity_err(msg: impl Into<String>) -> AppError {
 /// Open options that create a new file readable only by its owner.
 ///
 /// `create_new` makes the create path atomic against a concurrent startup: exactly one
-/// caller creates the file and every other observes `AlreadyExists` and reads it. Same
-/// discipline (and the same reason) as `sync_cert`'s `secure_create_options`.
+/// caller creates the file and every other observes `AlreadyExists` and reads it —
+/// without it, two racing startups can each mint a key and the loser's endpoint runs
+/// under an identity no peer has stored. `0o600` because the file *is* the device's
+/// private key: anything that can read it can impersonate this device to every paired
+/// peer. Both were the discipline the retired cert store used, for these reasons.
 fn secure_create_options() -> fs::OpenOptions {
     let mut opts = fs::OpenOptions::new();
     opts.write(true).create_new(true);

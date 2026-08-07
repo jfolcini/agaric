@@ -428,16 +428,14 @@ impl SyncOrchestrator {
                 });
                 return Err(AppError::InvalidOperation(msg_str.into()));
             }
-            // LoroSyncChunked must never reach the orchestrator — the
-            // transport layer (`sync_daemon::wire::recv_sync_message`)
-            // reassembles header + binary frames into a plain `LoroSync`
-            // before dispatch (#611). This arm only keeps the match
-            // exhaustive; the dispatch match below rejects it loudly.
+            // LoroSyncChunked must never reach the orchestrator — since
+            // #3464 nothing produces it (see the dispatch match below).
+            // This arm only keeps the state match exhaustive; the dispatch
+            // match rejects it loudly.
             (_, SyncMessage::LoroSyncChunked { .. }) => {}
-            // OpLogBatchChunked, like LoroSyncChunked, is reassembled into a
-            // plain OpLogBatch by the wire layer before dispatch (#2593) and
-            // never legitimately reaches the orchestrator. This arm keeps the
-            // match exhaustive; the dispatch match below rejects it loudly.
+            // OpLogBatchChunked, like LoroSyncChunked, has no producer since
+            // #3464 and never legitimately reaches the orchestrator. This arm
+            // keeps the match exhaustive; the dispatch match rejects it loudly.
             (_, SyncMessage::OpLogBatchChunked { .. }) => {}
             // Snapshot messages accepted in any non-terminal state
             (
@@ -494,9 +492,9 @@ impl SyncOrchestrator {
                 // streaming reply below (stashed at `peer_op_log_replication`).
                 op_log_replication,
                 // #2200: the peer's compression capability is consumed by
-                // the sync-daemon wire layer (`sync_daemon::wire`), which
-                // reads it off the received `HeadExchange` and records it
-                // on the `SyncConnection`. Ignored by this core.
+                // the transport session layer, which reads it off the
+                // received `HeadExchange` and records it on the session.
+                // Ignored by this core.
                 wire_compression: _,
                 // #2593: the peer's chunked-OpLogBatch capability gates whether
                 // we ship it an oversized (over-inline-bound) op batch — stashed
@@ -876,25 +874,24 @@ impl SyncOrchestrator {
             )),
 
             // ---- Chunked LoroSync header (#611) ------------------------------
-            // The wire layer reassembles `LoroSyncChunked` + its binary
-            // frames into a plain `LoroSync` before dispatch
-            // (`sync_daemon::wire::recv_sync_message`). One reaching
-            // `handle_message` means a transport-dispatch regression —
-            // fail loudly, same contract as `SnapshotOffer`.
+            // The chunked encoding went with the WebSocket transport (#3464):
+            // QUIC frames are capped at 256 MB, so an oversized `LoroSync`
+            // ships inline and nothing produces this variant. It can only
+            // arrive from a chunking-era peer, which this build cannot decode
+            // — fail loudly, same contract as `SnapshotOffer`.
             SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
-                "LoroSyncChunked must be reassembled by the sync daemon wire \
-                 layer (`transport::session::recv_sync_message`), not dispatched \
-                 to the orchestrator state machine"
+                "LoroSyncChunked is not supported: the chunked encoding was \
+                 removed with the WebSocket transport, and an oversized LoroSync \
+                 now travels inline"
                     .into(),
             )),
             // ---- Chunked OpLogBatch header (#2593) --------------------------
-            // Same contract as LoroSyncChunked: the wire layer reassembles it
-            // into a plain OpLogBatch before dispatch. One reaching
-            // `handle_message` is a transport-dispatch regression — fail loudly.
+            // Same story as LoroSyncChunked: no sender produces it, and a
+            // chunking-era peer's frame cannot be decoded — fail loudly.
             SyncMessage::OpLogBatchChunked { .. } => Err(AppError::InvalidOperation(
-                "OpLogBatchChunked must be reassembled by the sync daemon wire \
-                 layer (`transport::session::recv_sync_message`), not dispatched \
-                 to the orchestrator state machine"
+                "OpLogBatchChunked is not supported: the chunked encoding was \
+                 removed with the WebSocket transport, and an oversized \
+                 OpLogBatch now travels inline"
                     .into(),
             )),
             SyncMessage::SnapshotAccept | SyncMessage::SnapshotReject => {
@@ -1280,21 +1277,23 @@ impl SyncOrchestrator {
     /// batch. Whether that oversized batch actually ships depends on the peer's
     /// capabilities (#2593):
     ///
-    /// * **Peer advertised `op_log_batch_chunked`** → the batch ships; the wire
-    ///   layer (`sync_daemon::wire`) sends it via the chunked
-    ///   [`SyncMessage::OpLogBatchChunked`] transport rather than dropping it at
-    ///   the 10 MB frame cap.
+    /// * **Peer advertised `op_log_batch_chunked`** → the batch ships. Since the
+    ///   iroh port (#3464) it ships *inline*, as one oversized `OpLogBatch`:
+    ///   QUIC's 256 MB frame cap accommodates it and the chunked encoding was
+    ///   removed with the transport that needed it. The capability still gates
+    ///   the send because it is what the peer used to promise it could survive a
+    ///   payload above the inline bound, however that payload arrives.
     /// * **Peer did NOT** (a shipped #2481 build that knows `OpLogBatch` but not
     ///   the chunked envelope) → the oversized batch is **skipped with a
     ///   warning**, exactly as before #2593. This is the critical back-compat
-    ///   guard: shipping such a peer an `OpLogBatchChunked` frame it cannot
-    ///   deserialize would fault the session, and because the oversized record
+    ///   guard: shipping such a peer a payload above the cap it was built
+    ///   against would fault the session, and because the oversized record
     ///   persists, every subsequent session too — breaking *all* state sync, not
     ///   just audit. Its state still syncs via the chunked `LoroSync` path.
     ///
     /// A batch exceeding [`MAX_OP_LOG_BATCH_PAYLOAD_SIZE`] (256 MB) is skipped
-    /// unconditionally — even the chunked transport cannot ship it, so it would
-    /// fault the send regardless of capability.
+    /// unconditionally — it exceeds the frame cap itself, so it would fault the
+    /// send regardless of capability.
     ///
     /// [`MAX_OP_LOG_BATCH_PAYLOAD_SIZE`]: crate::sync_constants::MAX_OP_LOG_BATCH_PAYLOAD_SIZE
     async fn collect_op_batches_for_peer(&self) -> Result<Vec<Vec<OpTransfer>>, AppError> {
@@ -1314,8 +1313,8 @@ impl SyncOrchestrator {
                     device_id = %self.device_id,
                     size,
                     cap = MAX_OP_LOG_BATCH_PAYLOAD_SIZE,
-                    "#2593: skipping an op batch that exceeds the chunked-transport cap \
-                     (unshippable even chunked); its state still syncs via LoroSync"
+                    "#2593: skipping an op batch that exceeds the transport payload cap \
+                     (unshippable at any size); its state still syncs via LoroSync"
                 );
                 return false;
             }

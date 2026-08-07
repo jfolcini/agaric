@@ -164,7 +164,7 @@ pub struct SessionLimits {
 
 /// Carried from `SyncConnection::RECV_TIMEOUT` (`sync_net::connection`), the bound the
 /// old transport applied to every receive. Restated here rather than imported because
-/// `sync_net` is retired by this port; the value is the one that shipped, not a new
+/// `sync_net` was retired by this port; the value is the one that shipped, not a new
 /// guess.
 const RECV_TIMEOUT: Duration = Duration::from_secs(180);
 

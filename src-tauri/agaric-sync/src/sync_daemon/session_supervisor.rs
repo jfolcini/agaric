@@ -8,7 +8,7 @@
 //!   graceful-fallback path when raw multicast UDP is unavailable.
 //! * **Per-peer scheduling** — exponential backoff, "due for resync"
 //!   tick, foreground/background gating, and a dormant-mode
-//!   waiter that defers mDNS / TLS listener startup until the user
+//!   waiter that defers mDNS / QUIC endpoint startup until the user
 //!   pairs a device.
 //! * **Per-peer mutual exclusion** — a `try_lock_peer` mutex prevents
 //!   two concurrent sessions with the same device.

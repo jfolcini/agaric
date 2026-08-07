@@ -11,22 +11,23 @@
 //!   QR payload via this module and arms the pending-pairing marker (see
 //!   [`agaric_store::peer_refs::set_pending_pairing`]) with
 //!   [`crate::pairing::pairing_proof`] of the confirmed passphrase.
-//! - [`crate::sync_cert`] — owns the persistent self-signed TLS certificate
-//!   and its hash.
+//! - [`crate::transport::identity`] — owns the persistent iroh secret key whose
+//!   public half is this device's `EndpointId`, the thing a peer pins.
 //!
-//! There is no application-layer pairing handshake: cert pinning is pure
-//! TLS-level TOFU. On the first authenticated mTLS connection to an
-//! unpinned peer, [`agaric_store::peer_refs::upsert_peer_ref_with_cert`]
-//! stores the observed leaf-cert hash (`sync_daemon::server` on the
-//! responder side, `sync_daemon::session_supervisor` on the initiator
-//! side); [`crate::sync_net::tls::PinningCertVerifier`] enforces it on
-//! every subsequent connection. A two-device `PairingMessage` exchange
+//! There is no application-layer pairing handshake: identity pinning is pure
+//! transport-level TOFU. On the first authenticated connection to an unpinned
+//! peer, [`agaric_store::peer_refs::bind_endpoint_id`] stores the peer's
+//! `EndpointId` — the identity QUIC's own handshake authenticated
+//! (`sync_daemon::server` on the responder side,
+//! `sync_daemon::session_supervisor` on the initiator side) — and
+//! `get_peer_ref_by_endpoint_id` resolves against it on every subsequent
+//! connection. A two-device `PairingMessage` exchange
 //! existed here previously but was never reachable in production (#3463)
 //! and has been removed.
 //!
-//! Confidentiality and authenticity of the pairing exchange come from the
-//! rustls + cert-pin layer, not from a derived session key — there is no
-//! application-layer crypto in this module.
+//! Confidentiality and authenticity of the pairing exchange come from the QUIC
+//! handshake and the endpoint-id pin, not from a derived session key — there is
+//! no application-layer crypto in this module.
 
 use agaric_core::error::AppError;
 
@@ -183,9 +184,9 @@ pub fn pairing_proof(passphrase: &str) -> String {
 
 /// Short-lived pairing session that tracks the generated passphrase.
 ///
-/// Confidentiality and authenticity of the pairing exchange come from
-/// the mTLS + TOFU-cert-pin layer in [`crate::sync_net::connection`],
-/// not from a derived session key — see the module-level doc comment.
+/// Confidentiality and authenticity of the pairing exchange come from the QUIC
+/// handshake and the endpoint-id TOFU pin ([`crate::transport`]), not from a
+/// derived session key — see the module-level doc comment.
 pub struct PairingSession {
     pub passphrase: String,
     pub created_at: std::time::Instant,
