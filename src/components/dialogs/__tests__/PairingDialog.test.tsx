@@ -81,7 +81,7 @@ vi.mock('@/lib/logger', () => ({
 const { mockSyncStoreState } = vi.hoisted(() => ({
   mockSyncStoreState: {
     state: 'idle',
-    error: null,
+    error: null as string | null,
     peers: [],
     lastSyncedAt: null,
     opsReceived: 0,
@@ -880,7 +880,13 @@ describe('PairingDialog', () => {
     document.body.removeChild(triggerRef.current)
   })
 
-  it('shows an honest "waiting for the other device" toast after submitting (#436, #3463 review)', async () => {
+  // #3469 — `confirm_pairing` only arms this device's local proof; it does
+  // NOT validate the passphrase against the peer, so the dialog cannot
+  // claim success (or close) the instant it resolves. It must stay open in
+  // an honest waiting state until the peer is actually observed. See the
+  // dedicated `#3469 waiting/success/failure/timeout` describe block below
+  // for the full resolution-path coverage (success/failure/timeout).
+  it('stays open in a waiting state after submitting, and does not claim success (#436, #3463 review, #3469)', async () => {
     const user = userEvent.setup()
     const onOpenChange = vi.fn()
     mockInvokeByCommand({
@@ -901,15 +907,12 @@ describe('PairingDialog', () => {
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
 
-    // #3463 (review): confirm_pairing only arms a local proof — it does not
-    // validate the passphrase against the peer — so the toast must NOT claim
-    // pairing succeeded. It must claim only what this device actually knows.
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Waiting for the other device…')
-    })
+    // #3469: the dialog enters the waiting state — it does NOT close and
+    // does NOT toast a success claim it cannot back up.
+    expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Passphrase word 1')).not.toBeInTheDocument()
     expect(toast.success).not.toHaveBeenCalledWith('Device paired successfully')
-
-    expect(onOpenChange).toHaveBeenCalledWith(false)
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
   })
 
   it('shows Retry button when the host session expires and focuses it (#420, #430)', async () => {
@@ -1016,20 +1019,26 @@ describe('PairingDialog', () => {
     expect(screen.getByText('peer-abc-1234567890')).toBeInTheDocument()
   })
 
-  it('shows error when listPeerRefs fails after successful confirmPairing', async () => {
+  // #3469 — `executePair`'s `call` no longer fetches `list_peer_refs`
+  // inline (that used to be the immediate post-confirm refresh this test
+  // was written against). It now only calls `confirm_pairing`, then hands
+  // off to the background poll for the TOFU-pin signal — so a transient
+  // `list_peer_refs` failure DURING that poll must not surface as an error
+  // banner or abort the wait; `usePollingQuery` swallows it and retries on
+  // the next tick, with the TTL as the ultimate backstop (see the
+  // `#3469 waiting/success/failure/timeout` describe block for that path).
+  it('a transient listPeerRefs polling failure while waiting does not surface an error or leave the waiting state', async () => {
     const user = userEvent.setup()
     let listCallCount = 0
     mockedInvoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'list_peer_refs') {
         listCallCount++
-        // #3463 (review): list_peer_refs now fires twice before the
-        // post-pair refresh — once for the host's initHost() on mount
-        // (implicit-role default), once for initJoiner() when
-        // selectJoinerRole switches roles. Both must succeed; only the
-        // THIRD call (the post-confirmPairing refresh) is the one under
-        // test here.
-        if (listCallCount <= 2) return []
-        throw new Error('refresh failed') // post-pair refresh fails
+        // First two calls are the host-mount/joiner-switch refreshes; the
+        // third is the authoritative baseline snapshot taken the instant
+        // the proof is armed. All three failing is the worst case — the
+        // wait still starts, with an explicitly unknown baseline.
+        if (listCallCount <= 3) throw new Error('transient db error')
+        return []
       }
       if (cmd === 'confirm_pairing') return undefined
       return undefined
@@ -1048,8 +1057,443 @@ describe('PairingDialog', () => {
     const pairBtn = screen.getByRole('button', { name: /^Pair$/i })
     await user.click(pairBtn)
 
-    const errorEl = await screen.findByRole('alert')
-    expect(errorEl).toHaveTextContent(/Pairing failed:.*refresh failed/i)
+    expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
+    await waitFor(() => expect(listCallCount).toBeGreaterThanOrEqual(3))
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+  })
+
+  // -----------------------------------------------------------------------
+  // #3469 — the four resolution paths out of the waiting state: render/
+  // announce, success (peer appears in peer_refs), failure (responder
+  // rejects the proof), and timeout (TTL elapses with neither signal).
+  // -----------------------------------------------------------------------
+  describe('#3469 waiting/success/failure/timeout', () => {
+    // Reaches the waiting state with userEvent under REAL timers — safe for
+    // tests that don't need to control the poll/countdown intervals
+    // afterward, since userEvent + fake timers can deadlock (house rule
+    // above the paste-focus-unmount test).
+    async function enterWaitingState(user: ReturnType<typeof userEvent.setup>) {
+      await selectJoinerRole(user)
+      await screen.findByLabelText('Passphrase word 1')
+
+      const inputs = screen.getAllByRole('textbox')
+      await user.type(inputs[0] as HTMLElement, 'echo')
+      await user.type(inputs[1] as HTMLElement, 'foxtrot')
+      await user.type(inputs[2] as HTMLElement, 'golf')
+      await user.type(inputs[3] as HTMLElement, 'hotel')
+      await user.click(screen.getByRole('button', { name: /^Pair$/i }))
+
+      expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
+    }
+
+    // Reaches the waiting state via `fireEvent` under FAKE timers, for
+    // tests that go on to advance the poll/countdown intervals. This is
+    // NOT interchangeable with `enterWaitingState` above: `setInterval`
+    // handles created while real timers are active stay bound to the real
+    // clock even after a later `vi.useFakeTimers()` call — advancing fake
+    // time then does nothing to them. The interval must be created while
+    // fake timers are already active, which means the interactions that
+    // create it (role switch, word entry, Pair click) must also happen
+    // under fake timers — hence `fireEvent` (synchronous) instead of
+    // `userEvent` (which deadlocks against `waitFor`/`findBy` under fake
+    // timers, per the house rule above the paste-focus-unmount test) and
+    // `flushMicrotasks()` in place of the `findBy*` queries
+    // `enterWaitingState` uses.
+    //
+    // Deliberately does NOT use `vi.runAllTimersAsync()` for these
+    // flushes (unlike the single initial flush in e.g. the host countdown
+    // test): by the second/third flush a repeating `setInterval` (the
+    // host countdown, then the joiner's poll + wait countdown) is already
+    // active and never clears itself within the flush, so
+    // `runAllTimersAsync` — which exhausts the timer queue until it's
+    // empty — spins until Vitest's "10000 timers" infinite-loop guard
+    // aborts it. `flushMicrotasks` only drains the native Promise
+    // microtask queue (invoke() calls are plain resolved Promises, not
+    // fake-timer-driven), which is all that's needed to let
+    // confirmPairing/listPeerRefs settle without touching any interval.
+    async function flushMicrotasks() {
+      for (let i = 0; i < 5; i++) {
+        await act(async () => {
+          await Promise.resolve()
+        })
+      }
+    }
+
+    async function enterWaitingStateFake() {
+      // Flush the host-mount init promises (start_pairing + list_peer_refs)
+      // fired by the dialog-open effect.
+      await flushMicrotasks()
+
+      fireEvent.click(screen.getByRole('button', { name: /Have a code from the other device\?/i }))
+      // Flush the joiner-switch's cancelPairing + listPeerRefs refresh.
+      await flushMicrotasks()
+
+      const inputs = screen.getAllByRole('textbox')
+      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'echo' } })
+      fireEvent.change(inputs[1] as HTMLElement, { target: { value: 'foxtrot' } })
+      fireEvent.change(inputs[2] as HTMLElement, { target: { value: 'golf' } })
+      fireEvent.change(inputs[3] as HTMLElement, { target: { value: 'hotel' } })
+
+      fireEvent.click(screen.getByRole('button', { name: /^Pair$/i }))
+      // Flush confirmPairing + the poll's immediate enable-triggered fetch.
+      await flushMicrotasks()
+
+      expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+    }
+
+    it('renders the waiting state with countdown, announces it, and has no a11y violations', async () => {
+      const user = userEvent.setup()
+      mockInvokeByCommand({ list_peer_refs: [], confirm_pairing: undefined })
+
+      const { container } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await enterWaitingState(user)
+
+      expect(screen.getByText('Waiting for the other device…')).toBeInTheDocument()
+      expect(
+        screen.getByText(
+          'This device armed its side of the pairing handshake. It will confirm automatically once the other device connects.',
+        ),
+      ).toBeInTheDocument()
+      expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+      expect(vi.mocked(announce)).toHaveBeenCalledWith(
+        'Waiting for the other device to confirm pairing',
+      )
+      // The entry form (and its "type the passphrase" affordances) must be
+      // gone — there is nothing left to type while waiting.
+      expect(screen.queryByLabelText('Passphrase word 1')).not.toBeInTheDocument()
+
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('resolves to success when a new peer appears in peer_refs, closing the dialog and announcing success', async () => {
+      const onOpenChange = vi.fn()
+      const newPeer = {
+        peer_id: 'peer-new-999',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      }
+      let listCallCount = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') {
+          listCallCount++
+          // Calls 1-4 are the host-mount refresh, the joiner-switch
+          // refresh, the confirm-time baseline snapshot, and the immediate
+          // poll fired the instant waiting begins — all still empty. The
+          // peer only appears once we advance to the next 2s poll tick
+          // below, so this test genuinely exercises the polling loop and
+          // not just the initial fetch.
+          if (listCallCount <= 4) return []
+          return [newPeer]
+        }
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { container } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+        await enterWaitingStateFake()
+
+        // Advance one poll interval tick (PAIRING_PEER_POLL_INTERVAL_MS =
+        // 2000ms in the component). advanceTimersByTimeAsync awaits the
+        // poll's internal `await queryFn()` promise between fake-timer
+        // firings — the plain sync advanceTimersByTime used for the
+        // purely-synchronous countdown ticks elsewhere in this file would
+        // not wait for that promise to settle.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+        expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).toHaveBeenCalledWith('Device paired successfully')
+        expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
+
+        // axe-core's internal engine relies on real timers/promises — it
+        // hangs indefinitely under fake timers (observed: 20s test
+        // timeout). Switch back before running it.
+        vi.useRealTimers()
+        const results = await axe(container)
+        expect(results).toHaveNoViolations()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // #3469 (review) — the success signal is "a peer id appeared that was
+    // NOT in the baseline snapshot". If that baseline is taken from the
+    // dialog's `peers` React state, it is empty whenever the peer load that
+    // fills it failed — and then every ALREADY-paired peer on the device
+    // looks brand new to the first successful poll, producing exactly the
+    // false "Device paired successfully" this issue exists to remove. The
+    // baseline must be authoritative as of the moment the proof was armed,
+    // and when it cannot be read it must fail CLOSED (adopt the first poll
+    // as the baseline) rather than claim someone else's peer as this
+    // attempt's outcome.
+    it('does not claim success from pre-existing peers when the confirm-time peer snapshot fails', async () => {
+      const onOpenChange = vi.fn()
+      const existingPeer = {
+        peer_id: 'peer-already-paired-1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      }
+      let listCallCount = 0
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') {
+          listCallCount++
+          // Every read up to and including the confirm-time baseline
+          // snapshot fails transiently, so the dialog reaches the waiting
+          // state with NO trustworthy knowledge of which peers it already
+          // had. From then on the reads recover and report the device's
+          // pre-existing peer.
+          if (listCallCount <= 3) throw new Error('transient db error')
+          return [existingPeer]
+        }
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        render(<PairingDialog open onOpenChange={onOpenChange} />)
+        await enterWaitingStateFake()
+
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+
+        expect(toast.success).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).not.toHaveBeenCalledWith(false)
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // #3469 (review) — `DeviceManagement` mounts this dialog unconditionally
+    // (DeviceManagement.tsx:412), so every piece of its state survives each
+    // open/close cycle, and `usePollingQuery` never clears its `data` when
+    // `enabled` flips false (usePollingQuery.ts:100-105). Unpair-then-repair
+    // — the routine sync-troubleshooting path — walks straight into the gap
+    // between those two facts: at the instant the second wait begins, the
+    // poll still holds the FIRST attempt's peer list, while the fresh
+    // confirm-time baseline is correctly empty again because that peer was
+    // just deleted. Judged against each other, the old peer reads as "one
+    // that appeared after this attempt started" — instant false success,
+    // dialog closed, and the device the user just unpaired resurrected into
+    // the sidebar/StatusPanel. The baseline is not at fault; what was
+    // missing is that a poll result must be scoped to the wait it is being
+    // judged against, which is what the wait id stamped on it provides.
+    it('does not claim success from a previous attempt poll result when one mounted dialog pairs, unpairs, then pairs again', async () => {
+      const onOpenChange = vi.fn()
+      const pairedPeer = {
+        peer_id: 'peer-first-attempt-1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      }
+      // Authoritative peer table: `list_peer_refs` reads it and
+      // `delete_peer_ref` empties it, so the second attempt's confirm-time
+      // baseline is genuinely empty exactly as it is after a real unpair.
+      let peerRows: (typeof pairedPeer)[] = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return peerRows
+        if (cmd === 'confirm_pairing') return undefined
+        if (cmd === 'delete_peer_ref') {
+          peerRows = []
+          return undefined
+        }
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+
+        // 1. Pair for real. The resolving poll leaves the hook holding
+        //    `[pairedPeer]`, which nothing ever clears.
+        await enterWaitingStateFake()
+        peerRows = [pairedPeer]
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+
+        // 2. The close/reopen the parent drives. Same mount throughout —
+        //    this is the whole point of the test, so assert the dialog came
+        //    back rather than assuming it did.
+        rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+        rerender(<PairingDialog open onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+        expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+        // 3. Unpair the device through the dialog's own list.
+        expect(screen.getByText('peer-first-attempt-1')).toBeInTheDocument()
+        fireEvent.click(screen.getAllByRole('button', { name: /Unpair/i })[0] as HTMLElement)
+        fireEvent.click(screen.getByRole('button', { name: /Yes, unpair/i }))
+        await flushMicrotasks()
+        expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', {
+          peerId: 'peer-first-attempt-1',
+        })
+        expect(screen.queryByText('peer-first-attempt-1')).not.toBeInTheDocument()
+
+        // 4. Pair again on that same mount. Everything below must be
+        //    attributable to THIS attempt, so clear the first one's traces.
+        onOpenChange.mockClear()
+        vi.mocked(toast.success).mockClear()
+        vi.mocked(announce).mockClear()
+        mockSyncStoreState.setPeers.mockClear()
+
+        fireEvent.click(
+          screen.getByRole('button', { name: /Have a code from the other device\?/i }),
+        )
+        await flushMicrotasks()
+        const inputs = screen.getAllByRole('textbox')
+        fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'echo' } })
+        fireEvent.change(inputs[1] as HTMLElement, { target: { value: 'foxtrot' } })
+        fireEvent.change(inputs[2] as HTMLElement, { target: { value: 'golf' } })
+        fireEvent.change(inputs[3] as HTMLElement, { target: { value: 'hotel' } })
+        fireEvent.click(screen.getByRole('button', { name: /^Pair$/i }))
+        await flushMicrotasks()
+
+        // Nothing has been observed since this wait began, so it must still
+        // be running. Without the wait id this assertion is already lost
+        // here: the success effect resolves on the commit that flips into
+        // 'waiting', before this attempt's own first fetch has resolved.
+        expect(toast.success).not.toHaveBeenCalled()
+        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).not.toHaveBeenCalled()
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+        // ...and the device just unpaired must not be pushed back into the
+        // shared store the sidebar/StatusPanel read from (#1076 mirror).
+        expect(mockSyncStoreState.setPeers).not.toHaveBeenCalledWith(
+          expect.arrayContaining([expect.objectContaining({ peerId: 'peer-first-attempt-1' })]),
+        )
+
+        // Still waiting a full poll tick later: the empty result that does
+        // belong to this attempt reports nothing new, which is the truth.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+        expect(toast.success).not.toHaveBeenCalled()
+        expect(onOpenChange).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('surfaces the proof-rejection failure with a retype path back to the entry form', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      let container!: HTMLElement
+      vi.useFakeTimers()
+      try {
+        ;({ container } = render(<PairingDialog open onOpenChange={vi.fn()} />))
+        await enterWaitingStateFake()
+
+        try {
+          // Simulate the responder's wire-level rejection
+          // ("pairing passphrase proof required") landing via the shared
+          // sync store's `error` field — the same signal path the
+          // component reads (`useSyncEvents.ts` → `sync:error` Tauri
+          // event → `useSyncStore`) instead of a dedicated listener. The
+          // mock store here is a plain object, not a real subscription,
+          // so the component only observes this mutation on its NEXT
+          // render — force one via a poll/countdown tick.
+          mockSyncStoreState.error = 'pairing passphrase proof required'
+
+          await act(async () => {
+            await vi.advanceTimersByTimeAsync(2000)
+          })
+
+          expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
+          expect(screen.getByLabelText('Passphrase word 1')).toBeInTheDocument()
+          expect(screen.getByRole('alert')).toHaveTextContent(
+            'The passphrase did not match. Check it and try again.',
+          )
+          expect(vi.mocked(announce)).toHaveBeenCalledWith('Pairing passphrase did not match')
+        } finally {
+          mockSyncStoreState.error = null
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+
+      // axe-core hangs indefinitely under fake timers — run it only after
+      // real timers are restored (see the success test above for details).
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
+
+    it('surfaces a timeout with a retry path when the TTL elapses with no success or rejection', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      let container!: HTMLElement
+      vi.useFakeTimers()
+      try {
+        ;({ container } = render(<PairingDialog open onOpenChange={vi.fn()} />))
+        await enterWaitingStateFake()
+        expect(screen.getByText(/Session expires in 5:00/)).toBeInTheDocument()
+
+        // Advance past the full 300s pending-pairing TTL
+        // (PAIRING_TIMEOUT_SECONDS in the component — no distinct
+        // joiner-side binding is exposed to the frontend; see the
+        // constant's comment). Mirrors the host-side "session expires"
+        // test's 301_000ms advance exactly.
+        await act(async () => {
+          vi.advanceTimersByTime(301_000)
+        })
+
+        // Timeout returns the dialog to the entry phase with a retry
+        // affordance — the passphrase form and Pair button are reachable
+        // again, not a dead end.
+        expect(screen.queryByTestId('pairing-waiting-state')).not.toBeInTheDocument()
+        expect(screen.getByLabelText('Passphrase word 1')).toBeInTheDocument()
+        expect(screen.getByRole('alert')).toHaveTextContent(
+          'No response from the other device. The pairing code may have expired.',
+        )
+        expect(vi.mocked(announce)).toHaveBeenCalledWith(
+          'Pairing timed out waiting for the other device',
+        )
+        expect(screen.getByRole('button', { name: /^Pair$/i })).toBeInTheDocument()
+      } finally {
+        vi.useRealTimers()
+      }
+
+      // axe-core hangs indefinitely under fake timers — run it only after
+      // real timers are restored (see the success test above for details).
+      const results = await axe(container)
+      expect(results).toHaveNoViolations()
+    })
   })
 
   it('shows toast error when cancelPairing fails on host dialog close', async () => {

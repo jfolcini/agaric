@@ -21,7 +21,25 @@ export const sync: Record<string, string> = {
   // #3463 (review): `confirm_pairing` arms a local proof only — it does not
   // validate the passphrase against the peer, so this device cannot claim
   // the pairing succeeded. Deliberately not "Device paired successfully".
+  // #3469: this text now labels the inline WAITING state (not a toast) —
+  // the dialog stays open until the outcome is actually known.
   'pairing.awaitingPeerMessage': 'Waiting for the other device…',
+  // #3469 — supporting copy under the waiting-state title, explaining WHY
+  // this device can't confirm success yet.
+  'pairing.waitingDescription':
+    'This device armed its side of the pairing handshake. It will confirm automatically once the other device connects.',
+  // #3469 — fired only once the peer actually appears in peer_refs
+  // (TOFU-pin on first authenticated connection). This is the one place
+  // allowed to claim success, because it is the first moment this device
+  // actually knows the passphrase matched.
+  'pairing.pairSuccessMessage': 'Device paired successfully',
+  // #3469 — the responder's wire-level rejection ("pairing passphrase proof
+  // required") surfaced back into the dialog that caused it, with a path
+  // back to retype (the entry form re-renders once this error is set).
+  'pairing.proofRejectedError': 'The passphrase did not match. Check it and try again.',
+  // #3469 — the pending-marker TTL elapsed with no peer appearing and no
+  // rejection observed. Bounds the wait instead of hanging indefinitely.
+  'pairing.waitTimedOut': 'No response from the other device. The pairing code may have expired.',
   'pairing.qrScannedMessage': 'QR code scanned \u2014 verify and tap Pair',
   'pairing.closeDialogLabel': 'Close pairing dialog',
   'pairing.dialogTitle': 'Pair Device',
