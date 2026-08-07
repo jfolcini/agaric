@@ -435,8 +435,14 @@ export function PairingDialog({
   // Bound the wait by the same pending-pairing TTL the host countdown uses
   // (`PAIRING_TIMEOUT_SECONDS`) — 1s tick, mirroring the host countdown
   // effect below it in shape.
+  // `open &&` for the same reason the poll above carries it (#3496): this
+  // component is mounted unconditionally, so a parent that sets
+  // `open={false}` directly bypasses `handleCancel` and leaves `joinerPhase`
+  // at `'waiting'`. Without the gate the tick keeps running on a closed
+  // dialog and, up to `PAIRING_TIMEOUT_SECONDS` later, announces a timeout
+  // to a screen reader for a dialog that is no longer on screen.
   const waitCountdownActive =
-    joinerPhase === 'waiting' && waitCountdown !== null && waitCountdown > 0
+    open && joinerPhase === 'waiting' && waitCountdown !== null && waitCountdown > 0
   useEffect(() => {
     if (!waitCountdownActive) return
     const interval = setInterval(() => {

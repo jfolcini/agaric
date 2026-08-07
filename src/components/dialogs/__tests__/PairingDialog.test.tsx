@@ -1592,6 +1592,44 @@ describe('PairingDialog', () => {
         vi.useRealTimers()
       }
     })
+
+    // The poll is only half of #3496. The wait countdown runs on the same
+    // `joinerPhase === 'waiting'` condition, and its timeout arm calls
+    // `announce(...)` — so an ungated countdown does not merely burn a
+    // timer, it speaks to a screen reader about a dialog that is no longer
+    // on screen, up to PAIRING_TIMEOUT_SECONDS after the user closed it.
+    it('the wait countdown stops on a parent-driven close, so no timeout is announced to a closed dialog', async () => {
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'confirm_pairing') return undefined
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+        await enterWaitingStateFake()
+
+        // Sanity: the countdown is genuinely running before the close, so
+        // the assertion below cannot pass because nothing was ever ticking.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1500)
+        })
+        expect(vi.mocked(announce)).toHaveBeenCalled()
+        vi.mocked(announce).mockClear()
+
+        rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+
+        // Past the full PAIRING_TIMEOUT_SECONDS (300s) window.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(301_000)
+        })
+
+        expect(vi.mocked(announce)).not.toHaveBeenCalledWith(expect.stringContaining('timed out'))
+      } finally {
+        vi.useRealTimers()
+      }
+    })
   })
 
   it('shows toast error when cancelPairing fails on host dialog close', async () => {
