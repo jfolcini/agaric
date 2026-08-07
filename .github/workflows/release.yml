@@ -1080,15 +1080,19 @@ jobs:
       # step used to restore ci.yml's `rust-android` entry (and, via
       # `cache-bin`, a prebuilt `~/.cargo/bin/cargo-tauri`) to save the
       # cold-compile time. It was removed because this job SHIPS: it signs
-      # an APK, attests it, and uploads it to the release. A GitHub Actions
-      # cache is writable by any workflow on the repo, including ones that
-      # run at lower privilege on untrusted input, and the cache scope rules
-      # let a branch-scoped entry be READ from a tag build. That makes a
-      # restored `target/` tree or a restored `cargo-tauri` binary an
-      # unauthenticated input to a published artifact — a cache poisoned
-      # anywhere in the repo could reach a signed APK. zizmor's
-      # `cache-poisoning` audit flags exactly this shape (High) and it is
-      # not suppressible on a lane that publishes.
+      # an APK, attests it, and uploads it to the release.
+      #
+      # Being precise about the reachable path, because the loose version of
+      # this argument ("any cache anywhere could reach the APK") is wrong and
+      # invites dismissal: a run restores only cache entries scoped to its own
+      # ref plus the DEFAULT branch. A cache poisoned on an arbitrary PR branch
+      # is therefore NOT readable here. The real path is a `main`-scoped entry —
+      # and ci.yml's `android-build` writes exactly one, on pushes to `main`.
+      # So the input is narrower than "any workflow" and still unauthenticated:
+      # a restored `target/` tree or `cargo-tauri` binary would be an input to a
+      # signed, attested artifact, produced by a job that does not itself verify
+      # what it restored. zizmor's `cache-poisoning` audit flags this shape
+      # (High), and it is not something to suppress on a lane that publishes.
       #
       # The cost is release wall-clock only: a cold Rust build plus the
       # ~5-6 min `cargo install tauri-cli` compile the step below now always
