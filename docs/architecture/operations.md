@@ -113,6 +113,6 @@ A v1 peer cannot sync with a v2 peer: the raw Loro bytes are incompatible across
 What's not yet shipped is tracked separately. High-level items today:
 
 - **OS notifications** for due tasks (Org-mode parity; mobile especially).
-- **iroh transport** — **shipped** (#78, plan #3464). Both sync roles run over QUIC; `sync_net/`, `sync_cert.rs` and `sync_daemon/wire.rs` were deleted outright in #3544. What the port itself did *not* fix, and was closed separately: first-ever pairing initiation (#3502 — daemon policy, not transport, fixed in #3535). Still open from the cutover: inbound is single-homed (#3513), the S-5 lock key is asymmetric during the pairing window (#3511), and wire compression is gone (#3512).
+- **iroh transport** — **shipped** (#78, plan #3464). Both sync roles run over QUIC; `sync_net/`, `sync_cert.rs` and `sync_daemon/wire.rs` were deleted outright in #3544. What the port itself did *not* fix, and was closed separately: first-ever pairing initiation (#3502 — daemon policy, not transport, fixed in #3535). Also closed separately: the S-5 lock key was asymmetric during the pairing window (#3511 — both roles now key on the peer's `EndpointId`, per #3529). Still open from the cutover: inbound is single-homed (#3513) and wire compression is gone (#3512).
 - **rmcp migration** — M1 landed (RO tools/list); M2 (`tools/call`) + M3 (delete hand-rolled framing) remain.
 - **`ActiveBlockId` newtype M3** — completes the type-system lift of invariant #9 (recursive-CTE conflict filtering); dispatcher decision pending.

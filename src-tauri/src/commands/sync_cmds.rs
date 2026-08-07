@@ -337,13 +337,22 @@ pub fn start_sync_inner(
         ));
     }
 
-    // HEALTH CHECK ONLY — this is *not* a real exclusion lock.
+    // HEALTH CHECK ONLY — this is *not* a real exclusion lock, and since
+    // #3511 it is not a working probe either. Left in place, documented
+    // rather than quietly kept, because removing it changes a
+    // user-visible error and that is a separate call.
     //
-    // The `Some` vs `None` result of `try_lock_peer` is used as a probe
-    // for "is the daemon currently syncing this peer?" and the early
-    // return surfaces a user-visible error when the daemon already
-    // holds the per-peer lock. That probe is the only purpose of this
-    // call at the wrapper layer.
+    // The `Some` vs `None` result of `try_lock_peer` was a probe for "is
+    // the daemon currently syncing this peer?", and the early return
+    // surfaced a user-visible error when the daemon already held the
+    // per-peer lock. That probe no longer observes anything: S-5's lock
+    // is keyed on the peer's `EndpointId` in both roles now
+    // (`agaric_sync::sync_daemon::peer_lock_key`), because the responder
+    // cannot key on a `device_id` it has not been told yet — so a probe
+    // keyed on `peer_id`, a device id, can never collide with the
+    // daemon's guard and the `Err` arm below is unreachable in practice.
+    // Making it work again means resolving the peer's bound endpoint id,
+    // which needs the pool this synchronous wrapper does not take.
     //
     // The returned guard (`_health_check_only_guard`) falls out of scope
     // when `start_sync_inner` returns microseconds later — it does NOT
@@ -352,14 +361,8 @@ pub fn start_sync_inner(
     // guards immediately, and both call `notify_change()` below.
     //
     // Real per-peer exclusion lives in the daemon, where
-    // `try_sync_with_peer` re-acquires the same lock for the duration
-    // of the actual network sync — see
-    // `src-tauri/src/sync_daemon/session_supervisor.rs::try_sync_with_peer`
-    // (the `try_lock_peer` call there is what serialises real syncs).
-    // If a wrapper call interleaves with a daemon sync exactly on the
-    // lock acquisition the wrapper wins this probe and the daemon's
-    // own guard returns `None`, so the daemon skips that tick — but
-    // the wrapper's `notify_change()` will wake it on the next pass.
+    // `try_sync_with_peer` and `handle_incoming_sync` take the same
+    // endpoint-keyed lock for the duration of the actual network sync.
     //
     // Do not lean on this guard for correctness; it is named
     // `_health_check_only_guard` to make that misreading harder.
