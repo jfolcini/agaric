@@ -24,8 +24,9 @@ nothing went red when it stopped working.
 extracted *both* sides from `$SELF`. Corrupting setup-hooks.sh's sed on `main` prints
 `✓ … agrees` and `RC=0`. The comment above it claimed the opposite.
 
-**#3563 — the negative control that cannot run.** `control_relay_disabled_preset_still_
-queries_n0_dns` exists to prove `lan_only_endpoint_resolves_no_hostnames` *can* fail. In a
+**#3563 — the negative control that cannot run.**
+`control_relay_disabled_preset_still_queries_n0_dns` exists to prove
+`lan_only_endpoint_resolves_no_hostnames` *can* fail. In a
 sandbox it fails, and its own message says what that means: "treat
 `lan_only_endpoint_resolves_no_hostnames` as unable to fail." Guard 1 asserts
 `queries.is_empty()`; in an environment where nothing resolves anything, that is satisfied
