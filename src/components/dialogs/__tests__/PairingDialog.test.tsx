@@ -1669,7 +1669,18 @@ describe('PairingDialog', () => {
     expect(errorEl).toHaveTextContent(/network error/i)
 
     const retryBtn = screen.getByRole('button', { name: /Retry/i })
-    expect(document.activeElement).toBe(retryBtn)
+    // The focus move lives in a passive effect (`PairingDialog.tsx:747-751`), and
+    // React schedules those asynchronously. `findByRole('alert')` above resolves
+    // as soon as the alert is in the DOM, which can be one poll BEFORE that
+    // effect flushes — so asserting focus synchronously here is a race, and it
+    // loses on a loaded CI runner. When it loses, `activeElement` is still Radix's
+    // default (the dialog's close button), which reads like a focus-management
+    // regression rather than a test-timing one. `waitFor` removes the race
+    // without weakening the assertion: the wrong element still fails.
+    //
+    // The sibling assertion at ~line 961 does NOT need this — it drives fake
+    // timers inside `await act(...)`, which flushes effects before it returns.
+    await waitFor(() => expect(document.activeElement).toBe(retryBtn))
   })
 
   // ------------------------------------------------------------------------
