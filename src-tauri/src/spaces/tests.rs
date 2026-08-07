@@ -484,7 +484,7 @@ async fn bootstrap_does_not_re_emit_accent_color_on_second_boot() {
 }
 
 // ---------------------------------------------------------------------
-// / bootstrap re-runs `pages_without_space` every boot.
+// Bootstrap re-runs `pages_without_space` every boot.
 // ---------------------------------------------------------------------
 //
 // Pages that arrive without a `space` property — via a misbehaving
@@ -510,7 +510,7 @@ async fn count_is_space_ops_for_block(pool: &SqlitePool, block_id: &str) -> i64 
     .unwrap()
 }
 
-/// / regression — after the bootstrap-complete marker
+/// Regression — after the bootstrap-complete marker
 /// is set (i.e. on every boot AFTER the first), a freshly-arrived
 /// page WITHOUT a `space` property must STILL be migrated to the
 /// Personal space on the next boot. Before the fix the fast-path
@@ -553,9 +553,9 @@ async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
     );
 }
 
-/// / the seeded-block fast path is intentionally
+/// The seeded-block fast path is intentionally
 /// preserved. `is_space = "true"` SetProperty ops must fire ONLY on
-/// The first boot (invariant). This test pins the fact
+/// the first boot (invariant). This test pins the fact
 /// that loosening the fast-path was scoped to the
 /// `pages_without_space` step, NOT the seeded `is_space` /
 /// `accent_color` op emission.
@@ -664,7 +664,7 @@ async fn bootstrap_batched_migrator_handles_more_than_one_chunk() {
 }
 
 // ---------------------------------------------------------------------
-// / H-3c — Property-test-style invariant: every page block has a
+// H-3c — Property-test-style invariant: every page block has a
 // `space` property.
 // ---------------------------------------------------------------------
 //

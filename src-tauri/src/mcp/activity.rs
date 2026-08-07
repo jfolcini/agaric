@@ -1,6 +1,6 @@
 //! Activity ring buffer + Tauri event emitter for the MCP read-only server.
 //!
-//! ships the in-memory rolling log of the last 100 tool calls plus
+//! This module ships the in-memory rolling log of the last 100 tool calls plus
 //! the `mcp:activity` Tauri event surface. The frontend subscribes
 //! to the event stream and maintains its own 100-entry render buffer; the
 //! ring lets late subscribers / diagnostics inspect the recent history via
@@ -11,14 +11,14 @@
 //!
 //! Design notes:
 //!
-//! **No persistence.** The ring is pure in-memory state. explicitly
-//!   rejected a new table + retention policy.
-//! **Field filtering.** `summary` strings may include structural counts, dates,
+//! - **No persistence.** The ring is pure in-memory state; the design
+//!   explicitly rejected a new table + retention policy.
+//! - **Field filtering.** `summary` strings may include structural counts, dates,
 //!   property keys, number/date/bool property values, and eight-character
 //!   ULID/reference prefixes. They must never include block content, page
 //!   titles, tag display names, search query strings, or `value_text`.
-//!   `agent_name` is serialized into Tauri events but redacted in `Debug`
-//!   output so it cannot leak into tracing spans.
+//! - **Debug redaction.** `agent_name` is serialized into Tauri events but
+//!   redacted in `Debug` output so it cannot leak into tracing spans.
 //! - **Decoupled emitter.** `ActivityEmitter` is a trait object so the
 //!   server module stays free of any direct Tauri runtime generics.
 //!   Production wraps [`tauri::AppHandle`] in [`TauriRuntimeEmitter`]; tests

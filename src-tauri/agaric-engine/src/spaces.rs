@@ -35,7 +35,7 @@ use crate::loro::shared::LoroState;
 /// `block_properties` is `(block_id, key, value_text, value_num, value_date,
 /// value_ref)` — six bound params per row. SQLite caps bind parameters at
 /// [`MAX_SQL_PARAMS`] (999) per statement, giving 166 rows per chunk. Mirrors
-/// The chunked-INSERT convention from `cache/block_tag_refs.rs`.
+/// the chunked-INSERT convention from `cache/block_tag_refs.rs`.
 pub const PROPERTIES_INSERT_CHUNK: usize = MAX_SQL_PARAMS / 6;
 
 /// Reserved ULID for the seeded "Personal" space.
@@ -267,7 +267,7 @@ pub async fn ensure_accent_color_property(
 /// Batched migrator that assigns `space = SPACE_PERSONAL_ULID` to
 /// every page in `page_ids`.
 ///
-/// This is the perf path for the / every-boot backfill: a
+/// This is the perf path for the every-boot backfill: a
 /// 5000-page first-boot vault used to round-trip ~20k SQL statements
 /// inside one bootstrap transaction (the per-page `set_property_in_tx`
 /// loop did 4 round-trips per page — definitions lookup, block existence
@@ -277,15 +277,18 @@ pub async fn ensure_accent_color_property(
 ///
 /// # Inherited invariants
 ///
-/// ** (op log append-only).** Each page still gets its own
+/// - **Op log append-only.** Each page still gets its own
 ///   `SetProperty` op via [`op_log::append_local_op_in_tx`] because the
 ///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
 ///   the op_log contract. Batching the op_log writes is a separate,
-/// Larger refactor and is out of scope for.
-/// - ** predicate.** [`pages_without_space`] already
-///   filters to live, non-conflict pages with `block_type = 'page'`, so
-///   the per-page block-existence probe in `set_property_in_tx` is
-///   redundant and is intentionally skipped here.
+///   larger refactor and is out of scope here.
+/// - **`block_type` / liveness predicate.** [`pages_without_space`] already
+///   filters to live pages with `block_type = 'page'`, so the per-page
+///   block-existence probe in `set_property_in_tx` is redundant and is
+///   intentionally skipped here. (The original heading named an
+///   `is_conflict = 0` predicate; liveness is now enforced solely by
+///   `deleted_at IS NULL` — the conflict-copy exclusion went with the
+///   column in migration 0058.)
 /// - **UPSERT semantics.** The chunked write uses `INSERT OR REPLACE`
 ///   to mirror `set_property_in_tx`'s row materialisation contract.
 ///   Steady-state runs see zero candidate pages (the

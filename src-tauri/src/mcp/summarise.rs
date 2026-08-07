@@ -102,7 +102,7 @@ pub fn summarise(name: &str, args: &Value, result: &Value) -> String {
         TOOL_DELETE_BLOCK => summarise_delete_block(args, result),
         // Defensive default — keeps the activity feed working when
         // someone adds a new tool without a summariser. This is the
-        // Pre- behaviour for every entry. The privacy
+        // pre-existing behaviour for every entry. The privacy
         // guard test in this module asserts every registered MCP tool
         // has a non-fallback summariser arm above; if you add a tool
         // without one the test fails in CI.

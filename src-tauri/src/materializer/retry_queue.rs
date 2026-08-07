@@ -13,7 +13,7 @@
 //! `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
 //! `RebuildTagInheritanceCache`, `RebuildPageIds`,
 //! `RebuildBlockTagRefsCache`). The latter were silently dropped on
-//! queue saturation prior to they're now persisted under the
+//! queue saturation before this queue existed; they're now persisted under the
 //! sentinel `block_id = '__GLOBAL__'` so the sweeper re-enqueues them on
 //! the same exponential-backoff schedule.
 //!
@@ -48,8 +48,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::instrument;
 
-/// Sentinel literal stored in the `block_id` column for global cache
-/// Rebuild tasks. SQLite's `STRICT` mode forbids `NULL` in
+/// Sentinel literal stored in the `block_id` column for the global cache
+/// `Rebuild*` tasks. SQLite's `STRICT` mode forbids `NULL` in
 /// `PRIMARY KEY` columns, so a literal stand-in is used instead. The
 /// sentinel cannot collide with a real ULID block id (ULIDs are
 /// 26-char Crockford base32 uppercase; the sentinel is lowercase
@@ -92,11 +92,11 @@ pub(crate) const SEED_OBLIGATION_LAST_ERROR: &str =
 /// - **Per-block** idempotent tasks (`UpdateFtsBlock`,
 ///   `ReindexBlockLinks`, `ReindexBlockTagRefs`) — keyed by their
 ///   real block id.
-///   **Global** cache rebuilds — keyed by the
+/// - **Global** cache rebuilds — keyed by the
 ///   [`GLOBAL_TASK_SENTINEL`] literal so the composite primary key
 ///   `(block_id, task_kind)` enforces dedup naturally without
 ///   requiring a NULL column.
-///   **Foreground apply-op** failures — keyed by the
+/// - **Foreground apply-op** failures — keyed by the
 ///   composite `(device_id, seq)` packed into the `task_kind` column
 ///   as `"ApplyOp:<seq>:<device_id>"`, with `block_id` set to
 ///   [`APPLY_OP_TASK_SENTINEL`]. Reconstruction requires a fresh

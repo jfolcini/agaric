@@ -380,7 +380,7 @@ impl<R: ToolRegistry> RmcpAdapter<R> {
             .await;
 
         // Emission point.
-        // The success branch routes through the privacy-safe summariser;
+        // The success branch routes through the field-filtering summariser;
         // the error branch clips at ERROR_CLIP_CAP chars before pushing.
         let (summary, result_variant) = match &result {
             Ok(value) => (
@@ -629,7 +629,7 @@ mod tests {
             }
             // Echo the args back as `items: []` to match the
             // search-blocks summariser's expected shape (it reads
-            // `items.len()` for the privacy-safe summary).
+            // `items.len()` for the field-filtered summary).
             let query = args
                 .get("query")
                 .and_then(|v| v.as_str())

@@ -149,7 +149,7 @@ describe('createBlock', () => {
       content: 'hello',
       parentId: 'PARENT01',
       index: 3,
-      // / H-3a + Phase 3: every `create_block` IPC call
+      // H-3a + Phase 3: every `create_block` IPC call
       // carries the `scope` tagged-enum. For non-page block types
       // `{ kind: 'global' }` is correct (the backend ignores it).
       scope: { kind: 'global' },
@@ -177,7 +177,7 @@ describe('createBlock', () => {
       content: 'test',
       parentId: null,
       index: null,
-      // / H-3a + Phase 3: in production a page-typed
+      // H-3a + Phase 3: in production a page-typed
       // `createBlock` MUST pass an active scope; this unit test exercises
       // only the wrapper's payload shape, so `{ kind: 'global' }` here
       // documents that the wrapper forwards `undefined` → Global (the

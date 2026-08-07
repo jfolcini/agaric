@@ -113,7 +113,7 @@ pub async fn cascade_soft_delete(
 /// [`crate::materializer::dispatch::invalidations_for_op`] from the
 /// test/bench-only [`cascade_soft_delete`].
 ///
-/// / decision-b: this primitive is *not* a command — it does
+/// decision-b: this primitive is *not* a command — it does
 /// not append to `op_log`, so it has no real `OpRecord`. The
 /// `delete_block` arm of `invalidations_for_op` reads **only**
 /// `record.op_type` and `record.block_id` (it ignores `seq`, `hash`,

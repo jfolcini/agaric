@@ -68,7 +68,7 @@ beforeEach(() => {
     tabs: [{ id: '0', pageStack: [], label: '' }],
     activeTabIndex: 0,
   })
-  // / H-3b — TemplatesView routes page creation through
+  // H-3b — TemplatesView routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
   // Seed the store so the create-template path doesn't bail.
   useSpaceStore.setState({
@@ -807,7 +807,7 @@ describe('TemplatesView', () => {
 
     it('valid submit calls create_page_in_space then setProperty with template=true', async () => {
       const user = userEvent.setup()
-      // / H-3b — TemplatesView routes page creation through
+      // H-3b — TemplatesView routes page creation through
       // `create_page_in_space` (returns the new ULID as a plain string).
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'query_by_property') return emptyPage

@@ -77,7 +77,7 @@ export function useJournalBlockCreation({
         const isNewPage = !pageId
 
         if (!pageId) {
-          // / H-3b — route page creation through `createPageInSpace`
+          // H-3b — route page creation through `createPageInSpace`
           // so the new daily journal page lands with its `space` ref
           // property set atomically (CreateBlock + SetProperty in one tx).
           // The legacy `createBlock({ blockType: 'page' })` path leaked

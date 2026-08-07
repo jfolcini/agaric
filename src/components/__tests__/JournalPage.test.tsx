@@ -240,7 +240,7 @@ beforeEach(() => {
     scrollToDate: null,
     scrollToPanel: null,
   })
-  // / H-3b — JournalPage now routes page creation through
+  // H-3b — JournalPage now routes page creation through
   // `createPageInSpace`, which reads `useSpaceStore.getState().currentSpaceId`.
   // Seed the store so the addBlock path doesn't bail with "No active space".
   useSpaceStore.setState({
@@ -402,7 +402,7 @@ function makeJournalTemplateMockImpl(todayStr: string) {
     if (cmd === 'list_blocks') return templateListBlocksResponse(args)
     if (cmd === 'load_page_subtree') return templateLoadPageSubtreeResponse(args)
     if (cmd === 'query_by_property') return templateQueryByPropertyResponse(args)
-    // / H-3b — JournalPage now routes page creation through
+    // H-3b — JournalPage now routes page creation through
     // `create_page_in_space`. The IPC returns the new page ULID as a
     // plain string (see backend `create_page_in_space` Tauri command).
     if (cmd === 'create_page_in_space') return 'DP-TMPL'
@@ -858,7 +858,7 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // / H-3b — page creation routes through `create_page_in_space`
+      // H-3b — page creation routes through `create_page_in_space`
       // (returns the new page ULID as a plain string), not `create_block`.
       // Use a command-dispatched implementation so the responses are
       // deterministic regardless of call order.
@@ -967,7 +967,7 @@ describe('JournalPage', () => {
         })
       })
 
-      // / H-3b — page creation now routes through `create_page_in_space`,
+      // H-3b — page creation now routes through `create_page_in_space`,
       // so a `create_block({blockType:'page'})` call is impossible
       // by construction. Verify no `create_page_in_space` call fired
       // (the page already existed).
@@ -2516,7 +2516,7 @@ describe('JournalPage', () => {
         if (cmd === 'list_blocks') {
           return emptyPage
         }
-        // / H-3b — page creation goes through `create_page_in_space`,
+        // H-3b — page creation goes through `create_page_in_space`,
         // returning the new ULID as a string.
         if (cmd === 'create_page_in_space') return 'DP-AUTO'
         if (cmd === 'create_block') {
@@ -2847,7 +2847,7 @@ describe('JournalPage', () => {
         expect(screen.queryByTestId('loading-skeleton')).not.toBeInTheDocument()
       })
 
-      // / H-3b — page creation routes through `create_page_in_space`.
+      // H-3b — page creation routes through `create_page_in_space`.
       mockedInvoke.mockImplementation(async (cmd: string) => {
         const bug48 = bug48EmptyResponse(cmd)
         if (bug48 !== BUG48_NOT_HANDLED) return bug48
@@ -2967,7 +2967,7 @@ describe('JournalPage', () => {
   // ── H-1: Auto-creation for any date in daily mode ───────────────────
 
   describe('auto-creation of first block', () => {
-    // / H-3b — page creation routes through `create_page_in_space`.
+    // H-3b — page creation routes through `create_page_in_space`.
     // All tests in this group assert the new IPC name + payload shape.
     it('auto-creates page+block for today in daily mode', async () => {
       const todayStr = formatDate(new Date())

@@ -166,7 +166,7 @@ export function SearchPanel(): React.ReactElement {
   const [inputFocused, setInputFocused] = useState(false)
   // Search help dialog open state (the `?` toolbar button).
   const [helpOpen, setHelpOpen] = useState(false)
-  // / the caret-anchored autocomplete machine lives in
+  // the caret-anchored autocomplete machine lives in
   // <SearchAutocomplete>; SearchPanel keeps only the open/aria summary it
   // reports (for the input's combobox attrs) and the shared pending-caret ref.
   const [autocomplete, setAutocomplete] = useState<SearchAutocompleteState>({
@@ -290,7 +290,7 @@ export function SearchPanel(): React.ReactElement {
     }
   }, [setQueryAndCaret])
 
-  // / one-time migration toast pointing users at the help
+  // one-time migration toast pointing users at the help
   // dialog so they discover the inline filter syntax.
   useFilterSyntaxIntroToast()
 
@@ -475,7 +475,7 @@ export function SearchPanel(): React.ReactElement {
     [cycling, setQueryAndCaret, historyEntries, handleRemoveHistory],
   )
 
-  // / FE-A12 — chip / helper handlers. Each appends a filter token to
+  // FE-A12 — chip / helper handlers. Each appends a filter token to
   // the AST and re-serialises the canonical query string; they read the `ast`
   // memo (already `parse(query)`, recomputed on every `query` change and
   // current inside the same render's event handlers).
