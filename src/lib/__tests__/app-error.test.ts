@@ -14,6 +14,7 @@ import {
   isCancellation,
   isConflict,
   isDatabaseError,
+  isNonReversible,
   isNotFound,
   isPoolBusy,
   isValidation,
@@ -84,6 +85,25 @@ describe('isNotFound', () => {
     expect(isNotFound(null)).toBe(false)
     expect(isNotFound(new Error('not_found'))).toBe(false)
     expect(isNotFound('not_found')).toBe(false)
+  })
+})
+
+// #3353 — undoOp/undoOps revert preflight failure; a PERMANENT class
+// alongside `validation`/`not_found` (see `isPermanentRevertFailure` in
+// `stores/undo.ts`).
+describe('isNonReversible', () => {
+  it('matches only kind="non_reversible"', () => {
+    expect(isNonReversible({ kind: 'non_reversible', message: 'cycle' })).toBe(true)
+    expect(isNonReversible({ kind: 'not_found', message: 'x' })).toBe(false)
+    expect(isNonReversible({ kind: 'database', message: 'x' })).toBe(false)
+    expect(isNonReversible({ kind: 'pool_busy', message: 'x' })).toBe(false)
+    expect(isNonReversible({ kind: 'validation', message: 'x' })).toBe(false)
+  })
+
+  it('rejects non-AppError inputs', () => {
+    expect(isNonReversible(null)).toBe(false)
+    expect(isNonReversible(new Error('non_reversible'))).toBe(false)
+    expect(isNonReversible('non_reversible')).toBe(false)
   })
 })
 

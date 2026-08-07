@@ -110,6 +110,18 @@ export function isValidation(err: unknown): err is TypedAppError & { kind: 'vali
 }
 
 /**
+ * Was this a reverse-move preflight failure? #3353 — `undoOp`/`undoOps`
+ * reject with this kind when the backend's reverse-move check (moving the
+ * target back would violate a structural invariant, e.g. the reinserted
+ * parent no longer exists or the move would create a cycle) fails during
+ * revert. Like `validation`, resubmitting the identical entry fails
+ * identically forever — see `isPermanentRevertFailure` in `stores/undo.ts`.
+ */
+export function isNonReversible(err: unknown): err is TypedAppError & { kind: 'non_reversible' } {
+  return isAppError(err) && err.kind === 'non_reversible'
+}
+
+/**
  * The structured validation sub-kind of an IPC error, or `null` when the
  * value is not a validation `AppError` or carries no code. #2251 — replaces
  * the old `parseValidationReason` message-prefix regexing: the backend now
