@@ -42,11 +42,11 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Offline / foreground awareness**: a device that goes offline stops trying immediately; a device that backgrounds skips its resync ticks until foreground. Coming back online retries immediately.
 - **Wire**: QUIC (over UDP), encrypted with TLS 1.3. CRDT operations, snapshots and attachment bytes all flow over the same connection.
 
-> **Pairing a new device does not currently work.** Two devices that have never
-> paired cannot reliably start a session, so a first pair usually times out
-> (#3502). Restarting the app on both devices sometimes gets past it. This is a
-> known defect, not a configuration problem — no firewall or network change
-> fixes it.
+> **Two-device pairing has not been verified on real hardware.** The defect that
+> prevented a first pair from ever being initiated (#3502) is fixed, and the
+> daemon, transport and dialog paths are covered by unit tests — but nothing
+> here has yet been observed against two live devices, and QUIC/UDP behaviour on
+> Android and on restrictive WiFi is untested because it needs hardware (#3507).
 
 ## Snapshot catch-up
 

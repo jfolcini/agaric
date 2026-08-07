@@ -93,7 +93,8 @@ transport owns, in `src-tauri/agaric-sync/src/transport/`:
 | `MAX_LORO_SYNC_PAYLOAD_SIZE` | 256 MB | The crate's answer to "the largest protocol payload we will allocate for before we have seen the bytes"; `MAX_FRAME_SIZE` is deliberately this value rather than a new number. |
 | `MAX_SNAPSHOT_SIZE` | 256 MB | Cap the initiator applies to `SnapshotOffer.size_bytes` (defined in `sync_daemon/snapshot_transfer.rs`). |
 | `HANDSHAKE_TIMEOUT` | 120 s | Per-`handle_message` budget, applied by `SessionLimits::dispatch` in `transport/driver.rs`. |
-| `transport::session::RECV_TIMEOUT` | 180 s | Per-awaited-message receive guard, `SessionLimits::recv`. Carried across from `SyncConnection::RECV_TIMEOUT` by value, restated rather than imported because `sync_net` is retired. |
+| `transport::session::RECV_TIMEOUT` | 180 s | Per-awaited-message receive guard, applied by `recv_sync_message_within`. Carried across from `SyncConnection::RECV_TIMEOUT` by value, restated rather than imported because `sync_net` is retired. |
+| `transport::driver::RECV_TIMEOUT` (private) | 180 s | **A second, same-named constant** — this is the one that feeds `SessionLimits::recv`, i.e. the session driver's default. Same value and same provenance as `session::RECV_TIMEOUT`, but a different item: retuning one does not move the other. Disambiguated here because the name alone does not. |
 | `CONNECTION_SETUP_TIMEOUT` | 10 s | Budget for the QUIC handshake alone (`transport/service.rs`), spent in a spawned `AdmittedConnection::establish` so one stalled peer costs one slot rather than the whole accept queue. |
 | `FIRST_FRAME_TIMEOUT` | 180 s | Budget for the peer's *first* frame, which it cannot send until `orch.start()` has read local heads and version vectors out of the database. Deliberately not the handshake budget. |
 | `CLOSE_WAIT` | 10 s | How long the side that wrote the final frame waits for the peer's close (`transport/driver.rs`). |

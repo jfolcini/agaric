@@ -69,7 +69,11 @@ The port is not uniformly an improvement, and the regressions are load-bearing e
 
 ### What the port did not fix
 
-**First-ever pairing is still broken (#3502).** `process_discovery_event`, the three initiation branches and `should_attempt_sync_with_discovered_peer` are daemon *policy*, not transport; the cutover replaces how bytes move and touches none of them. During a first-ever pair `peer_refs` is empty, so only the mDNS-resolve branch can start an outbound session — and its already-discovered short-circuit returns before `pairing_pending` is consulted, giving one initiation opportunity per peer per process lifetime, which the pairing dialog spends on open before the user has typed. Nothing in this document should be read as saying the QUIC port makes pairing work.
+**First-ever pairing initiation (#3502) — fixed separately, in #3535.** `process_discovery_event`, the three initiation branches and `should_attempt_sync_with_discovered_peer` are daemon *policy*, not transport; the cutover replaced how bytes move and touched none of them, so the defect survived the port unchanged and had to be closed on its own.
+
+The failure was that during a first-ever pair `peer_refs` is empty, so only the mDNS-resolve branch could start an outbound session — and its already-discovered short-circuit returned before `pairing_pending` was consulted, giving one initiation opportunity per peer per process lifetime, which the pairing dialog spent on open before the user had typed. #3535 reorders the clauses so a pending pairing outranks the already-discovered guard, and removes the matching short-circuit in `process_discovery_event`.
+
+Nothing in this document should be read as saying the QUIC port *by itself* makes pairing work — and note that pairing still has not been observed against two live devices (#3507), so the evidence for it is unit tests rather than an observation.
 
 ## Protocol
 
