@@ -304,10 +304,16 @@ $1" "$2"
   # most one whole character at a cut which is already lossy, and the
   # diagnostic is always valid UTF-8.
   sanitize() {
-    local s raw LC_ALL=C
-    s="$(printf '%s' "$*" | tr '\n\t\r' '   ' | tr -d '\000-\037\177')"
+    local s raw orig LC_ALL=C
+    # Measure the ORIGINAL length, before control characters are stripped. The
+    # truncation notice exists so a cut can never hide substance silently, so it
+    # must report what was actually there: measuring post-`tr -d` under-reports
+    # by exactly the bytes most likely to have made the value long in the first
+    # place (a control-character-heavy payload). (#3580 review)
+    orig="$*"
+    raw=${#orig}
+    s="$(printf '%s' "$orig" | tr '\n\t\r' '   ' | tr -d '\000-\037\177')"
     if [ "${#s}" -gt 400 ]; then
-      raw=${#s}
       s="${s:0:400}"
       while [ -n "$s" ]; do
         case "$s" in *[$'\200'-$'\277']) s="${s%?}" ;; *) break ;; esac
