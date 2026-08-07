@@ -88,6 +88,25 @@ type PairingRole = 'host' | 'joiner'
 // not be representable.
 type JoinerPhase = 'entry' | 'waiting'
 
+// #3469 (review) — a poll result carries the id of the wait it was fetched
+// FOR, captured when the request starts. The dialog is mounted
+// unconditionally by `DeviceManagement` and `usePollingQuery` never clears
+// its `data` when `enabled` flips false, so the previous attempt's peer list
+// is still sitting there the instant the next wait begins — before that
+// wait's own first fetch has resolved. Judging a fresh (correctly empty)
+// baseline against that leftover list reports the peer the user just
+// unpaired as brand new, which is #3469 returning through unpair-then-repair.
+//
+// The token travels WITH the data rather than being counted separately on
+// the side: "some fetch started after waiting began" would not establish
+// that the value currently in `data` came from it — `usePollingQuery` leaves
+// the old value in place until the new request resolves. Matching the id
+// stamped on the value itself is the only form of the check with no window.
+interface PolledPeerRefs {
+  session: number
+  peers: PeerRefRow[]
+}
+
 export function PairingDialog({
   open,
   onOpenChange,
@@ -142,6 +161,10 @@ export function PairingDialog({
   // the baseline instead.
   const knownPeerIdsRef = useRef<Set<string> | null>(new Set())
   const waitErrorBaselineRef = useRef<string | null>(null)
+  // #3469 (review) — monotonic id of the current wait, bumped the instant a
+  // wait begins. Scopes poll results to the attempt they are judged against;
+  // see `PolledPeerRefs` for why the baseline alone is not enough.
+  const waitSessionRef = useRef(0)
 
   // Clear any pending paste-focus timer on unmount so we never touch a
   // detached DOM node after the dialog closes.
@@ -340,8 +363,15 @@ export function PairingDialog({
   // for the same fixed-interval-while-mounted shape); it pauses while the
   // tab is hidden and refetches on visibility return, same as everywhere
   // else it's used.
-  const pollPeerRefs = useCallback(() => commands.listPeerRefs().then((r) => unwrap(r)), [])
-  const { data: polledPeers } = usePollingQuery<PeerRefRow[]>(pollPeerRefs, {
+  //
+  // The wait id is read when the request STARTS, so a response that lands
+  // after the wait it belongs to has ended is recognisable as stale.
+  const pollPeerRefs = useCallback(async (): Promise<PolledPeerRefs> => {
+    const session = waitSessionRef.current
+    const rows = await commands.listPeerRefs().then((r) => unwrap(r))
+    return { session, peers: rows }
+  }, [])
+  const { data: polled } = usePollingQuery<PolledPeerRefs>(pollPeerRefs, {
     intervalMs: PAIRING_PEER_POLL_INTERVAL_MS,
     enabled: joinerPhase === 'waiting',
   })
@@ -352,7 +382,12 @@ export function PairingDialog({
   // passphrase matched (the responder pins the peer only after its own
   // proof comparison passes).
   useEffect(() => {
-    if (joinerPhase !== 'waiting' || !polledPeers) return
+    if (joinerPhase !== 'waiting' || !polled) return
+    // Left over from a previous wait (or from before this one's first fetch
+    // resolved) — carries no information about this attempt. Discarding it
+    // also keeps it out of the baseline-adoption path below.
+    if (polled.session !== waitSessionRef.current) return
+    const polledPeers = polled.peers
     const known = knownPeerIdsRef.current
     if (known === null) {
       // Baseline unknown (the confirm-time read failed). Fail closed:
@@ -374,7 +409,7 @@ export function PairingDialog({
     announce(t('announce.pairingSucceeded'))
     notify.success(t('pairing.pairSuccessMessage'))
     onOpenChange(false)
-  }, [polledPeers, joinerPhase, t, onOpenChange])
+  }, [polled, joinerPhase, t, onOpenChange])
 
   // Failure: the responder's wire-level proof rejection reaches this device
   // as a generic `sync:error` → `useSyncStore` error string (see `syncError`
@@ -511,6 +546,12 @@ export function PairingDialog({
       // already sitting in the store can't be mistaken for this attempt's
       // rejection.
       waitErrorBaselineRef.current = useSyncStore.getState().error
+      // #3469 (review) — open a new wait id. Every poll result stamped with
+      // an older id (including the whole of the previous attempt's, which
+      // `usePollingQuery` still holds in `data`) is now unusable as evidence
+      // for this attempt. Bumped here rather than in `call` so the id
+      // advances exactly once per wait that actually starts.
+      waitSessionRef.current += 1
       setWaitCountdown(PAIRING_TIMEOUT_SECONDS)
       setJoinerPhase('waiting')
       announce(t('announce.pairingWaiting'))

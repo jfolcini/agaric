@@ -29,6 +29,15 @@ import { fakeId, pairingPeerReveal, peerRefs } from '@/lib/tauri-mock/seed'
 //      the moment `pair()` returned" lie wearing a poll's clothes.
 // The third read is the first 2s interval tick, and that is where the
 // peer legitimately appears — one full poll interval of honest waiting.
+//
+// ASSUMPTION this count depends on (#3499 review): the counter is mutated
+// on READ, so `3` silently encodes "the pairing dialog is the only caller
+// of `list_peer_refs` during the wait". True today — `DeviceManagement`'s
+// load is mount/close-driven and `useSyncTrigger.ts:246` / `App.tsx:344`
+// are event-driven — but any added interval refresh of the device list
+// consumes a read, shifting the reveal one tick earlier and turning the
+// E2E spec's "waiting state persists" assertion into an instant success.
+// Add a reader, re-derive this number. Mock-only; no production risk.
 const PAIRING_PEER_REVEAL_READS = 3
 
 // #3463 — the mock used to accept ANY passphrase (`confirm_pairing:

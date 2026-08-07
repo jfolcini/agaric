@@ -1283,6 +1283,126 @@ describe('PairingDialog', () => {
       }
     })
 
+    // #3469 (review) — `DeviceManagement` mounts this dialog unconditionally
+    // (DeviceManagement.tsx:412), so every piece of its state survives each
+    // open/close cycle, and `usePollingQuery` never clears its `data` when
+    // `enabled` flips false (usePollingQuery.ts:100-105). Unpair-then-repair
+    // — the routine sync-troubleshooting path — walks straight into the gap
+    // between those two facts: at the instant the second wait begins, the
+    // poll still holds the FIRST attempt's peer list, while the fresh
+    // confirm-time baseline is correctly empty again because that peer was
+    // just deleted. Judged against each other, the old peer reads as "one
+    // that appeared after this attempt started" — instant false success,
+    // dialog closed, and the device the user just unpaired resurrected into
+    // the sidebar/StatusPanel. The baseline is not at fault; what was
+    // missing is that a poll result must be scoped to the wait it is being
+    // judged against, which is what the wait id stamped on it provides.
+    it('does not claim success from a previous attempt poll result when one mounted dialog pairs, unpairs, then pairs again', async () => {
+      const onOpenChange = vi.fn()
+      const pairedPeer = {
+        peer_id: 'peer-first-attempt-1',
+        last_hash: null,
+        last_sent_hash: null,
+        synced_at: null,
+        reset_count: 0,
+        last_reset_at: null,
+        cert_hash: null,
+        device_name: null,
+      }
+      // Authoritative peer table: `list_peer_refs` reads it and
+      // `delete_peer_ref` empties it, so the second attempt's confirm-time
+      // baseline is genuinely empty exactly as it is after a real unpair.
+      let peerRows: (typeof pairedPeer)[] = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return peerRows
+        if (cmd === 'confirm_pairing') return undefined
+        if (cmd === 'delete_peer_ref') {
+          peerRows = []
+          return undefined
+        }
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+
+        // 1. Pair for real. The resolving poll leaves the hook holding
+        //    `[pairedPeer]`, which nothing ever clears.
+        await enterWaitingStateFake()
+        peerRows = [pairedPeer]
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+
+        // 2. The close/reopen the parent drives. Same mount throughout —
+        //    this is the whole point of the test, so assert the dialog came
+        //    back rather than assuming it did.
+        rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+        rerender(<PairingDialog open onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+        expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+
+        // 3. Unpair the device through the dialog's own list.
+        expect(screen.getByText('peer-first-attempt-1')).toBeInTheDocument()
+        fireEvent.click(screen.getAllByRole('button', { name: /Unpair/i })[0] as HTMLElement)
+        fireEvent.click(screen.getByRole('button', { name: /Yes, unpair/i }))
+        await flushMicrotasks()
+        expect(mockedInvoke).toHaveBeenCalledWith('delete_peer_ref', {
+          peerId: 'peer-first-attempt-1',
+        })
+        expect(screen.queryByText('peer-first-attempt-1')).not.toBeInTheDocument()
+
+        // 4. Pair again on that same mount. Everything below must be
+        //    attributable to THIS attempt, so clear the first one's traces.
+        onOpenChange.mockClear()
+        vi.mocked(toast.success).mockClear()
+        vi.mocked(announce).mockClear()
+        mockSyncStoreState.setPeers.mockClear()
+
+        fireEvent.click(
+          screen.getByRole('button', { name: /Have a code from the other device\?/i }),
+        )
+        await flushMicrotasks()
+        const inputs = screen.getAllByRole('textbox')
+        fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'echo' } })
+        fireEvent.change(inputs[1] as HTMLElement, { target: { value: 'foxtrot' } })
+        fireEvent.change(inputs[2] as HTMLElement, { target: { value: 'golf' } })
+        fireEvent.change(inputs[3] as HTMLElement, { target: { value: 'hotel' } })
+        fireEvent.click(screen.getByRole('button', { name: /^Pair$/i }))
+        await flushMicrotasks()
+
+        // Nothing has been observed since this wait began, so it must still
+        // be running. Without the wait id this assertion is already lost
+        // here: the success effect resolves on the commit that flips into
+        // 'waiting', before this attempt's own first fetch has resolved.
+        expect(toast.success).not.toHaveBeenCalled()
+        expect(vi.mocked(announce)).not.toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).not.toHaveBeenCalled()
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+        // ...and the device just unpaired must not be pushed back into the
+        // shared store the sidebar/StatusPanel read from (#1076 mirror).
+        expect(mockSyncStoreState.setPeers).not.toHaveBeenCalledWith(
+          expect.arrayContaining([expect.objectContaining({ peerId: 'peer-first-attempt-1' })]),
+        )
+
+        // Still waiting a full poll tick later: the empty result that does
+        // belong to this attempt reports nothing new, which is the truth.
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+        expect(toast.success).not.toHaveBeenCalled()
+        expect(onOpenChange).not.toHaveBeenCalled()
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
     it('surfaces the proof-rejection failure with a retype path back to the entry form', async () => {
       mockedInvoke.mockImplementation(async (cmd: string) => {
         if (cmd === 'list_peer_refs') return []
