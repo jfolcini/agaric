@@ -35,7 +35,8 @@ function globError(reason: string): GlobValidationError {
 export function validateGlob(input: string): GlobValidationError | null {
   if (input.length === 0) return globError('empty pattern')
   const state = { bracket: 0, brace: 0 }
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; ; i++) {
+    if (input[i] === undefined) break
     const err = stepGlobValidate(input, i, state)
     if (err) return err
   }
@@ -60,27 +61,25 @@ function stepGlobValidate(
   switch (ch) {
     case '[': {
       state.bracket++
-      return null
+      break
     }
     case ']': {
       if (state.bracket === 0) return globError('unbalanced bracket')
       state.bracket--
-      return null
+      break
     }
     case '{': {
       state.brace++
       if (state.brace > 1) return globError('brace nesting not supported')
-      return null
+      break
     }
     case '}': {
       if (state.brace === 0) return globError('unbalanced brace')
       state.brace--
-      return null
-    }
-    default: {
-      return null
+      break
     }
   }
+  return null
 }
 
 /**
@@ -117,10 +116,8 @@ function parseSegments(pattern: string): Segment[] {
   while (i < pattern.length) {
     const ch = pattern[i]
     if (ch === '{') {
-      if (buf.length > 0) {
-        segments.push({ literal: buf })
-        buf = ''
-      }
+      segments.push({ literal: buf })
+      buf = ''
       const end = pattern.indexOf('}', i + 1)
       if (end === -1) {
         buf = pattern.slice(i)
@@ -138,12 +135,11 @@ function parseSegments(pattern: string): Segment[] {
       i++
     }
   }
-  if (buf.length > 0) segments.push({ literal: buf })
+  segments.push({ literal: buf })
   return segments
 }
 
 export function expandBraces(pattern: string): string[] {
-  if (!pattern.includes('{')) return [pattern]
   const segments = parseSegments(pattern)
   let results: string[] = ['']
   for (const seg of segments) {
@@ -151,18 +147,16 @@ export function expandBraces(pattern: string): string[] {
     if ('literal' in seg) {
       for (const r of results) next.push(r + seg.literal)
     } else {
-      outer: for (const r of results) {
-        for (const a of seg.alts) {
+      for (const r of results) {
+        const room = EXPANSION_CAP - next.length
+        for (const a of seg.alts.slice(0, room)) {
           next.push(r + a)
-          if (next.length > EXPANSION_CAP) break outer
         }
       }
     }
+    const overflowed = next.length < results.length * ('alts' in seg ? seg.alts.length : 1)
     results = next
-    if (results.length > EXPANSION_CAP) {
-      results = results.slice(0, EXPANSION_CAP)
-      break
-    }
+    if (overflowed) break
   }
   return results
 }
@@ -189,8 +183,9 @@ export function splitTopLevelCommas(input: string): string[] {
   const out: string[] = []
   let depth = 0
   let last = 0
-  for (let i = 0; i < input.length; i++) {
+  for (let i = 0; ; i++) {
     const ch = input[i]
+    if (ch === undefined) break
     if (ch === '{') depth++
     else if (ch === '}') depth = Math.max(0, depth - 1)
     else if (ch === ',' && depth === 0) {
@@ -238,8 +233,7 @@ export function prepareGlobs(entries: string[]): string[] {
       }
       const invalid = validateGlob(trimmed)
       if (invalid) throw new Error(invalid.message)
-      const expanded = expandBraces(trimmed)
-      const patterns = expanded.length > 0 ? expanded : [trimmed]
+      const patterns = expandBraces(trimmed)
       for (const pat of patterns) {
         out.push(asciiLowercase(wrapSubstring(pat)))
       }
@@ -270,7 +264,7 @@ export function prepareGlobs(entries: string[]): string[] {
 export function globToRegExp(glob: string): RegExp {
   let src = '^'
   let i = 0
-  while (i < glob.length) {
+  while (true) {
     const ch = glob[i]
     if (ch === undefined) break
     if (ch === '*') {
@@ -313,15 +307,15 @@ function compileCharClass(glob: string, start: number): { regex: string; next: n
     body += '\\]'
     j++
   }
-  while (j < glob.length && glob[j] !== ']') {
+  while (true) {
     const c = glob[j]
-    if (c === undefined) break
+    if (c === undefined || c === ']') break
     // Preserve `-` (range) and `^` (literal mid-class); escape only the chars
     // that are structurally special inside a JS regex class.
     body += c === '\\' ? '\\\\' : c
     j++
   }
-  if (j >= glob.length) return null
+  if (glob[j] === undefined) return null
   return { regex: `[${negate ? '^' : ''}${body}]`, next: j + 1 }
 }
 
