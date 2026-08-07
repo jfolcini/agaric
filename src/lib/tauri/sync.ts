@@ -2,35 +2,15 @@ import { Channel } from '@tauri-apps/api/core'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
-import type { SyncProgressUpdate } from '@/lib/bindings'
-
-/** Peer reference row returned by `list_peer_refs` / `get_peer_ref`.
- *  Fields match the Rust `PeerRef` struct (see src-tauri/agaric-store/src/peer_refs.rs). */
-export interface PeerRefRow {
-  peer_id: string
-  last_hash: string | null
-  last_sent_hash: string | null
-  /** Epoch milliseconds (UTC), or null if never synced. #109 Phase 2: was an ISO string. */
-  synced_at: number | null
-  reset_count: number
-  /** Epoch milliseconds (UTC), or null if never reset. #109 Phase 2: was an ISO string. */
-  last_reset_at: number | null
-  cert_hash: string | null
-  device_name: string | null
-  last_address: string | null
-  /** The peer's iroh `EndpointId` (32-byte ed25519 public key) in its canonical
-   *  64-char lowercase-hex encoding, or null if this peer has never been seen
-   *  over the iroh transport. Migration 0107 / plan #3464. */
-  endpoint_id: string | null
-}
+import type { PeerRef, SyncProgressUpdate } from '@/lib/bindings'
 
 /** List all known peer references. */
-export async function listPeerRefs(): Promise<PeerRefRow[]> {
+export async function listPeerRefs(): Promise<PeerRef[]> {
   return unwrap(await commands.listPeerRefs())
 }
 
 /** Fetch a single peer reference by ID, or null if not found. */
-export async function getPeerRef(peerId: string): Promise<PeerRefRow | null> {
+export async function getPeerRef(peerId: string): Promise<PeerRef | null> {
   return unwrap(await commands.getPeerRef(peerId))
 }
 

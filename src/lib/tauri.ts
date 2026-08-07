@@ -40,6 +40,7 @@ export type {
   PageSubtree,
   PageWithMetadataRow,
   PartitionedSearchResponse,
+  PeerRef,
   PropertyDefinition,
   PurgeResponse,
   QueryGroup,

@@ -49,7 +49,7 @@ import { usePollingQuery } from '@/hooks/usePollingQuery'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
 import { unwrap } from '@/lib/app-error'
-import type { PairingInfo, PeerRef as PeerRefRow } from '@/lib/bindings'
+import type { PairingInfo, PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
 import { logger } from '@/lib/logger'
@@ -104,7 +104,7 @@ type JoinerPhase = 'entry' | 'waiting'
 // stamped on the value itself is the only form of the check with no window.
 interface PolledPeerRefs {
   session: number
-  peers: PeerRefRow[]
+  peers: PeerRef[]
 }
 
 export function PairingDialog({
@@ -115,7 +115,7 @@ export function PairingDialog({
   const [role, setRole] = useState<PairingRole>('host')
   const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [words, setWords] = useState<[string, string, string, string]>(['', '', '', ''])
-  const [peers, setPeers] = useState<PeerRefRow[]>([])
+  const [peers, setPeers] = useState<PeerRef[]>([])
   const [loading, setLoading] = useState(false)
   const [pairLoading, setPairLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -222,7 +222,7 @@ export function PairingDialog({
 
   // Shared by both roles: refresh the paired-devices list. Never calls
   // `startPairing` — read-only, so it's safe for the joiner path too.
-  const { execute: executeLoadPeers } = useIpcCommand<void, PeerRefRow[]>({
+  const { execute: executeLoadPeers } = useIpcCommand<void, PeerRef[]>({
     call: () => commands.listPeerRefs().then((r) => unwrap(r)),
     module: 'PairingDialog',
     errorLogMessage: 'Failed to load paired devices',

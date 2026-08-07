@@ -30,7 +30,7 @@ import { useMdnsStatus } from '@/hooks/useMdnsStatus'
 import { mapPeerRefToInfo } from '@/hooks/useSyncTrigger'
 import { useSyncWithTimeout } from '@/hooks/useSyncWithTimeout'
 import { unwrap } from '@/lib/app-error'
-import type { PeerRef as PeerRefRow } from '@/lib/bindings'
+import type { PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { writeText } from '@/lib/clipboard'
 import { formatErrorForDisplay } from '@/lib/error-display'
@@ -57,7 +57,7 @@ import { useSyncStore } from '@/stores/sync'
  *  3. synced_at desc (never-synced => -Infinity, sorts last)
  *  4. peer_id, localeCompare (stable, deterministic final tiebreak)
  */
-export function comparePeers(a: PeerRefRow, b: PeerRefRow): number {
+export function comparePeers(a: PeerRef, b: PeerRef): number {
   const aHasName = a.device_name != null && a.device_name !== ''
   const bHasName = b.device_name != null && b.device_name !== ''
 
@@ -82,7 +82,7 @@ export function comparePeers(a: PeerRefRow, b: PeerRefRow): number {
 export function DeviceManagement(): React.ReactElement {
   const { t } = useTranslation()
   const [deviceId, setDeviceId] = useState<string | null>(null)
-  const [peers, setPeers] = useState<PeerRefRow[]>([])
+  const [peers, setPeers] = useState<PeerRef[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pairingOpen, setPairingOpen] = useState(false)
@@ -110,7 +110,7 @@ export function DeviceManagement(): React.ReactElement {
   // Load device id + peer list in parallel via the shared
   // useIpcCommand hook. Inline error display via `setError` (no toast —
   // matches existing behavior).
-  const { execute: executeLoadData } = useIpcCommand<void, [string, PeerRefRow[]]>({
+  const { execute: executeLoadData } = useIpcCommand<void, [string, PeerRef[]]>({
     call: () =>
       Promise.all([
         commands.getDeviceId().then((r) => unwrap(r)),

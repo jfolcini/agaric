@@ -27,7 +27,7 @@ vi.mock('@/lib/announcer', () => ({
 
 import { mapPeerRefToInfo, useSyncTrigger } from '@/hooks/useSyncTrigger'
 import { announce } from '@/lib/announcer'
-import type { PeerRefRow, SyncSessionInfo } from '@/lib/tauri'
+import type { PeerRef, SyncSessionInfo } from '@/lib/tauri'
 import { flushAllDrafts, listPeerRefs, startSync } from '@/lib/tauri'
 import { useSyncStore } from '@/stores/sync'
 
@@ -48,8 +48,8 @@ function setVisibility(state: 'visible' | 'hidden'): void {
   document.dispatchEvent(new Event('visibilitychange'))
 }
 
-/** Build a `PeerRefRow` with sensible defaults for tests (#1076). */
-function makePeerRow(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
+/** Build a `PeerRef` with sensible defaults for tests (#1076). */
+function makePeerRow(overrides: Partial<PeerRef> = {}): PeerRef {
   return {
     peer_id: 'PEER1',
     last_hash: null,
