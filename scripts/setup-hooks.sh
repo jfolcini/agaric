@@ -209,15 +209,23 @@ cargo_get() {
 # older build silently gates pushes with fewer rules than CI applies. The
 # version is read from the hook wrapper so this script cannot drift from the
 # constant the wrapper asserts against.
+# <version-awk> lets a caller share the EXACT field-extraction its own
+# `--version` assertion uses (see zizmor's ZIZMOR_VERSION_AWK below) instead
+# of this function guessing its own — two independent awk programs parsing
+# the same `<tool> --version` line is how #3545 happened: they agreed until
+# the output grew a trailing token, then one stayed silent while the other
+# decided the version didn't match and reinstalled on every run. Defaults to
+# `$NF` (last field) for any future caller that has no shared extraction to
+# pass.
 cargo_get_pinned() {
-  local crate="$1" version="$2" bin="${3:-$1}" current=""
+  local crate="$1" version="$2" bin="${3:-$1}" field="${4:-NR == 1 { print \$NF }}" current=""
   if [ -z "$version" ]; then
     warn "no pinned version found for $crate — falling back to an unpinned install"
     cargo_get "$crate" "$bin"
     return
   fi
   if have "$bin"; then
-    current="$("$bin" --version 2>/dev/null | awk 'NR == 1 { print $NF }')"
+    current="$("$bin" --version 2>/dev/null | awk "$field")"
     if [ "$current" = "$version" ]; then ok "$bin $version (already installed)"; return; fi
     note "$bin ${current:-unknown} differs from the pinned $version — reinstalling"
   fi
@@ -235,6 +243,15 @@ cargo_get_pinned() {
 # run whose binary disagrees).
 ZIZMOR_PINNED_VERSION="$(
   sed -n 's/^ZIZMOR_PINNED_VERSION="\([^"]*\)".*/\1/p' \
+    "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
+)"
+
+# Same source, same reason: the `zizmor --version` field extraction below
+# must be the exact one zizmor-hook.sh's own assertion uses, or the two can
+# silently diverge (#3545) the moment that output ever grows a trailing
+# token.
+ZIZMOR_VERSION_AWK="$(
+  sed -n "s/^ZIZMOR_VERSION_AWK='\([^']*\)'.*/\1/p" \
     "$(dirname "$0")/zizmor-hook.sh" 2>/dev/null | head -n 1
 )"
 
@@ -325,7 +342,7 @@ else
   cargo_get cargo-audit
   cargo_get sqruff
   cargo_get typos-cli typos
-  cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION"
+  cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"
   cargo_get taplo-cli taplo
   cargo_get cargo-nextest cargo-nextest
   cargo_get just
