@@ -175,9 +175,17 @@ describe('renderCodeBlock — deferred highlighting + output cache (#2271)', () 
     const block = codeBlock('const x: number = 1', 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
 
-    // happy-dom has no `requestIdleCallback`, so `scheduleIdle` falls back to
-    // `setTimeout(cb, 0)` — a real deferral arms a real timer synchronously on
-    // mount, before that timer ever fires.
+    // This assertion is only meaningful while `scheduleIdle` takes its
+    // `setTimeout` fallback, which happens because happy-dom does not implement
+    // `requestIdleCallback`. Pin that precondition explicitly: if a happy-dom
+    // bump ever adds the API, `scheduleIdle` takes the rIC branch, no fake timer
+    // is armed, and the assertion below would go red claiming the deferral was
+    // inlined — blaming the wrong thing. This line makes that failure name
+    // itself instead.
+    expect(typeof requestIdleCallback).toBe('undefined')
+
+    // A real deferral arms a real timer synchronously on mount, before that
+    // timer ever fires.
     expect(vi.getTimerCount()).toBeGreaterThan(0)
 
     act(() => {
@@ -185,9 +193,19 @@ describe('renderCodeBlock — deferred highlighting + output cache (#2271)', () 
     })
     // NB: `vi.waitFor` (not RTL's `waitFor`, which requires a global `jest`
     // vitest's fake-timer branch does not provide). `vi.waitFor` uses
-    // `getSafeTimers()` internally (real timers, 1000ms default), so it
-    // composes correctly with the fake timers installed above.
-    await vi.waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
+    // `getSafeTimers()` internally — REAL timers — so it composes with the fake
+    // timers installed above.
+    //
+    // The explicit 8000ms matches `asyncUtilTimeout` in `src/test-setup.ts`,
+    // which was raised from the default precisely because this suite flaked
+    // under pre-push CPU contention (vitest + cargo nextest saturating cores).
+    // `vi.waitFor` does NOT read that setting — it defaults to 1000ms — and the
+    // work being awaited here is a dynamic `import()` plus `lowlight.highlight`
+    // plus a React commit. Leaving the default would reintroduce exactly the
+    // contention flake #3541 removed from this file.
+    await vi.waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0), {
+      timeout: 8000,
+    })
   })
 
   it('paints highlighted SYNCHRONOUSLY on a cache hit (no flicker on re-render)', async () => {
