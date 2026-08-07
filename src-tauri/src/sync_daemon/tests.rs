@@ -9111,3 +9111,555 @@ async fn complete_2539_snapshot_catchup_emits_single_complete() {
 
     materializer.shutdown();
 }
+
+// ======================================================================
+// #3507 — two devices, one pairing, both sides asserted
+// ======================================================================
+//
+// # Why this section exists
+//
+// Three defects reached `main` through the same hole: #3463 (the joiner
+// compared the typed passphrase against its OWN session), #3469 (success was
+// announced the moment `confirm_pairing` returned, before anything verified
+// it) and #3502 (the `already_discovered` short-circuit ran ahead of the
+// `pairing_pending` clause, so a first-ever pair was undiallable). Every one
+// of them survived review and a full suite, because nothing anywhere drove
+// two devices through a real pairing and looked at what BOTH of them ended up
+// holding.
+//
+// # Why it is only affordable now
+//
+// It was not an oversight that this test did not exist. First contact used to
+// require mDNS, and multicast in CI is unreliable. Under QUIC a peer is dialled
+// by `EndpointId` — a key this test reads off the responder's service and hands
+// to the initiator through a synthesised announcement — so there is no
+// multicast, no service resolution and no timing window left to be flaky about.
+//
+// # What it drives, and what it refuses to fake
+//
+// Everything between `start_pairing` and the settled row is production code:
+//
+//   * `start_pairing_armed_inner` on the host and `start_pairing_inner` +
+//     `confirm_pairing_inner` on the joiner — the exact command sequence the
+//     frontend issues, on two independent pools;
+//   * `process_discovery_event` — the joiner's initiate-or-not decision, run
+//     TWICE so the peer is already known by the time it matters (#3502);
+//   * `try_sync_with_peer` — the real initiator, whose orchestrator sources the
+//     offered `pairing_proof` from the joiner's OWN marker
+//     (`session_state_machine::start`), rather than from a value the test read
+//     out of the database and posted by hand;
+//   * `handle_incoming_sync` — the real responder and its #855 gate, over a
+//     real loopback QUIC connection.
+//
+// The one thing the fixture supplies is the mDNS announcement, because there is
+// no mDNS. It supplies it by asking the responder's service for its own key and
+// address, so what the initiator dials is what is actually listening.
+
+/// The mDNS announcement device `device_id` would make if it were serving on
+/// `harness`'s endpoint.
+///
+/// Deliberately not [`make_resolved_event`], which derives a *synthetic* key
+/// from the device id. That is right for testing the decision function, whose
+/// answer does not depend on the key, and wrong here: the `DiscoveredPeer` this
+/// produces is handed to `try_sync_with_peer`, which dials the key and reaches
+/// nothing unless it is the one the service is listening on.
+fn resolved_event_for_service(device_id: &str, harness: &ServiceHarness) -> mdns_sd::ServiceEvent {
+    let sa = harness
+        .service
+        .addr()
+        .ip_addrs()
+        .copied()
+        .find(|sa: &std::net::SocketAddr| sa.ip().is_loopback())
+        .expect("a loopback-bound service publishes its loopback socket address");
+    let mut props = HashMap::new();
+    props.insert("device_id".to_string(), device_id.to_string());
+    props.insert(
+        "endpoint_id".to_string(),
+        harness.service.endpoint_id().to_string(),
+    );
+    let info = mdns_sd::ServiceInfo::new(
+        mdns::MDNS_SERVICE_TYPE,
+        device_id,
+        &format!("{device_id}.local."),
+        sa.ip().to_string().as_str(),
+        sa.port(),
+        Some(props),
+    )
+    .expect("a well-formed announcement for a loopback service");
+    mdns_sd::ServiceEvent::ServiceResolved(Box::new(info.as_resolved_service()))
+}
+
+const HOST_DEV_3507: &str = "HOST3507";
+const JOINER_DEV_3507: &str = "JOIN3507";
+const HOST_BLOCK_3507: &str = "01HZ3507HBLKXXXXXXXXXXXXXX";
+const JOINER_BLOCK_3507: &str = "01HZ3507JBLKXXXXXXXXXXXXXX";
+const SPACE_3507: &str = "01HZ3507SPACEXXXXXXXXXXXXX";
+const HOST_CONTENT_3507: &str = "seeded on the host (#3507)";
+
+/// Everything one pairing run leaves behind, on **both** devices.
+///
+/// Returned as data rather than asserted inside the driver so the success case
+/// and the mistyped-passphrase case read the same run through opposite
+/// expectations — and so a future assertion does not have to re-run the flow.
+struct PairingOutcome3507 {
+    /// The host's `peer_refs` row for the joiner, if it bound one.
+    host_row_for_joiner: Option<PeerRef>,
+    /// The joiner's `peer_refs` row for the host, if it bound one.
+    joiner_row_for_host: Option<PeerRef>,
+    host_events: Vec<SyncEvent>,
+    joiner_events: Vec<SyncEvent>,
+    /// Whether each device's pairing window is still open afterwards.
+    host_still_pending: bool,
+    /// The keys the two endpoints actually authenticated with, so the rows
+    /// above can be checked against an identity the test did not choose.
+    host_key: String,
+    joiner_key: String,
+    /// The host's seeded block, as projected into the joiner's `blocks` table.
+    ///
+    /// The settled reprojection, not a transient session counter: this is the
+    /// difference between "a session ran" and "these two devices are paired and
+    /// converged".
+    host_block_on_joiner: Option<String>,
+}
+
+/// Drive one complete two-device pairing and report what both devices hold.
+///
+/// `joiner_types_the_hosts_passphrase` is the only difference between the
+/// success run and the failure run, and it is the only thing a user controls.
+async fn drive_two_device_pairing_3507(
+    joiner_types_the_hosts_passphrase: bool,
+) -> PairingOutcome3507 {
+    let space = agaric_store::space::SpaceId::from_trusted(SPACE_3507);
+
+    // ── The host: shows the code, arms its own window ──────────────────
+    let (host_pool, _host_dir) = test_pool().await;
+    let host_mat = Materializer::new(host_pool.clone());
+    let host_state = std::sync::Arc::clone(host_mat.loro_state());
+    let host_sched = Arc::new(SyncScheduler::new());
+    let host_sink = Arc::new(RecordingEventSink::new());
+    let host_slot = std::sync::Mutex::new(None);
+
+    let host_passphrase = crate::commands::start_pairing_armed_inner(
+        &host_pool,
+        &host_slot,
+        &host_sched,
+        HOST_DEV_3507,
+    )
+    .await
+    .expect("the host arms its pairing window")
+    .passphrase;
+
+    // ── The joiner: its dialog mints a competing passphrase of its own,
+    //    which is #3463's root cause, and then the user types the host's ──
+    let (joiner_pool, _joiner_dir) = test_pool().await;
+    let joiner_mat = Materializer::new(joiner_pool.clone());
+    let joiner_state = std::sync::Arc::clone(joiner_mat.loro_state());
+    let joiner_sched = Arc::new(SyncScheduler::new());
+    let joiner_sink = Arc::new(RecordingEventSink::new());
+    let joiner_slot = std::sync::Mutex::new(None);
+    crate::commands::start_pairing_inner(&joiner_slot, JOINER_DEV_3507)
+        .expect("the joiner's dialog opens a session of its own");
+
+    // A mistype is derived from the real passphrase rather than invented, so
+    // "wrong" cannot accidentally collide with a random 4-word phrase.
+    let typed = if joiner_types_the_hosts_passphrase {
+        host_passphrase.clone()
+    } else {
+        format!("{host_passphrase} typo")
+    };
+    crate::commands::confirm_pairing_inner(
+        &joiner_pool,
+        &joiner_slot,
+        &joiner_sched,
+        JOINER_DEV_3507,
+        typed,
+        String::new(),
+    )
+    .await
+    .expect(
+        "#3463/#3469: confirming is a purely local act — it arms a marker with the \
+         proof of whatever was typed and returns Ok even for a mistype. It must NOT \
+         compare against this device's own session, and its Ok must never be read \
+         as 'paired'",
+    );
+
+    // ── Divergent local edits, through the real foreground pipeline ────
+    //
+    // The host's edit is what the joiner must end up holding, and asserting its
+    // SETTLED reprojection is what stops this test from passing on a session
+    // that merely completed.
+    //
+    // The joiner's edit is load-bearing for a different reason. The responder
+    // binds `orch.session().remote_device_id`, which comes from the joiner's
+    // advertised heads; a joiner with an empty op log advertises no head of its
+    // own and `server.rs` then deliberately leaves it unbound. Without this the
+    // host's half of the both-sides assertion could never hold, for a reason
+    // that has nothing to do with pairing.
+    make_local_edit_602(
+        &host_pool,
+        &host_mat,
+        &host_state,
+        HOST_DEV_3507,
+        &space,
+        HOST_BLOCK_3507,
+        HOST_CONTENT_3507,
+        1_736_942_400_000,
+    )
+    .await;
+    make_local_edit_602(
+        &joiner_pool,
+        &joiner_mat,
+        &joiner_state,
+        JOINER_DEV_3507,
+        &space,
+        JOINER_BLOCK_3507,
+        "seeded on the joiner (#3507)",
+        1_736_942_400_100,
+    )
+    .await;
+
+    // ── Two real endpoints: the host serves, the joiner dials ──────────
+    let harness = ServiceHarness::new().await;
+    let host_key = harness.service.endpoint_id().to_string();
+    let joiner_key = client_key(&harness);
+    assert_ne!(
+        host_key, joiner_key,
+        "the fixture must hand the two devices distinct identities, or every \
+         identity assertion below is vacuous"
+    );
+
+    // Precondition: a FIRST pair. Neither device knows the other, which is why
+    // the peer-enumerating initiation branches produce nothing and the pairing
+    // window is the only thing that can start this.
+    assert!(
+        peer_refs::list_peer_refs(&host_pool)
+            .await
+            .unwrap()
+            .is_empty(),
+        "precondition: the host must not already know the joiner"
+    );
+    assert!(
+        peer_refs::list_peer_refs(&joiner_pool)
+            .await
+            .unwrap()
+            .is_empty(),
+        "precondition: the joiner must not already know the host"
+    );
+
+    // ── #3502: the peer is ALREADY known when the passphrase lands ─────
+    //
+    // Both dialogs arm on open, both devices dial and reject each other, and
+    // both land in each other's `discovered` map — and only THEN does the user
+    // finish typing. So by the time there is anything to dial *about*, the peer
+    // is never new. The announcement is therefore processed twice and the peer
+    // this test dials is the one the SECOND call returns: the gate has to be
+    // opened by production code, not by the fixture.
+    let mut discovered: HashMap<String, (mdns::DiscoveredPeer, tokio::time::Instant)> =
+        HashMap::new();
+    let joiner_refs = peer_refs::list_peer_refs(&joiner_pool).await.unwrap();
+    let joiner_pending = peer_refs::is_pending_pairing(&joiner_pool).await.unwrap();
+    assert!(
+        joiner_pending,
+        "confirm_pairing must leave the joiner's pairing window open, or the \
+         initiate decision below is not being asked the question this test is about"
+    );
+
+    let first = process_discovery_event(
+        resolved_event_for_service(HOST_DEV_3507, &harness),
+        JOINER_DEV_3507,
+        &mut discovered,
+        &joiner_refs,
+        joiner_pending,
+    );
+    assert!(
+        first.is_some(),
+        "the first sight of an unpaired peer during a pairing window must initiate"
+    );
+    assert!(
+        discovered.contains_key(HOST_DEV_3507),
+        "the first announcement must leave the peer in `discovered`, which is what \
+         makes the second call the #3502 configuration"
+    );
+    let peer = process_discovery_event(
+        resolved_event_for_service(HOST_DEV_3507, &harness),
+        JOINER_DEV_3507,
+        &mut discovered,
+        &joiner_refs,
+        joiner_pending,
+    )
+    .expect(
+        "#3502: an mDNS refresh of a peer ALREADY in `discovered` must still \
+         initiate while a pairing window is open. This is the configuration every \
+         first-ever pair is in by the time the code is typed, and the \
+         `already_discovered` short-circuit made it undiallable",
+    );
+    assert_eq!(
+        peer.endpoint_id.map(|k| k.to_string()).as_deref(),
+        Some(host_key.as_str()),
+        "the discovered peer must carry the host's real key — under QUIC a dial \
+         names a key, and a peer resolved without one is a peer nothing can reach"
+    );
+
+    // ── The responder: production `handle_incoming_sync` on the host ───
+    let host_sink_dyn: Arc<dyn SyncEventSink> = host_sink.clone();
+    let host_task = spawn_responder(
+        &harness,
+        host_pool.clone(),
+        HOST_DEV_3507,
+        host_mat.clone(),
+        host_sched.clone(),
+        host_sink_dyn,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    // ── The initiator: production `try_sync_with_peer` on the joiner ───
+    //
+    // `joiner_refs` is empty, which is the whole point: the proof that goes on
+    // the wire is not passed in here, it is read from the joiner's own marker by
+    // `session_state_machine::start`.
+    let joiner_sink_dyn: Arc<dyn SyncEventSink> = joiner_sink.clone();
+    let joiner_apply: Arc<dyn agaric_sync::apply_host::ApplyHost> =
+        std::sync::Arc::new(joiner_mat.clone());
+    let joiner_cancel = AtomicBool::new(false);
+    let ctx = SyncSessionContext {
+        pool: &joiner_pool,
+        device_id: JOINER_DEV_3507,
+        materializer: &joiner_apply,
+        scheduler: &joiner_sched,
+        event_sink: &joiner_sink_dyn,
+        cancel: &joiner_cancel,
+        endpoint: &harness.client_endpoint,
+    };
+    let was_cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        try_sync_with_peer(&ctx, &peer, &joiner_refs),
+    )
+    .await
+    .expect("try_sync_with_peer must finish inside its own connect budget");
+    assert!(!was_cancelled, "no cancel is issued in this test");
+
+    // A rejection is not an error: on the mistyped run the responder still
+    // returns Ok, having spent at most one `close_wait` (10 s) on the peer's
+    // close — which the initiator's `drop(conn)` has already delivered.
+    let host_result = tokio::time::timeout(std::time::Duration::from_secs(40), host_task)
+        .await
+        .expect("the responder must resolve once the initiator's session ends")
+        .expect("the responder task must not panic");
+    assert!(
+        host_result.is_ok(),
+        "handle_incoming_sync must return Ok for both an accepted and a rejected \
+         session, got {host_result:?}"
+    );
+
+    let outcome = PairingOutcome3507 {
+        host_row_for_joiner: peer_refs::get_peer_ref(&host_pool, JOINER_DEV_3507)
+            .await
+            .unwrap(),
+        joiner_row_for_host: peer_refs::get_peer_ref(&joiner_pool, HOST_DEV_3507)
+            .await
+            .unwrap(),
+        host_events: host_sink.events(),
+        joiner_events: joiner_sink.events(),
+        host_still_pending: peer_refs::is_pending_pairing(&host_pool).await.unwrap(),
+        host_key,
+        joiner_key,
+        host_block_on_joiner: sqlx::query_scalar("SELECT content FROM blocks WHERE id = ?")
+            .bind(HOST_BLOCK_3507)
+            .fetch_optional(&joiner_pool)
+            .await
+            .unwrap(),
+    };
+
+    host_mat.shutdown();
+    joiner_mat.shutdown();
+    outcome
+}
+
+/// Does this device's sink hold a terminal success?
+fn saw_complete_3507(events: &[SyncEvent]) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, SyncEvent::Complete { .. }))
+}
+
+/// Does this device's sink hold an error naming `needle`?
+fn saw_error_containing_3507(events: &[SyncEvent], needle: &str) -> bool {
+    events
+        .iter()
+        .any(|e| matches!(e, SyncEvent::Error { message, .. } if message.contains(needle)))
+}
+
+/// #3507 (the success path): two devices that never met complete a pairing and
+/// end up holding each other — pinned to the identity the QUIC handshake
+/// authenticated, and converged on each other's content.
+///
+/// # What each assertion is defending
+///
+/// * **Both rows, each pinned to the OTHER device's key.** #3463 could never get
+///   here at all; the assertion that catches it is upstream, in the driver's
+///   `confirm_pairing_inner` call. What these catch is the quieter failure where
+///   one side binds and the other does not, which is the state #3503 describes
+///   the UI consequence of.
+/// * **The settled reprojection.** `blocks.content` on the joiner, written by
+///   the materializer, not a session counter and not a provisional command-path
+///   value. A session that "completed" without moving state fails here.
+/// * **Both sinks see a terminal Complete.** The host is a full participant in
+///   the outcome, not merely the thing that was dialled.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn two_devices_pair_bind_each_other_and_converge_3507() {
+    let out = drive_two_device_pairing_3507(true).await;
+
+    // ── 1. Both devices end with a row for the other ───────────────────
+    let host_row = out.host_row_for_joiner.as_ref().expect(
+        "the host must end with a peer_refs row for the joiner — TOFU-pinned by \
+         `handle_incoming_sync` once the session named the peer",
+    );
+    assert_eq!(
+        host_row.endpoint_id.as_deref(),
+        Some(out.joiner_key.as_str()),
+        "the host must pin the key the joiner's QUIC handshake authenticated, not \
+         one it was told about"
+    );
+    let joiner_row = out.joiner_row_for_host.as_ref().expect(
+        "the joiner must end with a peer_refs row for the host — TOFU-bound by \
+         `try_sync_with_peer` on a successful session",
+    );
+    assert_eq!(
+        joiner_row.endpoint_id.as_deref(),
+        Some(out.host_key.as_str()),
+        "the joiner must pin the host's real endpoint id"
+    );
+
+    // ── 2. The settled state, not a transient one ──────────────────────
+    assert_eq!(
+        out.host_block_on_joiner.as_deref(),
+        Some(HOST_CONTENT_3507),
+        "the host's block must be projected into the joiner's `blocks` table — a \
+         pairing that binds rows but moves no state is not a pairing"
+    );
+
+    // ── 3. BOTH devices observe the outcome (#3503) ────────────────────
+    assert!(
+        saw_complete_3507(&out.joiner_events),
+        "the joiner must observe a terminal Complete, got {:?}",
+        out.joiner_events
+    );
+    assert!(
+        saw_complete_3507(&out.host_events),
+        "#3503: the HOST must observe the outcome too. It is not a bystander to a \
+         pairing it started — a host told nothing keeps counting down and then \
+         offers a Retry over a pairing that already succeeded. Got {:?}",
+        out.host_events
+    );
+    assert!(
+        !saw_error_containing_3507(&out.joiner_events, "pairing passphrase proof"),
+        "a correct passphrase must not trip the #855 gate, got {:?}",
+        out.joiner_events
+    );
+
+    // ── 4. The window closes behind a completed pair (#1519) ───────────
+    assert!(
+        !out.host_still_pending,
+        "the host must clear its pending-pairing marker once it has bound the \
+         joiner, so a later unpaired device cannot ride the same open window"
+    );
+}
+
+/// #3507 (the failure path): a mistyped passphrase pairs NEITHER device, and
+/// the device that dialled is told why.
+///
+/// # Why this is the #3469 harness
+///
+/// #3469 was "success announced the moment `confirm_pairing` returned, before
+/// anything verified it". The driver asserts the premise directly — that call
+/// returns `Ok` here, on a passphrase that is wrong — so this test is the
+/// standing proof that `Ok` and "paired" are different facts. Any code that
+/// closes the loop on the earlier one turns these assertions red.
+///
+/// # What is deliberately NOT asserted here
+///
+/// That the *host* surfaces the rejection to its own user. It does not: `reject`
+/// (`sync_daemon/server.rs`) writes the reason to the wire and to the log and
+/// touches no event sink. That is #3491, and it has its own test below.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_mistyped_passphrase_pairs_neither_device_3507() {
+    let out = drive_two_device_pairing_3507(false).await;
+
+    assert!(
+        out.host_row_for_joiner.is_none(),
+        "#855: a device that could not prove it knows the passphrase must never be \
+         bound, got {:?}",
+        out.host_row_for_joiner
+    );
+    assert!(
+        out.joiner_row_for_host.is_none(),
+        "#3469: the joiner must not record a pairing it only *asked* for. \
+         `confirm_pairing` returned Ok on a wrong passphrase — that Ok is a local \
+         act, not an outcome. Got {:?}",
+        out.joiner_row_for_host
+    );
+    assert!(
+        out.host_block_on_joiner.is_none(),
+        "a rejected session must move no state"
+    );
+    assert!(
+        !saw_complete_3507(&out.joiner_events),
+        "the joiner must not observe success, got {:?}",
+        out.joiner_events
+    );
+    assert!(
+        !saw_complete_3507(&out.host_events),
+        "the host must not observe success, got {:?}",
+        out.host_events
+    );
+
+    // The dialling device is told, in the responder's own words — so the UI can
+    // say "wrong code" rather than falling through to a timeout that blames an
+    // expired one.
+    assert!(
+        saw_error_containing_3507(
+            &out.joiner_events,
+            Rejection::PairingProofMissing.peer_message()
+        ),
+        "the device that dialled must observe the responder's rejection verbatim, \
+         got {:?}",
+        out.joiner_events
+    );
+
+    // A wrong guess must not consume the window: the user retypes.
+    assert!(
+        out.host_still_pending,
+        "#855: a rejected attempt must leave the host's pairing window open"
+    );
+}
+
+/// #3491 (currently RED, and ignored for that reason): the device that *rejects*
+/// a passphrase must surface the rejection to its own user, not only to the peer.
+///
+/// # Why this is ignored rather than absent, and rather than green
+///
+/// `reject` sends the reason over the wire and logs it; it touches no event
+/// sink. So the rejection reaches whichever device happened to dial, and which
+/// side dials first is daemon timing the user does not control — the same wrong
+/// passphrase produces a 2-second error or a five-minute wrong one.
+///
+/// Writing this as an assertion of today's behaviour (`host_events.is_empty()`)
+/// would pin the defect in place and would go red on the fix, which is backwards.
+/// Leaving it out entirely would let the fix ship without a check. So it states
+/// the property, and is skipped until the property holds: remove the `#[ignore]`
+/// with #3491's fix.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "#3491: the rejecting device has no local path to its own UI; unignore with the fix"]
+async fn the_rejecting_device_surfaces_its_own_rejection_3491() {
+    let out = drive_two_device_pairing_3507(false).await;
+
+    assert!(
+        saw_error_containing_3507(
+            &out.host_events,
+            Rejection::PairingProofMissing.peer_message()
+        ),
+        "#3491: the responder detected the mismatch, told the peer and logged it — \
+         it must also tell its own user, got {:?}",
+        out.host_events
+    );
+}
