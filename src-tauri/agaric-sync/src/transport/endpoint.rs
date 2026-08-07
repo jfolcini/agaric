@@ -460,35 +460,68 @@ mod tests {
         .expect("loopback /8 is a valid LAN bind")
     }
 
+    const IROH_DNS_DOMAIN: &str = "iroh.link";
+
+    fn is_domain_or_subdomain(query: &str, domain: &str) -> bool {
+        let query = query.trim_end_matches('.');
+        query == domain
+            || query
+                .strip_suffix(domain)
+                .is_some_and(|prefix| prefix.ends_with('.'))
+    }
+
+    fn domain_queries<'a>(queries: &'a [String], domain: &str) -> Vec<&'a String> {
+        queries
+            .iter()
+            .filter(|query| is_domain_or_subdomain(query, domain))
+            .collect()
+    }
+
+    fn relay_queries(queries: &[String]) -> Vec<&String> {
+        queries
+            .iter()
+            .filter(|query| {
+                query
+                    .trim_end_matches('.')
+                    .split('.')
+                    .any(|label| label == "relay")
+            })
+            .collect()
+    }
+
     // -- Guard 1: the endpoint resolves no hostnames at all ------------------
 
     #[tokio::test]
     async fn lan_only_endpoint_resolves_no_hostnames() {
-        let lan_recorder = RecordingResolver::new();
-        let lan_queries = queries_for(lan_builder(&lan_recorder), lan_recorder).await;
-
         // Keep the permissive endpoint in this same test outcome: an empty LAN record
         // is only evidence if the control proves hostname lookups are observable in
         // this child process first. nextest gives this exact test a scoped NO_PROXY /
-        // no_proxy bypass so an ambient proxy cannot turn both records into `[]`.
+        // no_proxy wildcard bypass so an ambient proxy cannot turn any hostname into
+        // an IP-literal request that never reaches the recorder.
         let control_recorder = RecordingResolver::new();
         let control_queries = queries_until(
             permissive(DnsResolver::custom(control_recorder.clone())),
             control_recorder,
-            |q| q.iter().any(|s| s.contains("iroh.link")),
+            |queries| !domain_queries(queries, IROH_DNS_DOMAIN).is_empty(),
         )
         .await;
 
+        let control_dns_queries = domain_queries(&control_queries, IROH_DNS_DOMAIN);
         assert!(
-            control_queries.iter().any(|q| q.contains("iroh.link")),
+            !control_dns_queries.is_empty(),
             "NEGATIVE CONTROL FAILED: presets::N0DisableRelay made no query to an n0 \
              host, so the LAN-only result below is not observable and must not pass. \
              A proxy can cause this by routing reqwest to an IP literal; verify that \
-             nextest's exact-test wrapper supplied both NO_PROXY and no_proxy for \
-             iroh.link. Otherwise, iroh may have stopped using the n0 DNS services or \
+             nextest's exact-test setup supplied wildcard NO_PROXY and no_proxy. \
+             Otherwise, iroh may have stopped using the n0 DNS services or \
              RecordingResolver may no longer be wired into the resolution path. \
              Saw: {control_queries:?}"
         );
+
+        // Use a different recorder so the control's expected leak cannot contaminate
+        // the guard. Run the guard only after the control has proved observability.
+        let lan_recorder = RecordingResolver::new();
+        let lan_queries = queries_for(lan_builder(&lan_recorder), lan_recorder).await;
 
         assert!(
             lan_queries.is_empty(),
@@ -504,41 +537,44 @@ mod tests {
     // preset too, since no relay can be established while DNS is refused. The
     // observable difference is that a relay-enabled endpoint *queries relay hostnames*.
 
-    fn relay_queries(queries: &[String]) -> Vec<&String> {
-        queries.iter().filter(|q| q.contains("relay")).collect()
-    }
-
     #[tokio::test]
     async fn lan_only_endpoint_never_looks_for_a_relay() {
-        let recorder = RecordingResolver::new();
-        let queries = queries_for(lan_builder(&recorder), recorder).await;
+        // Keep this control in the same outcome as its guard. The exact-test nextest
+        // setup also bypasses ambient proxies for every hostname. iroh 1.0.3's relay
+        // path currently calls this resolver directly even behind a proxy; keeping the
+        // bypass scoped here prevents a future proxyable relay path from weakening the
+        // control silently. Either way, an empty control is a hard failure rather than
+        // permission for the guard to pass.
+        let control_recorder = RecordingResolver::new();
+        let control_queries = queries_until(
+            Endpoint::builder(presets::N0)
+                .dns_resolver(DnsResolver::custom(control_recorder.clone())),
+            control_recorder,
+            |queries| !relay_queries(queries).is_empty(),
+        )
+        .await;
 
-        let relays = relay_queries(&queries);
+        let control_relays = relay_queries(&control_queries);
+        assert!(
+            !control_relays.is_empty(),
+            "NEGATIVE CONTROL FAILED: presets::N0 (relays enabled) made no relay \
+             hostname query, so the LAN-only relay result below is not observable and \
+             must not pass. Verify that nextest's exact-test setup supplied wildcard \
+             NO_PROXY and no_proxy: the current relay path is proxy-independent, but a \
+             future proxyable path could otherwise route to an IP literal. Otherwise, \
+             iroh may have stopped using DNS for relays or RecordingResolver may no \
+             longer be wired into the relay resolution path. Saw: {control_queries:?}"
+        );
+
+        // A separate recorder keeps the expected control leak out of the guard record.
+        let lan_recorder = RecordingResolver::new();
+        let lan_queries = queries_for(lan_builder(&lan_recorder), lan_recorder).await;
+
+        let relays = relay_queries(&lan_queries);
         assert!(
             relays.is_empty(),
             "LAN-only endpoint looked up {} relay hostname(s): {relays:?}",
             relays.len()
-        );
-    }
-
-    /// Control for guard 2.
-    #[tokio::test]
-    async fn control_n0_preset_does_look_for_relays() {
-        let recorder = RecordingResolver::new();
-        let queries = queries_until(
-            Endpoint::builder(presets::N0).dns_resolver(DnsResolver::custom(recorder.clone())),
-            recorder,
-            |q| q.iter().any(|s| s.contains("relay")),
-        )
-        .await;
-
-        let relays = relay_queries(&queries);
-        assert!(
-            !relays.is_empty(),
-            "NEGATIVE CONTROL FAILED: presets::N0 (relays enabled) looked up no relay \
-             hostname. lan_only_endpoint_never_looks_for_a_relay is therefore unable \
-             to fail. Saw {} total quer(ies): {queries:?}",
-            queries.len()
         );
     }
 

@@ -1,14 +1,28 @@
 # cargo-nextest configuration
 # See https://nexte.st/book/configuration.html
 
-# Wrapper-command environment maps were added in 0.9.131. The exact-test wrapper
-# below is load-bearing: older nextest versions would leave its negative control
-# unobservable behind an ambient HTTP(S) proxy.
-nextest-version = "0.9.131"
-experimental = ["wrapper-scripts"]
+# Setup scripts have passed environment variables to matching test children through
+# $NEXTEST_ENV since nextest 0.9.98:
+# https://nexte.st/docs/configuration/setup-scripts/
+# https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.98
+#
+# nextest 0.9.131 added an environment map to wrapper commands
+# (https://nexte.st/changelog/#cargo-nextest-0-9-131), but using it here would still
+# require a wrapper executable such as POSIX-only `env` to launch the test binary.
+# Platform-specific setup scripts avoid that portability trap while keeping the
+# environment scoped to the two combined guard/control test children. Guard 1 depends
+# on this today; Guard 2's current relay path calls the injected resolver directly, but
+# carries the same bypass so an upstream move to a proxyable path cannot silently make
+# it vacuous. The scripts use the standard wildcard value so every current or future
+# hostname remains observable.
+nextest-version = "0.9.98"
+experimental = ["setup-scripts"]
 
-[scripts.wrapper.iroh-link-no-proxy]
-command = { command-line = "env", env = { NO_PROXY = "iroh.link,.iroh.link", no_proxy = "iroh.link,.iroh.link" } }
+[scripts.setup.iroh-no-proxy-unix]
+command = ["bash", "scripts/nextest-iroh-no-proxy.sh"]
+
+[scripts.setup.iroh-no-proxy-windows]
+command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", "scripts/nextest-iroh-no-proxy.ps1"]
 
 [profile.default]
 # Fail-fast disabled: run all tests even if some fail
@@ -22,12 +36,31 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 # release sockets; 30s is generous enough to avoid false-positive leak reports.
 leak-timeout = "30s"
 
-# The LAN-only hostname guard and its permissive control are one test outcome.
-# Bypass ambient proxies only for that exact child so the control must issue an
-# observable iroh.link lookup before the guard is allowed to pass.
+# The two LAN-only DNS guards each contain their permissive control in the same test
+# outcome. Bypass ambient proxies only for those exact children so each control must
+# issue an observable lookup before its guard is allowed to pass. Both uppercase and
+# lowercase variables are intentional: proxy implementations differ on which spelling
+# they honor. The wildcard is also intentional: Guard 1 asserts that *no* hostname was
+# queried, so a suffix allowlist would make an unknown future hostname unobservable.
 [[profile.default.scripts]]
 filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_resolves_no_hostnames)'
-run-wrapper = "iroh-link-no-proxy"
+platform = { host = 'cfg(unix)' }
+setup = "iroh-no-proxy-unix"
+
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_never_looks_for_a_relay)'
+platform = { host = 'cfg(unix)' }
+setup = "iroh-no-proxy-unix"
+
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_resolves_no_hostnames)'
+platform = { host = 'cfg(windows)' }
+setup = "iroh-no-proxy-windows"
+
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_never_looks_for_a_relay)'
+platform = { host = 'cfg(windows)' }
+setup = "iroh-no-proxy-windows"
 
 # Headroom for the suite's heaviest DB-bound tests so full-suite CPU contention
 # can't push them past the global 2×30s=60s terminate window and kill them on the
