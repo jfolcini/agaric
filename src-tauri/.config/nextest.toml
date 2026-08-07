@@ -1,8 +1,8 @@
 # cargo-nextest configuration
 # See https://nexte.st/book/configuration.html
 
-# Setup scripts have passed environment variables to matching test children through
-# $NEXTEST_ENV since nextest 0.9.98:
+# Named setup-script tables have been supported since nextest 0.9.98; setup scripts
+# pass environment variables to matching test children through $NEXTEST_ENV:
 # https://nexte.st/docs/configuration/setup-scripts/
 # https://github.com/nextest-rs/nextest/releases/tag/cargo-nextest-0.9.98
 #
