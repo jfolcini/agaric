@@ -146,10 +146,7 @@ export function PairingDialog({
   // #3469 — snapshot of known peer ids taken the instant waiting begins, so
   // the poll below can detect a genuinely NEW peer (the TOFU-pin signal)
   // rather than false-triggering on peers that were already paired before
-  // this attempt. Likewise `waitErrorBaselineRef` snapshots the shared sync
-  // store's error string at the same moment, so a STALE unrelated error
-  // already sitting in the store can't be mistaken for this attempt's
-  // rejection — only a change away from the baseline counts.
+  // this attempt.
   //
   // `null` means the baseline is UNKNOWN — the authoritative read failed.
   // It must never be conflated with "no peers known": with an empty
@@ -160,7 +157,6 @@ export function PairingDialog({
   // effect therefore fails CLOSED on `null` and adopts the first poll as
   // the baseline instead.
   const knownPeerIdsRef = useRef<Set<string> | null>(new Set())
-  const waitErrorBaselineRef = useRef<string | null>(null)
   // #3469 (review) — monotonic id of the current wait, bumped the instant a
   // wait begins. Scopes poll results to the attempt they are judged against;
   // see `PolledPeerRefs` for why the baseline alone is not enough.
@@ -373,7 +369,12 @@ export function PairingDialog({
   }, [])
   const { data: polled } = usePollingQuery<PolledPeerRefs>(pollPeerRefs, {
     intervalMs: PAIRING_PEER_POLL_INTERVAL_MS,
-    enabled: joinerPhase === 'waiting',
+    // #3496 — `open` flipping to `false` does NOT unmount this component:
+    // `if (!open) return null` (below) sits after every hook, so without
+    // this the poll keeps firing `list_peer_refs` every 2s on a closed
+    // dialog. `usePollingQuery` itself cleans up correctly on a genuine
+    // unmount; the bug is that a parent-driven close isn't one.
+    enabled: open && joinerPhase === 'waiting',
   })
 
   // Success: a peer id appears that was not present in the snapshot taken
@@ -413,12 +414,16 @@ export function PairingDialog({
 
   // Failure: the responder's wire-level proof rejection reaches this device
   // as a generic `sync:error` → `useSyncStore` error string (see `syncError`
-  // above). Only a value that (a) changed from the baseline snapshot taken
-  // when waiting began and (b) carries the specific rejection tag counts —
-  // an unrelated pre-existing/stale store error must not false-trigger this.
+  // above). #3495 — this used to also guard on a `waitErrorBaselineRef`
+  // snapshot to keep a STALE pre-existing store error from being mistaken
+  // for a fresh rejection, but that guard could never fire: `call` (below)
+  // runs `syncSetState('idle')` synchronously right after `confirm_pairing`
+  // resolves, which clears the store's `error` to `null` before waiting
+  // even begins — so any stale error is already neutralised before this
+  // effect can see it, and the ref was dead code. By the time `joinerPhase`
+  // is 'waiting', a non-null `syncError` can only be a fresh rejection.
   useEffect(() => {
     if (joinerPhase !== 'waiting' || !syncError) return
-    if (syncError === waitErrorBaselineRef.current) return
     if (!syncError.includes('pairing passphrase proof required')) return
     setJoinerPhase('entry')
     setWaitCountdown(null)
@@ -430,8 +435,14 @@ export function PairingDialog({
   // Bound the wait by the same pending-pairing TTL the host countdown uses
   // (`PAIRING_TIMEOUT_SECONDS`) — 1s tick, mirroring the host countdown
   // effect below it in shape.
+  // `open &&` for the same reason the poll above carries it (#3496): this
+  // component is mounted unconditionally, so a parent that sets
+  // `open={false}` directly bypasses `handleCancel` and leaves `joinerPhase`
+  // at `'waiting'`. Without the gate the tick keeps running on a closed
+  // dialog and, up to `PAIRING_TIMEOUT_SECONDS` later, announces a timeout
+  // to a screen reader for a dialog that is no longer on screen.
   const waitCountdownActive =
-    joinerPhase === 'waiting' && waitCountdown !== null && waitCountdown > 0
+    open && joinerPhase === 'waiting' && waitCountdown !== null && waitCountdown > 0
   useEffect(() => {
     if (!waitCountdownActive) return
     const interval = setInterval(() => {
@@ -541,11 +552,11 @@ export function PairingDialog({
     errorLogMessage: 'Pairing failed',
     onSuccess: () => {
       // The peer baseline is snapshotted in `call` above (it needs an
-      // authoritative read, which is async). This snapshots the other half:
-      // the shared sync store's error string, so a STALE unrelated error
-      // already sitting in the store can't be mistaken for this attempt's
-      // rejection.
-      waitErrorBaselineRef.current = useSyncStore.getState().error
+      // authoritative read, which is async). The equivalent stale-error
+      // problem on the sync-store side is already handled by
+      // `syncSetState('idle')` in `call`, above — see the failure effect's
+      // comment (#3495).
+      //
       // #3469 (review) — open a new wait id. Every poll result stamped with
       // an older id (including the whole of the previous attempt's, which
       // `usePollingQuery` still holds in `data`) is now unusable as evidence
@@ -905,6 +916,7 @@ export function PairingDialog({
               {!loading && role === 'joiner' && joinerPhase === 'waiting' && (
                 <PairingWaitingState
                   waitCountdownDisplay={waitCountdownDisplay}
+                  waitCountdown={waitCountdown}
                   onCancel={handleCancel}
                 />
               )}
