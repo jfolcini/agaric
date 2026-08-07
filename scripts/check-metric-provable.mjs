@@ -204,6 +204,23 @@
 //   The scan SCOPE, by contrast, is pinned: `--self-test` asserts the exact
 //   `scanRoots` set and the exact set of metric-declaring files, so a
 //   narrowed walk cannot silently shrink the surface.
+// - METRIC IDENTITY. Evidence is matched on the BARE field name, because
+//   that is all a call site spells (`self.metrics.retries.fetch_add(1, …)`
+//   never names `QueueMetrics`). #3439 closed the false credit that follows
+//   when two `…Metrics` structs declare the same field name — metric A's
+//   test discharging metric B's obligation — by requiring, for a name owned
+//   by more than one struct, that the crediting file NAME the owning struct
+//   (`ambiguousFieldNames` + the `ownerRe` filter in `gatherEvidence`). Two
+//   residuals, both narrow and both in the loud direction:
+//     * a file that legitimately proves an ambiguous metric without ever
+//       writing the struct's name loses the credit and the metric is
+//       reported — a named CI failure, exemptible with a reason;
+//     * a file that names BOTH structs still credits both. Distinguishing
+//       them needs the receiver's TYPE, which is not a textual property of
+//       the call site.
+//   A struct named exactly `Metrics` is enumerated (#3439): the suffix's
+//   prefix is optional, and `MetricsBuilder` is still excluded because the
+//   suffix must END the name.
 // - Nested block comments, raw strings (`r#"…"#`) and byte strings are
 //   handled; lifetimes are distinguished from char literals by close
 //   proximity of the closing quote.
@@ -283,6 +300,21 @@ const BASELINE_REL = 'scripts/metric-firing-baseline.json'
  * baseline and teach readers that baseline entries are noise.
  */
 const METRIC_STRUCT_SUFFIX = 'Metrics'
+
+/**
+ * A struct NAME that carries the suffix, as a regex source fragment.
+ *
+ * The prefix is OPTIONAL (#3439 item 3). `[A-Za-z_]\w*Metrics` required at
+ * least one character before the suffix, so a struct named exactly `Metrics`
+ * — a perfectly ordinary name for a crate-local metrics struct, and the name
+ * a module gets after `use crate::foo::Metrics` — was never enumerated and
+ * therefore never required to have a firing test. That is a SILENT miss, the
+ * failure mode this guard exists to remove.
+ *
+ * The trailing `\b` at each use site still keeps `MetricsBuilder` out: `B` is
+ * a word character, so the boundary fails.
+ */
+const METRIC_STRUCT_NAME = `(?:[A-Za-z_]\\w*)?${METRIC_STRUCT_SUFFIX}`
 
 const ATOMIC_TYPES = 'AtomicU64|AtomicU32|AtomicI64|AtomicUsize'
 
@@ -680,7 +712,15 @@ export function isPanicGateHead(head) {
       .slice(0, t.index)
       .replace(/[\w.:]*$/, '')
       .replace(/[\s(&*]+$/, '')
-    if (stem.endsWith('!') && !stem.endsWith('!=')) continue
+    // `&& !stem.endsWith('!=')` used to guard the `a != o.panicked` case and
+    // was removed in #3439: a string cannot end in both `!` and `=`, so the
+    // clause could never be false and the condition it guarded is already
+    // excluded by `endsWith('!')` itself (the stem of `a != o.panicked` is
+    // `a !=`, which ends in `=`). A guard whose whole purpose is deleting
+    // conditions that cannot fail may not carry one. `--self-test` pins that
+    // `!=` still reads as a panic gate, so the deletion is observably
+    // behaviour-preserving rather than argued to be.
+    if (stem.endsWith('!')) continue
     return true
   }
   return false
@@ -742,7 +782,7 @@ function atomicTypeAliases(stripped) {
  */
 export function enumerateStructMetrics(raw) {
   const stripped = stripNoise(raw)
-  const structRe = new RegExp(`\\bstruct\\s+([A-Za-z_]\\w*${METRIC_STRUCT_SUFFIX})\\b`, 'g')
+  const structRe = new RegExp(`\\bstruct\\s+(${METRIC_STRUCT_NAME})\\b`, 'g')
   const lineOf = makeLineLookup(stripped)
   const rawLines = raw.split('\n')
   const strippedLines = stripped.split('\n')
@@ -1266,7 +1306,7 @@ function parseTree(root, files) {
  */
 function enumerateMetrics(files, parsed) {
   const metrics = []
-  const structHint = new RegExp(`\\bstruct\\s+[A-Za-z_]\\w*${METRIC_STRUCT_SUFFIX}\\b`)
+  const structHint = new RegExp(`\\bstruct\\s+${METRIC_STRUCT_NAME}\\b`)
   for (const rel of files) {
     const { raw, stripped, whole } = parsed.get(rel)
     if (whole) continue
@@ -1274,6 +1314,10 @@ function enumerateMetrics(files, parsed) {
     for (const f of enumerateStructMetrics(raw)) {
       metrics.push({
         name: f.name,
+        // The owning struct is carried as its own field, not just folded into
+        // `id`, because evidence attribution needs it when two structs share
+        // a field name (#3439 item 1 — see `ambiguousFieldNames`).
+        struct: f.struct,
         line: f.line,
         exemptions: f.exemptions,
         id: `${f.struct}::${f.name}`,
@@ -1358,16 +1402,60 @@ function externalMutatorCallers(metric, files, parsed) {
 }
 
 /**
+ * Field names owned by MORE THAN ONE `…Metrics` struct.
+ *
+ * Every token this guard matches evidence on — the firing-assertion tokens
+ * and the `<name>.fetch_add(` write pattern — keys on the BARE field name,
+ * because that is all a call site spells: `self.metrics.retries.fetch_add(1,
+ * …)` never names `QueueMetrics`. That is sound exactly as long as a field
+ * name identifies one metric. The moment two structs both declare `retries`,
+ * every proof found for either one is credited to BOTH, so metric A's test
+ * silently discharges metric B's obligation — a false credit of precisely the
+ * kind this guard exists to delete (#3439 item 1).
+ *
+ * The set is normally empty, so the attribution below costs nothing until the
+ * collision actually exists.
+ *
+ * @param {{kind: string, name: string, struct?: string}[]} metrics
+ * @returns {Set<string>}
+ */
+function ambiguousFieldNames(metrics) {
+  /** @type {Map<string, Set<string>>} */
+  const owners = new Map()
+  for (const m of metrics) {
+    if (m.kind !== 'struct-field') continue
+    const set = owners.get(m.name) ?? new Set()
+    set.add(m.struct)
+    owners.set(m.name, set)
+  }
+  return new Set([...owners].filter(([, s]) => s.size > 1).map(([name]) => name))
+}
+
+/**
  * Production write sites and firing proofs for one metric, across the tree.
+ *
+ * `ambiguousNames` (from `ambiguousFieldNames`) narrows attribution: when a
+ * field name is owned by several structs, only files that NAME the owning
+ * struct may supply that metric's evidence. This fails in the loud direction
+ * — a test that proves `SyncMetrics::retries` fires without ever writing
+ * `SyncMetrics` in the file loses its credit and the metric is reported — and
+ * that is the correct side to fail on, per the same reasoning as rule 3's
+ * widening: the false positive is a named CI failure a human reads and can
+ * exempt, the false negative is a metric that nothing proves can move.
  *
  * @returns {{productionWrites: {file: string, index: number}[], firingTests: number, firingTestFiles: string[]}}
  */
-function gatherEvidence(metric, files, parsed) {
+function gatherEvidence(metric, files, parsed, ambiguousNames = new Set()) {
   const tokens = metricTokens(metric)
   const writeRe = new RegExp(
     `\\b${escapeForRegExp(metric.name)}\\s*\\.\\s*(?:${WRITE_OPS})\\s*\\(`,
     'g',
   )
+  // Non-null only for a metric whose field name is not unique.
+  const ownerRe =
+    metric.kind === 'struct-field' && ambiguousNames.has(metric.name)
+      ? new RegExp(`\\b${escapeForRegExp(metric.struct)}\\b`)
+      : null
   const productionWrites = []
   const firingTestFiles = []
   let firingTests = 0
@@ -1375,6 +1463,9 @@ function gatherEvidence(metric, files, parsed) {
   for (const rel of files) {
     const { stripped, testRegions, whole } = parsed.get(rel)
     if (!tokens.some((t) => t.test(stripped))) continue // cheap pre-filter
+    // Shared field name: this file's hits are unattributable unless it names
+    // the owning struct.
+    if (ownerRe !== null && !ownerRe.test(stripped)) continue
 
     if (!whole) {
       writeRe.lastIndex = 0
@@ -1422,9 +1513,16 @@ export function analyze({ root }) {
   const cargo = path.join(root, CARGO_TOML_REL)
   const panicAbort = existsSync(cargo) ? releasePanicsAbort(readFileSync(cargo, 'utf8')) : false
 
+  const ambiguousNames = ambiguousFieldNames(metrics)
+
   const violations = []
   for (const metric of metrics) {
-    const { productionWrites, firingTests, firingTestFiles } = gatherEvidence(metric, files, parsed)
+    const { productionWrites, firingTests, firingTestFiles } = gatherEvidence(
+      metric,
+      files,
+      parsed,
+      ambiguousNames,
+    )
     const externalCallers =
       metric.kind === 'global-static' ? externalMutatorCallers(metric, files, parsed) : []
     const hasEmit =
@@ -1871,6 +1969,23 @@ function runSelfTest() {
       '`if o.panic_free` is a KNOWN false positive of the widened gate match',
       isPanicGateHead('if o.panic_free && ready'),
       'behaviour changed — update the Known limits note',
+    )
+    // #3439 item 2: `&& !stem.endsWith('!=')` could never be false (a string
+    // cannot end in both `!` and `=`), so it was deleted. These two heads pin
+    // that the deletion changed nothing: a `!=` comparison leaves a stem
+    // ending in `=`, which never satisfies the `!` test in the first place,
+    // while an actual `!` negation still opts out.
+    for (const head of ['if a != o.panicked', 'if o.panicked != expected']) {
+      expect(
+        `\`${head}\` still reads as a panic gate (the dead \`!=\` clause was not load-bearing)`,
+        isPanicGateHead(head),
+        'behaviour changed when the unreachable clause was removed',
+      )
+    }
+    expect(
+      '`if !o.panicked != x` — a real `!` negation still opts out',
+      !isPanicGateHead('if !o.panicked != x'),
+      'negation no longer honoured',
     )
   }
 
@@ -3055,6 +3170,111 @@ function runProofAndEnumerationSelfTest(ctx) {
   res = run(root)
   expect(
     'rule 3 does not fire on a global static whose own mutator body is panic-gated',
+    res.status === 0,
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // ── #3439 item 1: identity. Two `…Metrics` structs sharing a field name
+  //    must not share evidence. The pair is the point — the FLAG case shows
+  //    the false credit is gone, the CLEAN case shows attribution still
+  //    credits proof that genuinely belongs to each metric. ──
+  const sharedNameTree = (syncTestBody) => ({
+    metricsFile: goodMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': goodProd,
+      'src-tauri/src/materializer/tests/mod.rs': goodTest,
+      'src-tauri/src/sync/metrics.rs': [
+        'use std::sync::atomic::AtomicU64;',
+        '',
+        '#[derive(Debug)]',
+        'pub struct SyncMetrics {',
+        '    pub good: AtomicU64,',
+        '}',
+        '',
+        'pub fn bump_sync(m: &SyncMetrics) {',
+        '    m.good.fetch_add(1, Ordering::Relaxed);',
+        '}',
+      ].join('\n'),
+      ...(syncTestBody === null ? {} : { 'src-tauri/src/sync/tests/mod.rs': syncTestBody }),
+    },
+    baseline: [],
+  })
+
+  root = build(sharedNameTree(null))
+  res = run(root)
+  expect(
+    "a second struct's identically-named field is NOT credited by the first one's firing test",
+    failsNaming(res, 'no-firing-test', 'SyncMetrics::good'),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  root = build(
+    sharedNameTree(
+      [
+        '#[test]',
+        'fn sync_good_rises() {',
+        '    let m = SyncMetrics::default();',
+        '    bump_sync(&m);',
+        '    assert_eq!(m.good.load(Ordering::Relaxed), 1, "good must rise");',
+        '}',
+      ].join('\n'),
+    ),
+  )
+  res = run(root)
+  expect(
+    'each of two structs sharing a field name is credited by its OWN firing test',
+    res.status === 0,
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // ── #3439 item 3: a struct named exactly `Metrics` is enumerated. The old
+  //    `[A-Za-z_]\w*Metrics` demanded a character before the suffix, so this
+  //    whole struct was a silent miss — never enumerated, never required to
+  //    have a firing test. ──
+  root = build({
+    metricsFile: goodMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': goodProd,
+      'src-tauri/src/materializer/tests/mod.rs': goodTest,
+      'src-tauri/src/sync/metrics.rs': [
+        'use std::sync::atomic::AtomicU64;',
+        '',
+        '#[derive(Debug)]',
+        'pub struct Metrics {',
+        '    pub bare: AtomicU64,',
+        '}',
+      ].join('\n'),
+    },
+    baseline: [],
+  })
+  res = run(root)
+  expect(
+    'a struct named exactly `Metrics` is enumerated (no unproven-metric hiding place)',
+    failsNaming(res, 'no-firing-test', 'Metrics::bare'),
+    `status=${res.status} out=${res.stdout}${res.stderr}`,
+  )
+
+  // The sibling: making the prefix optional must not swallow a struct that
+  // merely STARTS with the suffix. `MetricsBuilder` is not a metrics struct.
+  root = build({
+    metricsFile: goodMetrics,
+    extra: {
+      'src-tauri/src/materializer/consumer.rs': goodProd,
+      'src-tauri/src/materializer/tests/mod.rs': goodTest,
+      'src-tauri/src/sync/metrics.rs': [
+        'use std::sync::atomic::AtomicU64;',
+        '',
+        '#[derive(Debug)]',
+        'pub struct MetricsBuilder {',
+        '    pub bare: AtomicU64,',
+        '}',
+      ].join('\n'),
+    },
+    baseline: [],
+  })
+  res = run(root)
+  expect(
+    '`MetricsBuilder` is still NOT a metrics struct (the suffix must end the name)',
     res.status === 0,
     `status=${res.status} out=${res.stdout}${res.stderr}`,
   )

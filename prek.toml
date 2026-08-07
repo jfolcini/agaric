@@ -908,7 +908,27 @@ name = "snapshot redaction"
 entry = "node scripts/check-snapshot-redaction.mjs"
 language = "system"
 pass_filenames = false
-files = "(\\.snap$|^src-tauri/src/.*\\.rs$)"
+# The `.rs` half of the trigger covers EVERY workspace member, not just the
+# app crate (#3465): the fixture allowlist is built from all of them, so a
+# fixture const added in `agaric-sync/src` changes this guard's verdict.
+# `Cargo.toml` is a trigger too — the member list is derived from it.
+files = "(\\.snap$|^src-tauri/(src|[^/]+/src|[^/]+/[^/]+/src)/.*\\.rs$|^src-tauri/Cargo\\.toml$)"
+stages = ["pre-commit"]
+
+# Self-test the snapshot-redaction guard's own exit behaviour whenever it
+# changes: the fixture allowlist is the only leniency this guard has, and
+# #3465 was a hand-maintained root list that silently covered three of five
+# crates. The fixtures pin both directions (a non-fixture value in a
+# previously-unindexed crate is still flagged; a real fixture const there is
+# now allowed) and pin that a derivation which cannot be trusted exits 2
+# rather than scanning a partial set.
+[[repos.hooks]]
+id = "snapshot-redaction-self-test"
+name = "snapshot redaction guard self-test"
+entry = "node scripts/check-snapshot-redaction.mjs --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/check-snapshot-redaction\\.mjs$"
 stages = ["pre-commit"]
 
 # Session-log numbering: next number is NUMERIC max + 1. Past session-999,
@@ -1636,7 +1656,16 @@ stages = ["pre-commit"]
 # exfil class, and similar workflow-security smells. Existing
 # findings are baselined in `.github/zizmor.yml`; the hook fires
 # on new findings only.
-# Install: `cargo install zizmor --locked` (or `scripts/setup-hooks.sh`).
+# Install: `cargo install --locked zizmor@<pin>` (or `scripts/setup-hooks.sh`).
+# The version is PINNED (#3476) — `ZIZMOR_PINNED_VERSION` in
+# scripts/zizmor-hook.sh is the single source of truth, and the same version
+# is pinned in the `tool:` lists of .github/workflows/_validate.yml and
+# .github/workflows/scheduled-deep-checks.yml. It used to float on both sides,
+# so local and CI ran different audit SETS: #3475 reddened every open PR with
+# `ref-version-mismatch` findings from an audit that did not exist in the
+# local binary, which no local run could have reproduced. The wrapper asserts
+# the version it is about to run — hard failure in CI, visible warning
+# locally.
 #
 # Routed through scripts/zizmor-hook.sh (#2535) rather than calling zizmor
 # directly: zizmor's online audits (e.g. artipacked) hit the GitHub API, and
@@ -1644,6 +1673,9 @@ stages = ["pre-commit"]
 # hard-failing pushes for reasons unrelated to the diff. The wrapper always
 # runs the full online audit in CI (`CI` env set) and only degrades to
 # `--no-online-audits` locally when api.github.com is unreachable/unauthorized.
+# That degradation now ANNOUNCES itself and names the audits it skipped
+# (#3476): prek prints only `Passed` for a green hook and swallows its output,
+# so a degraded run and a full one used to look identical.
 [[repos]]
 repo = "local"
 [[repos.hooks]]
@@ -1652,6 +1684,19 @@ name = "zizmor"
 entry = "bash scripts/zizmor-hook.sh"
 language = "system"
 files = "^\\.github/workflows/.*\\.ya?ml$"
+stages = ["pre-commit"]
+
+# Self-test the wrapper's own behaviour whenever it changes: that a version
+# mismatch fails CI and warns locally, and that every degradation path names
+# the audits it skipped. Drives the wrapper against stub `zizmor`/`curl`
+# binaries, so it needs no network and no real zizmor.
+[[repos.hooks]]
+id = "zizmor-hook-self-test"
+name = "zizmor wrapper self-test"
+entry = "bash scripts/zizmor-hook.sh --self-test"
+language = "system"
+pass_filenames = false
+files = "^scripts/zizmor-hook\\.sh$"
 stages = ["pre-commit"]
 
 # taplo: TOML lint + format. The `check-toml` builtin only validates

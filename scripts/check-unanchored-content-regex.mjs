@@ -97,6 +97,18 @@
 // the source, so a marker-shaped substring inside a multi-line string
 // cannot suppress a violation.
 //
+// Adversarial review of that fixpoint (#3391) then found nine MORE hops
+// it walked straight past, all of them ordinary refactors of exactly the
+// code the guard protects: a class field read back through `this`, a
+// getter, a `Map`/`Set` of compiled patterns, a default parameter value,
+// a closure returned from a closure, a spread call, `.call`/`.apply`, an
+// array built with `.push(…)`, and an array produced by `.map()`. The
+// value flow now models all nine — plus a regex memoised behind a hook
+// whose callee never resolves (`useMemo(() => new RegExp(…))`), which is
+// the likeliest of the lot in a React codebase. None of them existed in
+// `src/` when they were closed; the point is that the guard's worth is
+// that a natural refactor cannot silently defeat it.
+//
 // TypeScript's own compiler API is NOT used: as of TypeScript 7 (the
 // native port, which is what this repo pins) the JS package exports only
 // `version`, and the `typescript/unstable/*` entry points reach an
@@ -171,7 +183,31 @@
 //     reachability through them is an OVER-approximation. That direction
 //     costs recall nothing and has been checked to add no findings
 //     across the scanned tree; if it ever misfires, the site marker is
-//     the escape hatch.
+//     the escape hatch. Class fields, `this.re`, getters and the element
+//     store of `opts.list` share that same name keying (#3391).
+//   - Argument positions are lost when a call spreads (`f(...args)`) or
+//     goes through `.apply`: the argument list's elements are assumed to
+//     reach ANY parameter. Over-approximate in the same direction.
+//   - Container tracking is by METHOD NAME, not by type: `.set`/`.add`/
+//     `.push` write a holder's element store and `.get`/`.at`/`.pop`/
+//     `.find` read it, whatever the holder actually is. A `.get` on
+//     something that is not a collection therefore reads a slot nothing
+//     ever writes — harmless — and a collection reached through an
+//     unnameable holder is not tracked at all.
+//   - Currying deeper than one hop (`makeBuilder(a)(b)`), or a factory
+//     with two different returned functions, is not resolved: one hop
+//     covers the observed shape and further hops need a second fixpoint
+//     over function VALUES, which is not worth the complexity while no
+//     such site exists in `src/`.
+//   - A callback's return value is only taken as its call's value when
+//     the callback takes NO arguments (`useMemo(() => new RegExp(…))`)
+//     or when the method is a known array producer (`.map`, `.flatMap`).
+//     A regex returned from, say, `reduce`'s accumulator is not tracked.
+//   - Iteration is followed through `for…of` and the callback of the
+//     known array methods only. `for (const re of getPatterns())` works
+//     when the holder can be named; `for (const re of anything())`
+//     deliberately is NOT wired to the "some array" catch-all, because
+//     that would make every `for…of` in a file a reader of it.
 //   - A pattern bounded by an ordinary literal character rather than an
 //     assertion (`${term}\\]\\]`) is reported; use the marker.
 //   - Rule 3's comment stripping is textual: a `//` inside a regex
@@ -363,6 +399,10 @@ function keyName(node) {
   if (!node) return null
   if (node.type === 'Identifier') return node.name
   if (node.type === 'StringLiteral') return node.value
+  // `#re` gets its own name space, so `prop:#re` can never be confused with
+  // a public `prop:re` — and no `#`-prefixed name can ever equal one of the
+  // method names rules 1 and 2 key on.
+  if (node.type === 'PrivateName') return `#${node.id.name}`
   return null
 }
 
@@ -382,7 +422,7 @@ function makeUid() {
 }
 
 /** The function NodePath a call's identifier callee resolves to, or null. */
-function resolveFunctionPath(calleePath) {
+function resolveFunctionPath(calleePath, depth = 0) {
   if (!calleePath.isIdentifier()) return null
   const binding = calleePath.scope.getBinding(calleePath.node.name)
   if (!binding) return null
@@ -391,11 +431,68 @@ function resolveFunctionPath(calleePath) {
   if (declared.isVariableDeclarator()) {
     const init = declared.get('init')
     if (init.isArrowFunctionExpression() || init.isFunctionExpression()) return init
+    // `const build = makeBuilder(term)` — a factory whose return value IS the
+    // function being called. One hop covers the closure-returned-from-a-closure
+    // shape; deeper currying is a documented limit.
+    if (depth < 1 && (init.isCallExpression() || init.isOptionalCallExpression())) {
+      const factory = resolveFunctionPath(init.get('callee'), depth + 1)
+      return factory ? returnedFunctionPath(factory) : null
+    }
   }
   return null
 }
 
+/**
+ * The single function expression `fnPath` returns directly, or null. Returns
+ * nested inside a deeper function belong to THAT function, so they are skipped;
+ * two different returned functions are ambiguous, so neither is used.
+ */
+function returnedFunctionPath(fnPath) {
+  const body = fnPath.get('body')
+  if (body.isArrowFunctionExpression() || body.isFunctionExpression()) return body
+  if (!body.isBlockStatement()) return null
+  let found = null
+  let count = 0
+  body.traverse({
+    Function: (p) => p.skip(),
+    ReturnStatement: (p) => {
+      const arg = p.get('argument')
+      if (!arg?.node) return
+      if (!arg.isArrowFunctionExpression() && !arg.isFunctionExpression()) return
+      count += 1
+      found ??= arg
+    },
+  })
+  return count === 1 ? found : null
+}
+
 // ─── rule 1: unanchored surgery ──────────────────────────────────────
+
+// Container methods that move a value INTO a collection's element store.
+// The number is the argument index carrying the value; -1 means "every
+// argument". `m.set(k, re)` and `arr.push(re)` are the same hop as
+// `arr[0] = re`, so they write the same `elem:` slot (#3391).
+const CONTAINER_WRITE_METHODS = new Map([
+  ['set', 1],
+  ['add', 0],
+  ['push', -1],
+  ['unshift', -1],
+])
+// …and the ones that take a value back OUT of it, the `arr[0]` read hop.
+const CONTAINER_READ_METHODS = new Set(['get', 'at', 'pop', 'shift', 'find', 'findLast'])
+// Methods that hand each element to a callback's first parameter.
+const ITERATION_METHODS = new Set([
+  'forEach',
+  'map',
+  'flatMap',
+  'filter',
+  'find',
+  'findLast',
+  'some',
+  'every',
+])
+// Methods whose RESULT is an array of the callback's return values.
+const ARRAY_PRODUCER_METHODS = new Set(['map', 'flatMap'])
 
 /** Does `seg` (regex source, left of the dynamic part) assert a left boundary? */
 function hasLeftAnchor(seg) {
@@ -490,11 +587,17 @@ function isRegExpConstruction(callPath) {
  * Value-flow slots. A slot is a place a regex value can come to rest and
  * be read back out again:
  *
- *   `bind:<id>`  a resolved lexical binding (const/let/var/param/function)
- *   `prop:<name>`  an object property with that name (name-keyed)
- *   `elem:<id>`  elements of the array held by a resolved binding
- *   `elem:*`     elements of an array whose holder could not be resolved
- *   `ret:<id>`   the return value of a local function
+ *   `bind:<id>`      a resolved lexical binding (const/let/var/param/fn)
+ *   `prop:<name>`    a property with that name — object literal, class
+ *                    field, `this.re`, getter (name-keyed)
+ *   `elem:<slot>`    the element store of the container held by <slot>:
+ *                    `arr[i]`, `arr.push(x)`, `m.set(k, x)`, `s.add(x)`,
+ *                    a rest parameter, and `for (const x of …)`
+ *   `elem:*`         elements of a container whose holder did not resolve
+ *   `ret:<id>`       the return value of a local function or callback
+ *   `argsholder:<id>`  the argument LIST of a local function, written by
+ *                    `f(...args)` / `f.apply(this, args)`; its element
+ *                    store feeds every parameter, since positions are lost
  *
  * Taint (a set of regex-construction ids) is pushed into slots and pulled
  * back out by every expression that reads them, to a fixpoint. A
@@ -532,7 +635,76 @@ function scanUnanchoredSurgery(ast, code) {
   /** Slot for the array-element store of `arr` in `arr[i]` / `const arr = [...]`. */
   const elementSlot = (holderPath) => {
     const slot = bindingSlot(holderPath)
-    return slot ? `elem:${slot}` : 'elem:*'
+    if (slot) return `elem:${slot}`
+    // `opts.list[0]` / `this.list[0]`: key the element store by property name,
+    // the same file-wide name keying `prop:` already uses.
+    if (holderPath?.isMemberExpression() && !holderPath.node.computed) {
+      const name = keyName(holderPath.node.property)
+      if (name) return `elem:prop:${name}`
+    }
+    // `buildList()[0]`: key it by the callee's return slot.
+    if (holderPath?.isCallExpression() || holderPath?.isOptionalCallExpression()) {
+      const fn = resolveFunctionPath(holderPath.get('callee'))
+      if (fn) return `elem:ret:${uid(fn.node)}`
+    }
+    return 'elem:*'
+  }
+
+  /** Slot(s) the #`index` argument of `fn` binds to. */
+  const paramSlotAt = (fn, index) => {
+    const params = fn.get('params')
+    const param = params[index]
+    if (!param?.node) {
+      // `function f(...rest)`: every argument past the fixed ones lands in the
+      // rest array's element store, read back as `rest[1]`.
+      const last = params.at(-1)
+      if (!last?.isRestElement()) return []
+      const slot = bindingSlot(last.get('argument'))
+      return slot ? [`elem:${slot}`] : []
+    }
+    if (param.isRestElement()) {
+      const slot = bindingSlot(param.get('argument'))
+      return slot ? [`elem:${slot}`] : []
+    }
+    // Destructured parameters are wired up by the static pattern links.
+    const inner = param.isAssignmentPattern() ? param.get('left') : param
+    if (!inner.isIdentifier()) return []
+    const slot = bindingSlot(inner)
+    return slot ? [slot] : []
+  }
+
+  /** Every parameter slot of `fn`, for calls whose argument POSITIONS are unknown. */
+  const paramSlots = (fn) => {
+    const out = []
+    for (let i = 0; i < fn.node.params.length; i++) out.push(...paramSlotAt(fn, i))
+    return out
+  }
+
+  /**
+   * Slot standing for "the argument LIST of `fn`". `f(...args)` and
+   * `f.apply(this, args)` hand over a whole array whose positions we cannot
+   * line up with parameters, so its element store feeds every parameter.
+   */
+  const argsHolderSlot = (fn) => `argsholder:${uid(fn.node)}`
+  const linkedArgsHolders = new Set()
+  const linkArgsHolder = (fn) => {
+    if (linkedArgsHolders.has(fn.node)) return
+    linkedArgsHolders.add(fn.node)
+    for (const slot of paramSlots(fn)) addEdge(`elem:${argsHolderSlot(fn)}`, slot)
+  }
+
+  /** The local function a call targets, seeing through `.call` / `.apply`. */
+  const calleeFunctionPath = (call) => {
+    const callee = call.get('callee')
+    if (
+      (callee.isMemberExpression() || callee.isOptionalMemberExpression()) &&
+      !callee.node.computed
+    ) {
+      const method = keyName(callee.node.property)
+      if (method === 'call' || method === 'apply') return resolveFunctionPath(callee.get('object'))
+      return null
+    }
+    return resolveFunctionPath(callee)
   }
 
   /** Link every `{ p: local }` / `[local]` pattern binding to its source slot. */
@@ -611,15 +783,29 @@ function scanUnanchoredSurgery(ast, code) {
         },
       ]
     }
+    // `f(...args)`: the value is the whole argument LIST (see linkArgsHolder).
+    if (call.node.arguments[index]?.type === 'SpreadElement') {
+      const spreadFn = calleeFunctionPath(call)
+      return spreadFn ? [argsHolderSlot(spreadFn)] : []
+    }
+    if (isMember && (method === 'call' || method === 'apply') && index >= 1) {
+      const target = resolveFunctionPath(callee.get('object'))
+      if (!target) return []
+      // `.call(thisArg, a, b)` shifts every argument by one; `.apply(thisArg,
+      // args)` hands over an argument LIST.
+      return method === 'call' ? paramSlotAt(target, index - 1) : [argsHolderSlot(target)]
+    }
+    // `m.set(k, re)` / `s.add(re)` / `arr.push(re)`: into the element store.
+    if (isMember && method !== null) {
+      const valueIndex = CONTAINER_WRITE_METHODS.get(method)
+      if (valueIndex !== undefined && (valueIndex === index || valueIndex === -1)) {
+        const holder = bindingSlot(callee.get('object'))
+        return holder ? [`elem:${holder}`] : []
+      }
+    }
     const fn = resolveFunctionPath(callee)
     if (!fn) return []
-    const param = fn.get('params')[index]
-    if (!param?.node) return []
-    // Destructured parameters are wired up by the static pattern links.
-    const inner = param.isAssignmentPattern() ? param.get('left') : param
-    if (!inner.isIdentifier()) return []
-    const slot = bindingSlot(inner)
-    return slot ? [slot] : []
+    return paramSlotAt(fn, index)
   }
 
   /**
@@ -632,47 +818,87 @@ function scanUnanchoredSurgery(ast, code) {
     for (let hops = 0; hops < 64; hops++) {
       const parent = cur.parentPath
       if (!parent) return []
-      if (isTransparent(parent, cur)) {
+      // `f(...args)`: the spread itself is not the destination, the call is.
+      if (isTransparent(parent, cur) || parent.isSpreadElement()) {
         cur = parent
         continue
       }
-      if (parent.isVariableDeclarator() && cur.key === 'init') {
-        const slot = bindingSlot(parent.get('id'))
-        return slot ? [slot] : []
-      }
-      if (parent.isAssignmentExpression() && cur.key === 'right' && parent.node.operator === '=') {
-        return assignmentSlots(parent.get('left'))
-      }
-      if (parent.isObjectProperty() && cur.key === 'value' && !parent.node.computed) {
-        const name = keyName(parent.node.key)
-        return name ? [`prop:${name}`] : []
-      }
-      if (parent.isArrayExpression() && cur.listKey === 'elements') {
-        const holder = parent.parentPath
-        if (holder?.isVariableDeclarator() && holder.node.init === parent.node) {
-          const slot = bindingSlot(holder.get('id'))
-          return [slot ? `elem:${slot}` : 'elem:*']
-        }
-        return ['elem:*']
-      }
-      if (
-        parent.isReturnStatement() ||
-        (parent.isArrowFunctionExpression() && cur.key === 'body')
-      ) {
-        const fn = parent.isArrowFunctionExpression() ? parent : parent.getFunctionParent()
-        return fn ? [`ret:${uid(fn.node)}`] : []
-      }
-      if (
-        (parent.isCallExpression() ||
-          parent.isNewExpression() ||
-          parent.isOptionalCallExpression()) &&
-        cur.listKey === 'arguments'
-      ) {
-        return argumentSlots(parent, cur.key)
-      }
-      return []
+      return destinationSlots(parent, cur)
     }
     return []
+  }
+
+  /**
+   * `{ re: v }` / `class { re = v }` / `class { #re = v }` — a value parked
+   * under a name. Null when `parent` is not one of those.
+   */
+  const namedPropertySlots = (parent, cur) => {
+    const isProperty =
+      parent.isObjectProperty() || parent.isClassProperty() || parent.isClassPrivateProperty()
+    if (!isProperty || cur.key !== 'value' || parent.node.computed) return null
+    const name = keyName(parent.node.key)
+    return name ? [`prop:${name}`] : []
+  }
+
+  /** `return v` / an arrow's expression body — null when neither. */
+  const returnSlots = (parent, cur) => {
+    const isReturn =
+      parent.isReturnStatement() || (parent.isArrowFunctionExpression() && cur.key === 'body')
+    if (!isReturn) return null
+    const fn = parent.isArrowFunctionExpression() ? parent : parent.getFunctionParent()
+    return fn ? [`ret:${uid(fn.node)}`] : []
+  }
+
+  /** Slots `parent` writes the value of its child `cur` into. */
+  const destinationSlots = (parent, cur) => {
+    if (parent.isVariableDeclarator() && cur.key === 'init') {
+      const slot = bindingSlot(parent.get('id'))
+      return slot ? [slot] : []
+    }
+    if (parent.isAssignmentExpression() && cur.key === 'right' && parent.node.operator === '=') {
+      return assignmentSlots(parent.get('left'))
+    }
+    // An object property, a class field (`re = new RegExp(…)`, `#re = …`)
+    // and `this.re = …` are the same hop: a value parked under a name.
+    const named = namedPropertySlots(parent, cur)
+    if (named) return named
+    // A default parameter value is written into the parameter's binding.
+    if (parent.isAssignmentPattern() && cur.key === 'right') {
+      const left = parent.get('left')
+      if (!left.isIdentifier()) return [] // destructured: static pattern links
+      const slot = bindingSlot(left)
+      return slot ? [slot] : []
+    }
+    if (parent.isArrayExpression() && cur.listKey === 'elements') {
+      return elementTargetsOf(parent)
+    }
+    const returned = returnSlots(parent, cur)
+    if (returned) return returned
+    if (
+      (parent.isCallExpression() ||
+        parent.isNewExpression() ||
+        parent.isOptionalCallExpression()) &&
+      cur.listKey === 'arguments'
+    ) {
+      return argumentSlots(parent, cur.key)
+    }
+    return []
+  }
+
+  /**
+   * Slots for an ARRAY value produced at `at` — i.e. where its ELEMENTS end
+   * up. `const res = xs.map(cb)` parks the callback's return value in `res`'s
+   * element store, not in `res` itself, so every destination is wrapped one
+   * level deeper. An array that reaches a `.replace()` first argument is not
+   * a regex, so sink descriptors are dropped.
+   */
+  const elementTargetsOf = (at) => {
+    const out = []
+    for (const target of targetsOf(at)) {
+      if (typeof target !== 'string') continue
+      out.push(`elem:${target}`)
+    }
+    return out.length > 0 ? out : ['elem:*']
   }
 
   // `new RegExp(p, f)` and a bare `RegExp(p, f)` build the same object, so
@@ -705,6 +931,82 @@ function scanUnanchoredSurgery(ast, code) {
     if (name) addReader(`prop:${name}`, p)
   }
 
+  /** Non-computed method name of a call (`m.get(k)` -> `get`), or null. */
+  const calledMethodName = (p) => {
+    const callee = p.get('callee')
+    if (!callee.isMemberExpression() && !callee.isOptionalMemberExpression()) return null
+    if (callee.node.computed) return null
+    return keyName(callee.node.property)
+  }
+
+  /** `m.get(k)` / `arr.at(i)` / `arr.pop()` read the holder's element store. */
+  const collectContainerReader = (p) => {
+    const method = calledMethodName(p)
+    if (!method || !CONTAINER_READ_METHODS.has(method)) return
+    const holder = bindingSlot(p.get('callee').get('object'))
+    if (holder) addReader(`elem:${holder}`, p)
+  }
+
+  /**
+   * `useMemo(() => new RegExp(…), [term])`: a zero-argument callback's return
+   * value is the obvious candidate for the call's own value, whether or not
+   * the callee itself resolves (it usually does not — it is imported).
+   */
+  const collectThunkReader = (p) => {
+    for (const arg of p.get('arguments')) {
+      if (!arg.isArrowFunctionExpression() && !arg.isFunctionExpression()) continue
+      if (arg.node.params.length > 0) continue
+      addReader(`ret:${uid(arg.node)}`, p)
+    }
+  }
+
+  /**
+   * `list.forEach((re) => …)` hands each element to the callback's first
+   * parameter, and `list.map(cb)`'s RESULT is an array of `cb`'s returns.
+   */
+  const linkIterationCallback = (p) => {
+    const method = calledMethodName(p)
+    if (!method) return
+    const cb = p.get('arguments')[0]
+    if (!cb?.node) return
+    if (!cb.isArrowFunctionExpression() && !cb.isFunctionExpression()) return
+    if (ITERATION_METHODS.has(method)) {
+      const holder = bindingSlot(p.get('callee').get('object'))
+      if (holder) for (const slot of paramSlotAt(cb, 0)) addEdge(`elem:${holder}`, slot)
+    }
+    if (ARRAY_PRODUCER_METHODS.has(method)) {
+      for (const dest of elementTargetsOf(p)) addEdge(`ret:${uid(cb.node)}`, dest)
+    }
+  }
+
+  /** `f(...args)` / `f.apply(this, args)`: an argument list handed over whole. */
+  const linkSpreadCall = (p) => {
+    const fn = calleeFunctionPath(p)
+    if (!fn) return
+    const holders = []
+    if (calledMethodName(p) === 'apply') {
+      const list = p.get('arguments')[1]
+      if (list?.node) holders.push(list)
+    }
+    for (const arg of p.get('arguments')) {
+      if (arg.isSpreadElement()) holders.push(arg.get('argument'))
+    }
+    if (holders.length === 0) return
+    linkArgsHolder(fn)
+    for (const holder of holders) {
+      const slot = bindingSlot(holder)
+      if (slot) addEdge(`elem:${slot}`, `elem:${argsHolderSlot(fn)}`)
+    }
+  }
+
+  const collectCallFlow = (p) => {
+    collectReturnReader(p)
+    collectContainerReader(p)
+    collectThunkReader(p)
+    linkIterationCallback(p)
+    linkSpreadCall(p)
+  }
+
   // NOTE: every node type gets exactly ONE key here. Babel's visitor
   // `explode()` expands an `'A|B'` key by ASSIGNING to `visitor.A` and
   // `visitor.B` rather than merging, so two alias keys naming the same node
@@ -714,9 +1016,9 @@ function scanUnanchoredSurgery(ast, code) {
     NewExpression: collectConstruction,
     CallExpression: (p) => {
       collectConstruction(p)
-      collectReturnReader(p)
+      collectCallFlow(p)
     },
-    OptionalCallExpression: collectReturnReader,
+    OptionalCallExpression: collectCallFlow,
     MemberExpression: collectMemberReader,
     OptionalMemberExpression: collectMemberReader,
     Identifier: (p) => {
@@ -733,6 +1035,23 @@ function scanUnanchoredSurgery(ast, code) {
         const inner = param.isAssignmentPattern() ? param.get('left') : param
         if (inner.isObjectPattern() || inner.isArrayPattern()) linkPattern(inner)
       }
+      // A getter's return value IS the property read: `get re() { … }` plus
+      // `x.re` is the same hop as `const re = …` plus `re`. `kind` is only
+      // set on object/class methods; on plain functions it is undefined.
+      if (p.node.kind === 'get') {
+        const name = p.node.computed ? null : keyName(p.node.key)
+        if (name) addEdge(`ret:${uid(p.node)}`, `prop:${name}`)
+      }
+    },
+    ForOfStatement: (p) => {
+      // `for (const re of list)` reads `list`'s element store. Only a holder
+      // we can name is followed — wiring the `elem:*` catch-all into every
+      // for-of body in the file would over-fire.
+      const slot = elementSlot(p.get('right'))
+      if (slot === 'elem:*') return
+      const left = p.get('left')
+      const target = left.isVariableDeclaration() ? left.get('declarations')[0]?.get('id') : left
+      if (target?.node) linkPatternTarget(slot, target)
     },
   })
 
@@ -1412,6 +1731,326 @@ function runSelfTest() {
       ].join('\n'),
     )
 
+    // ── nine further shapes the #3369 fixpoint still missed (#3391) ─────
+    //
+    // Every one of these is a plausible refactor of the code the guard
+    // protects, and every one produced ZERO findings before the value-flow
+    // learned the hop. Each has a legitimate twin below that must stay clean.
+
+    // (1) Parked on a class field, read back through `this`.
+    w(
+      compDir,
+      'ClassField.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export class Linker {',
+        '  constructor(private term: string) {}',
+        "  re = new RegExp(escapeRegExp(this.term), 'i')",
+        '  run(content: string, id: string) {',
+        '    return content.replace(this.re, `[[${id}]]`)',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+    // (2) The same, on a PRIVATE class field.
+    w(
+      compDir,
+      'PrivateClassField.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export class Linker {',
+        '  constructor(private term: string) {}',
+        "  #re = new RegExp(escapeRegExp(this.term), 'i')",
+        '  run(content: string, id: string) {',
+        '    return content.replace(this.#re, `[[${id}]]`)',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+    // (3) Built by a getter — the return value IS the property read.
+    w(
+      compDir,
+      'Getter.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export class Linker {',
+        '  constructor(private term: string) {}',
+        '  get re() {',
+        "    return new RegExp(escapeRegExp(this.term), 'i')",
+        '  }',
+        '  run(content: string, id: string) {',
+        '    return content.replace(this.re, `[[${id}]]`)',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+    // (4) Stashed in a `Map` and pulled back out — a compiled-pattern cache.
+    w(
+      compDir,
+      'MapCache.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'const cache = new Map<string, RegExp>()',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  cache.set(term, new RegExp(escapeRegExp(term), 'i'))",
+        '  return content.replace(cache.get(term)!, `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // (5) A `Set` of patterns, drained by a for-of.
+    w(
+      compDir,
+      'SetAdd.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string, id: string) {',
+        '  const pats = new Set<RegExp>()',
+        "  pats.add(new RegExp(escapeRegExp(term), 'i'))",
+        '  let out = content',
+        '  for (const re of pats) out = out.replace(re, `[[${id}]]`)',
+        '  return out',
+        '}',
+      ].join('\n'),
+    )
+    // (6) A default parameter value.
+    w(
+      compDir,
+      'DefaultParam.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(',
+        '  content: string,',
+        '  term: string,',
+        '  id: string,',
+        "  re = new RegExp(escapeRegExp(term), 'i'),",
+        ') {',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // (7) A closure returned from a closure.
+    w(
+      compDir,
+      'ClosureFactory.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function makeBuilder(term: string) {',
+        "  return () => new RegExp(escapeRegExp(term), 'i')",
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        '  const build = makeBuilder(term)',
+        '  return content.replace(build(), `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // (8) Spread into the call, so no argument lines up with a parameter.
+    w(
+      compDir,
+      'SpreadArgs.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, re: RegExp, id: string) {',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  const args: [string, RegExp, string] = [content, new RegExp(escapeRegExp(term), 'i'), id]",
+        '  return applySurgery(...args)',
+        '}',
+      ].join('\n'),
+    )
+    // (8b) …and its mirror image: a rest parameter read back by index.
+    w(
+      compDir,
+      'RestParam.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(...args: [string, RegExp, string]) {',
+        '  return args[0].replace(args[1], `[[${args[2]}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return applySurgery(content, new RegExp(escapeRegExp(term), 'i'), id)",
+        '}',
+      ].join('\n'),
+    )
+    // (9) `Function.prototype.call` — every argument shifted by one.
+    w(
+      compDir,
+      'FnCall.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, re: RegExp, id: string) {',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  return applySurgery.call(null, content, new RegExp(escapeRegExp(term), 'i'), id)",
+        '}',
+      ].join('\n'),
+    )
+    // (9b) `Function.prototype.apply` — the arguments arrive as an array.
+    w(
+      compDir,
+      'FnApply.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'function applySurgery(content: string, re: RegExp, id: string) {',
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+        'export function linkIt(content: string, term: string, id: string) {',
+        "  const args: [string, RegExp, string] = [content, new RegExp(escapeRegExp(term), 'i'), id]",
+        '  return applySurgery.apply(null, args)',
+        '}',
+      ].join('\n'),
+    )
+    // (10) An array built incrementally with `.push(…)`, read back by index.
+    w(
+      compDir,
+      'PushedArray.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, term: string, id: string) {',
+        '  const res: RegExp[] = []',
+        "  res.push(new RegExp(escapeRegExp(term), 'i'))",
+        '  return content.replace(res[0], `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+    // (11) An array produced by `.map()`, drained by a for-of.
+    w(
+      compDir,
+      'MappedArray.tsx',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export function linkIt(content: string, terms: string[], id: string) {',
+        "  const res = terms.map((t) => new RegExp(escapeRegExp(t), 'i'))",
+        '  let out = content',
+        '  for (const re of res) out = out.replace(re, `[[${id}]]`)',
+        '  return out',
+        '}',
+      ].join('\n'),
+    )
+    // (12) Not from #3391, same class, and the likeliest shape in this
+    // codebase: memoised behind a hook whose callee never resolves.
+    w(
+      compDir,
+      'MemoThunk.tsx',
+      [
+        "import { useMemo } from 'react'",
+        'function escapeRegExp(s: string) { return s }',
+        'export function useLinker(content: string, term: string, id: string) {',
+        "  const re = useMemo(() => new RegExp(escapeRegExp(term), 'i'), [term])",
+        '  return content.replace(re, `[[${id}]]`)',
+        '}',
+      ].join('\n'),
+    )
+
+    // ── the same hops, legitimately used → must stay clean ──────────────
+    //
+    // Half are anchored on both sides and still rewrite content; half are
+    // unanchored but only ever MATCH. A guard that flagged these would be
+    // flagging the refactor rather than the unanchored surgery.
+    w(
+      libDir,
+      'class-field-anchored.ts',
+      [
+        'function escapeRegExp(s: string) { return s }',
+        'export class Linker {',
+        '  constructor(private term: string) {}',
+        '  re = new RegExp(',
+        '    `(?<![\\\\p{L}\\\\p{N}\\\\p{M}_])${escapeRegExp(this.term)}(?![\\\\p{L}\\\\p{N}\\\\p{M}_])`,',
+        "    'iu',",
+        '  )',
+        '  run(content: string, id: string) {',
+        '    return content.replace(this.re, `[[${id}]]`)',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'getter-read-only.ts',
+      [
+        'export class Finder {',
+        '  constructor(private query: string) {}',
+        '  get re() {',
+        "    return new RegExp(this.query, 'i')",
+        '  }',
+        '  matches(haystack: string) {',
+        '    return this.re.test(haystack)',
+        '  }',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'map-read-only.ts',
+      [
+        'const cache = new Map<string, RegExp>()',
+        'export function findIt(haystack: string, query: string) {',
+        "  cache.set(query, new RegExp(query, 'i'))",
+        '  return cache.get(query)!.test(haystack)',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'push-read-only.ts',
+      [
+        'export function findIt(haystack: string, query: string) {',
+        '  const res: RegExp[] = []',
+        "  res.push(new RegExp(query, 'i'))",
+        '  return res[0].test(haystack)',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'mapped-read-only.ts',
+      [
+        'export function findIt(haystack: string, queries: string[]) {',
+        "  const res = queries.map((q) => new RegExp(q, 'i'))",
+        '  return res.some((r) => r.test(haystack))',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'default-param-read-only.ts',
+      [
+        'export function findIt(',
+        '  haystack: string,',
+        '  query: string,',
+        "  re = new RegExp(query, 'i'),",
+        ') {',
+        '  return re.test(haystack)',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'spread-read-only.ts',
+      [
+        'function matches(haystack: string, re: RegExp) {',
+        '  return re.test(haystack)',
+        '}',
+        'export function findIt(haystack: string, query: string) {',
+        "  const args: [string, RegExp] = [haystack, new RegExp(query, 'i')]",
+        '  return matches(...args)',
+        '}',
+      ].join('\n'),
+    )
+    w(
+      libDir,
+      'apply-read-only.ts',
+      [
+        'function matches(haystack: string, re: RegExp) {',
+        '  return re.test(haystack)',
+        '}',
+        'export function findIt(haystack: string, query: string) {',
+        "  return matches.call(null, haystack, new RegExp(query, 'i'))",
+        '}',
+      ].join('\n'),
+    )
+
     // Unanchored dynamic regex used only for MATCHING → clean (not surgery).
     w(
       libDir,
@@ -1696,6 +2335,47 @@ function runSelfTest() {
     ]) {
       expect(
         `read-only counterpart ${f} is NOT flagged`,
+        !hit(`lib/${f}`, R1),
+        JSON.stringify(sites.filter((s) => s.file === `src/lib/${f}`)),
+      )
+    }
+
+    // The further shapes from #3391: every one of these parsed cleanly and
+    // produced zero findings against the #3369 fixpoint.
+    for (const [shape, file] of [
+      ['class field read back through `this`', 'ClassField.tsx'],
+      ['private class field', 'PrivateClassField.tsx'],
+      ['getter', 'Getter.tsx'],
+      ['`Map.set` / `Map.get`', 'MapCache.tsx'],
+      ['`Set.add` drained by a for-of', 'SetAdd.tsx'],
+      ['default parameter value', 'DefaultParam.tsx'],
+      ['closure returned from a closure', 'ClosureFactory.tsx'],
+      ['spread into a call', 'SpreadArgs.tsx'],
+      ['rest parameter read by index', 'RestParam.tsx'],
+      ['`Function.prototype.call`', 'FnCall.tsx'],
+      ['`Function.prototype.apply`', 'FnApply.tsx'],
+      ['array built with `.push(…)`, read by index', 'PushedArray.tsx'],
+      ['array produced by `.map()`', 'MappedArray.tsx'],
+      ['regex memoised behind an unresolved hook callee', 'MemoThunk.tsx'],
+    ]) {
+      expect(`#3391 shape flagged: ${shape}`, hit(`components/${file}`, R1), JSON.stringify(sites))
+    }
+
+    // …and the legitimate twin of each hop — anchored surgery, or unanchored
+    // matching — must stay silent, so the guard flags the surgery and not the
+    // refactor.
+    for (const f of [
+      'class-field-anchored.ts',
+      'getter-read-only.ts',
+      'map-read-only.ts',
+      'push-read-only.ts',
+      'mapped-read-only.ts',
+      'default-param-read-only.ts',
+      'spread-read-only.ts',
+      'apply-read-only.ts',
+    ]) {
+      expect(
+        `legitimate counterpart ${f} is NOT flagged`,
         !hit(`lib/${f}`, R1),
         JSON.stringify(sites.filter((s) => s.file === `src/lib/${f}`)),
       )

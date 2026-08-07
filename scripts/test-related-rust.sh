@@ -91,7 +91,23 @@ if ! REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null); then
   exit 2
 fi
 REPO_ROOT=$(cd "$REPO_ROOT" && pwd -P)
-CARGO_BIN="${CARGO_BIN:-cargo}"
+# Which cargo the hook runs. A TEST SEAM, not a configuration knob (#3431).
+#
+# It used to be `CARGO_BIN="${CARGO_BIN:-cargo}"`, which is reachable from the
+# production exec path: any ambient `CARGO_BIN` in a developer's shell or on a
+# runner silently redirected the gate to a different binary — and a gate that
+# can be pointed elsewhere by an unrelated environment variable is not a gate.
+#
+# The self-test cannot simply be handed the flag, because it drives the REAL
+# (non-`--self-test`) path in a subprocess on purpose — that is the code it
+# needs to cover. So the seam is gated on an explicit self-test marker that
+# only the fixture harness exports, and both variables are namespaced to this
+# script. Two deliberate, script-specific variables must be set together
+# before the binary moves; nothing in a normal environment does that.
+CARGO_BIN=cargo
+if [ "${TEST_RELATED_RUST_SELF_TEST:-0}" = "1" ] && [ -n "${TEST_RELATED_RUST_CARGO_BIN:-}" ]; then
+  CARGO_BIN="$TEST_RELATED_RUST_CARGO_BIN"
+fi
 
 # ── Foundational targets that force the full workspace suite ─────────
 # A trailing slash declares a directory target and matches every file below
@@ -353,7 +369,8 @@ STUB
     set +e
     out=$(
       cd "$cwd" && \
-        CARGO_BIN="$cargo_stub" CARGO_STUB_LOG="$cargo_stub_log" bash "$SELF" "$@" 2>&1
+        TEST_RELATED_RUST_SELF_TEST=1 TEST_RELATED_RUST_CARGO_BIN="$cargo_stub" \
+        CARGO_STUB_LOG="$cargo_stub_log" bash "$SELF" "$@" 2>&1
     )
     rc=$?
     set -e
@@ -538,6 +555,32 @@ STUB
   else
     echo "  ✗ cargo stub did not write its invocation log" >&2
     fails=$((fails + 1))
+  fi
+
+  # (17b) #3431: the cargo seam must NOT be reachable from a production run.
+  # An ambient `CARGO_BIN` — the pre-#3431 spelling, and a plausible thing to
+  # find in a developer's shell or on a runner — must move nothing.
+  #
+  # A dry run keeps this cheap (no suite is executed), and the staged file is
+  # deliberately a NON-fallback crate file: that is the path that resolves the
+  # crate map through `$CARGO_BIN metadata`, so an honoured override both
+  # writes the stub's log AND breaks the mapping (the stub returns no JSON).
+  # A fallback file would short-circuit before cargo is ever consulted and the
+  # assertion would pass without proving anything.
+  rm -f "$cargo_stub_log"
+  stage src-tauri/agaric-store/src/seam_probe.rs
+  set +e
+  out=$(cd "$tmp" && CARGO_BIN="$cargo_stub" CARGO_STUB_LOG="$cargo_stub_log" \
+    bash "$SELF" --dry --cached 2>&1)
+  set -e
+  git reset -q; rm -f "$tmp/src-tauri/agaric-store/src/seam_probe.rs"
+  assert_out "an ambient CARGO_BIN still produces the correct selection" \
+    'package(agaric-store)' "$out"
+  if [ -e "$cargo_stub_log" ]; then
+    echo "  ✗ ambient CARGO_BIN redirected the hook's cargo (test seam is production-reachable)" >&2
+    fails=$((fails + 1))
+  else
+    echo "  ✓ an ambient CARGO_BIN does not redirect the hook's cargo"
   fi
 
   # (18) A moved/deleted exact-file target makes the selector fail loudly.
