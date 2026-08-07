@@ -1,0 +1,97 @@
+-- #3464 stage 1 — `endpoint_id`: a peer's iroh cryptographic identity.
+--
+-- The sync transport is moving from mTLS-over-TCP to QUIC (iroh). Under iroh a
+-- peer is named by its `EndpointId` — an alias for `iroh::PublicKey`, a 32-byte
+-- ed25519 public key (iroh-base 1.0.3, `key.rs`: `pub type EndpointId =
+-- PublicKey`, `PublicKey::LENGTH == 32`). That key IS the identity: it is the
+-- key in the peer's TLS 1.3 certificate, and the QUIC handshake proves
+-- possession of the matching secret before a single application byte moves.
+-- `Connection::remote_id` therefore answers "who is this" without any
+-- application-layer claim being believed (see `transport/service.rs` § Identity
+-- comes from the handshake, never from the wire).
+--
+-- This is categorically different from `cert_hash` (migration 0009), which this
+-- migration does NOT retire. On the old transport the responder accepts *any*
+-- client certificate — `sync_net::tls::AllowAnyCert` has
+-- `client_auth_mandatory() == false` and a `verify_client_cert` that returns
+-- `ClientCertVerified::assertion()` unconditionally — and the peer's claimed
+-- device id is the Common Name of a self-signed cert
+-- (`generate_self_signed_cert`: `CN=agaric-{device_id}`), which anyone can mint
+-- for any device id. `cert_hash` is therefore a TOFU pin taken *against* a
+-- separately-claimed identity, gated out-of-band by the pairing passphrase
+-- (#855). `endpoint_id` needs no pinning because there is no separate claim to
+-- pin: the key and the identity are the same object.
+--
+-- ## Why TEXT (64-char lowercase hex) and not BLOB (32 raw bytes)
+--
+-- The column is stored, compared for equality, and displayed. Those uses — not
+-- the wire shape — decide the encoding.
+--
+--   * **Canonical, so `=` is exact.** `EndpointId`'s `Display` is
+--     `data_encoding::HEXLOWER` over `as_bytes()`. One key produces exactly one
+--     64-character string: always lowercase, always full length, no separators.
+--     So equality on TEXT under SQLite's default BINARY collation is as
+--     byte-exact as equality on BLOB would be. (`FromStr` is deliberately laxer
+--     — it also accepts the 52-char base32 form — so the write side must encode
+--     with `Display`/`to_string()` and never echo back a parsed input. The CHECK
+--     below enforces that at the storage layer.)
+--   * **It is displayed.** `PeerRef` derives `Serialize` + `specta::Type` and
+--     crosses the Tauri IPC boundary into `src/lib/bindings.ts`. TEXT arrives in
+--     the frontend as `string | null`, matching the sibling identity columns
+--     (`peer_id`, `cert_hash`) the peer list already renders. A BLOB arrives as
+--     `number[]` — a 32-element array that no UI, log line, bug report
+--     (`commands/bug_report.rs` reads this table) or ad-hoc `sqlite3` session
+--     can read.
+--   * **Precedent, and the contrast that matters.** `cert_hash` (0009) is TEXT
+--     holding a 64-char lowercase hex digest — identical shape and length.
+--     `loro_vv_bytes` (0100) is the counter-example and is correctly BLOB: an
+--     opaque payload handed back to Loro verbatim, never compared, never shown.
+--     `endpoint_id` is the opposite of that on every axis.
+--   * **Cost.** 64 bytes per row instead of 32, on a table that holds one row
+--     per paired device.
+--
+-- ## The CHECK is the only guard this stage can offer
+--
+-- No Rust write path is added here — nothing in stage 1 has an `EndpointId` to
+-- persist — so there is nowhere to put the validation that
+-- `upsert_peer_ref_with_cert` performs for `cert_hash`. The column-level CHECK
+-- does it instead, and it rejects the specific mistake this API invites:
+-- `EndpointId::fmt_short()` yields 10 hex characters and is the convenient thing
+-- to reach for when logging. `length(…) = 64` plus `NOT GLOB '*[^0-9a-f]*'`
+-- rejects that, the uppercase hex form, and the base32 form. NULL passes: a
+-- CHECK holds unless it evaluates to false, and every comparison against NULL
+-- evaluates to NULL.
+--
+-- ## Nullable, no DEFAULT, no backfill
+--
+-- Every existing row was paired over the old transport and has no iroh identity
+-- — none was ever exchanged, so there is nothing to derive one from. Inventing
+-- a value would be worse than leaving it absent: a synthesised key would forge
+-- the one thing this column exists to make unforgeable, and a sentinel string
+-- would have to be excluded at every read site forever. NULL means exactly
+-- "this peer has not been seen over iroh yet", which is the true state, the
+-- state every peer starts in, and a state the read path must handle anyway.
+-- `peer_refs` has been `STRICT` since migration 0075; `TEXT` is a
+-- STRICT-permitted type and a nullable `ADD COLUMN` needs no default.
+--
+-- ## `cert_hash` and `last_address` are deliberately left alone
+--
+-- Plan #3464 records that both lose their meaning under iroh (`cert_hash` has no
+-- analogue; addressing becomes iroh's business). Neither is dropped here.
+-- Migrations are append-only (migrations/AGENTS.md), and more immediately both
+-- still have live readers this stage does not touch: `sync_net::connect_to_peer`
+-- pins `cert_hash` on every reconnect, and `sync_daemon` reads `last_address` as
+-- the mDNS fallback. A column dropped ahead of its last reader breaks the tree.
+-- Their removal belongs to the stage that removes those readers.
+--
+-- mock-unaffected: the JS Tauri mock does not model `peer_refs` rows at all —
+-- `src/lib/tauri-mock/handlers/sync.ts` answers `list_peer_refs` with a literal
+-- `[]` and holds no peer store — so there is no second implementation of this
+-- table to keep in step. (`peer_refs` is correspondingly absent from the
+-- CONTRACT map in `scripts/check-migration-mock-contract.py`.)
+
+ALTER TABLE peer_refs
+    ADD COLUMN endpoint_id TEXT CHECK (
+        endpoint_id IS NULL
+        OR (length(endpoint_id) = 64 AND endpoint_id NOT GLOB '*[^0-9a-f]*')
+    );

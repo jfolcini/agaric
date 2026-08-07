@@ -17,7 +17,11 @@ Companion to [`docs/features/sync.md`](../features/sync.md) (user perspective) a
 
 ## Discovery
 
-mDNS service type `_agaric._tcp.local.`. Each device announces its `device_id` and port; peers browse and resolve. **No Avahi dependency** — `mdns-sd` does everything in-process.
+mDNS service type `_agaric._udp.local.` (`src-tauri/agaric-sync/src/mdns.rs`). Each device announces its `device_id` **and its iroh `endpoint_id`**, plus the port; peers browse and resolve. **No Avahi dependency** — `mdns-sd` does everything in-process.
+
+Both TXT keys are load-bearing and neither is trusted. `endpoint_id` (the ed25519 public key, written in `Display` form: 64 lowercase hex characters) is the only part you can dial — mDNS supplies the rest of an iroh `EndpointAddr` via the A and SRV records. `device_id` is the op-log attribution key and what `peer_refs` rows are stored under, so a discovering peer can match a hit against a known row before spending a dial. A record with no parseable `endpoint_id` is ignored rather than surfaced: it names a peer without addressing it. Anyone on the LAN can forge either field; the pin is checked against the handshake-authenticated `EndpointId`, so a forged record costs a failed dial, not a session.
+
+`_udp`, not `_tcp`, because the advertised service is a QUIC endpoint (#3488). **This is a silent wire break**: a device on either side of the change does not see one on the other — the browse key differs, so no event fires and no error is raised. The ALPN change in the same port already forbids a cross-release *session*, which is what makes the break harmless, but it happens after the dial and so cannot report this one.
 
 Manual fallback: `peer_refs.last_address` (`host:port`) for peers that mDNS can't see (cross-subnet, VPN, firewall). The pairing dialog has a manual-entry path.
 

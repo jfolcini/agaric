@@ -29,6 +29,18 @@ pub struct PeerRef {
     /// Last known network address (host:port) for direct connection.
     /// Updated after each successful sync. Used when mDNS is unavailable.
     pub last_address: Option<String>,
+    /// The peer's iroh `EndpointId` — a 32-byte ed25519 public key — in its
+    /// canonical 64-character lowercase-hex `Display` encoding (migration 0107,
+    /// plan #3464).
+    ///
+    /// Unlike [`Self::cert_hash`], this is not a pin taken *against* an
+    /// identity the peer claims: the key **is** the identity, authenticated by
+    /// the QUIC/TLS 1.3 handshake before any application byte moves.
+    ///
+    /// `None` is a normal, expected state, not an error — every peer paired
+    /// over the pre-iroh transport has no iroh identity, and nothing writes
+    /// this column yet (the write path arrives with the transport cutover).
+    pub endpoint_id: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -43,13 +55,193 @@ pub async fn get_peer_ref(pool: &SqlitePool, peer_id: &str) -> Result<Option<Pee
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address
+                  device_name, last_address, endpoint_id
            FROM peer_refs WHERE peer_id = ?"#,
         peer_id,
     )
     .fetch_optional(pool)
     .await?;
     Ok(row)
+}
+
+/// The canonical on-disk spelling of an `EndpointId`: exactly 64 lowercase hex
+/// characters.
+///
+/// This is `iroh::PublicKey`'s `Display` (`data_encoding::HEXLOWER` over the 32 raw
+/// bytes) and it is the *only* spelling migration `0107_peer_refs_endpoint_id.sql`
+/// admits — its column CHECK is `length(endpoint_id) = 64 AND endpoint_id NOT GLOB
+/// '*[^0-9a-f]*'`.
+///
+/// It is validated in Rust as well as in SQL because the two rejections mean different
+/// things to a caller. The CHECK turns a bad value into an opaque constraint violation
+/// at the bottom of a `?` chain; this turns it into a named validation error at the
+/// call that got it wrong.
+///
+/// # Why lowercase specifically, when `is_ascii_hexdigit` would be the reflex
+///
+/// [`upsert_peer_ref_with_cert`] validates `cert_hash` with `is_ascii_hexdigit()`,
+/// which accepts `ABCD…` as readily as `abcd…`. Copying that here would be wrong, and
+/// wrong in the direction that hides: `EndpointId`'s `FromStr` is deliberately laxer
+/// than its `Display` — it also parses the 52-character base32 form — so a value that
+/// round-trips through `FromStr` is *not* necessarily the value `Display` produces.
+/// The migration's rule is that the write side encodes with `Display` and never echoes
+/// back a parsed input, and equality on `TEXT` under SQLite's `BINARY` collation is
+/// case-sensitive. An uppercase pin would therefore store fine under a permissive Rust
+/// check, then never match the lowercase form every lookup uses — a peer that is
+/// present in the table and invisible to the query that authorizes it.
+///
+/// It also rejects `EndpointId::fmt_short()`'s 10 characters, which is the convenient
+/// thing to reach for when logging and the mistake the migration header calls out.
+fn validate_endpoint_id(endpoint_id: &str) -> Result<(), AppError> {
+    if endpoint_id.len() != 64
+        || !endpoint_id
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+    {
+        return Err(AppError::validation(format!(
+            "invalid endpoint_id: expected the 64-char lowercase-hex `Display` form of \
+             an iroh EndpointId, got {} chars",
+            endpoint_id.len()
+        )));
+    }
+    Ok(())
+}
+
+/// Look up the peer bound to an authenticated iroh `EndpointId`.
+///
+/// This is the responder's identity lookup, and the direction matters: the QUIC
+/// handshake authenticates a **key**, and this answers which Agaric `DeviceId` — if any
+/// — that key was bound to at pairing. A key with no row is a peer this device has
+/// never paired with, which is the S-1 gate's whole input.
+///
+/// `endpoint_id` must be the canonical spelling; see [`validate_endpoint_id`].
+///
+/// # Why more than one match is an error rather than a pick
+///
+/// Migration 0107 adds the column with `ALTER TABLE … ADD COLUMN`, which in SQLite
+/// cannot carry a `UNIQUE` constraint, and the migration adds no unique index. So
+/// "two rows share an `endpoint_id`" is representable in the schema even though it is
+/// meaningless in the model: one key bound to two `DeviceId`s means the answer to
+/// "who is this peer" depends on row order.
+///
+/// `fetch_optional` would paper over that by returning whichever row SQLite reached
+/// first, and the caller — an authorization gate — would proceed with a `DeviceId` it
+/// had no basis to choose. That is the identity-confusion failure this column exists to
+/// make impossible, arriving through the back door. Refusing is the only answer that
+/// does not silently pick a victim.
+///
+/// [`bind_endpoint_id`] is what keeps the state from arising in the first place; this
+/// is the read side declining to trust that it succeeded.
+///
+/// # Why it agrees with `list_peer_refs` about the empty peer id
+///
+/// [`list_peer_refs`] — which is the device list, unpair, and the initiator's pinned-key
+/// check — has always carried `WHERE peer_id != ''`. Without the same predicate here the
+/// two queries disagree about what a row *means*: a row whose `peer_id` is `''` would be
+/// invisible to everything a user can act on while still resolving at the responder's
+/// S-1 gate, and resolving there is what makes the #855 passphrase proof unnecessary.
+/// A row nobody can see must not be a row that authorizes a session. The predicate is
+/// repeated rather than assumed because the two queries have to agree by construction,
+/// not by every write path being careful.
+///
+/// # Errors
+/// If `endpoint_id` is not the canonical form, if the query fails, or if more than one
+/// peer is bound to the same key.
+pub async fn get_peer_ref_by_endpoint_id(
+    pool: &SqlitePool,
+    endpoint_id: &str,
+) -> Result<Option<PeerRef>, AppError> {
+    validate_endpoint_id(endpoint_id)?;
+    let mut rows = sqlx::query_as!(
+        PeerRef,
+        r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
+                  reset_count as "reset_count!: i64", last_reset_at, cert_hash,
+                  device_name, last_address, endpoint_id
+           FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''"#,
+        endpoint_id,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    if rows.len() > 1 {
+        let peers: Vec<&str> = rows.iter().map(|r| r.peer_id.as_str()).collect();
+        return Err(AppError::InvalidOperation(format!(
+            "endpoint_id is bound to {} peers ({}); refusing to guess which one \
+             authenticated",
+            rows.len(),
+            peers.join(", ")
+        )));
+    }
+    Ok(rows.pop())
+}
+
+/// Bind an authenticated `EndpointId` to a peer, on the trust-on-first-use path.
+///
+/// Called once per peer, during the pairing window, after the #855 passphrase proof has
+/// authorized the key. Thereafter the binding is what
+/// [`get_peer_ref_by_endpoint_id`] reads and nothing re-derives it from the wire.
+///
+/// Like [`upsert_peer_ref_with_cert`] this is an `INSERT … ON CONFLICT(peer_id) DO
+/// UPDATE` that touches only its own column, so re-binding a peer preserves
+/// `last_hash`, `synced_at`, `reset_count` and the rest.
+///
+/// # Why it refuses to re-point a key at a second peer
+///
+/// The `ON CONFLICT` clause keys on `peer_id`, so it protects against one peer getting
+/// two rows — but nothing in the schema stops one *key* from being written onto two
+/// different peers' rows, which is precisely the ambiguity
+/// [`get_peer_ref_by_endpoint_id`] then has to refuse to resolve. Rejecting the second
+/// write is what keeps that read from ever having to.
+///
+/// Re-binding the same key to the same peer is allowed and is a no-op in effect:
+/// pairing twice with a device that was already paired must not fail.
+///
+/// # Why the empty `peer_id` is refused as well as the malformed key
+///
+/// This validated only the key, on the reasonable-looking assumption that the caller
+/// knows who it is binding. It does not: the device id reaching here comes from the
+/// peer's mDNS TXT record or from its advertised heads, both of which are claims, and
+/// `""` is a value either can carry. The row that would result is the one
+/// [`get_peer_ref_by_endpoint_id`] and [`list_peer_refs`] now agree to hide — so
+/// refusing to write it and refusing to read it are the same rule stated on both sides
+/// of the table, and neither is load-bearing alone.
+///
+/// # Errors
+/// If `peer_id` is empty, if `endpoint_id` is not the canonical form, if it is already
+/// bound to a different peer, or if the write fails.
+pub async fn bind_endpoint_id(
+    pool: &SqlitePool,
+    peer_id: &str,
+    endpoint_id: &str,
+) -> Result<(), AppError> {
+    validate_endpoint_id(endpoint_id)?;
+    if peer_id.is_empty() {
+        return Err(AppError::validation(
+            "invalid peer_id: refusing to bind an endpoint id to the empty device id, \
+             which every peer-facing query hides"
+                .to_owned(),
+        ));
+    }
+
+    if let Some(existing) = get_peer_ref_by_endpoint_id(pool, endpoint_id).await?
+        && existing.peer_id != peer_id
+    {
+        return Err(AppError::InvalidOperation(format!(
+            "endpoint_id is already bound to peer {}; refusing to re-point it at {}",
+            existing.peer_id, peer_id
+        )));
+    }
+
+    sqlx::query!(
+        "INSERT INTO peer_refs (peer_id, endpoint_id)
+         VALUES (?, ?)
+         ON CONFLICT(peer_id) DO UPDATE SET endpoint_id = excluded.endpoint_id",
+        peer_id,
+        endpoint_id,
+    )
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// List all peer refs, ordered by `synced_at` descending (most recently
@@ -60,7 +252,7 @@ pub async fn list_peer_refs(pool: &SqlitePool) -> Result<Vec<PeerRef>, AppError>
         PeerRef,
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
-                  device_name, last_address
+                  device_name, last_address, endpoint_id
            FROM peer_refs
            WHERE peer_id != ''
            ORDER BY synced_at DESC"#,
@@ -1255,6 +1447,377 @@ mod tests {
         assert!(
             matches!(result, Err(AppError::NotFound(_))),
             "update_loro_vv_bytes_in_tx on a nonexistent peer must return NotFound"
+        );
+    }
+
+    // ── endpoint_id (#3464 stage 1, migration 0107) ────────────────────
+
+    /// The read path carries `endpoint_id` end to end, and `None` is a real,
+    /// expected value rather than an error.
+    ///
+    /// Nothing writes this column yet — the write path arrives with the
+    /// transport cutover — so the row is populated with raw SQL here. What is
+    /// under test is the SELECT column list and the `PeerRef` mapping, which is
+    /// exactly what this stage adds.
+    #[tokio::test]
+    async fn peer_ref_endpoint_id_round_trips_and_defaults_to_none_3464() {
+        let (pool, _dir) = test_pool().await;
+
+        upsert_peer_ref(&pool, "peer-eid").await.unwrap();
+        upsert_peer_ref(&pool, "peer-no-eid").await.unwrap();
+
+        // A fresh row has no iroh identity.
+        let fresh = get_peer_ref(&pool, "peer-eid")
+            .await
+            .unwrap()
+            .expect("peer-eid must exist");
+        assert!(
+            fresh.endpoint_id.is_none(),
+            "a peer row with no iroh identity must read endpoint_id = None"
+        );
+
+        // The canonical `EndpointId::Display` encoding: 64 lowercase hex chars.
+        let eid = "0123456789abcdef".repeat(4);
+        sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            eid,
+            "peer-eid",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-eid")
+            .await
+            .unwrap()
+            .expect("peer-eid must exist");
+        assert_eq!(
+            peer.endpoint_id.as_deref(),
+            Some(eid.as_str()),
+            "get_peer_ref must read endpoint_id back verbatim"
+        );
+
+        let absent = get_peer_ref(&pool, "peer-no-eid")
+            .await
+            .unwrap()
+            .expect("peer-no-eid must exist");
+        assert!(
+            absent.endpoint_id.is_none(),
+            "a peer written without an endpoint_id must read back None"
+        );
+
+        // The list path must carry it too — it is the one the UI consumes.
+        let peers = list_peer_refs(&pool).await.unwrap();
+        let listed = peers
+            .iter()
+            .find(|p| p.peer_id == "peer-eid")
+            .expect("peer-eid must appear in list_peer_refs");
+        assert_eq!(
+            listed.endpoint_id.as_deref(),
+            Some(eid.as_str()),
+            "list_peer_refs must include endpoint_id"
+        );
+        let listed_absent = peers
+            .iter()
+            .find(|p| p.peer_id == "peer-no-eid")
+            .expect("peer-no-eid must appear in list_peer_refs");
+        assert!(
+            listed_absent.endpoint_id.is_none(),
+            "list_peer_refs must report an absent endpoint_id as None"
+        );
+    }
+
+    // ── endpoint_id: bind + lookup ──────────────────────────────────────
+    //
+    // The canonical `Display` form of an `EndpointId` is 64 lowercase hex chars.
+    // These fixtures spell it out rather than deriving it from a real key so the
+    // encoding under test is the one the migration's CHECK describes, not whatever
+    // iroh happens to produce today.
+    const KEY_A: &str = "aa11bb22cc33dd44ee55ff6607788990a1b2c3d4e5f60718293a4b5c6d7e8f90";
+    const KEY_B: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    #[tokio::test]
+    async fn an_authenticated_key_resolves_to_the_peer_it_was_bound_to() {
+        let (pool, _dir) = test_pool().await;
+
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+
+        let found = get_peer_ref_by_endpoint_id(&pool, KEY_A)
+            .await
+            .unwrap()
+            .expect("the bound key must resolve to a peer");
+        assert_eq!(
+            found.peer_id, "peer-A",
+            "the key must resolve to the peer it was bound to"
+        );
+        assert_eq!(
+            found.endpoint_id.as_deref(),
+            Some(KEY_A),
+            "the stored endpoint_id must round-trip verbatim"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unbound_key_resolves_to_no_peer() {
+        let (pool, _dir) = test_pool().await;
+
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+
+        // This is the S-1 gate's input: a genuine, authenticated key that this
+        // device has simply never paired with.
+        let found = get_peer_ref_by_endpoint_id(&pool, KEY_B).await.unwrap();
+        assert!(
+            found.is_none(),
+            "a key that was never bound must resolve to no peer, got {found:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn binding_preserves_the_peers_existing_sync_state() {
+        let (pool, _dir) = test_pool().await;
+
+        upsert_peer_ref(&pool, "peer-A").await.unwrap();
+        update_on_sync(&pool, "peer-A", "hash-in", "hash-out")
+            .await
+            .unwrap();
+
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+
+        let peer = get_peer_ref(&pool, "peer-A").await.unwrap().unwrap();
+        assert_eq!(
+            peer.last_hash.as_deref(),
+            Some("hash-in"),
+            "binding a key must not disturb last_hash — it is an ON CONFLICT DO \
+             UPDATE of one column, not an INSERT OR REPLACE"
+        );
+        assert!(
+            peer.synced_at.is_some(),
+            "binding a key must not clear synced_at"
+        );
+    }
+
+    #[tokio::test]
+    async fn rebinding_the_same_key_to_the_same_peer_is_allowed() {
+        let (pool, _dir) = test_pool().await;
+
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+        // Pairing twice with an already-paired device must not fail.
+        bind_endpoint_id(&pool, "peer-A", KEY_A)
+            .await
+            .expect("re-binding the same key to the same peer must succeed");
+    }
+
+    #[tokio::test]
+    async fn a_key_cannot_be_re_pointed_at_a_second_peer() {
+        let (pool, _dir) = test_pool().await;
+
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+
+        let err = bind_endpoint_id(&pool, "peer-B", KEY_A)
+            .await
+            .expect_err("binding one key to a second peer must be refused");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("already bound to peer peer-A"),
+            "the refusal must name the peer already holding the key, got: {msg}"
+        );
+
+        // The refusal is what keeps the read side from ever facing an ambiguity.
+        let found = get_peer_ref_by_endpoint_id(&pool, KEY_A).await.unwrap();
+        assert_eq!(
+            found.expect("the original binding must survive").peer_id,
+            "peer-A",
+            "the rejected write must not have disturbed the existing binding"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_bound_to_two_peers_is_refused_rather_than_resolved() {
+        let (pool, _dir) = test_pool().await;
+
+        // Reach past `bind_endpoint_id`'s guard to construct the state the schema
+        // still permits (0107 adds no UNIQUE index), because the point of the read
+        // guard is that it does not depend on the write guard having held.
+        upsert_peer_ref(&pool, "peer-A").await.unwrap();
+        upsert_peer_ref(&pool, "peer-B").await.unwrap();
+        for peer in ["peer-A", "peer-B"] {
+            sqlx::query!(
+                "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+                KEY_A,
+                peer
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let err = get_peer_ref_by_endpoint_id(&pool, KEY_A)
+            .await
+            .expect_err("an ambiguous binding must be refused, not resolved");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("bound to 2 peers"),
+            "the refusal must say how many peers claim the key, got: {msg}"
+        );
+        assert!(
+            msg.contains("peer-A") && msg.contains("peer-B"),
+            "the refusal must name both claimants so the row can be found, got: {msg}"
+        );
+    }
+
+    // ── endpoint_id: the peer id has to be a peer ───────────────────────
+
+    /// The write side of "a row nobody can see must not be a row that authorizes a
+    /// session".
+    ///
+    /// `""` is not a hypothetical: the device id reaching `bind_endpoint_id` comes from
+    /// an mDNS TXT record or from the peer's advertised heads, and both are claims.
+    #[tokio::test]
+    async fn binding_a_key_to_the_empty_device_id_is_refused() {
+        let (pool, _dir) = test_pool().await;
+
+        let err = bind_endpoint_id(&pool, "", KEY_A)
+            .await
+            .expect_err("the empty device id must be refused by the write path");
+        assert!(
+            err.to_string().contains("invalid peer_id"),
+            "the refusal must be a named validation error, got: {err}"
+        );
+
+        // And it refused before writing, not after.
+        assert!(
+            get_peer_ref(&pool, "").await.unwrap().is_none(),
+            "the refused bind must not have inserted a row"
+        );
+    }
+
+    /// The read side of the same rule, demonstrated on the row `bind_endpoint_id` now
+    /// refuses to create — because the point of the read guard is that it does not
+    /// depend on the write guard having held. (Same reasoning as
+    /// `a_key_bound_to_two_peers_is_refused_rather_than_resolved`: the schema still
+    /// permits the state.)
+    ///
+    /// Before this, `list_peer_refs` (`WHERE peer_id != ''`) and
+    /// `get_peer_ref_by_endpoint_id` (no such filter) disagreed about what this row
+    /// means: invisible to the device list and to unpair, and yet the thing the
+    /// responder's S-1 gate resolves the authenticated key to — which is what makes the
+    /// #855 passphrase proof unnecessary for the rest of that session.
+    #[tokio::test]
+    async fn a_row_with_no_device_id_is_invisible_to_the_lookup_that_authorizes_it() {
+        let (pool, _dir) = test_pool().await;
+
+        // Reach past `bind_endpoint_id`'s new guard to construct the row a
+        // version-skewed peer used to produce.
+        upsert_peer_ref(&pool, "").await.unwrap();
+        sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            KEY_A,
+            ""
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The row is really there — otherwise the assertions below are true for the
+        // wrong reason.
+        let raw: (i64,) = sqlx::query_as("SELECT count(*) FROM peer_refs WHERE peer_id = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw.0, 1, "the fixture must actually have written the row");
+
+        // 1. What the user sees: nothing. This was already true.
+        let listed = list_peer_refs(&pool).await.unwrap();
+        assert!(
+            listed.iter().all(|p| !p.peer_id.is_empty()),
+            "list_peer_refs must not surface the nameless row"
+        );
+
+        // 2. What the responder's S-1 gate sees must be the same nothing. This is the
+        //    half that was missing: the key resolved to a peer the UI cannot show,
+        //    cannot unpair, and cannot check `already_bound_elsewhere` against.
+        let found = get_peer_ref_by_endpoint_id(&pool, KEY_A).await.unwrap();
+        assert!(
+            found.is_none(),
+            "a row hidden from every peer-facing query must not resolve an \
+             authenticated key either, got {found:?}"
+        );
+    }
+
+    // ── endpoint_id: the encoding rules the migration's CHECK enforces ──
+
+    #[tokio::test]
+    async fn a_non_canonical_key_is_refused_before_it_reaches_the_column_check() {
+        let (pool, _dir) = test_pool().await;
+
+        // Each of these parses or prints as "an EndpointId" somewhere in iroh's API,
+        // and none of them is the spelling the column stores.
+        let uppercase = KEY_A.to_ascii_uppercase();
+        let short = &KEY_A[..10]; // what `EndpointId::fmt_short()` yields
+        let base32 = "a".repeat(52); // the other form `FromStr` accepts
+
+        for (label, bad) in [
+            ("uppercase hex", uppercase.as_str()),
+            ("fmt_short", short),
+            ("base32", base32.as_str()),
+            ("empty", ""),
+        ] {
+            let Err(err) = bind_endpoint_id(&pool, "peer-A", bad).await else {
+                panic!("{label} must be refused by the write path");
+            };
+            assert!(
+                err.to_string().contains("invalid endpoint_id"),
+                "{label} must fail as a named validation error, got: {err}"
+            );
+
+            let Err(err) = get_peer_ref_by_endpoint_id(&pool, bad).await else {
+                panic!("{label} must be refused by the read path");
+            };
+            assert!(
+                err.to_string().contains("invalid endpoint_id"),
+                "{label} must fail as a named validation error on read, got: {err}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn an_uppercase_key_would_be_invisible_to_lookup_if_it_were_stored() {
+        let (pool, _dir) = test_pool().await;
+
+        // This is the specific harm the lowercase rule prevents, demonstrated against
+        // the column itself: SQLite's BINARY collation is case-sensitive, so a peer
+        // stored under the uppercase spelling is present in the table and invisible
+        // to the query that authorizes it. `bind_endpoint_id` is bypassed here
+        // because it is exactly what stops this from being reachable.
+        upsert_peer_ref(&pool, "peer-A").await.unwrap();
+        let uppercase = KEY_A.to_ascii_uppercase();
+        let wrote = sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            uppercase,
+            "peer-A"
+        )
+        .execute(&pool)
+        .await;
+
+        // Two independent guards, asserted separately so neither can hide the other.
+        //
+        // 1. The column CHECK is the storage-layer backstop: it rejects the uppercase
+        //    spelling outright, so the bad row never exists.
+        assert!(
+            wrote.is_err(),
+            "migration 0107's CHECK must reject the uppercase spelling at the column"
+        );
+
+        // 2. And had it landed, it would have been unreachable by the canonical
+        //    spelling every lookup uses. Demonstrated on a value the CHECK *does*
+        //    accept, so this arm actually runs: same key, stored canonically, looked
+        //    up in the uppercase form that a permissive read path would have produced.
+        bind_endpoint_id(&pool, "peer-A", KEY_A).await.unwrap();
+        let found_by_uppercase = get_peer_ref_by_endpoint_id(&pool, &uppercase).await;
+        assert!(
+            found_by_uppercase.is_err(),
+            "the uppercase spelling must be refused rather than silently miss the row \
+             it cannot match under BINARY collation"
         );
     }
 }

@@ -18,6 +18,10 @@ export interface PeerRefRow {
   cert_hash: string | null
   device_name: string | null
   last_address: string | null
+  /** The peer's iroh `EndpointId` (32-byte ed25519 public key) in its canonical
+   *  64-char lowercase-hex encoding, or null if this peer has never been seen
+   *  over the iroh transport. Migration 0107 / plan #3464. */
+  endpoint_id: string | null
 }
 
 /** List all known peer references. */

@@ -60,6 +60,7 @@ function makePeerRow(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
     cert_hash: null,
     device_name: null,
     last_address: null,
+    endpoint_id: null,
     ...overrides,
   }
 }
@@ -115,6 +116,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -147,6 +149,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -174,6 +177,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -275,6 +279,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection failed'))
@@ -302,6 +307,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     mockStartSync.mockImplementation(
@@ -356,6 +362,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -381,6 +388,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -420,6 +428,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('connection refused'))
@@ -478,6 +487,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -508,6 +518,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -549,6 +560,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     mockStartSync.mockRejectedValue(new Error('fail'))
@@ -585,6 +597,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
     // First sync fails
@@ -633,6 +646,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -671,6 +685,7 @@ describe('useSyncTrigger', () => {
         cert_hash: null,
         device_name: null,
         last_address: null,
+        endpoint_id: null,
       },
     ])
 
@@ -736,6 +751,7 @@ describe('useSyncTrigger', () => {
           cert_hash: null,
           device_name: null,
           last_address: null,
+          endpoint_id: null,
         },
       ])
 

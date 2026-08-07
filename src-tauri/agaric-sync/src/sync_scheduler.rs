@@ -736,6 +736,7 @@ mod tests {
             cert_hash: None,
             device_name: None,
             last_address: None,
+            endpoint_id: None,
         }
     }
 

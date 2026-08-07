@@ -484,6 +484,20 @@ export const commands = {
 	 *  Updated after each successful sync. Used when mDNS is unavailable.
 	 */
 	last_address: string | null,
+	/**
+	 *  The peer's iroh `EndpointId` — a 32-byte ed25519 public key — in its
+	 *  canonical 64-character lowercase-hex `Display` encoding (migration 0107,
+	 *  plan #3464).
+	 * 
+	 *  Unlike [`Self::cert_hash`], this is not a pin taken *against* an
+	 *  identity the peer claims: the key **is** the identity, authenticated by
+	 *  the QUIC/TLS 1.3 handshake before any application byte moves.
+	 * 
+	 *  `None` is a normal, expected state, not an error — every peer paired
+	 *  over the pre-iroh transport has no iroh identity, and nothing writes
+	 *  this column yet (the write path arrives with the transport cutover).
+	 */
+	endpoint_id: string | null,
 } | null, AppError>(__TAURI_INVOKE("get_peer_ref", { peerId })),
 	/**  Tauri command: delete (unpair) a sync peer. Delegates to [`delete_peer_ref_inner`]. */
 	deletePeerRef: (peerId: string) => typedError<null, AppError>(__TAURI_INVOKE("delete_peer_ref", { peerId })),
@@ -2771,6 +2785,20 @@ export type PeerRef = {
 	 *  Updated after each successful sync. Used when mDNS is unavailable.
 	 */
 	last_address: string | null,
+	/**
+	 *  The peer's iroh `EndpointId` — a 32-byte ed25519 public key — in its
+	 *  canonical 64-character lowercase-hex `Display` encoding (migration 0107,
+	 *  plan #3464).
+	 * 
+	 *  Unlike [`Self::cert_hash`], this is not a pin taken *against* an
+	 *  identity the peer claims: the key **is** the identity, authenticated by
+	 *  the QUIC/TLS 1.3 handshake before any application byte moves.
+	 * 
+	 *  `None` is a normal, expected state, not an error — every peer paired
+	 *  over the pre-iroh transport has no iroh identity, and nothing writes
+	 *  this column yet (the write path arrives with the transport cutover).
+	 */
+	endpoint_id: string | null,
 };
 
 /**  A property definition from the schema registry. */

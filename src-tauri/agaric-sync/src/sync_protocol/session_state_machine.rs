@@ -883,7 +883,7 @@ impl SyncOrchestrator {
             // fail loudly, same contract as `SnapshotOffer`.
             SyncMessage::LoroSyncChunked { .. } => Err(AppError::InvalidOperation(
                 "LoroSyncChunked must be reassembled by the sync daemon wire \
-                 layer (sync_daemon::wire::recv_sync_message), not dispatched \
+                 layer (`transport::session::recv_sync_message`), not dispatched \
                  to the orchestrator state machine"
                     .into(),
             )),
@@ -893,7 +893,7 @@ impl SyncOrchestrator {
             // `handle_message` is a transport-dispatch regression — fail loudly.
             SyncMessage::OpLogBatchChunked { .. } => Err(AppError::InvalidOperation(
                 "OpLogBatchChunked must be reassembled by the sync daemon wire \
-                 layer (sync_daemon::wire::recv_sync_message), not dispatched \
+                 layer (`transport::session::recv_sync_message`), not dispatched \
                  to the orchestrator state machine"
                     .into(),
             )),

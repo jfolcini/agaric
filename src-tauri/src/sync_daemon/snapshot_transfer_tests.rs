@@ -8,7 +8,9 @@ use agaric_sync::snapshot::{
     get_latest_snapshot,
 };
 use agaric_sync::sync_events::RecordingEventSink;
-use agaric_sync::sync_net::test_connection_pair;
+use agaric_sync::transport::bulk::{recv_bulk, send_bulk};
+use agaric_sync::transport::session::{recv_sync_message, send_sync_message};
+use agaric_sync::transport::test_support::quic_pair;
 use sqlx::SqlitePool;
 use std::path::PathBuf;
 use tempfile::TempDir;
@@ -65,12 +67,19 @@ async fn seed_one_op(pool: &SqlitePool, device_id: &str) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn try_offer_snapshot_catchup_returns_no_snapshot_when_log_snapshots_empty() {
     let (pool, _dir) = test_pool().await;
-    let (mut server_conn, _client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let outcome = try_offer_snapshot_catchup(&mut server_conn, &pool, &event_sink, REMOTE_DEV, &[])
-        .await
-        .expect("try_offer_snapshot_catchup must succeed on empty snapshots table");
+    let outcome = try_offer_snapshot_catchup(
+        &mut pair.server.send,
+        &mut pair.server.recv,
+        &pool,
+        &event_sink,
+        REMOTE_DEV,
+        &[],
+    )
+    .await
+    .expect("try_offer_snapshot_catchup must succeed on empty snapshots table");
     assert_eq!(
         outcome,
         OfferOutcome::NoSnapshot,
@@ -139,10 +148,11 @@ async fn try_offer_snapshot_catchup_declines_pre_reset_snapshot_793() {
         seq: 1,
         hash: "old-lineage".into(),
     }];
-    let (mut server_conn, _client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let outcome = try_offer_snapshot_catchup(
-        &mut server_conn,
+        &mut pair.server.send,
+        &mut pair.server.recv,
         &pool,
         &event_sink,
         REMOTE_DEV,
@@ -179,50 +189,66 @@ async fn try_offer_snapshot_catchup_streams_bytes_on_accept() {
     assert!(!latest_id.is_empty(), "snapshot ID must not be empty");
     let expected_size = latest_bytes.len() as u64;
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Drive the responder in a task.
-    let pool_clone = pool.clone();
-    let sink_clone = event_sink.clone();
-    let responder = tokio::spawn(async move {
-        try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
+    // Both halves run on this task: the borrows into `pair` are disjoint
+    // (`client.*` vs `server.*`), so `join!` avoids the `'static` bound a
+    // `tokio::spawn` would impose on a live QUIC stream pair.
+    let (outcome, received) = tokio::join!(
+        try_offer_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &event_sink,
+            REMOTE_DEV,
+            &[],
+        ),
+        async {
+            // Client side: expect SnapshotOffer, reply Accept, drain bytes.
+            let offer = recv_sync_message(&mut client.recv).await.unwrap();
+            match offer {
+                SyncMessage::SnapshotOffer {
+                    size_bytes,
+                    blob_blake3,
+                } => {
+                    assert_eq!(
+                        size_bytes, expected_size,
+                        "offered size_bytes must match on-disk snapshot blob length"
+                    );
+                    // #706 item 2: the offer must carry the blake3 of the
+                    // compressed blob the responder is about to stream.
+                    assert_eq!(
+                        blob_blake3,
+                        blake3::hash(&latest_bytes).to_hex().to_string(),
+                        "offered blob_blake3 must hash the snapshot blob"
+                    );
+                }
+                other => panic!("expected SnapshotOffer, got {other:?}"),
+            }
+            send_sync_message(&mut client.send, &SyncMessage::SnapshotAccept)
+                .await
+                .unwrap();
+
+            // The bytes now arrive as one uninterrupted run on the stream —
+            // there are no binary frames to count any more, so the receiver
+            // is told exactly how many bytes to pull and `recv_bulk` errors
+            // if the peer stops short.
+            let mut received: Vec<u8> = Vec::new();
+            recv_bulk(
+                &mut client.recv,
+                &mut received,
+                expected_size,
+                MAX_SNAPSHOT_SIZE,
+                |_| {},
+            )
             .await
-    });
+            .unwrap();
+            received
+        },
+    );
 
-    // Client side: expect SnapshotOffer, reply Accept, drain bytes.
-    let offer: SyncMessage = client_conn.recv_json().await.unwrap();
-    match offer {
-        SyncMessage::SnapshotOffer {
-            size_bytes,
-            blob_blake3,
-        } => {
-            assert_eq!(
-                size_bytes, expected_size,
-                "offered size_bytes must match on-disk snapshot blob length"
-            );
-            // #706 item 2: the offer must carry the blake3 of the
-            // compressed blob the responder is about to stream.
-            assert_eq!(
-                blob_blake3,
-                blake3::hash(&latest_bytes).to_hex().to_string(),
-                "offered blob_blake3 must hash the snapshot blob"
-            );
-        }
-        other => panic!("expected SnapshotOffer, got {other:?}"),
-    }
-    client_conn
-        .send_json(&SyncMessage::SnapshotAccept)
-        .await
-        .unwrap();
-
-    // Receive all binary frames totalling expected_size.
-    let capacity = usize::try_from(expected_size).unwrap_or(usize::MAX);
-    let mut received: Vec<u8> = Vec::with_capacity(capacity);
-    while (received.len() as u64) < expected_size {
-        let chunk = client_conn.recv_binary().await.unwrap();
-        received.extend_from_slice(&chunk);
-    }
     assert_eq!(
         received.len() as u64,
         expected_size,
@@ -233,7 +259,7 @@ async fn try_offer_snapshot_catchup_streams_bytes_on_accept() {
         "bytes received must match the snapshot blob stored locally"
     );
 
-    let outcome = responder.await.unwrap().unwrap();
+    let outcome = outcome.unwrap();
     assert_eq!(
         outcome,
         OfferOutcome::Sent {
@@ -253,24 +279,29 @@ async fn try_offer_snapshot_catchup_handles_rejection() {
     seed_one_op(&pool, LOCAL_DEV).await;
     create_snapshot(&pool, LOCAL_DEV).await.unwrap();
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let pool_clone = pool.clone();
-    let sink_clone = event_sink.clone();
-    let responder = tokio::spawn(async move {
-        try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
-            .await
-    });
+    let (outcome, ()) = tokio::join!(
+        try_offer_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &event_sink,
+            REMOTE_DEV,
+            &[],
+        ),
+        async {
+            // Read the offer, reply with Reject.
+            let _offer = recv_sync_message(&mut client.recv).await.unwrap();
+            send_sync_message(&mut client.send, &SyncMessage::SnapshotReject)
+                .await
+                .unwrap();
+        },
+    );
 
-    // Read the offer, reply with Reject.
-    let _offer: SyncMessage = client_conn.recv_json().await.unwrap();
-    client_conn
-        .send_json(&SyncMessage::SnapshotReject)
-        .await
-        .unwrap();
-
-    let outcome = responder.await.unwrap().unwrap();
+    let outcome = outcome.unwrap();
     assert_eq!(
         outcome,
         OfferOutcome::Rejected,
@@ -365,46 +396,43 @@ async fn try_offer_snapshot_catchup_sends_error_when_snapshot_behind_remote() {
         hash: "stale-frontier".into(),
     }];
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let pool_clone = pool.clone();
-    let sink_clone = event_sink.clone();
-    let responder = tokio::spawn(async move {
+    let (outcome, ()) = tokio::join!(
         try_offer_snapshot_catchup(
-            &mut server_conn,
-            &pool_clone,
-            &sink_clone,
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &event_sink,
             REMOTE_DEV,
             &remote_heads,
-        )
-        .await
-    });
+        ),
+        async {
+            // The responder must NOT send a SnapshotOffer; it must send an
+            // Error explaining the covering failure.
+            let wire = recv_sync_message(&mut client.recv)
+                .await
+                .expect("responder must send a wire message even when snapshot is stale");
+            match wire {
+                SyncMessage::Error { message } => {
+                    assert!(
+                        message.contains(LOCAL_DEV),
+                        " Error message must name the offending device, got {message:?}"
+                    );
+                    assert!(
+                        message.contains("999"),
+                        " Error message must include the remote's claimed seq, got {message:?}"
+                    );
+                }
+                other => panic!("expected SyncMessage::Error for stale snapshot, got {other:?}"),
+            }
+        },
+    );
 
-    // The responder must NOT send a SnapshotOffer; it must send an
-    // Error explaining the covering failure.
-    let wire: SyncMessage = client_conn
-        .recv_json()
-        .await
-        .expect("responder must send a wire message even when snapshot is stale");
-    match wire {
-        SyncMessage::Error { message } => {
-            assert!(
-                message.contains(LOCAL_DEV),
-                " Error message must name the offending device, got {message:?}"
-            );
-            assert!(
-                message.contains("999"),
-                " Error message must include the remote's claimed seq, got {message:?}"
-            );
-        }
-        other => panic!("expected SyncMessage::Error for stale snapshot, got {other:?}"),
-    }
-
-    let outcome = responder
-        .await
-        .expect("responder task must not panic")
-        .expect("try_offer_snapshot_catchup must return Ok even when sending Error");
+    let outcome =
+        outcome.expect("try_offer_snapshot_catchup must return Ok even when sending Error");
     match outcome {
         OfferOutcome::SnapshotStale { reason } => {
             assert!(
@@ -437,43 +465,48 @@ async fn try_receive_snapshot_catchup_applies_snapshot_end_to_end() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let recording = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = recording.clone();
 
-    // Server side (responder): send offer + bytes.
-    let bytes_clone = snap_bytes.clone();
     let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: expected_size,
-                blob_blake3: snap_hash,
-            })
+
+    let (outcome, ()) = tokio::join!(
+        // Client side (initiator): receive + apply.
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        // Server side (responder): send offer + bytes.
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: snap_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        // Stream bytes.
-        for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-            server_conn.send_binary(chunk).await.unwrap();
-        }
-    });
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            // Stream the blob as one uninterrupted run of bytes: there is
+            // no per-frame chunking layer under the bi-stream any more.
+            send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                .await
+                .unwrap();
+        },
+    );
 
-    // Client side (initiator): receive + apply.
-    let outcome = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await
-    .expect("initiator catch-up must succeed with a valid snapshot");
+    let outcome = outcome.expect("initiator catch-up must succeed with a valid snapshot");
 
-    server_task.await.unwrap();
     materializer.flush_background().await.unwrap();
 
     match outcome {
@@ -572,9 +605,14 @@ fn snapshot_progress_events(sink: &RecordingEventSink) -> Vec<(String, u64, u64)
         .collect()
 }
 
-/// #2133 happy path (send side): an accepted multi-frame snapshot
-/// transfer must emit a `"sending"` tick whose running `bytes_done`
-/// reaches the full size, then exactly one terminal `"complete"` tick.
+/// #2133 happy path (send side): an accepted snapshot transfer must emit a
+/// `"sending"` tick whose running `bytes_done` reaches the full size, then
+/// exactly one terminal `"complete"` tick.
+///
+/// The tick cadence is now one per `BULK_COPY_BYTES` copy buffer rather than
+/// one per binary frame; the assertions below are deliberately written against
+/// "at least one 'sending' tick, exactly one 'complete' tick" so they hold at
+/// either cadence and pin the contract the UI actually consumes.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn try_offer_snapshot_catchup_emits_streaming_progress() {
     let (pool, _dir) = test_pool().await;
@@ -583,30 +621,39 @@ async fn try_offer_snapshot_catchup_emits_streaming_progress() {
     let (_id, latest_bytes) = get_latest_snapshot(&pool).await.unwrap().unwrap();
     let expected_size = latest_bytes.len() as u64;
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let recording = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = recording.clone();
 
-    let pool_clone = pool.clone();
-    let sink_clone = event_sink.clone();
-    let responder = tokio::spawn(async move {
-        try_offer_snapshot_catchup(&mut server_conn, &pool_clone, &sink_clone, REMOTE_DEV, &[])
+    let (responded, ()) = tokio::join!(
+        try_offer_snapshot_catchup(
+            &mut server.send,
+            &mut server.recv,
+            &pool,
+            &event_sink,
+            REMOTE_DEV,
+            &[],
+        ),
+        async {
+            // Accept the offer and drain the whole blob.
+            let _offer = recv_sync_message(&mut client.recv).await.unwrap();
+            send_sync_message(&mut client.send, &SyncMessage::SnapshotAccept)
+                .await
+                .unwrap();
+            let mut sink = tokio::io::sink();
+            recv_bulk(
+                &mut client.recv,
+                &mut sink,
+                expected_size,
+                MAX_SNAPSHOT_SIZE,
+                |_| {},
+            )
             .await
-    });
-
-    // Accept the offer and drain all frames.
-    let _offer: SyncMessage = client_conn.recv_json().await.unwrap();
-    client_conn
-        .send_json(&SyncMessage::SnapshotAccept)
-        .await
-        .unwrap();
-    let mut received: u64 = 0;
-    while received < expected_size {
-        let chunk = client_conn.recv_binary().await.unwrap();
-        received += chunk.len() as u64;
-    }
-
-    responder.await.unwrap().unwrap();
+            .unwrap();
+        },
+    );
+    responded.unwrap();
 
     let snapshot_events = snapshot_progress_events(&recording);
     assert!(
@@ -637,33 +684,69 @@ async fn try_offer_snapshot_catchup_emits_streaming_progress() {
     );
 }
 
-/// #2133 edge: a zero-size snapshot blob still emits a single
-/// `"complete"` terminal tick with bytes_done == bytes_total == 0.
-/// Exercises the `send_binary_streaming_with_progress` zero-size
-/// sentinel path directly via `send_snapshot_bytes`.
+/// #2133 edge, rewritten for the bi-stream (#3464): a zero-size snapshot blob
+/// puts **nothing** on the wire, and still emits a single `"complete"` terminal
+/// tick with bytes_done == bytes_total == 0.
+///
+/// The old WebSocket transport sent one empty binary frame for `size_bytes == 0`
+/// purely so the receiver's per-frame accounting had something to terminate on,
+/// and the previous version of this test asserted that sentinel. QUIC has no
+/// frames: an empty payload writes zero bytes. The sentinel is therefore not
+/// merely unnecessary but *wrong* — anything written here would be consumed by
+/// the receiver as the length prefix of the next framed message.
+///
+/// So the property under test is now the absence: after the zero-byte send, the
+/// very next thing on the stream must be the next protocol message, byte-for-byte
+/// aligned. Forced red by making `send_snapshot_bytes` write a single zero byte
+/// before returning: `recv_sync_message` then fails on a garbage length prefix.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn send_snapshot_bytes_zero_size_emits_complete() {
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+async fn send_snapshot_bytes_zero_size_writes_nothing_and_leaves_the_stream_aligned() {
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let recording = Arc::new(RecordingEventSink::new());
     let event_sink: Arc<dyn SyncEventSink> = recording.clone();
 
-    let sink_clone = event_sink.clone();
-    let sender = tokio::spawn(async move {
-        let progress = SnapshotTransferProgress {
-            event_sink: &sink_clone,
-            remote_device_id: REMOTE_DEV,
-            bytes_total: 0,
-        };
-        send_snapshot_bytes(&mut server_conn, &[], &progress)
-            .await
-            .unwrap();
-    });
+    let progress = SnapshotTransferProgress {
+        event_sink: &event_sink,
+        remote_device_id: REMOTE_DEV,
+        bytes_total: 0,
+    };
+    send_snapshot_bytes(&mut server.send, &mut server.recv, &[], &progress)
+        .await
+        .unwrap();
 
-    // Zero-size sentinel: exactly one empty frame on the wire.
-    let frame = client_conn.recv_binary().await.unwrap();
-    assert!(frame.is_empty(), "zero-size snapshot sends one empty frame");
+    // The receiver's side of the same contract: asking for zero bytes must
+    // consume zero bytes rather than block waiting for a sentinel.
+    let mut drained: Vec<u8> = Vec::new();
+    recv_bulk(&mut client.recv, &mut drained, 0, MAX_SNAPSHOT_SIZE, |_| {})
+        .await
+        .expect("a zero-byte bulk receive completes without reading anything");
+    assert!(
+        drained.is_empty(),
+        "a zero-length snapshot must put no bytes at all on the wire"
+    );
 
-    sender.await.unwrap();
+    // Alignment: the next framed message must read back exactly. If the send
+    // path had emitted a sentinel, this length prefix would start one frame
+    // late and deserialization would fail.
+    send_sync_message(
+        &mut server.send,
+        &SyncMessage::SyncComplete {
+            last_hash: "after-the-empty-snapshot".to_owned(),
+        },
+    )
+    .await
+    .unwrap();
+    let next = recv_sync_message(&mut client.recv)
+        .await
+        .expect("the stream is still aligned after a zero-length snapshot");
+    assert_eq!(
+        next,
+        SyncMessage::SyncComplete {
+            last_hash: "after-the-empty-snapshot".to_owned(),
+        },
+        "the message after a zero-length snapshot must arrive unshifted"
+    );
 
     let snapshot_events = snapshot_progress_events(&recording);
     let complete: Vec<&(String, u64, u64)> = snapshot_events
@@ -712,43 +795,47 @@ async fn try_receive_snapshot_catchup_increments_reset_count_2046() {
         let (_snap_id, snap_bytes) = get_latest_snapshot(&resp_pool).await.unwrap().unwrap();
         let expected_size = snap_bytes.len() as u64;
 
-        let (mut server_conn, mut client_conn) = test_connection_pair().await;
+        let mut pair = quic_pair().await;
+        let (client, server) = (&mut pair.client, &mut pair.server);
         let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-        let bytes_clone = snap_bytes.clone();
         let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
-        let server_task = tokio::spawn(async move {
-            server_conn
-                .send_json(&SyncMessage::SnapshotOffer {
-                    size_bytes: expected_size,
-                    blob_blake3: snap_hash,
-                })
+
+        let (outcome, ()) = tokio::join!(
+            try_receive_snapshot_catchup(
+                &mut client.send,
+                &mut client.recv,
+                init_pool,
+                materializer,
+                &event_sink,
+                REMOTE_DEV,
+                None,
+                None,
+            ),
+            async {
+                send_sync_message(
+                    &mut server.send,
+                    &SyncMessage::SnapshotOffer {
+                        size_bytes: expected_size,
+                        blob_blake3: snap_hash,
+                    },
+                )
                 .await
                 .unwrap();
-            let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-            assert_eq!(accept, SyncMessage::SnapshotAccept);
-            for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-                server_conn.send_binary(chunk).await.unwrap();
-            }
-        });
+                let accept = recv_sync_message(&mut server.recv).await.unwrap();
+                assert_eq!(accept, SyncMessage::SnapshotAccept);
+                send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                    .await
+                    .unwrap();
+            },
+        );
 
-        let outcome = try_receive_snapshot_catchup(
-            &mut client_conn,
-            init_pool,
-            materializer,
-            &event_sink,
-            REMOTE_DEV,
-            None,
-            None,
-        )
-        .await
-        .expect("catch-up must succeed");
+        let outcome = outcome.expect("catch-up must succeed");
         assert!(
             matches!(outcome, CatchupOutcome::Applied { .. }),
             "expected Applied, got {outcome:?}"
         );
 
-        server_task.await.unwrap();
         materializer.flush_background().await.unwrap();
         resp_materializer.shutdown();
     }
@@ -797,36 +884,46 @@ async fn try_receive_snapshot_catchup_rejects_oversized_offer() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     let oversized = MAX_SNAPSHOT_SIZE + 1;
 
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: oversized,
-                // Rejected on size before any receive/checksum.
-                blob_blake3: String::new(),
-            })
+    // The cap that fires here is still the PRE-OFFER one in
+    // `try_receive_snapshot_catchup` — `recv_bulk`'s `max_size` is only a
+    // backstop for a caller that skips the offer check, and this test asserts
+    // the offer-time refusal by pinning the `SnapshotReject` on the wire and
+    // the fact that no bytes are ever requested.
+    let (outcome, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: oversized,
+                    // Rejected on size before any receive/checksum.
+                    blob_blake3: String::new(),
+                },
+            )
             .await
             .unwrap();
-        // Expect a reject — no bytes will follow.
-        let reply: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(reply, SyncMessage::SnapshotReject);
-    });
+            // Expect a reject — no bytes will follow.
+            let reply = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(reply, SyncMessage::SnapshotReject);
+        },
+    );
 
-    let outcome = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await
-    .expect("catch-up must return Ok(Rejected) for oversized offer");
+    let outcome = outcome.expect("catch-up must return Ok(Rejected) for oversized offer");
     assert_eq!(
         outcome,
         CatchupOutcome::Rejected {
@@ -834,8 +931,6 @@ async fn try_receive_snapshot_catchup_rejects_oversized_offer() {
         },
         "initiator must reject offers above MAX_SNAPSHOT_SIZE without touching DB"
     );
-
-    server_task.await.unwrap();
 
     // DB must be untouched: still zero blocks, no peer_refs row.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
@@ -865,7 +960,8 @@ async fn try_receive_snapshot_catchup_rolls_back_on_corrupted_bytes() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     // Send a small under-the-cap size with garbage bytes. Decode
@@ -874,40 +970,43 @@ async fn try_receive_snapshot_catchup_rolls_back_on_corrupted_bytes() {
     let garbage: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05];
     let size_bytes = garbage.len() as u64;
 
-    let garbage_clone = garbage.clone();
     // #706 item 2: advertise the CORRECT blake3 of the garbage so the
     // integrity check passes and the failure is the *decode* failure
     // this test pins (not an early checksum rejection).
     let garbage_hash = blake3::hash(&garbage).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes,
-                blob_blake3: garbage_hash,
-            })
+
+    let (result, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes,
+                    blob_blake3: garbage_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        server_conn.send_binary(&garbage_clone).await.unwrap();
-    });
-
-    let result = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await;
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &garbage[..], size_bytes, |_| {})
+                .await
+                .unwrap();
+        },
+    );
     assert!(
         result.is_err(),
         "corrupted snapshot bytes must return Err (decode failure)"
     );
-
-    server_task.await.unwrap();
 
     // DB must be untouched by the failed apply.
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM blocks")
@@ -951,39 +1050,41 @@ async fn try_receive_snapshot_catchup_rejects_on_checksum_mismatch() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let bytes_clone = snap_bytes.clone();
     // Deliberately WRONG hash (all zeros) — does not match the bytes.
     let wrong_hash = "0".repeat(64);
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: expected_size,
-                blob_blake3: wrong_hash,
-            })
+
+    let (result, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: wrong_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-            server_conn.send_binary(chunk).await.unwrap();
-        }
-    });
-
-    let result = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await;
-
-    server_task.await.unwrap();
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                .await
+                .unwrap();
+        },
+    );
 
     // The mismatch must surface as an Err naming the integrity check.
     let err = result.expect_err("checksum mismatch must return Err");
@@ -1020,8 +1121,8 @@ async fn try_receive_snapshot_catchup_rejects_on_checksum_mismatch() {
 // -----------------------------------------------------------------
 
 /// The responder advertises a snapshot, the initiator accepts,
-/// then the responder disconnects mid-binary-stream after delivering
-/// only part of the promised payload. The initiator must:
+/// then the responder half-closes the stream after delivering only part of
+/// the promised payload. The initiator must:
 ///
 /// (a) return `Err` from `try_receive_snapshot_catchup`,
 /// (b) leave the local DB untouched (no half-applied rows),
@@ -1050,51 +1151,73 @@ async fn try_receive_snapshot_catchup_rolls_back_on_mid_stream_disconnect_l74() 
         "pre-condition: peer_refs must be empty"
     );
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    // Promise more bytes than we'll deliver. The receiver will read
-    // the partial chunk, loop back to `recv_binary`, and observe EOF
-    // when the responder drops the duplex stream.
+    // Promise more bytes than we'll deliver. The receiver pulls the partial
+    // 4 KB off the stream and then sees EOF with 60 KB still owed. Under the
+    // old transport that showed up as a failed `recv_binary` on the next
+    // frame; under QUIC there are no frames, so the party that notices is
+    // `recv_bulk` — the only one that knows how many bytes were promised.
     let promised_size: u64 = 64 * 1024;
     let partial_chunk: Vec<u8> = vec![0u8; 4 * 1024];
 
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: promised_size,
-                // Hash is irrelevant: the receive errors on EOF before
-                // the integrity check runs.
-                blob_blake3: String::new(),
-            })
+    let (result, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: promised_size,
+                    // Hash is irrelevant: the receive errors on EOF before
+                    // the integrity check runs.
+                    blob_blake3: String::new(),
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        // Send only the partial chunk, then drop the responder side.
-        server_conn.send_binary(&partial_chunk).await.unwrap();
-        // `drop(server_conn)` happens on task exit; the duplex stream
-        // closes and the initiator's next `recv_binary` returns Err.
-    });
-
-    let result = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await;
-
-    // (a) The interruption surfaces as Err.
-    assert!(
-        result.is_err(),
-        "mid-stream disconnect must surface as Err; got {result:?}"
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            // Send only the partial chunk, then half-close the send half so
+            // the initiator observes a clean EOF mid-payload.
+            send_bulk(
+                &mut server.send,
+                &partial_chunk[..],
+                partial_chunk.len() as u64,
+                |_| {},
+            )
+            .await
+            .unwrap();
+            server
+                .send
+                .finish()
+                .expect("half-closing the responder's send half");
+        },
     );
 
-    server_task.await.unwrap();
+    // (a) The interruption surfaces as Err — and specifically as the
+    // truncation, not as some incidental downstream failure. Under the old
+    // transport "the frame loop hit EOF" and "the blob would not decode" were
+    // both just `Err`; the bulk receiver is the only party that knows how many
+    // bytes were promised, so it can and does name the shortfall. Pinning both
+    // counts is what stops this test from passing on the wrong error.
+    let err = result.expect_err("mid-stream disconnect must surface as Err");
+    let err_text = err.to_string();
+    assert!(
+        err_text.contains("4096") && err_text.contains("65536"),
+        "the truncation must be reported with the bytes delivered and the bytes \
+         promised, so the failure is unambiguous; got {err_text:?}"
+    );
 
     // (b) The DB is untouched — `apply_snapshot` was never called
     // because the byte stream never reached the cap, AND if any
@@ -1130,22 +1253,26 @@ async fn try_receive_snapshot_catchup_errors_on_unexpected_message() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let server_task = tokio::spawn(async move {
-        // Responder protocol-violates: sends SyncComplete instead
-        // of SnapshotOffer after ResetRequired.
-        server_conn
-            .send_json(&SyncMessage::SyncComplete {
-                last_hash: "deadbeef".into(),
-            })
-            .await
-            .unwrap();
-    });
+    // Responder protocol-violates: sends SyncComplete instead of
+    // SnapshotOffer after ResetRequired. One framed message, sent before the
+    // receive starts — the initiator's read is bounded by `RECV_TIMEOUT`
+    // now, so it has to actually find something on the stream.
+    send_sync_message(
+        &mut server.send,
+        &SyncMessage::SyncComplete {
+            last_hash: "deadbeef".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     let result = try_receive_snapshot_catchup(
-        &mut client_conn,
+        &mut client.send,
+        &mut client.recv,
         &init_pool,
         &materializer,
         &event_sink,
@@ -1165,7 +1292,6 @@ async fn try_receive_snapshot_catchup_errors_on_unexpected_message() {
         other => panic!("expected InvalidOperation, got {other:?}"),
     }
 
-    server_task.await.unwrap();
     materializer.shutdown();
 }
 
@@ -1178,20 +1304,22 @@ async fn try_receive_snapshot_catchup_surfaces_peer_error() {
     let (init_pool, _init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::Error {
-                message: "responder internal error".into(),
-            })
-            .await
-            .unwrap();
-    });
+    send_sync_message(
+        &mut server.send,
+        &SyncMessage::Error {
+            message: "responder internal error".into(),
+        },
+    )
+    .await
+    .unwrap();
 
     let result = try_receive_snapshot_catchup(
-        &mut client_conn,
+        &mut client.send,
+        &mut client.recv,
         &init_pool,
         &materializer,
         &event_sink,
@@ -1211,7 +1339,6 @@ async fn try_receive_snapshot_catchup_surfaces_peer_error() {
         other => panic!("expected InvalidOperation, got {other:?}"),
     }
 
-    server_task.await.unwrap();
     materializer.shutdown();
 }
 
@@ -1219,30 +1346,21 @@ async fn try_receive_snapshot_catchup_surfaces_peer_error() {
 // Constants sanity
 // -----------------------------------------------------------------
 
+/// `BINARY_FRAME_CHUNK_SIZE` is no longer a *frame* size — under the bi-stream
+/// it is `transport::bulk::BULK_COPY_BYTES`, the fixed copy buffer that bounds
+/// peak heap during a transfer. The relationship that still matters is that the
+/// receive cap admits at least one full buffer, or a max-size snapshot could not
+/// be streamed at all.
 #[test]
-fn max_snapshot_size_is_at_least_one_chunk() {
+fn max_snapshot_size_is_at_least_one_copy_buffer() {
     // On any target where usize fits in u64, try_from succeeds. On
     // 32-bit targets where usize::MAX < MAX_SNAPSHOT_SIZE the cap
     // is effectively tighter — still valid.
     let cap_as_usize = usize::try_from(MAX_SNAPSHOT_SIZE).unwrap_or(usize::MAX);
     assert!(
         cap_as_usize >= BINARY_FRAME_CHUNK_SIZE,
-        "MAX_SNAPSHOT_SIZE must admit at least one full chunk"
+        "MAX_SNAPSHOT_SIZE must admit at least one full bulk copy buffer"
     );
-}
-
-#[test]
-fn snapshot_chunk_size_under_max_msg_size() {
-    // Stay well under the transport's 10 MB per-frame cap to leave
-    // headroom for WebSocket framing overhead. `const_assert`-style
-    // using a const block so clippy's `assertions_on_constants` is
-    // happy (the comparison is known at compile time).
-    const {
-        assert!(
-            BINARY_FRAME_CHUNK_SIZE <= 10_000_000,
-            "BINARY_FRAME_CHUNK_SIZE must stay under SyncConnection::MAX_MSG_SIZE"
-        );
-    }
 }
 
 // -----------------------------------------------------------------
@@ -1270,38 +1388,41 @@ async fn run_catchup_with_ids(
     let (init_pool, init_dir) = test_pool().await;
     let materializer = Materializer::new(init_pool.clone());
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let bytes_clone = snap_bytes.clone();
     let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: expected_size,
-                blob_blake3: snap_hash,
-            })
+
+    let (result, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            remote_device_id,
+            expected_remote_id,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: snap_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-            server_conn.send_binary(chunk).await.unwrap();
-        }
-    });
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                .await
+                .unwrap();
+        },
+    );
 
-    let result = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        remote_device_id,
-        expected_remote_id,
-        None,
-    )
-    .await;
-
-    server_task.await.unwrap();
     materializer.flush_background().await.unwrap();
     materializer.shutdown();
     resp_materializer.shutdown();
@@ -1384,20 +1505,19 @@ async fn try_receive_snapshot_catchup_prefers_session_id_over_expected() {
 // Streaming snapshot transfer regression suite
 // -----------------------------------------------------------------
 //
-// + paired sync streaming items. is the wire-side
-// Primitive (`send/receive_binary_streaming`), layers a temp
-// file on top so the receiver lands the compressed snapshot on
-// disk frame-by-frame instead of accumulating it in a `Vec<u8>`.
-// `apply_snapshot` then reads through that temp file via the
-// streaming `decode_snapshot(impl Read)` path so neither the
+// + paired sync streaming items. The wire-side primitive is now
+// `transport::bulk::{send,recv}_bulk` (it was
+// `send/receive_binary_streaming`); this layer puts a temp file on
+// top so the receiver lands the compressed snapshot on disk one
+// `BULK_COPY_BYTES` buffer at a time instead of accumulating it in a
+// `Vec<u8>`. `apply_snapshot` then reads through that temp file via
+// the streaming `decode_snapshot(impl Read)` path so neither the
 // compressed bytes nor the decompressed CBOR is ever fully
 // materialised in memory.
 
 /// Confirm `try_receive_snapshot_catchup` writes the
 /// incoming bytes to a temp file under the app data dir before
-/// applying. Asserts the temp file appears mid-receive (between
-/// the responder's binary frames and the apply call) and is
-/// unlinked once the call returns.
+/// applying, and that the temp file is unlinked once the call returns.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn snapshot_receive_streams_to_temp_file_m51_l67() {
     let (resp_pool, _resp_dir) = test_pool().await;
@@ -1421,39 +1541,43 @@ async fn snapshot_receive_streams_to_temp_file_m51_l67() {
         "no snapshot temp files must exist before catch-up"
     );
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
-    let bytes_clone = snap_bytes.clone();
     let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: expected_size,
-                blob_blake3: snap_hash,
-            })
+
+    let (outcome, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: snap_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-            server_conn.send_binary(chunk).await.unwrap();
-        }
-    });
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                .await
+                .unwrap();
+        },
+    );
 
-    let outcome = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await
-    .expect(" catch-up must succeed end-to-end");
+    let outcome = outcome.expect(" catch-up must succeed end-to-end");
 
-    server_task.await.unwrap();
     materializer.flush_background().await.unwrap();
 
     // Post-condition: catch-up applied, temp file unlinked
@@ -1533,45 +1657,49 @@ async fn snapshot_receive_drops_temp_on_failure_m51_l67() {
     // Pre-condition.
     assert_eq!(count_snapshot_tmp_files(&app_data_dir), 0);
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     // Send garbage that fits under the cap but won't decode.
     let garbage: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07];
     let size_bytes = garbage.len() as u64;
-    let garbage_clone = garbage.clone();
     // #706 item 2: correct hash so the failure is the decode failure
     // this test pins (the temp must still be unlinked on that path).
     let garbage_hash = blake3::hash(&garbage).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes,
-                blob_blake3: garbage_hash,
-            })
+
+    let (result, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            None,
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes,
+                    blob_blake3: garbage_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        server_conn.send_binary(&garbage_clone).await.unwrap();
-    });
-
-    let result = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        None,
-    )
-    .await;
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &garbage[..], size_bytes, |_| {})
+                .await
+                .unwrap();
+        },
+    );
     assert!(
         result.is_err(),
         "garbage snapshot bytes must surface as Err; got {result:?}"
     );
-
-    server_task.await.unwrap();
 
     // Post-condition: failed apply propagates AppError; the
     // `SnapshotTempFile` guard must have unlinked the temp on
@@ -1818,40 +1946,44 @@ async fn try_receive_snapshot_catchup_resets_engines_for_same_process_session_60
     .unwrap();
 
     // ── Wire transfer ─────────────────────────────────────────────
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let event_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
-    let bytes_clone = snap_bytes.clone();
     let snap_hash = blake3::hash(&snap_bytes).to_hex().to_string();
-    let server_task = tokio::spawn(async move {
-        server_conn
-            .send_json(&SyncMessage::SnapshotOffer {
-                size_bytes: expected_size,
-                blob_blake3: snap_hash,
-            })
+
+    let (outcome, ()) = tokio::join!(
+        try_receive_snapshot_catchup(
+            &mut client.send,
+            &mut client.recv,
+            &init_pool,
+            &materializer,
+            &event_sink,
+            REMOTE_DEV,
+            None,
+            Some(EngineReloadCtx {
+                registry: &registry,
+                device_id: LOCAL_DEV,
+            }),
+        ),
+        async {
+            send_sync_message(
+                &mut server.send,
+                &SyncMessage::SnapshotOffer {
+                    size_bytes: expected_size,
+                    blob_blake3: snap_hash,
+                },
+            )
             .await
             .unwrap();
-        let accept: SyncMessage = server_conn.recv_json().await.unwrap();
-        assert_eq!(accept, SyncMessage::SnapshotAccept);
-        for chunk in bytes_clone.chunks(BINARY_FRAME_CHUNK_SIZE) {
-            server_conn.send_binary(chunk).await.unwrap();
-        }
-    });
+            let accept = recv_sync_message(&mut server.recv).await.unwrap();
+            assert_eq!(accept, SyncMessage::SnapshotAccept);
+            send_bulk(&mut server.send, &snap_bytes[..], expected_size, |_| {})
+                .await
+                .unwrap();
+        },
+    );
 
-    let outcome = try_receive_snapshot_catchup(
-        &mut client_conn,
-        &init_pool,
-        &materializer,
-        &event_sink,
-        REMOTE_DEV,
-        None,
-        Some(EngineReloadCtx {
-            registry: &registry,
-            device_id: LOCAL_DEV,
-        }),
-    )
-    .await
-    .expect("catch-up must succeed");
-    server_task.await.unwrap();
+    let outcome = outcome.expect("catch-up must succeed");
     assert!(matches!(outcome, CatchupOutcome::Applied { .. }));
 
     // ── Sidecar SQL reset ────────────────────────────────────────
@@ -2003,14 +2135,16 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
     .await
     .unwrap();
 
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let resp_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
     let init_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     // Drive both sides concurrently on one task (borrows, no 'static).
     let (offer_res, recv_res) = tokio::join!(
         try_offer_loro_snapshot_catchup(
-            &mut server_conn,
+            &mut server.send,
+            &mut server.recv,
             &resp_pool,
             &resp_registry,
             &resp_sink,
@@ -2018,7 +2152,8 @@ async fn loro_snapshot_catchup_merges_and_preserves_unsynced_local_2503() {
             LOCAL_DEV,  // the initiator, as the responder sees it
         ),
         try_receive_snapshot_catchup(
-            &mut client_conn,
+            &mut client.send,
+            &mut client.recv,
             &init_pool,
             &init_mat,
             &init_sink,
@@ -2109,19 +2244,21 @@ async fn loro_snapshot_catchup_empty_registry_offers_nothing_2503() {
 
     let (resp_pool, _resp_dir) = test_pool().await;
     let resp_registry = LoroEngineRegistry::new();
-    let (mut server_conn, mut client_conn) = test_connection_pair().await;
+    let mut pair = quic_pair().await;
+    let (client, server) = (&mut pair.client, &mut pair.server);
     let sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
 
     let (offer_res, first) = tokio::join!(
         try_offer_loro_snapshot_catchup(
-            &mut server_conn,
+            &mut server.send,
+            &mut server.recv,
             &resp_pool,
             &resp_registry,
             &sink,
             REMOTE_DEV,
             LOCAL_DEV,
         ),
-        async { client_conn.recv_json::<SyncMessage>().await },
+        async { recv_sync_message(&mut client.recv).await },
     );
 
     let sent = offer_res.expect("offer must succeed even with nothing to send");

@@ -42,8 +42,9 @@
 //! `log_snapshots` table, and the pre-existing
 //! [`SyncMessage::SnapshotOffer`] / `SnapshotAccept` / `SnapshotReject`
 //! wire variants — into a post-`ResetRequired` sub-flow that transfers
-//! a compressed snapshot blob over the same TLS WebSocket connection
-//! (using the binary-frame path already used for attachments in
+//! a compressed snapshot blob over the same QUIC bi-stream the session
+//! is already running on (using the bulk path in
+//! [`crate::transport::bulk`], shared with attachments in
 //! [`sync_files`](crate::sync_files)).
 //!
 //! ## Protocol
@@ -58,20 +59,29 @@
 //!    blob_blake3 }`] with the compressed blob length and its blake3
 //!    integrity hash (#706 item 2).
 //! 3. Await [`SyncMessage::SnapshotAccept`] or
-//!    [`SyncMessage::SnapshotReject`] from the initiator.
-//! 4. On accept: send the blob in binary frames of
-//!    [`BINARY_FRAME_CHUNK_SIZE`](crate::sync_constants::BINARY_FRAME_CHUNK_SIZE)
-//!    bytes (mirrors `sync_files` chunking).
+//!    [`SyncMessage::SnapshotReject`] from the initiator, under an
+//!    explicit [`RECV_TIMEOUT`] — QUIC supplies no receive bound of its
+//!    own (see [`crate::transport::session::RECV_TIMEOUT`]).
+//! 4. On accept: write the blob to the stream as one uninterrupted run
+//!    of bytes via [`send_bulk`](crate::transport::bulk::send_bulk).
+//!    There is no chunking: a QUIC stream has no message boundary, and
+//!    its flow-control window is the backpressure the old frame loop
+//!    was hand-rolling.
 //! 5. On reject or no snapshot available: close the session; the
 //!    initiator falls back to the prior failure mode.
 //!
 //! ### Initiator (the peer that received `ResetRequired`)
 //!
-//! 1. Await [`SyncMessage::SnapshotOffer`].
-//! 2. Enforce the [`MAX_SNAPSHOT_SIZE`] size cap (256 MB). Over cap
-//!    → send `SnapshotReject` and terminate.
-//! 3. Under cap: send `SnapshotAccept`, then receive binary frames
-//!    until `size_bytes` have arrived.
+//! 1. Await [`SyncMessage::SnapshotOffer`] (again under an explicit
+//!    [`RECV_TIMEOUT`]).
+//! 2. Enforce the [`MAX_SNAPSHOT_SIZE`] size cap (256 MB) on the
+//!    advertised `size_bytes`. Over cap → send `SnapshotReject` and
+//!    terminate. This is the PRIMARY cap: it rejects before a byte moves.
+//! 3. Under cap: send `SnapshotAccept`, then read exactly `size_bytes`
+//!    off the stream via [`recv_bulk`](crate::transport::bulk::recv_bulk),
+//!    which is handed `MAX_SNAPSHOT_SIZE` again as a backstop (the cap
+//!    now belongs to the caller — the transport no longer bounds a
+//!    per-frame size on its behalf).
 //! 4. Call [`apply_snapshot`](crate::snapshot::apply_snapshot) to
 //!    wipe + restore core tables from the compressed blob.
 //!    `apply_snapshot` uses `BEGIN IMMEDIATE` + `defer_foreign_keys`
@@ -101,6 +111,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use iroh::endpoint::{RecvStream, SendStream};
 use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
@@ -109,10 +120,11 @@ use crate::snapshot::apply_snapshot;
 use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_files::app_data_dir_from_pool;
-use crate::sync_net::SyncConnection;
 use crate::sync_protocol::SyncMessage;
 use crate::sync_protocol::loro_sync::{self, ApplyOutcome};
 use crate::sync_protocol::loro_sync_types::LoroSyncMessage;
+use crate::transport::bulk::recv_bulk;
+use crate::transport::session::{RECV_TIMEOUT, recv_sync_message_within, send_sync_message};
 use agaric_core::error::AppError;
 use agaric_engine::loro::registry::LoroEngineRegistry;
 use agaric_store::peer_refs;
@@ -125,6 +137,11 @@ use agaric_store::peer_refs;
 use crate::snapshot::get_latest_snapshot_with_frontier;
 #[cfg(any(test, feature = "test-util"))]
 use crate::sync_protocol::DeviceHead;
+// Only the legacy CBOR path *sends* bulk bytes; the production Loro path
+// streams framed `LoroSync` messages instead. Gated with the path it
+// serves, or a default build warns on an unused import.
+#[cfg(any(test, feature = "test-util"))]
+use crate::transport::bulk::send_bulk;
 #[cfg(any(test, feature = "test-util"))]
 use std::collections::BTreeMap;
 
@@ -237,7 +254,8 @@ pub fn snapshot_covers_remote_heads(
 #[cfg(any(test, feature = "test-util"))]
 #[tracing::instrument(skip_all, err)]
 pub async fn try_offer_snapshot_catchup(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     event_sink: &Arc<dyn SyncEventSink>,
     remote_device_id: &str,
@@ -296,11 +314,13 @@ pub async fn try_offer_snapshot_catchup(
         // snapshot. Best-effort: a send failure here is logged but
         // does not change the outcome — we still report `SnapshotStale`
         // so the caller treats this session as a non-progress event.
-        if let Err(e) = conn
-            .send_json(&SyncMessage::Error {
+        if let Err(e) = send_sync_message(
+            send,
+            &SyncMessage::Error {
                 message: wire_msg.clone(),
-            })
-            .await
+            },
+        )
+        .await
         {
             tracing::warn!(
                 peer_id = %remote_device_id,
@@ -329,17 +349,28 @@ pub async fn try_offer_snapshot_catchup(
         ops_sent: 0,
     });
 
-    conn.send_json(&SyncMessage::SnapshotOffer {
-        size_bytes,
-        blob_blake3,
-    })
+    send_sync_message(
+        send,
+        &SyncMessage::SnapshotOffer {
+            size_bytes,
+            blob_blake3,
+        },
+    )
     .await?;
 
-    // Await the initiator's decision. Reuse the orchestrator's 120 s
-    // timeout-by-receive-cycle semantics: the underlying recv has its
-    // own guard (SyncConnection::RECV_TIMEOUT), kept strictly larger
-    // than the 120 s outer budget so the outer guard fires first.
-    let reply: SyncMessage = conn.recv_json().await?;
+    // Await the initiator's decision, under an EXPLICIT wall-clock bound.
+    //
+    // The old transport supplied this for free: every `SyncConnection`
+    // receive sat inside `SyncConnection::RECV_TIMEOUT`, so this call site
+    // carried no timeout of its own and the comment here only had to say
+    // which of the two nested guards fired first. QUIC has no such guard —
+    // `RecvStream::read_exact` against a peer that simply stops talking
+    // never resolves, and this await holds a responder permit and the
+    // per-peer session lock while it hangs. So the bound is now stated
+    // here, at the call site, rather than inherited: see
+    // `transport::session::RECV_TIMEOUT` for why every post-loop phase
+    // owes it explicitly.
+    let reply: SyncMessage = recv_sync_message_within(recv, RECV_TIMEOUT).await?;
     match reply {
         SyncMessage::SnapshotAccept => {
             tracing::info!(
@@ -352,7 +383,7 @@ pub async fn try_offer_snapshot_catchup(
                 remote_device_id,
                 bytes_total: size_bytes,
             };
-            send_snapshot_bytes(conn, &compressed, &progress).await?;
+            send_snapshot_bytes(send, recv, &compressed, &progress).await?;
             Ok(OfferOutcome::Sent {
                 bytes_sent: size_bytes,
             })
@@ -382,17 +413,23 @@ pub async fn try_offer_snapshot_catchup(
     }
 }
 
-/// Per-frame snapshot-transfer progress reporting hook.
+/// Per-buffer snapshot-transfer progress reporting hook.
 ///
 /// Mirrors [`FileTransferProgress`](crate::sync_files::FileTransferProgress)
 /// for the snapshot catch-up blob: when threaded into the send/receive
-/// paths, the streaming chunk loops emit
-/// [`SyncEvent::SnapshotProgress`] after each 5 MB binary frame so the
-/// active sync's `Channel<SyncProgressUpdate>` carries a real bytes-done
-/// signal to the UI. No throttling — the attachment path emits one event
-/// per frame and we match its cadence (a 256 MB blob is at most ~52
-/// frames at 5 MB each, well within event-bus budget). A terminal
-/// `"complete"` tick is emitted once the blob finishes.
+/// paths, the bulk copy loops emit [`SyncEvent::SnapshotProgress`] after
+/// each [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES)
+/// buffer lands, so the active sync's `Channel<SyncProgressUpdate>`
+/// carries a real bytes-done signal to the UI.
+///
+/// The tick cadence is deliberately unchanged by the QUIC port:
+/// `BULK_COPY_BYTES` is `BINARY_FRAME_CHUNK_SIZE`, which under the old
+/// transport *was* the binary-frame size, so the UI still sees one event
+/// per 5 MB (a 256 MB blob is at most ~52 ticks, well within event-bus
+/// budget). The buffer is no longer a frame — nothing on the wire can
+/// observe it — it is now only a memory bound and a progress
+/// granularity. A terminal `"complete"` tick is emitted once the blob
+/// finishes.
 pub struct SnapshotTransferProgress<'a> {
     pub event_sink: &'a Arc<dyn SyncEventSink>,
     pub remote_device_id: &'a str,
@@ -410,35 +447,49 @@ impl SnapshotTransferProgress<'_> {
     }
 }
 
-/// Send the compressed snapshot bytes over the WebSocket in
-/// [`BINARY_FRAME_CHUNK_SIZE`]-sized binary frames.
+/// Write the compressed snapshot bytes onto the already-open bi-stream as
+/// one uninterrupted run of bytes.
 ///
-/// Streams via
-/// [`SyncConnection::send_binary_streaming_with_progress`](crate::sync_net::SyncConnection::send_binary_streaming_with_progress)
-/// so each 5 MB frame ticks a [`SyncEvent::SnapshotProgress`] with the
-/// `"sending"` phase, mirroring the attachment-transfer path in
-/// [`sync_files`](crate::sync_files). A zero-length snapshot is delivered
-/// as a single empty frame so the receiver's frame accounting terminates
-/// cleanly. A terminal `"complete"` tick is emitted once all bytes ship.
+/// Streams via [`send_bulk`](crate::transport::bulk::send_bulk) so each
+/// [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES) buffer
+/// ticks a [`SyncEvent::SnapshotProgress`] with the `"sending"` phase,
+/// mirroring the attachment-transfer path in
+/// [`sync_files`](crate::sync_files). A terminal `"complete"` tick is
+/// emitted once all bytes ship.
+///
+/// # A zero-length snapshot now puts NOTHING on the wire
+///
+/// The old transport sent one empty binary frame for `total == 0`, purely
+/// so the receiver's per-frame accounting had something to terminate on.
+/// Under QUIC there are no frames: an empty payload writes zero bytes, and
+/// [`recv_bulk`](crate::transport::bulk::recv_bulk) correspondingly reads
+/// none. Emitting a sentinel here would desync the stream — the receiver
+/// would consume it as the length prefix of the *next* framed message. The
+/// `on_progress(0)` tick survives inside `send_bulk` so callers can still
+/// paint a 0 % state.
 ///
 /// #2503: test-only (backs the legacy CBOR offer path).
+///
+/// `_recv` is unused — this direction only writes. It is taken so every
+/// catch-up entry point in this module has the same `(send, recv)` prefix
+/// and callers do not have to remember which half each phase needs.
 #[cfg(any(test, feature = "test-util"))]
 pub async fn send_snapshot_bytes(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    _recv: &mut RecvStream,
     compressed: &[u8],
     progress: &SnapshotTransferProgress<'_>,
 ) -> Result<(), AppError> {
     let total = compressed.len() as u64;
     // `&[u8]` implements `tokio::io::AsyncRead` (+ Unpin), so the
-    // in-memory compressed blob can be streamed straight through the
-    // shared progress-aware sender without an intermediate file or a
-    // sync `std::io::Cursor` (which is NOT `AsyncRead`).
-    conn.send_binary_streaming_with_progress(
-        compressed,
-        total,
-        BINARY_FRAME_CHUNK_SIZE,
-        |bytes_sent| progress.emit("sending", bytes_sent),
-    )
+    // in-memory compressed blob is streamed straight through the shared
+    // bulk sender without an intermediate file, an extra copy, or a sync
+    // `std::io::Cursor` (which is NOT `AsyncRead`). Peak heap during the
+    // send is one `BULK_COPY_BYTES` buffer on top of the blob we were
+    // handed — it does not scale with the payload.
+    send_bulk(send, compressed, total, |bytes_sent| {
+        progress.emit("sending", bytes_sent)
+    })
     .await?;
     progress.emit("complete", total);
     Ok(())
@@ -477,8 +528,8 @@ pub struct LoroCatchupSent {
 /// any unsynced local edits (the #2474 data-loss contract) — the responder
 /// now exports each registered space's `LoroDoc` snapshot
 /// (`ExportMode::Snapshot`, the engine's truth) and streams it over the same
-/// chunked-binary transport the normal streaming phase uses
-/// ([`crate::sync_daemon::wire::send_sync_message`]).
+/// framed transport the normal streaming phase uses
+/// ([`crate::transport::session::send_sync_message`]).
 ///
 /// The initiator imports each snapshot into its own engine with Loro's
 /// **merge** semantics ([`crate::sync_protocol::loro_sync::apply_remote`]) and
@@ -494,9 +545,14 @@ pub struct LoroCatchupSent {
 /// (pre-#2503) initiator expecting a `SnapshotOffer` will fail this catch-up
 /// and retry — see the deprecation note in
 /// `docs/architecture/sync-protocol-spec.md`.
+///
+/// `_recv` is unused — this phase only writes; the responder streams every
+/// space snapshot and never waits for a reply. It is taken so every catch-up
+/// entry point in this module has the same `(send, recv)` prefix.
 #[tracing::instrument(skip_all, err)]
 pub async fn try_offer_loro_snapshot_catchup(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    _recv: &mut RecvStream,
     pool: &SqlitePool,
     registry: &LoroEngineRegistry,
     event_sink: &Arc<dyn SyncEventSink>,
@@ -533,9 +589,12 @@ pub async fn try_offer_loro_snapshot_catchup(
             peer_id = %remote_device_id,
             "loro-snapshot catch-up: responder has no exportable space state to offer"
         );
-        conn.send_json(&SyncMessage::SyncComplete {
-            last_hash: String::new(),
-        })
+        send_sync_message(
+            send,
+            &SyncMessage::SyncComplete {
+                last_hash: String::new(),
+            },
+        )
         .await?;
         return Ok(LoroCatchupSent {
             spaces_sent: 0,
@@ -560,10 +619,17 @@ pub async fn try_offer_loro_snapshot_catchup(
     for (idx, msg) in messages.into_iter().enumerate() {
         let is_last = idx + 1 == total;
         bytes_sent += loro_msg_payload_len(&msg);
-        // `send_sync_message` picks the inline or chunked-binary transport
-        // per payload size (#611), so an arbitrarily large space snapshot
-        // never blows the JSON text-frame cap.
-        super::wire::send_sync_message(conn, &SyncMessage::LoroSync { msg, is_last }).await?;
+        // One length-prefixed frame per space snapshot, however large: a
+        // QUIC stream has no message boundary and no 10 MB text-frame cap,
+        // so the #611 inline-vs-chunked split that `sync_daemon::wire`
+        // existed to make has nothing left to decide. The one bound that
+        // remains is `transport::session::MAX_FRAME_SIZE` (256 MB), and it
+        // still bites earlier than the payload size suggests: `bytes` is a
+        // `Vec<u8>` inside a serde-JSON enum, so a space snapshot costs ~4
+        // bytes on the wire per byte of CRDT state. That inflation is a
+        // property of `SyncMessage`'s shape, not of the transport — see the
+        // `transport::session` module docs.
+        send_sync_message(send, &SyncMessage::LoroSync { msg, is_last }).await?;
     }
 
     Ok(LoroCatchupSent {
@@ -615,15 +681,15 @@ pub enum CatchupOutcome {
 ///
 /// Behaviour:
 ///
-/// - Reads the next message, expecting [`SyncMessage::SnapshotOffer`].
-///   Any other variant returns [`AppError::InvalidOperation`] so the
-///   caller records a sync failure (same treatment as a malformed
-///   delta exchange).
+/// - Reads the next message under an explicit [`RECV_TIMEOUT`],
+///   expecting [`SyncMessage::SnapshotOffer`]. Any other variant returns
+///   [`AppError::InvalidOperation`] so the caller records a sync failure
+///   (same treatment as a malformed delta exchange).
 /// - Enforces [`MAX_SNAPSHOT_SIZE`] on the advertised `size_bytes`.
 ///   Over cap → send `SnapshotReject` and return
 ///   [`CatchupOutcome::Rejected`].
-/// - Under cap → send `SnapshotAccept`, receive `size_bytes` in binary
-///   frames, call [`apply_snapshot`], and update
+/// - Under cap → send `SnapshotAccept`, read exactly `size_bytes` off
+///   the stream, call [`apply_snapshot`], and update
 ///   [`peer_refs`](agaric_store::peer_refs) with the new `up_to_hash`.
 ///
 /// `apply_snapshot` wraps the restore in a single `BEGIN IMMEDIATE`
@@ -661,8 +727,13 @@ pub enum CatchupOutcome {
 /// initialised) is logged at `warn!` — the snapshot is still applied,
 /// but any live engines keep pre-reset state until restart.
 #[tracing::instrument(skip_all, err)]
+// One argument over the lint, and the extra one is the receive half of a bi-stream that
+// used to be a single `&mut SyncConnection`. Re-bundling them would cost the disjoint
+// field borrows the call sites depend on.
+#[allow(clippy::too_many_arguments)]
 pub async fn try_receive_snapshot_catchup(
-    conn: &mut SyncConnection,
+    send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     materializer: &dyn ApplyHost,
     event_sink: &Arc<dyn SyncEventSink>,
@@ -670,46 +741,51 @@ pub async fn try_receive_snapshot_catchup(
     expected_remote_id: Option<&str>,
     engine_reload: Option<EngineReloadCtx<'_>>,
 ) -> Result<CatchupOutcome, AppError> {
-    // #2503: read the responder's first post-ResetRequired message through
-    // the wire layer so a chunked LoroSync (a large Loro snapshot) is
-    // reassembled. Dispatch on its kind:
+    // #2503: read the responder's first post-ResetRequired message. Under
+    // QUIC this is one length-prefixed frame however large — there is no
+    // chunked reassembly step, because there is no message-size cap to
+    // chunk around. Bounded by `RECV_TIMEOUT` because this runs AFTER the
+    // driver loop, on the same stream, and QUIC gives a receive no clock of
+    // its own. Dispatch on its kind:
     //   * `LoroSync`      → NEW peer streaming full per-space Loro snapshots;
     //                       import + MERGE them (unsynced local edits survive)
     //                       and reproject SQL — the #2503 catch-up.
     //   * `SnapshotOffer` → legacy (pre-#2503) peer offering a zstd-CBOR SQL
     //                       snapshot RESET; accepted for back-compat via the
     //                       wipe-and-replace path below (accept-old).
-    let (size_bytes, expected_blob_blake3) = match super::wire::recv_sync_message(conn).await? {
-        SyncMessage::LoroSync { msg, is_last } => {
-            return receive_loro_snapshot_catchup(
-                conn,
-                pool,
-                materializer,
-                event_sink,
-                remote_device_id,
-                expected_remote_id,
-                engine_reload,
-                msg,
-                is_last,
-            )
-            .await;
-        }
-        SyncMessage::SnapshotOffer {
-            size_bytes,
-            blob_blake3,
-        } => (size_bytes, blob_blake3),
-        SyncMessage::Error { message } => {
-            return Err(AppError::InvalidOperation(format!(
-                "peer reported error instead of snapshot offer: {message}"
-            )));
-        }
-        other => {
-            return Err(AppError::InvalidOperation(format!(
-                "expected SnapshotOffer after ResetRequired, got {:?}",
-                std::mem::discriminant(&other)
-            )));
-        }
-    };
+    let (size_bytes, expected_blob_blake3) =
+        match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
+            SyncMessage::LoroSync { msg, is_last } => {
+                return receive_loro_snapshot_catchup(
+                    send,
+                    recv,
+                    pool,
+                    materializer,
+                    event_sink,
+                    remote_device_id,
+                    expected_remote_id,
+                    engine_reload,
+                    msg,
+                    is_last,
+                )
+                .await;
+            }
+            SyncMessage::SnapshotOffer {
+                size_bytes,
+                blob_blake3,
+            } => (size_bytes, blob_blake3),
+            SyncMessage::Error { message } => {
+                return Err(AppError::InvalidOperation(format!(
+                    "peer reported error instead of snapshot offer: {message}"
+                )));
+            }
+            other => {
+                return Err(AppError::InvalidOperation(format!(
+                    "expected SnapshotOffer after ResetRequired, got {:?}",
+                    std::mem::discriminant(&other)
+                )));
+            }
+        };
 
     tracing::info!(
         peer_id = %remote_device_id,
@@ -724,7 +800,7 @@ pub async fn try_receive_snapshot_catchup(
             cap = MAX_SNAPSHOT_SIZE,
             "snapshot offer exceeds size cap; rejecting"
         );
-        conn.send_json(&SyncMessage::SnapshotReject).await?;
+        send_sync_message(send, &SyncMessage::SnapshotReject).await?;
         event_sink.on_sync_event(SyncEvent::Error {
             message: format!(
                 "snapshot offer ({size_bytes} bytes) exceeds local cap ({MAX_SNAPSHOT_SIZE} bytes)"
@@ -741,15 +817,17 @@ pub async fn try_receive_snapshot_catchup(
         ops_sent: 0,
     });
 
-    conn.send_json(&SyncMessage::SnapshotAccept).await?;
+    send_sync_message(send, &SyncMessage::SnapshotAccept).await?;
 
     // Stream the compressed bytes straight to a temp file under
     // the app data dir instead of accumulating them into a `Vec<u8>`.
-    // Peak Rust-heap during the receive is one
-    // `BINARY_FRAME_CHUNK_SIZE` buffer (5 MB); a 256 MB compressed
-    // snapshot used to live entirely in memory until `apply_snapshot`
-    // returned. The `MAX_SNAPSHOT_SIZE` cap is enforced on
-    // `size_bytes` above, so the on-disk temp is bounded by 256 MB.
+    // Peak Rust-heap during the receive is one `BULK_COPY_BYTES` buffer
+    // (5 MB); a 256 MB compressed snapshot used to live entirely in
+    // memory until `apply_snapshot` returned. The `MAX_SNAPSHOT_SIZE`
+    // cap is enforced on `size_bytes` above — that is the PRIMARY check,
+    // and it fires before a byte moves — so the on-disk temp is bounded
+    // by 256 MB. `receive_snapshot_to_temp` passes the same cap to
+    // `recv_bulk` as a backstop; see there.
     // `SnapshotTempFile::Drop` unlinks the temp on every exit path
     // (success, decode failure, panic) — see the type's docs.
     let app_data_dir = app_data_dir_from_pool(pool).await?;
@@ -759,7 +837,8 @@ pub async fn try_receive_snapshot_catchup(
         bytes_total: size_bytes,
     };
     let temp =
-        receive_snapshot_to_temp(conn, &app_data_dir, size_bytes, Some(&recv_progress)).await?;
+        receive_snapshot_to_temp(send, recv, &app_data_dir, size_bytes, Some(&recv_progress))
+            .await?;
     // #2133 — terminal tick: the full blob is now on disk. Emit a
     // `"complete"` SnapshotProgress so the UI can clear the transfer
     // affordance before the (potentially slow) decode/apply begins.
@@ -1046,10 +1125,15 @@ pub async fn try_receive_snapshot_catchup(
 /// that without an engine-only reset (not yet implemented); it surfaces as an
 /// error so the session records a failure and retries, rather than silently
 /// corrupting state.
+///
+/// `_send` is unused — this phase only reads; every message it consumes is
+/// pushed by the responder and none is acknowledged. It is taken so every
+/// catch-up entry point in this module has the same `(send, recv)` prefix.
 #[tracing::instrument(skip_all, err)]
 #[allow(clippy::too_many_arguments)]
 async fn receive_loro_snapshot_catchup(
-    conn: &mut SyncConnection,
+    _send: &mut SendStream,
+    recv: &mut RecvStream,
     pool: &SqlitePool,
     materializer: &dyn ApplyHost,
     event_sink: &Arc<dyn SyncEventSink>,
@@ -1124,7 +1208,13 @@ async fn receive_loro_snapshot_catchup(
         if is_last {
             break;
         }
-        match super::wire::recv_sync_message(conn).await? {
+        // Bounded per message, not per catch-up: the responder exports and
+        // sends one space snapshot at a time, so a peer with many large
+        // spaces legitimately takes longer than `RECV_TIMEOUT` in total
+        // while never being silent for that long. QUIC contributes no clock
+        // here, so without this an export that dies between spaces leaves
+        // this loop awaiting a frame that will never come, forever.
+        match recv_sync_message_within(recv, RECV_TIMEOUT).await? {
             SyncMessage::LoroSync { msg, is_last: il } => {
                 loro_msg = msg;
                 is_last = il;
@@ -1336,22 +1426,27 @@ async fn blake3_of_file(path: &Path) -> Result<String, AppError> {
     .map_err(|e| AppError::Snapshot(format!("blake3 hashing task panicked: {e}")))?
 }
 
-/// Stream `size_bytes` of a compressed snapshot from `conn` straight
-/// To a `<app_data_dir>/snapshot-recv-<rand>.tmp` file.
+/// Stream `size_bytes` of a compressed snapshot off `recv` straight
+/// to a `<app_data_dir>/snapshot-recv-<rand>.tmp` file.
 ///
 /// Replaces the old `receive_snapshot_bytes` `Vec<u8>` accumulator —
-/// peak Rust-heap during the receive is now one
-/// `BINARY_FRAME_CHUNK_SIZE` buffer regardless of the snapshot
-/// size, instead of `O(size_bytes)`. The `MAX_SNAPSHOT_SIZE` cap
-/// (256 MB) enforced on the wire-level `size_bytes` by
+/// peak Rust-heap during the receive is one
+/// [`BULK_COPY_BYTES`](crate::transport::bulk::BULK_COPY_BYTES) buffer
+/// regardless of the snapshot size, instead of `O(size_bytes)`. Nothing
+/// here is sized from `size_bytes`. The `MAX_SNAPSHOT_SIZE` cap (256 MB)
+/// enforced on the wire-level `size_bytes` by
 /// `try_receive_snapshot_catchup` bounds the temp file the same way.
 ///
 /// The returned [`SnapshotTempFile`] guard unlinks the file on
 /// drop, so the caller does not need an explicit cleanup branch on
 /// the apply / decode error paths.
-#[tracing::instrument(skip(conn, app_data_dir, progress), err)]
+///
+/// `_send` is unused — this phase only reads. It is taken so every
+/// catch-up entry point in this module has the same `(send, recv)` prefix.
+#[tracing::instrument(skip(_send, recv, app_data_dir, progress), err)]
 async fn receive_snapshot_to_temp(
-    conn: &mut SyncConnection,
+    _send: &mut SendStream,
+    recv: &mut RecvStream,
     app_data_dir: &Path,
     size_bytes: u64,
     progress: Option<&SnapshotTransferProgress<'_>>,
@@ -1374,22 +1469,43 @@ async fn receive_snapshot_to_temp(
         ))
     })?;
 
-    // Uses the streaming receiver: per-frame chunks are
-    // pulled off the wire and written to the file as they arrive,
-    // so neither the compressed payload nor the partially-buffered
-    // chunk accumulator from the old `receive_binary_chunked` ever
-    // grows beyond a single frame. When a progress hook is present
-    // (#2133), each frame ticks a `"receiving"` SnapshotProgress event
-    // so the UI sees a real bytes-done bar for the catch-up blob.
+    // Uses the bulk receiver: bytes are pulled off the stream and written
+    // to the file as they arrive, so neither the compressed payload nor
+    // any accumulator ever grows beyond a single `BULK_COPY_BYTES` buffer.
+    // When a progress hook is present (#2133), each buffer ticks a
+    // `"receiving"` SnapshotProgress event so the UI sees a real
+    // bytes-done bar for the catch-up blob.
+    //
+    // Cap: `MAX_SNAPSHOT_SIZE`. This is the BACKSTOP, not the primary
+    // check — `try_receive_snapshot_catchup` already rejected an
+    // over-cap `size_bytes` at the offer, with a `SnapshotReject` on the
+    // wire, before we got here. It is passed again because under QUIC the
+    // cap belongs to the caller: the old transport bounded every frame at
+    // `MAX_MSG_SIZE` and so put a ceiling on a runaway receive whatever
+    // the call site did, and a QUIC stream has no such ceiling. So this
+    // arms the same bound for any future caller that reaches this
+    // function without the offer-time check, and `recv_bulk` refuses
+    // before it reads or allocates anything.
+    //
+    // A `size_bytes` of 0 reads NOTHING off the stream: the old
+    // transport's empty sentinel frame has no counterpart under QUIC, and
+    // consuming one that was never sent would eat the length prefix of
+    // the next framed message and desync the session.
     match progress {
         Some(p) => {
-            conn.receive_binary_streaming_with_progress(&mut file, size_bytes, |bytes_received| {
-                p.emit("receiving", bytes_received);
-            })
+            recv_bulk(
+                recv,
+                &mut file,
+                size_bytes,
+                MAX_SNAPSHOT_SIZE,
+                |bytes_received| {
+                    p.emit("receiving", bytes_received);
+                },
+            )
             .await?;
         }
         None => {
-            conn.receive_binary_streaming(&mut file, size_bytes).await?;
+            recv_bulk(recv, &mut file, size_bytes, MAX_SNAPSHOT_SIZE, |_| {}).await?;
         }
     }
 

@@ -84,6 +84,8 @@
 //! finishing here would end the session; opening a second stream would change
 //! protocol sequencing, which this slice deliberately does not touch.
 
+use std::time::Duration;
+
 use iroh::endpoint::{RecvStream, SendStream};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -98,6 +100,32 @@ use crate::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 /// that progress ticks land at the same cadence they did under the WebSocket
 /// transport, where this constant *was* the frame size.
 pub const BULK_COPY_BYTES: usize = BINARY_FRAME_CHUNK_SIZE;
+
+/// Longest this side waits for the peer to deliver *some* bytes mid-transfer.
+///
+/// # Why a bound exists here at all
+///
+/// The old bulk receive looped over `SyncConnection::recv_binary()`, and every one of
+/// those calls was wrapped in `RECV_TIMEOUT`. Nothing at the call sites said so, which
+/// is exactly why it is the kind of guarantee a transport swap drops silently: there is
+/// no timeout in the old `sync_files` or `snapshot_transfer` code to port, because the
+/// transport supplied it. Under QUIC, `RecvStream::read` on a peer that sent one byte
+/// and then vanished never resolves — a multi-gigabyte attachment transfer becomes a
+/// task that hangs forever holding a responder permit and a per-peer lock.
+///
+/// # Scope, re-derived rather than inherited
+///
+/// This is an **idle** bound, not a transfer bound, and that is the old scope stated
+/// precisely. `RECV_TIMEOUT` bounded one `BINARY_FRAME_CHUNK_SIZE` chunk, so a slow but
+/// delivering peer never tripped it however long the whole file took. Applying the same
+/// number to a whole transfer would be the #3481 mistake in its original direction —
+/// same value, silently wider scope — and would cap attachments at whatever fits in
+/// 180 s. So it is reset on every completed read: it bounds *silence*, and a peer
+/// making any progress at all resets it.
+///
+/// The value is `SyncConnection::RECV_TIMEOUT`'s, restated for the same reason
+/// `driver` restates it: the number moves with the responsibility, not the name.
+pub const BULK_IDLE_TIMEOUT: Duration = Duration::from_secs(180);
 
 fn bulk_err(msg: impl Into<String>) -> AppError {
     AppError::InvalidOperation(format!("[transport::bulk] {}", msg.into()))
@@ -129,6 +157,21 @@ impl Origin {
             Self::Peer => bulk_err(format!(
                 "bulk receive: peer stopped sending at {moved} bytes, expected {total_size}"
             )),
+        }
+    }
+
+    /// The source delivered nothing for `idle` — a stall, not an end.
+    ///
+    /// Distinguished from [`Self::exhausted`] because they call for different actions:
+    /// a truncated local file is this device's problem and will recur, while a peer
+    /// that went quiet is a retry.
+    fn went_quiet(self, idle: std::time::Duration) -> AppError {
+        let secs = idle.as_secs();
+        match self {
+            Self::LocalReader => bulk_err(format!(
+                "bulk send: local reader delivered nothing for {secs}s"
+            )),
+            Self::Peer => bulk_err(format!("bulk receive: peer sent nothing for {secs}s")),
         }
     }
 
@@ -166,6 +209,7 @@ async fn copy_exact<R, W, F>(
     writer: &mut W,
     total_size: u64,
     origin: Origin,
+    idle_timeout: std::time::Duration,
     mut on_progress: F,
 ) -> Result<(), AppError>
 where
@@ -205,9 +249,13 @@ where
         // whose callers emit a Tauri event per tick.
         let mut filled = 0usize;
         while filled < want {
-            let n = reader
-                .read(&mut buf[filled..want])
+            // Bounded because the peer's half of this is a QUIC stream with no timeout
+            // of its own — see `BULK_IDLE_TIMEOUT`. Reset per read, so it bounds silence
+            // rather than the transfer. On the send side `reader` is a local file and
+            // this can only fire on a stalled disk, where hanging is not better.
+            let n = tokio::time::timeout(idle_timeout, reader.read(&mut buf[filled..want]))
                 .await
+                .map_err(|_| origin.went_quiet(idle_timeout))?
                 .map_err(|e| origin.read_failed(&e))?;
             if n == 0 {
                 // EOF with bytes still owed. Reporting the partially-filled
@@ -250,7 +298,26 @@ where
 /// already a `usize` — but they are written as conversions rather than casts so
 /// that a future change to either type fails loudly instead of truncating a
 /// length silently.
+///
+/// # `buffer_len` must not be zero
+///
+/// The old chunking API guarded this with `chunk_size.max(1)`. That guard is
+/// gone, and its absence is worse than its presence was: a zero-length buffer
+/// makes this return zero, which makes `copy_exact` loop forever issuing
+/// zero-byte reads — a hang with no I/O and no error, rather than a failure.
+///
+/// Unreachable today only because [`BULK_COPY_BYTES`] is a `const`, which is
+/// exactly the kind of guarantee that stops holding the moment someone makes the
+/// size configurable. The assert is debug-only because the release cost of the
+/// branch is not worth paying for a condition no production call site can
+/// currently express — its job is to fail the test run of whoever makes it
+/// expressible.
 fn remaining_this_pass(owed: u64, buffer_len: usize) -> usize {
+    debug_assert!(
+        buffer_len > 0,
+        "a zero-length copy buffer would make copy_exact spin forever issuing \
+         zero-byte reads; size the buffer before calling"
+    );
     let buffer = u64::try_from(buffer_len).unwrap_or(u64::MAX);
     usize::try_from(owed.min(buffer)).unwrap_or(buffer_len)
 }
@@ -291,7 +358,15 @@ where
     // `SendStream` implements `tokio::io::AsyncWrite` (quinn 0.11
     // `send_stream.rs`, outside the `futures-io` cfg) and iroh re-exports the
     // type, so the generic core drives the real stream with no adapter.
-    copy_exact(reader, send, total_size, Origin::LocalReader, on_progress).await
+    copy_exact(
+        reader,
+        send,
+        total_size,
+        Origin::LocalReader,
+        BULK_IDLE_TIMEOUT,
+        on_progress,
+    )
+    .await
 }
 
 /// Read exactly `total_size` bytes from an already-open bi-stream into `writer`,
@@ -321,7 +396,15 @@ where
 {
     // `RecvStream` implements `tokio::io::AsyncRead` (quinn 0.11
     // `recv_stream.rs`, outside the `futures-io` cfg).
-    recv_bulk_from(recv, writer, total_size, max_size, on_progress).await
+    recv_bulk_from(
+        recv,
+        writer,
+        total_size,
+        max_size,
+        BULK_IDLE_TIMEOUT,
+        on_progress,
+    )
+    .await
 }
 
 /// The body of [`recv_bulk`], generic over the source.
@@ -337,6 +420,7 @@ async fn recv_bulk_from<R, W, F>(
     writer: &mut W,
     total_size: u64,
     max_size: u64,
+    idle_timeout: Duration,
     on_progress: F,
 ) -> Result<(), AppError>
 where
@@ -351,7 +435,15 @@ where
             "peer announced a {total_size}-byte payload (max {max_size}); refusing to receive"
         )));
     }
-    copy_exact(recv, writer, total_size, Origin::Peer, on_progress).await
+    copy_exact(
+        recv,
+        writer,
+        total_size,
+        Origin::Peer,
+        idle_timeout,
+        on_progress,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -493,6 +585,38 @@ mod tests {
                 return Poll::Ready(Ok(()));
             }
             let n = buf.remaining().min(me.max_per_read).min(owed);
+            let chunk: Vec<u8> = (0..n).map(|i| stream_byte(me.delivered + i)).collect();
+            buf.put_slice(&chunk);
+            me.delivered += n;
+            Poll::Ready(Ok(()))
+        }
+    }
+
+    /// A source that delivers some bytes and then never resolves again.
+    ///
+    /// The one shape neither [`PatternReader`] nor a real peer can express: EOF and
+    /// silence are different failures, and only silence needs a clock. Returning
+    /// `Poll::Pending` **without** registering a waker is deliberate — the reader is
+    /// modelling a peer that will never speak again, so there is nothing to wake on,
+    /// and the only thing that can resolve the future is the timeout under test.
+    struct StallingReader {
+        /// Bytes it will deliver before going quiet forever.
+        available: usize,
+        delivered: usize,
+    }
+
+    impl AsyncRead for StallingReader {
+        fn poll_read(
+            mut self: Pin<&mut Self>,
+            _cx: &mut Context<'_>,
+            buf: &mut ReadBuf<'_>,
+        ) -> Poll<io::Result<()>> {
+            let me = &mut *self;
+            let owed = me.available.saturating_sub(me.delivered);
+            if owed == 0 {
+                return Poll::Pending;
+            }
+            let n = buf.remaining().min(owed);
             let chunk: Vec<u8> = (0..n).map(|i| stream_byte(me.delivered + i)).collect();
             buf.put_slice(&chunk);
             me.delivered += n;
@@ -804,9 +928,16 @@ mod tests {
         let mut writer = RecordingWriter::default();
         let ticks = Ticks::default();
 
-        let err = recv_bulk_from(&mut reader, &mut writer, 4096, 4095, ticks.recorder())
-            .await
-            .expect_err("a payload above the cap must be refused");
+        let err = recv_bulk_from(
+            &mut reader,
+            &mut writer,
+            4096,
+            4095,
+            BULK_IDLE_TIMEOUT,
+            ticks.recorder(),
+        )
+        .await
+        .expect_err("a payload above the cap must be refused");
 
         let text = err.to_string();
         assert!(
@@ -844,9 +975,16 @@ mod tests {
         let mut reader = PatternReader::new(4096, BULK_COPY_BYTES);
         let mut writer = RecordingWriter::default();
 
-        recv_bulk_from(&mut reader, &mut writer, 4096, 4096, |_| {})
-            .await
-            .expect("a payload exactly at the cap is legal");
+        recv_bulk_from(
+            &mut reader,
+            &mut writer,
+            4096,
+            4096,
+            BULK_IDLE_TIMEOUT,
+            |_| {},
+        )
+        .await
+        .expect("a payload exactly at the cap is legal");
 
         assert_is_the_delivered_stream(&writer.bytes, 4096);
     }
@@ -877,6 +1015,7 @@ mod tests {
             &mut writer,
             as_u64(total),
             as_u64(total),
+            BULK_IDLE_TIMEOUT,
             ticks.recorder(),
         )
         .await
@@ -930,6 +1069,7 @@ mod tests {
             &mut writer,
             as_u64(total),
             as_u64(total),
+            BULK_IDLE_TIMEOUT,
             |_| {},
         )
         .await
@@ -963,6 +1103,7 @@ mod tests {
             &mut writer,
             4096,
             Origin::LocalReader,
+            BULK_IDLE_TIMEOUT,
             |_| {},
         )
         .await
@@ -972,6 +1113,66 @@ mod tests {
         assert!(
             text.contains("bulk send: reader exhausted at 100 bytes, expected 4096"),
             "a short local file must not be blamed on the peer, got: {text}"
+        );
+    }
+
+    /// A peer that goes quiet mid-transfer fails on the idle clock, rather than hanging.
+    ///
+    /// # Why this needs a fake and could not be driven against a real peer
+    ///
+    /// The distinction under test is between *EOF* and *silence*. A truncated peer
+    /// closes its stream, which surfaces as `peer stopped sending at N bytes` and is
+    /// already covered above. A peer that is merely gone leaves the stream open, and
+    /// `RecvStream::read` on it returns `Pending` for eternity: there is no error to
+    /// surface, no EOF, and nothing a cooperating test peer will do on request.
+    ///
+    /// The old transport hid this — every `recv_binary()` sat inside `RECV_TIMEOUT` —
+    /// so there is no timeout at the `sync_files` call sites to port, which is exactly
+    /// why it is the kind of bound that goes missing across a transport swap.
+    ///
+    /// Forced red by dropping the `tokio::time::timeout` wrapper in `copy_exact`: the
+    /// test then hangs to nextest's own hard timeout instead of failing here, which is
+    /// the shape of the production bug it guards.
+    #[tokio::test]
+    async fn a_peer_that_goes_quiet_mid_transfer_trips_the_idle_clock() {
+        let mut reader = StallingReader {
+            available: 8,
+            delivered: 0,
+        };
+        let mut writer = RecordingWriter::default();
+
+        let err = tokio::time::timeout(
+            Duration::from_secs(5),
+            recv_bulk_from(
+                &mut reader,
+                &mut writer,
+                4096,
+                4096,
+                Duration::from_millis(200),
+                |_| {},
+            ),
+        )
+        .await
+        .expect(
+            "the receive must give up on its own idle clock; reaching this deadline \
+             means there is no clock and a silent peer hangs the transfer forever",
+        )
+        .expect_err("a peer that goes quiet must not look like a completed transfer");
+
+        let text = err.to_string();
+        assert!(
+            text.contains("peer sent nothing for"),
+            "a stall must be reported as silence, not as a short stream or an I/O \
+             error, got: {text}"
+        );
+        // The copy fills a whole buffer before it writes, so a stall 8 bytes in leaves
+        // the writer empty — correct, and the reason this asserts on the *reader*
+        // instead. Without it the test would also pass against a receive that gave up
+        // before issuing a single read, which is a different bug wearing the same
+        // error message.
+        assert_eq!(
+            reader.delivered, 8,
+            "the copy must have consumed what the peer did send before the clock fired"
         );
     }
 
@@ -999,9 +1200,16 @@ mod tests {
         let mut reader = PatternReader::new(0, BULK_COPY_BYTES);
         let mut writer = RecordingWriter::default();
 
-        let err = recv_bulk_from(&mut reader, &mut writer, announced, announced * 2, |_| {})
-            .await
-            .expect_err("a source that delivers nothing must fail");
+        let err = recv_bulk_from(
+            &mut reader,
+            &mut writer,
+            announced,
+            announced * 2,
+            BULK_IDLE_TIMEOUT,
+            |_| {},
+        )
+        .await
+        .expect_err("a source that delivers nothing must fail");
         assert!(
             err.to_string().contains("peer stopped sending at 0 bytes"),
             "expected a short-stream failure, got: {err}"
@@ -1039,6 +1247,7 @@ mod tests {
             &mut writer,
             as_u64(total),
             as_u64(total),
+            BULK_IDLE_TIMEOUT,
             ticks.recorder(),
         )
         .await
@@ -1072,6 +1281,54 @@ mod tests {
         assert_eq!(
             writer.shutdowns, 0,
             "the stream stays open for the rest of the session"
+        );
+    }
+
+    /// `RecordingWriter::writes` was recorded and never read — scaffolding
+    /// wearing the costume of coverage, as the #3490 review noted.
+    ///
+    /// It gets its own test rather than another assertion on
+    /// [`progress_ticks_once_per_buffer_and_totals_the_payload`], because there
+    /// it was **unfalsifiable by shadowing**: every break that produces an
+    /// over-sized write also perturbs the tick sequence, so the tick assertion
+    /// fires first and the write assertion is never reached. An assertion that
+    /// only ever runs when it is already going to pass proves nothing, which was
+    /// the original complaint in a new costume.
+    ///
+    /// What it adds over the two existing memory tests: they watch the *read*
+    /// side — the length this module asks for. This watches the *sink*, which is
+    /// the last place an over-sized buffer is still visible. `writer.bytes` only
+    /// accumulates and so cannot tell one 12 MB write from three 5 MB ones.
+    ///
+    /// Falsified by sizing the copy buffer `vec![0u8; total_size as usize]`:
+    /// "no single write may exceed one buffer; got [10001234]" — one write of the
+    /// whole payload where there should have been three.
+    #[tokio::test]
+    async fn no_single_write_exceeds_one_buffer() {
+        let total = BULK_COPY_BYTES * 2 + 1234;
+        let mut reader = PatternReader::new(total, 128 * 1024);
+        let mut writer = RecordingWriter::default();
+
+        recv_bulk_from(
+            &mut reader,
+            &mut writer,
+            as_u64(total),
+            as_u64(total),
+            BULK_IDLE_TIMEOUT,
+            |_| {},
+        )
+        .await
+        .expect("the payload arrives");
+
+        assert!(
+            writer.writes.iter().all(|&n| n <= BULK_COPY_BYTES),
+            "no single write may exceed one buffer; got {:?}",
+            writer.writes
+        );
+        assert_eq!(
+            writer.writes.iter().sum::<usize>(),
+            total,
+            "the writes must account for the whole payload and nothing more"
         );
     }
 }

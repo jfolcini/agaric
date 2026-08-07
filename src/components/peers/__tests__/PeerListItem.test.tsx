@@ -32,6 +32,7 @@ function makePeer(overrides: Partial<PeerRefRow> = {}): PeerRefRow {
     cert_hash: null,
     device_name: null,
     last_address: null,
+    endpoint_id: null,
     ...overrides,
   }
 }
