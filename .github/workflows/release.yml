@@ -1065,6 +1065,29 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Free up runner disk space
+        # This job builds only one architecture, unlike ci.yml's two-arch
+        # android-build, but #3542 deliberately removed every restore cache on
+        # this publishing lane. Its aarch64 release `target/` tree is therefore
+        # fully cold, alongside the SDK/NDK, and can exhaust the ~14 GB the
+        # default ubuntu-24.04 runner leaves free. Reclaim the large preinstalled
+        # toolchains this job never uses BEFORE the SDK/NDK install and build.
+        # The preinstalled Android NDKs are removed too — `setup-android` below
+        # reinstalls the single pinned NDK this release needs. ~20-25 GB
+        # recovered; `|| true` means only a missing cleanup target does not fail
+        # the release.
+        run: |
+          set -x
+          df -h /
+          sudo rm -rf /usr/share/dotnet || true
+          sudo rm -rf /opt/ghc /usr/local/.ghcup || true
+          sudo rm -rf /usr/local/share/powershell || true
+          sudo rm -rf /usr/local/share/chromium || true
+          sudo rm -rf /usr/local/lib/android/sdk/ndk || true
+          sudo rm -rf /opt/hostedtoolcache/CodeQL || true
+          sudo docker image prune --all --force || true
+          df -h /
+
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # master
         with:
