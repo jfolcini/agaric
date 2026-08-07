@@ -34,12 +34,12 @@ Adjacent rejections that already have homes:
 
 ## Sync & networking
 
-- **iroh / iroh-blobs** (historical) — initially evaluated and rejected for size/scope. Now under reconsideration: an approved adoption plan would replace the current mDNS + WebSocket + TLS + TOFU stack. The earlier rejection is no longer current.
-- **magic-wormhole** — over-specified for a same-LAN pairing flow. 4-word EFF-wordlist passphrase + ephemeral mTLS is the right shape.
-- **`webpki` cert verification** — Agaric pins by SHA-256 hash, not by CA chain. `webpki` is the wrong abstraction for self-signed pinned certs.
+- **iroh** (historical) — initially evaluated and rejected for size/scope. **That rejection is reversed and superseded: iroh shipped** (#78, plan #3464). The transport is now QUIC over iroh, replacing mDNS-over-`_tcp` + WebSocket + TLS + cert-hash TOFU. `iroh-blobs` specifically was *not* adopted: its content-addressed "hand over a hash, let the peer fetch" model is a genuinely different shape from what the attachment and snapshot call sites do ("stream the bytes the peer asked for"), and a plain QUIC stream is the same shape minus the workaround. See [`sync-and-network.md`](sync-and-network.md) § Transport.
+- **magic-wormhole** — over-specified for a same-LAN pairing flow. A 4-word EFF-wordlist passphrase whose proof rides inside the first `HeadExchange` is the right shape.
+- **`webpki` cert verification** — rejected when Agaric pinned a self-signed certificate by SHA-256 rather than validating a CA chain. Moot since the iroh cutover: there is no certificate to verify, because a peer *is* its ed25519 public key and the QUIC handshake proves possession of the matching secret.
 - **Persistent shared passphrase** — passphrase theft becomes forever access. Pairing-session passphrases are 5-minute ephemeral.
 - **SPAKE2** for the pairing key derivation — no well-maintained Rust impl; complexity not worth the marginal threat-model upgrade.
-- **Application-layer crypto wrapping** of pairing messages — removed once mTLS replaced it. The TLS session is the only cryptographic envelope.
+- **Application-layer crypto wrapping** of pairing messages — removed once the transport supplied a confidential, mutually-authenticated channel. The QUIC session's TLS 1.3 is the only cryptographic envelope; the pairing passphrase is never used to encrypt anything, only to produce the #855 proof.
 
 ## Recurrence & scheduling
 

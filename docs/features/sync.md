@@ -17,7 +17,7 @@ Agaric syncs across your own devices over local WiFi. **No cloud, no accounts, n
 
 1. On the **first device**: Settings → Sync & Devices → *Pair new device*. The **PairingDialog** opens with a QR code and a 4-word passphrase. The session lasts 5 minutes (the countdown pauses while you're typing on the other side).
 2. On the **second device**: same path. Choose *Scan QR code* (camera) or *Enter passphrase* (4 word boxes).
-3. On scan / entry, both devices exchange certificates and add each other to their peer lists. The peer's TLS certificate hash is pinned on first contact (TOFU) — subsequent connections verify the same hash.
+3. On scan / entry, each device proves it knows the passphrase and the two add each other to their peer lists. There is no certificate exchange: the connection itself authenticates each device's cryptographic key, and that key is remembered on first contact (TOFU) — subsequent connections must present the same one.
 4. The first sync runs immediately. Large vaults use **snapshot catch-up** (see below) so you don't wait for thousands of small operations.
 
 If the camera isn't available (no permission, headless device), you can also upload a screenshot of the QR code.
@@ -40,11 +40,17 @@ If you click the Sync button before any device is paired, the **NoPeersDialog** 
 - **Discovery**: mDNS announces and discovers peers on the local network. On Android, Agaric holds a multicast lock so mDNS keeps working when the screen is off.
 - **Automatic triggers**: edits queue a debounced sync; the daemon also runs a periodic resync tick. Both back off exponentially on failure, per peer, with jitter so two devices don't lock-step.
 - **Offline / foreground awareness**: a device that goes offline stops trying immediately; a device that backgrounds skips its resync ticks until foreground. Coming back online retries immediately.
-- **Wire**: TLS over WebSocket. CRDT operations and snapshots flow over the same connection.
+- **Wire**: QUIC (over UDP), encrypted with TLS 1.3. CRDT operations, snapshots and attachment bytes all flow over the same connection.
+
+> **Two-device pairing has not been verified on real hardware.** The defect that
+> prevented a first pair from ever being initiated (#3502) is fixed, and the
+> daemon, transport and dialog paths are covered by unit tests — but nothing
+> here has yet been observed against two live devices, and QUIC/UDP behaviour on
+> Android and on restrictive WiFi is untested because it needs hardware (#3507).
 
 ## Snapshot catch-up
 
-When a peer is so far behind that the log has been compacted past its frontier (typical on a fresh device, or after a long absence), the responder sends a full snapshot instead of replaying the log. Snapshots stream in 5 MB binary frames and apply atomically — your local data is wiped and restored in one transaction, so a snapshot apply can never half-fail. The first sync of a fresh device on a large vault might take a moment; subsequent syncs are incremental.
+When a peer is so far behind that the log has been compacted past its frontier (typical on a fresh device, or after a long absence), the responder sends a full snapshot instead of replaying the log. Snapshots stream as raw bytes on the same connection and apply atomically, so a snapshot apply can never half-fail. It is a *merge*, not a wipe: anything you wrote on the catching-up device that the other side had not seen yet survives. The first sync of a fresh device on a large vault might take a moment; subsequent syncs are incremental.
 
 ## Per-peer settings
 
@@ -52,7 +58,7 @@ In **DeviceManagement** you can per-peer:
 
 - **Rename** the device (the name shows up in tooltips, sync progress, the activity feed).
 - **Set a manual address** (`host:port`) for peers that mDNS can't see.
-- **View status** (last sync, last error, certificate fingerprint).
+- **View status** (last sync, last error).
 - **Unpair** — confirmation required (non-reversible without re-pairing).
 
 ## What's not synced
@@ -64,9 +70,11 @@ In **DeviceManagement** you can per-peer:
 ## Pitfalls to know
 
 - **Both devices must be on the same local network.** Agaric does not relay over the internet. For across-network sync, set a manual `host:port` on a reachable address (e.g. VPN-routed).
-- **First-launch firewall prompt** (especially on macOS): allow incoming connections so peers can reach Agaric.
+- **First-launch firewall prompt** (especially on macOS): allow incoming connections so peers can reach Agaric. Agaric listens on **UDP**, and on a port the operating system picks fresh at each launch — so a hand-written rule has to allow the application, not a fixed TCP port.
 - **mDNS on Android needs multicast — built in.** Some routers disable multicast; if your other devices can see each other on the network but Agaric can't, that's the likely cause.
-- **TOFU on first pair.** If you re-install Agaric on a peer, its certificate hash changes — you'll need to unpair and re-pair.
+- **TOFU on first pair.** If you re-install Agaric on a peer and its app data is wiped, the device comes back with a different cryptographic identity — you'll need to unpair and re-pair.
+- **Upgrading from a pre-QUIC build re-establishes trust once.** Existing pairings survive the upgrade, but the old certificate could not be converted into the new key, so each pair silently re-learns the other's identity on its first sync after the update. Do the first post-upgrade sync on a network you trust.
+- **A desktop on both WiFi and Ethernet only accepts on one of them.** If two devices are on the same LAN but only reachable across different interfaces, they may show up in discovery and still fail to connect.
 - **Pairing session is 5 minutes.** If the timer expires, restart from the first device.
 - **The Sync button does the minimum.** It triggers what's already due; if you've just edited something, the auto-sync may have already fired by the time you click.
-- **Unpaired by mistake?** Pair again from either device. The new pairing replaces the previous certificate hash via TOFU.
+- **Unpaired by mistake?** Pair again from either device. The new pairing replaces the previously remembered identity via TOFU.

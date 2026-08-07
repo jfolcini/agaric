@@ -75,7 +75,7 @@ Enforced by the `tauri-command-sanitize` prek hook: every new `#[tauri::command]
 
 - **No encryption at rest** by the app itself. The OS handles disk encryption (FileVault / BitLocker / LUKS / Android FBE). SQLCipher was rejected (overhead + key management complexity not worth the marginal threat).
 - **OS keychain** holds OAuth tokens, per-space (`oauth_tokens_<SPACE_ULID>`).
-- **Self-signed TLS certificates** are stored in the keychain; the cert private key never touches disk plaintext.
+- **The sync identity is a file, not a keychain entry.** `sync-endpoint.key` holds this device's 32-byte ed25519 iroh secret, hex-encoded, mode `0o600`, in the app data dir (`agaric-sync/src/transport/identity.rs`). There is no `keyring` dependency on this path and never was — the retired self-signed TLS keypair lived on disk the same way. OS full-disk encryption is the confidentiality boundary, as it is for `notes.db`.
 
 ### Code-level
 

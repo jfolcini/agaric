@@ -43,7 +43,7 @@ How the system is built. Companion to:
 4. **Single roving editor.** Exactly one block hosts a TipTap editor at a time; everything else renders static.
 5. **Type-safe IPC.** Every Tauri command flows through specta-generated TypeScript. The `agaric_commands!` macro is the single source of truth — handler and bindings cannot drift.
 6. **Per-space partitioning.** The native, indexed `blocks.space_id` column (migration 0086, #533) is the sole source of truth for space membership — with a `spaces` registry FK (0089), and `space` forbidden as a `block_properties` key (0088 `key_not_reserved` CHECK). An `is_space = 'true'` property still marks a space's own page. Lists, search, agenda, backlinks, history, journals all scope to the active space via the `b.space_id = ?N` filter.
-7. **Offline-first sync.** Local writes commit immediately; sync converges peers over local WiFi via Loro CRDT messages + TLS-pinned WebSocket.
+7. **Offline-first sync.** Local writes commit immediately; sync converges peers over local WiFi via Loro CRDT messages over QUIC (iroh), with each peer named by a handshake-authenticated ed25519 `EndpointId`.
 8. **Tokens, not literals.** OKLCH semantic tokens, i18n for every visible string, 44 px touch floor — see `docs/UX.md`.
 
 ## Reading order for a new contributor
@@ -63,7 +63,7 @@ The Rust side is a Cargo workspace rooted at `src-tauri/`. Its members (see `[wo
 | `agaric-core` | Leaf primitives with no DB dependency — ULIDs, time, errors, text/tag normalisation, diffing |
 | `agaric-store` | SQLite access — op log, caches, FTS, filters, queries, pagination, snapshots |
 | `agaric-engine` | Loro CRDT engine, op apply, merge, drafts, import, recurrence |
-| `agaric-sync` | Peer discovery, pairing, TLS, WebSocket transport, sync protocol + daemon |
+| `agaric-sync` | Peer discovery (mDNS), pairing, the iroh QUIC transport, sync protocol + daemon |
 | `agaric-observability` | Tracing / OTLP / metrics plumbing |
 | `diagnostics` | Read-only DB inspection binaries, kept out of the app crate so `tauri-bundler` doesn't scan them |
 
