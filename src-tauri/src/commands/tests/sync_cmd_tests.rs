@@ -661,10 +661,11 @@ fn sync_cancel_pairing_noop_when_no_session() {
 // Sync — start_sync (#278: backoff integration)
 // ======================================================================
 
-#[test]
-fn sync_start_sync_returns_complete_info() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_returns_complete_info() {
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
-    let result = start_sync_inner(&scheduler, "device-local", "peer-1".into());
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
     assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
 
     let info = result.unwrap();
@@ -681,12 +682,13 @@ fn sync_start_sync_returns_complete_info() {
     assert_eq!(info.ops_sent, 0, "fresh sync should send zero ops");
 }
 
-#[test]
-fn sync_start_sync_respects_backoff() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_respects_backoff() {
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     scheduler.record_failure("peer-1");
 
-    let result = start_sync_inner(&scheduler, "device-local", "peer-1".into());
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
     assert!(
         result.is_err(),
         "start_sync must fail when peer is in backoff"
@@ -698,29 +700,31 @@ fn sync_start_sync_respects_backoff() {
     );
 }
 
-#[test]
-fn sync_start_sync_after_backoff_reset_succeeds() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_after_backoff_reset_succeeds() {
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
     scheduler.record_failure("peer-1");
     scheduler.record_success("peer-1"); // reset backoff
 
-    let result = start_sync_inner(&scheduler, "device-local", "peer-1".into());
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
     assert!(
         result.is_ok(),
         "start_sync must succeed after backoff is reset"
     );
 }
 
-#[test]
-fn sync_start_sync_does_not_record_success_preemptively() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_does_not_record_success_preemptively() {
     // Regression: `start_sync_inner` used to call
     // `scheduler.record_success(peer_id)` immediately after
     // `notify_change`, wiping per-peer backoff state before the
     // SyncDaemon had attempted (let alone succeeded at) a real sync.
     // The wrapper now only *triggers* a sync; the daemon's own
     // success path records the result after a real network round-trip.
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
-    let result = start_sync_inner(&scheduler, "device-local", "peer-1".into());
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
     assert!(result.is_ok(), "start_sync must succeed for a fresh peer");
 
     // No backoff entries should exist for peer-1 — `start_sync_inner`
@@ -730,6 +734,197 @@ fn sync_start_sync_does_not_record_success_preemptively() {
         scheduler.failure_counts().is_empty(),
         "start_sync_inner must not touch backoff state; found: {:?}",
         scheduler.failure_counts()
+    );
+}
+
+// ======================================================================
+// Sync — start_sync's busy probe (#3550)
+//
+// The probe used to call `try_lock_peer(&peer_id)` — a *device* id — against a
+// table #3511 had re-keyed on `EndpointId`, so it could never collide and
+// "Sync already in progress for this peer" was unreachable. Nothing was red,
+// because no test had ever reached that arm.
+//
+// These tests are that missing coverage. Reverting the fix — probing `&peer_id`
+// again — reddens the first two:
+//
+//   * `..._reports_busy_...`   — the collision arm, reached for real by
+//                                pre-holding the daemon's own S-5 key.
+//   * `..._probes_the_key_the_daemon_locks_under` — pins WHICH key, so a probe
+//                                that collides under some other spelling (e.g.
+//                                the device id) does not count as passing. Its
+//                                tail also pins guard *release*: leaking the
+//                                guard reddens it.
+//   * `..._succeeds_when_a_different_peer_is_syncing` — the probe is per-peer,
+//                                not a global sync mutex.
+//   * `..._rejects_a_corrupt_endpoint_id` / `..._for_a_peer_with_no_bound_...`
+//                              — the two non-probing exits: hard error vs skip.
+//
+// What these tests deliberately do NOT claim to catch: inlining the key
+// derivation instead of calling `peer_lock_key_from_stored`. `peer_lock_key` is
+// `to_string()` today, so the stored column and the derived key are the same
+// bytes, and *no* black-box test can separate them — that is the whole reason
+// #3550 went unnoticed. The guarantee that the probe and the daemon agree is
+// structural (one function decides the spelling) and is enforced by review, not
+// by these assertions. `bind_peer_and_lock_key` routes through the production
+// helper so that the tests stay correct if that spelling ever changes; that is a
+// different property from detecting a duplicate derivation.
+// ======================================================================
+
+/// Bind a freshly-generated iroh identity to `peer_id` and return the S-5 lock
+/// key the daemon would take for it.
+///
+/// The key is derived with the production helper rather than by re-spelling the
+/// endpoint id here: a test that computes the key its own way would pass against
+/// a probe that computes it a third way, which is the exact failure mode #3550
+/// is about.
+async fn bind_peer_and_lock_key(pool: &sqlx::SqlitePool, peer_id: &str) -> String {
+    let endpoint_id = agaric_sync::transport::SecretKey::generate()
+        .public()
+        .to_string();
+    peer_refs::upsert_peer_ref(pool, peer_id).await.unwrap();
+    peer_refs::bind_endpoint_id(pool, peer_id, &endpoint_id)
+        .await
+        .unwrap();
+    agaric_sync::sync_daemon::peer_lock_key_from_stored(&endpoint_id).unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_reports_busy_while_the_daemon_holds_the_peer_lock() {
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    let lock_key = bind_peer_and_lock_key(&pool, "peer-1").await;
+
+    // Stand in for a daemon mid-session: hold S-5 under exactly the key
+    // `try_sync_with_peer` / `handle_incoming_sync` take it under.
+    let _daemon_session = scheduler
+        .try_lock_peer(&lock_key)
+        .expect("the daemon's S-5 lock must be free before the test takes it");
+
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+
+    let err = result.expect_err(
+        "start_sync must refuse while the daemon holds the S-5 lock for this peer's endpoint id",
+    );
+    assert!(
+        matches!(err, AppError::InvalidOperation(ref m)
+            if m == "Sync already in progress for this peer"),
+        "the busy probe must surface the in-progress message verbatim, got: {err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_probes_the_key_the_daemon_locks_under() {
+    // The collision above must come from the *endpoint-id* key and nothing else.
+    // Holding the lock under the peer's device id instead — which is what the
+    // pre-#3550 probe used — must NOT be observed, because that is not a key the
+    // daemon ever locks under.
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    let lock_key = bind_peer_and_lock_key(&pool, "peer-1").await;
+    assert_ne!(
+        lock_key, "peer-1",
+        "fixture is meaningless unless the two keys differ"
+    );
+
+    let _device_keyed = scheduler
+        .try_lock_peer("peer-1")
+        .expect("device-id-keyed lock must be free");
+
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-1".into()).await;
+    assert!(
+        result.is_ok(),
+        "a lock held under the device id is not the daemon's lock; \
+         start_sync must not report busy, got: {:?}",
+        result.err()
+    );
+
+    // And the endpoint-keyed lock is genuinely free afterwards: the probe took
+    // it and dropped it, so it does not leak an acquisition into the daemon.
+    assert!(
+        scheduler.try_lock_peer(&lock_key).is_some(),
+        "the probe must release the S-5 lock before returning"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_succeeds_when_a_different_peer_is_syncing() {
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    let busy_key = bind_peer_and_lock_key(&pool, "peer-busy").await;
+    let _idle_key = bind_peer_and_lock_key(&pool, "peer-idle").await;
+
+    let _daemon_session = scheduler.try_lock_peer(&busy_key).unwrap();
+
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "peer-idle".into()).await;
+    assert!(
+        result.is_ok(),
+        "the busy probe is per-peer, not a global sync mutex; got: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_succeeds_for_a_peer_with_no_bound_endpoint_id() {
+    // A peer paired before the iroh cutover has `endpoint_id = None`. The probe
+    // is skipped rather than substituting some other key, and `start_sync` must
+    // still succeed — an unbound peer stays triggerable, which is how it reaches
+    // the TOFU path that binds its key in the first place.
+    //
+    // This pins the skip, NOT a claim that such a peer is idle: see
+    // `start_sync_inner`'s comment — a peer with a NULL `endpoint_id` that is
+    // announcing on mDNS can be mid-session under the announced key, which this
+    // probe cannot see. The gap is accepted and self-closing, not absent.
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    peer_refs::upsert_peer_ref(&pool, "legacy-peer")
+        .await
+        .unwrap();
+
+    let result = start_sync_inner(&pool, &scheduler, "device-local", "legacy-peer".into()).await;
+    assert!(
+        result.is_ok(),
+        "an unbound peer must still be triggerable, got: {:?}",
+        result.err()
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_start_sync_rejects_a_corrupt_stored_endpoint_id() {
+    // #3550 review: the `?` on `peer_lock_key_from_stored` is a NEW failure mode —
+    // before the fix, `start_sync_inner` never read `peer_refs` and so could not
+    // fail on its contents. This pins where that lands.
+    //
+    // The fixture is not a hand-corrupted DB: `deadbeef…` is 64 lowercase hex, so
+    // `bind_endpoint_id`'s own `validate_endpoint_id` accepts it and migration
+    // 0107's column CHECK accepts it. Only the ed25519 point decompression inside
+    // `EndpointId::from_str` rejects it. So the storage layer really can hold a
+    // value that makes the probe fail, and the `bind_endpoint_id` call below
+    // succeeding is half the assertion.
+    let (pool, _dir) = test_pool().await;
+    let scheduler = SyncScheduler::new();
+    let corrupt = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+
+    peer_refs::upsert_peer_ref(&pool, "corrupt-peer")
+        .await
+        .unwrap();
+    peer_refs::bind_endpoint_id(&pool, "corrupt-peer", corrupt)
+        .await
+        .expect("the store's own validation admits this value — that is the point");
+
+    let err = start_sync_inner(&pool, &scheduler, "device-local", "corrupt-peer".into())
+        .await
+        .expect_err("an unparseable stored endpoint id must not be silently skipped");
+    assert!(
+        matches!(err, AppError::Validation { .. }),
+        "a corrupt row must surface as a Validation error, not a lock result or a \
+         success; got: {err:?}"
+    );
+
+    // And it must not have taken a lock on its way out.
+    assert!(
+        scheduler.try_lock_peer(corrupt).is_some(),
+        "the failing path must not leave a peer lock held"
     );
 }
 
