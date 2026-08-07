@@ -1681,9 +1681,9 @@ stages = ["pre-commit"]
 # (which is style/correctness only) by catching unpinned `uses:`,
 # missing `persist-credentials: false`, env-injection in
 # `${{ github.* }}` interpolation, the `pull_request_target`
-# exfil class, and similar workflow-security smells. Existing
-# findings are baselined in `.github/zizmor.yml`; the hook fires
-# on new findings only.
+# exfil class, and similar workflow/composite-action security smells. Existing
+# findings are baselined in `.github/zizmor.yml`; the hook fires for workflow
+# and composite-action definitions, on new findings only.
 # Install: `cargo install --locked zizmor@<pin>` (or `scripts/setup-hooks.sh`).
 # The version is PINNED (#3476) — `ZIZMOR_PINNED_VERSION` in
 # scripts/zizmor-hook.sh is the single source of truth, and the same version
@@ -1711,7 +1711,7 @@ id = "zizmor"
 name = "zizmor"
 entry = "bash scripts/zizmor-hook.sh"
 language = "system"
-files = "^\\.github/workflows/.*\\.ya?ml$"
+files = "^\\.github/(workflows/.*\\.ya?ml|actions/.*/action\\.ya?ml)$"
 stages = ["pre-commit"]
 
 # Self-test the wrapper's own behaviour whenever it changes: that a version
