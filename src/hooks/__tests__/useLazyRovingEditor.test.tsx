@@ -138,11 +138,26 @@ describe('useLazyRovingEditor (#2939)', () => {
   it('prefetches + constructs the editor on idle even without an interaction', async () => {
     vi.useFakeTimers()
     render(<Harness />)
-    // scheduleIdle falls back to setTimeout(0) under jsdom.
+    // scheduleIdle falls back to setTimeout(0) under jsdom. Assert a timer was
+    // actually ARMED before running it — this is what distinguishes a real
+    // deferral from a `scheduleIdle` that invokes its callback inline (which
+    // would leave the editor host mounted, and this whole test green, with no
+    // timer ever scheduled). Without this line the mutant that deletes the
+    // deferral survives: `capturedOnReady` becomes non-null either way.
+    //
+    // That reasoning holds only while `scheduleIdle` takes its `setTimeout`
+    // fallback. Pin the precondition, so a DOM-env bump that adds
+    // `requestIdleCallback` names itself rather than surfacing as a bogus
+    // "deferral was inlined" failure.
+    expect(typeof requestIdleCallback).toBe('undefined')
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
     act(() => {
       vi.runOnlyPendingTimers()
     })
     // The lazy host is now in the tree; flush the dynamic import microtask.
-    await vi.waitFor(() => expect(capturedOnReady).not.toBeNull())
+    // Explicit 8000ms for parity with `asyncUtilTimeout` (`src/test-setup.ts`);
+    // `vi.waitFor` does not read that setting and would otherwise wait 1000ms
+    // for a dynamic import under CI contention.
+    await vi.waitFor(() => expect(capturedOnReady).not.toBeNull(), { timeout: 8000 })
   })
 })
