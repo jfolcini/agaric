@@ -73,8 +73,13 @@ jobs:
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' }}
     # PEND-41 R1 — based on ci.yml build observations (run 25966040732,
     # 2026-05-16, n=1) + ~10 min signing/attest/upload overhead per platform:
-    # linux 50 + 10 = 60, macos 50 + 10 = 60, windows 65 + 10 = 75.
-    timeout-minutes: ${{ matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
+    # macos 50 + 10 = 60, windows 65 + 10 = 75. Linux's old 60-minute
+    # budget assumed the rust-release cache restored by the now-deleted step.
+    # Removing that publishing-lane cache (#3573) makes its first build cold
+    # and unmeasured,
+    # so give Linux 50% headroom (60 -> 90) until a cold tag run can replace
+    # this estimate with observed whole-job timing.
+    timeout-minutes: ${{ matrix.platform == 'ubuntu-24.04' && 90 || matrix.platform == 'windows-2025-vs2026' && 75 || 60 }}
     permissions:
       contents: write # tauri-action uploads release bundles
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token
@@ -128,37 +133,6 @@ jobs:
           toolchain: 1.95.0
           targets: ${{ matrix.target }}
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        # Linux-only (#819 (6)): with `save-if: false` here and no other
-        # workflow saving on macOS / Windows runners (Swatinem keys per
-        # runner OS), the restore on those rows was a guaranteed miss —
-        # pure dead weight. Only the Linux row can hit ci.yml's
-        # `rust-release` entry.
-        if: matrix.platform == 'ubuntu-24.04'
-        with:
-          workspaces: src-tauri
-          # Restore from `rust-release` — the key ci.yml's Linux desktop
-          # build writes on main pushes (issue #813 split the old shared
-          # `rust-deps` key into per-job-class keys; nothing writes
-          # `rust-deps` anymore, so keeping it here would mean a permanent
-          # cache miss once old entries expire). That job's profile is the
-          # exact match for this matrix's Linux row (release-profile
-          # `cargo tauri build`, host triple), warming the `target/` tree
-          # for the tauri-action build below. (The Tauri CLI itself is NOT
-          # warmed from this cache: tauri-action runs the lockfile-pinned
-          # `@tauri-apps/cli` via `tauriScript: npm run tauri` — #822.)
-          shared-key: rust-release
-          # `cache-bin: true` matches the shape of the entry ci.yml's
-          # build job writes (its save includes `~/.cargo/bin/`).
-          cache-bin: 'true'
-          # The Windows tar.exe / release `target/` save flake (0.1.16
-          # run 24999938882) is still real, and the per-tag cache key
-          # makes the save itself useless on the next tag. Keep restore
-          # (free, hits ci.yml's warm `rust-release` entry above),
-          # disable save so a flake can never block a release.
-          save-if: false
-
       - name: Install system dependencies (Linux)
         if: matrix.platform == 'ubuntu-24.04'
         run: |
@@ -174,10 +148,13 @@ jobs:
             pkg-config
 
       - name: Setup Node.js
+        # No package-manager cache on a publishing lane (#3573). The
+        # explicit opt-out also prevents setup-node v7 from enabling its
+        # default npm cache after an unrelated package.json edit.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
+          package-manager-cache: false
 
       - name: Install Node dependencies
         run: npm ci
