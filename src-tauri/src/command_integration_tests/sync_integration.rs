@@ -314,9 +314,12 @@ async fn confirm_without_prior_start_arms_proof_and_creates_no_peer_3463() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_sync_returns_complete_info() {
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
 
-    let info = start_sync_inner(&scheduler, "dev-local", "dev-remote".into()).unwrap();
+    let info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
+        .await
+        .unwrap();
     assert_eq!(info.state, "complete", "sync state should be complete");
     assert_eq!(info.local_device_id, "dev-local");
     assert_eq!(info.remote_device_id, "dev-remote");
@@ -326,12 +329,13 @@ async fn start_sync_returns_complete_info() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_sync_rejects_peer_in_backoff() {
+    let (pool, _dir) = test_pool().await;
     let scheduler = SyncScheduler::new();
 
     // Record a failure to trigger backoff
     scheduler.record_failure("dev-remote");
 
-    let result = start_sync_inner(&scheduler, "dev-local", "dev-remote".into());
+    let result = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into()).await;
     assert!(
         result.is_err(),
         "sync should be rejected when peer is in backoff"
@@ -422,7 +426,9 @@ async fn full_pair_then_sync_workflow() {
     .unwrap();
 
     // Sync
-    let sync_info = start_sync_inner(&scheduler, "dev-local", "dev-remote".into()).unwrap();
+    let sync_info = start_sync_inner(&pool, &scheduler, "dev-local", "dev-remote".into())
+        .await
+        .unwrap();
     assert_eq!(sync_info.state, "complete");
 
     // #855: confirm arms the pending-pairing window (proof stored) rather than

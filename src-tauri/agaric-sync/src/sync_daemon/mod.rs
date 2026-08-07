@@ -118,6 +118,47 @@ pub fn peer_lock_key(endpoint_id: iroh::EndpointId) -> String {
     endpoint_id.to_string()
 }
 
+/// [`peer_lock_key`], reached from the *stored* spelling of an `EndpointId` —
+/// `agaric_store::peer_refs::PeerRef::endpoint_id`, 64 lowercase hex chars.
+///
+/// The command layer holds that column as a `String`, never as an
+/// [`EndpointId`](iroh::EndpointId): it reads `peer_refs`, it does not run a QUIC
+/// handshake or parse an mDNS announcement. So it cannot call [`peer_lock_key`]
+/// directly, and the obvious workaround — noticing that the function body is
+/// `to_string()` and passing the stored text to `try_lock_peer` as-is — is exactly the
+/// failure [`peer_lock_key`]'s docs describe: a second, independent derivation of the
+/// key that agrees today because two authors wrote the same expression, and stops
+/// agreeing the day one of them changes (#3550).
+///
+/// Parsing back into the type and delegating costs one ed25519 point decompression per
+/// `start_sync` press and buys the property that there is still exactly one place the
+/// spelling is decided. The round trip is lossless for every value the write path
+/// actually produces: `peer_refs` writes `EndpointId`'s `Display`, which is
+/// `HEXLOWER` over the 32 raw bytes of a key that by construction decompressed
+/// successfully, so `parse` → `to_string()` is the identity there.
+///
+/// # Errors
+///
+/// [`AppError::Validation`] if `endpoint_id` is not a parseable `EndpointId`.
+///
+/// Note that this is **strictly stronger than the storage layer's own validation**, and
+/// deliberately so. `peer_refs::validate_endpoint_id` and migration `0107`'s column
+/// CHECK both test only *spelling* — 64 lowercase hex characters — while parsing here
+/// additionally decompresses the ed25519 point. Those are not the same predicate:
+/// roughly half of all 64-hex strings are not valid curve points
+/// (`deadbeef…deadbeef` is one), so a row that both validators admit can still fail
+/// here. The write paths only ever store a real key's `Display`, so this is a corrupt
+/// row rather than a user error, and it is surfaced rather than treated as "no key" —
+/// the latter would silently reinstate the unprobeable state this helper exists to end.
+pub fn peer_lock_key_from_stored(endpoint_id: &str) -> Result<String, AppError> {
+    let parsed: iroh::EndpointId = endpoint_id.parse().map_err(|e| {
+        AppError::validation(format!(
+            "stored endpoint_id {endpoint_id:?} is not a parseable iroh EndpointId: {e}"
+        ))
+    })?;
+    Ok(peer_lock_key(parsed))
+}
+
 // ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound
 // ---------------------------------------------------------------------------
@@ -459,6 +500,63 @@ pub async fn peers_appeared(pool: &SqlitePool) -> bool {
                 "peer_refs query failed in dormant waiter; remaining dormant"
             );
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod peer_lock_key_tests {
+    use super::{peer_lock_key, peer_lock_key_from_stored};
+    use agaric_core::error::AppError;
+
+    /// The property the helper exists for: the stored spelling round-trips to the
+    /// key the daemon locks under, without the caller ever spelling it itself.
+    #[test]
+    fn from_stored_agrees_with_peer_lock_key_for_a_real_key() {
+        let key = crate::transport::SecretKey::generate().public();
+        let stored = key.to_string();
+
+        assert_eq!(
+            peer_lock_key_from_stored(&stored).unwrap(),
+            peer_lock_key(key),
+            "the stored round trip must land on the daemon's key"
+        );
+    }
+
+    /// #3550 review: the storage layer's validation is *weaker* than parsing.
+    ///
+    /// `peer_refs::validate_endpoint_id` and migration 0107's column CHECK both
+    /// test spelling only — 64 lowercase hex — while `EndpointId`'s `FromStr` also
+    /// decompresses the ed25519 point. `deadbeef…` satisfies both validators and is
+    /// still not a curve point, so this is a value the table genuinely admits and
+    /// this helper genuinely rejects. Pins that the rejection is a named
+    /// `Validation` error rather than a panic or a silent "no key".
+    #[test]
+    fn from_stored_rejects_a_check_valid_but_uncompressable_endpoint_id() {
+        let corrupt = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef";
+        assert_eq!(corrupt.len(), 64, "fixture must satisfy the column CHECK");
+        assert!(
+            corrupt
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)),
+            "fixture must satisfy the column CHECK"
+        );
+
+        let err = peer_lock_key_from_stored(corrupt)
+            .expect_err("a non-curve-point must not yield a lock key");
+        assert!(
+            matches!(err, AppError::Validation { ref message, .. } if message.contains(corrupt)),
+            "expected a Validation error naming the offending value, got: {err:?}"
+        );
+    }
+
+    #[test]
+    fn from_stored_rejects_truncated_and_empty_input() {
+        for bad in ["", "abcd", "not-hex-at-all"] {
+            assert!(
+                peer_lock_key_from_stored(bad).is_err(),
+                "{bad:?} must not yield a lock key"
+            );
         }
     }
 }
