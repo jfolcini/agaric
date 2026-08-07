@@ -927,6 +927,8 @@ describe('DataTab', () => {
       expect(screen.getByTestId('import-failures-heading')).toHaveTextContent(
         '1 file failed to import',
       )
+      // The durable summary counts successful imports, not selected files.
+      expect(screen.getByText('Imported “1 file”: 3 blocks')).toBeInTheDocument()
     })
     expect(toast.success).not.toHaveBeenCalled()
     // notify.retry routes through toast.error with a retry action.
@@ -1281,7 +1283,52 @@ describe('DataTab', () => {
     // The cancellation toast reports how many imported before the abort.
     await waitFor(() => {
       expect(toast).toHaveBeenCalledWith('Import cancelled — 1 file imported.')
+      expect(screen.getByTestId('import-result-cancelled')).toHaveTextContent(
+        'Import cancelled — 1 file imported.',
+      )
     })
+    // Cancellation keeps the action for the page that did finish importing.
+    expect(screen.getByTestId('import-view-button')).toBeInTheDocument()
+  })
+
+  it('shows cancellation before all-failed while preserving failure details', async () => {
+    const user = userEvent.setup()
+    let rejectFirst: (reason?: unknown) => void = () => {}
+    mockImportMarkdown
+      .mockImplementationOnce(
+        () =>
+          new Promise((_resolve, reject) => {
+            rejectFirst = reject
+          }),
+      )
+      .mockImplementationOnce(() => {
+        throw new Error('second file should not start after cancel')
+      })
+
+    render(<DataTab />)
+
+    const fileInput = screen.getByTestId('import-file-input') as HTMLInputElement
+    const file1 = new File(['# A'], 'one.md', { type: 'text/markdown' })
+    const file2 = new File(['# B'], 'two.md', { type: 'text/markdown' })
+    Object.defineProperty(fileInput, 'files', { value: [file1, file2] })
+
+    await act(async () => {
+      fileInput.dispatchEvent(new Event('change', { bubbles: true }))
+    })
+
+    await user.click(await screen.findByTestId('import-cancel-button'))
+    await act(async () => {
+      rejectFirst(new Error('boom'))
+    })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('import-result-cancelled')).toHaveTextContent(
+        'Import cancelled — 0 files imported.',
+      )
+    })
+    expect(screen.queryByTestId('import-result-error')).not.toBeInTheDocument()
+    expect(screen.getByText('Failed to import one.md: boom')).toBeInTheDocument()
+    expect(mockImportMarkdown).toHaveBeenCalledTimes(1)
   })
 
   // #1927 — axe audit including the new folder button, target label, and

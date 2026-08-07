@@ -823,8 +823,11 @@ const TOOLTIP_DELAY_PREFERENCE: PreferenceDefinition<TooltipDelay> = {
   serialize: identity,
 }
 
-/** `agaric-font-size` — editor/UI font size (`src/components/settings/AppearanceTab.tsx`). */
-const FONT_SIZE_PREFERENCE: PreferenceDefinition<'small' | 'medium' | 'large'> = {
+/** Editor/UI font-size choices (`src/hooks/useFontSize.ts`). */
+export type FontSize = 'small' | 'medium' | 'large'
+
+/** `agaric-font-size` — device-scoped bare-string editor/UI font size. */
+const FONT_SIZE_PREFERENCE: PreferenceDefinition<FontSize> = {
   key: 'agaric-font-size',
   scope: 'device',
   version: 1,
