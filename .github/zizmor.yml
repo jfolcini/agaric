@@ -30,10 +30,29 @@ rules:
     # and two `:3` entries silently anchored on the `on:` block, acting as
     # blanket file-wide suppressions of the whole rule. Re-derived by
     # running `zizmor` with an EMPTY cache-poisoning ignore list: exactly
-    # these 9 cache steps (Swatinem/rust-cache + actions/setup-node with
-    # `cache: npm`) fire, and anchoring to their current lines suppresses
-    # them with none left over. If cache steps move, re-run with an empty
-    # ignore list and re-anchor rather than editing line numbers blind.
+    # the cache steps listed below (Swatinem/rust-cache + actions/setup-node)
+    # fire, and anchoring to their current lines suppresses them with none
+    # left over. If cache steps move, re-run with an empty ignore list and
+    # re-anchor rather than editing line numbers blind.
+    #
+    # Narrowed 2026-08-07 (#3542) from 9 entries to 6. The three release.yml
+    # entries (`:1039`, `:1071`, `:1330`) covered the caches in
+    # `android-build-and-release` and `generate-vex`. Those two jobs SIGN,
+    # ATTEST and UPLOAD published artefacts, so the underlying findings were
+    # FIXED rather than re-anchored: the `Swatinem/rust-cache` step was
+    # deleted outright and both `actions/setup-node` steps now pass
+    # `package-manager-cache: false` (which also covers setup-node v7's
+    # enabled-by-default npm cache, not just an explicit `cache: npm`). The
+    # anchors were then removed instead of being left behind — a dead anchor
+    # is not inert, it is a landmine: it silently re-attaches to whatever
+    # content drifts onto that line, which is exactly how the `:3` entries
+    # above became blanket file-wide suppressions.
+    #
+    # Verified with an empty ignore list across .github/workflows/: exactly
+    # these 6 findings fire, none are left over, and the two that remain in
+    # release.yml (`:132`, `:177`) are the desktop `build-and-release`
+    # matrix — still baselined, and the obvious next triage step since the
+    # same publishing-lane argument applies to it.
     ignore:
       - ci.yml:273
       - ci.yml:296
@@ -41,19 +60,6 @@ rules:
       - ci.yml:458
       - release.yml:132
       - release.yml:177
-      # Re-anchored 2026-07-29 (#2737): the secretless "Install Tauri CLI for
-      # signing" step added 47 lines above these, shifting each by +47
-      # (992→1039, 1024→1071, 1273→1320). Re-derived with an empty
-      # cache-poisoning ignore list per the note above, not by editing blind:
-      # the same 9 cache steps fire and none are left over.
-      - release.yml:1039
-      - release.yml:1071
-      # Re-anchored 2026-08-05 (#3319): exact-version validation added 10
-      # lines before the cached Android/release CLI install in both workflow
-      # files, shifting the two later ci.yml cache steps and this final
-      # release.yml cache step by +10. Re-derived with an empty ignore list;
-      # the same 9 established cache steps fire and none are left over.
-      - release.yml:1330
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot

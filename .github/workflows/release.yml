@@ -793,13 +793,20 @@ jobs:
           # blob" heuristics to keep the false-positive rate near zero.
           #
           # The PEM `-----BEGIN ... PRIVATE KEY-----` header alone is NOT
-          # a reliable signal in a compiled binary — Agaric embeds the
-          # header as a *validation literal* in `src-tauri/src/sync_cert.rs`
-          # (used to assert that runtime-generated cert PEMs start with the
-          # expected magic). Real embedded keys carry the header + base64
-          # body + matching footer in one contiguous run; the regex below
-          # requires the header AND footer to appear together so the
-          # validation-only literal doesn't trip the scan. PEM keys leaked
+          # a reliable signal in a compiled binary. `strings` cannot
+          # distinguish a real embedded key from a *validation literal* —
+          # the same header text compiled in as a constant so that code can
+          # assert a PEM it generated, loaded or received starts with the
+          # expected magic. The two are byte-identical to a scanner, and any
+          # cert/key-handling code is liable to carry one, so this is a
+          # standing property of the pattern rather than a one-off: the
+          # regex was tightened for exactly such a literal shortly before
+          # the 0.1.30 release, and while the module that held it has since
+          # been deleted, that changes nothing about the heuristic — the
+          # next one reads the same. Real embedded keys carry the header +
+          # base64 body + matching footer in one contiguous run, so the
+          # regex below requires the header AND footer to appear together;
+          # a validation-only literal cannot satisfy both. PEM keys leaked
           # into source files (the much more common attack surface) are
           # already caught by the gitleaks prek hook before they ever
           # reach a release branch.
@@ -1012,9 +1019,43 @@ jobs:
     needs: [verify-version, validate, build-and-release]
     if: ${{ !cancelled() && needs.verify-version.result == 'success' && needs.validate.result == 'success' && needs.build-and-release.result == 'success' }}
     runs-on: ubuntu-24.04
-    # PEND-41 R1 — based on ci.yml android-build observations (27.8 min,
-    # run 25966040732, n=1) + ~10 min signing/attest/upload overhead → 60 min.
-    timeout-minutes: 60
+    # PEND-41 R1 set this to 60: ci.yml android-build observations (27.8 min,
+    # run 25966040732, n=1) + ~10 min signing/attest/upload overhead.
+    #
+    # Raised to 90 by #3542, because that 27.8-min figure no longer describes
+    # this job. It was measured on ci.yml's android-build, which runs with a
+    # WARM `rust-android` cache AND a warm `~/.cargo/bin/cargo-tauri`
+    # (`cache-bin: 'true'`) restored from main. #3542 deleted the cache step
+    # here, so this job is now fully COLD. Re-derived from the timings this
+    # file and ci.yml already record:
+    #
+    #   27.8  ci.yml android-build, warm, n=1 — and generous as a base, since
+    #         it covers TWO builds (x86_64 debug + aarch64 release) where this
+    #         job does one, and already includes JDK + SDK/NDK provisioning.
+    #  + 5-6  `cargo install tauri-cli` now runs unconditionally (the figure
+    #         is recorded on the Install Tauri CLI step below and on ci.yml's
+    #         cache-bin rationale). It used to be skipped on a cache hit.
+    #  + ~10  signing / attest / upload, per the original budget above.
+    #  ≈ 44   warm-equivalent
+    #
+    # The remaining term — a cold `target/` plus a cold cargo registry for
+    # aarch64-linux-android — is the dominant one and has NO measurement
+    # anywhere in this repo, because nothing has ever built this target cold
+    # in CI. That is the whole problem with keeping 60: the first unmeasured
+    # term already eats the entire 16-min margin. Even bounding it at the cost
+    # of ci.yml's whole warm Android slot (27.8) lands at ~72 min, i.e. over
+    # the old budget, and a cold Rust dependency graph plausibly costs more.
+    #
+    # 90 applies this repo's standard "+50% headroom on an n=1 estimate"
+    # convention (see ci.yml's 24.3→50 and 27.8→45) to the ~60 min that
+    # bound implies. The asymmetry justifies rounding up hard: GitHub bills
+    # actual minutes, not the budget, so an over-generous timeout costs
+    # nothing, while `finalize-release-notes` and `publish-release` both
+    # `needs:` this job with `result == 'success'` — a timeout here does not
+    # merely lose the APK, it blocks the release from ever being published.
+    # Replace this estimate with a real observation after the first cold tag
+    # build, and re-derive with the same +50% rule.
+    timeout-minutes: 90
     permissions:
       contents: write # gh release upload attaches the APK to the existing release
       id-token: write # actions/attest-build-provenance — Sigstore OIDC token
@@ -1035,24 +1076,37 @@ jobs:
           toolchain: 1.95.0
           targets: aarch64-linux-android
 
-      - name: Rust cache
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
-        with:
-          workspaces: src-tauri
-          # Mirror ci.yml's android-build cache shape: separate
-          # `rust-android` key because the target-graph differs
-          # (`aarch64-linux-android`), but `cache-bin: true` still warms
-          # `~/.cargo/bin/cargo-tauri` so the conditional install below
-          # can skip the ~5-6 min source compile when ci.yml's
-          # android-build has populated the cache from main.
-          shared-key: rust-android
-          cache-bin: 'true'
-          # Same rationale as the desktop matrix above: release tags get
-          # a fresh cache key every time, so `save` adds risk (silent
-          # post-step failure marks the whole job failed) without any
-          # restore benefit on the next tag. Keep restore, skip save.
-          save-if: false
-
+      # NO Rust cache here — deliberately (#3542). A `Swatinem/rust-cache`
+      # step used to restore ci.yml's `rust-android` entry (and, via
+      # `cache-bin`, a prebuilt `~/.cargo/bin/cargo-tauri`) to save the
+      # cold-compile time. It was removed because this job SHIPS: it signs
+      # an APK, attests it, and uploads it to the release. A GitHub Actions
+      # cache is writable by any workflow on the repo, including ones that
+      # run at lower privilege on untrusted input, and the cache scope rules
+      # let a branch-scoped entry be READ from a tag build. That makes a
+      # restored `target/` tree or a restored `cargo-tauri` binary an
+      # unauthenticated input to a published artifact — a cache poisoned
+      # anywhere in the repo could reach a signed APK. zizmor's
+      # `cache-poisoning` audit flags exactly this shape (High) and it is
+      # not suppressible on a lane that publishes.
+      #
+      # The cost is release wall-clock only: a cold Rust build plus the
+      # ~5-6 min `cargo install tauri-cli` compile the step below now always
+      # takes. Correctness is unaffected (the build is simply reproducible
+      # from source), and no release is on a wall-clock critical path.
+      # `timeout-minutes` was raised 60 → 90 in the same change to pay for
+      # it (see the derivation on the job). Do NOT re-add a cache step here
+      # to speed the release up; if the job ever runs out of budget again,
+      # raise the timeout further.
+      #
+      # `Swatinem/rust-cache` does have an input that turns the restore off
+      # (`lookup-only: 'true'`, which zizmor accepts as an opt-out where
+      # `save-if: false` alone is not enough — verified against v2.9.2's
+      # action.yml and by running zizmor with an empty ignore list). It is
+      # deliberately NOT used: with the download suppressed the step buys
+      # nothing at all, so keeping it would leave a no-op in the lane that
+      # reads as if this release were still cached. Deleting it says what
+      # is actually true.
       - name: Set up JDK 17
         uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
@@ -1068,10 +1122,20 @@ jobs:
             ndk;27.2.12479018
 
       - name: Install Node.js
+        # No npm cache on a publishing lane (#3542) — same rationale as the
+        # removed Rust cache above. `cache: npm` is gone AND
+        # `package-manager-cache: false` is set: setup-node v7 turns the npm
+        # cache on BY DEFAULT whenever package.json declares a top-level
+        # `packageManager` (or `devEngines.packageManager`), so dropping
+        # `cache:` alone would leave the cache one unrelated package.json
+        # edit away from silently coming back. The explicit `false` is the
+        # action's documented opt-out and is what actually holds the line.
+        # `npm ci` below is unaffected — it installs from the lockfile
+        # either way; only the ~/.npm download cache is skipped.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-          cache: npm
+          package-manager-cache: false
 
       - name: Install npm dependencies
         run: npm ci
@@ -1085,9 +1149,16 @@ jobs:
         run: node scripts/prepare-external-bins.mjs --placeholder-only
 
       - name: Install Tauri CLI
-        # Reuse the cached binary only when it matches the exact npm CLI pin.
-        # A dependency bump can otherwise leave this release using a stale
-        # `cargo-tauri` restored through `cache-bin: 'true'` above.
+        # Install `cargo-tauri` at the exact version package.json pins, and
+        # verify the version before trusting whatever is already on PATH.
+        # The `have != want` guard used to exist because `cache-bin: 'true'`
+        # on the (now removed, #3542) Rust cache step could restore a stale
+        # `cargo-tauri` from an earlier dependency pin. Nothing warms
+        # `~/.cargo/bin` on this job anymore, so in practice `have` is empty
+        # and the compile always runs (~5-6 min) — the guard is kept anyway
+        # because it is what makes the pin authoritative rather than
+        # advisory, and it must keep working if a runner image ever ships a
+        # `cargo-tauri` of its own.
         shell: bash
         run: |
           set -euo pipefail
@@ -1327,9 +1398,18 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node.js
+        # `package-manager-cache: false` (#3542) even though this step never
+        # asked for a cache and this job never runs `npm ci`: setup-node v7
+        # enables the npm cache BY DEFAULT once package.json declares a
+        # top-level `packageManager` / `devEngines.packageManager`. This job
+        # attests and uploads the OpenVEX document to the release, so it is
+        # a publishing lane and must not take a repo-wide-writable cache as
+        # an input. Pinning the opt-out here keeps that true regardless of
+        # what a future package.json edit does.
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
+          package-manager-cache: false
 
       - name: Generate OpenVEX statements
         env:
