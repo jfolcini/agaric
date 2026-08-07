@@ -11,11 +11,13 @@
  */
 
 import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
   __highlightCacheStats,
+  __resetScheduleIdleForTest,
+  __setScheduleIdleForTest,
   clearHighlightCache,
   HIGHLIGHT_MAX_LENGTH,
   peekHighlightCache,
@@ -38,6 +40,15 @@ beforeEach(() => {
   // Flush the module-level highlight cache so a prior test's cached tree does
   // not paint highlighted synchronously and mask the deferred-upgrade path.
   clearHighlightCache()
+})
+
+// #3541 — `__setScheduleIdleForTest` is module-level (process-wide) state, not
+// scoped to a render. Only the cap-boundary test below swaps it, but restoring
+// it unconditionally after EVERY test (not just that one) means a future test
+// that swaps it and forgets to reset can't leak a fake scheduler into whatever
+// runs next.
+afterEach(() => {
+  __resetScheduleIdleForTest()
 })
 
 describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
@@ -87,12 +98,37 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
   })
 
   it('still highlights a block right at the cap boundary', async () => {
-    // Exactly the cap length (not over) → highlighting still runs.
+    // Exactly the cap length (not over) → highlighting still runs, via a REAL
+    // `lowlight.highlight()` call over the largest input this suite exercises
+    // (every other >cap test short-circuits in `computeHighlight` before ever
+    // touching the highlighter — this is the one case that doesn't).
+    //
+    // #3541 — that combination (largest real highlight + the `setTimeout`
+    // fallback `scheduleIdle` uses under happy-dom, which has no
+    // `requestIdleCallback`) raced a REAL macrotask timer against `waitFor`'s
+    // own real-timer polling loop, and reproducibly timed out on CPU-contended
+    // CI runners. Swap in a synchronous scheduler for just this test so the
+    // deferred callback — still the real dynamic import and the real,
+    // synchronous `lowlight.highlight()` — runs immediately instead of via a
+    // timer. This removes the race without skipping any of the deferred-upgrade
+    // path: `waitFor` below still exercises the genuine post-commit upgrade
+    // (the state update from the resolved dynamic import is still a real
+    // microtask hop away from the synchronous `render()` call).
+    __setScheduleIdleForTest((cb) => {
+      cb()
+      return () => {}
+    })
+
     const filler = '// x\n'
     const base = 'const x = 1;\n'
     let body = base
     while (body.length + filler.length <= HIGHLIGHT_MAX_LENGTH) body += filler
-    expect(body.length).toBeLessThanOrEqual(HIGHLIGHT_MAX_LENGTH)
+    // The 5-char filler stride can undershoot the cap by up to 4 chars (it did:
+    // 29 998, not 30 000) — pad the remainder with inline comment slashes so
+    // the body lands EXACTLY at HIGHLIGHT_MAX_LENGTH. This test's name and
+    // comments claim the boundary itself, not "close to" it.
+    body += '/'.repeat(HIGHLIGHT_MAX_LENGTH - body.length)
+    expect(body.length).toBe(HIGHLIGHT_MAX_LENGTH)
 
     const block = codeBlock(body, 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)

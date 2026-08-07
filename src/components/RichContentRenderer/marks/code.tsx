@@ -234,9 +234,11 @@ function computeHighlight(
 
 /**
  * Schedule `cb` off the critical path. Prefers `requestIdleCallback`; falls back
- * to `setTimeout` where it is unavailable (jsdom/SSR). Returns a disposer.
+ * to `setTimeout` where it is unavailable (jsdom/SSR, and therefore every
+ * component test). Returns a disposer. This is the PRODUCTION scheduler — see
+ * `scheduleIdleImpl` below for the indirection that lets tests swap it out.
  */
-function scheduleIdle(cb: () => void): () => void {
+function defaultScheduleIdle(cb: () => void): () => void {
   if (typeof requestIdleCallback === 'function') {
     const id = requestIdleCallback(cb)
     return () => {
@@ -245,6 +247,52 @@ function scheduleIdle(cb: () => void): () => void {
   }
   const id = setTimeout(cb, 0)
   return () => clearTimeout(id)
+}
+
+/**
+ * Indirection point for `scheduleIdle` (#3541). `HighlightedCode` always calls
+ * through this variable rather than `defaultScheduleIdle` directly, so a test
+ * can swap in a synchronous scheduler for a single expensive case without
+ * touching real timers globally (no `vi.useFakeTimers()`, which would also
+ * have to contend with RTL `waitFor`'s own real-timer polling loop).
+ *
+ * Why this exists: under the `setTimeout` fallback (happy-dom has no
+ * `requestIdleCallback`), the deferred callback is a real macrotask that races
+ * against `waitFor`'s real-timer polling. For the most expensive input in the
+ * suite — a code block at exactly `HIGHLIGHT_MAX_LENGTH`, which runs a real
+ * `lowlight.highlight()` rather than short-circuiting — that race reproducibly
+ * timed out on CPU-constrained CI runners (2/40 iterations at 24-29s on a
+ * 2-core-contended runner, matching GitHub-hosted `ubuntu-24.04`). Swapping how
+ * `cb` is SCHEDULED does not change what `cb` does: the real dynamic
+ * `import('@/lib/lowlight-curated')` and the real, synchronous
+ * `lowlight.highlight()` still run inside it, so a test using the synchronous
+ * scheduler still exercises the genuine deferred-upgrade path end to end —
+ * only the "wait for a real timer to fire" step is removed.
+ *
+ * Production always uses `defaultScheduleIdle`; nothing in application code
+ * ever reassigns this variable.
+ */
+let scheduleIdleImpl: (cb: () => void) => () => void = defaultScheduleIdle
+
+/**
+ * TEST-ONLY seam: swap the scheduler `HighlightedCode` uses for its deferred
+ * highlight upgrade. `impl` receives the same callback `defaultScheduleIdle`
+ * would and must return a disposer, exactly like `defaultScheduleIdle` does —
+ * e.g. `(cb) => { cb(); return () => {} }` to flush synchronously. This is
+ * module-level (process-wide) state, not scoped to one render, so pair every
+ * call with `__resetScheduleIdleForTest()` (an `afterEach` is the simplest
+ * way) to avoid leaking a fake scheduler into unrelated tests.
+ */
+export function __setScheduleIdleForTest(impl: (cb: () => void) => () => void): void {
+  scheduleIdleImpl = impl
+}
+
+/**
+ * TEST-ONLY: restore the production scheduler after `__setScheduleIdleForTest`.
+ * See that function's doc for why this matters.
+ */
+export function __resetScheduleIdleForTest(): void {
+  scheduleIdleImpl = defaultScheduleIdle
 }
 
 interface HighlightedCodeProps {
@@ -286,7 +334,7 @@ function HighlightedCode({ code, language, keyPrefix }: HighlightedCodeProps): R
     // nothing to schedule.
     if (tree !== undefined) return undefined
     let cancelled = false
-    const cancel = scheduleIdle(() => {
+    const cancel = scheduleIdleImpl(() => {
       if (cancelled) return
       // #2939 — load the highlight.js grammars lazily (off the cold-start path)
       // as part of this deferred upgrade. On import failure fall back to
