@@ -81,6 +81,7 @@ beforeAll(async () => {
 
 beforeEach(() => {
   loggerMock.error.mockClear()
+  loggerMock.warn.mockClear()
 })
 
 describe('main.tsx — global error handler wiring', () => {
@@ -164,6 +165,71 @@ describe('main.tsx — error handler', () => {
       'global',
       'no stack',
       expect.objectContaining({ stack: '' }),
+    )
+  })
+
+  // #3518 — the "ResizeObserver loop completed with undelivered
+  // notifications" / "ResizeObserver loop limit exceeded" browser
+  // notifications are genuine (fired by Chrome when a ResizeObserver
+  // callback's own layout-affecting state update re-triggers the observer,
+  // e.g. `@tanstack/react-virtual` row remeasurement in
+  // `useVirtualizedGroupedRows.ts`) but benign in effect — the browser
+  // defers the remainder to the next frame and layout converges. Treating
+  // it as an application `error` was tripping the e2e console-error gate
+  // (`e2e/helpers.ts`) and flaking `pages-view.spec.ts`. This handler
+  // downgrades it to `logger.warn` instead of allowlisting the string in
+  // the e2e gate, so it stays visible (for anyone actually investigating
+  // the log) without being misclassified as an app bug anywhere it's read.
+  it('downgrades a ResizeObserver undelivered-notifications loop to a warning, not an error', () => {
+    const event = {
+      message: 'ResizeObserver loop completed with undelivered notifications.',
+      filename: '',
+      lineno: 0,
+      colno: 0,
+      error: undefined,
+    } as unknown as Event
+
+    capturedErrorHandler?.(event)
+
+    expect(loggerMock.error).not.toHaveBeenCalled()
+    expect(loggerMock.warn).toHaveBeenCalledWith(
+      'global',
+      'ResizeObserver loop completed with undelivered notifications.',
+      { filename: '', lineno: 0, colno: 0, stack: '' },
+    )
+  })
+
+  it('downgrades a ResizeObserver limit-exceeded loop to a warning, not an error', () => {
+    const event = {
+      message: 'ResizeObserver loop limit exceeded',
+      filename: '',
+      lineno: 0,
+      colno: 0,
+      error: undefined,
+    } as unknown as Event
+
+    capturedErrorHandler?.(event)
+
+    expect(loggerMock.error).not.toHaveBeenCalled()
+    expect(loggerMock.warn).toHaveBeenCalledTimes(1)
+  })
+
+  it('still treats an unrelated message that merely mentions ResizeObserver as a real error', () => {
+    const event = {
+      message: 'Uncaught TypeError: ResizeObserver is not defined',
+      filename: 'a.js',
+      lineno: 1,
+      colno: 1,
+      error: undefined,
+    } as unknown as Event
+
+    capturedErrorHandler?.(event)
+
+    expect(loggerMock.warn).not.toHaveBeenCalled()
+    expect(loggerMock.error).toHaveBeenCalledWith(
+      'global',
+      'Uncaught TypeError: ResizeObserver is not defined',
+      { filename: 'a.js', lineno: 1, colno: 1, stack: '' },
     )
   })
 })
