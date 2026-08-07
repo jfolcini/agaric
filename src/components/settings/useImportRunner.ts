@@ -51,7 +51,10 @@ export interface ImportRunResult {
    * wording in the multi-unit result-panel title.
    */
   notes: boolean
-  fileCount: number
+  /** Units that completed successfully before the run ended. */
+  importedCount: number
+  /** Whether the user stopped the run between units. */
+  cancelled: boolean
   blocksCreated: number
   propertiesSet: number
   /** Soft, per-file parse warnings; the file still imported. */
@@ -287,7 +290,8 @@ export function useImportRunner(): UseImportRunner {
       setImportResult({
         pageTitle: units.length === 1 ? lastTitle : null,
         notes,
-        fileCount: units.length,
+        importedCount: succeededFiles,
+        cancelled,
         blocksCreated: totalBlocks,
         propertiesSet: totalProps,
         warnings: allWarnings,

@@ -164,8 +164,6 @@ export const history: Record<string, string> = {
   'redo.op.removeTag': 'Redid tag',
   'redo.op.addAttachment': 'Redid attachment',
   'redo.op.deleteAttachment': 'Redid attachment',
-  'history.errorNetwork':
-    'A connection problem prevented the history from loading. Check your network and retry.',
   'history.errorServer':
     'The local backend returned an error while fetching history. Retry, or restart the app if it persists.',
   'history.errorUnknown':

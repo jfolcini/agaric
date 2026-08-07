@@ -24,6 +24,7 @@ import { useAppDialogs } from '@/hooks/useAppDialogs'
 import { useAppKeyboardShortcuts } from '@/hooks/useAppKeyboardShortcuts'
 import { useAppSpaceLifecycle } from '@/hooks/useAppSpaceLifecycle'
 import { useDeepLinkRouter } from '@/hooks/useDeepLinkRouter'
+import { useFontSize } from '@/hooks/useFontSize'
 import { useIsMobile } from '@/hooks/useIsMobile'
 import { useMotionPreference } from '@/hooks/useMotionPreference'
 import { useOnlineStatus } from '@/hooks/useOnlineStatus'
@@ -144,6 +145,8 @@ function App() {
   const pageStack = useTabsStore(selectPageStack)
   const headerLabel = useHeaderLabel()
   const { theme: currentTheme, isDark, toggleTheme } = useTheme()
+  // Apply the editor font-size preference from boot, before Settings mounts.
+  useFontSize()
   // Apply the global animation-speed preference app-wide from boot (the Settings
   // Select mounts the same hook for the control). #animation-speed-tuning
   useMotionPreference()

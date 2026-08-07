@@ -12,12 +12,6 @@
     "reason": "REAL, UNFIXED. `HUMAN_TAG_RE = /(^|[^\\p{L}\\p{N}_])#([\\p{L}\\p{N}_][\\p{L}\\p{N}_/-]*)/gu` rewrites pasted user content, and its boundary/name classes exclude combining marks, so `#café` in NFD form splits mid-grapheme. It must stay byte-identical to its Rust twins (HUMAN_TAG_RE in src-tauri/src/commands/pages/markdown.rs and the same literal in src-tauri/src/commands/pages/inline_query_md.rs), so the fix is a coordinated FE/BE change plus conformance vectors — tracked as follow-up."
   },
   {
-    "file": "src/lib/categorize-history-error.ts",
-    "rule": "error-message-substring",
-    "count": 13,
-    "reason": "Cited by #3348. `categorizeHistoryError` classifies a `listPageHistory` failure by substring-matching the lower-cased error message against English fragments (`fetch`, `timeout`, `internal server`, `sqlx`), which are locale- and version-dependent. The structured probes it tries first (`status` 5xx, `code` matching ^5xx) are the correct mechanism; removing the substring fallback requires the backend to return a stable machine-readable error code, which is out of scope for this guard PR."
-  },
-  {
     "file": "src/lib/in-page-find/matcher.ts",
     "rule": "incomplete-boundary-class",
     "count": 1,
