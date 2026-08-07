@@ -88,6 +88,19 @@ if [ "${1:-}" = "--self-test" ]; then
   SELF="$(cd "$(dirname "$0")" && pwd -P)/$(basename "$0")"
   fails=0
   tmp="$(mktemp -d)"
+  # Refuse to continue on an empty $tmp rather than building on it. EVERY path
+  # below is `$tmp/…`, so an empty value silently retargets all of them at the
+  # filesystem ROOT: the stub binaries become `/zizmor` and `/curl`, the sandbox
+  # becomes `/sandbox` with ~70 shims written into it, the EXIT trap degrades to
+  # `rm -rf ""` so none of it is cleaned up, and run_stub's `PATH="$tmp:$PATH"`
+  # acquires a LEADING EMPTY ELEMENT — which bash resolves as the current
+  # directory, putting cwd ahead of the stubs on PATH. Observed for real during
+  # #3559's review (a shadowed `mktemp` on PATH was enough to trigger it), and
+  # the new sandbox turns what used to be a two-file spill into a ~70-file one.
+  if [ -z "$tmp" ] || [ ! -d "$tmp" ]; then
+    echo "self-test: mktemp -d produced no usable directory — refusing to run" >&2
+    exit 1
+  fi
   trap 'rm -rf "$tmp"' EXIT
 
   cat > "$tmp/zizmor" <<'STUB'
@@ -111,11 +124,202 @@ exit "${ZIZMOR_STUB_CURL_RC:-0}"
 STUB
   chmod +x "$tmp/zizmor" "$tmp/curl"
 
+  # ─── sandbox for block (6)'s `bash -c` payloads ──────────────────────
+  # Block (6) proves setup-hooks.sh and this wrapper agree by EXECUTING
+  # setup-hooks.sh's own statements — text selected by a line window. Those
+  # windows fail closed (see the extractors below), which bounds WHAT gets
+  # executed; this bounds what executing the wrong thing can DO.
+  #
+  # It has been wrong before: during #3554's review an unbounded extractor
+  # really did hand ~190 lines of setup-hooks.sh's top-level PROVISIONER to
+  # `bash -c`. It stopped short of `cargo install` / `sudo apt-get` / `curl`
+  # only because `have()` happens to be defined ABOVE the extraction window, so
+  # the payload carried no `have` and every installer's guard exited non-zero.
+  # That is safety by accident of layout, not by construction — move `have()`
+  # up in setup-hooks.sh and it changes (#3559).
+  #
+  # So both payloads run with PATH pointing at THIS directory and nothing else:
+  #   * the text tools the real statements legitimately need (sed, head,
+  #     dirname, …) are symlinked in, so a benign refactor of the sourcing
+  #     statement does not spuriously redden;
+  #   * every tool that could mutate the box is a shim that prints
+  #     SANDBOX-VIOLATION on stderr and exits 97;
+  #   * anything else is simply not on PATH.
+  #
+  # KNOWN BOUNDARY — this constrains BARE-NAME COMMAND LOOKUP, and only that.
+  # Stating it precisely because a sandbox that reads as broader than it is is
+  # worse than none. Four things it does NOT stop, all verified during #3559's
+  # review:
+  #   1. An ABSOLUTE path (`/usr/bin/sudo`, `awk 'BEGIN{system("/usr/bin/…")}'`).
+  #      setup-hooks.sh invokes every one of these by bare name today, so the
+  #      shims make a regression to an absolute path loud rather than silent.
+  #   2. The symlinked tools' own WRITE modes. They are not "read-only" tools,
+  #      they are tools the extracted statements happen to use read-only:
+  #      `sed -i`, `awk 'BEGIN{print > "f"}'`, `sort -o` and `uniq out` all
+  #      write. setup-hooks.sh uses none of those forms; if it ever does, the
+  #      allowlist is the thing to revisit.
+  #   3. Shell BUILTINS. `>` creates files, `cd` moves, `.` sources. Hence the
+  #      `cd "$HOME"` in sandbox_bash below: without it the payload inherits
+  #      this process's cwd — the developer's checkout — and a stray `> f` in a
+  #      mis-extraction lands in the working tree. With it, relative writes are
+  #      confined to the temp HOME and only absolute ones (case 1) escape.
+  #   4. A payload that re-mutates PATH. `export PATH="…:$PATH"` restores
+  #      everything on the next command. This is not hypothetical: it is
+  #      setup-hooks.sh's own line 51, and a runaway window CAN cover it. It is
+  #      inert only because HOME is pinned at an empty temp tree, so the
+  #      `$HOME/.cargo/bin` / `$HOME/.local/bin` it prepends do not exist. That
+  #      makes the HOME pin load-bearing for PATH INTEGRITY, not just for
+  #      environment privacy — do not "simplify" it away. A future
+  #      setup-hooks.sh that prepends a non-$HOME directory would defeat this.
+  #
+  # Within that boundary the guarantee holds and is tested: a deliberately
+  # unbounded extraction that hands the whole provisioner to the payload
+  # produces only SANDBOX-VIOLATIONs and a red assertion, where the same
+  # payload under a plain `bash -c` reaches 10x `cargo install`, a `curl` to
+  # github.com, `tar -xz`, `rm -rf` and `prek install-hooks` (#3559).
+  sandbox="$tmp/sandbox"
+  sandbox_home="$tmp/sandbox-home"
+  mkdir -p "$sandbox" "$sandbox_home"
+  # `$BASH` is this interpreter's own absolute path. The payload's interpreter
+  # must NOT be resolved through the stub PATH — `bash` is poisoned on it.
+  sandbox_bash_bin="${BASH:-$(command -v bash)}"
+  for sbx_tool in sed awk gawk mawk grep egrep fgrep head tail cut tr sort \
+                  uniq wc cat dirname basename readlink realpath expr uname \
+                  true false; do
+    sbx_path="$(command -v "$sbx_tool" 2>/dev/null)" || continue
+    ln -sf "$sbx_path" "$sandbox/$sbx_tool"
+  done
+  for sbx_tool in cargo cargo-binstall cargo-sqlx rustup sudo doas su apt \
+                  apt-get dnf yum pacman apk brew port curl wget git ssh scp \
+                  npm npx pnpm yarn pip pip3 python python3 go prek install \
+                  tar unzip gunzip chmod chown mkdir mktemp rm rmdir mv cp ln \
+                  touch dd tee sh bash zsh env xargs eval systemctl; do
+    # `rm -f` first, and this loop runs LAST, so a name that ever appears in
+    # BOTH lists ends up poisoned rather than allowed. Without it `cat >` would
+    # follow the symlink left by the loop above and truncate the real system
+    # binary — the two lists are disjoint today, and this keeps a future edit
+    # from making that a discovery.
+    rm -f "$sandbox/$sbx_tool"
+    cat > "$sandbox/$sbx_tool" <<'POISON'
+#!/bin/sh
+# Poisoned shim — see scripts/zizmor-hook.sh's self-test sandbox (#3559).
+printf 'SANDBOX-VIOLATION: self-test payload tried to run `%s %s`\n' \
+  "${0##*/}" "$*" >&2
+exit 97
+POISON
+    chmod +x "$sandbox/$sbx_tool"
+  done
+
+  # setup-hooks.sh defines warn/ok/note/have at its top — ABOVE both extraction
+  # windows — so neither payload ever carries them. Provide all four, not just
+  # `warn` (#3559): with only `warn` defined, anything future work adds inside
+  # either block runs unstubbed, and `have` in particular then degrades to
+  # "command not found" (127 → false) purely by accident.
+  #
+  # `have` is setup-hooks.sh's REAL definition, verbatim, not a stub returning
+  # a fixed answer. A fixed answer would just relocate the accident: `return 1`
+  # makes a swallowed provisioner skip every installer (it looks safe, but only
+  # because of how setup-hooks.sh happens to nest its `have` guards today),
+  # while `return 0` drives it elsewhere. With the real definition the payload
+  # behaves the same whether or not the extraction window happens to include
+  # `have`, and under the stub PATH "installed" means "is a poisoned shim" — so
+  # an installer that believes a tool is present runs straight into a
+  # SANDBOX-VIOLATION instead of into `cargo install`.
+  sandbox_prelude='set -u
+warn() { printf "%s\n" "$*"; }
+ok()   { :; }
+note() { :; }
+have() { command -v "$1" >/dev/null 2>&1; }'
+
+  # sandbox_bash <payload> <argv0> — run <payload> under the stub PATH, with
+  # `$0` bound to <argv0> so setup-hooks.sh's `$(dirname "$0")` resolves the
+  # way it does in a real run. `env -i` also drops CI/GH_TOKEN/locale, so a
+  # payload cannot read this session's environment.
+  #
+  # `cd "$HOME"` (the temp tree) first: `env -i` does not change cwd, so
+  # without it the payload runs in the developer's checkout and a shell
+  # redirection — which no PATH can intercept — writes there. Both payloads
+  # take <argv0> as an ABSOLUTE path, so nothing they do depends on cwd;
+  # verified by running the whole self-test from an unrelated directory.
+  #
+  # ZIZMOR_VERSION_AWK is seeded EMPTY here, via the environment, rather than
+  # by an assignment line inside the guard payload. A column-0
+  # `ZIZMOR_VERSION_AWK=` in THIS file is the exact literal setup-hooks.sh's
+  # sourcing `sed` and the extractors below key on; one living inside a payload
+  # string is a trap for any future extraction that runs over the wrapper
+  # instead of the installer (#3559). Line 79's real constant is now the only
+  # column-0 occurrence in this file, which is what every one of those patterns
+  # intends to find.
+  sandbox_bash() { # <payload> <argv0>
+    env -i "PATH=$sandbox" "HOME=$sandbox_home" ZIZMOR_VERSION_AWK= \
+      "$sandbox_bash_bin" -c "cd \"\$HOME\" || exit 98
+$sandbox_prelude
+$1" "$2"
+  }
+
+  # Captured program output is spliced into the ✗ diagnostics below. The
+  # fail-closed line budget bounds its LENGTH; nothing bounds its bytes. A
+  # stray ESC in there repaints, clears or colours the rest of the terminal, so
+  # a failing assertion becomes an unreadable one — the same "the harness
+  # reports wrong" failure as everything else in this cluster (#3559). Newline/
+  # tab/CR become spaces (the diagnostics are single-line); the remaining C0
+  # controls and DEL are deleted. C1 (0x80–0x9F) is deliberately left alone: on
+  # a UTF-8 terminal those bytes are continuation bytes, and deleting them
+  # would mangle the very characters this file prints (✓ / ✗).
+  #
+  # The length cap serves the same end. The fail-closed budget bounds captured
+  # output to ~20 lines on the paths that are still guarded, but the whole
+  # point of a diagnostic is to survive the case where a guard did NOT hold:
+  # verified here, a deliberately unbounded extraction produced a single ✗ line
+  # of ~3 KB that buried its own SANDBOX-VIOLATION lines. Truncation only ever
+  # touches the message — every assertion above tests the UNsanitized value.
+  #
+  # It reports the ORIGINAL length rather than truncating silently. The cap is
+  # applied per FIELD, and the field carrying the substance (the payload's
+  # stderr, i.e. the SANDBOX-VIOLATION lines) measured 391 bytes against a 400
+  # cap in the review's own canary — one more violation and the decisive line
+  # would have been cut with nothing to say so. A reader who can see "1902
+  # bytes total" knows to re-run for the rest; silent truncation is the same
+  # "the harness reports wrong" failure as everything else here (#3559).
+  #
+  # `local LC_ALL=C` pins BYTE semantics for `${#s}` / `${s:0:400}` (hence
+  # "bytes" in the notice). Without it the cap silently means characters under
+  # LANG=…UTF-8 and bytes under the unset-LANG default that CI runs with — and
+  # in the byte case the cut lands mid-UTF-8-sequence and emits a dangling lead
+  # byte, mangling the very ✓/✗ this function leaves C1 alone to protect
+  # (verified: `✓`×300 cut at byte 400 yielded `… e2` + space). The loop then
+  # drops any trailing continuation bytes and the expansion after it drops a
+  # trailing lead byte, so a partial sequence never survives; that costs at
+  # most one whole character at a cut which is already lossy, and the
+  # diagnostic is always valid UTF-8.
+  sanitize() {
+    local s raw LC_ALL=C
+    s="$(printf '%s' "$*" | tr '\n\t\r' '   ' | tr -d '\000-\037\177')"
+    if [ "${#s}" -gt 400 ]; then
+      raw=${#s}
+      s="${s:0:400}"
+      while [ -n "$s" ]; do
+        case "$s" in *[$'\200'-$'\277']) s="${s%?}" ;; *) break ;; esac
+      done
+      s="${s%[$'\300'-$'\377']}"
+      s="$s …[truncated, ${raw} bytes total]"
+    fi
+    printf '%s' "$s"
+  }
+
   # HOME is redirected at a temp dir so the wrapper's `. "$HOME/.cargo/env"`
   # is a silent no-op and cannot prepend a real zizmor ahead of the stub.
   run_stub() { # <expected-version> [env assignments...] → output + [exit N]
-    local out rc
+    local out rc errexit_was_on=0
     : > "$tmp/stub.log"
+    # Save and restore the ACTUAL prior state. This used to be a bare
+    # `set +e` … `set -e` pair, but this script sets `set -uo pipefail` (line
+    # 51) and never `-e` — so the restoring `set -e` ENABLED errexit rather
+    # than restoring it. Harmless only by luck: all five call sites are
+    # `out=$(run_stub …)` command substitutions, so the change died with the
+    # subshell. One non-substitution call site away from silently turning
+    # errexit on for the rest of the self-test (#3559).
+    case "$-" in *e*) errexit_was_on=1 ;; esac
     set +e
     if have setsid; then
       # No controlling terminal, so `notify`'s tty mirror cannot escape the
@@ -127,7 +331,7 @@ STUB
         bash "$SELF" .github/workflows/ci.yml 2>&1)
     fi
     rc=$?
-    set -e
+    if [ "$errexit_was_on" = 1 ]; then set -e; fi
     printf '%s\n[exit %s]' "$out" "$rc"
   }
   # Substring tests are done with `case`, NOT `printf … | grep -qF`. This file
@@ -221,9 +425,13 @@ STUB
   # line budget, because both failure directions of an unbounded "print until
   # the closing line" loop are worse than an empty result:
   #   * it swallows the rest of setup-hooks.sh and hands ~190 lines of the
-  #     PROVISIONER to `bash -c` below — top-level code that echoes, and that
+  #     PROVISIONER to the payload below — top-level code that echoes, and that
   #     would call `cargo install` / `sudo apt-get install` / `curl` the
-  #     moment the swallowed range happens to contain a definition of `have`;
+  #     moment the swallowed range happens to contain a definition of `have`.
+  #     (That is now caught a second time by the poisoned-PATH sandbox above,
+  #     which turns such a run into a loud SANDBOX-VIOLATION and a red
+  #     assertion. The budget is still the FIRST line of defence: the sandbox
+  #     bounds the blast radius, it does not make a wrong window correct.);
   #   * and the sibling guard check then still finds its needle in that
   #     runaway output and goes GREEN — a guard that passes on a cosmetic
   #     refactor, which is the exact bug #3545 is about.
@@ -235,7 +443,7 @@ STUB
   # back empty and reddens the assertion below.
   installer_stmt="$(
     awk '
-      /^ZIZMOR_VERSION_AWK=/ && !grab {
+      /^(export[ \t]+)?ZIZMOR_VERSION_AWK=/ && !grab {
         grab = 1; buf = $0
         # Single-line form: the statement is this line and nothing else.
         if ($0 !~ /\$\($/) { print buf; exit }
@@ -248,18 +456,55 @@ STUB
       }
     ' "$setup_hooks" 2>/dev/null
   )"
+  # Executed through sandbox_bash (stub PATH + poisoned shims), never a bare
+  # `bash -c` — see the sandbox block above. stderr is captured to a file
+  # rather than discarded so a SANDBOX-VIOLATION shows up in the ✗ below
+  # instead of vanishing behind an empty value.
   installer_awk="$(
-    bash -c 'set -u
-'"$installer_stmt"'
-printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>/dev/null
+    sandbox_bash "$installer_stmt"'
+printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>"$tmp/installer.err"
   )"
+  installer_err="$(cat "$tmp/installer.err" 2>/dev/null)"
   installer_field="$(printf '%s\n' "$sample_version_line" | awk "$installer_awk" 2>/dev/null)"
   if [ -n "$installer_stmt" ] && [ -n "$installer_awk" ] \
     && [ "$wrapper_field" = "$installer_field" ] \
     && [ "$wrapper_field" = "$ZIZMOR_PINNED_VERSION" ]; then
     echo "  ✓ setup-hooks.sh's own sourcing statement, executed, agrees with the wrapper's extraction on a trailing-token version string"
   else
-    echo "  ✗ setup-hooks.sh's own sourcing statement does not reproduce the wrapper's extraction (wrapper: '$wrapper_field', installer: '$installer_field', installer_awk: '$installer_awk', statement found: $([ -n "$installer_stmt" ] && echo yes || echo no))" >&2
+    echo "  ✗ setup-hooks.sh's own sourcing statement does not reproduce the wrapper's extraction (wrapper: '$(sanitize "$wrapper_field")', installer: '$(sanitize "$installer_field")', installer_awk: '$(sanitize "$installer_awk")', statement found: $([ -n "$installer_stmt" ] && echo yes || echo no), stderr: '$(sanitize "$installer_err")')" >&2
+    fails=$((fails + 1))
+  fi
+
+  # The extractor above takes the FIRST `^ZIZMOR_VERSION_AWK=` statement, and
+  # the wiring grep below matches the `cargo_get_pinned` call site. A SECOND
+  # top-level assignment placed between the two would satisfy both while
+  # changing what actually reaches the installer (#3559, item 2), so assert
+  # there is exactly one — using the same anchor the extractor uses, so the two
+  # cannot disagree about what they are counting. Both accept an optional
+  # `export ` prefix: `export ZIZMOR_VERSION_AWK=…` sits at column 0, is a
+  # thoroughly plausible spelling, and under a bare `^ZIZMOR_VERSION_AWK=`
+  # anchor it was invisible to BOTH — so a second one could take effect at
+  # runtime while the extractor kept cross-checking the first and this count
+  # kept reading 1 (found in #3559's review; the two patterns are widened
+  # together precisely so they stay in agreement).
+  #
+  # KNOWN BOUNDARY, do not over-trust this pair: it closes top-level
+  # re-assignment only. An INDENTED re-assignment (inside an `if`, a function,
+  # a `case`) is invisible to both this count and the extractor, as is a second
+  # assignment sharing a line with the first (`FOO=a; FOO=b` is one matching
+  # LINE, and grep -c counts lines). And neither
+  # this nor the execution check above enforces "one source of truth" — the
+  # cross-check tests AGREEMENT ON A SAMPLE, so writing a hard-coded
+  # `ZIZMOR_VERSION_AWK='NR == 1 { print $2 }'` back into setup-hooks.sh in
+  # place of the sourcing sed still passes (a hard-coded DIFFERENT program,
+  # e.g. `$NF`, does redden — that is the regression that actually happened).
+  # Asserting "setup-hooks.sh contains no literal awk program of its own" is a
+  # materially more brittle check and is deliberately not made here.
+  awk_assign_count="$(grep -cE '^(export[[:space:]]+)?ZIZMOR_VERSION_AWK=' "$setup_hooks" 2>/dev/null || true)"
+  if [ "${awk_assign_count:-0}" = 1 ]; then
+    echo "  ✓ setup-hooks.sh has exactly one top-level ZIZMOR_VERSION_AWK assignment (the one executed above)"
+  else
+    echo "  ✗ setup-hooks.sh has ${awk_assign_count:-0} top-level ZIZMOR_VERSION_AWK assignments, not 1 — the cross-check above only ever executes the first, so a later one would reach cargo_get_pinned unchecked (#3559)" >&2
     fails=$((fails + 1))
   fi
   # The statement above CAN come back empty (renamed constant, moved file).
@@ -287,11 +532,12 @@ printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>/dev/null
       }
     ' "$setup_hooks" 2>/dev/null
   )"
-  guard_out="$(
-    bash -c 'warn() { printf "%s\n" "$*"; }
-ZIZMOR_VERSION_AWK=""
-'"$guard_stmt" 2>&1
-  )"
+  # Same sandbox as the statement above: stub PATH, poisoned shims, and
+  # warn/ok/note/have all stubbed (this payload used to stub `warn` alone).
+  # The empty ZIZMOR_VERSION_AWK the guard is being tested against arrives
+  # through sandbox_bash's environment, so no column-0 `ZIZMOR_VERSION_AWK=`
+  # decoy is left inside this file (#3559).
+  guard_out="$(sandbox_bash "$guard_stmt" "$setup_hooks" 2>&1)"
   # `case`, not `printf … | grep -qF` — same pipefail/SIGPIPE phantom-failure
   # hazard documented on assert_out above.
   guard_names_nf=no
@@ -299,7 +545,7 @@ ZIZMOR_VERSION_AWK=""
   if [ -n "$guard_stmt" ] && [ "$guard_names_nf" = yes ]; then
     echo "  ✓ setup-hooks.sh's empty-ZIZMOR_VERSION_AWK guard fires and names the \$NF fallback it degrades to"
   else
-    echo "  ✗ setup-hooks.sh's empty-ZIZMOR_VERSION_AWK guard is missing or does not name the \$NF fallback (guard found: $([ -n "$guard_stmt" ] && echo yes || echo no), output: '$guard_out')" >&2
+    echo "  ✗ setup-hooks.sh's empty-ZIZMOR_VERSION_AWK guard is missing or does not name the \$NF fallback (guard found: $([ -n "$guard_stmt" ] && echo yes || echo no), output: '$(sanitize "$guard_out")')" >&2
     fails=$((fails + 1))
   fi
 
