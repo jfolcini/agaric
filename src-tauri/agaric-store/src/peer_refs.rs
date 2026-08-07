@@ -133,6 +133,17 @@ fn validate_endpoint_id(endpoint_id: &str) -> Result<(), AppError> {
 /// [`bind_endpoint_id`] is what keeps the state from arising in the first place; this
 /// is the read side declining to trust that it succeeded.
 ///
+/// # Why it agrees with `list_peer_refs` about the empty peer id
+///
+/// [`list_peer_refs`] — which is the device list, unpair, and the initiator's pinned-key
+/// check — has always carried `WHERE peer_id != ''`. Without the same predicate here the
+/// two queries disagree about what a row *means*: a row whose `peer_id` is `''` would be
+/// invisible to everything a user can act on while still resolving at the responder's
+/// S-1 gate, and resolving there is what makes the #855 passphrase proof unnecessary.
+/// A row nobody can see must not be a row that authorizes a session. The predicate is
+/// repeated rather than assumed because the two queries have to agree by construction,
+/// not by every write path being careful.
+///
 /// # Errors
 /// If `endpoint_id` is not the canonical form, if the query fails, or if more than one
 /// peer is bound to the same key.
@@ -146,7 +157,7 @@ pub async fn get_peer_ref_by_endpoint_id(
         r#"SELECT peer_id, last_hash, last_sent_hash, synced_at,
                   reset_count as "reset_count!: i64", last_reset_at, cert_hash,
                   device_name, last_address, endpoint_id
-           FROM peer_refs WHERE endpoint_id = ?"#,
+           FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''"#,
         endpoint_id,
     )
     .fetch_all(pool)
@@ -185,15 +196,32 @@ pub async fn get_peer_ref_by_endpoint_id(
 /// Re-binding the same key to the same peer is allowed and is a no-op in effect:
 /// pairing twice with a device that was already paired must not fail.
 ///
+/// # Why the empty `peer_id` is refused as well as the malformed key
+///
+/// This validated only the key, on the reasonable-looking assumption that the caller
+/// knows who it is binding. It does not: the device id reaching here comes from the
+/// peer's mDNS TXT record or from its advertised heads, both of which are claims, and
+/// `""` is a value either can carry. The row that would result is the one
+/// [`get_peer_ref_by_endpoint_id`] and [`list_peer_refs`] now agree to hide — so
+/// refusing to write it and refusing to read it are the same rule stated on both sides
+/// of the table, and neither is load-bearing alone.
+///
 /// # Errors
-/// If `endpoint_id` is not the canonical form, if it is already bound to a different
-/// peer, or if the write fails.
+/// If `peer_id` is empty, if `endpoint_id` is not the canonical form, if it is already
+/// bound to a different peer, or if the write fails.
 pub async fn bind_endpoint_id(
     pool: &SqlitePool,
     peer_id: &str,
     endpoint_id: &str,
 ) -> Result<(), AppError> {
     validate_endpoint_id(endpoint_id)?;
+    if peer_id.is_empty() {
+        return Err(AppError::validation(
+            "invalid peer_id: refusing to bind an endpoint id to the empty device id, \
+             which every peer-facing query hides"
+                .to_owned(),
+        ));
+    }
 
     if let Some(existing) = get_peer_ref_by_endpoint_id(pool, endpoint_id).await?
         && existing.peer_id != peer_id
@@ -1634,6 +1662,85 @@ mod tests {
         assert!(
             msg.contains("peer-A") && msg.contains("peer-B"),
             "the refusal must name both claimants so the row can be found, got: {msg}"
+        );
+    }
+
+    // ── endpoint_id: the peer id has to be a peer ───────────────────────
+
+    /// The write side of "a row nobody can see must not be a row that authorizes a
+    /// session".
+    ///
+    /// `""` is not a hypothetical: the device id reaching `bind_endpoint_id` comes from
+    /// an mDNS TXT record or from the peer's advertised heads, and both are claims.
+    #[tokio::test]
+    async fn binding_a_key_to_the_empty_device_id_is_refused() {
+        let (pool, _dir) = test_pool().await;
+
+        let err = bind_endpoint_id(&pool, "", KEY_A)
+            .await
+            .expect_err("the empty device id must be refused by the write path");
+        assert!(
+            err.to_string().contains("invalid peer_id"),
+            "the refusal must be a named validation error, got: {err}"
+        );
+
+        // And it refused before writing, not after.
+        assert!(
+            get_peer_ref(&pool, "").await.unwrap().is_none(),
+            "the refused bind must not have inserted a row"
+        );
+    }
+
+    /// The read side of the same rule, demonstrated on the row `bind_endpoint_id` now
+    /// refuses to create — because the point of the read guard is that it does not
+    /// depend on the write guard having held. (Same reasoning as
+    /// `a_key_bound_to_two_peers_is_refused_rather_than_resolved`: the schema still
+    /// permits the state.)
+    ///
+    /// Before this, `list_peer_refs` (`WHERE peer_id != ''`) and
+    /// `get_peer_ref_by_endpoint_id` (no such filter) disagreed about what this row
+    /// means: invisible to the device list and to unpair, and yet the thing the
+    /// responder's S-1 gate resolves the authenticated key to — which is what makes the
+    /// #855 passphrase proof unnecessary for the rest of that session.
+    #[tokio::test]
+    async fn a_row_with_no_device_id_is_invisible_to_the_lookup_that_authorizes_it() {
+        let (pool, _dir) = test_pool().await;
+
+        // Reach past `bind_endpoint_id`'s new guard to construct the row a
+        // version-skewed peer used to produce.
+        upsert_peer_ref(&pool, "").await.unwrap();
+        sqlx::query!(
+            "UPDATE peer_refs SET endpoint_id = ? WHERE peer_id = ?",
+            KEY_A,
+            ""
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        // The row is really there — otherwise the assertions below are true for the
+        // wrong reason.
+        let raw: (i64,) = sqlx::query_as("SELECT count(*) FROM peer_refs WHERE peer_id = ''")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(raw.0, 1, "the fixture must actually have written the row");
+
+        // 1. What the user sees: nothing. This was already true.
+        let listed = list_peer_refs(&pool).await.unwrap();
+        assert!(
+            listed.iter().all(|p| !p.peer_id.is_empty()),
+            "list_peer_refs must not surface the nameless row"
+        );
+
+        // 2. What the responder's S-1 gate sees must be the same nothing. This is the
+        //    half that was missing: the key resolved to a peer the UI cannot show,
+        //    cannot unpair, and cannot check `already_bound_elsewhere` against.
+        let found = get_peer_ref_by_endpoint_id(&pool, KEY_A).await.unwrap();
+        assert!(
+            found.is_none(),
+            "a row hidden from every peer-facing query must not resolve an \
+             authenticated key either, got {found:?}"
         );
     }
 

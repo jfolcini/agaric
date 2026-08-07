@@ -15,8 +15,6 @@ use agaric_core::error::AppError;
 #[cfg(test)]
 use agaric_sync::sync_constants::BINARY_FRAME_CHUNK_SIZE;
 #[cfg(test)]
-use agaric_sync::sync_net::SyncConnection;
-#[cfg(test)]
 use agaric_sync::sync_protocol::SyncMessage;
 #[cfg(test)]
 use sqlx::SqlitePool;

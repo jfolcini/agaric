@@ -364,6 +364,13 @@ pub enum ServiceEventKind {
 /// `ServiceEvent::ServiceRemoved` carries the fullname from which we
 /// recover the device_id. All other variants return `None`.
 ///
+/// # An announcement with no name is not a discovery either
+///
+/// A `Resolved` event whose TXT record carries an *empty* `device_id` also returns
+/// `None`. The `Removed` arm has always refused that value; the `Resolved` arm used to
+/// accept it, and the two disagreeing is what let an unnameable peer through. See the
+/// comment at the check itself for what the resulting row does downstream.
+///
 /// # An announcement you cannot dial is not a discovery
 ///
 /// A `Resolved` event whose TXT record has no `endpoint_id`, or one whose value does
@@ -381,7 +388,31 @@ pub enum ServiceEventKind {
 pub fn parse_service_event(event: mdns_sd::ServiceEvent) -> Option<ServiceEventKind> {
     match event {
         mdns_sd::ServiceEvent::ServiceResolved(info) => {
-            let device_id = info.get_property_val_str(TXT_DEVICE_ID)?.to_string();
+            // `get_property_val_str` answers `Some("")` for a key that is *present and
+            // empty*; only an absent key gives `None`. So `?` on its own admits
+            // `device_id = ""`, which the `Removed` arm below already refuses
+            // (`device_id_from_service_fullname` returns `None` for it). That asymmetry
+            // is the entry point for a peer row nothing can see: `list_peer_refs`
+            // filters `WHERE peer_id != ''`, so an empty id is absent from the device
+            // list and from unpair, while still resolving at the responder's S-1 gate.
+            // Reject it where it enters, the same way removal does.
+            // `get_property_val_str` answers `Some("")` for a key that is *present and
+            // empty*; only an absent key gives `None`. So `?` on its own admits
+            // `device_id = ""`, which the `Removed` arm below already refuses
+            // (`device_id_from_service_fullname` returns `None` for it). That asymmetry
+            // is the entry point for a peer row nothing can see: `list_peer_refs`
+            // filters `WHERE peer_id != ''`, so an empty id is absent from the device
+            // list and from unpair, while still resolving at the responder's S-1 gate.
+            // Reject it where it enters, the same way removal does.
+            let device_id = info.get_property_val_str(TXT_DEVICE_ID)?;
+            if device_id.is_empty() {
+                tracing::debug!(
+                    "mdns: ignoring announcement with an empty device_id — a peer with \
+                     no name cannot be listed, paired with, or unpaired from"
+                );
+                return None;
+            }
+            let device_id = device_id.to_string();
             let Some(raw_endpoint_id) = info.get_property_val_str(TXT_ENDPOINT_ID) else {
                 tracing::debug!(
                     device_id,
@@ -681,6 +712,41 @@ mod tests {
             parse_service_event(event).is_none(),
             "a TXT record with no endpoint_id yields a name, not an address; surfacing \
              it would hand the daemon a peer it cannot dial"
+        );
+    }
+
+    /// An announcement with no *name* is not a discovery either, and the `Resolved`
+    /// arm used to be the only one that thought otherwise.
+    ///
+    /// `get_property_val_str` returns `Some("")` for a key that is present and empty —
+    /// only an absent key gives `None` — so `?` alone let `device_id = ""` through. The
+    /// `Removed` arm has always refused that value (`device_id_from_service_fullname`),
+    /// and the asymmetry is what made it reachable: the row it produces is filtered out
+    /// of `list_peer_refs` by `WHERE peer_id != ''`, so it is absent from the device
+    /// list and from unpair while still being a row.
+    ///
+    /// The endpoint id here is a real, parseable key, so this test cannot pass by
+    /// accident through the `no endpoint_id` arm above — the *only* thing wrong with
+    /// this record is the empty name. The second assertion pins that: the same record
+    /// with a non-empty name must resolve.
+    #[test]
+    fn an_announcement_with_an_empty_device_id_is_not_a_discovery() {
+        let key = test_endpoint_id("empty-name").to_string();
+
+        let event = resolved_with_txt(&[("device_id", ""), ("endpoint_id", &key)]);
+        assert!(
+            parse_service_event(event).is_none(),
+            "an empty device_id must be refused on Resolved exactly as it already is on \
+             Removed; it names a peer no query a user can reach will ever return"
+        );
+
+        // Control: the record is otherwise well-formed, so the refusal above is about
+        // the name and nothing else.
+        let event = resolved_with_txt(&[("device_id", "DEVICE-NAMED"), ("endpoint_id", &key)]);
+        assert!(
+            parse_service_event(event).is_some(),
+            "the same record with a name must still resolve, or the test above proves \
+             nothing about the empty one"
         );
     }
 

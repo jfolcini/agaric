@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address, endpoint_id\n           FROM peer_refs WHERE endpoint_id = ?",
+  "query": "SELECT peer_id, last_hash, last_sent_hash, synced_at,\n                  reset_count as \"reset_count!: i64\", last_reset_at, cert_hash,\n                  device_name, last_address, endpoint_id\n           FROM peer_refs WHERE endpoint_id = ? AND peer_id != ''",
   "describe": {
     "columns": [
       {
@@ -130,5 +130,5 @@
       true
     ]
   },
-  "hash": "10396da9fe9ed480c37d4bb0d99d630c52fcc3cd91a5246af067977f9e879bae"
+  "hash": "60dda7e652edcb3551d9d74badd571bc2b7ac265adf11e1f268b0fd2766b9441"
 }

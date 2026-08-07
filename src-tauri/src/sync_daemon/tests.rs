@@ -1056,6 +1056,83 @@ async fn try_sync_with_peer_skips_peer_it_cannot_dial() {
     materializer.shutdown();
 }
 
+/// A peer that announced no *name* is skipped before anything is spent on it.
+///
+/// The empty `device_id` is refused in four independent places (mDNS parse, here,
+/// `bind_endpoint_id`, `get_peer_ref_by_endpoint_id`) because each closes the hole on
+/// its own and an announcement is not the only way a `DiscoveredPeer` is built —
+/// `build_fallback_peer` synthesises one from a `peer_refs` row. The row an empty id
+/// produces is filtered out of `list_peer_refs` (`WHERE peer_id != ''`), so it is
+/// absent from the device list and from unpair while still being present enough to
+/// resolve the responder's S-1 gate.
+///
+/// # Why this asserts on events rather than the return value
+///
+/// The return value is `false` either way: without the skip the peer falls through to
+/// the dial, which fails, which also returns `false`. What separates the two is what
+/// was *spent* — the "connecting" event, the error event, and the recorded failure that
+/// backs this nameless id off. Asserting zero of each is the only reading that can tell
+/// the skip from the failure.
+///
+/// The endpoint id is real and the address is the same one
+/// `try_sync_with_peer_emits_error_event_on_connection_failure` uses, so nothing but
+/// the empty name distinguishes this case from that one — which emits exactly 2 events
+/// and records 1 failure.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn try_sync_with_peer_skips_a_peer_with_no_device_id() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    let scheduler = Arc::new(SyncScheduler::new());
+    let sink = Arc::new(RecordingEventSink::new());
+    let event_sink: Arc<dyn SyncEventSink> = sink.clone();
+    let cancel = AtomicBool::new(false);
+    let harness = ServiceHarness::new().await;
+
+    // Everything about this peer is well-formed except its name.
+    let peer = unreachable_peer("");
+    assert!(
+        peer.endpoint_id.is_some(),
+        "the fixture must carry a real key, or this test would exercise the \
+         cannot-dial arm instead"
+    );
+    // A ref list that does not mention this peer, so the pinned-key check at step 4
+    // could not be what stops it.
+    let refs = vec![make_peer_ref("SOME_OTHER_PEER")];
+
+    let apply_host: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
+        std::sync::Arc::new(materializer.clone());
+    let ctx = SyncSessionContext {
+        pool: &pool,
+        device_id: "LOCAL",
+        materializer: &apply_host,
+        scheduler: &scheduler,
+        event_sink: &event_sink,
+        cancel: &cancel,
+        endpoint: &harness.client_endpoint,
+    };
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        try_sync_with_peer(&ctx, &peer, &refs),
+    )
+    .await
+    .expect("try_sync_with_peer must complete within the timeout");
+
+    assert!(!cancelled, "no session ran, so no cancel was observed");
+    assert_eq!(
+        sink.events().len(),
+        0,
+        "a nameless peer must be skipped before the 'connecting' event — reaching the \
+         dial means the empty id was carried far enough to be bound"
+    );
+    assert_eq!(
+        scheduler.failure_count(""),
+        0,
+        "nothing may be recorded against a device id that does not exist"
+    );
+
+    materializer.shutdown();
+}
+
 /// When the per-peer lock is already held, try_sync_with_peer returns
 /// immediately — no events emitted.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

@@ -849,6 +849,25 @@ pub async fn try_sync_with_peer(
 ) -> bool {
     let peer_id = &peer.device_id;
 
+    // 0. A peer with no name is not a peer.
+    //
+    // `mdns::parse_service_event` refuses an empty `device_id` where announcements
+    // enter, and this is a second, independent refusal because an announcement is not
+    // the only way a `DiscoveredPeer` is built: `build_fallback_peer` synthesises one
+    // from a `peer_refs` row, and nothing stops a future caller synthesising another.
+    // An empty id carried through a session ends up as the `peer_id` of a row that
+    // `list_peer_refs` filters out (`WHERE peer_id != ''`) — present enough to
+    // authorize an inbound session at S-1, absent from the device list and from
+    // unpair.
+    //
+    // Placed before the backoff gate, the per-peer lock and the "connecting" event, so
+    // nothing is recorded against a name that does not exist; and before
+    // `_cancel_guard` exists, so it cannot swallow a sibling's cancel.
+    if peer_id.is_empty() {
+        tracing::warn!("skipping sync: the discovered peer announced an empty device id");
+        return false;
+    }
+
     // Scope guard: clear the shared cancel flag on Drop, but ONLY when this
     // task actually *owns* the cancel — i.e. it reached the real sync-session
     // phase and is therefore the legitimate consumer of (and resetter for) a

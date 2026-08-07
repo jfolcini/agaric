@@ -1472,6 +1472,99 @@ pub async fn receive_request_and_send_files(
 // File transfer protocol — receiver side
 // ---------------------------------------------------------------------------
 
+/// How often the receive loop wakes to re-read the cancel flag while waiting.
+///
+/// Short enough to abort promptly on the rare cancel race, long enough that on the
+/// common path — where the next message is already in flight — we wake at most a handful
+/// of times per multi-gigabyte transfer.
+const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// Await one [`SyncMessage`] with the cancel flag polled while we wait.
+///
+/// `Ok(Some(msg))` is a message; `Ok(None)` means the cancel flag was observed and the
+/// caller should stop cleanly, keeping the files it has already ACKed; `Err` is a real
+/// failure, including the [`RECV_TIMEOUT`] the whole wait is bounded by.
+///
+/// # Why the future is pinned instead of rebuilt each tick
+///
+/// [`recv_sync_message`] is **not cancel-safe**. Its framing state — the four-byte
+/// length prefix and however much of the body has arrived — lives in locals, and
+/// `read_exact` has already consumed those bytes *out of the QUIC stream* by the time
+/// they are there. Dropping the future throws them away. Rebuilding it per tick
+/// therefore means: prefix arrives, 150 ms elapses before the body does, the prefix is
+/// discarded, and the next read takes the body's first four bytes for a length prefix —
+/// every `SyncMessage` is internally tagged, so that is `{"ty` = 2,065,855,609, far over
+/// [`MAX_FRAME_SIZE`] (268,435,456). That number is the one
+/// `cancel_poll_tests::a_frame_split_across_the_poll_interval_is_read_whole_and_the_next_one_too`
+/// reports when this pinning is removed, not an estimate. On a lossy link (a QUIC PTO on
+/// WiFi is routinely 200–500 ms) it is every cycle, reported only as a non-fatal warning.
+///
+/// This loop was correct under the old transport, where `WebSocketStream::next()` kept
+/// partial-frame state in the *stream object* and the future held nothing worth losing.
+/// The property did not survive the port, and nothing in the type system says so.
+///
+/// So one future is created here and held across every tick: the timeout bounds the
+/// *waiting*, not the read. Re-arming is by construction — the future is a local of this
+/// function, so it is dropped only once it has produced a complete frame (or failed),
+/// and the caller's next message gets a fresh one from the next call. There is no path
+/// on which a partially-read frame outlives, or is outlived by, its buffer.
+async fn recv_message_polling_cancel(
+    recv: &mut RecvStream,
+    cancel: &AtomicBool,
+    files_received: usize,
+) -> Result<Option<SyncMessage>, AppError> {
+    let wait_deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
+    let fut = recv_sync_message(recv);
+    tokio::pin!(fut);
+    loop {
+        match tokio::time::timeout(CANCEL_POLL_INTERVAL, &mut fut).await {
+            Ok(Ok(msg)) => return Ok(Some(msg)),
+            Ok(Err(e)) => {
+                // The receive itself failed. If we're cancelling, a peer that has also
+                // cancelled may simply drop the connection instead of sending another
+                // message; that surfaces here as a recv error (e.g. "connection reset").
+                // Treat it as a clean cancel-driven stop — we already hold the files we
+                // ACKed — rather than a transfer failure. Only when *not* cancelling do
+                // we propagate the error so the daemon retries.
+                if cancel.load(Ordering::Acquire) {
+                    tracing::info!(
+                        files_received,
+                        error = %e,
+                        "peer connection ended while cancelling; aborting receive cleanly"
+                    );
+                    return Ok(None);
+                }
+                return Err(e);
+            }
+            Err(_elapsed) => {
+                if cancel.load(Ordering::Acquire) {
+                    tracing::info!(
+                        files_received,
+                        "cancel observed while waiting for next message; aborting receive"
+                    );
+                    return Ok(None);
+                }
+                // Not cancelled — but the wait is not unbounded. `RECV_TIMEOUT` is what
+                // replaces the bound the old transport supplied for free:
+                // `conn.recv_json()` was itself wrapped in
+                // `SyncConnection::RECV_TIMEOUT`, so a peer that neither sends nor
+                // cancels used to fail after 180 s; QUIC has no such clock, and without
+                // a deadline here the poll loop would spin against a silent peer
+                // forever, holding the session open. Same value, restated scope:
+                // OLD = 180 s per WebSocket frame, NEW = 180 s per awaited
+                // `SyncMessage`, re-armed per call.
+                if tokio::time::Instant::now() >= wait_deadline {
+                    return Err(AppError::InvalidOperation(format!(
+                        "[sync_files] peer sent no file-transfer message for {}s",
+                        RECV_TIMEOUT.as_secs()
+                    )));
+                }
+                // Keep waiting for the same frame.
+            }
+        }
+    }
+}
+
 /// Request and receive files from the remote peer.
 ///
 /// 1. Compute which attachment files are missing locally.
@@ -1560,78 +1653,20 @@ pub async fn request_and_receive_files(
         // has also cancelled and will therefore never send the next
         // message, a bare unbounded receive would block until the
         // connection closes (up to the nextest 60s timeout — the source of
-        // the flake). Poll cancel while we wait for the next message: wrap
-        // the receive in a short timeout and re-check `cancel` on each
-        // elapsed tick. A message that arrives within the interval is
-        // handled exactly as before — only the *waiting* becomes
-        // cancel-aware, so the normal (non-cancel) path is unchanged.
+        // the flake). `recv_message_polling_cancel` re-checks `cancel` every
+        // `CANCEL_POLL_INTERVAL` while it waits, and — see its docs — holds
+        // ONE `recv_sync_message` future across those ticks rather than
+        // rebuilding it. Only the *waiting* is cancel-aware; a message that
+        // arrives is read by a future that was never dropped mid-frame.
         //
-        // 150ms is short enough to abort promptly on the rare cancel race
-        // yet long enough that, on the common path where the next message
-        // is already in flight, we wake at most a handful of times per
-        // multi-gigabyte transfer (no busy-polling).
-        //
-        // The inner receive is `recv_sync_message` — the UNBOUNDED form —
-        // because this loop supplies its own clock and a nested
+        // The receive inside it is `recv_sync_message` — the UNBOUNDED form —
+        // because that helper supplies its own clock and a nested
         // `recv_sync_message_within` would restart its 180 s budget on
         // every 150 ms tick, i.e. never fire.
-        //
-        // `WAIT_DEADLINE` is what replaces the bound the old transport
-        // supplied for free. `conn.recv_json()` was itself wrapped in
-        // `SyncConnection::RECV_TIMEOUT`, so a peer that neither sends nor
-        // cancels used to fail this loop after 180 s; QUIC has no such
-        // clock, and without a deadline here the poll loop would spin
-        // against a silent peer forever, holding the session open. Same
-        // value, restated scope: OLD = 180 s per WebSocket frame,
-        // NEW = 180 s per awaited `SyncMessage`. It bounds the wait for
-        // ONE message and is re-armed per outer-loop iteration, so a peer
-        // delivering files steadily never trips it however long the whole
-        // phase takes.
-        const CANCEL_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(150);
-        let wait_deadline = tokio::time::Instant::now() + RECV_TIMEOUT;
-        let msg: SyncMessage = loop {
-            match tokio::time::timeout(CANCEL_POLL_INTERVAL, recv_sync_message(recv)).await {
-                Ok(Ok(msg)) => break msg,
-                Ok(Err(e)) => {
-                    // The receive itself failed. If we're cancelling, a
-                    // peer that has also cancelled may simply drop the
-                    // connection instead of sending another message; that
-                    // surfaces here as a recv error (e.g. "connection
-                    // reset"). Treat it as a clean cancel-driven stop —
-                    // we already hold the files we ACKed — rather than a
-                    // transfer failure. Only when *not* cancelling do we
-                    // propagate the error so the daemon retries.
-                    if cancel.load(Ordering::Acquire) {
-                        tracing::info!(
-                            files_received = stats.files_received,
-                            error = %e,
-                            "peer connection ended while cancelling; aborting receive cleanly"
-                        );
-                        return Ok(stats);
-                    }
-                    return Err(e);
-                }
-                Err(_elapsed) => {
-                    if cancel.load(Ordering::Acquire) {
-                        tracing::info!(
-                            files_received = stats.files_received,
-                            "cancel observed while waiting for next message; aborting receive"
-                        );
-                        return Ok(stats);
-                    }
-                    // Not cancelled — but the wait is not unbounded. See
-                    // `wait_deadline` above: this is the 180 s the old
-                    // transport applied to every receive, restated at the
-                    // one call site that now owns it.
-                    if tokio::time::Instant::now() >= wait_deadline {
-                        return Err(AppError::InvalidOperation(format!(
-                            "[sync_files] peer sent no file-transfer message for {}s",
-                            RECV_TIMEOUT.as_secs()
-                        )));
-                    }
-                    // Keep waiting for the next message.
-                }
-            }
+        let Some(msg) = recv_message_polling_cancel(recv, cancel, stats.files_received).await?
+        else {
+            // Cancelled: keep the files we ACKed and stop cleanly.
+            return Ok(stats);
         };
         match msg {
             SyncMessage::FileOffer {
@@ -2070,3 +2105,131 @@ pub async fn app_data_dir_from_pool(pool: &SqlitePool) -> Result<PathBuf, AppErr
 // Tests — hosted app-side (`src/sync_files/tests.rs`) via the app shim (#2621
 // Sync-D): they reference app-only `Materializer`/`recovery`.
 // ===========================================================================
+
+#[cfg(test)]
+mod cancel_poll_tests {
+    //! The one part of this module whose test does *not* live app-side.
+    //!
+    //! `src/sync_files/tests.rs` hosts the rest because they need the app crate's
+    //! `Materializer` and `recovery`. These need neither — they need a real QUIC stream,
+    //! which is `transport::test_support`, which is here. Hosting them app-side would
+    //! put a framing property one crate away from the code that owns framing.
+
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt as _;
+
+    use super::{CANCEL_POLL_INTERVAL, recv_message_polling_cancel};
+    use crate::sync_protocol::SyncMessage;
+    use crate::transport::test_support::quic_pair;
+
+    /// Long enough that the poll interval expires at least twice mid-frame, so the
+    /// split is not a coin toss on scheduler timing.
+    const SPLIT_DELAY: Duration = Duration::from_millis(400);
+
+    /// A frame whose length prefix and body are separated by more than one poll
+    /// interval is still read as one frame — twice in a row.
+    ///
+    /// # What this is actually about
+    ///
+    /// `recv_sync_message` is not cancel-safe: `read_exact` pulls the four prefix bytes
+    /// *out of the stream* into a local, so a dropped future takes them with it. The
+    /// loop this helper replaced built a new future every 150 ms, which is fine only
+    /// while whole frames arrive inside one tick. Split one — a lost body packet and a
+    /// QUIC PTO, which on WiFi is routinely 200–500 ms — and the prefix is gone and the
+    /// body's first four bytes (`{"ty`, internally-tagged JSON) are read as a length of
+    /// 2,065,855,609, over `MAX_FRAME_SIZE`, failing the whole transfer phase. That is
+    /// the verbatim error this test reports with the pinning removed:
+    /// `peer announced a 2065855609-byte message (max 268435456); refusing to allocate`.
+    ///
+    /// # Why two messages and not one
+    ///
+    /// One message proves the future survives ticks; it does not prove the *next*
+    /// message gets a future of its own. A helper that pinned one future and then
+    /// somehow reused it after completion would pass a single-message test and hang or
+    /// mis-frame on the second. Both messages here are split, and they are different
+    /// variants so a mis-framed read cannot be mistaken for a correct one.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_frame_split_across_the_poll_interval_is_read_whole_and_the_next_one_too() {
+        assert!(
+            SPLIT_DELAY > CANCEL_POLL_INTERVAL * 2,
+            "the delay must actually straddle the poll interval, or this test asserts \
+             nothing about dropped futures"
+        );
+
+        let first = SyncMessage::SnapshotAccept;
+        let second = SyncMessage::FileReceived {
+            attachment_id: "att-1".to_owned(),
+        };
+
+        let mut pair = quic_pair().await;
+        let cancel = AtomicBool::new(false);
+        // Disjoint field borrows, which is why `TestSide` has three fields rather than
+        // a getter pair.
+        let send = &mut pair.client.send;
+        let recv = &mut pair.server.recv;
+
+        let writer = async {
+            for msg in [&first, &second] {
+                let payload = serde_json::to_vec(msg).expect("a SyncMessage serialises");
+                let len = u32::try_from(payload.len()).expect("a small message");
+                // Prefix, then a gap, then the body. This is the whole fixture: without
+                // the gap the frame never straddles a tick and the test would pass
+                // against the code it is meant to falsify.
+                send.write_all(&len.to_be_bytes()).await.expect("prefix");
+                send.flush().await.expect("prefix flushed, not coalesced");
+                tokio::time::sleep(SPLIT_DELAY).await;
+                send.write_all(&payload).await.expect("body");
+                send.flush().await.expect("body flushed");
+            }
+        };
+
+        let reader = async {
+            let a = recv_message_polling_cancel(recv, &cancel, 0)
+                .await
+                .expect("the first split frame must read as one frame")
+                .expect("not cancelled");
+            let b = recv_message_polling_cancel(recv, &cancel, 1)
+                .await
+                .expect("the second split frame must read as one frame too")
+                .expect("not cancelled");
+            (a, b)
+        };
+
+        let (_, (a, b)) = tokio::join!(writer, reader);
+        assert_eq!(a, first, "the first frame must arrive intact");
+        assert_eq!(
+            b, second,
+            "and the second must get a future of its own — re-arming is what the \
+             pinning must not break"
+        );
+    }
+
+    /// The reason the poll exists at all still holds: a cancel raised while we wait,
+    /// with the peer silent, is observed rather than blocked on.
+    ///
+    /// Asserted alongside the framing test because the pinning must not cost this — a
+    /// future held across ticks would be useless if the ticks stopped happening.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_cancel_raised_while_waiting_is_observed_without_a_message() {
+        let mut pair = quic_pair().await;
+        let cancel = AtomicBool::new(false);
+        let recv = &mut pair.server.recv;
+
+        let raiser = async {
+            tokio::time::sleep(CANCEL_POLL_INTERVAL * 2).await;
+            cancel.store(true, std::sync::atomic::Ordering::Release);
+        };
+        let reader = recv_message_polling_cancel(recv, &cancel, 0);
+
+        let (_, outcome) = tokio::join!(raiser, reader);
+        assert!(
+            outcome
+                .expect("a cancel is a clean stop, not an error")
+                .is_none(),
+            "a cancel observed while waiting must end the receive cleanly, keeping the \
+             files already ACKed"
+        );
+    }
+}

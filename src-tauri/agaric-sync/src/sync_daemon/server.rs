@@ -231,6 +231,56 @@ async fn reject(
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+/// #800's surviving guarantee, as a decision rather than an expression buried in the
+/// session's tail.
+///
+/// `bind_endpoint_id` refuses to point one *key* at two peers, but its
+/// `ON CONFLICT(peer_id) DO UPDATE` would happily re-point one *peer* at a new key — and
+/// the id we would bind under came from the peer's advertised heads, which is a claim.
+/// So a device admitted on the pairing proof could otherwise take over an already-bound
+/// peer's row by naming it. `true` here means "do not re-bind".
+///
+/// # Why a read failure denies
+///
+/// This took `list_peer_refs(…).unwrap_or_default()`, which makes the guarantee fail
+/// **open**: any error — `SQLITE_BUSY` is entirely realistic on this pool, which the
+/// session has been writing to throughout — yields an empty list, nothing matches, and
+/// the re-bind proceeds. The evidence that the peer is already bound is exactly what a
+/// failed read does not have, so the only reading of `Err` that preserves the property
+/// is "assume it is". The cost of being wrong is one skipped bind, re-attempted on the
+/// next sync cycle; the cost of the other reading is a silently re-pointed row. The old
+/// stack propagated the error with `?` for the same reason.
+///
+/// Split out from the caller because a failing `list_peer_refs` is not reachable from a
+/// session test — every earlier step in the session needs the same pool — and an
+/// untestable branch on an authorization path is how this one came to be written the
+/// wrong way round.
+fn peer_is_bound_to_another_key(
+    peers: Result<Vec<peer_refs::PeerRef>, AppError>,
+    settled_remote_id: &str,
+    endpoint_id: &str,
+) -> bool {
+    if settled_remote_id.is_empty() {
+        // Nothing was named, so there is nothing to take over; the caller's own
+        // `!settled_remote_id.is_empty()` arm is what declines to bind.
+        return false;
+    }
+    match peers {
+        Ok(peers) => peers.into_iter().any(|p| {
+            p.peer_id == settled_remote_id && p.endpoint_id.is_some_and(|k| k != endpoint_id)
+        }),
+        Err(e) => {
+            tracing::warn!(
+                peer_id = %settled_remote_id,
+                error = %e,
+                "could not read peer_refs to check whether this peer is already bound to \
+                 another key; refusing the re-bind rather than assuming it is safe (#800)"
+            );
+            true
+        }
+    }
+}
+
 async fn handle_incoming_sync_inner(
     mut session: InboundSession,
     pool: sqlx::SqlitePool,
@@ -581,29 +631,19 @@ async fn handle_incoming_sync_inner(
     // column, so re-binding a peer preserves its version vectors and sync state; a
     // device that merely re-paired must not be reset.
     let settled_remote_id = orch.session().remote_device_id.clone();
-    // #800's surviving guarantee. `bind_endpoint_id` refuses to point one *key* at two
-    // peers, but its `ON CONFLICT(peer_id) DO UPDATE` would happily re-point one *peer*
-    // at a new key — and the id we would bind under here came from the peer's advertised
-    // heads, which is a claim. So a device admitted on the pairing proof could otherwise
-    // take over an already-bound peer's row by naming it.
+    // #800's surviving guarantee; see `peer_is_bound_to_another_key` for what it holds
+    // and why a failed read denies rather than assumes.
     //
     // The old stack refused this because the cert CN was checked against the pinned
     // hash (#800, B-33). Here the check is simpler and stronger: a peer whose row
     // already names a different key is not re-bound, whatever it claims. Re-pairing a
     // device that legitimately changed keys goes through `delete_peer_ref` first, which
     // is a deliberate act rather than a side effect of one session.
-    let already_bound_elsewhere = if settled_remote_id.is_empty() {
-        false
-    } else {
-        peer_refs::list_peer_refs(&pool_ref)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .any(|p| {
-                p.peer_id == settled_remote_id
-                    && p.endpoint_id.is_some_and(|k| k != endpoint_id_str)
-            })
-    };
+    let already_bound_elsewhere = peer_is_bound_to_another_key(
+        peer_refs::list_peer_refs(&pool_ref).await,
+        &settled_remote_id,
+        &endpoint_id_str,
+    );
     if already_bound_elsewhere {
         tracing::warn!(
             peer_id = %settled_remote_id,
@@ -660,4 +700,86 @@ async fn handle_incoming_sync_inner(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The responder's session-level tests live app-side (`src/sync_daemon/tests.rs`),
+    //! which is where the real admission path can be driven end to end. This one cannot
+    //! be: it is about what happens when `list_peer_refs` *fails*, and a session test
+    //! reaching this point has necessarily been using the same pool successfully for
+    //! the whole session. So the decision is a function and the failure is an input.
+
+    use super::*;
+
+    fn peer(peer_id: &str, endpoint_id: Option<&str>) -> peer_refs::PeerRef {
+        peer_refs::PeerRef {
+            peer_id: peer_id.to_owned(),
+            last_hash: None,
+            last_sent_hash: None,
+            synced_at: None,
+            reset_count: 0,
+            last_reset_at: None,
+            cert_hash: None,
+            device_name: None,
+            last_address: None,
+            endpoint_id: endpoint_id.map(str::to_owned),
+        }
+    }
+
+    const KEY_A: &str = "aa11bb22cc33dd44ee55ff6607788990a1b2c3d4e5f60718293a4b5c6d7e8f90";
+    const KEY_B: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+
+    /// The guarantee itself: a peer whose row already names a different key is not
+    /// re-bound. Without this the whole function would be testing nothing.
+    #[test]
+    fn a_peer_already_bound_to_a_different_key_is_refused() {
+        let peers = Ok(vec![peer("PEER-A", Some(KEY_A))]);
+        assert!(
+            peer_is_bound_to_another_key(peers, "PEER-A", KEY_B),
+            "the peer's row names KEY_A and this session authenticated KEY_B; the id \
+             came from the peer's advertised heads, which is a claim"
+        );
+    }
+
+    /// The other three shapes must NOT refuse, or the guard would block every ordinary
+    /// bind and re-bind and nothing would ever pair.
+    #[test]
+    fn the_ordinary_shapes_are_allowed() {
+        assert!(
+            !peer_is_bound_to_another_key(Ok(vec![peer("PEER-A", Some(KEY_A))]), "PEER-A", KEY_A),
+            "re-binding the same key to the same peer is a no-op, not a takeover"
+        );
+        assert!(
+            !peer_is_bound_to_another_key(Ok(vec![peer("PEER-A", None)]), "PEER-A", KEY_A),
+            "an unbound peer is the TOFU path every migrated install takes"
+        );
+        assert!(
+            !peer_is_bound_to_another_key(Ok(vec![peer("PEER-B", Some(KEY_A))]), "PEER-A", KEY_B),
+            "another peer's binding is not this peer's"
+        );
+        assert!(
+            !peer_is_bound_to_another_key(Ok(vec![peer("PEER-A", Some(KEY_A))]), "", KEY_B),
+            "a peer that never named itself has nothing to take over"
+        );
+    }
+
+    /// #800's guarantee must not fail **open**.
+    ///
+    /// `unwrap_or_default()` turned any read error into an empty list, so nothing
+    /// matched, `already_bound_elsewhere` was `false`, and the already-bound peer's row
+    /// was re-pointed at the key that just connected. `SQLITE_BUSY` is not exotic here:
+    /// the session has been writing to this pool throughout.
+    ///
+    /// The evidence that the peer is already bound is precisely what a failed read does
+    /// not have. Refusing costs one skipped bind, retried next cycle.
+    #[test]
+    fn a_failed_read_refuses_the_re_bind_rather_than_permitting_it() {
+        let failed: Result<Vec<peer_refs::PeerRef>, AppError> =
+            Err(AppError::InvalidOperation("database is locked".to_owned()));
+        assert!(
+            peer_is_bound_to_another_key(failed, "PEER-A", KEY_B),
+            "a read that failed is not a read that found nothing; deny"
+        );
+    }
 }
