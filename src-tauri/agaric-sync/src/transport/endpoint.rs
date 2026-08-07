@@ -397,8 +397,9 @@ mod tests {
     //!   a fully internet-facing endpoint.
     //!
     //! Both were rewritten onto the resolver record, and each is now paired with a
-    //! control asserting the opposite. **If a control goes green, the guard beside it
-    //! has stopped being able to fail and this suite is lying.**
+    //! control asserting the opposite. A green control proves the observation path
+    //! can see the forbidden behaviour; if it goes red while the guard stays green,
+    //! the guard result cannot be trusted.
     //!
     //! # These tests do not touch the network
     //!
