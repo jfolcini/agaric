@@ -240,9 +240,51 @@ export function KeyboardShortcuts({
           />
         </SheetHeader>
         <ScrollArea className="px-4 pb-4" data-testid="shortcuts-table">
+          {/* #3501 — every `<table>` below MUST keep `table-fixed`. Radix's
+              ScrollArea Viewport wraps its children in an internal
+              `display: table; min-width: 100%` div so it can measure content
+              size; that wrapper shrink-to-fits its widest child. With the
+              default `table-layout: auto`, an unwrappable cell (e.g. the
+              deep-links table's `agaric://settings/<tab>` code span, which
+              has no space to wrap at) forces this table's column to its
+              *minimum content width*, which the wrapper then adopts — and
+              because the viewport's `overflow-x` is `hidden` (this
+              ScrollArea is vertical-only), the excess silently clips instead
+              of scrolling. `table-fixed` makes each table honour its `w-full`
+              constraint instead of inflating to fit content, so the sheet
+              stays within its 360px surface on a phone. Verified via
+              `expectNoHorizontalOverflow` in `e2e/mobile-overflow.spec.ts`.
+
+              `table-fixed` alone is NOT sufficient (PR #3520 review): it
+              stops the *column* growing, but `<td>` overflow is `visible`,
+              so an unwrappable cell (the deep-links `<code>` chips, 23
+              monospace chars with no break opportunity) renders past its
+              column boundary and OVERLAPS the next column's text instead of
+              clipping — invisible to the guard above because the overlap
+              stays inside the sheet's own right edge. `break-all` on the
+              `<code>` chips (below) is what actually lets those cells
+              shrink to the fixed column width, by giving the browser a
+              character-level break point. Measured at 360px: without
+              `break-all` the deep-links chip is ~165px wide against a
+              ~94.5px column — ~71px of overlap into the Action column's
+              text. `KeyboardShortcuts.test.tsx` asserts both classes are
+              present on all four tables so this invariant is enforced in
+              CI (not just this e2e file, which stays local-only). */}
           {/* #214 Phase 3 — "Essential" group: the five core triggers a new
               user needs first, surfaced above the full catalog-driven list. */}
-          <table className="w-full text-sm" data-testid="essential-table">
+          <table className="w-full table-fixed text-sm" data-testid="essential-table">
+            {/* `<col>` widths (not `th` widths) because `table-layout: fixed`
+                sizes columns from the FIRST row of the table — this table's
+                first row is the colSpan=2 section title, which spans both
+                columns and so carries no per-column width info. A `<col>`
+                element's width is read independent of row order (CSS 2.1
+                17.5.2.1 rule 1, ahead of any cell-derived width), so it's
+                the only way to keep 1/3–2/3 proportions on a table whose
+                header-with-widths row isn't literally row one. */}
+            <colgroup>
+              <col className="w-1/3" />
+              <col className="w-2/3" />
+            </colgroup>
             <thead>
               <tr>
                 <th
@@ -275,7 +317,13 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-          <table className="w-full text-sm mt-6">
+          <table className="w-full table-fixed text-sm mt-6" data-testid="shortcuts-list-table">
+            {/* See `essential-table`'s colgroup comment above — same
+                1/3–2/3 proportion, kept as `<col>` for consistency. */}
+            <colgroup>
+              <col className="w-1/3" />
+              <col className="w-2/3" />
+            </colgroup>
             <thead>
               <tr className="border-b">
                 <th className="pb-2 text-left font-semibold text-foreground">
@@ -335,7 +383,12 @@ export function KeyboardShortcuts({
               ))}
             </tbody>
           </table>
-          <table className="w-full text-sm mt-6" data-testid="syntax-table">
+          <table className="w-full table-fixed text-sm mt-6" data-testid="syntax-table">
+            {/* See `essential-table`'s colgroup comment above. */}
+            <colgroup>
+              <col className="w-1/3" />
+              <col className="w-2/3" />
+            </colgroup>
             <thead>
               <tr className="border-b">
                 <th className="pb-2 text-left font-semibold text-foreground">
@@ -350,7 +403,7 @@ export function KeyboardShortcuts({
               {SYNTAX_ENTRIES.map((entry) => (
                 <tr key={entry.syntax} className="border-b last:border-0">
                   <td className="py-3 pr-4">
-                    <code className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    <code className="break-all rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
                       {entry.syntax}
                     </code>
                   </td>
@@ -363,7 +416,14 @@ export function KeyboardShortcuts({
               Listed so power users discover the scheme without grepping
               the codebase. Hosts must mirror `parse_deep_link` in
               `src-tauri/src/deeplink/mod.rs`. */}
-          <table className="w-full text-sm mt-6" data-testid="deep-links-table">
+          <table className="w-full table-fixed text-sm mt-6" data-testid="deep-links-table">
+            {/* See `essential-table`'s colgroup comment above — this table
+                also opens with colSpan=2 title/description rows, so `<col>`
+                is required (not just preferred) here too. */}
+            <colgroup>
+              <col className="w-1/3" />
+              <col className="w-2/3" />
+            </colgroup>
             <thead>
               <tr className="border-b">
                 <th
@@ -392,7 +452,7 @@ export function KeyboardShortcuts({
               {DEEP_LINK_ENTRIES.map((entry) => (
                 <tr key={entry.path} className="border-b last:border-0">
                   <td className="py-3 pr-4">
-                    <code className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
+                    <code className="break-all rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-xs">
                       {entry.path}
                     </code>
                   </td>

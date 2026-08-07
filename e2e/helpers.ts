@@ -178,40 +178,56 @@ export async function expectNoHorizontalOverflow(
   // In-page collector for a dialog/sheet element. Returns the scroll/client
   // widths plus the worst offenders (in-flow elements whose right edge passes the
   // limit and that are NOT inside an intentional horizontal-scroll container).
+  //
+  // Unlike the page-root collector below, this does NOT gate the walk on
+  // `scrollWidth > clientWidth`. Radix Dialog/Sheet content nodes bake in
+  // `overflow-hidden` on the element we're asserting against, which pins
+  // `scrollWidth === clientWidth` permanently — that gate would make this
+  // branch never walk the subtree and the assertion would pass unconditionally
+  // no matter how much content is clipped. `overflow-hidden` is what makes
+  // clipped content UNREACHABLE on a real phone, not what makes it safe, so we
+  // always walk and let the offender check itself be the signal (#3501).
   const collectFromElement = (root: Element, tol: number) => {
     const limit = root.getBoundingClientRect().right
     const scrollWidth = root.scrollWidth
     const clientWidth = root.clientWidth
 
+    // #3540: this walk only skips descendants of an `overflow-x: auto|scroll`
+    // ancestor below — NOT `overflow: hidden` (e.g. Tailwind `truncate`, or a
+    // deliberately hard-clipped column like the mobile icon rail). That's a
+    // known latent false-positive surface: if a legitimately-clipped
+    // sub-container is ever nested inside a `target`, a descendant whose own
+    // box (not just its text) genuinely extends past the clip would be
+    // flagged even though it's invisible/unreachable on a real phone. Not
+    // fixed inline — see #3540 for why a blanket `overflow: hidden` skip
+    // would blunt the exact protection this unconditional walk exists for.
     const offenders: OverflowOffender[] = []
-    if (scrollWidth > clientWidth + tol) {
-      for (const node of Array.from(root.querySelectorAll('*'))) {
-        const style = getComputedStyle(node)
-        // Fixed/sticky elements don't expand the scroll box; skip as noise.
-        if (style.position === 'fixed' || style.position === 'sticky') continue
-        // Skip anything living inside an intentional horizontal scroller.
-        let inScroll = false
-        let p: Element | null = node.parentElement
-        while (p && p !== root) {
-          const ox = getComputedStyle(p).overflowX
-          if (ox === 'auto' || ox === 'scroll') {
-            inScroll = true
-            break
-          }
-          p = p.parentElement
+    for (const node of Array.from(root.querySelectorAll('*'))) {
+      const style = getComputedStyle(node)
+      // Fixed/sticky elements don't expand the scroll box; skip as noise.
+      if (style.position === 'fixed' || style.position === 'sticky') continue
+      // Skip anything living inside an intentional horizontal scroller.
+      let inScroll = false
+      let p: Element | null = node.parentElement
+      while (p && p !== root) {
+        const ox = getComputedStyle(p).overflowX
+        if (ox === 'auto' || ox === 'scroll') {
+          inScroll = true
+          break
         }
-        if (inScroll) continue
-        const r = node.getBoundingClientRect()
-        if (r.width === 0 || r.height === 0) continue
-        if (r.right > limit + tol) {
-          offenders.push({
-            tag: node.tagName.toLowerCase(),
-            cls: typeof node.className === 'string' ? node.className : '',
-            text: (node.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 50),
-            right: Math.round(r.right),
-            limit: Math.round(limit),
-          })
-        }
+        p = p.parentElement
+      }
+      if (inScroll) continue
+      const r = node.getBoundingClientRect()
+      if (r.width === 0 || r.height === 0) continue
+      if (r.right > limit + tol) {
+        offenders.push({
+          tag: node.tagName.toLowerCase(),
+          cls: typeof node.className === 'string' ? node.className : '',
+          text: (node.textContent ?? '').replace(/\s+/g, ' ').trim().slice(0, 50),
+          right: Math.round(r.right),
+          limit: Math.round(limit),
+        })
       }
     }
     return { scrollWidth, clientWidth, limit, offenders }
@@ -266,10 +282,25 @@ export async function expectNoHorizontalOverflow(
     .join('\n')
 
   const detail = worst ? `\n  Widest offenders:\n${worst}` : ''
-  expect(
-    result.scrollWidth,
-    `Horizontal overflow on ${label}: scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}.${detail}`,
-  ).toBeLessThanOrEqual(result.clientWidth + TOLERANCE)
+
+  if (target) {
+    // Element root: `scrollWidth > clientWidth` is NOT a valid overflow
+    // signal here (see the comment on `collectFromElement` above), so the
+    // offender list collected by an unconditional walk is the assertion
+    // itself. Clipped content still counts as a failure.
+    expect(
+      result.offenders.length,
+      `Horizontal overflow on ${label}: ${result.offenders.length} element(s) extend past the surface's right edge (${result.limit}px).${detail}`,
+    ).toBe(0)
+  } else {
+    // Page root: `scrollWidth > clientWidth` on `document.documentElement`
+    // is a valid, meaningful overflow signal (the document doesn't clip its
+    // own overflow), so this remains the assertion for the whole-document case.
+    expect(
+      result.scrollWidth,
+      `Horizontal overflow on ${label}: scrollWidth=${result.scrollWidth} > clientWidth=${result.clientWidth}.${detail}`,
+    ).toBeLessThanOrEqual(result.clientWidth + TOLERANCE)
+  }
 }
 
 // ---------------------------------------------------------------------------

@@ -6,11 +6,24 @@
  * mode behind the pairing-dialog report (buttons bleeding off a narrow screen)
  * and the class of bug the user asked to sweep for across the whole UI.
  *
- * NOT run in CI: this is a broad, lower-signal visual guard that is most useful
- * locally while iterating on responsive layout, and it would add wall-clock to
- * the sharded CI run for little marginal protection. Gated with
- * `test.skip(!!process.env.CI, …)` per spec, mirroring the existing
- * `process.env['CI']` convention in `playwright.config.ts`.
+ * NOT run in CI (re-evaluated for #3501, still skipped — but not for the
+ * original "low marginal protection" reason below, which is now false: the
+ * element-root guard in `helpers.ts` was strengthened for #3501 and, once
+ * strengthened, immediately caught a real defect (KeyboardShortcuts.tsx
+ * clipping ~32px off the Action column at 360px), so this file has
+ * demonstrated real signal. The blocker to re-enabling it wholesale is a
+ * SEPARATE, pre-existing, unrelated bug discovered while verifying #3501:
+ * the "Pairing dialog" tests below query `activeDialog(page)`
+ * (`[data-slot="dialog-content"]`), but `PairingDialog` calls
+ * `useDialogOrSheet('dialog')`, whose mobile path always renders a `Sheet`
+ * (`data-slot="sheet-content"`) regardless of `kind` (see
+ * `src/hooks/useDialogOrSheet.ts`) — so those two tests fail on the selector
+ * before the overflow assertion ever runs, on both viewport profiles. Fixing
+ * that selector mismatch touches `PairingDialog`/test dialog-detection logic,
+ * outside #3501's scope (`e2e/helpers.ts` + `KeyboardShortcuts.tsx` only), so
+ * it isn't fixed here. Once that pre-existing bug is fixed (tracked
+ * separately), this file should go back into the sharded CI run — flip this
+ * `test.skip(!!process.env.CI, …)` at that point.
  *
  * Run locally:
  *   npx playwright test e2e/mobile-overflow.spec.ts --workers=1
