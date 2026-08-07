@@ -646,15 +646,16 @@ export function ImportSection(): React.ReactElement {
         )}
         {importResult &&
           (() => {
-            // Derive presentation flags. `allFailed` (nothing imported, at
-            // least one hard failure) drives the error-toned state instead
-            // of a silent "0 blocks" line (#1928).
+            // Derive presentation flags. Cancellation takes precedence over
+            // `allFailed`: a user-stopped run may also contain a hard failure,
+            // but its durable outcome must still explain that the run stopped.
             const {
               failures,
               warnings,
               blocksCreated,
               propertiesSet,
-              fileCount,
+              importedCount,
+              cancelled,
               pageTitle,
               navTitle,
               notes,
@@ -669,7 +670,7 @@ export function ImportSection(): React.ReactElement {
             const title =
               pageTitle ??
               t(notes ? 'data.importResultNotesTitle' : 'data.importResultFilesTitle', {
-                count: fileCount,
+                count: importedCount,
               })
             return (
               <div
@@ -682,7 +683,14 @@ export function ImportSection(): React.ReactElement {
                 aria-live="polite"
                 aria-atomic="true"
               >
-                {allFailed ? (
+                {cancelled ? (
+                  <p
+                    className="text-status-pending-foreground"
+                    data-testid="import-result-cancelled"
+                  >
+                    {t('data.importCancelled', { count: importedCount })}
+                  </p>
+                ) : allFailed ? (
                   <p className="text-destructive" data-testid="import-result-error">
                     {t('data.importAllFailed', { count: failures.length })}
                   </p>

@@ -113,7 +113,8 @@ describe('useImportRunner', () => {
     expect(result.current.importResult).toMatchObject({
       pageTitle: null,
       notes: false,
-      fileCount: 2,
+      importedCount: 1,
+      cancelled: false,
       blocksCreated: 3,
       propertiesSet: 2,
       warnings: ['w1'],
@@ -154,7 +155,8 @@ describe('useImportRunner', () => {
       // Single unit ⇒ pageTitle is the imported title (not the placeholder).
       pageTitle: 'Note',
       notes: true,
-      fileCount: 1,
+      importedCount: 1,
+      cancelled: false,
       blocksCreated: 5,
       warnings: ['skipped 1 encrypted item'],
       failures: [{ name: 'broken.enex', reason: 'not valid' }],
@@ -192,6 +194,10 @@ describe('useImportRunner', () => {
     // Only the first unit ran; the second was never started.
     expect(mockImportMarkdown).toHaveBeenCalledTimes(1)
     expect(result.current.importing).toBe(false)
+    expect(result.current.importResult).toMatchObject({
+      importedCount: 1,
+      cancelled: true,
+    })
   })
 
   it('reflects streamed per-block progress while a unit is in flight', async () => {
@@ -241,6 +247,10 @@ describe('useImportRunner', () => {
     // After completion the progress UI clears.
     expect(result.current.currentFileIndex).toBeNull()
     expect(result.current.importing).toBe(false)
-    expect(result.current.importResult).toMatchObject({ blocksCreated: 3, fileCount: 1 })
+    expect(result.current.importResult).toMatchObject({
+      blocksCreated: 3,
+      importedCount: 1,
+      cancelled: false,
+    })
   })
 })

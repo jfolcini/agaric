@@ -86,7 +86,7 @@ export function KeyboardTab(): React.ReactElement {
   const saveEdit = useCallback(() => {
     if (!editingId) return
     const trimmed = editValue.trim()
-    if (!trimmed) return
+    if (validateBindingInput(trimmed)) return
     setCustomShortcut(editingId, trimmed)
     setEditingId(null)
     setEditValue('')

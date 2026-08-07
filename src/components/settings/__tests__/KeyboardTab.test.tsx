@@ -419,6 +419,47 @@ describe('KeyboardTab', () => {
     await user.type(input, 'Ctrl + P{Enter}')
 
     expect(mockSetCustomShortcut).toHaveBeenCalledWith('prevBlock', 'Ctrl + P')
+    expect(screen.queryByPlaceholderText('Type new key binding...')).not.toBeInTheDocument()
+  })
+
+  it('Enter rejects a modifier-only binding without leaving the edit error state', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Ctrl + Shift{Enter}')
+
+    expect(mockSetCustomShortcut).not.toHaveBeenCalled()
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('Ctrl + Shift')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      t('keyboard.settings.validationModifierOnly'),
+    )
+  })
+
+  it('Enter rejects a binding with a valid and modifier-only alternative', async () => {
+    const user = userEvent.setup()
+    render(<KeyboardTab />)
+
+    const editButtons = screen.getAllByRole('button', { name: /Edit shortcut for/i })
+    await user.click(editButtons[0] as HTMLElement)
+
+    const input = screen.getByPlaceholderText('Type new key binding...')
+    await user.clear(input)
+    await user.type(input, 'Ctrl + E / Shift{Enter}')
+
+    expect(mockSetCustomShortcut).not.toHaveBeenCalled()
+    expect(input).toBeInTheDocument()
+    expect(input).toHaveValue('Ctrl + E / Shift')
+    expect(input).toHaveAttribute('aria-invalid', 'true')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      t('keyboard.settings.validationModifierOnly'),
+    )
   })
 
   // #1092: the reset-shortcut link button uses the canonical focus-ring-visible
