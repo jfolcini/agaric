@@ -10,8 +10,8 @@
  * `waitFor` the post-effect upgrade.
  */
 
-import { render, waitFor } from '@testing-library/react'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { act, render, waitFor } from '@testing-library/react'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
 import {
@@ -38,6 +38,9 @@ beforeEach(() => {
   // Flush the module-level highlight cache so a prior test's cached tree does
   // not paint highlighted synchronously and mask the deferred-upgrade path.
   clearHighlightCache()
+})
+afterEach(() => {
+  vi.useRealTimers()
 })
 
 describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
@@ -158,6 +161,33 @@ describe('renderCodeBlock — deferred highlighting + output cache (#2271)', () 
 
     // Post-commit upgrade.
     await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
+  })
+
+  it('arms a real timer for the deferred upgrade (idle deferral is not silently inlined)', async () => {
+    // #3557 — the "plain on first paint, then upgrades" assertions above pass
+    // even if `scheduleIdle` is deleted and its callback invoked inline: the
+    // dynamic `import('@/lib/lowlight-curated')` promise alone defers past
+    // RTL's synchronous `act()`, so those assertions never actually exercise
+    // the idle scheduling. Pin the thing that vanishes when the deferral is
+    // deleted — a timer actually gets ARMED — by checking `vi.getTimerCount()`
+    // BEFORE running any timers.
+    vi.useFakeTimers()
+    const block = codeBlock('const x: number = 1', 'typescript')
+    const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
+
+    // happy-dom has no `requestIdleCallback`, so `scheduleIdle` falls back to
+    // `setTimeout(cb, 0)` — a real deferral arms a real timer synchronously on
+    // mount, before that timer ever fires.
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
+
+    act(() => {
+      vi.runOnlyPendingTimers()
+    })
+    // NB: `vi.waitFor` (not RTL's `waitFor`, which requires a global `jest`
+    // vitest's fake-timer branch does not provide). `vi.waitFor` uses
+    // `getSafeTimers()` internally (real timers, 1000ms default), so it
+    // composes correctly with the fake timers installed above.
+    await vi.waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
   })
 
   it('paints highlighted SYNCHRONOUSLY on a cache hit (no flicker on re-render)', async () => {

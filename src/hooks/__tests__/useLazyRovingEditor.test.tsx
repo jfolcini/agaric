@@ -138,7 +138,13 @@ describe('useLazyRovingEditor (#2939)', () => {
   it('prefetches + constructs the editor on idle even without an interaction', async () => {
     vi.useFakeTimers()
     render(<Harness />)
-    // scheduleIdle falls back to setTimeout(0) under jsdom.
+    // scheduleIdle falls back to setTimeout(0) under jsdom. Assert a timer was
+    // actually ARMED before running it — this is what distinguishes a real
+    // deferral from a `scheduleIdle` that invokes its callback inline (which
+    // would leave the editor host mounted, and this whole test green, with no
+    // timer ever scheduled). Without this line the mutant that deletes the
+    // deferral survives: `capturedOnReady` becomes non-null either way.
+    expect(vi.getTimerCount()).toBeGreaterThan(0)
     act(() => {
       vi.runOnlyPendingTimers()
     })
