@@ -144,11 +144,12 @@ export { expect }
 // `scrollWidth > clientWidth` on the scroll root.
 //
 // Intentional horizontal scroll regions (wide tables, code/mermaid blocks,
-// carousels marked `overflow-x-auto`/`-scroll`) clip their own overflow and so
-// do NOT expand an ancestor's `scrollWidth`; a document- or dialog-level check
-// therefore does not false-positive on them. On failure we walk the subtree to
-// list the widest offending elements (skipping those inside a scroll container)
-// so the culprit row is obvious instead of a bare width mismatch.
+// carousels marked `overflow-x-auto`/`-scroll`) own their overflow, so their
+// descendants are excluded from the geometric offender walk. `scrollWidth`
+// alone is not a complete signal for element roots: a nested clipping context
+// can keep the root's width looking safe while a descendant's box extends past
+// it. The walk therefore remains the element-root assertion and makes the
+// culprit row obvious instead of reporting only a width mismatch.
 // ---------------------------------------------------------------------------
 
 /** One element that extends past its root's right edge. */
@@ -180,27 +181,23 @@ export async function expectNoHorizontalOverflow(
   // limit and that are NOT inside an intentional horizontal-scroll container).
   //
   // Unlike the page-root collector below, this does NOT gate the walk on
-  // `scrollWidth > clientWidth`. Radix Dialog/Sheet content nodes bake in
-  // `overflow-hidden` on the element we're asserting against, which pins
-  // `scrollWidth === clientWidth` permanently — that gate would make this
-  // branch never walk the subtree and the assertion would pass unconditionally
-  // no matter how much content is clipped. `overflow-hidden` is what makes
-  // clipped content UNREACHABLE on a real phone, not what makes it safe, so we
-  // always walk and let the offender check itself be the signal (#3501).
+  // `scrollWidth > clientWidth`. In Dialog/Sheet layouts a nested clipping
+  // context can keep the asserted root at `scrollWidth === clientWidth` while
+  // a descendant's geometric box still extends beyond its right edge. Such
+  // clipped content is unreachable on a real phone, not automatically safe,
+  // so we always walk and let the offender check itself be the signal (#3501).
   const collectFromElement = (root: Element, tol: number) => {
     const limit = root.getBoundingClientRect().right
     const scrollWidth = root.scrollWidth
     const clientWidth = root.clientWidth
 
-    // #3540: this walk only skips descendants of an `overflow-x: auto|scroll`
-    // ancestor below — NOT `overflow: hidden` (e.g. Tailwind `truncate`, or a
-    // deliberately hard-clipped column like the mobile icon rail). That's a
-    // known latent false-positive surface: if a legitimately-clipped
-    // sub-container is ever nested inside a `target`, a descendant whose own
-    // box (not just its text) genuinely extends past the clip would be
-    // flagged even though it's invisible/unreachable on a real phone. Not
-    // fixed inline — see #3540 for why a blanket `overflow: hidden` skip
-    // would blunt the exact protection this unconditional walk exists for.
+    // A hard-clipped sub-container may suppress its descendants only through
+    // the explicit `data-overflow-clip="intentional"` contract. The marker is
+    // honored only when computed `overflow-x` is `hidden` or `clip`; it MUST
+    // NOT be put on a container that can hide content users need to read or
+    // focus. Starting at `node.parentElement` and stopping before `root` keeps
+    // the marked container measurable and prevents a marker on the assertion
+    // target from disabling the whole check (#3540).
     const offenders: OverflowOffender[] = []
     for (const node of Array.from(root.querySelectorAll('*'))) {
       const style = getComputedStyle(node)
@@ -211,7 +208,10 @@ export async function expectNoHorizontalOverflow(
       let p: Element | null = node.parentElement
       while (p && p !== root) {
         const ox = getComputedStyle(p).overflowX
-        if (ox === 'auto' || ox === 'scroll') {
+        const intentionalHardClip =
+          p.getAttribute('data-overflow-clip') === 'intentional' &&
+          (ox === 'hidden' || ox === 'clip')
+        if (ox === 'auto' || ox === 'scroll' || intentionalHardClip) {
           inScroll = true
           break
         }
