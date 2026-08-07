@@ -87,15 +87,47 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
   })
 
   it('still highlights a block right at the cap boundary', async () => {
-    // Exactly the cap length (not over) → highlighting still runs.
-    const filler = '// x\n'
-    const base = 'const x = 1;\n'
-    let body = base
+    // #3541 — this test used to build its cap-length body out of `// x\n`
+    // repeated ~6000 times. That is the same LENGTH as the body below (what
+    // the cap actually gates on: `code.length > HIGHLIGHT_MAX_LENGTH`) but a
+    // wildly different amount of DOWNSTREAM work: ~6000 highlight tokens
+    // became ~6000 React `<span>`s built into happy-dom in one synchronous
+    // commit. Measured locally that commit — not the highlighter — dominated
+    // the test: ~1.9 s wall-clock, of which `lowlight.highlight` was ~53 ms
+    // and the dynamic `import()` ~98 ms. Racing ~1.9 s of blocking CPU work
+    // against `waitFor`'s 8000 ms real-timer budget leaves only ~4x headroom,
+    // which a low-core-count runner under contention can and did eat.
+    //
+    // Token COUNT is irrelevant to the cap logic, so keep the length at the
+    // boundary and drop the token count: long comment lines give the same
+    // "exactly at the cap, highlighting still runs" assertion with ~152 spans
+    // instead of ~6000, measured at ~80 ms instead of ~1900 ms (~20x more
+    // headroom). Nothing about the path under test is stubbed — the real
+    // `scheduleIdle` still defers through its real `setTimeout(cb, 0)`
+    // fallback (happy-dom has no `requestIdleCallback`), the real dynamic
+    // `import('@/lib/lowlight-curated')`, `lowlight.highlight`, cache write
+    // and `setState` all still run.
+    const filler = `// ${'x'.repeat(196)}\n`
+    let body = 'const x = 1;\n'
     while (body.length + filler.length <= HIGHLIGHT_MAX_LENGTH) body += filler
-    expect(body.length).toBeLessThanOrEqual(HIGHLIGHT_MAX_LENGTH)
+    // Pad the tail so the body lands ON the cap, not near it. The guard is
+    // `code.length > HIGHLIGHT_MAX_LENGTH`, so the largest still-highlighted
+    // input is exactly HIGHLIGHT_MAX_LENGTH — and only that value distinguishes
+    // `>` from `>=`. The previous filler stopped at 29 998, where flipping the
+    // comparison changes nothing and this test stayed green.
+    const remaining = HIGHLIGHT_MAX_LENGTH - body.length
+    if (remaining >= 4) body += `// ${'x'.repeat(remaining - 4)}\n`
+    // Exact, not a band: the construction above is deterministic, so a future
+    // edit that drifts the body off the boundary must redden here rather than
+    // silently downgrade this to a comfortably-under-the-cap test.
+    expect(body.length).toBe(HIGHLIGHT_MAX_LENGTH)
 
     const block = codeBlock(body, 'typescript')
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
+
+    // Deferred off the first paint (same invariant the #2271 tests pin).
+    expect(hljsSpans(container)).toHaveLength(0)
+
     await waitFor(() => expect(hljsSpans(container).length).toBeGreaterThan(0))
   })
 
