@@ -38,8 +38,16 @@ leak-timeout = "30s"
 #     failure whose likelihood shifts with nextest's per-run partition layout.
 #     Give it (and `replay_streams`, previously only covered in the default
 #     profile) the same extended leash under CI so coverage is stable.
+#   * dag::proptest_b2::find_lca_terminates_on_any_graph (#3532) — drives an
+#     adversarial-graph strategy through LCA search. Measured 14.5s / 12.8s /
+#     18.3s in three targeted foreground repeats on an unloaded box, against the
+#     default 2×30s=60s window; at ~15s nominal a 2× contention slowdown
+#     terminates TRY 1, which surfaces as a spurious "flaky" (observed FLAKY 2/2
+#     in a full-suite run at load 39, TRY 2 passing at 36.5s). Its slow peers
+#     above were given overrides and this one was not — no reason in its content,
+#     it just never happened to be noticed.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci]
@@ -52,10 +60,11 @@ leak-timeout = "30s"
 # Every test flagged SLOW (>30s) in a full-suite sweep is listed here so the
 # llvm-cov `cargo-coverage` build (2-3× slower) can never terminate one on the
 # first attempt and lose its coverage: apply_reproject_proptest,
-# perf26_draft_recovery, replay_streams_all_rows…_1574, and
-# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path.
+# perf26_draft_recovery, replay_streams_all_rows…_1574,
+# issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path, and
+# find_lca_terminates_on_any_graph.
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops_is_fast/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters
