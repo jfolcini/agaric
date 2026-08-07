@@ -795,9 +795,9 @@ jobs:
         # this action with a distinct working-directory + database-url. The
         # sqlx-0.9.x `prepare --check` rationale and the `-- --tests`
         # default (query drift in `#[cfg(test)]` modules must not slip
-        # through — prek.toml MAINT-227) live in the action itself. Three
-        # crates now carry a cache: `agaric` (this lane), `agaric-store`, and
-        # `agaric-engine` (the lanes below).
+        # through — prek.toml MAINT-227) live in the action itself. Four
+        # crates now carry a cache: `agaric` (this lane), `agaric-store`,
+        # `agaric-engine`, and `agaric-sync` (the lanes below).
         uses: ./.github/actions/sqlx-offline-check
         with:
           working-directory: src-tauri

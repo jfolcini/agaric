@@ -4,12 +4,10 @@ description: >
   Creates + migrates a throwaway SQLite DB, then runs
   `cargo sqlx prepare --check` against it so query drift is caught in CI.
 
-  Reusable per crate: the layered-workspace split (#2621) will give lower
-  crates (e.g. `agaric-core`, which carries `ulid`'s `sqlx` queries) their
-  own `.sqlx/` cache. Each such crate gets its own lane by calling this
-  action with a distinct `working-directory` + `database-url` — no
-  copy-pasted YAML. Today only the `agaric` crate (`src-tauri`) has a
-  cache, so there is a single caller.
+  Reusable per crate: each query-bearing cache owner calls this action with
+  a distinct `working-directory` + `database-url` — no copy-pasted YAML.
+  The current workspace uses it for `agaric`, `agaric-store`,
+  `agaric-engine`, and `agaric-sync`.
 
 inputs:
   working-directory:
@@ -25,7 +23,9 @@ inputs:
       Args appended after `cargo sqlx prepare --check`. Defaults to
       `-- --tests` so query drift inside `#[cfg(test)]` modules is caught
       too (matches the local pre-push hook + prek.toml MAINT-227 note;
-      caught 5 such drifts in session 679's PEND-18 work).
+      caught 5 such drifts in session 679's PEND-18 work). This is a
+      whitespace-delimited argument list; individual values containing
+      whitespace are unsupported.
     required: false
     default: '-- --tests'
 
@@ -46,7 +46,9 @@ runs:
       working-directory: ${{ inputs.working-directory }}
       env:
         DATABASE_URL: ${{ inputs.database-url }}
+        PREPARE_ARGS: ${{ inputs.prepare-args }}
       run: |
         cargo sqlx database create
         cargo sqlx migrate run
-        cargo sqlx prepare --check ${{ inputs.prepare-args }}
+        read -r -a prepare_args <<< "$PREPARE_ARGS"
+        cargo sqlx prepare --check "${prepare_args[@]}"
