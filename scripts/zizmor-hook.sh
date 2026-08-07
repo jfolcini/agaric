@@ -222,6 +222,24 @@ STUB
     fails=$((fails + 1))
   fi
 
+  # The grep above proves the ARGUMENT is passed; it cannot prove the callee
+  # receives it INTACT. It did not, once: a `${4:-NR == 1 { print $NF }}`
+  # default truncates at the first unquoted `}` (a bare `{` does not nest —
+  # only `${` does) and appends a literal one, so a supplied $4 arrived as
+  # `<field>}` and awk died of a syntax error. Its stderr was unredirected,
+  # `current` came back empty, and zizmor reinstalled on every run.
+  #
+  # Asserted against the source because `cargo_get_pinned` installs crates and
+  # cannot be invoked here. `bash -n` and shellcheck both accept the broken
+  # form — it is valid bash that means the wrong thing — so only a targeted
+  # check sees it.
+  if grep -nE 'field="\$\{4:-.*\{' "$setup_hooks" >/dev/null 2>&1; then
+    echo "  ✗ cargo_get_pinned's field default uses \${4:-...{...}} — bash truncates that at the first unquoted } and appends a literal one, so a supplied field arrives corrupted (#3545)" >&2
+    fails=$((fails + 1))
+  else
+    echo "  ✓ cargo_get_pinned's field default does not use the brace-truncating \${4:-...} form"
+  fi
+
   if [ "$fails" -gt 0 ]; then
     echo "self-test: $fails assertion(s) failed" >&2
     exit 1
