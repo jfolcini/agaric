@@ -48,18 +48,17 @@ rules:
     # content drifts onto that line, which is exactly how the `:3` entries
     # above became blanket file-wide suppressions.
     #
-    # Verified with an empty ignore list across .github/workflows/: exactly
-    # these 6 findings fire, none are left over, and the two that remain in
-    # release.yml (`:132`, `:177`) are the desktop `build-and-release`
-    # matrix — still baselined, and the obvious next triage step since the
-    # same publishing-lane argument applies to it.
+    # Narrowed again 2026-08-08 (#3573), from 6 entries to 4. The desktop
+    # `build-and-release` matrix is now cache-free too: its restore-only Rust
+    # cache was deleted and setup-node explicitly disables its automatic npm
+    # cache. Every release lane that builds, signs, attests or uploads an
+    # artefact is therefore cache-free. Verified with an empty ignore list:
+    # exactly the four ci.yml findings below fire, with none in release.yml.
     ignore:
       - ci.yml:273
       - ci.yml:296
       - ci.yml:426
       - ci.yml:458
-      - release.yml:132
-      - release.yml:177
   # unpinned-uses: empty — closed 2026-05-16 by SHA-pinning every
   # `uses: org/action@vX` reference across _validate.yml, ci.yml, and
   # release.yml to a 40-char commit SHA + `# vX` comment. Dependabot
