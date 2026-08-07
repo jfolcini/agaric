@@ -282,10 +282,13 @@ pub async fn ensure_accent_color_property(
 ///   per-row hash chain (`prev_hash` advance, `parent_seqs`) is part of
 ///   the op_log contract. Batching the op_log writes is a separate,
 ///   larger refactor and is out of scope here.
-/// - **`is_conflict = 0` predicate.** [`pages_without_space`] already
-///   filters to live, non-conflict pages with `block_type = 'page'`, so
-///   the per-page block-existence probe in `set_property_in_tx` is
-///   redundant and is intentionally skipped here.
+/// - **`block_type` / liveness predicate.** [`pages_without_space`] already
+///   filters to live pages with `block_type = 'page'`, so the per-page
+///   block-existence probe in `set_property_in_tx` is redundant and is
+///   intentionally skipped here. (The original heading named an
+///   `is_conflict = 0` predicate; liveness is now enforced solely by
+///   `deleted_at IS NULL` — the conflict-copy exclusion went with the
+///   column in migration 0058.)
 /// - **UPSERT semantics.** The chunked write uses `INSERT OR REPLACE`
 ///   to mirror `set_property_in_tx`'s row materialisation contract.
 ///   Steady-state runs see zero candidate pages (the

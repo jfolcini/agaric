@@ -555,7 +555,7 @@ async fn bootstrap_re_runs_pages_without_space_after_marker_set() {
 
 /// The seeded-block fast path is intentionally
 /// preserved. `is_space = "true"` SetProperty ops must fire ONLY on
-/// The first boot (invariant). This test pins the fact
+/// the first boot (invariant). This test pins the fact
 /// that loosening the fast-path was scoped to the
 /// `pages_without_space` step, NOT the seeded `is_space` /
 /// `accent_color` op emission.

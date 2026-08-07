@@ -1,6 +1,6 @@
 //! Activity ring buffer + Tauri event emitter for the MCP read-only server.
 //!
-//! ships the in-memory rolling log of the last 100 tool calls plus
+//! This module ships the in-memory rolling log of the last 100 tool calls plus
 //! the `mcp:activity` Tauri event surface. The frontend subscribes
 //! to the event stream and maintains its own 100-entry render buffer; the
 //! ring lets late subscribers / diagnostics inspect the recent history via

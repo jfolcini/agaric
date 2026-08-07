@@ -13,7 +13,7 @@
 //! `RebuildAgendaCache`, `RebuildProjectedAgendaCache`,
 //! `RebuildTagInheritanceCache`, `RebuildPageIds`,
 //! `RebuildBlockTagRefsCache`). The latter were silently dropped on
-//! queue saturation prior to they're now persisted under the
+//! queue saturation before this queue existed; they're now persisted under the
 //! sentinel `block_id = '__GLOBAL__'` so the sweeper re-enqueues them on
 //! the same exponential-backoff schedule.
 //!
@@ -48,8 +48,8 @@ use std::borrow::Cow;
 use std::sync::Arc;
 use tracing::instrument;
 
-/// Sentinel literal stored in the `block_id` column for global cache
-/// Rebuild tasks. SQLite's `STRICT` mode forbids `NULL` in
+/// Sentinel literal stored in the `block_id` column for the global cache
+/// `Rebuild*` tasks. SQLite's `STRICT` mode forbids `NULL` in
 /// `PRIMARY KEY` columns, so a literal stand-in is used instead. The
 /// sentinel cannot collide with a real ULID block id (ULIDs are
 /// 26-char Crockford base32 uppercase; the sentinel is lowercase
