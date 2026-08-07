@@ -104,7 +104,7 @@ type JoinerPhase = 'entry' | 'waiting'
 // stamped on the value itself is the only form of the check with no window.
 interface PolledPeerRefs {
   session: number
-  peers: PeerRefRow[]
+  peers: PeerRef[]
 }
 
 export function PairingDialog({
