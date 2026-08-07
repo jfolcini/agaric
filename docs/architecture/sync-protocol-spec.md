@@ -193,16 +193,25 @@ proof travels only over the QUIC channel's TLS 1.3 encryption; a full
 man-in-the-middle relay is out of the paired-device threat model
 (AGENTS.md §"Threat Model").
 
-**`HeadExchange` carries no `device_id`, and that has a consequence (#3511).**
+**`HeadExchange` carries no `device_id`, and S-5 is keyed accordingly (#3511).**
 The responder cannot learn the peer's Agaric device id before the session runs:
 the certificate CN used to supply it unconditionally, and `get_local_heads` reads
 only `op_log`, so a fresh joiner with an empty log advertises no head of its own
-either. S-5's per-peer lock key is therefore **asymmetric during the pairing
-window** — the responder falls back to the endpoint id while the initiator uses
-the device id — so an inbound and an outbound session with the same device can
-overlap until a binding exists. Unresolved; the additive fix (a `#[serde(default)]`
-`device_id` field, on the `pairing_proof` precedent) is a wire change across 63
-construction sites and was deliberately left out of the cutover.
+either. S-5's per-peer lock key was therefore **asymmetric during the pairing
+window** — the responder fell back to the endpoint id while the initiator used
+the device id — so an inbound and an outbound session with the same device could
+overlap until a binding existed.
+
+Resolved by keying **both roles on the peer's `EndpointId`**
+(`sync_daemon::peer_lock_key`), not by adding a `device_id` to the frame. A wire
+field would arrive *after* the connection is accepted, so the responder would
+still have to choose a key before it had one, and it would cost a field forever.
+The `EndpointId` is the only identifier both roles hold unconditionally: the
+responder has it from the QUIC/TLS 1.3 handshake before any application byte, and
+the initiator must have it to dial at all. The trade-off is that an `EndpointId`
+is 1:1 with an *install*, so the lock now admits one concurrent session per
+install rather than per device id — confined to the lock; `device_id` remains the
+durable identity everything else is keyed on (#3529).
 
 **Frontier semantics — Loro VVs are the sole state-causality signal
 (#2502).** The op-log `heads` and the Loro `loro_vvs` answer different

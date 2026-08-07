@@ -11,7 +11,10 @@
 //!   waiter that defers mDNS / QUIC endpoint startup until the user
 //!   pairs a device.
 //! * **Per-peer mutual exclusion** — a `try_lock_peer` mutex prevents
-//!   two concurrent sessions with the same device.
+//!   two concurrent sessions with the same peer, in either role. The key
+//!   is [`super::peer_lock_key`]'s, shared with the responder, because
+//!   "no two overlapping sessions" is a property of the two roles
+//!   agreeing on a spelling (#3511).
 //! * **Connection setup** — multi-address connect with TOFU cert
 //!   pinning and address persistence to `peer_refs`.
 //! * **Snapshot catch-up orchestration** — when the per-session state
@@ -898,26 +901,43 @@ pub async fn try_sync_with_peer(
         return false;
     }
 
-    // 2. Per-peer mutex (prevents concurrent syncs to the same peer)
-    let Some(_guard) = ctx.scheduler.try_lock_peer(peer_id) else {
-        // Already syncing with this peer; no real session ran here.
-        // #637: guard.owns is still false → don't clear a sibling's cancel.
-        return false;
-    };
-
-    // 3. The peer's key. Under iroh this is what a dial names; addresses are only
+    // 2. The peer's key. Under iroh this is what a dial names; addresses are only
     //    candidate paths to an already-named endpoint.
     //
     //    A discovered peer without one cannot be dialled at all, which is why
     //    `mdns::parse_service_event` refuses an announcement whose TXT record has no
     //    parseable `endpoint_id`: "we discovered a peer" and "we can attempt a session"
     //    have to stay the same statement.
+    //
+    //    This resolution used to sit *after* the per-peer lock. It reads a field off an
+    //    already-discovered peer — no network, no DB round-trip, nothing that needs the
+    //    lock held — so the order was free to change, and it has to, because the lock's
+    //    key is derived from it (step 3). It is also the better order on its own merits:
+    //    a peer we cannot dial at all no longer takes and releases a peer lock on its
+    //    way to being skipped.
     let Some(endpoint_id) = peer.endpoint_id else {
         tracing::warn!(
             peer_id,
             "peer announced no endpoint id, skipping sync (nothing to dial)"
         );
         // No real session ran, cancellation is moot for this peer.
+        // #637: guard.owns is still false → don't clear a sibling's cancel.
+        return false;
+    };
+
+    // 3. Per-peer mutex (prevents concurrent syncs to the same peer)
+    //
+    //    Keyed on the endpoint id, not on `peer_id`, because the responder in
+    //    `server::handle_incoming_sync` cannot key on a device id it has not been told
+    //    yet — see [`peer_lock_key`](super::peer_lock_key). Mutual exclusion is a
+    //    property of the two roles agreeing on a spelling, so both derive it there and
+    //    nowhere else. `peer_id` remains the key for backoff, events and `peer_refs`;
+    //    it is only the lock that moved.
+    let Some(_guard) = ctx
+        .scheduler
+        .try_lock_peer(&super::peer_lock_key(endpoint_id))
+    else {
+        // Already syncing with this peer; no real session ran here.
         // #637: guard.owns is still false → don't clear a sibling's cancel.
         return false;
     };

@@ -445,22 +445,20 @@ async fn handle_incoming_sync_inner(
 
     // ── S-5: per-peer mutual exclusion ────────────────────────────────────────
     //
-    // The key is the device id whenever we have one, because that is what the
-    // initiator side locks on — and the lock only does its job if both roles on THIS
-    // device agree on the spelling. During the pairing window a fresh joiner may
-    // advertise no head of its own, leaving `remote_id` empty; the endpoint id is the
-    // fallback because a lock keyed on "" would serialize every unidentified peer
-    // against every other.
+    // The key is the handshake-authenticated endpoint id, which is also what
+    // `session_supervisor::try_sync_with_peer` locks on — see [`peer_lock_key`] for why
+    // that identifier and not the device id. The lock only does its job if both roles
+    // on THIS device agree on the spelling, and this is the only identifier both of
+    // them hold unconditionally: we have it here before the peer has said anything at
+    // all, and the initiator has it before it can dial.
     //
-    // Stated honestly: in that fallback case the two roles do not agree, so an inbound
-    // and an outbound session with the same *device* can overlap for the length of the
-    // pairing window. The old stack did not have this gap, because the cert CN gave the
-    // responder a device id unconditionally. It closes the moment a binding exists.
-    let lock_key = if remote_id.is_empty() {
-        endpoint_id_str.clone()
-    } else {
-        remote_id.clone()
-    };
+    // It is deliberately NOT `remote_id`. That is empty for a fresh joiner with an
+    // empty `op_log` — the pairing window — and the endpoint-id fallback the old code
+    // used there disagreed with the initiator's device-id key, so an inbound and an
+    // outbound session with one physical peer could overlap in exactly the window where
+    // both ends arm a dial. `remote_id` stays the *reported* identity below; it is no
+    // longer the lock's spelling.
+    let lock_key = super::peer_lock_key(endpoint_id);
     let Some(_peer_guard) = scheduler.try_lock_peer(&lock_key) else {
         tracing::info!(
             %endpoint_id,

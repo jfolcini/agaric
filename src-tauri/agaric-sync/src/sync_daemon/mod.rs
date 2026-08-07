@@ -67,6 +67,58 @@ pub use server::{Rejection, handle_incoming_sync};
 pub use snapshot_transfer::sweep_orphaned_snapshot_temps;
 
 // ---------------------------------------------------------------------------
+// S-5 — the per-peer lock key, for both roles
+// ---------------------------------------------------------------------------
+
+/// The key both sync roles take the S-5 per-peer lock under (#3511, #3529).
+///
+/// # Why this is a function and not two literals
+///
+/// S-5 is *mutual exclusion across roles*: an inbound and an outbound session with the
+/// same physical peer must not overlap. That property is a statement about two call
+/// sites agreeing on a spelling, so it can only be held by one of them — a lock whose
+/// key is derived independently on each side is not a lock, it is two locks that
+/// usually happen to collide. [`server::handle_incoming_sync`] and
+/// [`session_supervisor::try_sync_with_peer`] both call this and nothing else.
+///
+/// # Why the [`EndpointId`](iroh::EndpointId) and not the `device_id`
+///
+/// The key has to be available to both roles at the moment each takes the lock, and
+/// `device_id` is not:
+///
+/// * the initiator has it from `peer_refs` / the mDNS announcement, always;
+/// * the responder can only learn it from the peer's `HeadExchange`, and only if the
+///   peer advertised a head — a fresh joiner with an empty `op_log` advertises none,
+///   which is exactly the pairing window in which both ends arm a dial and are
+///   therefore most likely to contend.
+///
+/// So the responder used to fall back to the endpoint id when the frame named no
+/// device, the initiator always used the device id, and during the pairing window the
+/// two disagreed: S-5 was open in the one window it most needed to be shut. The old
+/// stack did not have that gap because the TLS certificate CN handed the responder a
+/// device id unconditionally; QUIC authenticates a key, not a name.
+///
+/// The `EndpointId` has none of that shape. The responder gets it from the QUIC/TLS 1.3
+/// handshake before any application byte, and the initiator must have it to dial at
+/// all (`mdns::parse_service_event` refuses an announcement with no parseable one,
+/// precisely so "we discovered a peer" and "we can attempt a session" stay the same
+/// statement). No wire field is involved, in either direction.
+///
+/// # The trade-off, stated
+///
+/// An `EndpointId` is 1:1 with an *install*: a reinstall mints a new key
+/// (`transport::identity`) while `device_id` may persist. Keying here therefore admits
+/// one concurrent session per install rather than per device id. That is not a
+/// regression — `device_id` has the mirror problem (a duplicated install shares one) —
+/// and it is confined to the lock. `device_id` remains the durable identity that
+/// `op_log` frontiers, `peer_refs` rows and the UI are keyed on: `device_id` answers
+/// "whose data is this?", `EndpointId` answers "who am I talking to right now?", and
+/// the lock is the second question (#3529).
+pub fn peer_lock_key(endpoint_id: iroh::EndpointId) -> String {
+    endpoint_id.to_string()
+}
+
+// ---------------------------------------------------------------------------
 // SharedEventSink — wrapper to satisfy Sized bound
 // ---------------------------------------------------------------------------
 

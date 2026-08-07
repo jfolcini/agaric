@@ -1057,6 +1057,17 @@ async fn try_sync_with_peer_skips_peer_it_cannot_dial() {
     };
     try_sync_with_peer(&ctx, &peer, &refs).await;
 
+    // #3511: and it is skipped before the per-peer lock too, not after it. The key is
+    // derived from the endpoint id, so resolving that had to move above the lock —
+    // which also means a peer we cannot dial at all no longer takes and releases a
+    // lock on its way out. `gc_unused_peer_locks` counts the entries `try_lock_peer`
+    // would have left behind; before the reorder this was 1.
+    assert_eq!(
+        scheduler.gc_unused_peer_locks(),
+        0,
+        "#3511: a peer that cannot be dialled must not allocate a peer lock"
+    );
+
     // No events — the peer is skipped before the "connecting" event
     assert_eq!(
         sink.events().len(),
@@ -1164,8 +1175,12 @@ async fn try_sync_with_peer_skips_when_peer_locked() {
     let peer = unreachable_peer("PEER_LOCKED");
     let refs = vec![make_peer_ref("PEER_LOCKED")];
 
-    // Acquire the per-peer lock before calling try_sync_with_peer
-    let _guard = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
+    // Acquire the per-peer lock before calling try_sync_with_peer. #3511: the key is
+    // the peer's endpoint id, not its device id — the responder cannot key on a device
+    // id it has not been told, so both roles key on the handshake identity.
+    let _guard = scheduler
+        .try_lock_peer(&peer_lock_key(peer.endpoint_id.unwrap()))
+        .unwrap();
 
     let apply_host_ctx_1219: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
@@ -1319,8 +1334,11 @@ async fn s11_cancel_preserved_on_already_syncing_early_exit() {
     let peer = unreachable_peer("PEER_LOCKED");
     let refs = vec![make_peer_ref("PEER_LOCKED")];
 
-    // Hold the per-peer lock so the function returns early
-    let _lock = scheduler.try_lock_peer("PEER_LOCKED").unwrap();
+    // Hold the per-peer lock so the function returns early. #3511: keyed on the
+    // endpoint id, which is what `try_sync_with_peer` locks on.
+    let _lock = scheduler
+        .try_lock_peer(&peer_lock_key(peer.endpoint_id.unwrap()))
+        .unwrap();
 
     let apply_host_ctx_1463: std::sync::Arc<dyn agaric_sync::apply_host::ApplyHost> =
         std::sync::Arc::new(materializer.clone());
@@ -1568,8 +1586,8 @@ async fn handle_incoming_sync_rejects_a_key_not_bound_to_the_claimed_peer_800() 
 
 /// S-5: a second concurrent session with the same peer is refused.
 ///
-/// The per-peer lock keys on the resolved device id, so an inbound session
-/// cannot run alongside an outbound one to the same device.
+/// The per-peer lock keys on the peer's endpoint id in both roles (#3511), so an
+/// inbound session cannot run alongside an outbound one to the same install.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn handle_incoming_sync_rejects_busy_peer() {
     let (pool, _dir) = test_pool().await;
@@ -1580,8 +1598,9 @@ async fn handle_incoming_sync_rejects_busy_peer() {
     let harness = ServiceHarness::new().await;
     bind_client_as(&pool, "REMOTE_DEV", &harness).await;
 
-    // Pre-acquire the per-peer lock to simulate a concurrent outbound session.
-    let _guard = scheduler.try_lock_peer("REMOTE_DEV").unwrap();
+    // Pre-acquire the per-peer lock to simulate a concurrent outbound session. The key
+    // is the dialling endpoint's, which is what `try_sync_with_peer` would hold.
+    let _guard = scheduler.try_lock_peer(&client_key(&harness)).unwrap();
 
     let handle = spawn_responder(
         &harness,
@@ -1604,6 +1623,170 @@ async fn handle_incoming_sync_rejects_busy_peer() {
     let response = recv_sync_message(&mut client.recv).await.unwrap();
     assert_rejected(&response, &Rejection::Busy);
 
+    close_and_join_ok(client, handle).await;
+    materializer.shutdown();
+}
+
+/// S-5 across the two roles (#3511): an inbound session is refused while an
+/// OUTBOUND session with the same physical peer is in flight — *during the
+/// pairing window*, which is the only window in which the two used to disagree.
+///
+/// # Why this test and not `handle_incoming_sync_rejects_busy_peer`
+///
+/// That test pre-holds the lock with a bare `try_lock_peer`, so it asserts the
+/// responder honours *a* lock. S-5 is a stronger claim: mutual exclusion **across
+/// roles**, which is a statement about two call sites agreeing on a spelling. A
+/// test that exercises one role cannot see a disagreement. So the lock here is
+/// held by the real `try_sync_with_peer`, and the two halves are checked to
+/// overlap in time (`!outbound.is_finished()` on both sides of the exchange).
+///
+/// # The fixture detail the whole test hangs on
+///
+/// The joiner's `HeadExchange` advertises **no heads at all**. That is not
+/// decoration — it is the case:
+///
+/// * `get_local_heads` reads only `op_log`, so a fresh joiner with an empty log
+///   has no head of its own to advertise;
+/// * the responder's `claimed_id` therefore resolves to `""`, and before this fix
+///   the responder fell back to locking on the endpoint id while the initiator
+///   locked on `peer.device_id` — two keys, no exclusion.
+///
+/// Hand this test `head_exchange(vec![fake_head("JOINING_DEV")], …)` instead and
+/// it passes with or without the fix, because both roles would then have the
+/// device id and would agree by accident. Empty heads is what makes it a test.
+///
+/// # Why the outbound half never connects
+///
+/// It dials the peer's real key at a loopback port nothing is bound to, so it sits
+/// in `CONNECT_TIMEOUT` holding the peer lock — the state a live outbound session
+/// is in, reached without needing a second full daemon. `lan_only` clears address
+/// lookup and disables relays, so the dial cannot find the peer's endpoint by any
+/// route other than the (dead) address given.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn inbound_is_refused_while_outbound_holds_the_same_peer_3511() {
+    let (pool, _dir) = test_pool().await;
+    let materializer = Materializer::new(pool.clone());
+    // ONE scheduler, as in production: both roles on this device share it. Two
+    // schedulers would make the test vacuous.
+    let scheduler = Arc::new(SyncScheduler::new());
+
+    // The pairing window: a pending marker and NO `peer_refs` row for the joiner.
+    let proof = agaric_sync::pairing::pairing_proof("the pairing passphrase");
+    peer_refs::set_pending_pairing(&pool, &proof).await.unwrap();
+
+    // `harness.service` is THIS device's inbound service; `harness.client_endpoint` is
+    // the PEER's endpoint — the identity that dials us, and the identity we dial.
+    let harness = ServiceHarness::new().await;
+    // A second harness, used only for its endpoint: this device's outbound dialler.
+    let local = ServiceHarness::new().await;
+    assert_ne!(
+        local.client_endpoint.id(),
+        harness.client_endpoint.id(),
+        "precondition: the dialler and the peer must be distinct identities"
+    );
+    assert!(
+        peer_refs::get_peer_ref_by_endpoint_id(&pool, &client_key(&harness))
+            .await
+            .unwrap()
+            .is_none(),
+        "precondition: the peer must be unbound — that is what the pairing window is"
+    );
+
+    // ── the outbound half ────────────────────────────────────────────────────
+    //
+    // The same physical peer as seen from the initiator's side: a device id (which
+    // the initiator always has, from the announcement) and the endpoint id it dials.
+    let peer = mdns::DiscoveredPeer {
+        device_id: "JOINING_DEV".to_string(),
+        endpoint_id: Some(harness.client_endpoint.id()),
+        addresses: vec!["127.0.0.1".parse().unwrap()],
+        port: 1,
+    };
+
+    let out_sink = Arc::new(RecordingEventSink::new());
+    let outbound = tokio::spawn({
+        let pool = pool.clone();
+        let scheduler = scheduler.clone();
+        let materializer = materializer.clone();
+        let endpoint = local.client_endpoint.clone();
+        let out_sink = out_sink.clone();
+        let peer = peer.clone();
+        async move {
+            let apply_host: Arc<dyn agaric_sync::apply_host::ApplyHost> = Arc::new(materializer);
+            let event_sink: Arc<dyn SyncEventSink> = out_sink;
+            let cancel = AtomicBool::new(false);
+            let ctx = SyncSessionContext {
+                pool: &pool,
+                device_id: "LOCAL_DEV",
+                materializer: &apply_host,
+                scheduler: &scheduler,
+                event_sink: &event_sink,
+                cancel: &cancel,
+                endpoint: &endpoint,
+            };
+            // An empty ref list, so the step-4 pinned-key check cannot be what stops
+            // (or fails to stop) anything here.
+            try_sync_with_peer(&ctx, &peer, &[]).await
+        }
+    });
+
+    // Barrier: the "connecting" event is emitted AFTER the per-peer lock is taken and
+    // BEFORE the dial, in both the old and the new step order — so it marks the start
+    // of the overlap window without itself assuming which key was used.
+    wait_for(
+        || !out_sink.events().is_empty(),
+        std::time::Duration::from_secs(10),
+        "the outbound half takes the peer lock and reaches its dial",
+    )
+    .await;
+    assert!(
+        !outbound.is_finished(),
+        "fixture: the outbound half must still hold the peer lock when the inbound \
+         session arrives"
+    );
+
+    // ── the inbound half, from that same peer ────────────────────────────────
+    let in_sink: Arc<dyn SyncEventSink> = Arc::new(RecordingEventSink::new());
+    let handle = spawn_responder(
+        &harness,
+        pool.clone(),
+        "LOCAL_DEV",
+        materializer.clone(),
+        scheduler.clone(),
+        in_sink,
+        Arc::new(AtomicBool::new(false)),
+    );
+
+    let mut client = harness.dial().await;
+    send_sync_message(
+        &mut client.send,
+        // No heads: the fresh joiner. See the doc comment — this is the fixture
+        // detail that makes the two roles' keys differ before the fix.
+        &head_exchange(vec![], Some(proof.clone())),
+    )
+    .await
+    .unwrap();
+
+    let response = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        recv_sync_message(&mut client.recv),
+    )
+    .await
+    .expect(
+        "the responder must answer the inbound HeadExchange; a silent responder here \
+         means it was admitted past S-5 and is running a session that overlaps the \
+         outbound one",
+    )
+    .unwrap();
+
+    assert!(
+        !outbound.is_finished(),
+        "fixture: the outbound half must still have been holding the peer lock while \
+         the responder decided — otherwise there was nothing to contend with"
+    );
+    assert_rejected(&response, &Rejection::Busy);
+
+    outbound.abort();
     close_and_join_ok(client, handle).await;
     materializer.shutdown();
 }
@@ -1640,11 +1823,14 @@ async fn handle_incoming_sync_admits_first_connection_while_pairing_pending() {
         "precondition: a pairing must be pending"
     );
 
-    // Pre-acquire the per-peer lock so that — and only if — the connection gets
-    // PAST the S-1 unpaired gate, it lands on the busy branch.
-    let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
-
     let harness = ServiceHarness::new().await;
+
+    // Pre-acquire the per-peer lock so that — and only if — the connection gets
+    // PAST the S-1 unpaired gate, it lands on the busy branch. #3511: the key is the
+    // dialling endpoint's, which is what both roles lock on; the harness therefore has
+    // to exist before the lock is taken.
+    let _guard = scheduler.try_lock_peer(&client_key(&harness)).unwrap();
+
     assert!(
         peer_refs::get_peer_ref_by_endpoint_id(&pool, &client_key(&harness))
             .await
@@ -1692,10 +1878,10 @@ async fn handle_incoming_sync_admits_first_connection_while_pairing_pending() {
 /// connection from an unbound key that offers `offered_proof`, and return
 /// `(response, victim_was_bound, still_pending)`.
 ///
-/// The per-peer lock for `VICTIM_DEV` is pre-held throughout, so an ADMITTED
-/// connection has a distinct observable — the busy rejection — rather than
-/// running a whole session. That makes one driver serve the reject cases and
-/// the admit case alike.
+/// The per-peer lock for the dialling endpoint is pre-held throughout, so an
+/// ADMITTED connection has a distinct observable — the busy rejection — rather
+/// than running a whole session. That makes one driver serve the reject cases
+/// and the admit case alike.
 #[cfg(test)]
 async fn run_pairing_proof_scenario_855(
     offered_proof: Option<String>,
@@ -1710,9 +1896,11 @@ async fn run_pairing_proof_scenario_855(
         .await
         .unwrap();
 
-    let _guard = scheduler.try_lock_peer("VICTIM_DEV").unwrap();
-
     let harness = ServiceHarness::new().await;
+    // #3511: the responder locks on the dialling endpoint's key, so that is what has to
+    // be pre-held for an admitted connection to land on the busy branch.
+    let _guard = scheduler.try_lock_peer(&client_key(&harness)).unwrap();
+
     let handle = spawn_responder(
         &harness,
         pool.clone(),
@@ -1871,9 +2059,10 @@ async fn pairing_proof_from_two_device_command_flow_is_admitted_3463() {
             .is_none(),
         "precondition: the joining device must still be unpaired on the host"
     );
-    let _guard = scheduler.try_lock_peer("JOINING_DEV").unwrap();
-
     let harness = ServiceHarness::new().await;
+    // #3511: pre-held on the dialling endpoint's key, the spelling both roles use.
+    let _guard = scheduler.try_lock_peer(&client_key(&harness)).unwrap();
+
     let handle = spawn_responder(
         &harness,
         pool.clone(),
@@ -1931,11 +2120,12 @@ async fn handle_incoming_sync_rejects_unpaired_without_pending_marker() {
         "precondition: no pairing may be pending"
     );
 
+    let harness = ServiceHarness::new().await;
     // Hold the lock too: if the gate were (wrongly) bypassed we would see
     // "busy"; the correct behaviour is the "not paired" rejection before it.
-    let _guard = scheduler.try_lock_peer("UNKNOWN_DEV").unwrap();
+    // #3511: keyed on the dialling endpoint, the key the responder locks on.
+    let _guard = scheduler.try_lock_peer(&client_key(&harness)).unwrap();
 
-    let harness = ServiceHarness::new().await;
     let handle = spawn_responder(
         &harness,
         pool.clone(),
@@ -2021,7 +2211,7 @@ async fn handle_incoming_sync_aborts_on_cancel_and_releases_lock() {
     // The per-peer lock must have been released when the session aborted —
     // otherwise a cancelled/hung responder would strand the peer as "busy".
     assert!(
-        scheduler.try_lock_peer("REMOTE_DEV").is_some(),
+        scheduler.try_lock_peer(&client_key(&harness)).is_some(),
         "the per-peer lock must be released after the responder aborts on cancel"
     );
 
