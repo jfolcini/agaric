@@ -187,7 +187,18 @@ STUB
                   uniq wc cat dirname basename readlink realpath expr uname \
                   true false; do
     sbx_path="$(command -v "$sbx_tool" 2>/dev/null)" || continue
-    ln -sf "$sbx_path" "$sandbox/$sbx_tool"
+    # `command -v` returns the BARE NAME for a shell builtin, not a path --
+    # `command -v true` is `true`, not `/usr/bin/true`. Linking that would make
+    # `$sandbox/true` point at itself and every use ELOOP ("Too many levels of
+    # symbolic links"). Harmless today only because bash resolves `true`/`false`
+    # as builtins and never consults PATH for them, so the broken link is never
+    # followed -- i.e. the allowlist quietly did not do what it says for those
+    # two. Require an absolute path; builtins remain available to the payload
+    # regardless, because they are builtins. (#3580 review)
+    case "$sbx_path" in
+      /*) ln -sf "$sbx_path" "$sandbox/$sbx_tool" ;;
+      *)  : ;;   # builtin or relative -- not something we can or need to link
+    esac
   done
   for sbx_tool in cargo cargo-binstall cargo-sqlx rustup sudo doas su apt \
                   apt-get dnf yum pacman apk brew port curl wget git ssh scp \
