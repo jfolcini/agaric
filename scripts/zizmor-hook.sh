@@ -479,14 +479,20 @@ printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>"$tmp/installer.err"
   # the wiring grep below matches the `cargo_get_pinned` call site. A SECOND
   # top-level assignment placed between the two would satisfy both while
   # changing what actually reaches the installer (#3559, item 2), so assert
-  # there is exactly one — using the same anchor the extractor uses, so the two
-  # cannot disagree about what they are counting. Both accept an optional
-  # `export ` prefix: `export ZIZMOR_VERSION_AWK=…` sits at column 0, is a
-  # thoroughly plausible spelling, and under a bare `^ZIZMOR_VERSION_AWK=`
+  # there is exactly one — anchored on the same construct the extractor anchors
+  # on, so the two do not disagree about what they are counting. Both accept an
+  # optional `export ` prefix: `export ZIZMOR_VERSION_AWK=…` sits at column 0,
+  # is a thoroughly plausible spelling, and under a bare `^ZIZMOR_VERSION_AWK=`
   # anchor it was invisible to BOTH — so a second one could take effect at
   # runtime while the extractor kept cross-checking the first and this count
-  # kept reading 1 (found in #3559's review; the two patterns are widened
-  # together precisely so they stay in agreement).
+  # kept reading 1 (found in #3559's review).
+  #
+  # Precisely: the two patterns are EQUIVALENT, not textually identical. The
+  # extractor is awk and spells the gap `[ \t]+` (line ~446); this is grep -E
+  # and spells it `[[:space:]]+`. On a single line those accept the same thing,
+  # so the property holds today — but they are two spellings, and widening one
+  # without the other is exactly the drift this assertion exists to catch. Keep
+  # them in step by hand; nothing enforces it (#3578).
   #
   # KNOWN BOUNDARY, do not over-trust this pair: it closes top-level
   # re-assignment only. An INDENTED re-assignment (inside an `if`, a function,
