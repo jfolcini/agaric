@@ -62,6 +62,27 @@ function hastChildrenToReact(
 }
 
 /**
+ * Return whether a highlighted HAST exceeds the amount of work we are willing
+ * to turn into React nodes in one synchronous commit. Both element wrappers
+ * and text leaves count, at every nesting level. Stop as soon as the cap is
+ * crossed so a pathological result does not require a second full tree walk.
+ */
+function exceedsHighlightNodeCap(children: readonly HastChildNode[]): boolean {
+  let nodeCount = 0
+
+  const visit = (nodes: readonly HastChildNode[]): boolean => {
+    for (const node of nodes) {
+      nodeCount += 1
+      if (nodeCount > HIGHLIGHT_MAX_NODES) return true
+      if (node.type === 'element' && visit(node.children)) return true
+    }
+    return false
+  }
+
+  return visit(children)
+}
+
+/**
  * Highlighting cap (#747 item 3). `highlightAuto` scans the source across every
  * registered grammar with backtracking regexes — O(grammars × length) work — so
  * a pasted multi-hundred-KB log would stall the render thread. Above this cap we
@@ -70,20 +91,29 @@ function hastChildrenToReact(
  */
 export const HIGHLIGHT_MAX_LENGTH = 30_000
 
+/**
+ * Maximum number of text + element HAST nodes committed for one highlighted
+ * block (#3558). The character cap bounds grammar work; this separate output
+ * cap bounds the synchronous HAST-to-React conversion and React commit. Above
+ * it, the complete source remains visible as plain text.
+ */
+export const HIGHLIGHT_MAX_NODES = 3_000
+
 // ============================================================================
 // Highlight-output cache + deferred highlighting (#2271)
 // ============================================================================
 //
-// `lowlight.highlight` / `highlightAuto` are the single most expensive step in
-// rendering a viewport of code blocks: `highlightAuto` alone backtracks across
-// ~16 grammars. Two layers keep that off the critical path:
+// `lowlight.highlight` / `highlightAuto` and committing their token trees are
+// the expensive steps in rendering a viewport of code blocks. Two layers keep
+// grammar work off the critical path, while `HIGHLIGHT_MAX_NODES` separately
+// bounds the synchronous HAST-to-React conversion and React commit:
 //
 //   1. A bounded module-level LRU keyed on `(language ?? 'auto', code)` caches
-//      the produced HAST tree (or `null` for "known plain": over-cap or a
-//      highlighter error). Identical blocks and re-renders never re-scan — an
+//      the produced HAST tree (or `null` for "known plain": over either cap or
+//      a highlighter error). Identical blocks and re-renders never re-scan — an
 //      O(1) lookup replaces the grammar walk. We cache the HAST (not the React
-//      nodes) so the cheap HAST→React conversion can re-key per call site,
-//      keeping React keys correct regardless of which block reuses the entry.
+//      nodes) so conversion can re-key per call site, keeping React keys correct
+//      regardless of which block reuses the entry.
 //
 //   2. `HighlightedCode` renders plain `<code>` text on first paint and upgrades
 //      to highlighted output post-commit (requestIdleCallback, setTimeout
@@ -98,22 +128,21 @@ const HIGHLIGHT_CACHE_MAX = 300
  * Byte ceiling for the highlight cache (#2289). The entry cap alone
  * (`HIGHLIGHT_CACHE_MAX`) bounds the *count* of entries but not their *size*:
  * each entry may hold the HAST tree for a code block up to
- * `HIGHLIGHT_MAX_LENGTH` (30 000) chars, so 300 large entries could
- * theoretically accumulate tens of MB of retained tree nodes.
+ * `HIGHLIGHT_MAX_LENGTH` (30 000) chars and `HIGHLIGHT_MAX_NODES` nodes, so 300
+ * large entries could still retain substantial source text and tree overhead.
  *
  * We add a second, byte-based bound. The per-entry cost is estimated by a cheap
  * PROXY computed at write time: the source `code` string's `.length`. That is a
- * lower bound on — and correlates with — the produced HAST size (every source
- * char reappears in some text node, plus per-token element overhead) and needs
- * no tree walk. The proxy is stored per entry so eviction can subtract it
+ * lower bound on the produced HAST size (every source char reappears in some
+ * text node, plus per-token element overhead) and needs no extra work after the
+ * node-budget walk. The proxy is stored per entry so eviction can subtract it
  * without recomputing.
  *
  * The value below is a conservative SAFETY CEILING, not a measured optimum:
- * ~4 MB of accumulated proxy-bytes. Because the proxy under-counts the true HAST
- * footprint (element wrappers, class strings, per-object overhead), real
- * retained memory is a small multiple of this — the point is a hard upper bound
- * in the low-single-digit-MB range regardless of individual entry sizes, which
- * the count cap alone cannot guarantee.
+ * ~4 MB of accumulated source-string proxy bytes. It is not a literal heap-byte
+ * ceiling because it excludes element wrappers, class strings, and per-object
+ * overhead. The entry, source-byte, and per-tree node caps instead bound those
+ * three independent dimensions together.
  */
 const HIGHLIGHT_CACHE_MAX_BYTES = 4 * 1024 * 1024
 
@@ -215,7 +244,8 @@ export function __highlightCacheStats(): { entries: number; bytes: number } {
 
 /**
  * Run the (expensive) highlighter. Returns the HAST tree, or `null` when the
- * block is over the cap or the highlighter throws (fall back to plain text).
+ * source exceeds the character cap, the highlighted output exceeds the node
+ * cap, or the highlighter throws (fall back to the complete plain text).
  */
 function computeHighlight(
   lowlight: CuratedLowlight,
@@ -224,9 +254,10 @@ function computeHighlight(
 ): HastRootNode | null {
   if (code.length > HIGHLIGHT_MAX_LENGTH) return null
   try {
-    return (language
+    const tree = (language
       ? lowlight.highlight(language, code)
       : lowlight.highlightAuto(code)) as unknown as HastRootNode
+    return exceedsHighlightNodeCap(tree.children) ? null : tree
   } catch {
     return null
   }
