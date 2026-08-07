@@ -22,8 +22,8 @@ publish = false
 
 # Sync-D folds in the net / protocol / daemon / files cluster + `snapshot`, so
 # this crate gains a `test-util` feature: the cross-crate test helpers the app's
-# hosted sync tests reach (e.g. `sync_net::test_connection_pair` + the
-# `InnerStream::Test` machinery) are gated `#[cfg(any(test, feature =
+# hosted sync tests reach (e.g. `transport::test_support::quic_pair`,
+# `sync_events::RecordingEventSink`) are gated `#[cfg(any(test, feature =
 # "test-util"))]` so they compile when the app builds this crate as a dependency
 # for its own test target (mirrors `agaric-store` / `agaric-core`'s `test-util`).
 [features]
@@ -95,20 +95,14 @@ tracing = { version = "0.1.44", features = ["attributes"] }
 blake3 = "1.8.5"
 zstd = "0.13"
 ciborium = "0.2"
-base64 = "0.23.0"
 # Crypto-quality random for pairing tokens + key material.
 rand = "0.10"
-# SHA-256 for sync_scheduler digest paths + pairing token derivation.
-sha2 = "0.11"
-# TLS stack for the mTLS sync handshake (rustls + tokio adapter + WebSocket
-# transport + self-signed cert gen + peer-cert parsing). Versions/features
-# mirror the app crate exactly.
-rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
-tokio-rustls = "0.26"
+# `Stream`/`Sink` adapters on the attachment-transfer path (sync_files.rs).
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
-rcgen = "0.14"
-x509-parser = "0.18.1"
+# The mTLS stack this crate used to carry (rustls, tokio-rustls,
+# tokio-tungstenite, rcgen, x509-parser) went with `sync_net` / `sync_cert` in
+# the iroh cutover (#3464), as did `base64` (PEM decoding) and `sha2` (cert
+# fingerprints). QUIC brings its own crypto via the pinned `iroh`.
 # LAN discovery: mDNS announce/browse + private-interface enumeration.
 mdns-sd = "0.20"
 if-addrs = "0.15"

@@ -975,12 +975,11 @@ async fn orchestrator_rejects_snapshot_offer_as_unreachable_protocol_state() {
     materializer.shutdown();
 }
 
-/// #611: `LoroSyncChunked` is a transport-internal encoding — the wire
-/// layer (`sync_daemon::wire::recv_sync_message`) reassembles the
-/// header + binary frames into a plain `LoroSync` before dispatch. One
-/// reaching `handle_message` means that interception has regressed;
-/// surface it as `AppError::InvalidOperation` (same contract as a
-/// stray `SnapshotOffer`).
+/// #611: `LoroSyncChunked` is a transport-internal encoding with no producer
+/// since the iroh port (#3464) removed the chunking layer. One reaching
+/// `handle_message` means a chunking-era peer sent it, or a dispatch
+/// regression; either way surface it as `AppError::InvalidOperation` (same
+/// contract as a stray `SnapshotOffer`).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() {
     use agaric_sync::sync_protocol::loro_sync_types::{
@@ -1012,8 +1011,9 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         Err(agaric_core::error::AppError::InvalidOperation(msg)) => msg,
         other => panic!(
             "LoroSyncChunked routed through handle_message must return \
-             AppError::InvalidOperation — the wire layer is the only \
-             reachable path. got: {other:?}"
+             AppError::InvalidOperation — nothing produces the variant, so \
+             the only way to see one is a peer that predates the QUIC port. \
+             got: {other:?}"
         ),
     };
     assert!(
@@ -1021,8 +1021,10 @@ async fn orchestrator_rejects_loro_sync_chunked_as_unreachable_protocol_state() 
         "error message must name the offending variant, got: {err}"
     );
     assert!(
-        err.contains("wire"),
-        "error message must point callers at the wire layer, got: {err}"
+        err.contains("inline"),
+        "error message must say where an oversized LoroSync goes instead, \
+         so the reader is not left looking for a reassembly layer that no \
+         longer exists, got: {err}"
     );
 
     materializer.shutdown();
@@ -2158,6 +2160,57 @@ fn serde_roundtrip_empty_string_fields() {
         val["last_hash"], "",
         "empty string must serialize to empty string, not null"
     );
+}
+
+/// Migrated from `src/sync_net/tests.rs` when the iroh cutover (#3464) deleted
+/// that file: `SyncMessage` serde is a protocol property, not a transport one,
+/// and these three cases are not covered by the roundtrips above.
+///
+/// The escaping case is the reason this one is not redundant with
+/// [`serde_roundtrip_unicode_error_message`]: a `"` inside the payload is the
+/// only character that can terminate the JSON string early, and no other test
+/// in the tree puts one in a `SyncMessage` field.
+#[test]
+fn serde_roundtrip_error_message_escaping() {
+    for msg_str in &["", "network error", "emoji: \u{1f525}", "quotes: \"hello\""] {
+        let msg = SyncMessage::Error {
+            message: (*msg_str).to_string(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize Error");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize Error");
+        assert_eq!(
+            deser, msg,
+            "SyncMessage::Error roundtrip failed for: {msg_str}"
+        );
+    }
+}
+
+/// `sync_message_serde_roundtrip` above ships a `FileRequest` through a
+/// serialize-deserialize-reserialize comparison, which catches shape drift but
+/// not a field that decodes to the wrong value. This asserts value equality.
+#[test]
+fn serde_roundtrip_sync_message_file_request() {
+    let msg = SyncMessage::FileRequest {
+        attachment_ids: vec!["ATT_A".into(), "ATT_B".into()],
+    };
+    let json = serde_json::to_string(&msg).expect("serialize FileRequest");
+    let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize FileRequest");
+    assert_eq!(deser, msg, "FileRequest must survive serde roundtrip");
+}
+
+/// `last_hash` is a hex digest in production but the type is a bare `String`;
+/// the empty and full-length forms are the two ends of what the field can hold.
+#[test]
+fn serde_roundtrip_sync_complete_hash_lengths() {
+    let long_hash = "a".repeat(64);
+    for hash in &["", "abc123", long_hash.as_str()] {
+        let msg = SyncMessage::SyncComplete {
+            last_hash: (*hash).to_string(),
+        };
+        let json = serde_json::to_string(&msg).expect("serialize SyncComplete");
+        let deser: SyncMessage = serde_json::from_str(&json).expect("deserialize SyncComplete");
+        assert_eq!(deser, msg, "SyncComplete roundtrip failed for hash: {hash}");
+    }
 }
 
 #[test]
@@ -3851,8 +3904,8 @@ async fn seed_oversized_op_for_2593(pool: &sqlx::SqlitePool) {
 /// STREAMED as an `OpLogBatch` when the peer advertised the
 /// `op_log_batch_chunked` capability. The orchestrator emits the plain
 /// `OpLogBatch`; the wire layer ships the over-threshold batch via the chunked
-/// `OpLogBatchChunked` transport (asserted in `sync_daemon::wire` round-trip
-/// tests and the real-socket E2E).
+/// oversized inline `OpLogBatch` (the chunked encoding went with the WebSocket
+/// transport in #3464; QUIC's 256 MB frame cap carries it as one message).
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn streamer_streams_oversized_op_record_to_chunked_capable_peer_2593() {
     let (pool, _dir) = test_pool().await;

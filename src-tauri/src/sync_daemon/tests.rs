@@ -3279,7 +3279,7 @@ fn process_discovery_unpaired_returns_some_only_while_pairing_pending() {
 
 // ── conditional daemon startup ──────────────────────────────
 //
-// `SyncDaemon::start_if_peers_exist` avoids starting mDNS + TLS listener
+// `SyncDaemon::start_if_peers_exist` avoids starting mDNS + the QUIC endpoint
 // when no paired peers exist. These tests exercise the peer-count helper,
 // the pending-pairing wake path (#466), and the dormant/active transition.
 
@@ -3378,13 +3378,13 @@ async fn peers_appeared_returns_true_on_pending_pairing_with_no_peer_rows() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_if_peers_exist_spawns_dormant_when_empty() {
     // When no peers are paired, the daemon task should NOT initialize
-    // mDNS or the TLS listener. We verify this by:
+    // mDNS or the QUIC endpoint. We verify this by:
     //   1. spawning `start_if_peers_exist` with an empty peer table,
     //   2. observing that the returned handle is alive (dormant task),
     //   3. shutting down cleanly.
     //
     // If the daemon had started in active mode, it would have bound a
-    // random-port TLS listener and attempted mDNS init — both of which
+    // random-port QUIC endpoint and attempted mDNS init — both of which
     // are side effects we want to avoid. The dormant task has no such
     // side effects; it just polls `peer_refs`.
 
@@ -6534,9 +6534,10 @@ async fn issue778_fresh_device_empty_heads_completes_session_against_seeded_resp
 /// This test seeds the responder with one block holding ~4 MB of
 /// incompressible content (asserting the premise: the exported
 /// snapshot really is over `LORO_INLINE_MAX_BYTES`), drives a full
-/// session through the REAL `handle_incoming_sync` responder over an
-/// in-memory wire (so the production `sync_daemon::wire` chunked send
-/// path runs), pumps the initiator via the same wire helpers
+/// session through the REAL `handle_incoming_sync` responder over a
+/// QUIC pair (so the production send path runs — since #3464 an
+/// over-threshold payload rides one frame rather than the retired
+/// chunked encoding), pumps the initiator via the same helpers
 /// `run_sync_session` uses, and asserts the session completes and the
 /// 4 MB block lands in the initiator's DB byte-for-byte.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -8628,7 +8629,7 @@ async fn catchup_2538_oversize_rejection_records_failure_not_success() {
 /// responder's message loop (`server.rs`) and the initiator's loop
 /// (`run_sync_session`). Pinning the helper's timeout + error shape therefore
 /// pins all three sites, the same way the `RECV_TIMEOUT > HANDSHAKE_TIMEOUT`
-/// structural tests in `sync_net::connection` pin the guard ordering.
+/// structural tests in `transport::driver` pin the `SessionLimits` ordering.
 ///
 /// `start_paused` virtual time makes the 120 s timeout elapse instantly and
 /// deterministically.

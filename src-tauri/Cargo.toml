@@ -50,9 +50,10 @@ default-run = "agaric"
 # in the final binary.
 [package.metadata.cargo-machete]
 ignored = [
-    # #2621 Sync-D: the sync-only deps (mdns-sd, qrcode, rcgen, tokio-tungstenite,
-    # tokio-rustls, if-addrs, x509-parser, jni, ndk-context) moved to
-    # `agaric-sync/Cargo.toml` along with the code that uses them. What remains
+    # #2621 Sync-D: the sync-only deps (mdns-sd, qrcode, if-addrs, jni,
+    # ndk-context) moved to `agaric-sync/Cargo.toml` along with the code that
+    # uses them; the mTLS-era ones (rcgen, tokio-tungstenite, tokio-rustls,
+    # x509-parser) were deleted outright by the iroh cutover. What remains
     # here is used by app production code (or shared TLS/crypto) but sits behind
     # conditional compilation the static analyzer can't see under the default
     # feature set.
@@ -231,10 +232,12 @@ tracing-opentelemetry = "0.33"
 # (`tokio-tungstenite`, `tokio-rustls`, `rcgen`, `mdns-sd`, `if-addrs`,
 # `qrcode`, `x509-parser`). What remains here is used by app *production* code
 # outside the sync cluster (or is a shared TLS/crypto dep): `rustls`,
-# `futures-util`, `sha2`, `rand`. The four still referenced by the app's hosted
-# sync *tests* (`tokio-tungstenite`, `rcgen`, `mdns-sd`, `x509-parser`) moved to
-# `[dev-dependencies]`; `tokio-rustls` / `if-addrs` / `qrcode` had no remaining
-# app use site and were dropped entirely.
+# `futures-util`, `sha2`, `rand`. `rustls` stays because the app installs the
+# ring `CryptoProvider` at startup, which iroh's QUIC handshake needs. Only
+# `mdns-sd` is still referenced by the app's hosted sync *tests* and therefore
+# sits in `[dev-dependencies]`; the mTLS-era test deps (`tokio-tungstenite`,
+# `rcgen`, `x509-parser`) went with `src/sync_net/tests.rs` in #3464, and
+# `tokio-rustls` / `if-addrs` / `qrcode` had already been dropped.
 rustls = { version = "0.23", default-features = false, features = ["std", "tls12", "ring"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 sha2 = "0.11"
@@ -335,16 +338,15 @@ agaric-core = { path = "agaric-core", version = "0.1.0", features = ["test-util"
 agaric-engine = { path = "agaric-engine", version = "0.1.0", features = ["test-util"] }
 # #2621 Sync-D: re-declare agaric-sync with `test-util` so the app-hosted sync
 # tests can reach the cross-crate test helpers gated behind that feature
-# (`sync_net::test_connection_pair` + the `InnerStream::Test` machinery,
-# `sync_events::RecordingEventSink`). Only enabled for test builds.
+# (`transport::test_support::quic_pair`, `sync_events::RecordingEventSink`).
+# Only enabled for test builds.
 agaric-sync = { path = "agaric-sync", version = "0.1.0", features = ["test-util"] }
-# #2621 Sync-D: these sync-only crates moved to `agaric-sync` for production;
-# the only remaining app use sites are the hosted sync tests, so they are
-# dev-only here (unified with agaric-sync's production copies by cargo).
-tokio-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
-rcgen = "0.14"
+# #2621 Sync-D: sync-only crate moved to `agaric-sync` for production; the only
+# remaining app use sites are the hosted sync tests, so it is dev-only here
+# (unified with agaric-sync's production copy by cargo). The mTLS-era siblings
+# (tokio-tungstenite, rcgen, x509-parser) went with `src/sync_net/tests.rs` in
+# the iroh cutover (#3464).
 mdns-sd = "0.20"
-x509-parser = "0.18.1"
 criterion = { version = "0.8.2", features = ["async_tokio"] }
 # The `opentelemetry_sdk` `testing` dev-dep (InMemory{Span,Log,Metric}Exporter)
 # moved to `agaric-observability` with the pipeline tests it backed (#2878); no

@@ -64,7 +64,12 @@ const DOC_ROOTS = [
 //  - `docs/session-log/*.md` are archives of past state; references in
 //    archived sessions are expected to drift (files get renamed,
 //    refactored, deleted) and the historical record stays accurate.
-const EXCLUDE_PATH_RE = /^docs\/session-log\//
+//  - `docs/security/review-*.md` are point-in-time reviews that record the
+//    HEAD they were taken against and declare, in their own header, that they
+//    are not updated as the code changes. Repointing their citations would
+//    falsify the record; the audit therefore leaves them alone. The living
+//    `docs/security/README.md` is still audited.
+const EXCLUDE_PATH_RE = /^docs\/(session-log\/|security\/review-)/
 
 function listMarkdownFiles() {
   if (!TRACKED) {

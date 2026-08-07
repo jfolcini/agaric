@@ -1,10 +1,11 @@
-//! LAN peer discovery over mDNS — the half of `sync_net` the iroh port keeps.
+//! LAN peer discovery over mDNS — the half of the retired `sync_net` the iroh port
+//! keeps.
 //!
-//! [`sync_net::websocket`](crate::sync_net) held two unrelated things in one file: a
-//! TLS/WebSocket accept loop, which the cutover deletes, and this — announcing the
-//! device on the local network and browsing for others. The transport half is being
-//! replaced by [`transport`](crate::transport); the discovery half is not replaced by
-//! anything, so it lives here, outside the module that is about to go.
+//! `sync_net::websocket` held two unrelated things in one file: a TLS/WebSocket accept
+//! loop, and this — announcing the device on the local network and browsing for others.
+//! The transport half was replaced by [`transport`](crate::transport) and deleted
+//! (#3464); the discovery half was not replaced by anything, which is why it was lifted
+//! out first (#3488) rather than going down with the module that held it.
 //!
 //! # Why this survives the port at all
 //!
@@ -100,8 +101,9 @@ const TXT_ENDPOINT_ID: &str = "endpoint_id";
 
 /// Map any mDNS error into an `AppError`.
 ///
-/// A local copy of what `sync_net::sync_err` did, so this module owes that module
-/// nothing; the tag changes from `[sync_net]` to `[mdns]` accordingly.
+/// Its own copy rather than a shared helper: the equivalent used to live in the
+/// transport module this was lifted out of, and that module is gone. The tag is
+/// `[mdns]` so a discovery failure is not read as a transport one.
 fn mdns_err(msg: impl std::fmt::Display) -> AppError {
     AppError::InvalidOperation(format!("[mdns] {msg}"))
 }
