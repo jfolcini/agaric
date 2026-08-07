@@ -163,12 +163,12 @@ export function HistoryView(): React.ReactElement {
   // `isFetching` reproduces that (`isLoading` would be false during load-more).
   const loading = isFetching
   const hasMore = hasNextPage
-  // Sub-fix 7: the categorised failure drives the banner's network/server/unknown
+  // Sub-fix 7: the categorised failure drives the banner's server/unknown
   // detail line. #2639 — DERIVED from the query error (not component state set
   // inside the queryFn): the cached error survives across remount, so deriving it
   // keeps the detail line correct immediately on reopen. The old component-state
   // reset to `null` on remount, briefly showing the `unknown` fallback against a
-  // cached network/server failure until `refetchOnMount` re-ran the queryFn.
+  // cached backend failure until `refetchOnMount` re-ran the queryFn.
   const errorCategory: HistoryErrorCategory | null =
     isError && queryError != null ? categorizeHistoryError(queryError) : null
   // usePaginatedQuery exposed `error` as the `onError` string on failed loads.
@@ -318,11 +318,7 @@ export function HistoryView(): React.ReactElement {
           <div className="flex flex-col gap-1">
             <p className="text-sm font-medium text-destructive">{error}</p>
             <p className="text-xs text-muted-foreground" data-testid="history-error-detail">
-              {errorCategory === 'network'
-                ? t('history.errorNetwork')
-                : errorCategory === 'server'
-                  ? t('history.errorServer')
-                  : t('history.errorUnknown')}
+              {errorCategory === 'server' ? t('history.errorServer') : t('history.errorUnknown')}
             </p>
           </div>
           <Button variant="outline" size="sm" onClick={() => reload()}>

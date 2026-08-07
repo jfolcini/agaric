@@ -105,14 +105,17 @@ describe('categorizeHistoryError', () => {
     expect(categorizeHistoryError(error)).toBe('unknown')
   })
 
-  it('treats an unrecognised serialized kind as unknown at runtime', () => {
-    expect(
-      categorizeHistoryError({
-        kind: 'kind_added_by_a_newer_backend',
-        message: 'Failed to fetch while offline',
-      }),
-    ).toBe('unknown')
-  })
+  it.each(['kind_added_by_a_newer_backend', 'toString', 'constructor', '__proto__'])(
+    'treats unrecognised serialized kind %s as unknown at runtime',
+    (kind) => {
+      expect(
+        categorizeHistoryError({
+          kind,
+          message: 'Failed to fetch while offline',
+        }),
+      ).toBe('unknown')
+    },
+  )
 
   it.each([null, undefined, {}, { message: 'Database error', status: 503 }, 'opaque failure'])(
     'classifies non-AppError value %# as unknown',

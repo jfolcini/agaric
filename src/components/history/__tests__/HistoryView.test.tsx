@@ -1556,7 +1556,7 @@ describe('HistoryView screen reader announcements', () => {
   })
 
   // ===========================================================================
-  // Sub-fix 7: error-banner categorization (network / server / unknown).
+  // Sub-fix 7: error-banner categorization (server / unknown).
   // ===========================================================================
   describe(' error categorization', () => {
     it('does not classify a native Error from its message text', async () => {

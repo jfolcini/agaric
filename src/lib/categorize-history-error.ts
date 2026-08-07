@@ -3,7 +3,6 @@
  * user-meaningful bucket so the History error banner can show
  * actionable context instead of a generic message.
  *
- *  - `network` — reserved for a future structured transport discriminator
  *  - `server`  — selected typed IPC backend failures
  *  - `unknown` — anything else
  *  - `null`    — expected cancellation; the caller suppresses error UX
@@ -15,7 +14,7 @@
 
 import { isAppError, type AppErrorKind } from '@/lib/app-error'
 
-export type HistoryErrorCategory = 'network' | 'server' | 'unknown'
+export type HistoryErrorCategory = 'server' | 'unknown'
 
 const appErrorCategories = {
   database: 'server',
@@ -40,8 +39,8 @@ export function categorizeHistoryError(err: unknown): HistoryErrorCategory | nul
     // `isAppError` validates the envelope, while the generated union validates
     // known kinds at compile time. Keep a runtime fallback for a newer backend
     // introducing a kind before this frontend has regenerated its bindings.
-    const category = appErrorCategories[err.kind]
-    return category === undefined ? 'unknown' : category
+    if (!Object.hasOwn(appErrorCategories, err.kind)) return 'unknown'
+    return appErrorCategories[err.kind as AppErrorKind]
   }
 
   return 'unknown'
