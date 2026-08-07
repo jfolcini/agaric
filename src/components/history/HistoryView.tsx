@@ -114,17 +114,19 @@ export function HistoryView(): React.ReactElement {
           return result
         } catch (err) {
           const category = categorizeHistoryError(err)
-          logger.error(
-            'HistoryView',
-            'Failed to load history page',
-            {
-              category,
-              opTypeFilter: opTypeFilter ?? null,
-              spaceId: effectiveSpaceId ?? null,
-              cursor: pageParam ?? null,
-            },
-            err,
-          )
+          if (category !== null) {
+            logger.error(
+              'HistoryView',
+              'Failed to load history page',
+              {
+                category,
+                opTypeFilter: opTypeFilter ?? null,
+                spaceId: effectiveSpaceId ?? null,
+                cursor: pageParam ?? null,
+              },
+              err,
+            )
+          }
           throw err
         }
       },
@@ -161,10 +163,6 @@ export function HistoryView(): React.ReactElement {
   // `isFetching` reproduces that (`isLoading` would be false during load-more).
   const loading = isFetching
   const hasMore = hasNextPage
-  // usePaginatedQuery exposed `error` as the `onError` string on any failed load
-  // (cleared on next success). `isError` latches on the same condition, so the
-  // banner shows the same generic title exactly when the last fetch failed.
-  const error = isError ? t('history.loadFailed') : null
   // Sub-fix 7: the categorised failure drives the banner's network/server/unknown
   // detail line. #2639 — DERIVED from the query error (not component state set
   // inside the queryFn): the cached error survives across remount, so deriving it
@@ -173,6 +171,11 @@ export function HistoryView(): React.ReactElement {
   // cached network/server failure until `refetchOnMount` re-ran the queryFn.
   const errorCategory: HistoryErrorCategory | null =
     isError && queryError != null ? categorizeHistoryError(queryError) : null
+  // usePaginatedQuery exposed `error` as the `onError` string on failed loads.
+  // A typed cancellation is expected control flow, so its null category also
+  // suppresses the banner and retry affordance instead of inventing a fourth
+  // display category for it.
+  const error = isError && errorCategory !== null ? t('history.loadFailed') : null
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
@@ -195,11 +198,16 @@ export function HistoryView(): React.ReactElement {
   // HistoryPanel's shared toast.
   const lastToastedErrorAtRef = useRef(errorUpdatedAt)
   useEffect(() => {
-    if (isError && !isFetching && errorUpdatedAt !== lastToastedErrorAtRef.current) {
+    if (
+      isError &&
+      errorCategory !== null &&
+      !isFetching &&
+      errorUpdatedAt !== lastToastedErrorAtRef.current
+    ) {
       lastToastedErrorAtRef.current = errorUpdatedAt
       notify.error(t('history.loadFailed'))
     }
-  }, [isError, isFetching, errorUpdatedAt, t])
+  }, [isError, errorCategory, isFetching, errorUpdatedAt, t])
 
   // ── Selection (multi-select with shift-range) ────────────────────
   const {

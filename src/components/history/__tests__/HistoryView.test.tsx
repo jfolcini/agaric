@@ -30,6 +30,7 @@ import { makeHistoryEntry } from '@/__tests__/fixtures'
 import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { HistoryView } from '@/components/history/HistoryView'
 import { t } from '@/lib/i18n'
+import { logger } from '@/lib/logger'
 import { useSpaceStore } from '@/stores/space'
 
 // Mock CompactionCard so it doesn't make extra invoke calls in HistoryView tests
@@ -1558,21 +1559,24 @@ describe('HistoryView screen reader announcements', () => {
   // Sub-fix 7: error-banner categorization (network / server / unknown).
   // ===========================================================================
   describe(' error categorization', () => {
-    it('classifies a network failure and shows network-specific copy', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('failed to fetch — network error'))
+    it('does not classify a native Error from its message text', async () => {
+      mockedInvoke.mockRejectedValueOnce(new TypeError('Failed to fetch'))
 
       render(<HistoryView />)
 
       const alert = await screen.findByRole('alert')
-      expect(alert).toHaveAttribute('data-error-category', 'network')
+      expect(alert).toHaveAttribute('data-error-category', 'unknown')
       // Heading remains the generic title; detail line is category-specific.
       expect(alert).toHaveTextContent(t('history.loadFailed'))
-      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/connection problem/i)
+      expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/unexpected/i)
     })
 
-    it('classifies a server failure (5xx) and shows server-specific copy', async () => {
-      // Object-shaped error with HTTP status — exercises the obj.status path.
-      mockedInvoke.mockRejectedValueOnce({ status: 503, message: 'service unavailable' })
+    it('classifies a typed pool-busy AppError and shows server-specific copy', async () => {
+      // unwrap() throws this serialized IPC object directly, not an Error.
+      mockedInvoke.mockRejectedValueOnce({
+        kind: 'pool_busy',
+        message: 'Failed to fetch while offline',
+      })
 
       render(<HistoryView />)
 
@@ -1581,8 +1585,11 @@ describe('HistoryView screen reader announcements', () => {
       expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/local backend/i)
     })
 
-    it('falls back to "unknown" when the error message is opaque', async () => {
-      mockedInvoke.mockRejectedValueOnce(new Error('something weird happened'))
+    it('classifies a typed not-found AppError as unknown', async () => {
+      mockedInvoke.mockRejectedValueOnce({
+        kind: 'not_found',
+        message: 'Database network timeout (503)',
+      })
 
       render(<HistoryView />)
 
@@ -1591,17 +1598,41 @@ describe('HistoryView screen reader announcements', () => {
       expect(screen.getByTestId('history-error-detail')).toHaveTextContent(/unexpected/i)
     })
 
+    it('suppresses a typed cancelled AppError without logging, toast, or retry UI', async () => {
+      const loggerError = vi.spyOn(logger, 'error')
+      const mockedToastError = vi.mocked(toast.error)
+      try {
+        mockedInvoke.mockRejectedValueOnce({
+          kind: 'cancelled',
+          message: 'Failed to fetch while offline',
+        })
+
+        render(<HistoryView />)
+
+        expect(await screen.findByText(t('history.noEntriesFound'))).toBeInTheDocument()
+        expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+        expect(screen.queryByRole('button', { name: /Retry/i })).not.toBeInTheDocument()
+        expect(loggerError).not.toHaveBeenCalled()
+        expect(mockedToastError).not.toHaveBeenCalled()
+      } finally {
+        loggerError.mockRestore()
+      }
+    })
+
     it('clears the categorised banner after a successful retry', async () => {
       const user = userEvent.setup()
       mockedInvoke
-        .mockRejectedValueOnce(new Error('network failure')) // initial load fails (network)
+        .mockRejectedValueOnce({
+          kind: 'pool_busy',
+          message: 'Database connection pool timed out',
+        }) // initial load fails with a serialized IPC error
         .mockResolvedValueOnce(emptyPage) // retry succeeds
 
       render(<HistoryView />)
 
-      // Wait for the initial network-error banner.
+      // Wait for the initial typed server-error banner.
       const alert = await screen.findByRole('alert')
-      expect(alert).toHaveAttribute('data-error-category', 'network')
+      expect(alert).toHaveAttribute('data-error-category', 'server')
 
       await user.click(screen.getByRole('button', { name: /Retry/i }))
 
