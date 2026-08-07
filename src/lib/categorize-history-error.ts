@@ -3,49 +3,45 @@
  * user-meaningful bucket so the History error banner can show
  * actionable context instead of a generic message.
  *
- *  - `network` — fetch / connectivity / timeout / offline
- *  - `server`  — backend error (HTTP 5xx, sqlx, IPC reject)
+ *  - `server`  — selected typed IPC backend failures
  *  - `unknown` — anything else
+ *  - `null`    — expected cancellation; the caller suppresses error UX
  *
- * Best-effort detection: inspects HTTP-shaped errors (`{ status: 5xx }`,
- * `{ code: '5xx...' }`) first, then falls back to substring matches
- * Against the lower-cased message. sub-fix 7.
+ * Tauri command failures are serialized `AppError`s, so their `kind` is the
+ * authoritative discriminator. Opaque values and native `Error` instances
+ * remain unknown: message text is not a stable transport discriminator.
  */
 
-export type HistoryErrorCategory = 'network' | 'server' | 'unknown'
+import { isAppError, type AppErrorKind } from '@/lib/app-error'
 
-export function categorizeHistoryError(err: unknown): HistoryErrorCategory {
-  if (err == null) return 'unknown'
-  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
-  if (typeof err === 'object' && err != null) {
-    const obj = err as { status?: number; code?: string | number }
-    if (typeof obj.status === 'number' && obj.status >= 500 && obj.status < 600) {
-      return 'server'
-    }
-    if (typeof obj.code === 'string' && /^5\d\d/.test(obj.code)) {
-      return 'server'
-    }
+export type HistoryErrorCategory = 'server' | 'unknown'
+
+const appErrorCategories = {
+  database: 'server',
+  not_found: 'unknown',
+  pool_busy: 'server',
+  conflict: 'unknown',
+  migration: 'unknown',
+  io: 'unknown',
+  json: 'unknown',
+  ulid: 'unknown',
+  invalid_operation: 'unknown',
+  channel: 'unknown',
+  internal: 'server',
+  snapshot: 'server',
+  validation: 'unknown',
+  non_reversible: 'unknown',
+  cancelled: null,
+} satisfies Record<AppErrorKind, HistoryErrorCategory | null>
+
+export function categorizeHistoryError(err: unknown): HistoryErrorCategory | null {
+  if (isAppError(err)) {
+    // `isAppError` validates the envelope, while the generated union validates
+    // known kinds at compile time. Keep a runtime fallback for a newer backend
+    // introducing a kind before this frontend has regenerated its bindings.
+    if (!Object.hasOwn(appErrorCategories, err.kind)) return 'unknown'
+    return appErrorCategories[err.kind as AppErrorKind]
   }
-  if (
-    msg.includes('fetch') ||
-    msg.includes('network') ||
-    msg.includes('timeout') ||
-    msg.includes('offline') ||
-    msg.includes('econnrefused') ||
-    msg.includes('etimedout')
-  ) {
-    return 'network'
-  }
-  if (
-    msg.includes('500') ||
-    msg.includes('502') ||
-    msg.includes('503') ||
-    msg.includes('504') ||
-    msg.includes('internal server') ||
-    msg.includes('database') ||
-    msg.includes('sqlx')
-  ) {
-    return 'server'
-  }
+
   return 'unknown'
 }

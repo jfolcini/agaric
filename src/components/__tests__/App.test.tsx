@@ -152,6 +152,10 @@ beforeEach(() => {
   localStorage.removeItem('theme-preference')
   document.documentElement.classList.remove('dark')
 
+  // Reset the boot-applied editor font size.
+  localStorage.removeItem('agaric-font-size')
+  document.documentElement.style.removeProperty('--agaric-font-size')
+
   // Dismiss onboarding modal so it doesn't block interactions.
   localStorage.setItem('agaric-onboarding-done', 'true')
 
@@ -201,6 +205,17 @@ function getSidebar() {
 }
 
 describe('App', () => {
+  it('applies the stored font size at boot without opening Settings', async () => {
+    localStorage.setItem('agaric-font-size', 'large')
+
+    render(<App />)
+
+    await waitFor(() => {
+      expect(document.documentElement.style.getPropertyValue('--agaric-font-size')).toBe('18px')
+    })
+    expect(useNavigationStore.getState().currentView).toBe('journal')
+  })
+
   it('renders with sidebar navigation items', async () => {
     render(<App />)
 

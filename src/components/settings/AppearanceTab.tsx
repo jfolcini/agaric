@@ -1,15 +1,13 @@
 /**
  * AppearanceTab — theme + font size + week-start preference selectors.
  *
- * Owns the local state for font size (UX-defined small/medium/large CSS
- * variable) and delegates theme + week-start persistence to the
- * `useTheme` and `useWeekStart` hooks. All three
- * preferences are localStorage-backed and re-read across windows via
- * synthetic `storage` events fired by the hooks.
+ * Delegates each preference to its shared hook. The hooks are
+ * localStorage-backed and re-read across windows via synthetic `storage`
+ * events; App also mounts the hooks that apply app-wide DOM state at boot.
  */
 
 import type React from 'react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { FormField } from '@/components/ui/form-field'
@@ -20,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { type FontSize, useFontSize } from '@/hooks/useFontSize'
 import {
   JOURNAL_DATE_FORMATS,
   type JournalDateFormat,
@@ -31,7 +30,6 @@ import { type TooltipDelay, useTooltipDelay } from '@/hooks/useTooltipDelay'
 import { useWeekStart } from '@/hooks/useWeekStart'
 import { formatJournalTitle } from '@/lib/date-utils'
 import { notify } from '@/lib/notify'
-import { PREFERENCES, readPreference, writePreference } from '@/lib/preferences'
 
 /**
  * Theme select uses 'system' as the user-facing alias for the internal 'auto'
@@ -55,22 +53,6 @@ const JOURNAL_DATE_FORMAT_LABELS: Record<JournalDateFormat, string> = {
   'EEE, MMM d': 'settings.journalDateFormatWeekday',
 }
 
-type FontSize = 'small' | 'medium' | 'large'
-
-const FONT_SIZE_CSS: Record<FontSize, string> = {
-  small: '14px',
-  medium: '16px',
-  large: '18px',
-}
-
-function readFontSize(): FontSize {
-  return readPreference(PREFERENCES.fontSize)
-}
-
-function applyFontSize(size: FontSize) {
-  document.documentElement.style.setProperty('--agaric-font-size', FONT_SIZE_CSS[size])
-}
-
 /** Map the existing useTheme preference names to user-facing select values. */
 function themeToSelect(theme: ThemePreference): ThemeSelectValue {
   if (theme === 'auto') return 'system'
@@ -87,7 +69,7 @@ export function AppearanceTab(): React.ReactElement {
   const { theme, setTheme } = useTheme()
   const { motion, setMotion } = useMotionPreference()
   const { tooltipDelay, setTooltipDelay } = useTooltipDelay()
-  const [fontSize, setFontSize] = useState<FontSize>(readFontSize)
+  const { fontSize, setFontSize } = useFontSize()
   // Surface the previously hidden week-start preference. The hook
   // returns `0 | 1` (Sunday | Monday); the Select primitive only deals
   // in strings so we coerce on read/write.
@@ -96,11 +78,6 @@ export function AppearanceTab(): React.ReactElement {
   // stays ISO `yyyy-MM-dd`; this only changes how titles are rendered.
   const { journalDateFormat, setJournalDateFormat } = useJournalDateFormat()
 
-  // Apply font size on mount and changes
-  useEffect(() => {
-    applyFontSize(fontSize)
-  }, [fontSize])
-
   const handleThemeChange = useCallback(
     (value: string) => {
       setTheme(selectToTheme(value))
@@ -108,11 +85,12 @@ export function AppearanceTab(): React.ReactElement {
     [setTheme],
   )
 
-  const handleFontSizeChange = useCallback((value: string) => {
-    const size = value as FontSize
-    setFontSize(size)
-    writePreference(PREFERENCES.fontSize, size)
-  }, [])
+  const handleFontSizeChange = useCallback(
+    (value: string) => {
+      setFontSize(value as FontSize)
+    },
+    [setFontSize],
+  )
 
   const handleMotionChange = useCallback(
     (value: string) => {
