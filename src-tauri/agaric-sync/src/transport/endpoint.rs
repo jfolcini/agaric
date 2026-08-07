@@ -464,36 +464,37 @@ mod tests {
 
     #[tokio::test]
     async fn lan_only_endpoint_resolves_no_hostnames() {
-        let recorder = RecordingResolver::new();
-        let queries = queries_for(lan_builder(&recorder), recorder).await;
+        let lan_recorder = RecordingResolver::new();
+        let lan_queries = queries_for(lan_builder(&lan_recorder), lan_recorder).await;
 
-        assert!(
-            queries.is_empty(),
-            "LAN-only endpoint attempted {} DNS lookup(s), so something is reaching \
-             for a name off this machine: {queries:?}",
-            queries.len()
-        );
-    }
-
-    /// Control for guard 1 — and the standing evidence that `RelayMode::Disabled`
-    /// alone is insufficient, which is the finding that shaped this whole module.
-    #[tokio::test]
-    async fn control_relay_disabled_preset_still_queries_n0_dns() {
-        let recorder = RecordingResolver::new();
-        let queries = queries_until(
-            permissive(DnsResolver::custom(recorder.clone())),
-            recorder,
+        // Keep the permissive endpoint in this same test outcome: an empty LAN record
+        // is only evidence if the control proves hostname lookups are observable in
+        // this child process first. nextest gives this exact test a scoped NO_PROXY /
+        // no_proxy bypass so an ambient proxy cannot turn both records into `[]`.
+        let control_recorder = RecordingResolver::new();
+        let control_queries = queries_until(
+            permissive(DnsResolver::custom(control_recorder.clone())),
+            control_recorder,
             |q| q.iter().any(|s| s.contains("iroh.link")),
         )
         .await;
 
         assert!(
-            queries.iter().any(|q| q.contains("iroh.link")),
+            control_queries.iter().any(|q| q.contains("iroh.link")),
             "NEGATIVE CONTROL FAILED: presets::N0DisableRelay made no query to an n0 \
-             host. Either iroh stopped using the n0 DNS services, or RecordingResolver \
-             is no longer wired into the resolution path. Until that is understood, \
-             treat lan_only_endpoint_resolves_no_hostnames as unable to fail. \
-             Saw: {queries:?}"
+             host, so the LAN-only result below is not observable and must not pass. \
+             A proxy can cause this by routing reqwest to an IP literal; verify that \
+             nextest's exact-test wrapper supplied both NO_PROXY and no_proxy for \
+             iroh.link. Otherwise, iroh may have stopped using the n0 DNS services or \
+             RecordingResolver may no longer be wired into the resolution path. \
+             Saw: {control_queries:?}"
+        );
+
+        assert!(
+            lan_queries.is_empty(),
+            "LAN-only endpoint attempted {} DNS lookup(s), so something is reaching \
+             for a name off this machine: {lan_queries:?}",
+            lan_queries.len()
         );
     }
 

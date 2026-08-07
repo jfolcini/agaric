@@ -1,6 +1,15 @@
 # cargo-nextest configuration
 # See https://nexte.st/book/configuration.html
 
+# Wrapper-command environment maps were added in 0.9.131. The exact-test wrapper
+# below is load-bearing: older nextest versions would leave its negative control
+# unobservable behind an ambient HTTP(S) proxy.
+nextest-version = "0.9.131"
+experimental = ["wrapper-scripts"]
+
+[scripts.wrapper.iroh-link-no-proxy]
+command = { command-line = "env", env = { NO_PROXY = "iroh.link,.iroh.link", no_proxy = "iroh.link,.iroh.link" } }
+
 [profile.default]
 # Fail-fast disabled: run all tests even if some fail
 fail-fast = false
@@ -12,6 +21,13 @@ slow-timeout = { period = "30s", terminate-after = 2 }
 # sync_daemon tests spawn TCP listeners that occasionally need a moment to
 # release sockets; 30s is generous enough to avoid false-positive leak reports.
 leak-timeout = "30s"
+
+# The LAN-only hostname guard and its permissive control are one test outcome.
+# Bypass ambient proxies only for that exact child so the control must issue an
+# observable iroh.link lookup before the guard is allowed to pass.
+[[profile.default.scripts]]
+filter = 'binary_id(agaric-sync) and test(=transport::endpoint::tests::lan_only_endpoint_resolves_no_hostnames)'
+run-wrapper = "iroh-link-no-proxy"
 
 # Headroom for the suite's heaviest DB-bound tests so full-suite CPU contention
 # can't push them past the global 2×30s=60s terminate window and kill them on the
