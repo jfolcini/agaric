@@ -66,6 +66,18 @@ set -uo pipefail
 # prevent.
 ZIZMOR_PINNED_VERSION="1.28.0"
 
+# The single source of truth for how `zizmor --version`'s one-line
+# `zizmor <semver>` output is turned into a bare version string. Extracted
+# as `$2` (the second field) rather than `$NF` (the last field) — the two
+# agree today but silently diverge the moment the output ever grows a
+# trailing token. scripts/setup-hooks.sh reads this constant via `sed`, the
+# same way it reads ZIZMOR_PINNED_VERSION above, instead of hard-coding its
+# own awk program (#3545): before this, a divergence would leave the
+# wrapper's assertion silent while `cargo_get_pinned` decided the installed
+# version no longer matched and reinstalled zizmor on every run — a hook
+# that quietly became expensive with no error anywhere.
+ZIZMOR_VERSION_AWK='NR == 1 { print $2 }'
+
 have() { command -v "$1" >/dev/null 2>&1; }
 
 # `--self-test` drives this wrapper as a subprocess against stub `zizmor` and
@@ -170,6 +182,46 @@ STUB
   assert_out "the fallback still exits 0" "[exit 0]" "$out"
   assert_out "the fallback retried offline" "--no-online-audits" "$(cat "$tmp/stub.log")"
 
+  # (6) #3545 — scripts/setup-hooks.sh must parse `zizmor --version` the
+  #     SAME way this wrapper does. It sources ZIZMOR_VERSION_AWK from this
+  #     file via `sed` (mirroring how it already sources
+  #     ZIZMOR_PINNED_VERSION) instead of keeping an independent awk
+  #     program. Prove that on a version string with a TRAILING TOKEN — the
+  #     shape that made the old `$NF` vs. `$2` split diverge — both the
+  #     wrapper's own extraction and setup-hooks.sh's sourced copy of it
+  #     land on the same field. If setup-hooks.sh ever regresses to its own
+  #     hard-coded `$NF`, this line would extract "(deadbeef)" instead of
+  #     the version and the two would disagree.
+  sample_version_line="zizmor ${ZIZMOR_PINNED_VERSION} (deadbeef)"
+  wrapper_field="$(printf '%s\n' "$sample_version_line" | awk "$ZIZMOR_VERSION_AWK")"
+  setup_hooks="$(dirname "$SELF")/setup-hooks.sh"
+  # setup-hooks.sh does not hard-code the awk program — it extracts it from
+  # THIS file at runtime with the sed command below. Run that exact command
+  # (copy-pasted, not re-derived) to prove the sourcing itself still works,
+  # then apply the result to the same sample line the wrapper used.
+  installer_awk="$(
+    sed -n 's/^ZIZMOR_VERSION_AWK='"'"'\([^'"'"']*\)'"'"'.*/\1/p' \
+      "$SELF" 2>/dev/null | head -n 1
+  )"
+  installer_field="$(printf '%s\n' "$sample_version_line" | awk "$installer_awk")"
+  if [ -n "$installer_awk" ] && [ "$wrapper_field" = "$installer_field" ] \
+    && [ "$wrapper_field" = "$ZIZMOR_PINNED_VERSION" ]; then
+    echo "  ✓ setup-hooks.sh's sourced field extraction agrees with the wrapper's own on a trailing-token version string"
+  else
+    echo "  ✗ the two extractions disagree on a trailing-token version string (wrapper: '$wrapper_field', installer: '$installer_field', installer_awk: '$installer_awk')" >&2
+    fails=$((fails + 1))
+  fi
+  # And the wiring in setup-hooks.sh must actually PASS that sourced value
+  # into cargo_get_pinned's zizmor call — sourcing it into an unused
+  # variable would satisfy the check above while still leaving the old
+  # default in effect.
+  if grep -qF 'cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"' "$setup_hooks"; then
+    echo "  ✓ setup-hooks.sh's cargo_get_pinned call passes the sourced ZIZMOR_VERSION_AWK through"
+  else
+    echo "  ✗ setup-hooks.sh's cargo_get_pinned call no longer passes ZIZMOR_VERSION_AWK (wiring regressed)" >&2
+    fails=$((fails + 1))
+  fi
+
   if [ "$fails" -gt 0 ]; then
     echo "self-test: $fails assertion(s) failed" >&2
     exit 1
@@ -200,7 +252,7 @@ ONLINE_ONLY_AUDITS='impostor-commit, known-vulnerable-actions, ref-confusion, st
 # ─── version assertion ────────────────────────────────────────────────
 installed_version() {
   # `zizmor --version` prints `zizmor <semver>`.
-  zizmor --version 2>/dev/null | awk 'NR == 1 { print $2 }'
+  zizmor --version 2>/dev/null | awk "$ZIZMOR_VERSION_AWK"
 }
 
 if have zizmor; then

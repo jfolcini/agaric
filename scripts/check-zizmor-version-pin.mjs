@@ -97,16 +97,46 @@ export function extractHookPin(hookText) {
 }
 
 /**
+ * A YAML block-scalar indicator (`|`, `|-`, `|+2`, `>`, `>1-`, …) as the
+ * entire (post-comment-stripped) `tool:` value. That means the real value
+ * lives on the FOLLOWING indented lines, which this single-line scanner
+ * cannot see.
+ */
+const BLOCK_SCALAR_RE = /^[|>][+-]?\d*$/
+
+/**
  * Given ONE `tool:` line's value (e.g. `prek,zizmor,taplo-cli,sqruff@0.38.0`),
  * returns `{ version }` for the zizmor entry (`version` is `null` when zizmor
  * is present but bare), or `undefined` when the line has no zizmor entry —
  * `tool:` lines for other steps (e.g. a plain `sqruff@0.38.0` install with no
  * zizmor at all) must not be mistaken for a zizmor pin site.
+ *
+ * Throws when the `tool:` value is a shape this line-based parser cannot
+ * represent (a YAML block scalar). That is deliberate (#3538): this parser
+ * is line- and entry-exact, so a shape it cannot read must fail LOUD rather
+ * than silently return `undefined` — which reads identically to "no tool:
+ * on this line" and would let a drifted zizmor pin inside the block go
+ * completely unseen, contributing nothing to the version set the wiring
+ * guard below compares (a false negative, not a total miss, so nothing else
+ * trips).
  */
 export function parseZizmorFromToolLine(line) {
   const m = line.match(/(?:^|\s)tool:\s*(\S.*?)\s*$/)
   if (!m) return undefined
-  const entries = m[1].split(',').map((e) => e.trim())
+  // Strip a trailing YAML comment (a `#` preceded by whitespace) before
+  // splitting on commas. Without this, a comment glued onto the last entry
+  // (`tool: prek,zizmor@1.28.0  # pinned`) makes that entry read
+  // `zizmor@1.28.0  # pinned`, which fails the exact `^zizmor(?:@(\S+))?$`
+  // match below — so the whole line silently parsed as "no zizmor entry at
+  // all" (#3538) instead of extracting the pin that is right there.
+  const value = m[1].replace(/\s+#.*$/, '').trim()
+  if (BLOCK_SCALAR_RE.test(value)) {
+    throw new Error(
+      `tool: value on this line is a YAML block scalar ("${value}") that parseZizmorFromToolLine cannot read — ` +
+        'give it a single-line value, or teach this parser to follow block scalars',
+    )
+  }
+  const entries = value.split(',').map((e) => e.trim())
   for (const entry of entries) {
     const em = entry.match(/^zizmor(?:@(\S+))?$/)
     if (em) return { version: em[1] ?? null }
@@ -128,7 +158,14 @@ export function findZizmorToolPins(dir = WORKFLOWS_DIR) {
   for (const name of files.toSorted()) {
     const text = readFileSync(join(dir, name), 'utf8')
     text.split('\n').forEach((line, idx) => {
-      const parsed = parseZizmorFromToolLine(line)
+      let parsed
+      try {
+        parsed = parseZizmorFromToolLine(line)
+      } catch (err) {
+        // Re-throw with file:line context — parseZizmorFromToolLine itself
+        // has no idea which file or line it was given.
+        throw new Error(`${name}:${idx + 1}: ${err.message}`)
+      }
       if (parsed) {
         hits.push({ location: `${name}:${idx + 1}`, version: parsed.version })
       }
@@ -248,6 +285,51 @@ function selfTestExtraction({ check }) {
     'a tool name that merely CONTAINS "zizmor" as a substring is not a match',
     JSON.stringify(parseZizmorFromToolLine('        tool: prek,not-zizmor-cli')),
   )
+
+  // #3538 — a trailing YAML comment glued onto the last entry must not make
+  // the zizmor pin invisible. Checked against the SPECIFIC version, not
+  // `=== undefined || .version === null`: the pre-fix bug also returns
+  // `undefined` here, so a check that merely tolerates `undefined` would
+  // pass on the broken parser too and prove nothing.
+  check(
+    parseZizmorFromToolLine('        tool: prek,zizmor@1.28.0  # pinned')?.version === '1.28.0',
+    'a trailing comment after the last entry does not swallow the zizmor pin',
+    JSON.stringify(parseZizmorFromToolLine('        tool: prek,zizmor@1.28.0  # pinned')),
+  )
+  check(
+    parseZizmorFromToolLine('        tool: zizmor  # bare, still pinned via CI default')
+      ?.version === null,
+    'a trailing comment after a BARE zizmor entry still parses as version: null, not undefined',
+    JSON.stringify(
+      parseZizmorFromToolLine('        tool: zizmor  # bare, still pinned via CI default'),
+    ),
+  )
+  check(
+    parseZizmorFromToolLine('        tool: prek,sqruff@0.38.0  # no zizmor here') === undefined,
+    'a trailing comment on a line with no zizmor entry still correctly returns undefined',
+    JSON.stringify(parseZizmorFromToolLine('        tool: prek,sqruff@0.38.0  # no zizmor here')),
+  )
+
+  // #3538 — a YAML block-scalar `tool:` value (the real list lives on the
+  // FOLLOWING indented lines, invisible to this line scanner) must fail
+  // LOUD, not return `undefined`. `undefined` is indistinguishable from "no
+  // tool: on this line at all", which is exactly how a drifted pin inside
+  // the block would go completely unseen.
+  for (const blockValue of ['tool: |', 'tool: >', 'tool: |-', 'tool: >2']) {
+    let threw = null
+    try {
+      parseZizmorFromToolLine(`        ${blockValue}`)
+    } catch (err) {
+      threw = err
+    }
+    check(
+      threw !== null && /block scalar/.test(threw.message),
+      `a YAML block-scalar tool: value ("${blockValue}") fails loud instead of silently reading as no entry`,
+      threw
+        ? threw.message
+        : 'undefined (no throw) — indistinguishable from "no tool: on this line"',
+    )
+  }
 }
 
 function selfTestConsistency({ check }) {
@@ -361,6 +443,44 @@ function selfTestDiskScan({ check }) {
     hits.some((h) => h.location === 'y.yaml:2' && h.version === null),
     'a bare hit records version: null with the correct file:line',
     JSON.stringify(hits),
+  )
+
+  // #3538 — a trailing comment on disk (not just as a hand-built string) is
+  // still found by the real file scan.
+  const commentDir = mkdtempSync(join(tmpdir(), 'zizmor-pin-scan-comment-'))
+  writeFileSync(
+    join(commentDir, 'c.yml'),
+    ['name: C', '          tool: prek,zizmor@1.30.0  # pinned, see #3476', ''].join('\n'),
+    'utf8',
+  )
+  const commentHits = findZizmorToolPins(commentDir)
+  check(
+    commentHits.some((h) => h.location === 'c.yml:2' && h.version === '1.30.0'),
+    'a zizmor pin followed by a trailing comment is found by the real file scan, not silently dropped',
+    JSON.stringify(commentHits),
+  )
+
+  // #3538 — a block-scalar tool: value on disk makes the SCAN throw (not
+  // return an empty/partial hit list), and the error names the offending
+  // file:line so a maintainer can find it immediately.
+  const blockDir = mkdtempSync(join(tmpdir(), 'zizmor-pin-scan-block-'))
+  writeFileSync(
+    join(blockDir, 'd.yml'),
+    ['name: D', '        with:', '          tool: |', '            zizmor@1.30.0', ''].join('\n'),
+    'utf8',
+  )
+  let blockThrew = null
+  try {
+    findZizmorToolPins(blockDir)
+  } catch (err) {
+    blockThrew = err
+  }
+  check(
+    blockThrew !== null &&
+      blockThrew.message.includes('d.yml:3') &&
+      /block scalar/.test(blockThrew.message),
+    'a block-scalar tool: value found during the real file scan fails loud and names its file:line',
+    blockThrew ? blockThrew.message : 'undefined (no throw)',
   )
 }
 
