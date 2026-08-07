@@ -5,25 +5,47 @@ use iroh::EndpointId;
 use crate::mdns::{self, DiscoveredPeer, ServiceEventKind};
 use agaric_store::peer_refs::PeerRef;
 
-/// Determine whether a newly discovered mDNS peer should trigger an
-/// immediate sync attempt.
+/// Determine whether a discovered mDNS peer should trigger an immediate
+/// sync attempt.
 ///
-/// Returns `true` only when all of the following hold:
-/// 1. The peer is not the local device (no self-sync).
-/// 2. The peer was not already present in the discovered-peers map.
-/// 3. EITHER the peer appears in `peer_refs` (already paired) OR a pairing
-///    is in progress (`pairing_pending`).
+/// The arms are ordered, and the order is the whole content of #3502:
+///
+/// 1. **Self** — never sync with the local device, pairing or not. Absolute.
+/// 2. **`pairing_pending`** — a pairing window is *exactly* the situation in
+///    which a re-discovery must re-initiate, so it overrides clause 3.
+/// 3. **`already_discovered`** — steady state: don't re-fire a session on
+///    every mDNS refresh of a peer we already know about.
+/// 4. Otherwise: sync iff the peer appears in `peer_refs` (already paired).
 ///
 /// The `pairing_pending` clause is the initiator-side counterpart to the
 /// responder's admit-while-pending path (`sync_daemon/server.rs`, #1519):
 /// during the pairing window neither device has a `peer_ref` for the other
 /// yet, so without this clause no one would ever *initiate* the first sync
 /// and pairing deadlocks (#2008). On a successful unpaired session the
-/// initiator TOFU-pins the peer's cert (`upsert_peer_ref_with_cert` in
-/// `try_sync_with_peer`), after which clause 3's membership arm carries it
-/// and the pending marker is cleared.
+/// initiator TOFU-binds the peer's key (`bind_endpoint_id` in
+/// `try_sync_with_peer`), after which clause 4 carries it and the pending
+/// marker is cleared.
 ///
-/// Extracted from `daemon_loop` Branch A for independent testing.
+/// # #3502 — why clause 2 sits above clause 3
+///
+/// The `already_discovered` guard was added later, for clause 3's legitimate
+/// job, and silently took clause 2 back: below it, an unpaired peer that had
+/// been resolved even once could never be re-initiated against, and a
+/// first-ever pair is *always* in that configuration by the time the user
+/// finishes typing the code (both dialogs arm on open, both devices dial and
+/// reject each other, both land in each other's `discovered` map — and only
+/// then does the passphrase arrive). The window closed with nobody dialling.
+///
+/// Re-firing on every refresh *during* the window is bounded by two
+/// mechanisms that already exist: `try_lock_peer` prevents overlapping
+/// sessions with one peer, and `may_retry`'s per-peer backoff prevents
+/// hammering. The window itself is TTL-bounded
+/// (`peer_refs::PENDING_PAIRING_TTL_MS`).
+///
+/// Extracted from `daemon_loop` Branch A for independent testing. Since
+/// #3502 it is the *only* place the decision is made — [`process_discovery_event`]
+/// deliberately has no short-circuit of its own, because a second copy of
+/// this rule is a second place for it to be wrong (and was).
 pub fn should_attempt_sync_with_discovered_peer(
     peer_device_id: &str,
     local_device_id: &str,
@@ -34,10 +56,13 @@ pub fn should_attempt_sync_with_discovered_peer(
     if peer_device_id == local_device_id {
         return false;
     }
+    if pairing_pending {
+        return true;
+    }
     if already_discovered {
         return false;
     }
-    pairing_pending || peer_refs.iter().any(|p| p.peer_id == peer_device_id)
+    peer_refs.iter().any(|p| p.peer_id == peer_device_id)
 }
 
 /// Try to construct a [`DiscoveredPeer`] from a stored `last_address`.
@@ -164,6 +189,79 @@ pub fn resolve_peer_address(
         })
 }
 
+/// The peers Branch B (`wait_for_debounced_change`) should attempt this round.
+///
+/// Ordinarily this is just the paired peers whose address resolves: the
+/// enumeration is `peer_refs`, because a local change is only worth pushing to
+/// devices we are paired with.
+///
+/// While `pairing_pending` is set it additionally yields every peer in
+/// `discovered` that has no `peer_ref` yet — the first-ever-pair case, where
+/// `peer_refs` is **empty** and the paired-only enumeration therefore produces
+/// nothing at all.
+///
+/// # #3502 Part 2 — why a wake is the trigger, and why not a false→true edge
+///
+/// Part 1 makes a *re*-discovery re-initiate during the window, but
+/// [`process_discovery_event`] only runs on mDNS traffic. On a quiet network
+/// (both devices announced before the user reached for the code, neither
+/// re-announces after) the whole window can elapse with no event, so nothing
+/// dials and the fix only works when the network happens to help. This is the
+/// half that makes it deterministic.
+///
+/// Both pairing commands — `start_pairing_armed_inner` and
+/// `confirm_pairing_inner` — end with `scheduler.notify_change()`, which is
+/// precisely what Branch B is parked on, so the wake already arrives at the
+/// moment the local marker is written. No new plumbing, and no second waiter
+/// competing with Branch B for the same `Notify` permit.
+///
+/// The trigger is deliberately "the window is open at this wake", **not** the
+/// `pairing_pending` false→true transition, because in the failing scenario
+/// that transition never happens: the dialog arms the marker on open, so
+/// `pairing_pending` is *already* true, and the user typing the code makes
+/// `confirm_pairing` **overwrite** the marker's proof with a different value.
+/// The bool never changes; only the content does, and the content is what the
+/// wire-side gate compares. An edge-triggered design would sit out the exact
+/// deadlock #3502 describes.
+///
+/// Re-attempting on unrelated wakes during the window is bounded by the same
+/// two mechanisms as Part 1 (`try_lock_peer`, `may_retry`) plus the marker's
+/// own TTL.
+///
+/// `discovered` never contains the local device — [`process_discovery_event`]
+/// returns on self-discovery before the insert — so there is no self-dial to
+/// filter here. The pairing tail is sorted by device id so a round's
+/// composition does not depend on `HashMap` iteration order.
+pub fn peers_for_change_round(
+    peer_refs: &[PeerRef],
+    discovered: &HashMap<String, (DiscoveredPeer, tokio::time::Instant)>,
+    pairing_pending: bool,
+) -> Vec<DiscoveredPeer> {
+    let mut round: Vec<DiscoveredPeer> = peer_refs
+        .iter()
+        .filter_map(|peer_ref| {
+            resolve_peer_address(
+                &peer_ref.peer_id,
+                peer_ref.last_address.as_deref(),
+                peer_ref.endpoint_id.as_deref(),
+                discovered,
+            )
+        })
+        .collect();
+
+    if pairing_pending {
+        let mut unpaired: Vec<DiscoveredPeer> = discovered
+            .iter()
+            .filter(|(peer_id, _)| !peer_refs.iter().any(|r| r.peer_id == **peer_id))
+            .map(|(_, (peer, _))| peer.clone())
+            .collect();
+        unpaired.sort_by(|a, b| a.device_id.cmp(&b.device_id));
+        round.extend(unpaired);
+    }
+
+    round
+}
+
 /// Format a peer's first address as "ip:port" for connection.
 /// Returns None if the peer has no addresses.
 ///
@@ -260,10 +358,20 @@ pub fn should_store_cert_hash(stored_hash: Option<&str>, observed_hash: Option<&
 ///   ([`ServiceEventKind::Removed`] flows through
 ///   [`process_service_removed`] instead)
 /// - The peer is the local device (self-discovery)
-/// - The peer was already discovered (timestamp updated, no new sync)
-/// - The peer is not in the paired peer_refs list AND no pairing is pending
-///   (during a pairing window an unpaired peer is a valid initiation target;
-///   see [`should_attempt_sync_with_discovered_peer`] and #2008)
+/// - [`should_attempt_sync_with_discovered_peer`] declines: a peer already in
+///   the map outside a pairing window (timestamp updated, no new sync), or a
+///   peer that is neither paired nor inside a pairing window
+///
+/// # #3502 — the map update and the decision are separate steps
+///
+/// The timestamp refresh happens unconditionally and *before* the decision,
+/// because keeping a visible peer out of Branch C's staleness sweep is not the
+/// same question as whether to dial it. This function used to fold the two
+/// together with an `if already_discovered { return None }` between them,
+/// which returned before the pairing bypass in
+/// [`should_attempt_sync_with_discovered_peer`] was ever consulted — making
+/// that bypass unreachable, and a first-ever pair undiallable, no matter what
+/// the bypass said. The decision now lives in exactly one function.
 pub fn process_discovery_event(
     event: mdns_sd::ServiceEvent,
     device_id: &str,
@@ -281,9 +389,6 @@ pub fn process_discovery_event(
                 peer.device_id.clone(),
                 (peer.clone(), tokio::time::Instant::now()),
             );
-            if already_discovered {
-                return None; // Already known, just updated timestamp
-            }
             if !should_attempt_sync_with_discovered_peer(
                 &peer.device_id,
                 device_id,
@@ -291,7 +396,10 @@ pub fn process_discovery_event(
                 peer_refs,
                 pairing_pending,
             ) {
-                return None; // Not paired (and no pairing in progress)
+                // Already known outside a pairing window, or not paired and no
+                // pairing in progress. #3502: do NOT re-add a short-circuit
+                // above this call — it is what made the pairing bypass dead.
+                return None;
             }
             Some(peer)
         }

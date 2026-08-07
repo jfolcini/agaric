@@ -600,14 +600,30 @@ fn should_attempt_sync_rejects_self_even_while_pairing_pending() {
     );
 }
 
-/// The pairing-pending bypass must NOT override the already-discovered guard:
-/// an unpaired peer already in the discovered map must not re-trigger a sync.
+/// #3502: the pairing-pending bypass MUST override the already-discovered
+/// guard. This test previously asserted the exact opposite and was the thing
+/// that made the deadlock look like intended behaviour; its name is now the
+/// specification of the fix.
+///
+/// A first-ever pair is always in this configuration by the time the user
+/// finishes typing the code: both dialogs arm on open, both devices dial and
+/// reject each other on a proof mismatch, and both therefore sit in each
+/// other's `discovered` map before the passphrase is ever entered. If
+/// `already_discovered` outranks `pairing_pending`, the window closes with
+/// nobody dialling.
+///
+/// The guard's real job — not re-firing a session on every mDNS refresh of an
+/// already-known peer in the *paired steady state* — is unaffected, and is
+/// pinned by `should_attempt_sync_rejects_already_discovered_peer` above
+/// (same inputs, `pairing_pending: false`). The two tests differ in exactly
+/// one argument, which is the whole of the fix.
 #[test]
-fn should_attempt_sync_rejects_already_discovered_even_while_pairing_pending() {
+fn should_attempt_sync_accepts_already_discovered_while_pairing_pending() {
     let refs: Vec<agaric_store::peer_refs::PeerRef> = vec![];
     assert!(
-        !should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", true, &refs, true),
-        "already-discovered guard must hold even while pairing is pending"
+        should_attempt_sync_with_discovered_peer("PEER_NEW", "MY_DEVICE", true, &refs, true),
+        "#3502: a rediscovered unpaired peer must be re-initiated against while \
+         pairing is pending — the window is exactly when rediscovery MUST dial"
     );
 }
 
@@ -3250,31 +3266,156 @@ fn process_discovery_paired_returns_some() {
     assert_eq!(discovered.len(), 1);
 }
 
-/// #2008: an UNPAIRED discovered peer returns `None` normally but `Some`
-/// while a pairing is pending, so Branch A initiates the first session that
-/// the responder's admit-while-pending (#1519) is waiting to accept.
+/// #2008 / #3502: an UNPAIRED discovered peer returns `None` normally but
+/// `Some` while a pairing is pending, so Branch A initiates the first session
+/// that the responder's admit-while-pending (#1519) is waiting to accept.
+///
+/// # Why this drives ONE map across both halves
+///
+/// It used to swap in a fresh `HashMap` for the pending half, commented "use a
+/// fresh map so the already-discovered guard doesn't short-circuit." That made
+/// the test unable to fail for the reason it names: it asserted the
+/// pairing-initiation property against the one configuration in which that
+/// property already held, and skipped the configuration production is *always*
+/// in by the time the user types the code (the peer is in the map, put there
+/// by the pre-code dial that failed the proof check).
+///
+/// So the map persists across the flip, which is #3502's own "cheaper
+/// refutation": drive the event twice against the same map with
+/// `pairing_pending` going `false → true`, and require the second call to
+/// return `Some`. That is unsatisfiable unless BOTH the caller's
+/// `already_discovered` short-circuit is gone AND
+/// `should_attempt_sync_with_discovered_peer` orders `pairing_pending` above
+/// `already_discovered` — either half alone still returns `None` here.
 #[test]
 fn process_discovery_unpaired_returns_some_only_while_pairing_pending() {
     let no_refs: Vec<agaric_store::peer_refs::PeerRef> = vec![];
-
-    // Not pending: unpaired peer is ignored (current paired-only behaviour).
     let mut discovered = HashMap::new();
+
+    // Not pending: unpaired peer is ignored (paired-only steady-state
+    // behaviour) — but it IS recorded in the map, which is what sets up the
+    // second half.
     let event = make_resolved_event("UNPAIRED_PEER", 8443);
     assert!(
         process_discovery_event(event, "LOCAL", &mut discovered, &no_refs, false).is_none(),
         "unpaired peer must be ignored when no pairing is pending"
     );
+    assert!(
+        discovered.contains_key("UNPAIRED_PEER"),
+        "the peer must be in the discovered map before the pairing window opens — \
+         without this the second half proves nothing (#3502)"
+    );
 
-    // Pending: the same unpaired peer becomes a valid initiation target.
-    // Use a fresh map so the already-discovered guard doesn't short-circuit.
-    let mut discovered = HashMap::new();
+    // Pending, SAME map: the already-known unpaired peer becomes a valid
+    // initiation target. This is the user typing the code after both devices
+    // have already found and rejected each other.
     let event = make_resolved_event("UNPAIRED_PEER", 8443);
     let result = process_discovery_event(event, "LOCAL", &mut discovered, &no_refs, true);
     assert!(
         result.is_some(),
-        "unpaired peer must trigger sync while pairing is pending (#2008)"
+        "an ALREADY-DISCOVERED unpaired peer must trigger sync while pairing is \
+         pending (#2008, #3502) — the rediscovery guard must not outrank the window"
     );
     assert_eq!(result.unwrap().device_id, "UNPAIRED_PEER");
+    assert_eq!(
+        discovered.len(),
+        1,
+        "the rediscovery must refresh the existing entry, not add a second"
+    );
+}
+
+// ======================================================================
+// #3502 Part 2 — peers_for_change_round (Branch B's pairing-window round)
+// ======================================================================
+
+/// Build a `DiscoveredPeer` map entry for the change-round tests.
+fn discovered_entry(
+    device_id: &str,
+) -> (
+    String,
+    (agaric_sync::mdns::DiscoveredPeer, tokio::time::Instant),
+) {
+    (
+        device_id.to_string(),
+        (
+            agaric_sync::mdns::DiscoveredPeer {
+                device_id: device_id.to_string(),
+                endpoint_id: Some(mdns::test_endpoint_id(device_id)),
+                addresses: vec![std::net::IpAddr::from([127, 0, 0, 1])],
+                port: 8443,
+            },
+            tokio::time::Instant::now(),
+        ),
+    )
+}
+
+/// Steady state: a discovered but unpaired peer is NOT a target for a
+/// debounced local change. Branch B pushes local work to devices we are paired
+/// with; outside a pairing window an unpaired peer is not one.
+#[tokio::test]
+async fn change_round_ignores_unpaired_discovered_peer_when_not_pairing() {
+    let no_refs: Vec<PeerRef> = vec![];
+    let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
+
+    let round = peers_for_change_round(&no_refs, &discovered, false);
+
+    assert!(
+        round.is_empty(),
+        "outside a pairing window an unpaired discovered peer must not be dialled \
+         by Branch B; got {:?}",
+        round.iter().map(|p| &p.device_id).collect::<Vec<_>>()
+    );
+}
+
+/// #3502 Part 2: the first-ever pair. `peer_refs` is EMPTY — which is why
+/// Branch B (and Branch C, same source) could never produce a partner and the
+/// whole flow depended on a subsequent mDNS announcement that a quiet network
+/// need never send. With the window open, the peer already in the `discovered`
+/// map becomes the round.
+///
+/// This is the branch reached by `confirm_pairing_inner`'s `notify_change()`,
+/// the moment the user's typed code lands in the marker.
+#[tokio::test]
+async fn change_round_dials_discovered_unpaired_peer_while_pairing_pending() {
+    let no_refs: Vec<PeerRef> = vec![];
+    let discovered: HashMap<_, _> = [discovered_entry("UNPAIRED_PEER")].into_iter().collect();
+
+    let round = peers_for_change_round(&no_refs, &discovered, true);
+
+    assert_eq!(
+        round
+            .iter()
+            .map(|p| p.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["UNPAIRED_PEER"],
+        "#3502: while a pairing is pending, a peer already in the discovered map \
+         must be re-attempted on the change wake without waiting for mDNS"
+    );
+}
+
+/// A peer that is both paired and discovered must appear ONCE, not twice:
+/// the pairing tail adds only peers with no `peer_ref`. Two entries would mean
+/// two concurrent dials to one device per round — harmless thanks to
+/// `try_lock_peer`, but it would burn the second as a lock-contention no-op
+/// and make the round's size meaningless.
+#[tokio::test]
+async fn change_round_does_not_duplicate_a_paired_and_discovered_peer() {
+    let refs = vec![make_peer_ref("PEER_A")];
+    let discovered: HashMap<_, _> = [discovered_entry("PEER_A"), discovered_entry("PEER_B")]
+        .into_iter()
+        .collect();
+
+    let round = peers_for_change_round(&refs, &discovered, true);
+
+    assert_eq!(
+        round
+            .iter()
+            .map(|p| p.device_id.as_str())
+            .collect::<Vec<_>>(),
+        vec!["PEER_A", "PEER_B"],
+        "the paired peer must appear exactly once, and the unpaired one must be \
+         appended after it in device-id order"
+    );
 }
 
 // ── conditional daemon startup ──────────────────────────────

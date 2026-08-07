@@ -45,8 +45,9 @@ use iroh::SecretKey;
 
 // Re-export submodule items
 pub use discovery::{
-    build_fallback_peer, format_peer_addresses, get_peer_cert_hash, process_discovery_event,
-    resolve_peer_address, should_attempt_sync_with_discovered_peer, should_store_cert_hash,
+    build_fallback_peer, format_peer_addresses, get_peer_cert_hash, peers_for_change_round,
+    process_discovery_event, resolve_peer_address, should_attempt_sync_with_discovered_peer,
+    should_store_cert_hash,
 };
 // These helpers are only called from test siblings — guard against unused_imports
 // on non-test builds (same rationale as the orchestrator/server re-exports below).
