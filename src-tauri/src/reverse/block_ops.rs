@@ -108,6 +108,12 @@ pub async fn reverse_edit_block(
     }))
 }
 
+/// A resolved `prev_edit` row paired with the `(device_id, seq)` of the
+/// pointer that named it. The pairing is the point: see
+/// [`resolve_prior_text`] for why the row and its pointer are one `Option`
+/// and not two.
+type ResolvedPrevEdit<'a> = (&'a (String, String), (&'a str, i64));
+
 /// The #1526 precedence, in ONE place — shared by the single-op kernel
 /// ([`reverse_edit_block`]) and the batch kernel
 /// (`reverse::batch::build_reverse_edit_block`). #3280.
@@ -149,7 +155,7 @@ pub async fn reverse_edit_block(
 /// same `payload.prev_edit`, so they are always Some/None together — the
 /// signature now says so instead of leaving a branch that merely assumed it.
 pub(crate) fn resolve_prior_text(
-    prev: Option<(&(String, String), (&str, i64))>,
+    prev: Option<ResolvedPrevEdit<'_>>,
     timestamp_prior: Option<&(String, String)>,
 ) -> Result<Option<String>, AppError> {
     if let Some(((op_type, payload), (device, seq))) = prev {
