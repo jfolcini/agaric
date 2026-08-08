@@ -103,6 +103,32 @@ if [ "${1:-}" = "--self-test" ]; then
   fi
   trap 'rm -rf "$tmp"' EXIT
 
+  setup_hooks="$(dirname "$SELF")/setup-hooks.sh"
+
+  # `have()` in the sandbox prelude below (used by block (6)'s sandbox_bash
+  # payloads) must be setup-hooks.sh's REAL, CURRENT `have()` — sourced via
+  # `sed`, the same direction-reversed shape as ZIZMOR_PINNED_VERSION and
+  # ZIZMOR_VERSION_AWK are sourced below (#3554), not retyped here. A retyped
+  # copy agrees with setup-hooks.sh today and silently reverts to a fixed
+  # string that only RESEMBLES the real definition the moment setup-hooks.sh's
+  # `have()` changes and this one does not — the exact accident this sandbox
+  # exists to prevent, one level up (#3578). Sourcing means there is only ever
+  # one `have()` to change.
+  #
+  # Fail closed, same as the other extractors in this file: an empty result
+  # (renamed function, moved file, reshaped onto multiple lines) must not
+  # silently hand block (6) a sandbox with no `have()` at all — that degrades
+  # every `have` call inside the payload to plain "command not found" (127),
+  # which is a THIRD, uninspected behaviour, not the real one. Exit here,
+  # before anything downstream can mistake silence for coverage.
+  setup_hooks_have="$(
+    sed -n '/^have() { .*; }$/p' "$setup_hooks" 2>/dev/null | head -n 1
+  )"
+  if [ -z "$setup_hooks_have" ]; then
+    echo "self-test: could not source have() from setup-hooks.sh (looked for a line matching '^have() { .*; }\$' in $setup_hooks) — refusing to build the sandbox prelude on a guess (#3578)" >&2
+    exit 1
+  fi
+
   cat > "$tmp/zizmor" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$ZIZMOR_STUB_LOG"
@@ -227,9 +253,10 @@ POISON
   # either block runs unstubbed, and `have` in particular then degrades to
   # "command not found" (127 → false) purely by accident.
   #
-  # `have` is setup-hooks.sh's REAL definition, verbatim, not a stub returning
-  # a fixed answer. A fixed answer would just relocate the accident: `return 1`
-  # makes a swallowed provisioner skip every installer (it looks safe, but only
+  # `have` is setup-hooks.sh's REAL definition — sourced above into
+  # $setup_hooks_have, not retyped here — not a stub returning a fixed
+  # answer. A fixed answer would just relocate the accident: `return 1` makes
+  # a swallowed provisioner skip every installer (it looks safe, but only
   # because of how setup-hooks.sh happens to nest its `have` guards today),
   # while `return 0` drives it elsewhere. With the real definition the payload
   # behaves the same whether or not the extraction window happens to include
@@ -240,7 +267,7 @@ POISON
 warn() { printf "%s\n" "$*"; }
 ok()   { :; }
 note() { :; }
-have() { command -v "$1" >/dev/null 2>&1; }'
+'"$setup_hooks_have"
 
   # sandbox_bash <payload> <argv0> — run <payload> under the stub PATH, with
   # `$0` bound to <argv0> so setup-hooks.sh's `$(dirname "$0")` resolves the
@@ -425,7 +452,8 @@ $1" "$2"
   #     land on the same field.
   sample_version_line="zizmor ${ZIZMOR_PINNED_VERSION} (deadbeef)"
   wrapper_field="$(printf '%s\n' "$sample_version_line" | awk "$ZIZMOR_VERSION_AWK")"
-  setup_hooks="$(dirname "$SELF")/setup-hooks.sh"
+  # $setup_hooks was already resolved above, before the sandbox prelude was
+  # built (#3578) — not re-derived here.
   # The value under test has to come from setup-hooks.sh's OWN code, not from
   # a copy of its sed pasted here. A pasted copy re-derives the answer from
   # THIS file and so passes no matter what setup-hooks.sh contains: the
@@ -599,6 +627,69 @@ printf %s "${ZIZMOR_VERSION_AWK:-}"' "$setup_hooks" 2>"$tmp/installer.err"
     fails=$((fails + 1))
   else
     echo "  ✓ cargo_get_pinned's field default does not use the brace-truncating \${4:-...} form"
+  fi
+
+  # (7) #3578 — the sandbox prelude's `have()` (sourced from setup-hooks.sh
+  # above, into $setup_hooks_have) must be the REAL command-v check, not a
+  # fixed answer that merely resembles it. Sourcing removes the ability to
+  # DRIFT out of sync with setup-hooks.sh's have(), but a sourcing bug (wrong
+  # line grabbed, extraction pattern too loose) could still land something
+  # that isn't the real check — and because $setup_hooks_have came from
+  # setup-hooks.sh's OWN text, this exercises that text's actual behaviour
+  # rather than re-asserting what block (6) already established. Probe both
+  # arms, not just one, exactly per the comment above sandbox_prelude: a
+  # `return 0` fixed answer and a `return 1` fixed answer are two DIFFERENT
+  # wrong behaviours, and a check that only rules out one leaves the sibling
+  # open. `cat` is real and symlinked into the sandbox (see the sbx_tool loop
+  # above) so `have cat` is true under a real check; the made-up tool name
+  # below is on no PATH anywhere, sandboxed or not, so `have` on it is false
+  # under a real check.
+  sandbox_have_probe="$(
+    sandbox_bash 'if have cat
+then echo SANDBOX_HAVE_CAT_YES
+else echo SANDBOX_HAVE_CAT_NO
+fi
+if have zz_definitely_not_a_real_tool_3578
+then echo SANDBOX_HAVE_MISSING_YES
+else echo SANDBOX_HAVE_MISSING_NO
+fi' "$setup_hooks" 2>&1
+  )"
+  assert_out "sandbox have(): a real, present tool (cat) is reported available" \
+    "SANDBOX_HAVE_CAT_YES" "$sandbox_have_probe"
+  assert_out "sandbox have(): a tool absent from the sandboxed PATH is reported unavailable" \
+    "SANDBOX_HAVE_MISSING_NO" "$sandbox_have_probe"
+  refute_out "sandbox have() is not a fixed 'always available' answer (rules out setup-hooks.sh's have() becoming e.g. \`return 0\`)" \
+    "SANDBOX_HAVE_MISSING_YES" "$sandbox_have_probe"
+  refute_out "sandbox have() is not a fixed 'never available' answer (rules out setup-hooks.sh's have() becoming e.g. \`return 1\`)" \
+    "SANDBOX_HAVE_CAT_NO" "$sandbox_have_probe"
+
+  # The extraction above takes the FIRST line matching `^have() { .*; }$` and
+  # exits loud only on ZERO matches — same as the ZIZMOR_VERSION_AWK extractor
+  # once did, before this file's own review (#3559) found that a SECOND
+  # top-level assignment sharing the same anchor would satisfy that extractor
+  # while changing what actually reaches the installer, and added the
+  # `awk_assign_count` check above to close it. `head -n 1` here has the same
+  # gap: a second line matching this pattern — a decoy `have() { ... }`
+  # placed earlier in the file, e.g. a stale debug override left in — would
+  # be silently preferred over the real one with no error, no red assertion,
+  # and no signal that block (7) just verified the WRONG function's
+  # behaviour. Demonstrated directly: two literal `have() { ... }` lines in a
+  # test file, `sed -n '/^have() { .*; }$/p' | head -n 1` returns the FIRST,
+  # not the one that would actually win at runtime (bash function
+  # redefinition means the LAST one defined is the one that executes) —
+  # exactly the "matches, but the wrong line" failure mode fail-closed
+  # extraction is supposed to rule out, not just "matches nothing".
+  # Counted in EVERY definition form bash accepts, not just the one the sed
+  # above matches. `function have {`, `have () {` and an indented redefinition
+  # all escape that stricter pattern, so counting only `^have() {` would let
+  # precisely the redefinitions that beat the extractor go unnoticed while
+  # this assertion claimed to have checked for them.
+  have_def_count="$(grep -cE '^[[:space:]]*(function[[:space:]]+have([[:space:]]*\(\))?|have[[:space:]]*\(\))[[:space:]]*\{' "$setup_hooks" 2>/dev/null || true)"
+  if [ "${have_def_count:-0}" = 1 ]; then
+    echo "  ✓ setup-hooks.sh defines have() exactly once, in any form (the one sourced above)"
+  else
+    echo "  ✗ setup-hooks.sh has ${have_def_count:-0} have() definitions, not 1 — bash runs the LAST one defined, while the sed extraction above silently prefers the first, and this count is the only thing that would notice (#3578)" >&2
+    fails=$((fails + 1))
   fi
 
   if [ "$fails" -gt 0 ]; then
