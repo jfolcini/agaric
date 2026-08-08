@@ -5,11 +5,13 @@
 # fresh sandbox/container). Local Claude sessions hit the existing local
 # toolchain and skip this entirely.
 #
-# Delegates to scripts/setup.sh — the single canonical post-clone bootstrap.
-# That script provisions the pinned Node version (.nvmrc) and then runs
-# `npm ci`, installs Playwright's chromium, seeds src-tauri/.env, provisions
-# the sqlx dev DB, and installs the prek hook toolchain + wires the git hooks
-# (just, prek, cargo-deny, sqruff, typos, zizmor, taplo, lychee, shellcheck, …).
+# Delegates to scripts/setup.sh — the single canonical post-clone bootstrap —
+# with its remote-only system-dependency opt-in. That installs the Linux native
+# libraries required to compile/test the Rust workspace, provisions the pinned
+# Node version (.nvmrc), runs `npm ci`, installs Playwright's chromium, seeds
+# src-tauri/.env, provisions the sqlx dev DB, and installs the prek hook
+# toolchain + wires the git hooks (just, prek, cargo-deny, sqruff, typos,
+# zizmor, taplo, lychee, shellcheck, …).
 #
 # This hook runs under a hard ~600s provisioning timeout. The fast critical
 # path (Node, npm ci, .env, dev DB) runs synchronously and finishes well inside
@@ -33,4 +35,4 @@ fi
 
 cd "$CLAUDE_PROJECT_DIR"
 
-bash scripts/setup.sh
+bash scripts/setup.sh --install-system-deps
