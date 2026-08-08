@@ -2,7 +2,7 @@ import { Dialog as DialogPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
-import { DIALOG_CONTENT_BASE } from '@/components/ui/dialog-shared'
+import { DIALOG_BODY_VIEWPORT_CLASS, DIALOG_CONTENT_BASE } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 
@@ -85,15 +85,7 @@ const DialogBody = ({ ref, className, children, dir, ...props }: DialogBodyProps
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
     className={cn('flex-1 min-h-0 -mx-6', className)}
-    // Radix's ScrollArea Viewport wraps children in an inner
-    // `<div style="min-width:100%; display:table">`. `display:table`
-    // shrink-wraps to content width instead of being capped at the
-    // viewport, so wide/long body content (e.g. the bug-report form)
-    // overflows to the right with no wrap and — since this is a
-    // vertical-only ScrollArea — no horizontal scrollbar. Forcing that
-    // wrapper to `block` (beats the non-important inline style) makes it
-    // honour the viewport width so children wrap normally.
-    viewportClassName="px-6 [&>div]:!block"
+    viewportClassName={DIALOG_BODY_VIEWPORT_CLASS}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

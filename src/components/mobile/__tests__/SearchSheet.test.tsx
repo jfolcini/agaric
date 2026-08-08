@@ -112,7 +112,7 @@ describe('SearchSheet', () => {
   it('renders the sheet shell when the store is open', () => {
     useSearchSheetStore.getState().open$('in-page')
     render(<SearchSheet />)
-    expect(screen.getByTestId('search-sheet')).toBeInTheDocument()
+    expect(screen.getByTestId('search-sheet')).toHaveClass('max-h-[90dvh]')
     expect(screen.getByTestId('search-sheet-segment-in-page')).toBeInTheDocument()
     expect(screen.getByTestId('search-sheet-segment-all-pages')).toBeInTheDocument()
   })

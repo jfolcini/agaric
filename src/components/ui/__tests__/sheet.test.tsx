@@ -106,6 +106,35 @@ describe('SheetContent base classes', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-6')
   })
+
+  it.each(['top', 'bottom'] as const)(
+    '%s sheets use the exact dynamic viewport height cap',
+    (side) => {
+      render(
+        <Sheet open>
+          <SheetContent side={side} aria-describedby={undefined}>
+            <SheetHeader>
+              <SheetTitle>{side} Sheet</SheetTitle>
+            </SheetHeader>
+          </SheetContent>
+        </Sheet>,
+      )
+      expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    },
+  )
+
+  it('right sheets do not inherit the top/bottom dynamic viewport height cap', () => {
+    render(
+      <Sheet open>
+        <SheetContent side="right" aria-describedby={undefined}>
+          <SheetHeader>
+            <SheetTitle>Right Sheet</SheetTitle>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>,
+    )
+    expect(screen.getByRole('dialog')).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -135,7 +164,7 @@ describe('SheetBody', () => {
     expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
   })
 
-  it('viewport carries `px-6` so the scrollbar can sit in the SheetContent gutter without eating content padding', () => {
+  it('viewport carries the shared gutter and Radix width workaround classes', () => {
     render(
       <Sheet open>
         <SheetContent aria-describedby={undefined}>
@@ -151,7 +180,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-6')
+    expect(viewport).toHaveClass('px-6', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {
@@ -272,6 +301,7 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
     const dialog = renderBottomSheet()
     expect(dialog.style.bottom).toBe('300px')
     expect(dialog.style.maxHeight).toBe('calc(100% - 300px)')
+    expect(dialog).toHaveClass('max-h-[calc(100dvh-2rem)]')
   })
 
   it('tracks visualViewport resize: keyboard up → lifted, keyboard down → class anchoring restored', () => {

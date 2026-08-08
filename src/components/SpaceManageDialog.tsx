@@ -379,12 +379,9 @@ export function SpaceManageDialog({
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
-
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content data-testid="space-manage-dialog" {...contentSideProps}>
+      <Content data-testid="space-manage-dialog">
         <Header>
           <Title>{t('space.manageDialogTitle')}</Title>
           <Description>{t('space.manageDialogDescription')}</Description>

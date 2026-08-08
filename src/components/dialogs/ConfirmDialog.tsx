@@ -222,12 +222,9 @@ export function ConfirmDialog({
   const parts = useDialogOrSheet()
   const { Root, Content, Header, Title, Footer } = parts
 
-  // Sheet's Content takes a `side` prop; AlertDialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
-
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className={className} data-testid={contentTestId} {...contentSideProps}>
+      <Content className={className} data-testid={contentTestId}>
         <Header>
           <Title>{resolvedTitle}</Title>
           {/* Description renders inline as a sibling so we keep markup parity

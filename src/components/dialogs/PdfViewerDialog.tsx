@@ -428,11 +428,10 @@ export function PdfViewerDialog({
   // Dialog (not AlertDialog) on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className="max-w-5xl h-[90vh] max-h-[90vh]" {...contentSideProps}>
+      <Content className={parts.isMobile ? undefined : 'max-w-5xl h-[90vh] max-h-[90vh]'}>
         <Header>
           <Title>{filename}</Title>
           <Description className="sr-only">{t('pdfViewer.description', { filename })}</Description>

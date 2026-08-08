@@ -28,6 +28,8 @@
  * regular Dialog (manual close, lighter modal semantics).
  */
 
+import { createElement, type ComponentProps, type ReactElement } from 'react'
+
 import {
   AlertDialog,
   AlertDialogContent,
@@ -56,6 +58,15 @@ import { useIsMobile } from '@/hooks/useIsMobile'
 
 export type DialogKind = 'alert' | 'dialog'
 
+/**
+ * Stable mobile content adapter. Keeping the bottom-side contract here means
+ * every hook consumer gets the same sheet direction without repeating props.
+ * `side` follows the spread deliberately so callers cannot override it.
+ */
+function BottomSheetContent(props: ComponentProps<typeof SheetContent>): ReactElement {
+  return createElement(SheetContent, { ...props, side: 'bottom' })
+}
+
 interface DesktopAlertParts {
   isMobile: false
   kind: 'alert'
@@ -82,7 +93,7 @@ interface MobileParts {
   isMobile: true
   kind: DialogKind
   Root: typeof Sheet
-  Content: typeof SheetContent
+  Content: typeof BottomSheetContent
   Header: typeof SheetHeader
   Title: typeof SheetTitle
   Description: typeof SheetDescription
@@ -98,7 +109,7 @@ export function useDialogOrSheet(kind: DialogKind = 'alert'): DialogOrSheetParts
       isMobile: true,
       kind,
       Root: Sheet,
-      Content: SheetContent,
+      Content: BottomSheetContent,
       Header: SheetHeader,
       Title: SheetTitle,
       Description: SheetDescription,

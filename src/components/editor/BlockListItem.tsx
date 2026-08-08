@@ -114,7 +114,6 @@ function DueDateChipInner({
         {blockId && (
           <SheetContent
             side="bottom"
-            className="max-h-[80vh]"
             data-testid="due-date-sheet"
             onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => e.stopPropagation()}

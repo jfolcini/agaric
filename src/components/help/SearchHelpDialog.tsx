@@ -307,8 +307,6 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
   // Mobile bottom-sheet path uses the Sheet body primitive so
   // padding/scroll behaviour comes from the Sheet scaffolding rather than
   // Dialog's — matches QuickCaptureDialog / BugReportDialog.
@@ -323,7 +321,7 @@ export function SearchHelpDialog({ open, onOpenChange }: SearchHelpDialogProps) 
           `TitleWarning` (which looks up the generated id via
           `getElementById`) fired a "DialogContent requires a DialogTitle"
           console.error. Let Radix wire it — no manual id / aria-labelledby. */}
-      <Content data-testid="search-help-dialog" {...contentSideProps}>
+      <Content data-testid="search-help-dialog">
         <Header>
           <Title>{t('search.helpButtonLabel')}</Title>
           <Description>{t('search.help.description')}</Description>

@@ -127,6 +127,36 @@ function openPalette(): void {
   })
 }
 
+describe('#3336 mobile command palette shell', () => {
+  it('uses a full-width bottom sheet while preserving the palette flex layout', () => {
+    render(<CommandPalette />)
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    expect(palette).toHaveClass('bottom-0', 'inset-x-0', 'flex', 'flex-col', 'p-0')
+    expect(palette).not.toHaveClass('right-0', 'w-3/4', 'sm:max-w-sm')
+  })
+
+  it('retains the wider, viewport-capped desktop dialog shell', () => {
+    mockedUseIsMobile.mockReturnValue(false)
+    render(<CommandPalette />)
+    openPalette()
+
+    const palette = screen.getByTestId('command-palette')
+    expect(palette).toHaveClass(
+      'sm:max-w-2xl',
+      'max-h-[80dvh]',
+      'flex',
+      'flex-col',
+      'p-0',
+      'top-[50%]',
+      'left-[50%]',
+    )
+    expect(palette).not.toHaveClass('bottom-0')
+    expect(palette).not.toHaveClass('inset-x-0')
+  })
+})
+
 describe('#131 recent searches (empty state)', () => {
   it('lists recent search terms when the input is empty on mobile', () => {
     addRecentSearch('alpha')

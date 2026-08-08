@@ -5,6 +5,7 @@ import type * as React from 'react'
 import { useEffect, useState } from 'react'
 
 import { CloseButtonIcon, closeButtonClassName } from '@/components/ui/close-button'
+import { DIALOG_BODY_VIEWPORT_CLASS } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { computeKeyboardInset } from '@/lib/keyboard-inset'
 import { cn } from '@/lib/utils'
@@ -130,9 +131,9 @@ const SheetContent = ({
           side === 'left' &&
             'inset-y-0 left-0 h-full w-3/4 rounded-r-xl border-r data-[state=closed]:slide-out-to-left data-[state=open]:slide-in-from-left sm:max-w-sm',
           side === 'top' &&
-            'inset-x-0 top-0 h-auto rounded-b-xl border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
+            'inset-x-0 top-0 h-auto max-h-[calc(100dvh-2rem)] rounded-b-xl border-b data-[state=closed]:slide-out-to-top data-[state=open]:slide-in-from-top',
           side === 'bottom' &&
-            'inset-x-0 bottom-0 h-auto rounded-t-xl border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
+            'inset-x-0 bottom-0 h-auto max-h-[calc(100dvh-2rem)] rounded-t-xl border-t data-[state=closed]:slide-out-to-bottom data-[state=open]:slide-in-from-bottom',
           className,
         )}
         // While the soft keyboard is up, lift the bottom anchor above it
@@ -227,7 +228,7 @@ SheetDescription.displayName = 'SheetDescription'
  * Wraps children in a `ScrollArea` constrained to `flex-1 min-h-0` so it
  * shares the SheetContent's available height (everything not consumed by
  * the header/footer) instead of overflowing past the viewport. The
- * `-mx-6` + `viewportClassName="px-6"` trick lets the scrollbar sit in
+ * `-mx-6` + the shared viewport gutter class lets the scrollbar sit in
  * the SheetContent's padding gutter while keeping the inner content
  * indented by the same 24 px the header uses — so left edges align.
  *
@@ -252,7 +253,7 @@ const SheetBody = ({ ref, className, children, dir, ...props }: SheetBodyProps) 
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
     className={cn('flex-1 min-h-0 -mx-6', className)}
-    viewportClassName="px-6"
+    viewportClassName={DIALOG_BODY_VIEWPORT_CLASS}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

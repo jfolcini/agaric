@@ -130,10 +130,11 @@ export function CommandPalette(): React.ReactElement | null {
     <Root open={open} onOpenChange={(o: boolean) => (o ? null : closeStore())}>
       <Content
         className={cn(
+          'flex flex-col p-0',
           // Wider than the default `sm:max-w-lg` so 8 page-groups fit
-          // comfortably without horizontal scrolling. Heights cap at
-          // `80dvh` so the dialog never grows past the viewport.
-          !parts.isMobile && 'sm:max-w-2xl max-h-[80dvh] flex flex-col p-0',
+          // comfortably without horizontal scrolling. The desktop dialog
+          // keeps its narrower 80dvh cap; mobile uses the shared sheet cap.
+          !parts.isMobile && 'sm:max-w-2xl max-h-[80dvh]',
         )}
         // Stop the dialog from auto-focusing its close button on open;
         // we want focus on the input.

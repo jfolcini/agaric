@@ -331,8 +331,6 @@ export function QueryBuilderModal({
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
   // Mobile bottom-sheet path uses the Sheet body primitive so
   // padding/scroll behaviour comes from the Sheet scaffolding rather than
   // Dialog's — matches QuickCaptureDialog / BugReportDialog.
@@ -340,7 +338,7 @@ export function QueryBuilderModal({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content {...contentSideProps}>
+      <Content>
         <Header>
           <Title>{t('queryBuilder.title')}</Title>
           <Description>{t('queryBuilder.description')}</Description>

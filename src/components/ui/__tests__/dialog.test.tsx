@@ -125,6 +125,23 @@ describe('DialogContent viewport cap', () => {
     expect(body?.className).toContain('flex-1')
     expect(body?.className).toContain('min-h-0')
   })
+
+  it('DialogBody viewport carries the shared gutter and Radix width workaround classes', () => {
+    const { baseElement } = render(
+      <Dialog open>
+        <DialogContent>
+          <DialogTitle>Title</DialogTitle>
+          <DialogDescription>Description</DialogDescription>
+          <DialogBody>
+            <p>Body</p>
+          </DialogBody>
+        </DialogContent>
+      </Dialog>,
+    )
+    const viewport = baseElement.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).not.toBeNull()
+    expect(viewport).toHaveClass('px-6', '[&>div]:!block')
+  })
 })
 
 // ---------------------------------------------------------------------------

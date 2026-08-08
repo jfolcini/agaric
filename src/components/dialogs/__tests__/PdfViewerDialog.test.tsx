@@ -148,6 +148,28 @@ describe('PdfViewerDialog', () => {
     })
   })
 
+  it('uses the shared dynamic viewport cap on mobile without the desktop vh override', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    render(
+      <PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:mobile" filename="mobile.pdf" />,
+    )
+
+    const viewer = screen.getByRole('dialog')
+    expect(viewer).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(viewer).not.toHaveClass('h-[90vh]')
+    expect(viewer).not.toHaveClass('max-h-[90vh]')
+  })
+
+  it('retains the near-full-screen desktop dialog sizing', () => {
+    render(
+      <PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:desktop" filename="desktop.pdf" />,
+    )
+
+    const viewer = screen.getByRole('dialog')
+    expect(viewer).toHaveClass('max-w-5xl', 'h-[90vh]', 'max-h-[90vh]')
+    expect(viewer).not.toHaveClass('bottom-0')
+  })
+
   it('shows loading state while the PDF loads', async () => {
     let resolveDoc: (v: unknown) => void = () => {}
     mockGetDocument.mockReturnValue({

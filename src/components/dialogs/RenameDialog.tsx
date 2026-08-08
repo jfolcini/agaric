@@ -109,9 +109,6 @@ export function RenameDialog({
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
 
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
-
   const formBody = (
     <form
       onSubmit={(e) => {
@@ -147,7 +144,7 @@ export function RenameDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className={className} {...contentSideProps}>
+      <Content className={className}>
         <Header>
           <Title>{title ?? t('rename.title')}</Title>
           <Description>{description ?? t('rename.deviceName')}</Description>
@@ -155,9 +152,9 @@ export function RenameDialog({
         {/*
           route the body through DialogBody on desktop so a tall
           body scrolls and the footer stays pinned. The mobile Sheet path
-          keeps its native flow — SheetContent already constrains height
-          and the form is short enough that adding a SheetBody scroll
-          region would just introduce nested scroll contexts.
+          keeps its native flow — the shared SheetContent viewport cap is
+          sufficient for this short form, while a SheetBody would introduce
+          a nested scroll context.
         */}
         {parts.isMobile ? formBody : <DialogBody>{formBody}</DialogBody>}
         <Footer>
