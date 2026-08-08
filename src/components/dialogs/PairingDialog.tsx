@@ -137,12 +137,22 @@ export function PairingDialog({
   // Tracks the paste-focus setTimeout so we can cancel it on unmount and
   // Avoid focusing a stale DOM node (#).
   const pendingFocusRef = useRef<number | null>(null)
-  // True only once `startPairing` has actually succeeded (host path). Gates
-  // every `cancelPairing` call (close/unmount cleanup, explicit Cancel,
-  // switching to the joiner path) so we never cancel a session that was
-  // never started — required because the joiner path never calls
-  // `startPairing` at all.
-  const sessionStartedRef = useRef(false)
+  // True while this device holds BACKEND-side pairing state that a
+  // `cancelPairing` would tear down. Gates every `cancelPairing` call
+  // (close/unmount cleanup, explicit Cancel, switching to the joiner path)
+  // so we never fire one when there is nothing armed.
+  //
+  // #3493 — this used to be `sessionStartedRef`, set only by a successful
+  // host-side `startPairing`. That name described the QR session, but the
+  // thing cancel actually has to tear down is the DB-side pending-pairing
+  // marker, and BOTH roles arm one: the host in `start_pairing` and the
+  // joiner in `confirm_pairing`. Gating on "did the host start a session"
+  // therefore made the joiner's Cancel — the button on the waiting screen,
+  // i.e. the exact "cancel a pairing wait" the issue is about — a pure UI
+  // act that left the marker armed for the rest of its 5-minute TTL, still
+  // able to admit an unpaired device. The ref now tracks "is anything armed
+  // on the backend", which is the question the gate is really asking.
+  const backendArmedRef = useRef(false)
   // #3469 — snapshot of known peer ids taken the instant waiting begins, so
   // the poll below can detect a genuinely NEW peer (the TOFU-pin signal)
   // rather than false-triggering on peers that were already paired before
@@ -203,7 +213,7 @@ export function PairingDialog({
     module: 'PairingDialog',
     errorLogMessage: 'Failed to start pairing',
     onSuccess: (info) => {
-      sessionStartedRef.current = true
+      backendArmedRef.current = true
       setPairingInfo(info)
       setCountdown(PAIRING_TIMEOUT_SECONDS)
     },
@@ -266,7 +276,8 @@ export function PairingDialog({
   }, [role, initHost, initJoiner])
 
   // Cleanup-side cancelPairing — fires when the dialog closes or unmounts,
-  // but ONLY if a host session was actually started (`sessionStartedRef`).
+  // but ONLY if something is actually armed on the backend
+  // (`backendArmedRef`, either role — #3493).
   // Logger.warn + notify.error matches the original inline shape
   // (handleCancel uses a different logger.error-only flavor that stays
   // inline because it has no toast).
@@ -302,7 +313,7 @@ export function PairingDialog({
     setEntryMode('manual')
     setJoinerPhase('entry')
     setWaitCountdown(null)
-    sessionStartedRef.current = false
+    backendArmedRef.current = false
     void initHost()
   }, [open, initHost])
 
@@ -313,8 +324,8 @@ export function PairingDialog({
   useEffect(() => {
     if (!open) return
     return () => {
-      if (sessionStartedRef.current) {
-        sessionStartedRef.current = false
+      if (backendArmedRef.current) {
+        backendArmedRef.current = false
         void executeCancelPairingCleanup()
       }
     }
@@ -402,6 +413,13 @@ export function PairingDialog({
     }
     const newPeer = polledPeers.find((p) => !known.has(p.peer_id))
     if (!newPeer) return
+    // #3493 — the pairing COMPLETED: the peer is pinned, so this device's
+    // pending-pairing marker has done its job and is no longer ours to
+    // tear down. Disarm the ref before `onOpenChange(false)` below, or the
+    // close/unmount cleanup would fire a `cancel_pairing` on the way out of
+    // a *successful* pair — a cancel that owns nothing, racing whatever
+    // arms the marker next.
+    backendArmedRef.current = false
     setPeers(polledPeers)
     useSyncStore.getState().setPeers(polledPeers.map(mapPeerRefToInfo))
     setJoinerPhase('entry')
@@ -528,6 +546,14 @@ export function PairingDialog({
     call: async ({ passphrase }) => {
       // remoteDeviceId is derived from the passphrase in the pairing protocol
       unwrap(await commands.confirmPairing(passphrase, ''))
+      // #3493 — `confirm_pairing` has just armed this device's DB-side
+      // pending-pairing marker, so from here on a Cancel has something real
+      // to tear down. Set the moment the call resolves rather than in
+      // `onSuccess`, so the baseline read below (which can reject) cannot
+      // leave an armed marker recorded as unarmed. Without this the joiner's
+      // Cancel button — the one on the waiting screen — never reached
+      // `cancel_pairing` at all and the marker stayed live for its full TTL.
+      backendArmedRef.current = true
       syncSetState('idle')
       // #3469 (review) — take the "peers we already had" baseline HERE,
       // from an authoritative read at the moment the proof is armed, not
@@ -538,7 +564,8 @@ export function PairingDialog({
       // peers into a false "paired successfully" on the first poll.
       //
       // A failure here must not fail the pairing: the local proof is
-      // already armed and there is no way to un-arm it, so the wait
+      // already armed, and the only thing that un-arms it is an explicit
+      // user Cancel (#3493) — not a failed bookkeeping read. So the wait
       // proceeds with an explicitly UNKNOWN baseline (see the ref's
       // comment) rather than a wrong one.
       try {
@@ -645,11 +672,13 @@ export function PairingDialog({
   }, [])
 
   const handleCancel = useCallback(() => {
-    // Cancel any in-progress pairing session — only if one was actually
-    // started (host path). The joiner path never calls `startPairing`, so
-    // there is nothing on the backend to cancel for it.
-    if (sessionStartedRef.current) {
-      sessionStartedRef.current = false
+    // Tear down whatever this device has armed on the backend — the host's
+    // QR session, or (#3493) the joiner's pending-pairing marker armed by
+    // `confirm_pairing`. Gated on `backendArmedRef` so a Cancel with
+    // nothing armed (e.g. the joiner's entry form, before Pair) stays a
+    // pure UI act and does not disarm a marker it never owned.
+    if (backendArmedRef.current) {
+      backendArmedRef.current = false
       commands
         .cancelPairing()
         .then((r) => unwrap(r))
@@ -663,15 +692,16 @@ export function PairingDialog({
 
   // #3463 — switching to the joiner path is what DECLARES the joiner role
   // (replacing the removed upfront chooser question). Crucially, this
-  // cancels the host's own session first (`cancelPairing` clears the
-  // backend's in-memory `pairing_state` slot — see sync_cmds.rs
+  // cancels the host's own session first (`cancelPairing` clears both the
+  // backend's in-memory `pairing_state` slot AND, since #3493, the DB-side
+  // pending-pairing marker that slot was advertising — see sync_cmds.rs
   // `cancel_pairing_inner`) so this device stops offering a code it is no
-  // longer showing. Without this, a device could simultaneously be
-  // offering its own code (host) and entering another's (joiner) — the
-  // #3463 shape wearing a different hat.
+  // longer showing, on the wire as well as on screen. Without this, a
+  // device could simultaneously be offering its own code (host) and
+  // entering another's (joiner) — the #3463 shape wearing a different hat.
   const handleSwitchToJoiner = useCallback(async () => {
-    if (sessionStartedRef.current) {
-      sessionStartedRef.current = false
+    if (backendArmedRef.current) {
+      backendArmedRef.current = false
       await executeCancelPairingCleanup()
     }
     setPairingInfo(null)

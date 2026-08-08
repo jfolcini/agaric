@@ -244,6 +244,7 @@ async fn start_pairing_armed_inner_arms_pending_window() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pairing_start_then_cancel_clears_session() {
+    let (pool, _dir) = test_pool().await;
     let pairing = PairingState(Mutex::new(None));
 
     let _info = start_pairing_inner(&pairing.0, "dev-1").unwrap();
@@ -252,7 +253,7 @@ async fn pairing_start_then_cancel_clears_session() {
         "session must exist after start"
     );
 
-    cancel_pairing_inner(&pairing.0).unwrap();
+    cancel_pairing_inner(&pool, &pairing.0).await.unwrap();
     assert!(
         pairing.0.lock().unwrap().is_none(),
         "session must be cleared after cancel"

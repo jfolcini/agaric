@@ -311,10 +311,58 @@ pub async fn confirm_pairing_inner(
 
 /// Cancel an in-progress pairing session.
 ///
-/// Clears the stored session; no-op if no session is active.
-#[instrument(skip(pairing_state), err)]
-pub fn cancel_pairing_inner(pairing_state: &Mutex<Option<PairingSession>>) -> Result<(), AppError> {
+/// Clears the stored in-memory session (no-op if none is active) AND the
+/// DB-side pending-pairing marker.
+///
+/// # #3493 — why the marker clear cannot be gated on the session
+///
+/// Before this fix, cancel only cleared `pairing_state`. Both pairing roles
+/// arm the marker (`start_pairing_armed_inner` for the host,
+/// `confirm_pairing_inner` for the joiner) *before* a wire connection has
+/// completed, so a cancelled wait left the marker armed for the rest of its
+/// TTL. The wire-side responder (`sync_daemon::server`) admits any unpaired
+/// device that offers a proof matching that marker, so a stale or concurrent
+/// inbound connection could still complete pairing against a row the user
+/// had already cancelled.
+///
+/// The marker clear is therefore unconditional — it does not check whether
+/// `pairing_state` held a session. `confirm_pairing_inner` (the joiner path)
+/// already nulls the local session the instant it arms the marker, since a
+/// joiner is waiting on the *wire* handshake, not on local state. If cancel
+/// only cleared the marker when a local session was present, cancelling
+/// during that wait (session already `None`, marker still live) would be a
+/// no-op on the very row this fix targets — reintroducing the defect via an
+/// ordering trap rather than fixing it.
+///
+/// # Why unconditional is not over-clearing
+///
+/// The marker is a single device-global `app_settings` row, not a per-attempt
+/// record: `set_pending_pairing` upserts one key, so a second attempt already
+/// overwrites the first's proof with no ownership check. There is therefore no
+/// attempt identity for a clear to respect — "disarm this device" is the only
+/// meaning the row can carry, and it is exactly what an explicit user cancel
+/// asks for. (Contrast #3536, where the frontend needed a generation token:
+/// there the stale value was a *poll result* being judged against a newer
+/// wait, so the two attempts genuinely coexisted and had to be told apart.)
+/// The caller-side counterpart is `PairingDialog`'s `backendArmedRef`, which
+/// keeps a cancel with nothing armed from firing at all.
+///
+/// # Known residual window (accepted)
+///
+/// The responder reads the marker once, at admission time
+/// (`sync_daemon::server`), and pins the peer later in the same handshake. A
+/// cancel that lands between that read and the pin does not abort the
+/// connection, so a handshake already in flight can still complete. This is
+/// inherent — cancel is a local state change, not a wire abort — and it is
+/// bounded by a single in-flight handshake rather than the full 5-minute TTL,
+/// which is the whole of what #3493 removes.
+#[instrument(skip(pool, pairing_state), err)]
+pub async fn cancel_pairing_inner(
+    pool: &SqlitePool,
+    pairing_state: &Mutex<Option<PairingSession>>,
+) -> Result<(), AppError> {
     *lock_pairing_state(pairing_state)? = None;
+    peer_refs::clear_pending_pairing(pool).await?;
     Ok(())
 }
 
@@ -568,8 +616,13 @@ pub async fn confirm_pairing(
 /// Tauri command: cancel an in-progress pairing session.
 #[tauri::command]
 #[specta::specta]
-pub async fn cancel_pairing(pairing_state: State<'_, PairingState>) -> Result<(), AppError> {
-    cancel_pairing_inner(&pairing_state.0).map_err(sanitize_internal_error)
+pub async fn cancel_pairing(
+    pool: State<'_, WritePool>,
+    pairing_state: State<'_, PairingState>,
+) -> Result<(), AppError> {
+    cancel_pairing_inner(&pool.0, &pairing_state.0)
+        .await
+        .map_err(sanitize_internal_error)
 }
 
 /// Tauri command: start sync with a remote peer.

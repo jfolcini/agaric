@@ -1186,6 +1186,48 @@ describe('PairingDialog', () => {
       expect(results).toHaveNoViolations()
     })
 
+    // -------------------------------------------------------------------
+    // #3493 — the CALL SITE for `cancel_pairing_inner`'s marker clear.
+    //
+    // The backend can only disarm the pending-pairing row if the frontend
+    // actually invokes `cancel_pairing`, and the joiner's Cancel used to be
+    // gated on `sessionStartedRef` — false for a joiner, which never calls
+    // `startPairing`. So the waiting screen's Cancel was a pure UI act: the
+    // dialog closed while the marker stayed armed for the rest of its
+    // 5-minute TTL, still able to admit an unpaired device. Asserting the
+    // backend clear alone would leave that half uncovered.
+    // -------------------------------------------------------------------
+    it('Cancel on the waiting screen invokes cancel_pairing so the armed pending-pairing marker is disarmed (#3493)', async () => {
+      const user = userEvent.setup()
+      const onOpenChange = vi.fn()
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        confirm_pairing: undefined,
+        cancel_pairing: undefined,
+      })
+
+      render(<PairingDialog open onOpenChange={onOpenChange} />)
+      await enterWaitingState(user)
+
+      // Exactly one cancel so far — the host session torn down by the role
+      // switch. The joiner's own `confirm_pairing` has since armed a marker.
+      const cancelsBefore = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'cancel_pairing',
+      ).length
+      expect(cancelsBefore).toBe(1)
+
+      await user.click(document.querySelector('.pairing-waiting-cancel-btn') as HTMLElement)
+
+      await waitFor(() => {
+        const cancelsAfter = mockedInvoke.mock.calls.filter(
+          ([cmd]) => cmd === 'cancel_pairing',
+        ).length
+        expect(cancelsAfter).toBe(2)
+      })
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
     it('resolves to success when a new peer appears in peer_refs, closing the dialog and announcing success', async () => {
       const onOpenChange = vi.fn()
       const newPeer = {

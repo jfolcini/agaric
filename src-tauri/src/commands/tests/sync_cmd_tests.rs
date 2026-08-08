@@ -626,8 +626,9 @@ async fn confirm_pairing_pure_joiner_with_no_local_session_succeeds_3463() {
 // Sync — cancel_pairing (#275)
 // ======================================================================
 
-#[test]
-fn sync_cancel_pairing_clears_session() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_cancel_pairing_clears_session() {
+    let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
 
     // Start pairing
@@ -638,22 +639,120 @@ fn sync_cancel_pairing_clears_session() {
     );
 
     // Cancel
-    cancel_pairing_inner(&pairing_state).unwrap();
+    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
     assert!(
         pairing_state.lock().unwrap().is_none(),
         "pairing session must be cleared after cancel"
     );
 }
 
-#[test]
-fn sync_cancel_pairing_noop_when_no_session() {
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_cancel_pairing_noop_when_no_session() {
+    let (pool, _dir) = test_pool().await;
     let pairing_state = Mutex::new(None);
 
     // Cancel with no active session — should succeed
-    let result = cancel_pairing_inner(&pairing_state);
+    let result = cancel_pairing_inner(&pool, &pairing_state).await;
     assert!(
         result.is_ok(),
         "cancel_pairing with no session must succeed"
+    );
+}
+
+/// #3493 — happy path: cancelling a pairing wait must disarm the DB-side
+/// pending-pairing marker, not just the in-memory session. Before the fix,
+/// `cancel_pairing_inner` never touched the marker at all, so this assertion
+/// on `is_pending_pairing`/`get_pending_pairing_proof` fails against the
+/// pre-fix code (see the RED capture in the PR description).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_cancel_pairing_disarms_pending_pairing_row() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    let info = start_pairing_armed_inner(&pool, &pairing_state, &scheduler, "device-host")
+        .await
+        .unwrap();
+    // Precondition, stated against the proof this attempt actually armed —
+    // not just "something is pending". This is what makes the post-cancel
+    // assertion below mean "the row THIS attempt armed is gone".
+    assert_eq!(
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .as_deref(),
+        Some(agaric_sync::pairing::pairing_proof(&info.passphrase).as_str()),
+        "starting an armed pairing must set the pending-pairing marker to \
+         this attempt's own proof"
+    );
+
+    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "#3493: cancel must disarm the pending-pairing marker, not just the \
+         in-memory session"
+    );
+    assert!(
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .is_none(),
+        "#3493: a cancelled wait must not leave a proof a stale inbound \
+         connection could still match — the wire-side admission check in \
+         `sync_daemon::server` reads exactly this value"
+    );
+}
+
+/// #3493 — error/ordering-trap path: the joiner's `confirm_pairing_inner`
+/// already nulls the local `pairing_state` the moment it arms the marker
+/// (the joiner has no local session by design — see #3463), so by the time
+/// the user cancels while still waiting on the wire handshake, the local
+/// session is already `None`. A cancel implementation that only clears the
+/// marker when a local session is present would treat this as a no-op and
+/// leave the row armed — exactly the race the fix must not reintroduce.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn sync_cancel_pairing_disarms_row_after_joiner_confirm_already_cleared_session() {
+    let (pool, _dir) = test_pool().await;
+    let pairing_state = Mutex::new(None);
+    let scheduler = SyncScheduler::new();
+
+    confirm_pairing_inner(
+        &pool,
+        &pairing_state,
+        &scheduler,
+        "device-joiner",
+        "correct horse battery staple".into(),
+        String::new(),
+    )
+    .await
+    .unwrap();
+
+    // Simulates the state a joiner is in while waiting for the wire
+    // handshake: no local session, but the marker is live.
+    assert!(
+        pairing_state.lock().unwrap().is_none(),
+        "confirm_pairing_inner must clear the local session immediately (#3463)"
+    );
+    assert!(
+        peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "confirm_pairing_inner must arm the pending-pairing marker"
+    );
+
+    cancel_pairing_inner(&pool, &pairing_state).await.unwrap();
+
+    assert!(
+        !peer_refs::is_pending_pairing(&pool).await.unwrap(),
+        "#3493: cancel must disarm the marker even when the local session was \
+         already None going in — a naive fix gated on the session would miss \
+         this and leave the row armed for a concurrent inbound confirm"
+    );
+    assert!(
+        peer_refs::get_pending_pairing_proof(&pool)
+            .await
+            .unwrap()
+            .is_none(),
+        "#3493: the pending row must no longer be usable to complete a pairing"
     );
 }
 

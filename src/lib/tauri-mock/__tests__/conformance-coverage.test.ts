@@ -163,7 +163,11 @@ const NO_FIXTURE_ALLOWLIST: Readonly<Record<string, string>> = {
   cancel_sync: 'sync transport session; no durable domain state to snapshot',
   start_pairing: 'pairing transport session; no durable domain state to snapshot',
   confirm_pairing: 'pairing transport session; no durable domain state to snapshot',
-  cancel_pairing: 'pairing transport session; no durable domain state to snapshot',
+  // #3493 — cancel now deletes the pending-pairing marker (an `app_settings`
+  // row), so this is no longer "no durable state". It stays excluded for the
+  // same reason `confirm_pairing` (which writes that row) is: the marker is
+  // pairing-window plumbing, not projected block state.
+  cancel_pairing: 'pending-pairing marker (app_settings), not projected block state',
   set_peer_address: 'peer registry (device metadata) outside the conformance snapshot scope',
   update_peer_name: 'peer registry (device metadata) outside the conformance snapshot scope',
   delete_peer_ref: 'peer registry (device metadata) outside the conformance snapshot scope',
