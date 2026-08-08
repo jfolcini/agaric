@@ -205,7 +205,7 @@ echo 'ok - apt failure remains a truthful build/test blocker'
 # 6. Package-install failure is independently loud after a successful update.
 # The whole compile/test set is missing here (state was cleared), so this is
 # THE COMPILE-SET ARM of the #3629 review note-2 pair: it must classify as
-# exit 1, not the patchelf-only exit 2 that test 6c below pins.
+# exit 1, not the patchelf-only exit 42 that test 6c below pins.
 : >"$state"
 : >"$log"
 FAKE_UID=0 FAKE_APT_INSTALL_FAIL=1 run_helper
@@ -222,11 +222,17 @@ echo 'ok - apt install failure remains a truthful build/test blocker (classified
 # 6c. THE PATCHELF-ONLY ARM of the same pair (#3629 review note 2). The
 # compile/test set (all six non-patchelf packages) is already installed;
 # only patchelf is missing, and installing it fails. This must NOT be
-# reported with the same severity as #6: exit 2 (not 1), plus wording that
+# reported with the same severity as #6: exit 42 (not 1), plus wording that
 # says the compile/test set is intact rather than an undifferentiated
 # "may remain unavailable" that would wrongly implicate the whole workspace.
 # Asserting only this arm (without #6 above) would be a half-covered pair —
-# a helper that always returned exit 2 would pass this block alone.
+# a helper that always returned exit 42 would pass this block alone.
+#
+# 42, not 2 (#3629 review note 1): bash itself exits 2 on ITS OWN syntax
+# errors, so a sentinel of 2 would let a future parse error in
+# setup-system-deps.sh masquerade as this patchelf-only all-clear. See test
+# 6d below, which pins that directly against a syntax-broken copy of the
+# helper.
 : >"$state"
 : >"$log"
 for package in "${expected_packages[@]}"; do
@@ -234,11 +240,11 @@ for package in "${expected_packages[@]}"; do
 done
 FAKE_UID=0 FAKE_APT_INSTALL_FAIL=1 run_helper
 [ "$helper_status" -ne 0 ] || fail 'patchelf-only apt install failure falsely succeeded'
-[ "$helper_status" -eq 2 ] || fail "patchelf-only apt install failure did not classify as exit 2 (got $helper_status)"
+[ "$helper_status" -eq 42 ] || fail "patchelf-only apt install failure did not classify as exit 42 (got $helper_status)"
 assert_contains "$output" 'patchelf'
 assert_contains "$output" 'is the only package still missing — the compile/test package set installed fine'
 if [[ "$output" == *'dependencies installed.'* ]]; then fail 'patchelf-only failure printed success'; fi
-echo 'ok - a patchelf-only install failure is classified separately (exit 2) from a compile-set failure (exit 1)'
+echo 'ok - a patchelf-only install failure is classified separately (exit 42) from a compile-set failure (exit 1)'
 
 # 6b. The other half of #6: apt exits 0 yet the packages are still absent. The
 # exit code alone is not evidence of a working build, so the helper re-queries
@@ -503,13 +509,15 @@ fi
 echo 'ok - opt-in helper failure reaches the final Ready-except summary'
 
 # 9d/9e. #3629 review note 2, at the setup.sh level: a patchelf-only failure
-# (helper exit 2) must get an accurate message (never the compile/test-set
+# (helper exit 42) must get an accurate message (never the compile/test-set
 # claim) AND must not suppress the pkg-config webkit probe — the only other
-# consumer of the system packages. Two arms, same status=2, opposite webkit
+# consumer of the system packages. Two arms, same status=42, opposite webkit
 # state, so passing one arm without the other cannot make this block green.
+# (42, not 2: bash's own syntax-error status is 2, so the sentinel setup.sh
+# special-cases here must not be 2 — see the falsification test below.)
 : >"$outer_log"
 : >"$outer_priv_log"
-FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=0 FAKE_OUTER_HELPER_STATUS=2 \
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=0 FAKE_OUTER_HELPER_STATUS=42 \
   run_outer_setup --install-system-deps
 [ "$outer_status" -eq 0 ] || fail 'patchelf-only outer setup (webkit missing) failed'
 assert_no_privileged_calls
@@ -517,7 +525,7 @@ assert_contains "$outer_output" 'Ready except:'
 assert_contains "$outer_output" 'patchelf (used only when bundling with "cargo tauri build"'
 assert_contains "$outer_output" 'the Rust workspace will still compile and test without it'
 if [[ "$outer_output" == *'the Rust workspace will not compile or test until they are present'* ]]; then
-  fail 'patchelf-only failure (exit 2) was reported with the compile/test-set message'
+  fail 'patchelf-only failure (exit 42) was reported with the compile/test-set message'
 fi
 # The probe must have actually run: with headers genuinely absent it reports
 # them absent. If the old blanket "any system_deps_problem -> skip the probe"
@@ -527,13 +535,13 @@ echo 'ok - patchelf-only failure gets accurate wording and the webkit probe stil
 
 : >"$outer_log"
 : >"$outer_priv_log"
-FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=1 FAKE_OUTER_HELPER_STATUS=2 \
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=1 FAKE_OUTER_HELPER_STATUS=42 \
   run_outer_setup --install-system-deps
 [ "$outer_status" -eq 0 ] || fail 'patchelf-only outer setup (webkit present) failed'
 assert_no_privileged_calls
 assert_contains "$outer_output" 'patchelf (used only when bundling with "cargo tauri build"'
 if [[ "$outer_output" == *'the Rust workspace will not compile or test until they are present'* ]]; then
-  fail 'patchelf-only failure (exit 2) was reported with the compile/test-set message'
+  fail 'patchelf-only failure (exit 42) was reported with the compile/test-set message'
 fi
 # The probe ran and correctly found webkit present: no false "not found" line
 # should ride along with the (real, separate) patchelf note.
@@ -541,6 +549,46 @@ if [[ "$outer_output" == *'libwebkit2gtk-4.1 (system webkit) not found via pkg-c
   fail 'webkit probe falsely reported missing headers when FAKE_OUTER_WEBKIT=1'
 fi
 echo 'ok - patchelf-only failure leaves the (satisfied) webkit probe result untouched'
+
+# 9e2. #3629 review (this round), note 1 — THE FALSIFICATION, driven end to
+# end against the real outer setup.sh. bash itself exits 2 on ITS OWN syntax
+# errors. Swap the fake setup-system-deps.sh stub for one with a deliberately
+# unclosed `if`: bash's parser rejects the whole file before a single
+# statement runs, so this never touches fail_status()/only_patchelf_missing()
+# — it is purely bash's own exit status hitting scripts/setup.sh's
+# classification. Before this round's fix (sentinel 2) this exact scenario
+# was misread as the patchelf-only all-clear; the sentinel is now 42, which
+# bash never produces for its own errors, so this must surface the loud,
+# generic "will not compile or test" message instead.
+: >"$outer_log"
+: >"$outer_priv_log"
+cat >"$outer_project/scripts/setup-system-deps.sh" <<'OUTER_HELPER_BROKEN'
+#!/usr/bin/env bash
+set -euo pipefail
+echo 'this line is never reached — the parser rejects the file first'
+if [ 1 -eq 1
+OUTER_HELPER_BROKEN
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=0 run_outer_setup --install-system-deps
+[ "$outer_status" -eq 0 ] || fail 'outer setup itself aborted on a broken system-deps helper (should degrade to Ready-except, not crash)'
+assert_no_privileged_calls
+assert_contains "$outer_output" 'Ready except:'
+assert_contains "$outer_output" \
+  'Linux build/test system dependencies could not be installed automatically'
+assert_contains "$outer_output" 'the Rust workspace will not compile or test until they are present'
+if [[ "$outer_output" == *'the Rust workspace will still compile and test without it'* ]]; then
+  fail 'a bash syntax error in setup-system-deps.sh was misread as the patchelf-only all-clear (sentinel collides with a shell-generated status) — THIS IS THE #3629 NOTE-1 REGRESSION'
+fi
+if [[ "$outer_output" == *'Ready. Run: cargo tauri dev'* ]]; then
+  fail 'a bash syntax error in setup-system-deps.sh was reported as fully ready'
+fi
+echo 'ok - a syntax error in setup-system-deps.sh surfaces the loud compile-set-failure message, never the patchelf all-clear'
+# Restore the logging stub for every test below that depends on it.
+cat >"$outer_project/scripts/setup-system-deps.sh" <<'OUTER_HELPER'
+#!/usr/bin/env bash
+printf 'system-deps|%s\n' "$*" >>"$OUTER_LOG"
+exit "${FAKE_OUTER_HELPER_STATUS:-0}"
+OUTER_HELPER
+chmod +x "$outer_project/scripts/setup-system-deps.sh"
 
 # 9f. #3629 review note 1: the opt-in apt dispatch must run AFTER
 # setup-dev-db.sh, not ahead of the fast Node/npm-ci/.env/dev-DB critical
@@ -558,6 +606,29 @@ system_deps_line="$(grep -n '^system-deps|' "$outer_log" | head -1 | cut -d: -f1
 [ "$dev_db_line" -lt "$system_deps_line" ] || fail \
   "apt dispatch ran ahead of setup-dev-db.sh (dev-db@${dev_db_line} system-deps@${system_deps_line}) — holding the fast critical path hostage to apt again"
 echo 'ok - the opt-in apt dispatch runs after setup-dev-db.sh, not ahead of the fast critical path'
+
+# 9f2. #3629 review (this round), note 2: pin the dispatch relative to the
+# detached setsid launch of setup-hooks.sh too, not merely to setup-dev-db.sh
+# (test 9f above passed even in the pre-this-round layout, where apt sat
+# ahead of the setsid launch — proof that 9f alone under-covers this note).
+#
+# This is a SOURCE-position check, not a runtime log-order check like 9f:
+# `setsid ... &` backgrounds the hook-toolchain install, so its actual
+# completion (and even its first write to a log) races the parent script's
+# next statement — there is no wall-clock guarantee the child writes
+# anything before the parent reaches the apt dispatch. What IS deterministic,
+# and what the review note is actually about, is which statement the parent
+# shell executes first: the `setsid ... &` launch line (which returns near-
+# instantly, handing the hook install to the background) or the synchronous
+# `bash scripts/setup-system-deps.sh` dispatch line (which can block on a
+# slow apt for the SessionStart budget's duration). Pin THAT.
+setsid_launch_line="$(grep -n 'setsid bash scripts/setup-hooks\.sh' "$setup" | head -1 | cut -d: -f1)"
+system_deps_dispatch_line="$(grep -n '^  bash scripts/setup-system-deps\.sh ' "$setup" | head -1 | cut -d: -f1)"
+[ -n "${setsid_launch_line:-}" ] || fail 'setsid launch of setup-hooks.sh not found in scripts/setup.sh'
+[ -n "${system_deps_dispatch_line:-}" ] || fail 'apt dispatch line not found in scripts/setup.sh'
+[ "$setsid_launch_line" -lt "$system_deps_dispatch_line" ] || fail \
+  "apt dispatch (line ${system_deps_dispatch_line}) sits ahead of the detached setsid launch (line ${setsid_launch_line}) — re-coupling the hook-toolchain install to the ~600s SessionStart budget that the setsid launch exists to escape"
+echo 'ok - the opt-in apt dispatch runs after the detached setsid launch of setup-hooks.sh, decoupled from the SessionStart budget'
 
 # 9g/9h. #3629 review note 3: --help must win regardless of position,
 # including next to an otherwise-unknown flag. Same two flags, order flipped,

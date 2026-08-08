@@ -251,37 +251,6 @@ node scripts/prepare-external-bins.mjs --placeholder-only
 # without network for the sqlx-cli install) still completes.
 bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scripts/setup-dev-db.sh before pushing Rust changes"
 
-# --- Linux system packages (opt-in, privileged) -----------------------------
-# System packages are the sole intentionally-privileged part of bootstrap, so
-# they remain an explicit opt-in (#3556). The remote SessionStart hook passes
-# the flag on a disposable VM; local/manual setup — `npm run setup`,
-# `just setup`, a bare `bash scripts/setup.sh` — never does, and retains the
-# long-standing warn-only contract. Failure here must not strand the
-# Node/.env/dev-DB setup that is still useful, but it is carried into the final
-# Ready-except summary instead of being hidden.
-#
-# Dispatched HERE — after the fast Node/npm-ci/.env/dev-DB critical path
-# above, not at the top of the script — because nothing in that path touches
-# system packages: the sole consumer is the pkg-config preflight further
-# down. Inside the ~600s SessionStart budget this script operates under (see
-# the hook-toolchain comment below), a slow apt must not hold that
-# previously-reliable path hostage (#3629 review).
-system_deps_problem=''
-system_deps_status=0
-if [ "$install_system_deps" = true ]; then
-  bash scripts/setup-system-deps.sh || system_deps_status=$?
-  if [ "$system_deps_status" -eq 2 ]; then
-    # setup-system-deps.sh's own classification: exit 2 means patchelf — the
-    # bundle-time-only package — is the SOLE thing that failed to install; the
-    # compile/test package set is confirmed present. Don't repeat the "will
-    # not compile or test" claim over a package that only matters to
-    # `cargo tauri build` bundling (#3629 review).
-    system_deps_problem='patchelf (used only when bundling with "cargo tauri build" to rewrite RPATH) could not be installed automatically (see the warning earlier in this log) — install it by hand before bundling, then re-run scripts/setup.sh; the Rust workspace will still compile and test without it. See docs/BUILD.md'
-  elif [ "$system_deps_status" -ne 0 ]; then
-    system_deps_problem='Linux build/test system dependencies could not be installed automatically (see the warning earlier in this log) — install them by hand, then re-run scripts/setup.sh; the Rust workspace will not compile or test until they are present. See docs/BUILD.md'
-  fi
-fi
-
 # --- Rust link-speed: auto-wire a faster linker (Linux, best-effort) --------
 # The link step is the long pole of incremental Rust compiles on this codebase
 # (see docs/BUILD.md → "Speed up Rust builds"), and a faster linker (mold, else
@@ -361,6 +330,63 @@ else
   bash scripts/setup-hooks.sh || echo "warning: hook toolchain setup skipped — run scripts/setup-hooks.sh before committing"
 fi
 
+# --- Linux system packages (opt-in, privileged) -----------------------------
+# System packages are the sole intentionally-privileged part of bootstrap, so
+# they remain an explicit opt-in (#3556). The remote SessionStart hook passes
+# the flag on a disposable VM; local/manual setup — `npm run setup`,
+# `just setup`, a bare `bash scripts/setup.sh` — never does, and retains the
+# long-standing warn-only contract. Failure here must not strand the
+# Node/.env/dev-DB setup that is still useful, but it is carried into the final
+# Ready-except summary instead of being hidden.
+#
+# Dispatched HERE — after BOTH the fast Node/npm-ci/.env/dev-DB critical path
+# AND the setsid launch of the hook-toolchain install above, not at the top of
+# the script and not between those two. Nothing in either of those precedes
+# this on the system packages: the sole consumer of $system_deps_problem /
+# $system_deps_status is the Rust preflight below (rust_problems collection
+# and the pkg-config webkit gate), both well after this point, and the setsid
+# launch above reads neither variable — it only needs `setsid`/`bash` on PATH.
+# So this synchronous, potentially slow apt call can sit after the detached
+# launch without anything between them going stale.
+#
+# This placement matters because the two are coupled the other way around
+# under the ~600s SessionStart budget this script operates under (see the
+# hook-toolchain comment above): the detached setsid launch is what lets the
+# SLOW hook-toolchain install escape that budget by running in the
+# background. If the (synchronous, network-bound) apt dispatch sat ahead of
+# that launch, its own duration would eat into the same budget before the
+# detached process ever got a chance to start — re-coupling the hook install
+# to apt's latency instead of decoupling it. Dispatching apt after the launch
+# means the background hook install is already underway, running concurrently
+# with apt, by the time apt's (possibly slow) network round-trip begins
+# (#3629 review).
+system_deps_problem=''
+system_deps_status=0
+if [ "$install_system_deps" = true ]; then
+  bash scripts/setup-system-deps.sh || system_deps_status=$?
+  if [ "$system_deps_status" -eq 42 ]; then
+    # setup-system-deps.sh's own classification: exit 42 means patchelf —
+    # the bundle-time-only package — is the SOLE thing that failed to
+    # install; the compile/test package set is confirmed present. Don't
+    # repeat the "will not compile or test" claim over a package that only
+    # matters to `cargo tauri build` bundling (#3629 review).
+    #
+    # This is deliberately NOT 2: bash itself exits 2 on ITS OWN syntax
+    # errors, so a future parse error in setup-system-deps.sh would (under
+    # the old sentinel) be misread right here as "patchelf-only, compile/test
+    # set confirmed intact" — a false all-clear. 42 is a status
+    # setup-system-deps.sh alone ever returns; any other nonzero value
+    # (including bash's 2, a not-found 127, a not-executable 126, or a
+    # signal's 128+n) falls through to the `elif` below and is treated as
+    # the generic, fail-loud "may not compile or test" case, which is the
+    # correct outcome when this script cannot vouch for the compile/test set
+    # at all — see setup-system-deps.sh's own comment on the sentinel choice.
+    system_deps_problem='patchelf (used only when bundling with "cargo tauri build" to rewrite RPATH) could not be installed automatically (see the warning earlier in this log) — install it by hand before bundling, then re-run scripts/setup.sh; the Rust workspace will still compile and test without it. See docs/BUILD.md'
+  elif [ "$system_deps_status" -ne 0 ]; then
+    system_deps_problem='Linux build/test system dependencies could not be installed automatically (see the warning earlier in this log) — install them by hand, then re-run scripts/setup.sh; the Rust workspace will not compile or test until they are present. See docs/BUILD.md'
+  fi
+fi
+
 # --- Rust-side preflight (advisory, best-effort) ----------------------------
 # Everything above verifies the NODE toolchain end-to-end, but this script
 # used to end with an unconditional "Ready. Run: cargo tauri dev" without
@@ -403,12 +429,12 @@ fi
 
 # Gate: skip only when the apt attempt genuinely could have left the
 # compile/test set incomplete (status 1, or never ran, or any other nonzero
-# status) — NOT for status 2, where setup-system-deps.sh already confirmed
+# status) — NOT for status 42, where setup-system-deps.sh already confirmed
 # the compile/test set installed and only bundle-time patchelf failed. A
 # blanket "any system_deps_problem -> skip" (the pre-#3629-review behaviour)
 # wrongly suppressed this probe — the only other consumer of the system
 # packages — over a patchelf-only miss that has nothing to do with webkit.
-if [ "$(uname -s)" = "Linux" ] && { [ "$system_deps_status" -eq 0 ] || [ "$system_deps_status" -eq 2 ]; }; then
+if [ "$(uname -s)" = "Linux" ] && { [ "$system_deps_status" -eq 0 ] || [ "$system_deps_status" -eq 42 ]; }; then
   # Package name vs. pkg-config module name mismatch: apt ships this as
   # `libwebkit2gtk-4.1-dev` (see docs/BUILD.md), but the .pc file it installs
   # is `webkit2gtk-4.1.pc` — no `lib` prefix. Verified against a box with the

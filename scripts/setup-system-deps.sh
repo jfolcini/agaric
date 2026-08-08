@@ -85,13 +85,29 @@ only_patchelf_missing() {
 }
 
 # Exit code convention consumed by scripts/setup.sh:
-#   0 = every BUILD_PACKAGES entry installed.
-#   2 = patchelf is the only one still missing — compile/test set intact.
-#   1 = anything else (including "can't tell" cases like a missing dpkg-query).
+#   0  = every BUILD_PACKAGES entry installed.
+#   42 = patchelf is the only one still missing — compile/test set intact.
+#   1  = anything else (including "can't tell" cases like a missing dpkg-query).
+#
+# Why 42 and not 2 (#3629 review): bash itself exits 2 on ITS OWN syntax
+# errors (`bash -c 'if [ 1 -eq 1'` -> exit 2), and this script runs under
+# `set -euo pipefail` with no trap — a parse error in setup-system-deps.sh
+# (e.g. a future edit that leaves an `if` unclosed) never reaches a line of
+# our code at all; bash aborts the whole script and *that* is the exit
+# status scripts/setup.sh receives. If this sentinel were 2, such a parse
+# error would be silently misread by setup.sh as "patchelf-only, compile/test
+# set confirmed intact" — a false all-clear from the exact script whose job
+# is to prevent one. 42 is never emitted by bash for its own errors (not the
+# generic failure 1, not bash's syntax-error 2, not 126/127 exec-failure, not
+# 128+signal, and not 64 — this repo's own arg-parse-error convention in
+# scripts/setup.sh) and this script is the only place that returns 42: every
+# exit path funnels through fail_status() (0/1/42) or the explicit `return 0`
+# on success, never a raw propagated apt-get/dpkg-query status. Do NOT "tidy"
+# this back to 2.
 fail_status() {
   if only_patchelf_missing; then
     warn 'patchelf (bundle-time only, used by "cargo tauri build" to rewrite RPATH) is the only package still missing — the compile/test package set installed fine.'
-    return 2
+    return 42
   fi
   return 1
 }
