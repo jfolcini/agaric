@@ -9746,6 +9746,30 @@ async fn two_devices_pair_bind_each_other_and_converge_3507() {
         "a correct passphrase must not trip the #855 gate, got {:?}",
         out.joiner_events
     );
+    // The same negative on the RESPONDER, which #3491 gave a local emit of its own.
+    //
+    // Note what this can and cannot catch, because the two are easy to confuse.
+    // It CANNOT catch the emit policy going wrong: a correct passphrase means the
+    // host never calls `reject` at all, so widening
+    // `Rejection::user_facing_message` to `Some` for every variant leaves this
+    // green (verified by trying it). The exhaustive policy check lives where it
+    // can actually fail — `only_the_passphrase_rejection_is_shown_to_this_devices_own_user`
+    // in `agaric-sync/src/sync_daemon/server.rs`, which does redden under that edit.
+    //
+    // What it DOES catch is the emit reaching a healthy host's sink at all: raised
+    // from the session path or a future scheduler/announce path rather than from
+    // `reject`, or `reject` itself being called here because the #855 proof gate
+    // inverted. Both are real, and both would put a "wrong code" banner on a
+    // successful pair. Neither is subtle — the assertions above would also fall
+    // over — so read this as a cheap second net on a specific user-visible
+    // symptom, not as the guard that makes the emit policy safe.
+    assert!(
+        !saw_error_containing_3507(&out.host_events, "pairing passphrase proof"),
+        "#3491: the responder's local rejection emit must be reachable only through \
+         `reject` — a correct passphrase must leave the host's own sink free of it, \
+         got {:?}",
+        out.host_events
+    );
 
     // ── 4. The window closes behind a completed pair (#1519) ───────────
     assert!(
@@ -9768,9 +9792,11 @@ async fn two_devices_pair_bind_each_other_and_converge_3507() {
 ///
 /// # What is deliberately NOT asserted here
 ///
-/// That the *host* surfaces the rejection to its own user. It does not: `reject`
-/// (`sync_daemon/server.rs`) writes the reason to the wire and to the log and
-/// touches no event sink. That is #3491, and it has its own test below.
+/// That the *host* surfaces the rejection to its own user. It now does (#3491:
+/// `reject` raises the same message on the rejecting device's own event sink),
+/// but that is the OTHER role's arm of this pair and it is asserted in its own
+/// test below — this one is the dialler's view, and keeping the two apart is
+/// what makes it visible that only one of them was ever red.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_mistyped_passphrase_pairs_neither_device_3507() {
     let out = drive_two_device_pairing_3507(false).await;
@@ -9823,23 +9849,30 @@ async fn a_mistyped_passphrase_pairs_neither_device_3507() {
     );
 }
 
-/// #3491 (currently RED, and ignored for that reason): the device that *rejects*
-/// a passphrase must surface the rejection to its own user, not only to the peer.
+/// #3491: the device that *rejects* a passphrase must surface the rejection to
+/// its own user, not only to the peer.
 ///
-/// # Why this is ignored rather than absent, and rather than green
+/// # The sibling of the assertion above, and why the pair is the point
 ///
-/// `reject` sends the reason over the wire and logs it; it touches no event
-/// sink. So the rejection reaches whichever device happened to dial, and which
-/// side dials first is daemon timing the user does not control — the same wrong
-/// passphrase produces a 2-second error or a five-minute wrong one.
+/// The test above pins the DIALLER's view: the initiator receives the
+/// responder's rejection over the wire and its dialog can say "wrong code". That
+/// arm passed before #3491 and still does. This arm is the same user-visible
+/// outcome asked of the other role, and it is the one that was red: `reject`
+/// sent the reason over the wire and logged it, and touched no event sink, so a
+/// device learned of a mismatch only when it happened to be the side that
+/// dialled. Which side dials first is daemon timing, not a user choice — so the
+/// same mistyped passphrase produced a two-second error or a five-minute one
+/// that blamed an expired code.
 ///
-/// Writing this as an assertion of today's behaviour (`host_events.is_empty()`)
-/// would pin the defect in place and would go red on the fix, which is backwards.
-/// Leaving it out entirely would let the fix ship without a check. So it states
-/// the property, and is skipped until the property holds: remove the `#[ignore]`
-/// with #3491's fix.
+/// Both arms assert against the SAME string (`peer_message()`, which #3492 made
+/// one constant shared with `PairingDialog.tsx`), because the frontend has one
+/// matcher: if the local emit said anything else the dialog would ignore it, and
+/// a test asserting merely "some error was emitted" would not notice.
+///
+/// It was previously `#[ignore]`d rather than written as an assertion of the
+/// broken behaviour (`host_events.is_empty()`), which would have pinned the
+/// defect and gone red on the fix. The `#[ignore]` comes off here.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[ignore = "#3491: the rejecting device has no local path to its own UI; unignore with the fix"]
 async fn the_rejecting_device_surfaces_its_own_rejection_3491() {
     let out = drive_two_device_pairing_3507(false).await;
 

@@ -81,7 +81,7 @@ use std::sync::atomic::AtomicBool;
 
 use crate::apply_host::ApplyHost;
 use crate::sync_constants::HANDSHAKE_TIMEOUT;
-use crate::sync_events::SyncEventSink;
+use crate::sync_events::{SyncEvent, SyncEventSink};
 use crate::sync_protocol::{SyncMessage, SyncOrchestrator};
 use crate::sync_scheduler::SyncScheduler;
 use crate::transport::driver::{Role, SessionLimits, finish_session, run_session};
@@ -115,6 +115,22 @@ pub async fn dispatch_with_handshake_timeout<T>(
         })?
 }
 
+/// The rejection text for [`Rejection::PairingProofMissing`] — the one rejection
+/// string in this file with a **machine** consumer as well as a human one.
+///
+/// `src/components/dialogs/PairingDialog.tsx` matches on it
+/// (`syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)`, its own re-declaration of
+/// this same text) to turn a waiting joiner's dialog into an immediate "wrong code"
+/// straight away, instead of letting it sit out the full pairing TTL and then blame
+/// an *expired* code for what was a *wrong* one.
+///
+/// Nothing in the type system connects the two declarations: this is a prose string
+/// crossing a process boundary as free text. Reword it here and every Rust and
+/// TypeScript test stays green while the dialog silently loses its failure path
+/// (#3492). `scripts/check-pairing-rejection-contract.mjs`, wired into `prek.toml`
+/// so it fires when EITHER side changes, is what makes that reword red.
+pub const PAIRING_PROOF_REQUIRED_MESSAGE: &str = "pairing passphrase proof required";
+
 /// Why a connection was turned away before it became a session.
 ///
 /// Every variant is a *rejection*, which in #2537's terms means `cancel_guard.owns`
@@ -145,9 +161,40 @@ impl Rejection {
         match self {
             Self::NotHeadExchange => "HeadExchange expected as the first message",
             Self::Unpaired => "peer not paired with this device",
-            Self::PairingProofMissing => "pairing passphrase proof required",
+            Self::PairingProofMissing => PAIRING_PROOF_REQUIRED_MESSAGE,
             Self::Self_ => "cannot sync with self",
             Self::Busy => "peer is busy with another sync session",
+        }
+    }
+
+    /// The text this device shows **its own** user, or `None` for a rejection the
+    /// user neither caused nor can act on.
+    ///
+    /// #3491: the #855 proof gate runs on the *responder*, so before this existed a
+    /// device learned of a passphrase mismatch only when it was the side that
+    /// dialled. Which side dials first is daemon timing, not a user choice, so the
+    /// same mistyped passphrase produced a two-second error or a five-minute wrong
+    /// one depending on who won the race. Returning the *same* string
+    /// [`peer_message`](Self::peer_message) puts on the wire means the frontend's
+    /// single matcher handles both origins — a locally-detected rejection and a
+    /// received one are indistinguishable to the UI, which is the point.
+    ///
+    /// Only `PairingProofMissing` is user-facing, and the other four are `None`
+    /// deliberately rather than by omission:
+    ///
+    /// * `Unpaired` fires constantly and by design — every stranger's probe, and
+    ///   (per #3502) both devices dialling and rejecting each other in the moments
+    ///   before a passphrase is typed. Surfacing it would make the error banner
+    ///   permanent background noise.
+    /// * `Busy` and `Self_` are the scheduler working correctly; there is nothing
+    ///   for a user to do about either.
+    /// * `NotHeadExchange` means a peer spoke a protocol this build does not, which
+    ///   is a log line for a developer, not a sentence for a user.
+    #[must_use]
+    pub fn user_facing_message(&self) -> Option<&'static str> {
+        match self {
+            Self::PairingProofMissing => Some(PAIRING_PROOF_REQUIRED_MESSAGE),
+            Self::NotHeadExchange | Self::Unpaired | Self::Self_ | Self::Busy => None,
         }
     }
 }
@@ -204,7 +251,8 @@ pub async fn handle_incoming_sync(
     .await
 }
 
-/// Tell the peer why it was turned away, then close.
+/// Tell the peer why it was turned away — and, when the reason is one its own user
+/// caused, tell this device's user too — then close.
 ///
 /// The close is `finish_session` rather than a bare `conn.close()` so a rejection sends
 /// its final frame the same way a completed session does. `Connection::close` lets the
@@ -212,11 +260,31 @@ pub async fn handle_incoming_sync(
 /// closing immediately after the write is what discards the explanation — and a peer
 /// that is told nothing retries blindly, which is the behaviour the rejection strings
 /// exist to prevent.
+///
+/// #3491: the local emit lives HERE, next to the wire send, rather than at the one
+/// call site that needs it today. Both destinations for a single rejection are then
+/// one thing to read and one thing to change, which is the same reason [`Rejection`]
+/// itself exists — and [`Rejection::user_facing_message`], not this function, decides
+/// which rejections a user hears about, so that policy is a `match` a reviewer can
+/// check exhaustively rather than a judgement re-made at each of five call sites.
+///
+/// The emit reuses the ordinary [`SyncEvent::Error`] path every other sync failure
+/// already travels (`sync_event_sinks.rs` → `sync:error` → `useSyncEvents.ts` →
+/// `useSyncStore.setState('error', message)`), so the frontend needs no second
+/// listener and cannot tell a locally-detected rejection from a received one.
 async fn reject(
     session: &mut InboundSession,
     reason: &Rejection,
+    remote_device_id: &str,
+    event_sink: &Arc<dyn SyncEventSink>,
     limits: SessionLimits,
 ) -> Result<(), AppError> {
+    if let Some(message) = reason.user_facing_message() {
+        event_sink.on_sync_event(SyncEvent::Error {
+            message: message.to_owned(),
+            remote_device_id: remote_device_id.to_owned(),
+        });
+    }
     send_sync_message(
         &mut session.send,
         &SyncMessage::Error {
@@ -362,7 +430,14 @@ async fn handle_incoming_sync_inner(
             msg = ?std::mem::discriminant(&opening),
             "rejecting sync: first message was not a HeadExchange"
         );
-        return reject(&mut session, &Rejection::NotHeadExchange, limits).await;
+        return reject(
+            &mut session,
+            &Rejection::NotHeadExchange,
+            &endpoint_id_str,
+            &event_sink,
+            limits,
+        )
+        .await;
     };
 
     // ── S-1: is this key allowed to sync with us? ─────────────────────────────
@@ -402,7 +477,17 @@ async fn handle_incoming_sync_inner(
                     %endpoint_id,
                     "rejecting sync from an unpaired device: no pairing is in progress"
                 );
-                return reject(&mut session, &Rejection::Unpaired, limits).await;
+                // The authenticated key, not `claimed_id`: inside this branch no
+                // `peer_refs` row binds the caller, so its self-reported device id is
+                // an unverified claim. The key is what actually dialled.
+                return reject(
+                    &mut session,
+                    &Rejection::Unpaired,
+                    &endpoint_id_str,
+                    &event_sink,
+                    limits,
+                )
+                .await;
             };
 
             // #855: admit an unpaired device during the pairing window ONLY if it
@@ -427,7 +512,20 @@ async fn handle_incoming_sync_inner(
                     "rejecting first sync from unpaired device: missing/mismatched pairing \
                      passphrase proof (#855)"
                 );
-                return reject(&mut session, &Rejection::PairingProofMissing, limits).await;
+                // #3491: this `reject` also raises the rejection on THIS device's own
+                // event sink (see the function's docs), so the side that detected the
+                // mismatch stops depending on having been the side that dialled.
+                // `endpoint_id_str` for the same reason as the S-1 branch above: a
+                // peer that just failed the proof has not earned the right to name
+                // itself, and the frontend keys on `message` regardless.
+                return reject(
+                    &mut session,
+                    &Rejection::PairingProofMissing,
+                    &endpoint_id_str,
+                    &event_sink,
+                    limits,
+                )
+                .await;
             }
             tracing::info!(
                 %endpoint_id,
@@ -440,7 +538,14 @@ async fn handle_incoming_sync_inner(
 
     if !remote_id.is_empty() && remote_id == device_id {
         tracing::warn!(%endpoint_id, "rejecting sync with self");
-        return reject(&mut session, &Rejection::Self_, limits).await;
+        return reject(
+            &mut session,
+            &Rejection::Self_,
+            &remote_id,
+            &event_sink,
+            limits,
+        )
+        .await;
     }
 
     // ── S-5: per-peer mutual exclusion ────────────────────────────────────────
@@ -465,7 +570,14 @@ async fn handle_incoming_sync_inner(
             peer_id = %remote_id,
             "rejecting incoming sync: already syncing with this peer"
         );
-        return reject(&mut session, &Rejection::Busy, limits).await;
+        return reject(
+            &mut session,
+            &Rejection::Busy,
+            &remote_id,
+            &event_sink,
+            limits,
+        )
+        .await;
     };
     tracing::info!(%endpoint_id, peer_id = %remote_id, "responder locked peer for sync");
 
@@ -778,6 +890,55 @@ mod tests {
         assert!(
             peer_is_bound_to_another_key(failed, "PEER-A", KEY_B),
             "a read that failed is not a read that found nothing; deny"
+        );
+    }
+
+    /// #3491: WHICH rejections reach this device's own user is a policy, and
+    /// `reject` consults it for all five. The end-to-end pair in
+    /// `src/sync_daemon/tests.rs` drives only the passphrase case, so without this
+    /// the four `None` arms are decided by a `match` nothing reads back.
+    ///
+    /// Both halves matter, and the negative half is the one with teeth: `Unpaired`
+    /// fires on every stranger's probe and (per #3502) on both devices dialling
+    /// each other in the seconds before a passphrase is typed, so flipping it to
+    /// `Some` would make the error banner permanent background noise on an idle,
+    /// healthy LAN — a regression no pairing test would notice, because none of
+    /// them is about an idle LAN.
+    #[test]
+    fn only_the_passphrase_rejection_is_shown_to_this_devices_own_user() {
+        assert_eq!(
+            Rejection::PairingProofMissing.user_facing_message(),
+            Some(PAIRING_PROOF_REQUIRED_MESSAGE),
+            "the passphrase mismatch is the one rejection a user caused and can fix"
+        );
+
+        for quiet in [
+            Rejection::NotHeadExchange,
+            Rejection::Unpaired,
+            Rejection::Self_,
+            Rejection::Busy,
+        ] {
+            assert_eq!(
+                quiet.user_facing_message(),
+                None,
+                "{quiet:?} is routine daemon traffic, not a sentence for a user"
+            );
+        }
+    }
+
+    /// The local emit and the wire send must carry the SAME text.
+    ///
+    /// `PairingDialog.tsx` has exactly one matcher for this rejection, and it is a
+    /// substring test against whatever string arrives. So if the message a device
+    /// raises for itself and the message it sends the peer ever diverge, one of the
+    /// two roles silently stops being handled — which is the #3491 bug re-created
+    /// one level down, inside the fix for it.
+    #[test]
+    fn the_local_and_wire_rejection_texts_are_the_same_string() {
+        assert_eq!(
+            Rejection::PairingProofMissing.user_facing_message(),
+            Some(Rejection::PairingProofMissing.peer_message()),
+            "the frontend cannot tell the two origins apart, and must not have to"
         );
     }
 }
