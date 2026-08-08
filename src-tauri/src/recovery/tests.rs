@@ -2169,14 +2169,39 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
 }
 
 /// Scale test: 10K ops spread across 10 block_ids plus one target block.
-/// Draft recovery for the target must complete quickly and return the
-/// correct result — verifying the idx_op_log_block_id index is used.
+/// Draft recovery for the target must complete correctly at 10K-op scale.
 ///
-/// No wall-clock assertion (flaky on loaded CI); instead we rely on the
-/// test timing out at the harness default (~60s) if the scan degrades
-/// to a full-table JSON parse.
+/// ## #3560 — why this is not (and cannot honestly be) `..._is_fast`
+///
+/// The name used to claim a wall-clock property (`_is_fast`) that the body
+/// never checked — the only thing that could fail it was the nextest
+/// harness timeout, which is CPU-contention headroom, not a perf budget
+/// (see `.config/nextest.toml`'s `terminate-after` comment). A genuine 2x
+/// regression (measured ~51s -> ~102s) would stay comfortably inside that
+/// leash and pass silently; a loaded box can redden it with nothing
+/// regressed at all (already observed: TIMED OUT at 120.048s under load).
+///
+/// Investigating a "work done, not time" proxy (option 2 in #3560) for
+/// *this test's* actual runtime: instrumentation shows `recover_at_boot`'s
+/// Step 1.5 boot replay of the 10K seeded (unmaterialized) ops through the
+/// full Materializer/Loro apply pipeline dominates — measured 622ms insert
+/// vs 42.3s recovery, i.e. >98% of wall-clock, on a box with concurrent
+/// contention. That cost is proportional, unavoidable production work
+/// (replaying N ops necessarily touches N ops); there is no query-count or
+/// row-scanned counter that would catch a genuine per-op latency
+/// regression there without becoming a wall-clock assertion in disguise.
+/// So no full-coverage non-wall-clock proxy exists for what this test
+/// actually measures, and `_is_fast` is dropped (option 3).
+///
+/// A *narrower* stable proxy does exist and is asserted below, as a bonus
+/// guard rather than a justification for the name: `EXPLAIN QUERY PLAN` on
+/// `recover_single_draft`'s supersession-check query (draft_recovery.rs)
+/// pins that it resolves via a block-scoped index seek, not the O(N)
+/// full-table scan the migration-0030 comment warns about. That assertion
+/// only has teeth once the planner has statistics — see the `ANALYZE` and
+/// its comment inline below, which is load-bearing, not incidental.
 #[tokio::test]
-async fn perf26_draft_recovery_at_10k_ops_is_fast() {
+async fn perf26_draft_recovery_at_10k_ops() {
     let (pool, _dir) = test_pool().await;
     let device_id = "dev-perf26scale";
 
@@ -2253,6 +2278,76 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
         "expected exactly 10K seeded ops, got {total_ops}"
     );
 
+    // Bonus deterministic guard (does not carry the whole "_is_fast" claim
+    // — see the doc comment above): at 10K-op scale, the supersession-check
+    // query `recover_single_draft` runs for every draft (draft_recovery.rs)
+    // must resolve via a BLOCK-SCOPED index seek — migration 0030's whole
+    // point — and never degrade to the full-table scan its comment warns
+    // about.
+    //
+    // ANALYZE first, deliberately. `EXPLAIN QUERY PLAN` never looks at bound
+    // values; the plan comes from the schema plus `sqlite_stat1` alone. A
+    // fresh test DB has no usable stats — `init_pool` does run
+    // `PRAGMA optimize`, but at pool-creation time, when `op_log` is still
+    // empty — so SQLite falls back to generic row estimates and picks the
+    // `(device_id, seq)` PRIMARY KEY autoindex, which walks every op this
+    // device ever wrote. Crucially that stats-free plan is *identical* when
+    // `idx_op_log_block_id` is absent, so asserting on it is a gate that
+    // cannot open (verified: dropping all three block_id indexes leaves this
+    // test green). ANALYZE on the seeded rows gives the planner the
+    // selectivity a populated production database has — where boot's
+    // `PRAGMA optimize` reaches the same plan — and the assertion below then
+    // reddens when the block-scoped index goes away.
+    //
+    // Both statements run on ONE pinned connection on purpose: SQLite caches
+    // `sqlite_stat1` per connection and only reloads it on the connection that
+    // ran ANALYZE, so issuing these against the pool can hand the EXPLAIN to a
+    // sibling connection still holding the empty-table stats.
+    let mut conn = pool.acquire().await.unwrap();
+    sqlx::raw_sql("ANALYZE").execute(&mut *conn).await.unwrap();
+
+    // Query text below is kept byte-for-byte identical to
+    // draft_recovery.rs's `recover_single_draft` query (only the
+    // `EXPLAIN QUERY PLAN` prefix differs), bound with the same values that
+    // query actually receives for this fixture's draft (draft_anchor_device
+    // NULL -> falls back to `device_id`; draft_anchor_seq defaults to 0 per
+    // migration 0092). The two literals are duplicated, not shared — sqlx's
+    // compile-time-checked `query_scalar!` only accepts a literal, so a
+    // shared `const` is not possible; `draft_recovery_supersession_sql_is_in_sync`
+    // below fails if they drift apart.
+    let plan: Vec<(i64, i64, i64, String)> = sqlx::query_as(
+        "EXPLAIN QUERY PLAN \
+         SELECT COUNT(*) FROM op_log \
+         WHERE block_id = ?1 \
+         AND op_type IN ('edit_block', 'create_block') \
+         AND device_id = ?2 \
+         AND seq > ?3",
+    )
+    .bind(target.as_str().to_ascii_uppercase())
+    .bind(device_id)
+    .bind(0i64)
+    .fetch_all(&mut *conn)
+    .await
+    .unwrap();
+    let plan_detail = plan
+        .iter()
+        .map(|r| r.3.as_str())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    assert!(
+        plan_detail.contains("SEARCH op_log USING INDEX") && plan_detail.contains("(block_id=?)"),
+        "draft recovery's supersession-check query must resolve via a \
+         BLOCK-SCOPED index seek at 10K-op scale (migration 0030), not via a \
+         whole-device seek or a full-table scan: {plan_detail}"
+    );
+    assert!(
+        !plan_detail.contains("SCAN op_log"),
+        "draft recovery's supersession-check query must not full-scan \
+         op_log at 10K-op scale: {plan_detail}"
+    );
+    // Release the pinned connection before recovery reaches for the pool.
+    drop(conn);
+
     // Run draft recovery. Without the indexed block_id column this would
     // json_extract across 10K rows per draft lookup.
     let recover_start = std::time::Instant::now();
@@ -2265,8 +2360,62 @@ async fn perf26_draft_recovery_at_10k_ops_is_fast() {
         "target draft must be recovered correctly at 10K scale"
     );
     eprintln!(
-        "perf26_draft_recovery_at_10k_ops_is_fast: \
+        "perf26_draft_recovery_at_10k_ops: \
          inserted 10K ops in {insert_elapsed:?}, recovered in {recover_elapsed:?}"
+    );
+}
+
+/// Drift guard for the duplicated SQL in `perf26_draft_recovery_at_10k_ops`.
+///
+/// That test runs `EXPLAIN QUERY PLAN` over its own copy of
+/// `recover_single_draft`'s supersession-check query. sqlx's compile-time
+/// checked `query_scalar!` accepts only a string literal, so the query cannot
+/// be hoisted into a shared `const` and the copy is unavoidable. Without this
+/// guard the copy would silently rot the moment `draft_recovery.rs` changed,
+/// leaving a query-plan assertion over a string nobody executes.
+#[test]
+fn draft_recovery_supersession_sql_is_in_sync() {
+    const SUPERSESSION_SQL: &str = "SELECT COUNT(*) FROM op_log \
+         WHERE block_id = ?1 \
+         AND op_type IN ('edit_block', 'create_block') \
+         AND device_id = ?2 \
+         AND seq > ?3";
+
+    /// Collapse Rust's `\<newline><indent>` string-literal continuations, so
+    /// the source text of a wrapped literal can be compared against its value.
+    fn collapse(src: &str) -> String {
+        let mut out = String::with_capacity(src.len());
+        let mut chars = src.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c == '\\' && chars.peek() == Some(&'\n') {
+                chars.next();
+                while chars
+                    .peek()
+                    .is_some_and(|c| *c != '\n' && c.is_whitespace())
+                {
+                    chars.next();
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    }
+
+    // The production site: draft_recovery.rs still runs exactly this query.
+    assert!(
+        collapse(include_str!("draft_recovery.rs")).contains(SUPERSESSION_SQL),
+        "the supersession-check query in draft_recovery.rs changed; update the \
+         EXPLAIN QUERY PLAN copy in perf26_draft_recovery_at_10k_ops (and this \
+         guard) to match, or that plan assertion silently stops describing \
+         production"
+    );
+    // The test site: the EXPLAIN copy is that query and nothing else.
+    assert!(
+        collapse(include_str!("tests.rs"))
+            .contains(&format!("EXPLAIN QUERY PLAN {SUPERSESSION_SQL}")),
+        "the EXPLAIN QUERY PLAN copy in perf26_draft_recovery_at_10k_ops no \
+         longer matches draft_recovery.rs's supersession-check query"
     );
 }
 
