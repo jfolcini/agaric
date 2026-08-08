@@ -2,6 +2,36 @@
 # One-shot post-clone setup. Idempotent: safe to re-run.
 set -euo pipefail
 
+install_system_deps=false
+for arg in "$@"; do
+  case "$arg" in
+    --install-system-deps) install_system_deps=true ;;
+    -h|--help)
+      echo 'Usage: bash scripts/setup.sh [--install-system-deps]'
+      echo '  --install-system-deps  Install Linux build/test packages (remote-session opt-in).'
+      exit 0
+      ;;
+    *)
+      echo "error: unknown setup option: $arg" >&2
+      exit 64
+      ;;
+  esac
+done
+
+# System packages are the sole intentionally-privileged part of bootstrap, so
+# they remain an explicit opt-in (#3556). The remote SessionStart hook passes
+# the flag on a disposable VM; local/manual setup — `npm run setup`,
+# `just setup`, a bare `bash scripts/setup.sh` — never does, and retains the
+# long-standing warn-only contract. Failure here must not strand the
+# Node/.env/dev-DB setup that is still useful, but it is carried into the final
+# Ready-except summary instead of being hidden.
+system_deps_problem=''
+if [ "$install_system_deps" = true ]; then
+  if ! bash scripts/setup-system-deps.sh; then
+    system_deps_problem='Linux build/test system dependencies could not be installed automatically (see the warning earlier in this log) — install them by hand, then re-run scripts/setup.sh; the Rust workspace will not compile or test until they are present. See docs/BUILD.md'
+  fi
+fi
+
 # --- Transient-failure retry ----------------------------------------------
 # Retry a flaky network command with exponential backoff (2s, 4s, 8s, 16s;
 # 5 attempts total). Container provisioning sometimes runs this script before
@@ -317,6 +347,10 @@ fi
 # the warn-and-collect `MISSING:` pattern in scripts/setup-hooks.sh.
 rust_problems=()
 
+if [ -n "$system_deps_problem" ]; then
+  rust_problems+=("$system_deps_problem")
+fi
+
 if ! command -v rustc >/dev/null 2>&1 || ! command -v cargo >/dev/null 2>&1; then
   rust_problems+=("rustc/cargo not found — install via https://rustup.rs, then re-run scripts/setup.sh")
 else
@@ -338,15 +372,23 @@ if command -v cargo >/dev/null 2>&1; then
   fi
 fi
 
-if [ "$(uname -s)" = "Linux" ] && command -v pkg-config >/dev/null 2>&1; then
+if [ "$(uname -s)" = "Linux" ] && [ -z "$system_deps_problem" ]; then
   # Package name vs. pkg-config module name mismatch: apt ships this as
   # `libwebkit2gtk-4.1-dev` (see docs/BUILD.md), but the .pc file it installs
   # is `webkit2gtk-4.1.pc` — no `lib` prefix. Verified against a box with the
   # apt package installed: `pkg-config --exists libwebkit2gtk-4.1` (with the
   # `lib` prefix) falsely reports missing; `webkit2gtk-4.1` is the real module
   # name and correctly reports present.
-  if ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
-    rust_problems+=("libwebkit2gtk-4.1 (system webkit) not found via pkg-config — install it (e.g. 'sudo apt-get install libwebkit2gtk-4.1-dev') before running the Tauri app")
+  #
+  # Wording (#3556): this used to end "…before running the Tauri app", which
+  # understates the impact and invites a session to skip it. The missing
+  # headers make `gdk-sys` (via `wry`) fail to configure, so the crate does not
+  # COMPILE — `cargo check --all-targets` and `cargo nextest` fail, and with
+  # them the whole pre-push gate. Say that, and keep a copy-pasteable command.
+  if ! command -v pkg-config >/dev/null 2>&1; then
+    rust_problems+=("pkg-config not found — it and the Linux WebKit/GTK development headers are required to build and test the Rust workspace, not just to run the app: cargo check/nextest fail without them. See docs/BUILD.md")
+  elif ! pkg-config --exists webkit2gtk-4.1 2>/dev/null; then
+    rust_problems+=("libwebkit2gtk-4.1 (system webkit) not found via pkg-config — the WebKit/GTK development headers are required to build and test the Rust workspace, not just to run the app: cargo check/nextest fail without them. Install with 'sudo apt-get install libwebkit2gtk-4.1-dev libgtk-3-dev librsvg2-dev patchelf' (see docs/BUILD.md)")
   fi
 fi
 

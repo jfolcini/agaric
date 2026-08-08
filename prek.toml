@@ -1562,7 +1562,22 @@ id = "shellcheck"
 name = "shellcheck"
 entry = "shellcheck --severity=warning"
 language = "system"
-files = "^(scripts|src-tauri/scripts)/.*\\.sh$"
+files = "^((scripts|src-tauri/scripts)/|\\.claude/hooks/).*\\.sh$"
+stages = ["pre-commit"]
+
+# Remote system-dependency bootstrap self-test (#3556). Drives the installer
+# through fake apt/dpkg/sudo commands so neither the hook nor CI ever mutates
+# the host while proving exact packages, idempotency, noninteractive privilege,
+# failure truthfulness, and the CLAUDE_CODE_REMOTE wiring.
+[[repos]]
+repo = "local"
+[[repos.hooks]]
+id = "setup-system-deps-self-test"
+name = "remote setup system-dependency self-test"
+entry = "bash scripts/test-setup-system-deps.sh"
+language = "system"
+pass_filenames = false
+files = "^(scripts/(setup|setup-system-deps|test-setup-system-deps)\\.sh|\\.claude/hooks/session-start\\.sh)$"
 stages = ["pre-commit"]
 
 # Migration immutability — enforces the AGENTS.md "append-only,
