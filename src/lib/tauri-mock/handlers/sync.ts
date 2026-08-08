@@ -144,7 +144,17 @@ export const syncHandlers = {
     // #3469 deletes — see `PAIRING_PEER_REVEAL_READS`.
     pairingPeerReveal.readsRemaining = PAIRING_PEER_REVEAL_READS
   },
-  cancel_pairing: returnUndefined,
+  cancel_pairing: () => {
+    // #3493 — cancelling disarms this device's pending-pairing marker on
+    // the real backend (`cancel_pairing_inner` deletes the row), so nothing
+    // can pair against it afterwards. The mock's stand-in for that armed
+    // marker is the pending peer reveal above, so cancel must clear it too.
+    // Left as `returnUndefined`, the mock would keep counting down and pin
+    // a peer several `list_peer_refs` reads AFTER the user cancelled —
+    // dev mode and E2E would show a device pairing itself out of a
+    // cancelled attempt, which is the exact behaviour #3493 removes.
+    pairingPeerReveal.readsRemaining = 0
+  },
 
   start_sync: (args) => {
     const a = args as Record<string, unknown>
