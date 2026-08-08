@@ -706,7 +706,7 @@ fn build_reverse_edit_block(
         .as_ref()
         .map(|(device, seq)| (device.as_str(), *seq));
     let prior_text =
-        block_ops::resolve_prior_text(prev_row, prior, prev_ptr)?.ok_or_else(|| {
+        block_ops::resolve_prior_text(prev_row.zip(prev_ptr), prior)?.ok_or_else(|| {
             // #3280: NOT `NotFound`. Neither source could reconstruct a prior
             // text — the normal case for the first local edit of a
             // peer-originated block, whose only op_log row is a replicated audit

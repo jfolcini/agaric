@@ -88,12 +88,38 @@ async fn assert_inverse_law(
     let reverse = match compute_reverse(pool, HARNESS_DEVICE, rec.seq).await {
         Ok(r) => r,
         Err(AppError::NonReversible { .. }) => {
-            // The only NonReversible ops the generator can produce are
-            // move_block whose only prior is an ancient create with no
-            // position — the generator always sets a position, so this
-            // should not fire. If it does, it is a legitimate rejection,
-            // not a mis-reversal; skip the inverse-law check for it.
-            return Ok(());
+            // #3645 unified the two reverse kernels' "no inverse can be
+            // reconstructed" outcome onto `NonReversible`. Before that,
+            // `reverse_edit_block`'s prior-lookup-broken case surfaced as
+            // `NotFound` and was caught by the arm below; now it lands
+            // here instead, alongside the LEGITIMATELY non-reversible ops
+            // the generator can produce (`purge_block`, unconditionally;
+            // and `move_block` whose only prior is an ancient create with
+            // no position — the generator always sets a position, so this
+            // arm should not fire for it in practice).
+            //
+            // The generator guarantees a legitimate prior always exists
+            // for Edit/Move/SetProperty (Edit only emitted after Create,
+            // Move only after a block has a known position, SetProperty
+            // only after the block exists) — and this harness is
+            // single-device, so the "first local edit of a
+            // peer-originated block" legitimate-NonReversible case
+            // (#3645's rationale for the batch kernel) cannot arise here
+            // either. So for those three variants a NonReversible means
+            // the prior lookup is broken — a real bug, not a legitimate
+            // refusal — and we fail so the shrinker can minimise. Other
+            // variants (Create/Delete/Restore/Tag/PurgeBlock/Attachment
+            // etc.) get a legitimate pass, matching the NotFound arm
+            // below.
+            match payload {
+                OpPayload::EditBlock(_) | OpPayload::MoveBlock(_) | OpPayload::SetProperty(_) => {
+                    return Err(TestCaseError::fail(format!(
+                        "unexpected NonReversible for {:?} — prior should always exist",
+                        std::mem::discriminant(payload)
+                    )));
+                }
+                _ => return Ok(()),
+            }
         }
         Err(AppError::NotFound(_)) => {
             // For Edit/Move/SetProperty the generator guarantees a prior

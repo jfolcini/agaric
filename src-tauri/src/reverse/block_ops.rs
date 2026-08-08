@@ -86,7 +86,7 @@ pub async fn reverse_edit_block(
         .prev_edit
         .as_ref()
         .map(|(device, seq)| (device.as_str(), *seq));
-    let prior_text = resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref(), prev_ptr)?
+    let prior_text = resolve_prior_text(prev_row.as_ref().zip(prev_ptr), timestamp_prior.as_ref())?
         .ok_or_else(
             // #3645: `NonReversible`, matching the batch kernel byte-for-byte.
             // This condition means "no inverse can be reconstructed for this op",
@@ -122,7 +122,7 @@ pub async fn reverse_edit_block(
 /// `(created_at, seq, device_id)` scan could pick a DIFFERENT ancestor that
 /// the live edit had already superseded.
 ///
-/// Fall back to the timestamp-ordered scan only when `prev_row` is `None` —
+/// Fall back to the timestamp-ordered scan only when `prev` is `None` —
 /// i.e. `prev_edit` was absent (pre-existing ops, or an edit whose pointer
 /// was never recorded) or the pointed-at op is gone (op-log compaction).
 /// A pointer into a replicated audit row RESOLVES; see
@@ -140,20 +140,20 @@ pub async fn reverse_edit_block(
 /// Returns `Ok(None)` when neither source yields text; the caller decides
 /// whether that is fatal (single-op) or skippable (batch).
 ///
-/// `prev_ptr` is the `(device_id, seq)` of the `prev_edit` pointer that
-/// produced `prev_row`, when there was one — it exists purely to give
+/// `prev` pairs the resolved `prev_edit` row with the `(device_id, seq)` of
+/// the pointer that produced it — the pointer exists purely to give
 /// [`text_of_prior_row`]'s corruption-path error message an identity to
-/// point at; it does not affect which branch is taken.
+/// point at. Pairing them in ONE `Option` (rather than two independently
+/// optional parameters) makes "a resolved row with no known pointer"
+/// unrepresentable: both call sites derive the row and the pointer from the
+/// same `payload.prev_edit`, so they are always Some/None together — the
+/// signature now says so instead of leaving a branch that merely assumed it.
 pub(crate) fn resolve_prior_text(
-    prev_row: Option<&(String, String)>,
+    prev: Option<(&(String, String), (&str, i64))>,
     timestamp_prior: Option<&(String, String)>,
-    prev_ptr: Option<(&str, i64)>,
 ) -> Result<Option<String>, AppError> {
-    if let Some((op_type, payload)) = prev_row {
-        let origin = match prev_ptr {
-            Some((device, seq)) => format!("named by prev_edit ({device}, {seq})"),
-            None => "from the timestamp scan".to_string(),
-        };
+    if let Some(((op_type, payload), (device, seq))) = prev {
+        let origin = format!("named by prev_edit ({device}, {seq})");
         return Ok(Some(text_of_prior_row(op_type, payload, &origin)?));
     }
     timestamp_prior
