@@ -2334,16 +2334,20 @@ async fn perf26_draft_recovery_at_10k_ops() {
         .map(|r| r.3.as_str())
         .collect::<Vec<_>>()
         .join(" | ");
+    // Single assertion: this is a single-table query (no joins, subqueries,
+    // or ORDER BY / GROUP BY), so `EXPLAIN QUERY PLAN` always yields exactly
+    // one plan row, and SQLite's EQP text for that row uses one of two
+    // mutually exclusive templates — "SEARCH TABLE ... USING INDEX ..." or
+    // "SCAN TABLE ...". A trailing `!plan_detail.contains("SCAN op_log")`
+    // check here would be unreachable dead code: verified by construction
+    // (issue #3618) that dropping all three block_id-related indexes makes
+    // `plan_detail` exactly `"SCAN op_log"`, which already fails the SEARCH
+    // check below before any second assertion could run.
     assert!(
         plan_detail.contains("SEARCH op_log USING INDEX") && plan_detail.contains("(block_id=?)"),
         "draft recovery's supersession-check query must resolve via a \
          BLOCK-SCOPED index seek at 10K-op scale (migration 0030), not via a \
          whole-device seek or a full-table scan: {plan_detail}"
-    );
-    assert!(
-        !plan_detail.contains("SCAN op_log"),
-        "draft recovery's supersession-check query must not full-scan \
-         op_log at 10K-op scale: {plan_detail}"
     );
     // Release the pinned connection before recovery reaches for the pool.
     drop(conn);
@@ -2365,6 +2369,63 @@ async fn perf26_draft_recovery_at_10k_ops() {
     );
 }
 
+/// Collapse Rust's `\<newline><indent>` string-literal continuations, so
+/// the source text of a wrapped literal can be compared against its value.
+///
+/// Normalizes `\r\n` to `\n` first: `include_str!` returns a file's raw
+/// bytes verbatim, unlike the string-literal lexer (which treats CRLF and
+/// LF continuations identically), so a CRLF checkout (e.g. Git-for-Windows'
+/// default `core.autocrlf=true` on a repo with no `.gitattributes` pinning
+/// `text=auto eol=lf`) would otherwise leave the `\` + `\r` unmatched and
+/// fail to collapse the line at all.
+fn collapse(src: &str) -> String {
+    let src = src.replace("\r\n", "\n");
+    let mut out = String::with_capacity(src.len());
+    let mut chars = src.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\\' && chars.peek() == Some(&'\n') {
+            chars.next();
+            while chars
+                .peek()
+                .is_some_and(|c| *c != '\n' && c.is_whitespace())
+            {
+                chars.next();
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// `collapse` must treat a `\r\n`-terminated continuation line the same as a
+/// bare `\n` one. Git-for-Windows checks this repo out with CRLF line endings
+/// by default (no `.gitattributes` pins `text=auto eol=lf`), and
+/// `include_str!` returns the file's raw bytes verbatim — it does not
+/// normalize line endings the way the string-literal lexer does. Without
+/// this, `draft_recovery_supersession_sql_is_in_sync` reddens spuriously on
+/// a CRLF checkout, and CI (ubuntu-24.04 only) can never catch it.
+#[test]
+fn collapse_tolerates_crlf() {
+    let lf = "SELECT COUNT(*) FROM op_log \\\n         WHERE block_id = ?1";
+    let crlf = "SELECT COUNT(*) FROM op_log \\\r\n         WHERE block_id = ?1";
+    let expected = "SELECT COUNT(*) FROM op_log WHERE block_id = ?1";
+    // Pin both inputs to the known-good collapsed form, not just to each
+    // other: two inputs collapsing to the SAME (still-wrong) string would
+    // satisfy an `lf == crlf` check without proving either one actually
+    // collapsed.
+    assert_eq!(
+        collapse(lf),
+        expected,
+        "collapse() must strip \\n continuations"
+    );
+    assert_eq!(
+        collapse(crlf),
+        expected,
+        "collapse() must treat \\r\\n continuations the same as \\n ones"
+    );
+}
+
 /// Drift guard for the duplicated SQL in `perf26_draft_recovery_at_10k_ops`.
 ///
 /// That test runs `EXPLAIN QUERY PLAN` over its own copy of
@@ -2380,27 +2441,6 @@ fn draft_recovery_supersession_sql_is_in_sync() {
          AND op_type IN ('edit_block', 'create_block') \
          AND device_id = ?2 \
          AND seq > ?3";
-
-    /// Collapse Rust's `\<newline><indent>` string-literal continuations, so
-    /// the source text of a wrapped literal can be compared against its value.
-    fn collapse(src: &str) -> String {
-        let mut out = String::with_capacity(src.len());
-        let mut chars = src.chars().peekable();
-        while let Some(c) = chars.next() {
-            if c == '\\' && chars.peek() == Some(&'\n') {
-                chars.next();
-                while chars
-                    .peek()
-                    .is_some_and(|c| *c != '\n' && c.is_whitespace())
-                {
-                    chars.next();
-                }
-            } else {
-                out.push(c);
-            }
-        }
-        out
-    }
 
     // The production site: draft_recovery.rs still runs exactly this query.
     assert!(
