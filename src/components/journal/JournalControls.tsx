@@ -19,7 +19,7 @@ import {
 } from 'date-fns'
 import { Calendar as CalendarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import type React from 'react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useShallow } from 'zustand/react/shallow'
 
@@ -28,12 +28,10 @@ import { Button } from '@/components/ui/button'
 import { IconButton } from '@/components/ui/icon-button'
 import { Kbd } from '@/components/ui/kbd'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import { useCalendarPageDates } from '@/hooks/useCalendarPageDates'
 import {
   formatDate,
   formatDateDisplay,
   formatWeekRange,
-  getCalendarMonthRange,
   getMaxJournalDate,
   MIN_JOURNAL_DATE,
 } from '@/lib/date-utils'
@@ -87,8 +85,6 @@ export function JournalControls(): React.ReactElement {
   useEffect(() => {
     setRovingMode(mode as JournalMode)
   }, [mode])
-  const calendarRange = useMemo(() => getCalendarMonthRange(currentDate), [currentDate])
-  const { highlightedDays } = useCalendarPageDates(calendarRange)
 
   function goPrev() {
     if (mode === 'daily') setCurrentDate(subDays(currentDate, 1))
@@ -368,7 +364,6 @@ export function JournalControls(): React.ReactElement {
           {calendarOpen && (
             <JournalCalendarDropdown
               currentDate={currentDate}
-              highlightedDays={highlightedDays}
               onSelectDate={(day) => {
                 navigateToDate(day, 'daily')
                 setCalendarOpen(false)

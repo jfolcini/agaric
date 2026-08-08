@@ -30,8 +30,6 @@ export interface AgendaFetchOutcome {
   hasMore: boolean
   /** Cursor for the next page (null when exhausted). */
   cursor: string | null
-  /** Deduplicated page IDs needing title resolution (never contains null). */
-  pageIds: string[]
 }
 
 /**
@@ -67,15 +65,18 @@ export function buildPageTitleMap(resolved: readonly ResolvedBlock[]): Map<strin
 /**
  * Transform an `executeAgendaFilters` result into an {@link AgendaFetchOutcome}:
  * pass the blocks through untruncated (#721 — see
- * {@link AgendaFetchOutcome.blocks}) and collect the page IDs that need
- * title resolution in a single pass-friendly package.
+ * {@link AgendaFetchOutcome.blocks}) alongside the pagination state.
+ *
+ * Deliberately does NOT derive page IDs: title resolution is keyed on the
+ * accumulated `filteredBlocks` (which load-more appends to), not on this
+ * single query's blocks, so it calls {@link collectUniquePageIds} itself
+ * (#3340). Deriving them here as well was dead work on every fetch.
  */
 export function processFilterResult(result: ExecuteFiltersResult): AgendaFetchOutcome {
   return {
     blocks: result.blocks,
     hasMore: result.hasMore,
     cursor: result.cursor,
-    pageIds: collectUniquePageIds(result.blocks),
   }
 }
 

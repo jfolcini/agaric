@@ -56,7 +56,6 @@ function Harness({ onClose }: { onClose?: () => void } = {}) {
       {open && (
         <JournalCalendarDropdown
           currentDate={new Date(2025, 5, 15)}
-          highlightedDays={[]}
           onSelectDate={close}
           onSelectWeek={close}
           onSelectMonth={close}

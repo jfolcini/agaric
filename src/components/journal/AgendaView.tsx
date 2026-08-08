@@ -14,6 +14,7 @@ import { AgendaResults } from '@/components/agenda/AgendaResults'
 import {
   appendUniqueBlocks,
   buildPageTitleMap,
+  collectUniquePageIds,
   processFilterResult,
 } from '@/components/journal/AgendaView.helpers'
 import { ViewHeader } from '@/components/layout/ViewHeader'
@@ -113,12 +114,8 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
         setAgendaCursor(outcome.cursor)
         setAgendaToday(result.today)
         setAgendaLoading(false)
-
-        // Resolve page titles for breadcrumbs
-        if (outcome.pageIds.length === 0) return
-        const resolved = unwrap(await commands.batchResolve(outcome.pageIds, { kind: 'global' }))
-        if (cancelled) return
-        setAgendaPageTitles(buildPageTitleMap(resolved))
+        // Page-title resolution deliberately does NOT live here — see the
+        // dedicated effect below (#3340).
       } catch (err) {
         logger.warn(
           'AgendaView',
@@ -138,6 +135,39 @@ export function AgendaView({ onNavigateToPage }: AgendaViewProps): React.ReactEl
       cancelled = true
     }
   }, [agendaFilters, refreshKey, currentSpaceId])
+
+  // ── Page-title resolution (#3340) ──────────────────────────────────
+  // Keyed on `filteredBlocks`, NOT on the initial-query identity. Title
+  // resolution used to live inside the fetch effect above, whose deps
+  // (`agendaFilters` / `refreshKey` / `currentSpaceId`) none of which change
+  // when `loadMoreAgenda` appends a page — so every appended row rendered its
+  // breadcrumb as "Untitled" and, because `groupBy` defaults to 'page',
+  // `groupByPage` labelled the group with the raw page ULID and sorted that
+  // pseudo-title alphabetically among the real ones.
+  //
+  // Titles are MERGED, never rebuilt (mirrors DonePanel): a later partial or
+  // failed resolve must not drop a title already resolved for a page that is
+  // still visible from an earlier cursor page. A resolve failure is logged and
+  // degrades to the "Untitled" fallback rather than failing the whole view —
+  // the blocks themselves loaded fine.
+  useEffect(() => {
+    const pageIds = collectUniquePageIds(filteredBlocks)
+    if (pageIds.length === 0) return
+    let cancelled = false
+    commands
+      .batchResolve(pageIds, { kind: 'global' })
+      .then(unwrap)
+      .then((resolved) => {
+        if (cancelled) return
+        setAgendaPageTitles((prev) => new Map([...prev, ...buildPageTitleMap(resolved)]))
+      })
+      .catch((err: unknown) => {
+        logger.warn('AgendaView', 'Failed to resolve agenda page titles', undefined, err)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [filteredBlocks])
 
   /**
    * Load the next page of agenda results.
