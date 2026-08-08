@@ -187,6 +187,8 @@ export const block: Record<string, string> = {
   'blockTree.noBlocks': 'No blocks yet. Click + Add block below to start writing.',
   'blockTree.emptyPageHint': 'Type / for commands',
   'blockTree.emptyPage': 'Creating first block\u2026',
+  'blockTree.emptyZoom': 'No blocks are visible inside this block.',
+  'blockTree.emptyZoomHint': 'Exit zoom to return to the page.',
   'blockTree.treeLabel': 'Block tree',
   'blockTree.createFirstBlockFailed': 'Failed to create first block',
   'blockTree.setDueDateFailed': 'Failed to set due date',

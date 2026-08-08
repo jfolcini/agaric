@@ -23,6 +23,7 @@ import { DragStateContext, DragStateStore } from '@/components/editor/drag-state
 import { ListMarkerProvider } from '@/components/editor/ListMarkerContext'
 import type { ListMarkerValue } from '@/components/editor/ListMarkerContext'
 import { SortableBlockWrapper } from '@/components/editor/SortableBlockWrapper'
+import { Button } from '@/components/ui/button'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { useExtraBlockProperties } from '@/hooks/useExtraBlockProperties'
 import { useListStyles } from '@/hooks/useListStyles'
@@ -36,12 +37,16 @@ import { cn } from '@/lib/utils'
 export interface BlockListRendererProps {
   /** Blocks visible during drag (descendants of active item excluded). */
   visibleItems: FlatBlock[]
-  /** Full block list (used for empty-state check). */
+  /** Full block list (distinguishes an empty page from an empty projection). */
   blocks: FlatBlock[]
   /** Whether the block list is loading. */
   loading: boolean
   /** Root parent ID (for empty-state message). */
   rootParentId: string | null
+  /** Whether the active projection is zoomed into a block. */
+  isZoomed: boolean
+  /** Safely leaves the zoomed projection when it has no visible rows. */
+  onExitZoom: () => void
   /** Currently focused block ID. */
   focusedBlockId: string | null
   /** Currently selected block IDs. */
@@ -88,6 +93,8 @@ export function BlockListRenderer({
   blocks,
   loading,
   rootParentId,
+  isZoomed,
+  onExitZoom,
   focusedBlockId,
   selectedBlockIds,
   projected,
@@ -246,8 +253,18 @@ export function BlockListRenderer({
     <ListMarkerProvider value={listMarkerValue}>
       <DragStateContext.Provider value={dragStore}>
         <SortableContext items={sortableItems} strategy={verticalListSortingStrategy}>
-          {blocks.length === 0 && !loading ? (
-            rootParentId ? (
+          {visibleItems.length === 0 && !loading ? (
+            isZoomed ? (
+              <EmptyState
+                message={t('blockTree.emptyZoom')}
+                description={t('blockTree.emptyZoomHint')}
+                action={
+                  <Button type="button" variant="outline" className="mt-4" onClick={onExitZoom}>
+                    {t('blockZoom.exitZoom')}
+                  </Button>
+                }
+              />
+            ) : rootParentId && blocks.length === 0 ? (
               <EmptyState message={t('blockTree.emptyPage')} />
             ) : (
               <EmptyState

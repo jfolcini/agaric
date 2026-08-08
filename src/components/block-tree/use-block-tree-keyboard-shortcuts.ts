@@ -47,7 +47,13 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
   pageStore: StoreApi<PageBlockState>
   selectedBlockIds: string[]
   hasChildrenSet: Set<string>
-  blocks: Array<{ id: string }>
+  /**
+   * IDs Ctrl/Cmd+A selects. At the page root this is the full page; while
+   * zoomed it is the complete (uncapped) zoom projection. This is separate
+   * from `visibleIds`, whose rendered-list contract intentionally respects
+   * the mount cap for range navigation.
+   */
+  selectAllIds: string[]
   /**
    * Visible block ids in rendered order (collapsed/zoomed filtering already
    * applied — `collapsedVisible`, or the zoomed slice). Keyboard range-select
@@ -85,7 +91,7 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     pageStore,
     selectedBlockIds,
     hasChildrenSet,
-    blocks,
+    selectAllIds,
     visibleIds,
     toggleCollapse,
     rawSelectAll,
@@ -135,16 +141,23 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
   )
 
   // ── Keyboard shortcuts for multi-selection (Ctrl+A, Escape) ─────────
-  // #713 note: these fire only when NO block is focused, so there is no
-  // ownership signal to gate on. Select-all/clear act on the global
-  // selection store (no per-block IPC side effects); deliberately ungated.
+  // #713 note: these fire only when NO block is focused, so block ownership
+  // cannot gate them. Select-all instead uses the last-interacted tree token
+  // (#774) so journal views with several mounted trees cannot race to replace
+  // the global selection. `defaultPrevented` lets an earlier shortcut owner
+  // retain the chord without this listener overwriting its result.
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       // `selectAllBlocks` (Ctrl/Cmd+A by default) — select all blocks (only
       // when not editing). Routed through matchesShortcutBinding (#724).
-      if (matchesShortcutBinding(e, 'selectAllBlocks') && !focusedBlockId) {
+      if (
+        !e.defaultPrevented &&
+        matchesShortcutBinding(e, 'selectAllBlocks') &&
+        !focusedBlockId &&
+        isLastInteractedTree(pageStore)
+      ) {
         e.preventDefault()
-        rawSelectAll(blocks.map((b) => b.id))
+        rawSelectAll(selectAllIds)
       }
       // `clearSelection` (Escape by default) — clear selection (when not
       // editing and there's an active selection).
@@ -160,7 +173,14 @@ export function useBlockTreeKeyboardShortcuts(options: UseBlockTreeKeyboardShort
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [focusedBlockId, selectedBlockIds.length, rawSelectAll, blocks, clearSelected])
+  }, [
+    focusedBlockId,
+    selectedBlockIds.length,
+    pageStore,
+    selectAllIds,
+    rawSelectAll,
+    clearSelected,
+  ])
 
   // ── Keyboard shortcut: extend selection (#922 — Shift+Arrow) ────────
   // Shift+ArrowDown / Shift+ArrowUp grow (or shrink) a contiguous block
