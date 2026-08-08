@@ -36,18 +36,26 @@
 # `msrv_fallback_version_for()` below for the pinned-version retry that
 # handles that case.
 #
-# Two DIFFERENT version tables, opposite precedence (issue #3602): a crate
-# CI pins explicitly (today: sqruff, `sqruff@0.38.0` in the `tool:` lists of
-# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`) must
-# install that EXACT version here too, tried FIRST — `cargo_get` used to try
-# latest first and only fall back to the pinned value if that failed, so on
-# any box where binstall could fetch a newer sqruff, local silently ran a
-# different linter version than CI, the exact divergence the pin exists to
-# prevent. `pinned_version_for()` is that table — consulted first, and wins
-# outright (no latest attempt for a pinned crate at all). It is a distinct
+# Two DIFFERENT version tables, opposite precedence (issue #3602, and #3611
+# for the sequel): a crate CI pins explicitly (today: sqruff, `sqruff@0.38.0`
+# in the `tool:` lists of `.github/workflows/_validate.yml` and
+# `scheduled-deep-checks.yml`) must install that EXACT version here too, and
+# — #3611 — REPLACE a differing one already on PATH, not just skip installing
+# because *something* is already there. `cargo_get` used to try latest first
+# and only fall back to the pinned value if that failed, so on any box where
+# binstall could fetch a newer sqruff, local silently ran a different linter
+# version than CI. That got one layer worse before it got fixed: routing the
+# pin through a branch INSIDE `cargo_get` still lost to `cargo_get`'s own
+# `have "$bin"` early return (line ~230) on any box that had already
+# installed a wrong version — which, for a crate #3602 had just made local
+# ever install unpinned, was every box that ran this script before the pin
+# existed. So a pinned crate is instead routed to `cargo_get_pinned` directly
+# at its call site — `cargo_get` is never invoked for it at all, and has no
+# pin-handling branch to bypass. `pinned_version_for()` is the version TABLE
+# a pinned crate's `cargo_get_pinned` call reads from; it is a distinct
 # concept from `msrv_fallback_version_for()`'s MSRV-skew escape hatch, which
-# stays tried SECOND, only after a real latest-install attempt fails, for a
-# crate with no CI pin.
+# stays tried SECOND inside `cargo_get`, only after a real latest-install
+# attempt fails, for a crate with no CI pin.
 set -uo pipefail
 
 have() { command -v "$1" >/dev/null 2>&1; }
@@ -171,13 +179,17 @@ ensure_cargo_binstall() {
 # pinned_version_for <crate> — echoes the EXACT version this crate must
 # install as, matching a version CI pins explicitly (today: sqruff, via
 # `sqruff@0.38.0` in the `taiki-e/install-action` `tool:` lists of
-# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`). This
-# table is consulted FIRST in `cargo_get` and WINS outright — no "try latest,
-# fall back to this on failure": that was precisely the bug (#3602). If a
-# pinned install fails, `cargo_get` warns rather than silently falling
-# through to latest, because installing *something* that isn't the pin is
-# not actually a fix for "local ran the wrong version" — it is the same bug
-# with different arithmetic.
+# `.github/workflows/_validate.yml` and `scheduled-deep-checks.yml`). This is
+# purely a DATA table — it does not itself install anything and is not
+# consulted by `cargo_get`. A pinned crate's `cargo_get_pinned` call site
+# (see sqruff's below) reads it and WINS outright: no "try latest, fall back
+# to this on failure" (#3602), and no "skip because something is already on
+# PATH" either (#3611 — that is exactly what `cargo_get`'s early return would
+# do, which is why a pinned crate is never routed through `cargo_get` at
+# all). If a pinned install fails, `cargo_get_pinned` warns rather than
+# silently falling through to latest, because installing *something* that
+# isn't the pin is not actually a fix for "local ran the wrong version" — it
+# is the same bug with different arithmetic.
 #
 # A plain `case` (not an associative array) so this stays bash-3.2/macOS
 # compatible. Keep in lockstep with the `tool:` pins above — bumping one
@@ -207,39 +219,44 @@ pinned_version_for() {
 # same table served both "install this first, it must match CI" and "retry
 # this after latest fails" with opposite precedence under one name). A crate
 # CI pins belongs in `pinned_version_for`, tried first, full stop — not
-# here. This table is empty today (sqruff moved to `pinned_version_for`
-# above); it stays as the escape hatch for a FUTURE crate that has MSRV skew
-# but no CI pin. A plain `case` (not an associative array) so this stays
-# bash-3.2/macOS compatible.
+# here. This table is empty for every REAL crate today (sqruff moved to
+# `pinned_version_for` above); it stays as the escape hatch for a FUTURE
+# crate that has MSRV skew but no CI pin. A plain `case` (not an associative
+# array) so this stays bash-3.2/macOS compatible.
 msrv_fallback_version_for() {
   case "$1" in
+    # TEST-ONLY: never a real crate `cargo_get` installs in production —
+    # exercised by --self-test's Test 2b below so `cargo_get`'s
+    # `[ -n "$msrv_fallback" ]` branches don't silently rot now that this
+    # table is empty in production (an empty table is otherwise a plausible
+    # end state, not a bug, so nothing else would ever redden if these
+    # branches broke).
+    selftest-msrv-fallback-crate) echo "9.9.9" ;;
     *) echo "" ;;
   esac
 }
 
-# cargo_get <crate> [binary] — install a Rust hook tool. Precedence:
-#   1. `pinned_version_for` — if the crate has a CI-matching pin, install
-#      EXACTLY that version (binstall, else `cargo install --locked`) and
-#      stop there — no latest attempt, no MSRV fallback. A failure here
-#      warns; it does not fall through to installing an unpinned version.
-#   2. No pin: install latest (prebuilt via binstall, else from source).
+# cargo_get <crate> [binary] — install a Rust hook tool at LATEST (with an
+# MSRV-skew fallback). Precedence:
+#   1. Already on PATH: skip. "Some recent version" is fine here — that is
+#      the whole point of this function, and exactly why it is the WRONG
+#      function for a crate whose local/CI version agreement is itself the
+#      property being bought (see cargo_get_pinned's docstring).
+#   2. Not present: install latest (prebuilt via binstall, else from source).
 #   3. Latest failed: `msrv_fallback_version_for`'s pinned-version retry, for
 #      a crate with MSRV skew but no CI pin.
+#
+# Deliberately does NOT consult `pinned_version_for` (#3611): it used to,
+# via a branch here that stopped at rule 1 for anything already installed —
+# so a box that had already picked up a wrong sqruff via rule 1 never even
+# reached the pin branch, the exact defect #3602's fix was meant to close.
+# A crate with a CI pin is instead wired directly to `cargo_get_pinned` at
+# its own call site (see sqruff below); `cargo_get` is never called for it.
+# Do not re-add a pin branch here — that is how the same bug comes back one
+# layer up with a different shape.
 cargo_get() {
-  local crate="$1" bin="${2:-$1}" pinned msrv_fallback
+  local crate="$1" bin="${2:-$1}" msrv_fallback
   if have "$bin"; then ok "$bin (already installed)"; return; fi
-
-  pinned="$(pinned_version_for "$crate")"
-  if [ -n "$pinned" ]; then
-    if have cargo-binstall && cargo binstall -y "${crate}@${pinned}" >/dev/null 2>&1; then
-      ok "$bin $pinned (binstall — pinned to match CI)"; return
-    fi
-    if cargo install --locked "${crate}@${pinned}" >/dev/null 2>&1; then
-      ok "$bin $pinned (cargo install — pinned to match CI)"; return
-    fi
-    warn "could not install pinned ${crate}@${pinned} (must match CI) — run: cargo install --locked ${crate}@${pinned}"
-    return
-  fi
 
   msrv_fallback="$(msrv_fallback_version_for "$crate")"
   if have cargo-binstall; then
@@ -346,6 +363,16 @@ if [ -z "$ZIZMOR_VERSION_AWK" ]; then
   warn "could not source ZIZMOR_VERSION_AWK from zizmor-hook.sh — falling back to cargo_get_pinned's \$NF default, which can disagree with the wrapper's \$2 and reinstall zizmor on every run (#3545)"
 fi
 
+# `sqruff --version` prints `sqruff 0.38.0` — unlike zizmor, no separate
+# hook wrapper owns a competing version assertion for sqruff to drift
+# against (prek.toml's sqruff hook shells out to `sqruff lint` directly,
+# with no version check of its own), so there is no second file to source
+# this from. Spelled out explicitly anyway, rather than left to
+# `cargo_get_pinned`'s `$NF` default, so the extraction sits next to the
+# call site that uses it and stays visible if that output ever grows a
+# trailing token the way zizmor's did (#3545).
+SQRUFF_VERSION_AWK='NR == 1 { print $2 }'
+
 # lychee is a heavy crate that cargo-binstall can't fetch prebuilt (it falls
 # back to a slow from-source compile), so — exactly like CI — pull the official
 # prebuilt release tarball instead. macOS prefers brew.
@@ -419,20 +446,28 @@ install_sqlx_cli() {
   fi
 }
 
-# ── self-test (#3602) ────────────────────────────────────────────────────
-# Falsifiable coverage for cargo_get's pin-vs-latest PRECEDENCE: proves a
-# pinned crate (sqruff) is requested at its exact pinned version FIRST, never
-# at "latest" first. Before this fix, `cargo_get sqruff` tried latest first
-# and only fell back to the pin if binstall's latest attempt failed — so on
-# any box where binstall could fetch a newer sqruff, local silently ran a
-# different linter version than the one CI pins (`sqruff@0.38.0` in the
-# `tool:` lists of `.github/workflows/_validate.yml` and
-# `scheduled-deep-checks.yml`), and the pin was never reached. Stubs `cargo`
-# / `cargo-binstall` on an isolated PATH — no network, no real installs, no
-# repo mutation. Wired as the `setup-hooks-selftest` prek hook (mirrors the
-# established `push.sh --self-test` / `verify-ci-equivalent.sh --self-test`
-# convention) so a future reordering of this precedence reddens instead of
-# silently re-diverging.
+# ── self-test (#3602, #3611) ─────────────────────────────────────────────
+# Falsifiable coverage for the sqruff pin's actual reach, in three parts:
+#   Test 1  — cargo_get_pinned requests the pinned version FIRST, never
+#             "latest" first (the original #3602 bug).
+#   Test 1b — cargo_get_pinned detects and REPLACES a wrong version already
+#             on PATH, rather than accepting it as "already installed" (the
+#             #3611 bug: `cargo_get`'s early return skipped its old pin
+#             branch entirely for any box that already had SOME sqruff —
+#             exactly the population #3602's fix was meant to cover).
+#   Test 1c — the real call site actually routes sqruff through
+#             `cargo_get_pinned`, not `cargo_get`. Test 1b alone can't catch
+#             a regression back to `cargo_get sqruff`: it calls
+#             `cargo_get_pinned` directly, so it stays green even if the
+#             call site stops using it.
+#   Test 2b — `cargo_get`'s own MSRV-fallback retry (a table that is empty
+#             for every real crate now that sqruff moved off it) still
+#             works, via a TEST-ONLY table entry.
+# Stubs `cargo` / `cargo-binstall` on an isolated PATH — no network, no real
+# installs, no repo mutation. Wired as the `setup-hooks-selftest` prek hook
+# (mirrors the established `push.sh --self-test` /
+# `verify-ci-equivalent.sh --self-test` convention) so a regression in any of
+# these reddens instead of silently re-diverging.
 if [ "${1:-}" = "--self-test" ]; then
   st_fail=0
   st_ok() { printf '  ok   - %s\n' "$1"; }
@@ -451,13 +486,21 @@ FAKEBINSTALL
   chmod +x "$stub_dir/cargo-binstall"
 
   # Fake `cargo` — logs every `binstall`/`install` request it receives, one
-  # line per request IN ORDER, to $REQUEST_LOG, and always SUCCEEDS. Both the
-  # bare ("latest") and pinned requests succeed here on purpose: the point of
-  # this stub is to isolate INSTALL ORDER — which version cargo_get asks for
-  # FIRST — not failure/retry handling.
+  # line per request IN ORDER, to $REQUEST_LOG, and SUCCEEDS for everything
+  # except one deliberate exception. Both the bare ("latest") and pinned
+  # requests succeed by default on purpose: the point of this stub is to
+  # isolate INSTALL ORDER — which version cargo_get asks for FIRST — not
+  # failure/retry handling. The one exception is `selftest-msrv-fallback-crate`
+  # requested bare: it FAILS, so Test 2b below can exercise cargo_get's
+  # otherwise-dead MSRV-fallback retry (that crate exists only in
+  # msrv_fallback_version_for's TEST-ONLY entry — nothing else ever requests
+  # it, so this exception cannot affect any other test's behavior).
   cat >"$stub_dir/cargo" <<'FAKECARGO'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$REQUEST_LOG"
+case "$*" in
+  "binstall -y selftest-msrv-fallback-crate") exit 1 ;;
+esac
 case "${1:-}" in
   binstall|install) exit 0 ;;
   *) echo "fake cargo: unhandled subcommand: $*" >&2; exit 99 ;;
@@ -465,35 +508,55 @@ esac
 FAKECARGO
   chmod +x "$stub_dir/cargo"
 
+  # Symlink the two real external tools this stub environment still needs
+  # into $stub_dir, rather than falling back to a host directory like
+  # /usr/bin:/bin, so `stub_path` is fully self-contained: no dependency on
+  # which system dirs happen to exist or what they contain on this
+  # particular host.
+  #   - awk:  cargo_get_pinned's version-field extraction (Test 1b below)
+  #           needs a real one.
+  #   - bash: the fake cargo/cargo-binstall scripts above are executed via
+  #           their `#!/usr/bin/env bash` shebang — that path is absolute so
+  #           the kernel finds `env` directly, but `env` then resolves
+  #           `bash` itself via a PATH lookup, so `bash` has to be ON this
+  #           stub PATH too or every stub invocation fails to launch.
+  for real_tool in awk bash; do
+    if command -v "$real_tool" >/dev/null 2>&1; then
+      ln -sf "$(command -v "$real_tool")" "$stub_dir/$real_tool"
+    fi
+  done
+
   # Deliberately excludes $HOME/.cargo/bin and $HOME/.local/bin (where a real
   # sqruff/prek would live if this box already has one) — only the stubs
-  # above plus the minimal system dirs `have`/awk/mktemp/etc. need, so the
-  # test is deterministic regardless of what is actually installed here.
-  stub_path="$stub_dir:/usr/bin:/bin"
+  # above, so the test is deterministic regardless of what is actually
+  # installed here.
+  stub_path="$stub_dir"
 
   # ── Test 1 (the falsifiable core) ── a PINNED crate is requested at its
-  # exact pinned version FIRST — never at "latest" first.
+  # exact pinned version FIRST — never at "latest" first. Calls
+  # `cargo_get_pinned` with the exact arguments the real call site below
+  # passes — not `cargo_get`, which has no pin awareness at all (#3611).
   req_log="$stub_dir/requests.log"
   : >"$req_log"
-  out="$(PATH="$stub_path" REQUEST_LOG="$req_log" cargo_get sqruff 2>&1)"
+  out="$(PATH="$stub_path" REQUEST_LOG="$req_log" cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
   first_req="$(head -n1 "$req_log" 2>/dev/null || true)"
   if [ "$first_req" = "binstall -y sqruff@0.38.0" ]; then
-    st_ok "cargo_get sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)"
+    st_ok "cargo_get_pinned sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)"
   else
-    st_bad "cargo_get sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)" \
+    st_bad "cargo_get_pinned sqruff requests the PINNED version first (matches CI's sqruff@0.38.0)" \
       "first cargo request was '${first_req:-<none>}', wanted 'binstall -y sqruff@0.38.0' — full log: $(tr '\n' ';' <"$req_log" 2>/dev/null)"
   fi
   case "$out" in
-    *0.38.0*) st_ok "cargo_get sqruff's own report names the pinned version" ;;
-    *) st_bad "cargo_get sqruff's own report names the pinned version" "output was: $out" ;;
+    *0.38.0*) st_ok "cargo_get_pinned sqruff's own report names the pinned version" ;;
+    *) st_bad "cargo_get_pinned sqruff's own report names the pinned version" "output was: $out" ;;
   esac
   # A bare/unversioned request IS "latest" — the exact thing #3602 forbids
   # for a pinned crate. It must never appear in the log at all.
   if grep -qxF 'binstall -y sqruff' "$req_log" 2>/dev/null; then
-    st_bad "cargo_get sqruff never requests the bare (latest) version" \
+    st_bad "cargo_get_pinned sqruff never requests the bare (latest) version" \
       "found an unversioned 'binstall -y sqruff' request — full log: $(tr '\n' ';' <"$req_log")"
   else
-    st_ok "cargo_get sqruff never requests the bare (latest) version"
+    st_ok "cargo_get_pinned sqruff never requests the bare (latest) version"
   fi
 
   # ── Test 2 ── an UNPINNED crate is unaffected: still tries latest first,
@@ -512,6 +575,78 @@ FAKECARGO
     *"(binstall)"*) st_ok "cargo_get prek's own report names a plain (latest) install" ;;
     *) st_bad "cargo_get prek's own report names a plain (latest) install" "output was: $out2" ;;
   esac
+
+  # ── Test 2b (MSRV-fallback coverage) ── `msrv_fallback_version_for` is
+  # empty for every REAL crate today, so `cargo_get`'s
+  # `[ -n "$msrv_fallback" ]` retry branches are otherwise dead and
+  # uncovered — an empty table is a plausible, correct end state, so nothing
+  # would ever redden if one of those branches broke. `selftest-msrv-fallback-crate`
+  # is a TEST-ONLY entry in that table (never installed in production); the
+  # fake cargo above fails its bare/latest request and succeeds its
+  # `@9.9.9` retry, exercising the binstall MSRV-fallback success path.
+  req_log2b="$stub_dir/requests2b.log"
+  : >"$req_log2b"
+  out2b="$(PATH="$stub_path" REQUEST_LOG="$req_log2b" cargo_get selftest-msrv-fallback-crate 2>&1)"
+  if grep -qxF 'binstall -y selftest-msrv-fallback-crate@9.9.9' "$req_log2b" 2>/dev/null; then
+    st_ok "cargo_get retries at the MSRV fallback version after the latest binstall request fails"
+  else
+    st_bad "cargo_get retries at the MSRV fallback version after the latest binstall request fails" \
+      "expected a 'binstall -y selftest-msrv-fallback-crate@9.9.9' retry after the bare request failed — full log: $(tr '\n' ';' <"$req_log2b" 2>/dev/null || echo '<none>')"
+  fi
+  case "$out2b" in
+    *"9.9.9"*"exceeds this box's rustc"*) st_ok "cargo_get's MSRV-fallback success report names the fallback version and the reason" ;;
+    *) st_bad "cargo_get's MSRV-fallback success report names the fallback version and the reason" "output was: $out2b" ;;
+  esac
+
+  # ── Test 1b (#3611 finding 1) ── a WRONG version of sqruff ALREADY on
+  # PATH must be DETECTED and REINSTALLED at the pin, not accepted as
+  # "already installed". Test 1 above starts from a PATH with no sqruff at
+  # all, so `have sqruff` is false there and never exercises the
+  # already-installed case that actually caused the divergence: on any box
+  # that already ran this script once and picked up a newer sqruff, `have
+  # sqruff` is TRUE (#3602 was filed on exactly that population). This is
+  # `cargo_get_pinned`'s own job — it already did this correctly for zizmor
+  # before this PR — so this guards its correctness in isolation; Test 1c
+  # below guards the other half, that sqruff's call site actually reaches
+  # this function at all. Stub a sqruff binary that reports a version other
+  # than the pin.
+  cat >"$stub_dir/sqruff" <<'FAKESQRUFF'
+#!/usr/bin/env bash
+echo "sqruff 0.30.0"
+FAKESQRUFF
+  chmod +x "$stub_dir/sqruff"
+
+  req_log3="$stub_dir/requests3.log"
+  : >"$req_log3"
+  out3="$(PATH="$stub_path" REQUEST_LOG="$req_log3" cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK" 2>&1)"
+  if grep -qxF 'binstall -y sqruff@0.38.0' "$req_log3" 2>/dev/null; then
+    st_ok "cargo_get_pinned sqruff detects a wrong version already on PATH and reinstalls at the pin"
+  else
+    st_bad "cargo_get_pinned sqruff detects a wrong version already on PATH and reinstalls at the pin" \
+      "wrong-version sqruff 0.30.0 stub was on PATH — expected a 'binstall -y sqruff@0.38.0' reinstall request, got: $(tr '\n' ';' <"$req_log3" 2>/dev/null || echo '<none>') (output: $out3)"
+  fi
+
+  # ── Test 1c (#3611 finding 1, the actual wiring) ── Test 1b above proves
+  # `cargo_get_pinned` ITSELF handles a wrong version correctly — it already
+  # did, for zizmor, before this PR. It proves nothing about whether
+  # sqruff's call site actually USES it: reverting the call site back to
+  # `cargo_get sqruff` (the exact regression this PR fixes) would leave
+  # Test 1b green while the real script silently regressed, because Test 1b
+  # calls `cargo_get_pinned` directly and never looks at the call site.
+  # Assert the call-site text itself, the same way zizmor-hook.sh's own
+  # self-test guards its `cargo_get_pinned zizmor …` wiring line. Scoped to
+  # the PRODUCTION portion of the file, from the "Setting up the prek hook
+  # toolchain" banner onward — this test's own grep pattern is that exact
+  # literal string, and it lives (like the rest of --self-test) ABOVE that
+  # banner, so searching the whole file ($0) would always match its own
+  # source line regardless of what the real call site says.
+  if awk '/^echo "Setting up the prek hook toolchain/{p=1} p' "$0" \
+      | grep -qF 'cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"'; then
+    st_ok "setup-hooks.sh's sqruff call site is wired through cargo_get_pinned, not cargo_get"
+  else
+    st_bad "setup-hooks.sh's sqruff call site is wired through cargo_get_pinned, not cargo_get" \
+      "expected the literal line cargo_get_pinned sqruff \"\$(pinned_version_for sqruff)\" sqruff \"\$SQRUFF_VERSION_AWK\" above the --self-test guard in $0"
+  fi
 
   # ── Test 3 ── the pin/fallback tables carry sqruff under the right NAME:
   # a hard pin (pinned_version_for), no longer an MSRV-skew fallback
@@ -575,7 +710,7 @@ else
   cargo_get cargo-deny
   cargo_get cargo-machete
   cargo_get cargo-audit
-  cargo_get sqruff
+  cargo_get_pinned sqruff "$(pinned_version_for sqruff)" sqruff "$SQRUFF_VERSION_AWK"
   cargo_get typos-cli typos
   cargo_get_pinned zizmor "$ZIZMOR_PINNED_VERSION" zizmor "$ZIZMOR_VERSION_AWK"
   cargo_get taplo-cli taplo
