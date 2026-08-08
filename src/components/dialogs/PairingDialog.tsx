@@ -63,6 +63,25 @@ interface PairingDialogProps {
 
 const PAIRING_TIMEOUT_SECONDS = 300 // 5 minutes
 
+// #3492 — the rejection text a device raises when a pairing proof does not
+// match, matched below to turn a waiting joiner's dialog into an immediate
+// "wrong code" instead of a five-minute wait that then blames an *expired* one.
+//
+// This is a SECOND declaration of a string whose original is
+// `PAIRING_PROOF_REQUIRED_MESSAGE` in
+// `src-tauri/agaric-sync/src/sync_daemon/server.rs`. It arrives here as free
+// prose inside a generic `sync:error` payload, so nothing in either language's
+// type system notices when the two stop agreeing — reword the Rust side and
+// every test on both sides stays green while this dialog silently loses its
+// failure path. `scripts/check-pairing-rejection-contract.mjs` (wired into
+// prek.toml, firing on a change to EITHER file) is what makes that reword red.
+//
+// Keep it byte-identical to the Rust constant, and keep the match below
+// referring to THIS binding: a re-inlined literal would satisfy the guard's
+// value comparison while the matcher itself drifted, so the guard checks for
+// the reference too.
+export const PAIRING_PROOF_REQUIRED_MESSAGE = 'pairing passphrase proof required'
+
 // #3469 — how often the joiner polls `list_peer_refs` while waiting for the
 // peer to appear (TOFU-pin on first authenticated connection). There is no
 // push notification for "a peer just got pinned" distinct from the generic
@@ -201,12 +220,20 @@ export function PairingDialog({
   )
 
   const syncSetState = useSyncStore((s) => s.setState)
-  // #3469 — the responder rejects a bad pairing proof over the wire with
-  // `"pairing passphrase proof required"` (sync_daemon/server.rs); today
-  // that reaches this device only via the generic `sync:error` Tauri event
-  // → `useSyncStore.setState('error', message)` (useSyncEvents.ts). Reading
-  // the store's `error` field here — rather than adding a second listener —
-  // reuses that exact, already-wired signal instead of duplicating it.
+  // #3469 — a device rejects a bad pairing proof with
+  // `PAIRING_PROOF_REQUIRED_MESSAGE` (sync_daemon/server.rs); that reaches this
+  // dialog via the generic `sync:error` Tauri event →
+  // `useSyncStore.setState('error', message)` (useSyncEvents.ts). Reading the
+  // store's `error` field here — rather than adding a second listener — reuses
+  // that exact, already-wired signal instead of duplicating it.
+  //
+  // #3491: this now fires for BOTH roles. The proof gate runs on the responder,
+  // so the rejection used to arrive only when this device was the one that
+  // dialled; the responder now raises the same message on its own event sink
+  // too. Which side dials first is daemon timing, not a user choice, so before
+  // that fix the same mistyped passphrase produced a two-second error or a
+  // five-minute timeout depending on the race. The two origins are
+  // indistinguishable here by design — one matcher, one code path.
   const syncError = useSyncStore((s) => s.error)
 
   // Host-only: mint a passphrase + QR code via the shared useIpcCommand
@@ -536,7 +563,7 @@ export function PairingDialog({
   // is 'waiting', a non-null `syncError` can only be a fresh rejection.
   useEffect(() => {
     if (joinerPhase !== 'waiting' || !syncError) return
-    if (!syncError.includes('pairing passphrase proof required')) return
+    if (!syncError.includes(PAIRING_PROOF_REQUIRED_MESSAGE)) return
     setJoinerPhase('entry')
     setWaitCountdown(null)
     setWords(['', '', '', ''])
