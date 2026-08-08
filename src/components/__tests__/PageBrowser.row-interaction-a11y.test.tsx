@@ -222,7 +222,7 @@ describe('PageBrowser', () => {
       expect(trashBtn).toBeDisabled()
     })
   })
-  it('success toast shown after delete', async () => {
+  it('success toast offers Undo after delete', async () => {
     const user = userEvent.setup()
     mockedInvoke.mockResolvedValueOnce({
       items: [makePage({ id: 'P1', content: 'Toast Page' })],
@@ -249,9 +249,15 @@ describe('PageBrowser', () => {
     const confirmBtn = await screen.findByRole('button', { name: /^Delete$/i })
     await user.click(confirmBtn)
 
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith('Page deleted')
-    })
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    const deleteToast = vi
+      .mocked(toast.success)
+      .mock.calls.find(([message]) => message === 'Page deleted')
+    const options = deleteToast?.[1] as
+      | { action?: { label?: string; onClick?: () => void } }
+      | undefined
+    expect(options?.action?.label).toBe('Undo')
+    expect(options?.action?.onClick).toBeTypeOf('function')
   })
   it('page name has title attribute for accessibility', async () => {
     mockedInvoke.mockResolvedValueOnce({

@@ -25,11 +25,15 @@
  * 21. A11y audit passes (axe)
  */
 
+import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { format } from 'date-fns'
+import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
+
+import { mockInvokeCommands } from '@/__tests__/helpers/invoke'
 
 // ── Mock BlockTree ──────────────────────────────────────────────────
 vi.mock('@/components/editor/BlockTree', () => ({
@@ -125,6 +129,11 @@ vi.mock('@/components/ui/button', () => ({
 import { DaySection } from '@/components/journal/DaySection'
 import type { DayEntry } from '@/lib/date-utils'
 import { useJournalStore } from '@/stores/journal'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
+
+const mockedInvoke = vi.mocked(invoke)
+const mockedToastSuccess = vi.mocked(toast.success)
 
 /** Format a Date as YYYY-MM-DD (mirrors the component's formatDate). */
 function formatDate(d: Date): string {
@@ -151,6 +160,12 @@ beforeEach(() => {
     currentDate: new Date(),
     scrollToDate: null,
     scrollToPanel: null,
+  })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_A',
+    availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
+    isReady: true,
   })
 })
 
@@ -728,6 +743,57 @@ describe('DaySection', () => {
       expect(await screen.findByText('Delete the note for Sun, Jun 15, 2025?')).toBeInTheDocument()
       // Description references Trash + Undo.
       expect(screen.getByText(/moves the day's note .* to Trash/i)).toBeInTheDocument()
+    })
+
+    it('keeps the ISO journal title in a cold cache while showing friendly delete copy', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(
+        mockInvokeCommands({
+          delete_block: () => ({
+            block_id: 'PAGE_1',
+            deleted_at: '2026-01-01T00:00:00Z',
+            descendants_affected: 0,
+          }),
+          restore_blocks_by_ids: () => ({ affected_count: 1 }),
+        }),
+      )
+      const entry = makeDayEntry({
+        pageId: 'PAGE_1',
+        dateStr: '2025-06-15',
+        displayDate: 'Sun, Jun 15, 2025',
+      })
+      render(
+        <DaySection entry={entry} mode="weekly" onAddBlock={noop} onNavigateToPage={() => {}} />,
+      )
+
+      await user.click(screen.getByRole('button', { name: /delete page/i }))
+      expect(await screen.findByText('Delete the note for Sun, Jun 15, 2025?')).toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: /^Delete page$/i }))
+
+      await waitFor(() => expect(mockedToastSuccess).toHaveBeenCalled())
+      expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+        title: '2025-06-15',
+        deleted: true,
+      })
+
+      const deleteToast = mockedToastSuccess.mock.calls.find(
+        ([message]) => message === 'Page deleted',
+      )
+      const options = deleteToast?.[1] as { action?: { onClick?: () => void } } | undefined
+      if (!options?.action?.onClick) throw new Error('Expected journal delete toast to expose Undo')
+      act(() => {
+        options.action?.onClick?.()
+      })
+
+      await waitFor(() => {
+        expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+          blockIds: ['PAGE_1'],
+        })
+      })
+      expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+        title: '2025-06-15',
+        deleted: false,
+      })
     })
   })
 

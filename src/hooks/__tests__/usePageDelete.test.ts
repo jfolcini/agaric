@@ -1,217 +1,82 @@
-/**
- * Tests for usePageDelete hook.
- *
- * Validates:
- *  - Setting and clearing delete target
- *  - Executing delete calls deleteBlock and updates pages list
- *  - Updates resolve store on successful delete
- *  - Shows success toast on delete
- *  - Shows error toast with retry on failed delete
- *  - Confirm delete executes deletion and clears target
- *  - deletingId tracks in-flight deletion
- */
+/** Tests for the thin PageBrowser adapter over usePageDeleteAction. */
 
-import { invoke } from '@tauri-apps/api/core'
-import { act, renderHook, waitFor } from '@testing-library/react'
-import { toast } from 'sonner'
+import { act, renderHook } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePageDelete } from '@/hooks/usePageDelete'
-import { keyFor, useResolveStore } from '@/stores/resolve'
-import { useSpaceStore } from '@/stores/space'
 
-const mockedInvoke = vi.mocked(invoke)
+const { requestDelete, sharedDialog } = vi.hoisted(() => ({
+  requestDelete: vi.fn(),
+  sharedDialog: { type: 'shared-confirm-dialog' },
+}))
+
+vi.mock('@/hooks/usePageDeleteAction', () => ({
+  usePageDeleteAction: () => ({
+    requestDelete,
+    deletingId: 'PENDING_PAGE',
+    isDeleting: true,
+    confirmDialog: sharedDialog,
+  }),
+}))
 
 beforeEach(() => {
   vi.clearAllMocks()
-  useResolveStore.setState({
-    cache: new Map(),
-    version: 0,
-    _preloaded: false,
-  })
-  // Pin the active space so `useResolveStore.set` composes
-  // its cache key with a deterministic prefix.
-  useSpaceStore.setState({
-    currentSpaceId: 'SPACE_TEST',
-    availableSpaces: [{ id: 'SPACE_TEST', name: 'Test', accent_color: null }],
-    isReady: true,
-  })
 })
 
 describe('usePageDelete', () => {
-  it('initializes with null deleteTarget and deletingId', () => {
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
+  it('exposes shared in-flight state and the shared confirm dialog', () => {
+    const { result } = renderHook(() => usePageDelete(vi.fn(), vi.fn()))
 
-    expect(result.current.deleteTarget).toBeNull()
-    expect(result.current.deletingId).toBeNull()
+    expect(result.current.deletingId).toBe('PENDING_PAGE')
+    expect(result.current.confirmDialog).toBe(sharedDialog)
   })
 
-  it('sets and clears deleteTarget', () => {
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    act(() => {
-      result.current.setDeleteTarget({ id: 'P1', name: 'Test Page' })
-    })
-    expect(result.current.deleteTarget).toEqual({ id: 'P1', name: 'Test Page' })
+  it('ignores a null row target', () => {
+    const { result } = renderHook(() => usePageDelete(vi.fn(), vi.fn()))
 
     act(() => {
       result.current.setDeleteTarget(null)
     })
-    expect(result.current.deleteTarget).toBeNull()
+
+    expect(requestDelete).not.toHaveBeenCalled()
   })
 
-  it('calls deleteBlock and removes page from list on success', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      block_id: 'P1',
-      deleted_at: '2025-01-15T00:00:00Z',
-      descendants_affected: 0,
-    })
-
+  it('delegates PageBrowser copy and removes only after the shared delete succeeds', () => {
     const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
+    const onRestored = vi.fn()
+    const { result } = renderHook(() => usePageDelete(setPages, onRestored))
 
-    await act(async () => {
-      await result.current.handleDeletePage('P1')
+    act(() => {
+      result.current.setDeleteTarget({ id: 'P1', name: 'Page one' })
     })
 
-    expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'P1' })
-    expect(setPages).toHaveBeenCalledWith(expect.any(Function))
-
-    // Verify the updater function filters out the deleted page
-    const firstCall = setPages.mock.calls[0]
-    if (firstCall === undefined) throw new Error('expected setPages to have been called')
-    const updater = firstCall[0]
-    const filtered = updater([
-      { id: 'P1', content: 'Page 1' },
-      { id: 'P2', content: 'Page 2' },
-    ])
-    expect(filtered).toEqual([{ id: 'P2', content: 'Page 2' }])
-  })
-
-  it('updates resolve store on successful delete', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      block_id: 'P1',
-      deleted_at: '2025-01-15T00:00:00Z',
-      descendants_affected: 0,
-    })
-
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    await act(async () => {
-      await result.current.handleDeletePage('P1')
-    })
-
-    const cached = useResolveStore.getState().cache.get(keyFor('SPACE_TEST', 'P1'))
-    expect(cached).toEqual({ title: '(deleted)', deleted: true })
-  })
-
-  it('shows success toast after deletion', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      block_id: 'P1',
-      deleted_at: '2025-01-15T00:00:00Z',
-      descendants_affected: 0,
-    })
-
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    await act(async () => {
-      await result.current.handleDeletePage('P1')
-    })
-
-    expect(toast.success).toHaveBeenCalledWith('Page deleted')
-  })
-
-  it('shows error toast with retry on failed delete', async () => {
-    mockedInvoke.mockRejectedValueOnce(new Error('Network error'))
-
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    await act(async () => {
-      await result.current.handleDeletePage('P1')
-    })
-
-    expect(toast.error).toHaveBeenCalledWith(
-      expect.stringContaining('Failed to delete page'),
+    expect(requestDelete).toHaveBeenCalledWith(
+      'P1',
+      'Page one',
       expect.objectContaining({
-        action: expect.objectContaining({ label: 'Retry' }),
+        confirmCopy: {
+          titleKey: 'pageBrowser.deletePage',
+          descriptionKey: 'pageHeader.deleteConfirm',
+          confirmKey: 'pageBrowser.delete',
+          cancelKey: 'pageBrowser.cancel',
+          values: { name: 'Page one' },
+        },
+        onRestored,
       }),
     )
-  })
+    expect(setPages).not.toHaveBeenCalled()
 
-  it('tracks deletingId during in-flight deletion', async () => {
-    let resolveDelete!: (v: unknown) => void
-    const pending = new Promise((resolve) => {
-      resolveDelete = resolve
-    })
-    mockedInvoke.mockReturnValueOnce(pending)
-
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    let deletePromise: Promise<void>
+    const options = requestDelete.mock.calls[0]?.[2] as
+      | { onDeleted?: (pageId: string) => void }
+      | undefined
     act(() => {
-      deletePromise = result.current.handleDeletePage('P1')
+      options?.onDeleted?.('P1')
     })
 
-    // While in flight, deletingId should be set
-    expect(result.current.deletingId).toBe('P1')
-
-    // Resolve the delete
-    await act(async () => {
-      resolveDelete({
-        block_id: 'P1',
-        deleted_at: '2025-01-15T00:00:00Z',
-        descendants_affected: 0,
-      })
-      await deletePromise
-    })
-
-    expect(result.current.deletingId).toBeNull()
-  })
-
-  it('handleConfirmDelete executes delete and clears target', async () => {
-    mockedInvoke.mockResolvedValueOnce({
-      block_id: 'P1',
-      deleted_at: '2025-01-15T00:00:00Z',
-      descendants_affected: 0,
-    })
-
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    // Set a delete target first
-    act(() => {
-      result.current.setDeleteTarget({ id: 'P1', name: 'My Page' })
-    })
-    expect(result.current.deleteTarget).not.toBeNull()
-
-    // Confirm delete
-    act(() => {
-      result.current.handleConfirmDelete()
-    })
-
-    // Target should be cleared immediately
-    expect(result.current.deleteTarget).toBeNull()
-
-    // Delete should have been called
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'P1' })
-    })
-  })
-
-  it('handleConfirmDelete is a no-op when no target is set', () => {
-    const setPages = vi.fn()
-    const { result } = renderHook(() => usePageDelete(setPages))
-
-    act(() => {
-      result.current.handleConfirmDelete()
-    })
-
-    expect(mockedInvoke).not.toHaveBeenCalled()
+    expect(setPages).toHaveBeenCalledTimes(1)
+    const updater = setPages.mock.calls[0]?.[0] as
+      | ((pages: Array<{ id: string }>) => Array<{ id: string }>)
+      | undefined
+    expect(updater?.([{ id: 'P1' }, { id: 'P2' }])).toEqual([{ id: 'P2' }])
   })
 })

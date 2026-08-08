@@ -1,16 +1,4 @@
-/**
- * Tests for usePageDeleteAction hook (Part A).
- *
- * Validates:
- *  - `requestDelete()` opens the ConfirmDialog (dialog mount appears in DOM).
- *  - On confirm: `delete_block` invoked once with the pageId.
- *  - Success toast carries an "Undo" action that calls
- *    `restore_blocks_by_ids` with `[pageId]`.
- *  - `onDeleted` callback fires once after a successful delete.
- *  - Custom `confirmCopy` (used by the journal day header) overrides
- *    the default title/description.
- *  - Failure path surfaces an error toast with a "Retry" action.
- */
+/** Tests for the shared confirm → delete → Undo → restore page flow. */
 
 import { invoke } from '@tauri-apps/api/core'
 import { act, render, screen, waitFor } from '@testing-library/react'
@@ -18,11 +6,17 @@ import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { type InvokeHandler, mockInvokeCommands } from '@/__tests__/helpers/invoke'
 import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
+import { keyFor, useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 const mockedInvoke = vi.mocked(invoke)
 
-/** Tiny harness that exposes the hook return on `window` for direct assertions. */
+function stubInvoke(overrides: Readonly<Record<string, InvokeHandler>>): void {
+  mockedInvoke.mockImplementation(mockInvokeCommands(overrides))
+}
+
 function Harness({ onReady }: { onReady: (api: ReturnType<typeof usePageDeleteAction>) => void }) {
   const api = usePageDeleteAction()
   onReady(api)
@@ -30,162 +24,211 @@ function Harness({ onReady }: { onReady: (api: ReturnType<typeof usePageDeleteAc
 }
 
 function renderHarness(): { api: ReturnType<typeof usePageDeleteAction> } {
-  // Mutable holder — the harness assigns the latest snapshot on every render.
   const holder: { api: ReturnType<typeof usePageDeleteAction> | null } = { api: null }
-  const onReady = (api: ReturnType<typeof usePageDeleteAction>) => {
-    holder.api = api
-  }
-  render(<Harness onReady={onReady} />)
+  render(
+    <Harness
+      onReady={(api) => {
+        holder.api = api
+      }}
+    />,
+  )
   if (!holder.api) throw new Error('Harness did not yield an api')
   return holder as { api: ReturnType<typeof usePageDeleteAction> }
 }
 
+function lastUndoAction(): () => void {
+  const lastCall = vi.mocked(toast.success).mock.calls.at(-1)
+  const options = lastCall?.[1] as { action?: { onClick?: () => void } } | undefined
+  const onClick = options?.action?.onClick
+  if (!onClick) throw new Error('Expected the success toast to expose Undo')
+  return onClick
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
+  useSpaceStore.setState({
+    currentSpaceId: 'SPACE_A',
+    availableSpaces: [{ id: 'SPACE_A', name: 'A', accent_color: null }],
+    isReady: true,
+  })
 })
 
 describe('usePageDeleteAction', () => {
-  it('opens the confirm dialog with default copy when requestDelete is called', async () => {
+  it('opens with default copy and accepts caller-specific button copy', async () => {
     const handle = renderHarness()
 
     act(() => {
       handle.api.requestDelete('PAGE_1', 'My Page')
     })
-
-    // Dialog renders the default page-delete copy. "Delete page" also
-    // appears as the action-button label, so scope to the heading.
     expect(await screen.findByRole('heading', { name: /^Delete page$/i })).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        'This action cannot be undone. This will permanently delete the page and all its blocks.',
-      ),
-    ).toBeInTheDocument()
-  })
+    expect(screen.getByText(/can be restored from trash/i)).toBeInTheDocument()
+    expect(screen.queryByText(/cannot be undone|permanently delete/i)).not.toBeInTheDocument()
 
-  it('overrides title + description when confirmCopy is supplied', async () => {
-    const handle = renderHarness()
-
+    await userEvent.setup().click(screen.getByRole('button', { name: /^Cancel$/i }))
     act(() => {
-      handle.api.requestDelete('PAGE_1', 'Sun, Jun 15, 2025', {
+      handle.api.requestDelete('PAGE_1', 'My Page', {
         confirmCopy: {
-          titleKey: 'journal.deleteDayTitle',
-          descriptionKey: 'journal.deleteDayDescription',
-          values: { date: 'Sun, Jun 15, 2025' },
+          titleKey: 'pageBrowser.deletePage',
+          descriptionKey: 'pageHeader.deleteConfirm',
+          confirmKey: 'pageBrowser.delete',
+          cancelKey: 'pageBrowser.cancel',
+          values: { name: 'My Page' },
         },
       })
     })
 
-    expect(
-      await screen.findByRole('heading', { name: /Delete the note for Sun, Jun 15, 2025\?/i }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByText(
-        "This moves the day's note (and its blocks) to Trash. You can restore it from Trash or with Undo.",
-      ),
-    ).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: 'Delete page?' })).toBeInTheDocument()
+    expect(screen.getByText(/can be restored from trash/i)).toBeInTheDocument()
+    expect(screen.queryByText(/cannot be undone|permanently delete/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
   })
 
-  it('confirm runs delete_block + fires success toast with Undo action', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      block_id: 'PAGE_1',
-      deleted_at: '2026-01-01T00:00:00Z',
-      descendants_affected: 0,
+  it('uses the cached title on a successful delete and calls onDeleted once', async () => {
+    stubInvoke({
+      delete_block: () => ({
+        block_id: 'PAGE_1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      }),
     })
-
-    const handle = renderHarness()
+    useResolveStore.getState().set('PAGE_1', 'Cached title', false)
     const onDeleted = vi.fn()
+    const handle = renderHarness()
 
     act(() => {
-      handle.api.requestDelete('PAGE_1', 'My Page', { onDeleted })
+      handle.api.requestDelete('PAGE_1', 'Visible fallback', { onDeleted })
     })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
 
-    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
-    await user.click(confirmBtn)
-
-    // The IPC should have been called exactly with the page id.
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'PAGE_1' })
-    })
-
-    // Success toast was raised with an "Undo" action.
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalledWith(
-        'Page deleted',
-        expect.objectContaining({
-          action: expect.objectContaining({ label: 'Undo' }),
-        }),
-      )
-    })
-
-    expect(onDeleted).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(onDeleted).toHaveBeenCalledTimes(1))
     expect(onDeleted).toHaveBeenCalledWith('PAGE_1')
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Cached title',
+      deleted: true,
+    })
+    expect(toast.success).toHaveBeenCalledWith(
+      'Page deleted',
+      expect.objectContaining({ action: expect.objectContaining({ label: 'Undo' }) }),
+    )
   })
 
-  it('clicking the Undo toast action restores via restore_blocks_by_ids', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockResolvedValue({
-      block_id: 'PAGE_1',
-      deleted_at: '2026-01-01T00:00:00Z',
-      descendants_affected: 0,
+  it('falls back to the visible title, then Undo restores status and calls onRestored', async () => {
+    stubInvoke({
+      delete_block: () => ({
+        block_id: 'PAGE_1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      }),
+      restore_blocks_by_ids: () => ({ affected_count: 1 }),
     })
-
+    const onRestored = vi.fn()
     const handle = renderHarness()
-    act(() => {
-      handle.api.requestDelete('PAGE_1', 'My Page')
-    })
-    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
-    await user.click(confirmBtn)
-
-    await waitFor(() => {
-      expect(toast.success).toHaveBeenCalled()
-    })
-
-    // Pull the action handler out of the success-toast call and invoke it.
-    // `notify.success(message, opts)` forwards `opts` straight through to
-    // `toast.success`, so the action handler we passed in the hook is the
-    // function we want to invoke here.
-    const successCalls = vi.mocked(toast.success).mock.calls
-    const lastCall = successCalls.at(-1)
-    const opts = lastCall?.[1] as { action: { onClick: () => void } } | undefined
-    expect(opts?.action?.onClick).toBeTypeOf('function')
-
-    // Now invoke Undo. It must call restore_blocks_by_ids with [pageId].
-    // Reset the invoke spy so we can assert it was called exactly once for
-    // the restore (not counting the delete above).
-    mockedInvoke.mockClear()
-    mockedInvoke.mockResolvedValue({ affected_count: 1 })
 
     act(() => {
-      opts?.action?.onClick()
+      handle.api.requestDelete('PAGE_1', 'Visible title', { onRestored })
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Visible title',
+      deleted: true,
     })
 
-    await waitFor(() => {
-      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
-        blockIds: ['PAGE_1'],
-      })
+    act(() => {
+      lastUndoAction()()
     })
-    expect(mockedInvoke).toHaveBeenCalledTimes(1)
+
+    await waitFor(() => expect(onRestored).toHaveBeenCalledWith('PAGE_1'))
+    expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+      blockIds: ['PAGE_1'],
+    })
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Visible title',
+      deleted: false,
+    })
   })
 
-  it('surfaces an error toast with a Retry action when delete fails', async () => {
-    const user = userEvent.setup()
-    mockedInvoke.mockRejectedValueOnce(new Error('backend boom'))
-
+  it('keeps the page deleted and skips onRestored when Undo restore fails', async () => {
+    stubInvoke({
+      delete_block: () => ({
+        block_id: 'PAGE_1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      }),
+      restore_blocks_by_ids: () => Promise.reject(new Error('restore failed')),
+    })
+    const onRestored = vi.fn()
     const handle = renderHarness()
     act(() => {
-      handle.api.requestDelete('PAGE_1', 'My Page')
+      handle.api.requestDelete('PAGE_1', 'Still deleted', { onRestored })
     })
-    const confirmBtn = await screen.findByRole('button', { name: /^Delete page$/i })
-    await user.click(confirmBtn)
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+
+    act(() => {
+      lastUndoAction()()
+    })
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith('Failed to restore page'))
+    expect(onRestored).not.toHaveBeenCalled()
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Still deleted',
+      deleted: true,
+    })
+  })
+
+  it('does not change resolve status or call onDeleted when delete fails', async () => {
+    stubInvoke({ delete_block: () => Promise.reject(new Error('backend boom')) })
+    useResolveStore.getState().set('PAGE_1', 'Original title', false)
+    const onDeleted = vi.fn()
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Visible title', { onDeleted })
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
 
     await waitFor(() => {
       expect(toast.error).toHaveBeenCalledWith(
         'Failed to delete page',
-        expect.objectContaining({
-          action: expect.objectContaining({ label: 'Retry' }),
-        }),
+        expect.objectContaining({ action: expect.objectContaining({ label: 'Retry' }) }),
       )
+    })
+    expect(onDeleted).not.toHaveBeenCalled()
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Original title',
+      deleted: false,
+    })
+  })
+
+  it('does not write an originating page into a newly active space', async () => {
+    let resolveDelete: ((value: unknown) => void) | undefined
+    stubInvoke({
+      delete_block: () =>
+        new Promise((resolve) => {
+          resolveDelete = resolve
+        }),
+    })
+    useResolveStore.getState().set('PAGE_1', 'Space A title', false)
+    const handle = renderHarness()
+    act(() => {
+      handle.api.requestDelete('PAGE_1', 'Fallback')
+    })
+    await userEvent.setup().click(await screen.findByRole('button', { name: /^Delete page$/i }))
+    act(() => {
+      useSpaceStore.setState({ currentSpaceId: 'SPACE_B' })
+      resolveDelete?.({
+        block_id: 'PAGE_1',
+        deleted_at: '2026-01-01T00:00:00Z',
+        descendants_affected: 0,
+      })
+    })
+
+    await waitFor(() => expect(toast.success).toHaveBeenCalled())
+    expect(useResolveStore.getState().cache.has(keyFor('SPACE_B', 'PAGE_1'))).toBe(false)
+    expect(useResolveStore.getState().cache.get(keyFor('SPACE_A', 'PAGE_1'))).toEqual({
+      title: 'Space A title',
+      deleted: false,
     })
   })
 })
