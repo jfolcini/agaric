@@ -356,6 +356,20 @@ pub async fn confirm_pairing_inner(
 /// inherent — cancel is a local state change, not a wire abort — and it is
 /// bounded by a single in-flight handshake rather than the full 5-minute TTL,
 /// which is the whole of what #3493 removes.
+///
+/// # Behaviour change (review, not a bug): closing the host dialog now genuinely cancels
+///
+/// The frontend already called `cancel_pairing` when the *host* dialog
+/// closed, before this fix existed — but the marker clear used to be gated
+/// (or, pre-#3493, simply absent in the ways described above), so that call
+/// was effectively a no-op on the marker: a joiner mid-attempt could still
+/// complete pairing after the host had closed its dialog. Now that the
+/// clear is unconditional, that same call genuinely disarms the marker, so
+/// a joiner submitting a passphrase after the host closes its dialog can no
+/// longer complete against it. This follows directly from the fix above
+/// rather than being a bug in its own right, but it regresses a flow that
+/// used to work (by accident) and is worth knowing before assuming "host
+/// closed its dialog" is harmless to an in-flight joiner.
 #[instrument(skip(pool, pairing_state), err)]
 pub async fn cancel_pairing_inner(
     pool: &SqlitePool,

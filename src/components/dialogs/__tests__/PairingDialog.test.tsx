@@ -1228,6 +1228,86 @@ describe('PairingDialog', () => {
       expect(onOpenChange).toHaveBeenCalledWith(false)
     })
 
+    // -------------------------------------------------------------------
+    // #3610 (review, finding 1) — a failed explicit-Cancel used to clear
+    // `backendArmedRef` optimistically and swallow the rejection into a
+    // silent `logger.error`: the marker stayed armed for its full TTL
+    // while the user believed Cancel had worked — the same shape #3493
+    // fixed above, reached via a DB-write failure instead of a stale gate.
+    //
+    // Asserts both halves: the failure is surfaced (mirroring the
+    // close/unmount path's existing `notify.error(t('pairing.cancelFailed'))`
+    // toast), and the ref is NOT cleared — proven behaviourally by showing
+    // the close/unmount cleanup effect still attempts its own cancelPairing
+    // when the dialog actually closes, which only happens if the ref is
+    // still armed.
+    // -------------------------------------------------------------------
+    it('a failed Cancel on the waiting screen surfaces an error toast and leaves the marker armed for the close/unmount retry (#3610 review)', async () => {
+      const user = userEvent.setup()
+      const onOpenChange = vi.fn()
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        confirm_pairing: undefined,
+      })
+
+      const { rerender } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+      await enterWaitingState(user)
+
+      // Exactly one cancel so far — the host session torn down by the role
+      // switch. The joiner's own `confirm_pairing` has since armed a marker
+      // this explicit Cancel click is about to (attempt to) tear down.
+      const cancelsBefore = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'cancel_pairing',
+      ).length
+      expect(cancelsBefore).toBe(1)
+
+      // The explicit-Cancel's own cancelPairing call fails (e.g. a DB
+      // write error).
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'cancel_pairing') throw new Error('db write failed')
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+
+      await user.click(document.querySelector('.pairing-waiting-cancel-btn') as HTMLElement)
+
+      // The failure is surfaced — no longer swallowed into a silent
+      // logger.error with nothing shown to the user.
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to cancel pairing')
+      })
+      // The dialog still closes — the user's Cancel click is honoured
+      // either way, it's just the backend marker that's left dangling.
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+
+      const cancelsAfterFailedClick = mockedInvoke.mock.calls.filter(
+        ([cmd]) => cmd === 'cancel_pairing',
+      ).length
+      expect(cancelsAfterFailedClick).toBe(2)
+
+      // Simulate the parent actually honouring `onOpenChange(false)` (the
+      // mock above only recorded the call; it doesn't flip the `open`
+      // prop by itself). Let cancelPairing succeed this time so the
+      // retry's own outcome doesn't confound the assertion.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'cancel_pairing') return undefined
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+      rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)
+
+      // The close/unmount cleanup effect fires its own cancelPairing —
+      // the one retry the system would otherwise have lost if the failed
+      // click above had cleared the ref anyway.
+      await waitFor(() => {
+        const cancelsAfterClose = mockedInvoke.mock.calls.filter(
+          ([cmd]) => cmd === 'cancel_pairing',
+        ).length
+        expect(cancelsAfterClose).toBe(3)
+      })
+    })
+
     it('resolves to success when a new peer appears in peer_refs, closing the dialog and announcing success', async () => {
       const onOpenChange = vi.fn()
       const newPeer = {

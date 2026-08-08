@@ -52,7 +52,6 @@ import { unwrap } from '@/lib/app-error'
 import type { PairingInfo, PeerRef } from '@/lib/bindings'
 import { commands } from '@/lib/bindings'
 import { formatErrorForDisplay } from '@/lib/error-display'
-import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { useSyncStore } from '@/stores/sync'
 
@@ -278,9 +277,14 @@ export function PairingDialog({
   // Cleanup-side cancelPairing — fires when the dialog closes or unmounts,
   // but ONLY if something is actually armed on the backend
   // (`backendArmedRef`, either role — #3493).
-  // Logger.warn + notify.error matches the original inline shape
-  // (handleCancel uses a different logger.error-only flavor that stays
-  // inline because it has no toast).
+  //
+  // #3610 (review) — closing the host dialog now genuinely disarms the
+  // pairing window: before #3493 the backend clear here was a no-op, so a
+  // joiner mid-attempt could still complete pairing after the host closed
+  // its dialog; it can no longer do so. Defensible (it follows directly
+  // from the marker-clear becoming unconditional) but worth knowing if
+  // you're relying on "host closed the dialog" as harmless to an
+  // in-flight joiner.
   const { execute: executeCancelPairingCleanup } = useIpcCommand<void, void>({
     call: () =>
       commands.cancelPairing().then((r) => {
@@ -671,24 +675,55 @@ export function PairingDialog({
     setWaitCountdown(null)
   }, [])
 
-  const handleCancel = useCallback(() => {
+  // #3610 (review) — explicit-Cancel's own cancelPairing call. Mirrors
+  // `executeCancelPairingCleanup`'s notify.error(t('pairing.cancelFailed'))
+  // shape instead of swallowing a failure into a silent logger.error: a
+  // failed cancel here is the same "marker stays armed for its full TTL
+  // while the user believes it's cancelled" shape #3493 fixed on the
+  // waiting-screen Cancel, just reached via a DB-write failure instead of
+  // a stale gate.
+  //
+  // `backendArmedRef` is deliberately only cleared in `onSuccess` — the
+  // ref means "something is armed on the backend", so if the DELETE never
+  // landed it still is. Leaving it armed on failure hands the retry to the
+  // close/unmount cleanup effect above: `handleCancel` still unconditionally
+  // calls `onOpenChange(false)` below, which flips `open` to false and runs
+  // that effect's cleanup — a no-op if this call succeeded (ref already
+  // clear), one retry attempt if it didn't. `cancel_pairing_inner`'s clear
+  // is a plain idempotent DELETE, so the two calls can never disagree.
+  const { execute: executeCancelPairingExplicit } = useIpcCommand<void, void>({
+    call: () =>
+      commands.cancelPairing().then((r) => {
+        unwrap(r)
+      }),
+    module: 'PairingDialog',
+    errorLogMessage: 'Failed to cancel pairing',
+    onSuccess: () => {
+      backendArmedRef.current = false
+    },
+    onError: () => {
+      notify.error(t('pairing.cancelFailed'))
+    },
+  })
+
+  const handleCancel = useCallback(async () => {
     // Tear down whatever this device has armed on the backend — the host's
     // QR session, or (#3493) the joiner's pending-pairing marker armed by
     // `confirm_pairing`. Gated on `backendArmedRef` so a Cancel with
     // nothing armed (e.g. the joiner's entry form, before Pair) stays a
     // pure UI act and does not disarm a marker it never owned.
+    //
+    // Awaited so `backendArmedRef` only clears once the call has actually
+    // succeeded — see `executeCancelPairingExplicit` above for why, and for
+    // how a failure still gets one retry via the close/unmount cleanup.
     if (backendArmedRef.current) {
-      backendArmedRef.current = false
-      commands
-        .cancelPairing()
-        .then((r) => unwrap(r))
-        .catch((err) => logger.error('PairingDialog', 'Failed to cancel pairing', undefined, err))
+      await executeCancelPairingExplicit()
     }
     resetRoleState()
     onOpenChange(false)
     // #288: Return focus to trigger element
     triggerRef?.current?.focus()
-  }, [onOpenChange, triggerRef, resetRoleState])
+  }, [onOpenChange, triggerRef, resetRoleState, executeCancelPairingExplicit])
 
   // #3463 — switching to the joiner path is what DECLARES the joiner role
   // (replacing the removed upfront chooser question). Crucially, this
