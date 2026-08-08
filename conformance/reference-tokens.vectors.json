@@ -62,6 +62,16 @@
       "requestedTagNames": []
     },
     {
+      "name": "an ordinary bullet outside a fence still ends the block run (#3617)",
+      "input": "a #before\n- b #x\n```\n#inside\n```",
+      "requestedTagNames": ["before"]
+    },
+    {
+      "name": "an ordinary bullet after a closed fence still starts a fresh block (#3617)",
+      "input": "```\n#inside\n```\n- #tail",
+      "requestedTagNames": ["tail"]
+    },
+    {
       "name": "text sharing a block with a fence is literal on both sides",
       "input": "a `x` b\n``` #inside\nc #after",
       "requestedTagNames": []

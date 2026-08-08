@@ -266,27 +266,42 @@ function fencedCodeSpans(content: string): Span[] {
     const depth = Math.floor((line.length - trimmed.length) / 2)
     const [lineStart, lineEnd] = bounds[i] ?? [content.length, content.length]
 
-    // #2866 recovery, evaluated before the line is classified (as in Rust).
+    // #2866 recovery, evaluated before the line is classified (as in Rust):
+    // an ordinary bullet at/above the open fence's depth force-closes an
+    // unterminated fence, unless the next non-blank line is a bare closing
+    // delimiter. This only flips `inFence` back to false — ending the run at
+    // this line is now the job of the general #3617 bullet check below, the
+    // same as it is for any other bullet line.
     if (inFence && !isDelim && BULLET_LINE_RE.test(trimmed) && depth <= openDepth) {
       let peek = i + 1
       while (peek < lines.length && leftTrim(lines[peek] ?? '').length === 0) peek += 1
       // Past the end counts as "not a bare delimiter", matching the importer's
       // fall-through-to-recovery at EOF.
-      if (!leftTrim(lines[peek] ?? '').startsWith('```')) {
-        inFence = false
-        flushRun()
-        runStart = lineStart
-        runEnd = lineStart
-        runHasCode = false
-      }
+      if (!leftTrim(lines[peek] ?? '').startsWith('```')) inFence = false
     }
 
-    if (inFence || isDelim) runHasCode = true
-    runEnd = lineEnd
+    const lineIsCode = inFence || isDelim
     if (isDelim) {
       if (!inFence) openDepth = depth
       inFence = !inFence
     }
+
+    // #3617 — mirror the importer's per-line block boundary generally, not
+    // only at the #2866 recovery point above: an ordinary bullet (`- ` or a
+    // bare `-`) that is NOT itself fence content — i.e. not a line strictly
+    // INSIDE an already-open fence — starts a NEW block, ending the current
+    // run. A bullet whose own line opens/closes the fence (`- ```) still
+    // counts, since `inCodeBody` is false for the delimiter line itself.
+    const inCodeBody = inFence && !isDelim
+    if (!inCodeBody && BULLET_LINE_RE.test(trimmed)) {
+      flushRun()
+      runStart = lineStart
+      runEnd = lineStart
+      runHasCode = false
+    }
+
+    if (lineIsCode) runHasCode = true
+    runEnd = lineEnd
   }
   flushRun()
   return spans
