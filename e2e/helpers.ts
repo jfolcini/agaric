@@ -201,24 +201,56 @@ export async function expectNoHorizontalOverflow(
     //
     // Whether `el` establishes a CSS containing block for a `position:
     // absolute` descendant (CSS Position spec, "Fixed/Absolute positioning
-    // layout model" — `contain`/`filter`/`perspective`/`transform`/
-    // `will-change` all establish one in addition to `position !== static`).
+    // layout model" — `contain`/`filter`/`backdrop-filter`/`perspective`/
+    // `transform`/`will-change` all establish one in addition to
+    // `position !== static`).
     // `position: fixed`'s containing-block rules differ slightly, but fixed
     // nodes are never evaluated here (skipped as noise below), so that
     // distinction doesn't matter for this walk.
+    //
+    // Under-reporting a property here is a live bug, not pedantry: the walk
+    // then starts ABOVE the node's real containing block, so the marked clip
+    // that genuinely hides the node is never consulted and the guard reports a
+    // phantom offender. Over-reporting is the mirror bug — the walk stops at a
+    // box that does not clip the node and a real overflow is swallowed. Every
+    // entry below was confirmed by measuring where an abs child actually lands
+    // in Chromium (see the fixtures in `horizontal-overflow-helper.spec.ts`).
     const establishesContainingBlock = (style: CSSStyleDeclaration): boolean => {
       if (style.position !== 'static') return true
       if (style.transform !== 'none') return true
       if (style.filter !== 'none') return true
+      // Filter Effects 2 gives a non-`none` `backdrop-filter` the same
+      // containing-block powers as `filter`, and Chromium implements it. The
+      // repo's `backdrop-blur-*` surfaces include UNPOSITIONED ones
+      // (`GraphFilterBar`, `LocalGraphControl`), so nothing else in this
+      // predicate covers them (#3609). Compare against `'none'` rather than
+      // testing truthiness: the computed value on an unfiltered element is the
+      // non-empty string `'none'`, so `if (style.backdropFilter)` would make
+      // EVERY element a containing block and swallow real overflow.
+      if (style.backdropFilter !== 'none') return true
       if (style.perspective !== 'none') return true
       if (
         style.willChange
           .split(',')
           .map((v) => v.trim())
-          .some((v) => v === 'transform' || v === 'filter' || v === 'perspective')
+          // `'backdrop-filter'` is its own token — a `v === 'filter'` check
+          // does not match it.
+          .some(
+            (v) =>
+              v === 'transform' || v === 'filter' || v === 'backdrop-filter' || v === 'perspective',
+          )
       )
         return true
       if (/\b(layout|paint|strict|content)\b/.test(style.contain)) return true
+      // Deliberately NOT `container-type`. It looks like it belongs (the old
+      // "size containers apply layout containment" reading, still repeated in
+      // places), but the CSSWG resolved that `container-type` forces only an
+      // independent formatting context — abs descendants escape a query
+      // container (csswg-drafts #10102), and Chromium behaves that way:
+      // measured, an abs child of a `container-type: size | inline-size` box
+      // resolves against the ICB, not the container. Adding it would suppress
+      // real overflow. Note that computed `contain` reads `none` on a query
+      // container, so the regex above never sees `container-type` either way.
       return false
     }
 
@@ -231,8 +263,14 @@ export async function expectNoHorizontalOverflow(
     // `parentElement`: an unpositioned `data-overflow-clip` wrapper sitting
     // between the two does not actually clip it, so the walk must skip past
     // it rather than counting it as covering the node (#3603).
-    const nextClipAncestor = (el: Element): Element | null => {
-      if (getComputedStyle(el).position !== 'absolute') return el.parentElement
+    //
+    // `style` is the caller's already-computed style for `el`. Every call site
+    // has one in hand (the walk computes it for its own fixed/sticky skip and
+    // its `overflow-x` read), and `getComputedStyle` forces style resolution,
+    // so taking it as a parameter keeps this to ONE computation per node per
+    // assertion instead of two.
+    const nextClipAncestor = (el: Element, style: CSSStyleDeclaration): Element | null => {
+      if (style.position !== 'absolute') return el.parentElement
       let p = el.parentElement
       while (p) {
         if (establishesContainingBlock(getComputedStyle(p))) return p
@@ -248,9 +286,10 @@ export async function expectNoHorizontalOverflow(
       if (style.position === 'fixed' || style.position === 'sticky') continue
       // Skip anything living inside an intentional horizontal scroller.
       let inScroll = false
-      let p: Element | null = nextClipAncestor(node)
+      let p: Element | null = nextClipAncestor(node, style)
       while (p && p !== root && root.contains(p)) {
-        const ox = getComputedStyle(p).overflowX
+        const pStyle = getComputedStyle(p)
+        const ox = pStyle.overflowX
         const intentionalHardClip =
           p.getAttribute('data-overflow-clip') === 'intentional' &&
           (ox === 'hidden' || ox === 'clip')
@@ -258,7 +297,7 @@ export async function expectNoHorizontalOverflow(
           inScroll = true
           break
         }
-        p = nextClipAncestor(p)
+        p = nextClipAncestor(p, pStyle)
       }
       if (inScroll) continue
       const r = node.getBoundingClientRect()
