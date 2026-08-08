@@ -679,11 +679,16 @@ fi' "$setup_hooks" 2>&1
   # redefinition means the LAST one defined is the one that executes) —
   # exactly the "matches, but the wrong line" failure mode fail-closed
   # extraction is supposed to rule out, not just "matches nothing".
-  have_def_count="$(grep -c '^have() {' "$setup_hooks" 2>/dev/null || true)"
+  # Counted in EVERY definition form bash accepts, not just the one the sed
+  # above matches. `function have {`, `have () {` and an indented redefinition
+  # all escape that stricter pattern, so counting only `^have() {` would let
+  # precisely the redefinitions that beat the extractor go unnoticed while
+  # this assertion claimed to have checked for them.
+  have_def_count="$(grep -cE '^[[:space:]]*(function[[:space:]]+have([[:space:]]*\(\))?|have[[:space:]]*\(\))[[:space:]]*\{' "$setup_hooks" 2>/dev/null || true)"
   if [ "${have_def_count:-0}" = 1 ]; then
-    echo "  ✓ setup-hooks.sh has exactly one top-level have() definition (the one sourced above)"
+    echo "  ✓ setup-hooks.sh defines have() exactly once, in any form (the one sourced above)"
   else
-    echo "  ✗ setup-hooks.sh has ${have_def_count:-0} top-level have() definitions, not 1 — the sed extraction above silently prefers the first and this count is the only thing that would notice a second one (#3578)" >&2
+    echo "  ✗ setup-hooks.sh has ${have_def_count:-0} have() definitions, not 1 — bash runs the LAST one defined, while the sed extraction above silently prefers the first, and this count is the only thing that would notice (#3578)" >&2
     fails=$((fails + 1))
   fi
 
