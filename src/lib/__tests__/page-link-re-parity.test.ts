@@ -88,8 +88,13 @@ describe('reference-token cross-language parity (#1920, #3261)', () => {
         },
       })
 
-      expect(requestedPageNames).toEqual(vector.expected.requestedPageNames)
-      expect(requestedTagNames).toEqual(vector.expected.requestedTagNames)
+      // Rust collects through BTreeSet (sorted); TypeScript resolves in first-
+      // occurrence order. The contract is the same distinct name set, not an
+      // incidental resolver call order.
+      expect(requestedPageNames).toHaveLength(vector.expected.requestedPageNames.length)
+      expect(new Set(requestedPageNames)).toEqual(new Set(vector.expected.requestedPageNames))
+      expect(requestedTagNames).toHaveLength(vector.expected.requestedTagNames.length)
+      expect(new Set(requestedTagNames)).toEqual(new Set(vector.expected.requestedTagNames))
       expect(transformed).toBe(vector.expected.transformed)
     })
   }

@@ -1,7 +1,9 @@
 {
   "pageResolutions": {
     "Page": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-    "Shared": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+    "Shared": "01ARZ3NDEKTSV4RRFFQ69G5FB0",
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV": "01ARZ3NDEKTSV4RRFFQ69G5FB1",
+    "﻿Page﻿": "01ARZ3NDEKTSV4RRFFQ69G5FB2"
   },
   "tagResolutions": {
     "Tag With Space": "01BX5ZZKBKACTAV9WEVGEMMVS0",
@@ -64,6 +66,39 @@
         "requestedPageNames": ["Page"],
         "requestedTagNames": [],
         "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"
+      }
+    },
+    {
+      "name": "page resolution trims Rust U+0085 whitespace",
+      "input": "[[Page]]",
+      "expected": {
+        "pageCaptures": ["Page"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Page"],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"
+      }
+    },
+    {
+      "name": "page resolution retains U+FEFF at boundaries",
+      "input": "[[﻿Page﻿]]",
+      "expected": {
+        "pageCaptures": ["﻿Page﻿"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["﻿Page﻿"],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB2]]"
+      }
+    },
+    {
+      "name": "padded ULID-shaped page name is resolved as human text",
+      "input": "[[  01ARZ3NDEKTSV4RRFFQ69G5FAV  ]]",
+      "expected": {
+        "pageCaptures": ["  01ARZ3NDEKTSV4RRFFQ69G5FAV  "],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB1]]"
       }
     },
     {
@@ -130,6 +165,17 @@
         "requestedPageNames": ["Shared"],
         "requestedTagNames": ["Shared"],
         "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS2] and [[01ARZ3NDEKTSV4RRFFQ69G5FB0]]"
+      }
+    },
+    {
+      "name": "resolver request sets do not depend on encounter order",
+      "input": "[[Shared]] [[Page]] #tag #Shared",
+      "expected": {
+        "pageCaptures": ["Shared", "Page"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Page", "Shared"],
+        "requestedTagNames": ["Shared", "tag"],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FB0]] [[01ARZ3NDEKTSV4RRFFQ69G5FAV]] #[01BX5ZZKBKACTAV9WEVGEMMVS1] #[01BX5ZZKBKACTAV9WEVGEMMVS2]"
       }
     },
     {

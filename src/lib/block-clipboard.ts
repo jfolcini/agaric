@@ -214,7 +214,7 @@ export async function internalizeRefTokens(
     HUMAN_PAGE_LINK_RE,
     resolvers.page,
     (ulid) => `[[${ulid}]]`,
-    { skipCanonicalBody: true, skipPagePrefixes: true },
+    { skipCanonicalBody: true, skipPagePrefixes: true, trimName: true },
   )
   const tagCache = new Map<string, string | null>()
   const withMultiwordTags = await replaceRefs(
@@ -237,7 +237,7 @@ interface ReplaceRefOptions {
   skipPagePrefixes?: boolean
   /** Leave a canonical `[[ULID]]` page link untouched. Tags use token shape. */
   skipCanonicalBody?: boolean
-  /** Normalize padding inside `#[[ tag ]]` before resolving. */
+  /** Normalize Rust Unicode White_Space at human-reference boundaries. */
   trimName?: boolean
   /** Cache shared by the multi-word and bare tag passes. */
   resolved?: Map<string, string | null>
@@ -281,12 +281,15 @@ async function replaceRefs(
   }
 
   const matches = [...content.matchAll(re)]
-  const candidate = (match: RegExpMatchArray): { boundary: string; name: string } => {
+  const candidate = (
+    match: RegExpMatchArray,
+  ): { boundary: string; name: string; rawName: string } => {
     const boundary = options.tagBoundary ? (match[1] ?? '') : ''
-    const capturedName = (options.tagBoundary ? match[2] : match[1]) ?? ''
+    const rawName = (options.tagBoundary ? match[2] : match[1]) ?? ''
     return {
       boundary,
-      name: options.trimName ? trimUnicodeWhiteSpace(capturedName) : capturedName,
+      name: options.trimName ? trimUnicodeWhiteSpace(rawName) : rawName,
+      rawName,
     }
   }
   const shouldSkip = (match: RegExpMatchArray, boundary: string): boolean => {
@@ -296,16 +299,16 @@ async function replaceRefs(
     const prefix = content[matchIndex - 1]
     return prefix === '#' || prefix === '!'
   }
-  const isCanonicalBody = (name: string): boolean =>
-    options.skipCanonicalBody === true && ULID_BODY_RE.test(name)
+  const isCanonicalBody = (rawName: string): boolean =>
+    options.skipCanonicalBody === true && ULID_BODY_RE.test(rawName)
 
   // Pass 1: collect distinct candidate names (skip bare-ULID canonical bodies,
   // tag matches inside `[[ ]]`, and page matches owned by tags or embeds).
   const names = new Set<string>()
   for (const match of matches) {
-    const { boundary, name } = candidate(match)
+    const { boundary, name, rawName } = candidate(match)
     if (shouldSkip(match, boundary)) continue
-    if (name.length > 0 && !isCanonicalBody(name)) names.add(name)
+    if (name.length > 0 && !isCanonicalBody(rawName)) names.add(name)
   }
   if (names.size === 0) return content
 
@@ -328,8 +331,8 @@ async function replaceRefs(
   for (const match of matches) {
     const matchIndex = match.index ?? 0
     output += content.slice(cursor, matchIndex)
-    const { boundary, name } = candidate(match)
-    if (shouldSkip(match, boundary) || isCanonicalBody(name)) {
+    const { boundary, name, rawName } = candidate(match)
+    if (shouldSkip(match, boundary) || isCanonicalBody(rawName)) {
       output += match[0]
       cursor = matchIndex + match[0].length
       continue
