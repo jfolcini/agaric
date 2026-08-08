@@ -2,6 +2,8 @@
  * Tests for the code-block renderer:
  *  - highlight size cap (#747 item 3): above `HIGHLIGHT_MAX_LENGTH` we render
  *    plain text instead of running the O(grammars × length) highlighter.
+ *  - highlight node cap (#3558): highlighted output above 3 000 recursive text
+ *    + element HAST nodes stays as complete plain text and caches that result.
  *  - deferred highlighting + output cache (#2271): first paint is plain and
  *    upgrades post-commit; a cache hit paints highlighted synchronously.
  *
@@ -18,11 +20,13 @@ import {
   __highlightCacheStats,
   clearHighlightCache,
   HIGHLIGHT_MAX_LENGTH,
+  HIGHLIGHT_MAX_NODES,
   peekHighlightCache,
   renderCodeBlock,
   writeHighlightCache,
 } from '@/components/RichContentRenderer/marks/code'
 import type { CodeBlockNode } from '@/editor/types'
+import { curatedLowlight } from '@/lib/lowlight-curated'
 
 function codeBlock(text: string, language: string | null = null): CodeBlockNode {
   return {
@@ -34,6 +38,39 @@ function codeBlock(text: string, language: string | null = null): CodeBlockNode 
 
 const hljsSpans = (container: HTMLElement) => container.querySelectorAll('span[class*="hljs-"]')
 
+interface HastFixtureStats {
+  readonly rootChildren: number
+  readonly text: number
+  readonly elements: number
+  readonly total: number
+}
+
+function realTypeScriptHastStats(code: string): HastFixtureStats {
+  const tree = curatedLowlight.highlight('typescript', code)
+  let text = 0
+  let elements = 0
+
+  const visit = (nodes: typeof tree.children): void => {
+    for (const node of nodes) {
+      if (node.type === 'text') {
+        text += 1
+      } else if (node.type === 'element') {
+        elements += 1
+        visit(node.children)
+      }
+    }
+  }
+  visit(tree.children)
+
+  return { rootChildren: tree.children.length, text, elements, total: text + elements }
+}
+
+const DENSE_TYPESCRIPT_LINE = 'const x=1;\n'
+
+function denseTypeScript(lineCount: number): string {
+  return DENSE_TYPESCRIPT_LINE.repeat(lineCount)
+}
+
 beforeEach(() => {
   // Flush the module-level highlight cache so a prior test's cached tree does
   // not paint highlighted synchronously and mask the deferred-upgrade path.
@@ -41,6 +78,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   vi.useRealTimers()
+  vi.restoreAllMocks()
 })
 
 describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
@@ -92,8 +130,8 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
   it('still highlights a block right at the cap boundary', async () => {
     // #3541 — this test used to build its cap-length body out of `// x\n`
     // repeated ~6000 times. That is the same LENGTH as the body below (what
-    // the cap actually gates on: `code.length > HIGHLIGHT_MAX_LENGTH`) but a
-    // wildly different amount of DOWNSTREAM work: ~6000 highlight tokens
+    // this character-boundary test gates on) but a wildly different amount of
+    // DOWNSTREAM work: ~6000 highlight tokens
     // became ~6000 React `<span>`s built into happy-dom in one synchronous
     // commit. Measured locally that commit — not the highlighter — dominated
     // the test: ~1.9 s wall-clock, of which `lowlight.highlight` was ~53 ms
@@ -101,11 +139,12 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
     // against `waitFor`'s 8000 ms real-timer budget leaves only ~4x headroom,
     // which a low-core-count runner under contention can and did eat.
     //
-    // Token COUNT is irrelevant to the cap logic, so keep the length at the
-    // boundary and drop the token count: long comment lines give the same
-    // "exactly at the cap, highlighting still runs" assertion with ~152 spans
-    // instead of ~6000, measured at ~80 ms instead of ~1900 ms (~20x more
-    // headroom). Nothing about the path under test is stubbed — the real
+    // #3558 now caps that downstream node count separately. Keep this fixture
+    // below the node cap so the test isolates the character boundary: long
+    // comment lines give the same "exactly at the character cap, highlighting
+    // still runs" assertion with ~152 spans instead of ~6000, measured at
+    // ~80 ms instead of ~1900 ms (~20x more headroom). Nothing about the path
+    // under test is stubbed — the real
     // `scheduleIdle` still defers through its real `setTimeout(cb, 0)`
     // fallback (happy-dom has no `requestIdleCallback`), the real dynamic
     // `import('@/lib/lowlight-curated')`, `lowlight.highlight`, cache write
@@ -146,6 +185,52 @@ describe('renderCodeBlock — highlight size cap (#747 item 3)', () => {
     const block = codeBlock(huge, null)
     const { container } = render(<>{renderCodeBlock(block, 'k')}</>)
     expect(await axe(container)).toHaveNoViolations()
+  })
+})
+
+describe('renderCodeBlock — highlighted HAST node cap (#3558)', () => {
+  it('highlights exactly 3 000 recursive text + element nodes from the real grammar', async () => {
+    const code = denseTypeScript(500)
+    expect(code.length).toBeLessThan(HIGHLIGHT_MAX_LENGTH)
+    expect(realTypeScriptHastStats(code)).toEqual({
+      rootChildren: 2_000,
+      text: 2_000,
+      elements: 1_000,
+      total: HIGHLIGHT_MAX_NODES,
+    })
+
+    const { container } = render(<>{renderCodeBlock(codeBlock(code, 'typescript'), 'k')}</>)
+    expect(hljsSpans(container)).toHaveLength(0)
+
+    await waitFor(() => expect(peekHighlightCache(code, 'typescript')).not.toBeUndefined())
+    expect(peekHighlightCache(code, 'typescript') === null).toBe(false)
+    await waitFor(() => expect(hljsSpans(container)).toHaveLength(1_000))
+    expect(container.querySelector('code')?.textContent).toBe(code)
+  })
+
+  it('keeps all 3 006 nodes as plain text and caches null above the node cap', async () => {
+    const code = denseTypeScript(501)
+    expect(code.length).toBeLessThan(HIGHLIGHT_MAX_LENGTH)
+    expect(realTypeScriptHastStats(code)).toEqual({
+      rootChildren: 2_004,
+      text: 2_004,
+      elements: 1_002,
+      total: HIGHLIGHT_MAX_NODES + 6,
+    })
+    const highlightSpy = vi.spyOn(curatedLowlight, 'highlight')
+
+    const first = render(<>{renderCodeBlock(codeBlock(code, 'typescript'), 'k')}</>)
+    expect(first.container.querySelector('code')?.textContent).toBe(code)
+    await waitFor(() => expect(highlightSpy).toHaveBeenCalledOnce())
+    expect(peekHighlightCache(code, 'typescript') === null).toBe(true)
+    expect(hljsSpans(first.container)).toHaveLength(0)
+    expect(first.container.querySelector('code')?.textContent).toBe(code)
+    expect(await axe(first.container)).toHaveNoViolations()
+    first.unmount()
+
+    const second = render(<>{renderCodeBlock(codeBlock(code, 'typescript'), 'k2')}</>)
+    expect(hljsSpans(second.container)).toHaveLength(0)
+    expect(second.container.querySelector('code')?.textContent).toBe(code)
   })
 })
 
