@@ -1744,13 +1744,30 @@ stages = ["pre-commit"]
 # `cargo-binstall` that logs install requests in order, so the assertion is
 # on ACTUAL PRECEDENCE (which version gets requested first), not just on the
 # pin table's contents — no network, no real installs.
+#
+# The `files` pattern covers the WORKFLOWS as well as the script (#3619), for
+# the same reason `zizmor-hook-self-test` above lists setup-hooks.sh: the
+# self-test's Test 4 READS the workflows to cross-check their
+# `sqruff@<version>` pins against the script's `pinned_version_for` table.
+# Scoped to `^scripts/setup-hooks\.sh$` alone, bumping a `sqruff@` pin in
+# _validate.yml or scheduled-deep-checks.yml without touching the script never
+# fired this hook locally — which is precisely the drift direction the
+# cross-check exists to catch, so the guard was blind to its own subject and
+# nothing complained until CI's `--all-files` run.
+#
+# It matches ALL of .github/, not just the two files that carry a pin today,
+# because that is exactly the tree Test 4b sweeps. Keep the two in step: any
+# path the self-test READS but this pattern does not match is the #3619 bug
+# again — a guard blind to part of its own subject, green locally and only
+# caught by CI's `--all-files` run. Matching the whole tree costs nothing
+# real; the self-test runs in well under a tenth of a second.
 [[repos.hooks]]
 id = "setup-hooks-selftest"
 name = "setup-hooks.sh self-test (pin-vs-latest precedence)"
 entry = "bash scripts/setup-hooks.sh --self-test"
 language = "system"
 pass_filenames = false
-files = '^scripts/setup-hooks\.sh$'
+files = '^(scripts/setup-hooks\.sh|\.github/.+)$'
 stages = ["pre-commit"]
 
 # taplo: TOML lint + format. The `check-toml` builtin only validates

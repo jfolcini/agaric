@@ -46,7 +46,11 @@
 # binstall could fetch a newer sqruff, local silently ran a different linter
 # version than CI. That got one layer worse before it got fixed: routing the
 # pin through a branch INSIDE `cargo_get` still lost to `cargo_get`'s own
-# `have "$bin"` early return (line ~230) on any box that had already
+# `have "$bin"` early return (grep `if have "$bin"` to land on it — the first
+# statement `cargo_get` runs after its `local` declaration; this cited a line
+# number until #3619 found the number had rotted to a stale "~230", so a
+# greppable anchor replaced it rather than a fresher number that would rot
+# the same way) on any box that had already
 # installed a wrong version — which, for a crate #3602 had just made local
 # ever install unpinned, was every box that ran this script before the pin
 # existed. So a pinned crate is instead routed to `cargo_get_pinned` directly
@@ -474,6 +478,19 @@ if [ "${1:-}" = "--self-test" ]; then
   st_bad() { printf '  FAIL - %s: %s\n' "$1" "$2" >&2; st_fail=1; }
 
   stub_dir="$(mktemp -d -t setup-hooks-selftest.XXXXXX)"
+  # This script runs under `set -u` but deliberately NOT `set -e` (see the
+  # header), so a failed `mktemp -d` does not abort — it leaves $stub_dir
+  # empty, and every "$stub_dir/<name>" below then resolves to "/<name>". The
+  # self-test would try to write /cargo, /cargo-binstall and /sqruff at the
+  # filesystem ROOT, and the `rm -rf "$stub_dir"` cleanup would expand to
+  # `rm -rf ""` and clean up nothing. Bail out loudly instead — and BEFORE
+  # arming the EXIT trap, so the trap can never fire with an empty $stub_dir
+  # (#3619).
+  if [ -z "$stub_dir" ] || [ ! -d "$stub_dir" ]; then
+    echo "setup-hooks.sh self-test: mktemp -d failed (no writable temp dir?) — refusing to run" >&2
+    echo "setup-hooks.sh self-test FAILED" >&2
+    exit 2
+  fi
   trap 'rm -rf "$stub_dir"' EXIT
 
   # Fake `cargo-binstall` — only needs to EXIST on PATH so `have
@@ -669,23 +686,122 @@ FAKESQRUFF
   # what version they MEAN — it does NOT prove either can actually OBTAIN
   # it; that gap is precisely what #3564 showed a name-only guard leaves
   # open. Test 1 above is what actually exercises install behavior.
+  #
+  # EVERY `sqruff@` occurrence is checked, not just the first (#3619). This
+  # used to `head -n1`, and scheduled-deep-checks.yml carries TWO pins (its
+  # lint job and its scheduled re-run install the same tool list): drift in
+  # the second one was structurally invisible, so the guard read one of two
+  # values and reported agreement while the two disagreed — the failure mode
+  # a cross-check exists to make impossible.
+  #
+  # The expected COUNT per file is asserted too, for the same reason. Without
+  # it, "check them all" still under-covers the day a third `tool:` list is
+  # added to one of these files: the new pin would be read, but a pin DELETED
+  # from a list nobody re-reads would just silently shrink the check. Making
+  # the count explicit means adding or removing a pin reddens here and forces
+  # whoever did it to look at this list.
+  #
+  # The per-file counts are only half of it, though: this loop reads a FIXED
+  # list of files, so on its own it is another instance of the very defect it
+  # exists to prevent — a check that reads a subset and reports agreement. A
+  # `sqruff@` pin landing in a THIRD file (a new workflow, or one of the
+  # composite actions under .github/actions) is read by nobody here while
+  # every per-file assertion still prints ok. Test 4b below closes that by
+  # sweeping all of .github/ (#3619).
+  #
+  # Note this hook's `files` pattern in prek.toml matches all of .github/ as
+  # well as this script, i.e. exactly what Test 4b below reads — a cross-check
+  # scoped only to the file it lives in never fires on the other side of the
+  # comparison (#3619). If you narrow either one, narrow both.
   repo_root="$(cd "$(dirname "$0")/.." && pwd)"
-  for wf in .github/workflows/_validate.yml .github/workflows/scheduled-deep-checks.yml; do
+  want_pin="$(pinned_version_for sqruff)"
+  # Summed from the per-file spec below so there is ONE list to update, not
+  # two that can drift apart.
+  want_total=0
+  # "<workflow path>:<number of sqruff@ pins that file is expected to carry>"
+  for wf_spec in \
+    ".github/workflows/_validate.yml:1" \
+    ".github/workflows/scheduled-deep-checks.yml:2"; do
+    wf="${wf_spec%:*}"
+    want_count="${wf_spec##*:}"
+    want_total=$((want_total + want_count))
     wf_path="$repo_root/$wf"
     if [ ! -f "$wf_path" ]; then
       st_bad "sqruff pin cross-check: $wf exists" "file not found at $wf_path"
       continue
     fi
-    ci_pin="$(grep -oE 'sqruff@[0-9][^,[:space:]"]*' "$wf_path" | head -n1 | cut -d@ -f2)"
-    if [ -z "$ci_pin" ]; then
+    # `grep -n` (not just -o) so a mismatch report NAMES the offending line —
+    # with several pins per file, "CI says 0.99.0" alone would not say which.
+    # Each hit reads `<lineno>:sqruff@<version>`.
+    ci_hits="$(grep -noE 'sqruff@[0-9][^,[:space:]"]*' "$wf_path" || true)"
+    pin_count=0
+    seen_pins=""
+    bad_pins=""
+    while IFS= read -r hit; do
+      [ -n "$hit" ] || continue
+      pin_count=$((pin_count + 1))
+      hit_line="${hit%%:*}"
+      hit_ver="${hit##*@}"
+      seen_pins="$seen_pins line $hit_line=$hit_ver;"
+      if [ "$hit_ver" != "$want_pin" ]; then
+        bad_pins="$bad_pins line $hit_line pins $hit_ver;"
+      fi
+    done <<<"$ci_hits"
+
+    if [ "$pin_count" -eq 0 ]; then
       st_bad "sqruff pin cross-check: $wf pins a sqruff version" "no 'sqruff@<version>' found in $wf"
-    elif [ "$ci_pin" = "$(pinned_version_for sqruff)" ]; then
-      st_ok "sqruff pin cross-check: $wf's sqruff@$ci_pin matches pinned_version_for's $(pinned_version_for sqruff)"
+      continue
+    fi
+
+    if [ "$pin_count" -eq "$want_count" ]; then
+      st_ok "sqruff pin cross-check: $wf carries exactly $want_count sqruff@ pin(s)"
     else
-      st_bad "sqruff pin cross-check: $wf's sqruff@$ci_pin matches pinned_version_for's $(pinned_version_for sqruff)" \
-        "CI says $ci_pin, scripts/setup-hooks.sh says $(pinned_version_for sqruff)"
+      st_bad "sqruff pin cross-check: $wf carries exactly $want_count sqruff@ pin(s)" \
+        "found $pin_count —$seen_pins a sqruff@ pin was added or removed; update this test's expected count for $wf so the new pin is cross-checked too"
+    fi
+
+    if [ -z "$bad_pins" ]; then
+      st_ok "sqruff pin cross-check: all $pin_count sqruff@ pin(s) in $wf match pinned_version_for's $want_pin"
+    else
+      st_bad "sqruff pin cross-check: all $pin_count sqruff@ pin(s) in $wf match pinned_version_for's $want_pin" \
+        "scripts/setup-hooks.sh says $want_pin; CI disagrees at:$bad_pins"
     fi
   done
+
+  # ── Test 4b (same cross-check, at FILE granularity) ── everything above
+  # trusts the hardcoded file list to be complete. This does not: it counts
+  # and version-checks every `sqruff@` pin anywhere under .github/, so a pin
+  # added to a file the list does not name reddens instead of passing
+  # unexamined. Run from $repo_root so the reported paths are repo-relative.
+  # Each hit reads `<path>:<lineno>:sqruff@<version>`.
+  all_hits="$(cd "$repo_root" && grep -rnoE 'sqruff@[0-9][^,[:space:]"]*' .github || true)"
+  total_count=0
+  all_seen=""
+  all_bad=""
+  while IFS= read -r hit; do
+    [ -n "$hit" ] || continue
+    total_count=$((total_count + 1))
+    hit_where="${hit%:sqruff@*}"
+    hit_ver="${hit##*:sqruff@}"
+    all_seen="$all_seen $hit_where=$hit_ver;"
+    if [ "$hit_ver" != "$want_pin" ]; then
+      all_bad="$all_bad $hit_where pins $hit_ver;"
+    fi
+  done <<<"$all_hits"
+
+  if [ "$total_count" -eq "$want_total" ]; then
+    st_ok "sqruff pin cross-check: .github carries exactly $want_total sqruff@ pin(s) in total"
+  else
+    st_bad "sqruff pin cross-check: .github carries exactly $want_total sqruff@ pin(s) in total" \
+      "found $total_count —$all_seen a sqruff@ pin was added or removed, possibly in a file the per-file list above does not name; add that file to the list so its pins are cross-checked too"
+  fi
+
+  if [ -z "$all_bad" ]; then
+    st_ok "sqruff pin cross-check: every sqruff@ pin under .github matches pinned_version_for's $want_pin"
+  else
+    st_bad "sqruff pin cross-check: every sqruff@ pin under .github matches pinned_version_for's $want_pin" \
+      "scripts/setup-hooks.sh says $want_pin; CI disagrees at:$all_bad"
+  fi
 
   rm -rf "$stub_dir"
   trap - EXIT
