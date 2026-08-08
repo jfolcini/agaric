@@ -113,10 +113,9 @@ interface UsePageBrowserDataResult {
   setPages: Dispatch<SetStateAction<(BlockRow | PageWithMetadataRow)[]>>
   displayTotalCount: number | undefined
   setDisplayTotalCount: Dispatch<SetStateAction<number | undefined>>
-  deleteTarget: ReturnType<typeof usePageDelete>['deleteTarget']
   deletingId: ReturnType<typeof usePageDelete>['deletingId']
   setDeleteTarget: ReturnType<typeof usePageDelete>['setDeleteTarget']
-  handleConfirmDelete: ReturnType<typeof usePageDelete>['handleConfirmDelete']
+  deleteConfirmDialog: ReturnType<typeof usePageDelete>['confirmDialog']
 }
 
 export function usePageBrowserData({
@@ -254,21 +253,37 @@ export function usePageBrowserData({
   // load-more).
   const loading = isFetching
   const hasMore = hasNextPage
+  // Mutable local count used for first-page adoption and optimistic deletion.
+  // Declared before `reload` because a settled explicit refetch also reconciles
+  // it from the authoritative first page (see below).
+  const [displayTotalCount, setDisplayTotalCount] = useState<number | undefined>(undefined)
   const loadMore = useCallback(() => {
     if (hasNextPage && !isFetchingNextPage) void fetchNextPage()
   }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  const reloadGenerationRef = useRef(0)
   const reload = useCallback(() => {
-    void refetch()
+    const generation = ++reloadGenerationRef.current
+    const basis = queryKeyRef.current
+    void refetch().then((result) => {
+      // Only the latest reload for the still-current query basis may reconcile
+      // the count. This prevents a slower concurrent reload (or an Undo from a
+      // space the user has since left) from overwriting newer view state.
+      if (generation !== reloadGenerationRef.current || queryKeyRef.current !== basis) return
+      if (!result.isSuccess) return
+      const authoritativeTotal = result.data?.pages[0]?.total_count
+      if (typeof authoritativeTotal === 'number') {
+        setDisplayTotalCount(authoritativeTotal)
+      }
+    })
   }, [refetch])
 
-  // `totalCount` mirrors usePaginatedQuery's last-write-wins semantics: it set
-  // `total_count` (null → undefined) on EVERY page response, so the exposed
-  // value was always the most-recently-fetched page's — i.e. the last page in
-  // the accumulated list. The first-page-retain lives one level up in the
-  // `displayTotalCount` adopt effect (cursor pages return `null`, which stays
-  // `undefined` here and is ignored there).
-  const lastPageTotal = data?.pages.at(-1)?.total_count
-  const totalCount = lastPageTotal == null ? undefined : lastPageTotal
+  // `total_count` is authoritative only on page 1; cursor pages intentionally
+  // return null. Always derive from the first page so a multi-page refetch
+  // after Undo can reconcile an optimistic decrement once the entire refetch
+  // settles. Reading the last page would leave the decremented count stuck
+  // whenever that cursor page's required null was the final response.
+  const firstPageTotal = data?.pages[0]?.total_count
+  const totalCount = firstPageTotal == null ? undefined : firstPageTotal
 
   // Reproduce the old `onError: t('pageBrowser.loadFailed')` toast.
   // usePaginatedQuery called `notify.error` from its catch on EACH non-cancelled
@@ -364,7 +379,6 @@ export function usePageBrowserData({
   // D20: the chip must also drop by one on an optimistic delete (the
   // delete path mutates `pages` directly, never re-running the COUNT), so
   // this is local mutable state rather than a pure mirror of the hook.
-  const [displayTotalCount, setDisplayTotalCount] = useState<number | undefined>(undefined)
   // Adopt the hook's total only when it is a real number, and only once a
   // fetch has SETTLED (`!isFetching`). A cursor page returning `null` (D6)
   // leaves `totalCount` `undefined`; ignoring that keeps the retained
@@ -376,13 +390,15 @@ export function usePageBrowserData({
   // basis carries the SAME total (a sort switch never changes the count) the
   // derived `totalCount` never changes value. Keyed on `[totalCount]` only,
   // the adopt effect would then never re-fire after the reset effect below
-  // blanked `displayTotalCount`, permanently hiding the chip. Keying on
-  // `[isFetching, totalCount]` and gating on `!isFetching` re-adopts the total
-  // every time a fetch resolves — the `undefined→N` transition the old
-  // last-write-wins hook produced on every deps change.
+  // blanked `displayTotalCount`, permanently hiding the chip. A failed refetch
+  // retains the cached page (including its pre-delete total), so success is
+  // part of the gate too: an error must not re-adopt that stale total over the
+  // optimistic decrement.
   useEffect(() => {
-    if (!isFetching && typeof totalCount === 'number') setDisplayTotalCount(totalCount)
-  }, [isFetching, totalCount])
+    if (!isFetching && !isError && typeof totalCount === 'number') {
+      setDisplayTotalCount(totalCount)
+    }
+  }, [isError, isFetching, totalCount])
   // Reset the retained total when the query basis changes (space / sort /
   // chip set) so a stale count never lingers against a fresh result set
   // before the new first page resolves.
@@ -390,7 +406,7 @@ export function usePageBrowserData({
     setDisplayTotalCount(undefined)
   }, [currentSpaceId, sortOption, wireFiltersKey])
 
-  // `usePageDelete` predates the metadata-rich union type; its
+  // `usePageDelete` adapts the metadata-rich union type; its
   // updater is typed against `BlockRow[]`. The two row shapes share
   // every field the deletion path reads (`id`), so we narrow at the
   // boundary with a typed cast instead of widening `usePageDelete`.
@@ -433,8 +449,11 @@ export function usePageBrowserData({
     },
     [setPages],
   )
-  const { deleteTarget, deletingId, setDeleteTarget, handleConfirmDelete } =
-    usePageDelete(setPagesForDelete)
+  const {
+    deletingId,
+    setDeleteTarget,
+    confirmDialog: deleteConfirmDialog,
+  } = usePageDelete(setPagesForDelete, reload)
 
   return {
     pages,
@@ -445,9 +464,8 @@ export function usePageBrowserData({
     setPages,
     displayTotalCount,
     setDisplayTotalCount,
-    deleteTarget,
     deletingId,
     setDeleteTarget,
-    handleConfirmDelete,
+    deleteConfirmDialog,
   }
 }

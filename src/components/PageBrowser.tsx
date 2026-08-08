@@ -23,7 +23,6 @@ import { useTranslation } from 'react-i18next'
 
 import { EmptyState } from '@/components/common/EmptyState'
 import { LoadMoreButton } from '@/components/common/LoadMoreButton'
-import { ConfirmDialog } from '@/components/dialogs/ConfirmDialog'
 import { ViewHeader } from '@/components/layout/ViewHeader'
 import { PageBrowserFilterRow } from '@/components/PageBrowser/PageBrowserFilterRow'
 import { PageBrowserHeader } from '@/components/PageBrowser/PageBrowserHeader'
@@ -133,10 +132,9 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
     setPages,
     displayTotalCount,
     setDisplayTotalCount,
-    deleteTarget,
     deletingId,
     setDeleteTarget,
-    handleConfirmDelete,
+    deleteConfirmDialog,
   } = usePageBrowserData({
     currentSpaceId,
     spaceIsReady,
@@ -718,20 +716,7 @@ export function PageBrowser({ onPageSelect }: PageBrowserProps): React.ReactElem
         {filterAnnouncement}
       </output>
 
-      {/* Delete confirmation dialog */}
-      <ConfirmDialog
-        open={deleteTarget !== null}
-        onOpenChange={(open) => {
-          if (!open) setDeleteTarget(null)
-        }}
-        titleKey="pageBrowser.deletePage"
-        descriptionKey="pageBrowser.deleteDescription"
-        cancelKey="pageBrowser.cancel"
-        confirmKey="pageBrowser.delete"
-        values={{ name: deleteTarget?.name ?? '' }}
-        variant="destructive"
-        onConfirm={handleConfirmDelete}
-      />
+      {deleteConfirmDialog}
     </div>
   )
 }

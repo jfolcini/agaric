@@ -2,8 +2,8 @@
  * usePageDeleteAction — orchestrates the page-delete user flow (confirm
  * dialog → IPC → success toast with Undo → restore on click).
  *
- * Sits one layer above `usePageDelete` and `deleteBlock`. Two surfaces
- * (PageHeader, journal DaySection) need the same UX:
+ * Sits one layer above `deleteBlock`. PageHeader, journal DaySection,
+ * and PageBrowser share the same UX:
  *
  *   1. Click delete → open a ConfirmDialog.
  *   2. On confirm → call `deleteBlock(pageId)` (soft-delete → Trash).
@@ -21,11 +21,10 @@
  *     entry points (e.g. PageHeader's dedicated trash button AND its
  *     kebab "Delete page" item).
  *
- * The hook does NOT mutate any list state — `usePageDelete` covers that
- * case for `PageBrowser`. Callers that need post-delete side effects
- * (e.g. `PageHeader` calling `onBack`) pass an `onDeleted(pageId)`
- * callback. The optional `confirmCopy` lets the journal override the
- * default "Delete page" copy with "Delete the note for {date}?".
+ * The hook does NOT mutate any list state. Callers that need post-delete
+ * or post-restore side effects pass `onDeleted(pageId)` / `onRestored(pageId)`
+ * callbacks. The optional `confirmCopy` lets each surface preserve its
+ * established dialog copy.
  *
  * Undo is wired to the existing `restoreBlocksByIds` IPC, which accepts
  * a list and cascade-restores the root + descendants in a single
@@ -42,13 +41,19 @@ import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
+import { useResolveStore } from '@/stores/resolve'
+import { useSpaceStore } from '@/stores/space'
 
 /** Locked-in copy slots a caller can override per-invocation. */
 export interface PageDeleteConfirmCopy {
   /** Dialog title i18n key. Default: `pageHeader.deletePageTitle`. */
   titleKey?: string
-  /** Dialog body i18n key. Default: `pageHeader.deletePageDescription`. */
+  /** Dialog body i18n key. Default: `pageHeader.deleteConfirm`. */
   descriptionKey?: string
+  /** Confirm-button i18n key. Default: `pageHeader.deletePage`. */
+  confirmKey?: string
+  /** Cancel-button i18n key. Default: `pageHeader.cancel`. */
+  cancelKey?: string
   /** Values for interpolating the title/description keys via `t()`. */
   values?: Record<string, string | number>
 }
@@ -62,6 +67,8 @@ export interface RequestDeleteOptions {
    * `announce(...)`).
    */
   onDeleted?: (pageId: string) => void
+  /** Called once an Undo restore resolves successfully. */
+  onRestored?: (pageId: string) => void
   /**
    * Called when the delete IPC rejects. Lets the host surface an AT
    * announcement or any other failure-only side effect; the shared
@@ -76,9 +83,21 @@ const EMPTY_VALUES: Record<string, string | number> = {}
 interface DeleteTarget {
   id: string
   title: string
+  originSpaceId: string | null
   copy: PageDeleteConfirmCopy
   onDeleted: ((pageId: string) => void) | undefined
+  onRestored: ((pageId: string) => void) | undefined
   onFailed: ((pageId: string, error: unknown) => void) | undefined
+}
+
+/**
+ * Keep resolve-cache writes in the space where the action originated. A user
+ * may switch spaces while either IPC is pending; writing through the store
+ * after that switch would otherwise insert the old page under the new space.
+ */
+function setResolveDeletedStatus(target: DeleteTarget, deleted: boolean): void {
+  if (useSpaceStore.getState().currentSpaceId !== target.originSpaceId) return
+  useResolveStore.getState().set(target.id, target.title, deleted)
 }
 
 export interface UsePageDeleteActionReturn {
@@ -99,11 +118,16 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
 
   const requestDelete = useCallback(
     (pageId: string, title: string, options?: RequestDeleteOptions) => {
+      const resolveStore = useResolveStore.getState()
       setTarget({
         id: pageId,
-        title,
+        // Preserve the authoritative cached title when one exists. The visible
+        // row/header title remains the fallback for pages not preloaded yet.
+        title: resolveStore.has(pageId) ? resolveStore.resolveTitle(pageId) : title,
+        originSpaceId: useSpaceStore.getState().currentSpaceId,
         copy: options?.confirmCopy ?? {},
         onDeleted: options?.onDeleted,
+        onRestored: options?.onRestored,
         onFailed: options?.onFailed,
       })
     },
@@ -111,15 +135,22 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
   )
 
   const handleUndo = useCallback(
-    (pageId: string) => {
+    (deletedTarget: DeleteTarget) => {
       commands
-        .restoreBlocksByIds([pageId])
+        .restoreBlocksByIds([deletedTarget.id])
         .then(unwrap)
         .then(() => {
+          setResolveDeletedStatus(deletedTarget, false)
+          deletedTarget.onRestored?.(deletedTarget.id)
           notify.success(t('pageDeleteAction.restored'))
         })
         .catch((err: unknown) => {
-          logger.error('usePageDeleteAction', 'Failed to restore page', { pageId }, err)
+          logger.error(
+            'usePageDeleteAction',
+            'Failed to restore page',
+            { pageId: deletedTarget.id },
+            err,
+          )
           notify.error(t('pageDeleteAction.restoreFailed'))
         })
     },
@@ -132,10 +163,11 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
     setDeletingId(id)
     try {
       unwrap(await commands.deleteBlock(id))
+      setResolveDeletedStatus(target, true)
       notify.success(t('pageDeleteAction.deleted'), {
         action: {
           label: t('pageDeleteAction.undo'),
-          onClick: () => handleUndo(id),
+          onClick: () => handleUndo(target),
         },
       })
       onDeleted?.(id)
@@ -164,7 +196,9 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
   }, [])
 
   const dialogTitleKey = target?.copy.titleKey ?? 'pageHeader.deletePageTitle'
-  const dialogDescriptionKey = target?.copy.descriptionKey ?? 'pageHeader.deletePageDescription'
+  const dialogDescriptionKey = target?.copy.descriptionKey ?? 'pageHeader.deleteConfirm'
+  const dialogConfirmKey = target?.copy.confirmKey ?? 'pageHeader.deletePage'
+  const dialogCancelKey = target?.copy.cancelKey ?? 'pageHeader.cancel'
   const dialogValues = target?.copy.values ?? EMPTY_VALUES
 
   const confirmDialog = useMemo(
@@ -174,14 +208,23 @@ export function usePageDeleteAction(): UsePageDeleteActionReturn {
         onOpenChange={handleOpenChange}
         titleKey={dialogTitleKey}
         descriptionKey={dialogDescriptionKey}
-        confirmKey="pageHeader.deletePage"
-        cancelKey="pageHeader.cancel"
+        confirmKey={dialogConfirmKey}
+        cancelKey={dialogCancelKey}
         values={dialogValues}
         variant="destructive"
         onConfirm={handleConfirm}
       />
     ),
-    [dialogDescriptionKey, dialogTitleKey, dialogValues, handleConfirm, handleOpenChange, target],
+    [
+      dialogCancelKey,
+      dialogConfirmKey,
+      dialogDescriptionKey,
+      dialogTitleKey,
+      dialogValues,
+      handleConfirm,
+      handleOpenChange,
+      target,
+    ],
   )
 
   return {

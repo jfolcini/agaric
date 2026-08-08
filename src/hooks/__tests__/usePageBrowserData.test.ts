@@ -7,12 +7,32 @@
  */
 
 import { act, renderHook, waitFor } from '@testing-library/react'
+import { createElement, StrictMode, type ReactNode } from 'react'
 import { toast } from 'sonner'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { usePageBrowserData } from '@/hooks/usePageBrowserData'
 import type { SortOption } from '@/hooks/usePageBrowserSort'
-import type { FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
+import type { BlockRow, FilterPrimitive, PageWithMetadataRow } from '@/lib/bindings'
+
+type DeleteSetter = (updater: (prev: BlockRow[]) => BlockRow[]) => void
+
+const deleteAdapter = vi.hoisted(() => ({
+  setPages: null as DeleteSetter | null,
+  onRestored: null as ((pageId: string) => void) | null,
+}))
+
+vi.mock('@/hooks/usePageDelete', () => ({
+  usePageDelete: (setPages: DeleteSetter, onRestored: (pageId: string) => void) => {
+    deleteAdapter.setPages = setPages
+    deleteAdapter.onRestored = onRestored
+    return {
+      deletingId: null,
+      setDeleteTarget: vi.fn(),
+      confirmDialog: null,
+    }
+  },
+}))
 
 // #2927 phase 7 — `usePageBrowserData` calls `commands.listPagesWithMetadata`
 // from `@/lib/bindings` directly. The spy now sees the real wire arguments
@@ -66,6 +86,8 @@ const BASE: {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  deleteAdapter.setPages = null
+  deleteAdapter.onRestored = null
 })
 
 afterEach(() => {
@@ -159,5 +181,116 @@ describe('usePageBrowserData', () => {
     // Blanks briefly on the basis change, then re-adopts the same total (7) once
     // the refetch settles — the chip must not vanish.
     await waitFor(() => expect(result.current.displayTotalCount).toBe(7))
+  })
+
+  it('removes a deleted row and decrements the total once under StrictMode', async () => {
+    mockedList.mockResolvedValueOnce(resp([page('A'), page('B')], { total: 2 }))
+    const wrapper = ({ children }: { children: ReactNode }) =>
+      createElement(StrictMode, null, children)
+    const { result } = renderHook(() => usePageBrowserData(BASE), { wrapper })
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(2))
+
+    act(() => {
+      deleteAdapter.setPages?.((rows) => rows.filter((row) => row.id !== 'A'))
+    })
+
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['B']))
+    expect(result.current.displayTotalCount).toBe(1)
+  })
+
+  it('reconciles a decremented total from page 1 after a two-page Undo refetch', async () => {
+    mockedList
+      // Initial two-page query: only page 1 owns the authoritative total.
+      .mockResolvedValueOnce(resp([page('A')], { cursor: 'CUR', hasMore: true, total: 2 }))
+      .mockResolvedValueOnce(resp([page('B')], { total: null }))
+      // Undo refetches every loaded page; the final cursor page is null again.
+      .mockResolvedValueOnce(resp([page('A')], { cursor: 'CUR', hasMore: true, total: 2 }))
+      .mockResolvedValueOnce(resp([page('B')], { total: null }))
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(2))
+
+    await act(async () => {
+      result.current.loadMore()
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['A', 'B']))
+
+    act(() => {
+      deleteAdapter.setPages?.((rows) => rows.filter((row) => row.id !== 'A'))
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['B']))
+    expect(result.current.displayTotalCount).toBe(1)
+
+    act(() => {
+      deleteAdapter.onRestored?.('A')
+    })
+
+    await waitFor(() => {
+      expect(result.current.pages.map((row) => row.id)).toEqual(['A', 'B'])
+      expect(result.current.displayTotalCount).toBe(2)
+    })
+    expect(mockedList).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not let a slower concurrent reload overwrite a newer total', async () => {
+    let resolveOlder: ((value: ReturnType<typeof resp>) => void) | undefined
+    let resolveNewer: ((value: ReturnType<typeof resp>) => void) | undefined
+    mockedList
+      .mockResolvedValueOnce(resp([page('A')], { total: 1 }))
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveOlder = resolve
+          }),
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            resolveNewer = resolve
+          }),
+      )
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(1))
+
+    act(() => {
+      deleteAdapter.onRestored?.('A')
+    })
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(2))
+    act(() => {
+      deleteAdapter.onRestored?.('A')
+    })
+    await waitFor(() => expect(mockedList).toHaveBeenCalledTimes(3))
+
+    await act(async () => {
+      resolveNewer?.(resp([page('A')], { total: 3 }))
+    })
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(3))
+
+    await act(async () => {
+      resolveOlder?.(resp([page('A')], { total: 99 }))
+    })
+    expect(result.current.displayTotalCount).toBe(3)
+  })
+
+  it('keeps the optimistic decrement when the post-Undo refetch fails', async () => {
+    mockedList
+      .mockResolvedValueOnce(resp([page('A'), page('B')], { total: 2 }))
+      .mockRejectedValueOnce(new Error('reload failed'))
+    const { result } = renderHook(() => usePageBrowserData(BASE))
+    await waitFor(() => expect(result.current.displayTotalCount).toBe(2))
+
+    act(() => {
+      deleteAdapter.setPages?.((rows) => rows.filter((row) => row.id !== 'A'))
+    })
+    await waitFor(() => expect(result.current.pages.map((row) => row.id)).toEqual(['B']))
+    expect(result.current.displayTotalCount).toBe(1)
+
+    act(() => {
+      deleteAdapter.onRestored?.('A')
+    })
+
+    await waitFor(() => expect(mockedToastError).toHaveBeenCalled())
+    expect(mockedList).toHaveBeenCalledTimes(2)
+    expect(result.current.pages.map((row) => row.id)).toEqual(['B'])
+    expect(result.current.displayTotalCount).toBe(1)
   })
 })

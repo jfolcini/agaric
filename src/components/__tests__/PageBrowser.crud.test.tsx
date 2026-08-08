@@ -3,7 +3,7 @@
 // deletion, page creation (incl. under a namespace), and error feedback.
 
 import { invoke } from '@tauri-apps/api/core'
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -15,6 +15,7 @@ import { mockReactVirtual } from '@/__tests__/mocks/react-virtual'
 import { PageBrowser } from '@/components/PageBrowser'
 import { t } from '@/lib/i18n'
 import { usePageBrowserFiltersStore } from '@/stores/pageBrowserFilters'
+import { useResolveStore } from '@/stores/resolve'
 import { useSpaceStore } from '@/stores/space'
 
 // Capture every `estimateSize` callback passed to `useVirtualizer` so the
@@ -63,6 +64,7 @@ vi.mock('@/stores/recent-pages', async (importActual) => {
 
 const mockedInvoke = vi.mocked(invoke)
 const mockedToastError = vi.mocked(toast.error)
+const mockedToastSuccess = vi.mocked(toast.success)
 
 /** Find the trash (delete) button within a page row via its aria-label. */
 function findTrashButton(row: HTMLElement): HTMLButtonElement {
@@ -127,6 +129,7 @@ beforeEach(() => {
   // persisted key so chips added in one test don't leak into the next.
   localStorage.removeItem('agaric:page-browser-filters')
   usePageBrowserFiltersStore.setState({ filtersBySpace: {}, nextAddId: 0 })
+  useResolveStore.setState({ cache: new Map(), version: 0, _preloaded: false })
   // Phase 2 — PageBrowser now gates its render and page query
   // on `useSpaceStore.isReady`. Seed the store so tests exercise the
   // real code path rather than the loading skeleton.
@@ -193,10 +196,10 @@ describe('PageBrowser', () => {
       const trashBtn = findTrashButton(pageRow)
       await user.click(trashBtn)
 
-      // AlertDialog should appear with title and page name in description
+      // AlertDialog should describe the real soft-delete/Trash behavior.
       expect(await screen.findByText(/Delete page\?/i)).toBeInTheDocument()
-      // The page name appears both in the list (aria-hidden) and dialog description
-      expect(screen.getAllByText(/Deletable Page/).length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText(/can be restored from trash/i)).toBeInTheDocument()
+      expect(screen.queryByText(/cannot be undone|permanently delete/i)).not.toBeInTheDocument()
       expect(screen.getByRole('button', { name: /Cancel/i })).toBeInTheDocument()
       expect(screen.getByRole('button', { name: /^Delete$/i })).toBeInTheDocument()
     })
@@ -256,6 +259,61 @@ describe('PageBrowser', () => {
 
       // Verify delete_block was called
       expect(mockedInvoke).toHaveBeenCalledWith('delete_block', { blockId: 'P1' })
+    })
+
+    it('Undo refetches and restores the deleted row and authoritative total', async () => {
+      const user = userEvent.setup()
+      const restoredPage = makePage({ id: 'P1', content: 'Undo this deletion' })
+      let deleted = false
+      stubInvoke({
+        list_pages_with_metadata: () => ({
+          items: deleted ? [] : [restoredPage],
+          next_cursor: null,
+          has_more: false,
+          total_count: deleted ? 0 : 1,
+        }),
+        delete_block: () => {
+          deleted = true
+          return {
+            block_id: 'P1',
+            deleted_at: '2025-01-15T00:00:00Z',
+            descendants_affected: 0,
+          }
+        },
+        restore_blocks_by_ids: () => {
+          deleted = false
+          return { affected_count: 1 }
+        },
+      })
+
+      render(<PageBrowser />)
+      expect(await screen.findByText('Undo this deletion')).toBeInTheDocument()
+      expect(await screen.findByTestId('page-browser-count')).toHaveTextContent('1 page')
+
+      const pageRow = screen.getByText('Undo this deletion').closest('.group') as HTMLElement
+      await user.click(findTrashButton(pageRow))
+      await user.click(await screen.findByRole('button', { name: /^Delete$/i }))
+      await waitFor(() => {
+        expect(screen.queryByText('Undo this deletion')).not.toBeInTheDocument()
+      })
+
+      const deleteToast = mockedToastSuccess.mock.calls.find(
+        ([message]) => message === 'Page deleted',
+      )
+      const options = deleteToast?.[1] as { action?: { onClick?: () => void } } | undefined
+      if (!options?.action?.onClick) throw new Error('Expected delete toast to expose Undo')
+      act(() => {
+        options.action?.onClick?.()
+      })
+
+      expect(await screen.findByText('Undo this deletion')).toBeInTheDocument()
+      expect(await screen.findByTestId('page-browser-count')).toHaveTextContent('1 page')
+      expect(mockedInvoke).toHaveBeenCalledWith('restore_blocks_by_ids', {
+        blockIds: ['P1'],
+      })
+      expect(
+        mockedInvoke.mock.calls.filter(([command]) => command === 'list_pages_with_metadata'),
+      ).toHaveLength(2)
     })
   })
   describe('page creation form', () => {

@@ -1,18 +1,17 @@
 /**
- * usePageDelete — hook for managing page deletion state including
- * confirmation dialog target, in-flight tracking, and toast feedback.
+ * usePageDelete — thin PageBrowser adapter over the shared page-delete flow.
  *
- * Extracted from PageBrowser for testability and reuse.
+ * It supplies the browser's established copy, removes a successfully deleted
+ * row through the browser-owned setter, and asks the browser to reload after a
+ * successful Undo restore. Dialog, IPC, resolve-cache, and toast lifecycle all
+ * remain owned by `usePageDeleteAction`.
  */
 
-import { useCallback, useState } from 'react'
-import { useTranslation } from 'react-i18next'
+import type React from 'react'
+import { useCallback } from 'react'
 
-import { unwrap } from '@/lib/app-error'
+import { usePageDeleteAction } from '@/hooks/usePageDeleteAction'
 import type { BlockRow } from '@/lib/bindings'
-import { commands } from '@/lib/bindings'
-import { notify } from '@/lib/notify'
-import { useResolveStore } from '@/stores/resolve'
 
 interface DeleteTarget {
   id: string
@@ -20,56 +19,43 @@ interface DeleteTarget {
 }
 
 interface UsePageDeleteResult {
-  /** The page currently targeted for deletion (shown in confirm dialog). */
-  deleteTarget: DeleteTarget | null
   /** The ID of the page currently being deleted (for disabling UI). */
   deletingId: string | null
-  /** Set the delete target to show the confirmation dialog. */
+  /** Open the shared confirmation dialog for a PageBrowser row. */
   setDeleteTarget: (target: DeleteTarget | null) => void
-  /** Confirm deletion of the current target — call from the dialog's action button. */
-  handleConfirmDelete: () => void
-  /** Execute delete for a specific page ID. */
-  handleDeletePage: (pageId: string) => Promise<void>
+  /** Embed once in PageBrowser — the shared hook owns the single dialog. */
+  confirmDialog: React.ReactElement
 }
 
 export function usePageDelete(
   setPages: (updater: (prev: BlockRow[]) => BlockRow[]) => void,
+  onRestored: (pageId: string) => void,
 ): UsePageDeleteResult {
-  const { t } = useTranslation()
-  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
-  const [deletingId, setDeletingId] = useState<string | null>(null)
+  const { requestDelete, deletingId, confirmDialog } = usePageDeleteAction()
 
-  const handleDeletePage = useCallback(
-    async (pageId: string) => {
-      setDeletingId(pageId)
-      try {
-        unwrap(await commands.deleteBlock(pageId))
-        setPages((prev) => prev.filter((p) => p.id !== pageId))
-        useResolveStore.getState().set(pageId, '(deleted)', true)
-        notify.success(t('pageBrowser.deleteSuccess'))
-      } catch (error) {
-        notify.error(t('pageBrowser.deleteFailed', { error: String(error) }), {
-          action: { label: t('pageBrowser.retry'), onClick: () => handleDeletePage(pageId) },
-        })
-      } finally {
-        setDeletingId(null)
-      }
+  const setDeleteTarget = useCallback(
+    (target: DeleteTarget | null) => {
+      if (!target) return
+      requestDelete(target.id, target.name, {
+        confirmCopy: {
+          titleKey: 'pageBrowser.deletePage',
+          descriptionKey: 'pageHeader.deleteConfirm',
+          confirmKey: 'pageBrowser.delete',
+          cancelKey: 'pageBrowser.cancel',
+          values: { name: target.name },
+        },
+        onDeleted: (pageId) => {
+          setPages((prev) => prev.filter((page) => page.id !== pageId))
+        },
+        onRestored,
+      })
     },
-    [setPages, t],
+    [onRestored, requestDelete, setPages],
   )
 
-  const handleConfirmDelete = useCallback(() => {
-    if (deleteTarget) {
-      handleDeletePage(deleteTarget.id)
-      setDeleteTarget(null)
-    }
-  }, [deleteTarget, handleDeletePage])
-
   return {
-    deleteTarget,
     deletingId,
     setDeleteTarget,
-    handleConfirmDelete,
-    handleDeletePage,
+    confirmDialog,
   }
 }

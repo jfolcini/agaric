@@ -200,7 +200,10 @@ function DaySectionInner({
 
   const handleRequestDayDelete = useCallback(
     (pageId: string) => {
-      requestDelete(pageId, entry.displayDate, {
+      // `dateStr` is the canonical journal page title/cache identity. Keep
+      // the friendly `displayDate` confined to dialog interpolation so a cold
+      // resolve cache cannot persist presentation copy as the page title.
+      requestDelete(pageId, entry.dateStr, {
         confirmCopy: {
           titleKey: 'journal.deleteDayTitle',
           descriptionKey: 'journal.deleteDayDescription',
@@ -208,7 +211,7 @@ function DaySectionInner({
         },
       })
     },
-    [entry.displayDate, requestDelete],
+    [entry.dateStr, entry.displayDate, requestDelete],
   )
 
   // Lazy-mount the BlockTree only when (a) the caller opted in via
