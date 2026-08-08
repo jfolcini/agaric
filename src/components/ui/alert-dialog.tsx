@@ -2,7 +2,7 @@ import { AlertDialog as AlertDialogPrimitive } from 'radix-ui'
 import type * as React from 'react'
 
 import { buttonVariants } from '@/components/ui/button'
-import { DIALOG_CONTENT_BASE } from '@/components/ui/dialog-shared'
+import { DIALOG_BODY_VIEWPORT_CLASS, DIALOG_CONTENT_BASE } from '@/components/ui/dialog-shared'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 
@@ -76,7 +76,7 @@ const AlertDialogBody = ({ ref, className, children, dir, ...props }: AlertDialo
     // forward it only when it's a valid direction.
     {...(dir === 'ltr' || dir === 'rtl' ? { dir } : {})}
     className={cn('flex-1 min-h-0 -mx-6', className)}
-    viewportClassName="px-6"
+    viewportClassName={DIALOG_BODY_VIEWPORT_CLASS}
     {...props}
   >
     <div className="space-y-4 min-w-0">{children}</div>

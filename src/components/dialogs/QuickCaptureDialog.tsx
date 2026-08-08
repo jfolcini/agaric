@@ -113,8 +113,6 @@ export function QuickCaptureDialog({
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
   // #2281 — match BugReportDialog: the mobile bottom-sheet path uses the
   // Sheet body primitive so padding/scroll behaviour comes from the Sheet
   // scaffolding rather than Dialog's.
@@ -122,7 +120,7 @@ export function QuickCaptureDialog({
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content data-testid="quick-capture-dialog" {...contentSideProps}>
+      <Content data-testid="quick-capture-dialog">
         <Header>
           <Title>{t('quickCapture.dialogTitle')}</Title>
           <Description>{t('settings.quickCapture.description')}</Description>

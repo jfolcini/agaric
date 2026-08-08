@@ -817,5 +817,21 @@ describe('QueryBuilderModal', () => {
       expect(screen.getByRole('radiogroup', { name: /query type/i })).toBeInTheDocument()
       expect(screen.getByLabelText(/tag prefix/i)).toBeInTheDocument()
     })
+
+    // #3336 — this modal passes no className at all, so before the primitive
+    // carried a cap its mobile sheet was `bottom-0 h-auto overflow-hidden`
+    // with unbounded height: the header could be pushed off the top of the
+    // screen with no reachable scroll region. It gets its anchor and its cap
+    // from `useDialogOrSheet`, not from a hand-rolled prop here.
+    it('renders as a height-capped bottom sheet on mobile without a local override', () => {
+      mockedUseIsMobile.mockReturnValue(true)
+      render(<QueryBuilderModal {...defaultProps} />)
+
+      const shell = screen.getByRole('dialog')
+      expect(shell).toHaveClass('bottom-0')
+      expect(shell).toHaveClass('inset-x-0')
+      expect(shell).toHaveClass('max-h-[calc(100dvh-2rem)]')
+      expect(shell).not.toHaveClass('right-0')
+    })
   })
 })

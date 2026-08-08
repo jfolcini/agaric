@@ -141,15 +141,12 @@ export function WelcomeModal() {
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
 
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
-
   if (bootState !== 'ready') return null
 
   // Feature list renders inside DialogBody on desktop so it
   // scrolls when the viewport is short; the mobile Sheet path keeps the
-  // list inline (SheetContent already constrains height) so we don't nest
-  // scroll regions.
+  // list inline because the shared SheetContent viewport cap is sufficient,
+  // avoiding nested scroll regions.
   const featureList = (
     /*
       oxlint-disable-next-line jsx-a11y/no-redundant-roles -- explicit role="list" is
@@ -179,7 +176,7 @@ export function WelcomeModal() {
         if (!value) handleDismiss()
       }}
     >
-      <Content data-testid="welcome-modal" {...contentSideProps}>
+      <Content data-testid="welcome-modal">
         <Header>
           <Title>{t('welcome.title')}</Title>
           <Description>{t('welcome.description')}</Description>

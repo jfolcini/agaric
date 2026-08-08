@@ -362,14 +362,13 @@ export function BugReportDialog({
   // kind keeps regular Dialog parts on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description, Footer } = parts
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
   const Body = parts.isMobile ? SheetBody : DialogBody
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
       {/* Dialog primitive bakes in flex flex-col + pinned
           header/footer + a scrollable DialogBody slot. */}
-      <Content className="max-w-2xl" {...contentSideProps}>
+      <Content className="max-w-2xl">
         <Header>
           <Title>{t('bugReport.title')}</Title>
           <Description>{t('bugReport.description')}</Description>

@@ -8,8 +8,9 @@
  */
 
 import { act, render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import * as React from 'react'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { axe } from '@/__tests__/helpers/axe'
 import {
@@ -86,6 +87,46 @@ describe('Sheet a11y', () => {
     })
     expect(results).toHaveNoViolations()
   })
+
+  // #3336 — the bottom-sheet shell is the shape the three fixes produce
+  // together: a height-capped container whose SheetBody owns the scroll
+  // region and forces the Radix viewport wrapper back to `block`. Drive it
+  // with real interaction so the audit runs against a focused, typed-into
+  // sheet rather than an inert first paint.
+  it('bottom sheet with a SheetBody stays keyboard-operable and axe-clean after interaction', async () => {
+    const user = userEvent.setup()
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault())
+    const { baseElement } = render(
+      <Sheet open>
+        <SheetContent side="bottom">
+          <SheetHeader>
+            <SheetTitle>Interactive Sheet</SheetTitle>
+            <SheetDescription>Sheet with a scrollable body</SheetDescription>
+          </SheetHeader>
+          <SheetBody>
+            <form onSubmit={onSubmit}>
+              <label htmlFor="sheet-note">Note</label>
+              <input id="sheet-note" name="note" />
+              <button type="submit">Save note</button>
+            </form>
+          </SheetBody>
+        </SheetContent>
+      </Sheet>,
+    )
+
+    const input = screen.getByLabelText('Note')
+    await user.type(input, 'hello')
+    expect(input).toHaveValue('hello')
+    await user.click(screen.getByRole('button', { name: 'Save note' }))
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+
+    // The shell contract still holds with content and focus inside it.
+    expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(input.closest('[data-slot="scroll-area-viewport"]')).toHaveClass('[&>div]:!block')
+
+    const results = await axe(baseElement, { rules: { region: { enabled: false } } })
+    expect(results).toHaveNoViolations()
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -106,6 +147,62 @@ describe('SheetContent base classes', () => {
     const dialog = screen.getByRole('dialog')
     expect(dialog).toHaveClass('flex', 'flex-col', 'overflow-hidden', 'p-6')
   })
+
+  it.each(['top', 'bottom'] as const)(
+    '%s sheets use the exact dynamic viewport height cap',
+    (side) => {
+      render(
+        <Sheet open>
+          <SheetContent side={side} aria-describedby={undefined}>
+            <SheetHeader>
+              <SheetTitle>{side} Sheet</SheetTitle>
+            </SheetHeader>
+          </SheetContent>
+        </Sheet>,
+      )
+      // The cap must live *in the primitive*, so an edge-anchored sheet whose
+      // content exceeds the viewport bounds itself instead of pushing its
+      // header off-screen under `overflow-hidden`. Exact token, and `dvh` —
+      // `vh` measures against the tallest mobile-chrome state (docs/UX.md).
+      expect(screen.getByRole('dialog')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    },
+  )
+
+  it('a caller className still wins over the primitive cap (deliberate overrides)', () => {
+    render(
+      <Sheet open>
+        <SheetContent side="bottom" className="max-h-[90dvh]" aria-describedby={undefined}>
+          <SheetHeader>
+            <SheetTitle>Override Sheet</SheetTitle>
+          </SheetHeader>
+        </SheetContent>
+      </Sheet>,
+    )
+    const dialog = screen.getByRole('dialog')
+    expect(dialog).toHaveClass('max-h-[90dvh]')
+    expect(dialog).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
+  })
+
+  // Both side-anchored arms, not just one: they are `h-full` already, so the
+  // edge-anchored cap would be dead weight there — and a regression that added
+  // it to only one side would otherwise slip through.
+  it.each(['left', 'right'] as const)(
+    '%s sheets do not inherit the top/bottom dynamic viewport height cap',
+    (side) => {
+      render(
+        <Sheet open>
+          <SheetContent side={side} aria-describedby={undefined}>
+            <SheetHeader>
+              <SheetTitle>{side} Sheet</SheetTitle>
+            </SheetHeader>
+          </SheetContent>
+        </Sheet>,
+      )
+      const dialog = screen.getByRole('dialog')
+      expect(dialog).toHaveClass('h-full')
+      expect(dialog).not.toHaveClass('max-h-[calc(100dvh-2rem)]')
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------
@@ -135,7 +232,7 @@ describe('SheetBody', () => {
     expect(scrollRoot).toHaveClass('flex-1', 'min-h-0', '-mx-6')
   })
 
-  it('viewport carries `px-6` so the scrollbar can sit in the SheetContent gutter without eating content padding', () => {
+  it('viewport carries the shared gutter and Radix width workaround classes', () => {
     render(
       <Sheet open>
         <SheetContent aria-describedby={undefined}>
@@ -151,7 +248,7 @@ describe('SheetBody', () => {
     const child = screen.getByTestId('body-child')
     const viewport = child.closest('[data-slot="scroll-area-viewport"]')
     expect(viewport).not.toBeNull()
-    expect(viewport).toHaveClass('px-6')
+    expect(viewport).toHaveClass('px-6', '[&>div]:!block')
   })
 
   it('SheetBody forwards ref to the ScrollArea root', () => {
@@ -272,6 +369,7 @@ describe('SheetContent soft-keyboard avoidance (#760)', () => {
     const dialog = renderBottomSheet()
     expect(dialog.style.bottom).toBe('300px')
     expect(dialog.style.maxHeight).toBe('calc(100% - 300px)')
+    expect(dialog).toHaveClass('max-h-[calc(100dvh-2rem)]')
   })
 
   it('tracks visualViewport resize: keyboard up → lifted, keyboard down → class anchoring restored', () => {

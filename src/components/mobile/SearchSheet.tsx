@@ -139,10 +139,9 @@ export function SearchSheet(): React.ReactElement | null {
     <Sheet open={open} onOpenChange={handleOpenChange}>
       <SheetContent
         side="bottom"
-        // `dvh` (dynamic viewport height) keeps the sheet shrunk when
-        // the iOS soft keyboard pops. 90 dvh caps height so the page
-        // underneath stays partially visible — the in-page segment
-        // relies on seeing the highlight pipeline beneath.
+        // Deliberately lower than SheetContent's shared viewport-minus-2rem
+        // cap: 90dvh keeps the page partially visible for the in-page
+        // highlight pipeline, including while the iOS keyboard is open.
         className="max-h-[90dvh]"
         // Suppress Radix's default first-focus — both embedded
         // surfaces auto-focus their own inputs.

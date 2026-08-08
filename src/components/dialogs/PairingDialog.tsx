@@ -834,8 +834,6 @@ export function PairingDialog({
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title } = parts
-  // Sheet's Content takes a `side` prop; DialogContent does not.
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
   // Mobile bottom-sheet path uses the Sheet body primitive so
   // padding/scroll behaviour comes from the Sheet scaffolding rather than
   // Dialog's — matches QuickCaptureDialog / BugReportDialog.
@@ -860,7 +858,6 @@ export function PairingDialog({
               triggerRef.current.focus()
             }
           }}
-          {...contentSideProps}
         >
           {/* Header */}
           <Header className="text-left mb-4">

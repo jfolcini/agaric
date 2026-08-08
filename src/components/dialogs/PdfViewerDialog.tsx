@@ -428,11 +428,19 @@ export function PdfViewerDialog({
   // Dialog (not AlertDialog) on desktop.
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title, Description } = parts
-  const contentSideProps = parts.isMobile ? ({ side: 'bottom' } as const) : {}
+
+  // This shell is the one adaptive surface that cannot live off SheetContent's
+  // `h-auto` + shared `max-h` cap: the viewer region below is `flex-1 min-h-0`
+  // wrapping an `absolute inset-0` container, which contributes no intrinsic
+  // height — with an auto-height shell the viewer would resolve to 0 px and the
+  // PDF would vanish. So both paths set an explicit height, and the mobile one
+  // states it in `dvh` (docs/UX.md — mobile chrome makes `vh` taller than the
+  // visible area, which the desktop dialog never sees).
+  const contentClassName = parts.isMobile ? 'h-[90dvh]' : 'max-w-5xl h-[90vh] max-h-[90vh]'
 
   return (
     <Root open={open} onOpenChange={onOpenChange}>
-      <Content className="max-w-5xl h-[90vh] max-h-[90vh]" {...contentSideProps}>
+      <Content className={contentClassName}>
         <Header>
           <Title>{filename}</Title>
           <Description className="sr-only">{t('pdfViewer.description', { filename })}</Description>

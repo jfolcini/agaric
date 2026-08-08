@@ -232,7 +232,7 @@ export function AddPropertyPopover({
     return (
       <Sheet open={popoverOpen} onOpenChange={setPopoverOpen}>
         <SheetTrigger asChild>{trigger}</SheetTrigger>
-        <SheetContent side="bottom" className="max-h-[80vh]" data-testid="add-property-sheet">
+        <SheetContent side="bottom" data-testid="add-property-sheet">
           <SheetHeader>
             <SheetTitle>{t('pageProperty.addPropertyButton')}</SheetTitle>
             <SheetDescription>{t('pageProperty.pickerLabel')}</SheetDescription>

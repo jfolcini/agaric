@@ -61,7 +61,7 @@ export function EmojiPickerDialog({
   if (isMobile) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
-        <SheetContent side="bottom" className="max-h-[80dvh]">
+        <SheetContent side="bottom">
           <SheetHeader>
             <SheetTitle>{t('emojiPicker.title')}</SheetTitle>
             <SheetDescription className="sr-only">

@@ -110,6 +110,23 @@ describe('AlertDialogContent viewport cap', () => {
     expect(body?.className).toContain('flex-1')
     expect(body?.className).toContain('min-h-0')
   })
+
+  it('AlertDialogBody viewport carries the shared gutter and Radix width workaround classes', () => {
+    const { baseElement } = render(
+      <AlertDialog open>
+        <AlertDialogContent>
+          <AlertDialogTitle>Title</AlertDialogTitle>
+          <AlertDialogDescription>Description</AlertDialogDescription>
+          <AlertDialogBody>
+            <p>Body</p>
+          </AlertDialogBody>
+        </AlertDialogContent>
+      </AlertDialog>,
+    )
+    const viewport = baseElement.querySelector('[data-slot="scroll-area-viewport"]')
+    expect(viewport).not.toBeNull()
+    expect(viewport).toHaveClass('px-6', '[&>div]:!block')
+  })
 })
 
 // ---------------------------------------------------------------------------

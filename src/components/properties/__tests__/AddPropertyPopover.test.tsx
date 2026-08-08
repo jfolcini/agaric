@@ -20,6 +20,12 @@ import { axe } from 'vitest-axe'
 
 import type { PropertyDefinition } from '@/lib/tauri'
 
+const mockUseIsTouch = vi.hoisted(() => vi.fn(() => false))
+
+vi.mock('@/hooks/useIsTouch', () => ({
+  useIsTouch: mockUseIsTouch,
+}))
+
 vi.mock('lucide-react', () => ({
   CalendarCheck2: () => <svg data-testid="calendar-check2-icon" />,
   CalendarClock: () => <svg data-testid="calendar-clock-icon" />,
@@ -30,6 +36,7 @@ vi.mock('lucide-react', () => ({
   Plus: () => <svg data-testid="plus-icon" />,
   Repeat: () => <svg data-testid="repeat-icon" />,
   User: () => <svg data-testid="user-icon" />,
+  XIcon: () => <svg data-testid="x-icon" />,
 }))
 
 // Radix Select is mocked globally via the shared mock in src/test-setup.ts
@@ -48,9 +55,18 @@ function makeDef(key: string, valueType = 'text'): PropertyDefinition {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockUseIsTouch.mockReturnValue(false)
 })
 
 describe('AddPropertyPopover', () => {
+  it('inherits the shared viewport cap in the coarse-pointer sheet', () => {
+    mockUseIsTouch.mockReturnValue(true)
+    render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} open onOpenChange={vi.fn()} />)
+
+    expect(screen.getByTestId('add-property-sheet')).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    expect(screen.getByTestId('add-property-sheet')).not.toHaveClass('max-h-[80vh]')
+  })
+
   it('renders trigger button', () => {
     render(<AddPropertyPopover definitions={[]} onAdd={vi.fn()} />)
     expect(screen.getByRole('button', { name: 'Add property' })).toBeInTheDocument()

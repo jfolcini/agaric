@@ -1,7 +1,7 @@
 /**
  * Tests for useDialogOrSheet — the Dialog/Sheet swap hook used by
- * ConfirmDialog (kind='alert', default) and the 6 form-style dialogs
- * Migrated under (kind='dialog').
+ * ConfirmDialog (kind='alert', default) and the form-style dialogs migrated
+ * under (kind='dialog').
  *
  * Validates:
  *  - Desktop+alert returns the AlertDialog set.
@@ -10,7 +10,8 @@
  *  - `kind` discriminant on the returned object matches the input.
  */
 
-import { renderHook } from '@testing-library/react'
+import { render, renderHook, screen } from '@testing-library/react'
+import { createElement } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
@@ -37,7 +38,7 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
-import { useDialogOrSheet } from '@/hooks/useDialogOrSheet'
+import { type DialogKind, useDialogOrSheet } from '@/hooks/useDialogOrSheet'
 import { useIsMobile } from '@/hooks/useIsMobile'
 
 vi.mock('@/hooks/useIsMobile', () => ({
@@ -97,6 +98,7 @@ describe('useDialogOrSheet', () => {
 
   it('returns Sheet primitives on mobile regardless of kind', () => {
     mockedUseIsMobile.mockReturnValue(true)
+    let sharedContent: unknown
 
     for (const kind of ['alert', 'dialog'] as const) {
       const { result } = renderHook(() => useDialogOrSheet(kind))
@@ -104,12 +106,51 @@ describe('useDialogOrSheet', () => {
       expect(result.current.isMobile).toBe(true)
       expect(result.current.kind).toBe(kind)
       expect(result.current.Root).toBe(Sheet)
-      expect(result.current.Content).toBe(SheetContent)
+      expect(result.current.Content).not.toBe(SheetContent)
+      sharedContent ??= result.current.Content
+      expect(result.current.Content).toBe(sharedContent)
       expect(result.current.Header).toBe(SheetHeader)
       expect(result.current.Title).toBe(SheetTitle)
       expect(result.current.Description).toBe(SheetDescription)
       expect(result.current.Footer).toBe(SheetFooter)
     }
+  })
+
+  it('renders mobile content as a bottom sheet even when a caller requests another side', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const { result } = renderHook(() => useDialogOrSheet('dialog'))
+    if (!result.current.isMobile) throw new Error('expected mobile parts')
+
+    const Content = result.current.Content
+    render(
+      createElement(
+        Sheet,
+        { open: true },
+        createElement(Content, { side: 'right' }, createElement(SheetTitle, null, 'Mobile sheet')),
+      ),
+    )
+
+    const content = screen.getByRole('dialog')
+    expect(content).toHaveClass('bottom-0', 'inset-x-0')
+    // One class per expectation: `.not.toHaveClass(a, b)` passes as soon as a
+    // single member is absent, so the grouped form would not actually rule out
+    // the right-drawer anchor.
+    expect(content).not.toHaveClass('right-0')
+    expect(content).not.toHaveClass('w-3/4')
+    expect(content).not.toHaveClass('sm:max-w-sm')
+  })
+
+  it('keeps the mobile Content component identity stable across rerenders and kinds', () => {
+    mockedUseIsMobile.mockReturnValue(true)
+    const { result, rerender } = renderHook(
+      ({ kind }: { kind: DialogKind }) => useDialogOrSheet(kind),
+      { initialProps: { kind: 'alert' as DialogKind } },
+    )
+    const initialContent = result.current.Content
+
+    rerender({ kind: 'dialog' })
+
+    expect(result.current.Content).toBe(initialContent)
   })
 
   it('exposes the same part keys on every path', () => {
