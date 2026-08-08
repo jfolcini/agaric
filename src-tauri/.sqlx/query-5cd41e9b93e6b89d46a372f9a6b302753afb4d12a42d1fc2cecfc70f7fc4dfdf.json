@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, payload FROM op_log WHERE block_id = ?1 AND op_type IN ('edit_block', 'create_block') AND (created_at < ?2 OR (created_at = ?2 AND seq <= ?3)) ORDER BY created_at DESC, seq DESC LIMIT 1",
+  "query": "SELECT op_type, payload FROM op_log WHERE device_id = ?1 AND seq = ?2 AND is_replicated = 0",
   "describe": {
     "columns": [
       {
@@ -27,12 +27,12 @@
       }
     ],
     "parameters": {
-      "Right": 3
+      "Right": 2
     },
     "nullable": [
       false,
       false
     ]
   },
-  "hash": "3dca7c4d41fb169bf26ae0b9570eaf2d93437bbae0f44e5d51e1aca04968884b"
+  "hash": "5cd41e9b93e6b89d46a372f9a6b302753afb4d12a42d1fc2cecfc70f7fc4dfdf"
 }

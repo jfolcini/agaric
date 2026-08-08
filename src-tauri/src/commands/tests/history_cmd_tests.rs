@@ -1131,3 +1131,139 @@ async fn undo_page_op_skips_interleaved_undo_op_matching_group_walk() {
         "depth 0 and 1 must target the two distinct user edits, not the same op"
     );
 }
+
+/// #3281: the restore PREVIEW must reconstruct historical content from
+/// locally-authored ops only.
+///
+/// `compute_block_vs_current_diff_inner` sits under a comment claiming it
+/// mirrors `find_prior_text`'s canonical total order, but it carried neither
+/// `is_replicated = 0` (#2549) nor the `device_id` tie-break (#382). A
+/// peer-authored audit row — ingested for provenance and NEVER applied
+/// locally — could therefore win the scan, so the preview showed a diff
+/// against text no restore would ever produce.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_skips_replicated_rows_3281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "v0".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    edit_block_inner(&pool, DEV, &mat, created.id.clone(), "v1 local".into())
+        .await
+        .unwrap();
+    mat.flush_background().await.unwrap();
+
+    // Peer audit row, later than every local op, never applied here.
+    let block_id_upper = created.id.as_str().to_string();
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_replicated) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1)",
+    )
+    .bind("remote-dev")
+    .bind(77_i64)
+    .bind("hash-remote")
+    .bind("edit_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","to_text":"foreign never applied","prev_edit":null}}"#
+    ))
+    .bind(4_102_444_800_900_i64)
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let spans = compute_block_vs_current_diff_inner(
+        &pool,
+        block_id_upper.clone().into(),
+        4_102_444_800_900,
+        77,
+    )
+    .await
+    .unwrap();
+
+    use agaric_core::word_diff::DiffTag;
+    let historical: String = spans
+        .iter()
+        .filter(|s| s.tag != DiffTag::Insert)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(
+        historical, "v1 local",
+        "#3281: the preview must reconstruct from the latest LOCAL op, not \
+         from a replicated audit row. spans: {spans:?}"
+    );
+}
+
+/// #3281: with two rows colliding on an identical `(created_at, seq)` across
+/// devices, `ORDER BY created_at DESC, seq DESC` alone leaves the `LIMIT 1`
+/// winner up to SQLite's row order. The canonical total order breaks the tie
+/// on `device_id DESC`, exactly like `find_prior_text`.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_tie_breaks_on_device_id_3281() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "current text".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let block_id_upper = created.id.as_str().to_string();
+
+    // Identical (created_at, seq); `dev_b` must win on `device_id DESC`.
+    // `dev_b` is inserted FIRST so a rowid-order tie-break would pick `dev_a`.
+    for (dev, text) in [("dev_b", "from dev_b"), ("dev_a", "from dev_a")] {
+        sqlx::query(
+            "INSERT INTO op_log \
+             (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id) \
+             VALUES (?, ?, NULL, ?, ?, ?, ?, ?)",
+        )
+        .bind(dev)
+        .bind(5_i64)
+        .bind(format!("hash-{dev}"))
+        .bind("edit_block")
+        .bind(format!(
+            r#"{{"block_id":"{block_id_upper}","to_text":"{text}","prev_edit":null}}"#
+        ))
+        .bind(4_102_444_800_500_i64)
+        .bind(&block_id_upper)
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, block_id_upper.into(), 4_102_444_800_500, 5)
+            .await
+            .unwrap();
+
+    use agaric_core::word_diff::DiffTag;
+    let historical: String = spans
+        .iter()
+        .filter(|s| s.tag != DiffTag::Insert)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(
+        historical, "from dev_b",
+        "#3281: an equal-(created_at, seq) collision must resolve \
+         deterministically on device_id DESC. spans: {spans:?}"
+    );
+}

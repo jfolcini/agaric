@@ -9,7 +9,7 @@ use agaric_store::op::{
     CreateBlockPayload, DeleteBlockPayload, EditBlockPayload, MoveBlockPayload, OpPayload,
     RestoreBlockPayload,
 };
-use agaric_store::op_log::{OpRecord, get_op_by_seq};
+use agaric_store::op_log::{OpRecord, resolve_prev_edit_target};
 
 // #1543: the reverse of a `create_block` is a SOFT delete (`DeleteBlock`), not a
 // hard purge. This is deliberate and internally consistent with the rest of the
@@ -51,56 +51,43 @@ pub async fn reverse_edit_block(
     record: &OpRecord,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
-    // #1526: follow the op's CAUSAL predecessor (`payload.prev_edit`) when it is
-    // present, rather than reconstructing the pre-image purely by timestamp
-    // order. `prev_edit` is the `(device_id, seq)` of the edit/create that was
-    // the live value when this edit was authored (stamped by
-    // `find_prev_edit_in_tx`, which keys on `seq DESC` — the per-device causal
-    // counter — NOT `created_at`). Restoring exactly that op's text is the
-    // correct undo target even under cross-device clock skew, where
-    // `find_prior_text`'s `(created_at, seq, device_id)` ordering could pick a
-    // DIFFERENT ancestor that the live edit had already superseded.
-    //
-    // Fall back to the timestamp-ordered `find_prior_text` only when:
-    // * `prev_edit` is `None` (e.g. pre-existing ops, or the first edit after
-    //     a create where the pointer was not recorded), or
-    //   * the pointed-at op is missing (e.g. removed by op-log compaction) —
-    //     the timestamp scan is the best remaining reconstruction.
-    let prior_text = match &payload.prev_edit {
+
+    // Resolve the causal pointer, if the op carries one. `None` covers
+    // "no pointer", "pointer dangles (compaction)" and "pointer names a
+    // replicated audit row" (#3281) — all three mean the same thing to
+    // `resolve_prior_text`: fall back to the timestamp scan.
+    let prev_row = match &payload.prev_edit {
         Some((prev_device, prev_seq)) => {
-            match get_op_by_seq(&ReadPool(pool.clone()), prev_device, *prev_seq).await {
-                Ok(prev) => Some(text_of_edit_or_create(&prev)?),
-                // Pointer dangles (compaction) — fall back to the timestamp scan.
-                Err(AppError::NotFound(_)) => {
-                    find_prior_text(
-                        pool,
-                        payload.block_id.as_str(),
-                        record.created_at,
-                        record.seq,
-                        &record.device_id,
-                    )
-                    .await?
-                }
-                Err(e) => return Err(e),
-            }
+            resolve_prev_edit_target(&ReadPool(pool.clone()), prev_device, *prev_seq).await?
         }
-        None => {
-            find_prior_text(
-                pool,
-                payload.block_id.as_str(),
-                record.created_at,
-                record.seq,
-                &record.device_id,
-            )
-            .await?
-        }
-    }
-    .ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior text found for block '{}' before ({}, {})",
-            payload.block_id, record.device_id, record.seq
-        ))
-    })?;
+        None => None,
+    };
+
+    // Perf short-circuit ONLY: `resolve_prior_text` ignores the fallback
+    // whenever the causal pointer resolved, so skipping the scan here cannot
+    // change the answer — it just avoids a query the single-op path would
+    // otherwise pay on every undo.
+    let timestamp_prior = if prev_row.is_some() {
+        None
+    } else {
+        find_prior_text_row(
+            pool,
+            payload.block_id.as_str(),
+            record.created_at,
+            record.seq,
+            &record.device_id,
+        )
+        .await?
+    };
+
+    let prior_text =
+        resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref())?.ok_or_else(|| {
+            AppError::NotFound(format!(
+                "no prior text found for block '{}' before ({}, {})",
+                payload.block_id, record.device_id, record.seq
+            ))
+        })?;
+
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
         to_text: prior_text,
@@ -108,22 +95,64 @@ pub async fn reverse_edit_block(
     }))
 }
 
-/// Extract the text an `edit_block`/`create_block` op contributed to its block:
-/// `to_text` for an edit, `content` for a create. Used by [`reverse_edit_block`]
-/// to recover the pre-image named by `EditBlockPayload::prev_edit` (#1526).
-fn text_of_edit_or_create(record: &OpRecord) -> Result<String, AppError> {
-    match record.op_type.as_str() {
+/// The #1526 precedence, in ONE place — shared by the single-op kernel
+/// ([`reverse_edit_block`]) and the batch kernel
+/// (`reverse::batch::build_reverse_edit_block`). #3280.
+///
+/// Follow the op's CAUSAL predecessor (`EditBlockPayload::prev_edit`) when it
+/// resolves, rather than reconstructing the pre-image purely by timestamp
+/// order. `prev_edit` is the `(device_id, seq)` of the edit/create that was
+/// the live value when this edit was authored (stamped by
+/// `find_prev_edit_in_tx`, which keys on `seq DESC` — the per-device causal
+/// counter — NOT `created_at`). Restoring exactly that op's text is the
+/// correct undo target even under cross-device clock skew, where the
+/// `(created_at, seq, device_id)` scan could pick a DIFFERENT ancestor that
+/// the live edit had already superseded.
+///
+/// Fall back to the timestamp-ordered scan only when `prev_row` is `None` —
+/// i.e. `prev_edit` was absent (pre-existing ops, or an edit whose pointer
+/// was never recorded), the pointed-at op is gone (op-log compaction), or it
+/// names a replicated audit row (#3281).
+///
+/// # Why this is shared
+///
+/// The batch kernel used to implement the FALLBACK ONLY: it derived the undo
+/// text purely from the timestamp scan and never read `payload.prev_edit`,
+/// while still writing a `prev_edit` onto the reverse op it produced. Since
+/// `compute_reverse_batch` serves `revert_ops`, `restore_page_to_op`,
+/// `undo_page_group` AND `undo_op`, two near-identical affordances ran
+/// divergent kernels — against a module contract asserting they could not.
+/// Returns `Ok(None)` when neither source yields text; the caller decides
+/// whether that is fatal (single-op) or skippable (batch).
+pub(crate) fn resolve_prior_text(
+    prev_row: Option<&(String, String)>,
+    timestamp_prior: Option<&(String, String)>,
+) -> Result<Option<String>, AppError> {
+    if let Some((op_type, payload)) = prev_row {
+        return Ok(Some(text_of_prior_row(op_type, payload)?));
+    }
+    timestamp_prior
+        .map(|(op_type, payload)| text_of_prior_row(op_type, payload))
+        .transpose()
+}
+
+/// Extract the text an `edit_block`/`create_block` op contributed to its
+/// block: `to_text` for an edit, `content` for a create.
+///
+/// Shared by both reverse kernels via [`resolve_prior_text`] so the two can
+/// never disagree on how a prior row is decoded.
+pub(crate) fn text_of_prior_row(op_type: &str, payload: &str) -> Result<String, AppError> {
+    match op_type {
         "edit_block" => {
-            let p: EditBlockPayload = serde_json::from_str(&record.payload)?;
+            let p: EditBlockPayload = serde_json::from_str(payload)?;
             Ok(p.to_text)
         }
         "create_block" => {
-            let p: CreateBlockPayload = serde_json::from_str(&record.payload)?;
+            let p: CreateBlockPayload = serde_json::from_str(payload)?;
             Ok(p.content)
         }
         other => Err(AppError::InvalidOperation(format!(
-            "prev_edit ({}, {}) points to a non-text op '{}'; expected edit_block/create_block",
-            record.device_id, record.seq, other
+            "prior-text row is a non-text op '{other}'; expected edit_block/create_block"
         ))),
     }
 }
@@ -197,6 +226,37 @@ pub fn reverse_restore_block(record: &OpRecord) -> Result<OpPayload, AppError> {
     }))
 }
 
+/// Timestamp-ordered fallback scan, returning the raw `(op_type, payload)`
+/// row so both reverse kernels feed [`resolve_prior_text`] the same shape.
+///
+/// Delegates to the single scan primitive
+/// ([`agaric_store::op_log::latest_block_edit_before`]), which owns the
+/// `is_replicated = 0` policy (#2549) and the canonical
+/// `(created_at, seq, device_id)` total order including the `device_id`
+/// tie-break (#382).
+pub async fn find_prior_text_row(
+    pool: &SqlitePool,
+    block_id: &str,
+    created_at: i64,
+    seq: i64,
+    device_id: &str,
+) -> Result<Option<(String, String)>, AppError> {
+    let row = agaric_store::op_log::latest_block_edit_before(
+        pool,
+        block_id,
+        agaric_store::op_log::BlockEditScan::StrictlyBefore {
+            created_at,
+            seq,
+            device_id,
+        },
+    )
+    .await?;
+    Ok(row.map(|r| (r.op_type, r.payload)))
+}
+
+/// Text-extracting wrapper over [`find_prior_text_row`], kept for
+/// `commands::history::compute_edit_diff_inner` and the #1526 sanity
+/// assertions in the reverse tests.
 pub async fn find_prior_text(
     pool: &SqlitePool,
     block_id: &str,
@@ -204,55 +264,10 @@ pub async fn find_prior_text(
     seq: i64,
     device_id: &str,
 ) -> Result<Option<String>, AppError> {
-    // Use the indexed `block_id` column (migration 0030) instead of
-    // `json_extract(payload, '$.block_id')` so undo of `edit_block` is
-    // O(log N) on op_log size. AGENTS.md invariant #8: ULIDs are stored
-    // uppercase for hash determinism, so normalize the bound parameter to
-    // match — mirrors `recovery/draft_recovery.rs`.
-    let bid_upper = block_id.to_ascii_uppercase();
-    // #382: the op_log PK is `(device_id, seq)` and `seq` is a PER-DEVICE
-    // counter, so the "strictly before" predicate must tie-break on the
-    // full canonical `(created_at, seq, device_id)` total order — the same
-    // order used by `commands/history.rs` and `pagination/history.rs`.
-    // Omitting `device_id` leaves the bound ambiguous when two devices
-    // share a `(created_at, seq)` pair: the equal-key op could fall on
-    // either side of the boundary. Including `device_id` makes "the op
-    // immediately before this one" well-defined cross-device.
-    // #2549: `AND is_replicated = 0` — reconstruct prior state ONLY from
-    // locally-authored ops. #2495 introduced audit-only replicated rows
-    // (`is_replicated = 1`) that are ingested for provenance but NEVER
-    // applied to local state. Walking back into such a row would restore
-    // content this device never actually held ("prior state" fabricated from
-    // a never-applied edit). Implicit undo already scopes to local ops; this
-    // makes the shared `compute_reverse` prior-state walk do the same.
-    let row = sqlx::query!(
-        "SELECT op_type, payload FROM op_log \
-         WHERE block_id = ?1 \
-           AND op_type IN ('edit_block', 'create_block') \
-           AND is_replicated = 0 \
-           AND (created_at < ?2 \
-                OR (created_at = ?2 AND (seq < ?3 OR (seq = ?3 AND device_id < ?4)))) \
-         ORDER BY created_at DESC, seq DESC, device_id DESC \
-         LIMIT 1",
-        bid_upper,
-        created_at,
-        seq,
-        device_id,
-    )
-    .fetch_optional(pool)
-    .await?;
-    match row {
-        Some(r) => {
-            if r.op_type == "edit_block" {
-                let p: EditBlockPayload = serde_json::from_str(&r.payload)?;
-                Ok(Some(p.to_text))
-            } else {
-                let p: CreateBlockPayload = serde_json::from_str(&r.payload)?;
-                Ok(Some(p.content))
-            }
-        }
-        None => Ok(None),
-    }
+    find_prior_text_row(pool, block_id, created_at, seq, device_id)
+        .await?
+        .map(|(op_type, payload)| text_of_prior_row(&op_type, &payload))
+        .transpose()
 }
 
 /// A block's parent + sibling slot reconstructed from its last create/move op,

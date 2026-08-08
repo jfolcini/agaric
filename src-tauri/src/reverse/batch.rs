@@ -34,6 +34,42 @@
 //! [`super::compute_reverse`] loop output for the same input order.
 //! `compute_reverse_batch_matches_per_op_loop` in `super::tests` is
 //! the regression oracle that locks this contract.
+//!
+//! #3280: that contract was false on the `edit_block` arm for a long time,
+//! and the oracle could not see it because every seeded payload used
+//! `prev_edit: None` — the one shape where the pointer-first and
+//! timestamp-scan kernels trivially agree, and a shape production never
+//! produces. The DECISION now lives in exactly one place,
+//! [`block_ops::resolve_prior_text`], which both kernels call; only the
+//! plumbing that feeds it (per-op queries vs. prefetched UNION-ALL batches)
+//! differs. When adding a new context-bearing op-type here, prefer sharing
+//! the decision function with `block_ops`/`property_ops`/`attachment_ops`
+//! over hand-copying it — and seed the oracle with a fixture that can
+//! actually tell the two apart.
+//!
+//! The prior-state SQL predicates below are hand-copied from
+//! [`agaric_store::op_log::latest_block_edit_before`] because batching N
+//! lookups into one statement is this module's entire reason to exist; that
+//! primitive is the source of truth for the `is_replicated = 0` policy
+//! (#2549/#3281) and the canonical `(created_at, seq, device_id)` order
+//! (#382).
+//!
+//! What actually holds the `edit_block` copies to the primitive — stated
+//! precisely, because a vague "the oracle covers it" claim is the sin #3280
+//! was filed about:
+//!   * `is_replicated = 0` on `fetch_prev_edit_rows_batch` —
+//!     `batch_reverse_edit_without_prior_is_skippable_not_fatal_3280`.
+//!   * `is_replicated = 0` on `fetch_prior_text_batch` — the parity oracle
+//!     (B3_BLK1 carries a replicated audit row that is the timestamp-newest
+//!     candidate) and `revert_ops_restores_local_content_over_replicated_prior_2549`.
+//!   * `ORDER BY created_at DESC, seq DESC` on `fetch_prior_text_batch` —
+//!     the parity oracle (B3_BLK1 has two local candidates) and
+//!     `compute_reverse_batch_chunks_large_edit_batch_c5`.
+//!   * NOT COVERED: the `device_id DESC` tie-break (#382). No fixture seeds
+//!     two rows colliding on an identical `(created_at, seq)` across
+//!     devices, so dropping `, device_id DESC` from any copy here is
+//!     currently invisible to the whole suite. Seed that collision before
+//!     relying on the tie-break.
 
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 use std::str::FromStr;
@@ -132,15 +168,20 @@ pub fn is_skippable_non_reversible(err: &AppError) -> bool {
 ///   * `Ok(payload)` — the op's reverse payload.
 ///   * `Err(AppError::NonReversible { .. })` — the op has no inverse
 ///     (purge_block, an attachment restore whose `add_attachment` is
-///     gone, or a move-of-create missing position). Callers decide
-///     whether to SKIP (point-in-time restore) or abort (interactive
-///     undo); see [`is_skippable_non_reversible`].
+///     gone, a move-of-create missing position, or — #3280 — an
+///     `edit_block` whose prior text cannot be reconstructed from either
+///     its causal `prev_edit` pointer or the local timestamp scan).
+///     Callers decide whether to SKIP (point-in-time restore) or abort
+///     (interactive undo); see [`is_skippable_non_reversible`].
 ///
 /// The OUTER `Result` is reserved for fatal batch-level failures that
 /// abort the whole computation regardless of caller policy:
 ///   * `AppError::Validation` on unknown `op_type` strings.
 ///   * `AppError::NotFound` when an op's prior context is missing
-///     (edit_block, move_block, set_property, delete_property arms).
+///     (move_block, set_property, delete_property arms). #3280 moved the
+///     `edit_block` arm OFF this list: a peer-originated block has no
+///     local prior text at all, so a fatal error there aborted entire
+///     restores that had explicitly asked to skip non-reversible ops.
 ///   * `serde_json::Error` (via `From`) for malformed payloads, and any
 ///     SQL error from the prior-context prefetch.
 ///
@@ -194,6 +235,14 @@ pub async fn compute_reverse_batch(
     // and `attachment_ops::reverse_delete_attachment` byte-for-byte
     // so the batched output round-trips against the per-op oracle.
 
+    // #3280: resolve every `edit_block`'s CAUSAL pointer
+    // (`payload.prev_edit`) in one additional PK-keyed fetch, so the batch
+    // kernel can honour the same #1526 precedence as the single-op kernel
+    // instead of implementing only the timestamp fallback. `edit_prior`
+    // stays: it IS that fallback, used whenever the pointer does not
+    // resolve.
+    let edit_prev: Vec<Option<(String, String)>> =
+        fetch_prev_edit_rows_batch(pool, ops, &edit_idxs).await?;
     let edit_prior: Vec<Option<(String, String)>> =
         fetch_prior_text_batch(pool, ops, &edit_idxs).await?;
     let move_prior: Vec<Option<(String, String)>> =
@@ -227,9 +276,10 @@ pub async fn compute_reverse_batch(
             OpType::CreateBlock => block_ops::reverse_create_block(record),
             OpType::DeleteBlock => block_ops::reverse_delete_block(record),
             OpType::EditBlock => {
+                let prev_row = edit_prev[edit_cursor].as_ref();
                 let prior = edit_prior[edit_cursor].as_ref();
                 edit_cursor += 1;
-                build_reverse_edit_block(record, prior)
+                build_reverse_edit_block(record, prev_row, prior)
             }
             OpType::MoveBlock => {
                 let prior = move_prior[move_cursor].as_ref();
@@ -280,6 +330,72 @@ pub async fn compute_reverse_batch(
 // loop converts that to the same error shape the single-op
 // `find_prior_*` helpers produce.
 // ---------------------------------------------------------------------------
+
+/// Batched `op_log::resolve_prev_edit_target`: one UNION-ALL keyed on the
+/// op_log PRIMARY KEY `(device_id, seq)`, resolving the `prev_edit` pointer
+/// of every `edit_block` in the batch. #3280.
+///
+/// Output is aligned with `idxs`. An entry is `None` when the op carried no
+/// pointer at all, when the pointed-at row is gone (op-log compaction), or
+/// when it is a REPLICATED audit row (#3281) — the three cases
+/// `block_ops::resolve_prior_text` treats alike by falling back to the
+/// timestamp scan. Mirrors the single-op `resolve_prev_edit_target`,
+/// including its `is_replicated = 0` predicate.
+///
+/// Cheaper than the sibling `fetch_prior_*` fetches: a PK lookup returns at
+/// most one row, so no per-op `ORDER BY … LIMIT 1` subquery wrapper is
+/// needed, and ops with no pointer are skipped entirely.
+async fn fetch_prev_edit_rows_batch(
+    pool: &SqlitePool,
+    ops: &[OpRecord],
+    idxs: &[usize],
+) -> Result<Vec<Option<(String, String)>>, AppError> {
+    let mut out: Vec<Option<(String, String)>> = vec![None; idxs.len()];
+    if idxs.is_empty() {
+        return Ok(out);
+    }
+
+    // The bound `idx` is the position within `idxs` (i.e. within `out`), so
+    // rows map straight back regardless of chunk boundaries.
+    let mut wanted: Vec<(usize, String, i64)> = Vec::new();
+    for (j, &op_idx) in idxs.iter().enumerate() {
+        let payload: EditBlockPayload = serde_json::from_str(&ops[op_idx].payload)?;
+        if let Some((prev_device, prev_seq)) = payload.prev_edit {
+            wanted.push((j, prev_device, prev_seq));
+        }
+    }
+    if wanted.is_empty() {
+        return Ok(out);
+    }
+
+    // C5 (#344): same (idx, device_id, seq) bind width as
+    // `get_op_records_batch`, so the same chunk size applies.
+    let chunk_size = MAX_SQL_PARAMS / OP_RECORD_BINDS_PER_OP;
+    for chunk in wanted.chunks(chunk_size) {
+        let mut qb: QueryBuilder<Sqlite> = QueryBuilder::new("");
+        for (j, (pos, prev_device, prev_seq)) in chunk.iter().enumerate() {
+            if j == 0 {
+                qb.push("SELECT ");
+            } else {
+                qb.push(" UNION ALL SELECT ");
+            }
+            qb.push_bind(*pos as i64);
+            qb.push(" AS idx, op_type, payload FROM op_log WHERE device_id = ");
+            qb.push_bind(prev_device.clone());
+            qb.push(" AND seq = ");
+            qb.push_bind(*prev_seq);
+            qb.push(" AND is_replicated = 0");
+        }
+        let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
+        for (i, op_type, payload) in rows {
+            let i = i as usize;
+            if i < out.len() {
+                out[i] = Some((op_type, payload));
+            }
+        }
+    }
+    Ok(out)
+}
 
 /// Batched `find_prior_text`: one UNION-ALL with one subquery per
 /// op, returning (op_type, payload) of the most-recent matching row
@@ -568,24 +684,31 @@ async fn fetch_prior_attachment_batch(
 // paths; the parity test in `super::tests` is the regression oracle.
 // ---------------------------------------------------------------------------
 
+/// #3280: goes through the SAME [`block_ops::resolve_prior_text`] decision as
+/// the single-op kernel. `prev_row` is this op's resolved `prev_edit` target
+/// (prefetched by [`fetch_prev_edit_rows_batch`]); `prior` is the
+/// timestamp-ordered fallback. Previously this arm implemented the fallback
+/// only — it never read `payload.prev_edit`, though it still wrote one onto
+/// the reverse it produced.
 fn build_reverse_edit_block(
     record: &OpRecord,
+    prev_row: Option<&(String, String)>,
     prior: Option<&(String, String)>,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
-    let (prior_op_type, prior_payload) = prior.ok_or_else(|| {
-        AppError::NotFound(format!(
-            "no prior text found for block '{}' before ({}, {})",
-            payload.block_id, record.device_id, record.seq
-        ))
+    let prior_text = block_ops::resolve_prior_text(prev_row, prior)?.ok_or_else(|| {
+        // #3280: NOT `NotFound`. Neither source could reconstruct a prior
+        // text — the normal case for the first local edit of a
+        // peer-originated block, whose only op_log row is a replicated audit
+        // row. `is_skippable_non_reversible` matches only `NonReversible`, so
+        // a `NotFound` here took `compute_reverse_batch`'s fatal arm and
+        // aborted the ENTIRE restore with no partial progress, even under
+        // `skip_non_reversible = true` — exactly the #2020 failure mode that
+        // predicate was written to prevent.
+        AppError::NonReversible {
+            op_type: record.op_type.clone(),
+        }
     })?;
-    let prior_text = if prior_op_type == "edit_block" {
-        let p: EditBlockPayload = serde_json::from_str(prior_payload)?;
-        p.to_text
-    } else {
-        let p: CreateBlockPayload = serde_json::from_str(prior_payload)?;
-        p.content
-    };
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
         to_text: prior_text,
