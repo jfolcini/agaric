@@ -31,10 +31,24 @@ interface HumanizeTagCase {
   expected: string
 }
 
+/**
+ * #3599 — a MECHANISM-level parity vector. The `cases` corpus hands each side a
+ * block whose code-ness the fixture declares; these feed raw text to each
+ * side's real code-protection mechanism instead (Rust's line-oriented
+ * `parse_logseq_markdown`, this side's per-content `fencedCodeSpans`) and
+ * compare the SET of tag names the resolver is asked to create.
+ */
+interface CodeFenceCase {
+  name: string
+  input: string
+  requestedTagNames: string[]
+}
+
 interface ReferenceTokenVectors {
   pageResolutions: Record<string, string>
   tagResolutions: Record<string, string>
   humanizeCases: HumanizeTagCase[]
+  codeFenceCases: CodeFenceCase[]
   cases: ReferenceTokenCase[]
 }
 
@@ -63,6 +77,23 @@ describe('reference-token cross-language parity (#1920, #3261)', () => {
         ulid === vector.tagUlid ? vector.tagName : undefined,
       )
       expect(transformed).toBe(vector.expected)
+    })
+  }
+
+  for (const vector of vectors.codeFenceCases) {
+    it(`code fence: ${vector.name}`, async () => {
+      const requestedTagNames: string[] = []
+      await internalizeRefTokens(vector.input, {
+        page: async (name) => vectors.pageResolutions[name] ?? null,
+        tag: async (name) => {
+          requestedTagNames.push(name)
+          return vectors.tagResolutions[name] ?? null
+        },
+      })
+      // Same set-plus-count contract as below: the count still catches a
+      // duplicate create-if-missing round trip.
+      expect(requestedTagNames).toHaveLength(vector.requestedTagNames.length)
+      expect(new Set(requestedTagNames)).toEqual(new Set(vector.requestedTagNames))
     })
   }
 
