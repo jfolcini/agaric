@@ -67,7 +67,7 @@ function makeOptions(
     pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
     selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
-    blocks: [{ id: 'BLOCK_1' }, { id: 'BLOCK_2' }],
+    selectAllIds: ['BLOCK_1', 'BLOCK_2'],
     visibleIds: ['BLOCK_1', 'BLOCK_2'],
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
@@ -130,13 +130,95 @@ describe('useBlockTreeKeyboardShortcuts', () => {
   })
 
   describe('Multi-selection (Ctrl+A)', () => {
-    it('calls rawSelectAll when Ctrl+A is pressed and no block is focused', () => {
-      const opts = makeOptions({ focusedBlockId: null })
+    it('selects the full page scope at the page root', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        zoomedBlockId: null,
+        selectAllIds: ['ROOT_1', 'ROOT_2', 'ROOT_3'],
+      })
       renderHook(() => useBlockTreeKeyboardShortcuts(opts))
 
       fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
 
-      expect(opts.rawSelectAll).toHaveBeenCalledWith(['BLOCK_1', 'BLOCK_2'])
+      expect(opts.rawSelectAll).toHaveBeenCalledWith(['ROOT_1', 'ROOT_2', 'ROOT_3'])
+    })
+
+    it('selects a nested zoom scope without including page-root siblings', () => {
+      const opts = makeOptions({
+        focusedBlockId: null,
+        zoomedBlockId: 'NESTED_ROOT',
+        selectAllIds: ['NESTED_CHILD', 'NESTED_GRANDCHILD'],
+        visibleIds: ['NESTED_CHILD', 'NESTED_GRANDCHILD'],
+      })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'a', metaKey: true })
+
+      expect(opts.rawSelectAll).toHaveBeenCalledWith(['NESTED_CHILD', 'NESTED_GRANDCHILD'])
+    })
+
+    it('selects every zoom descendant beyond the 500-row mount cap', () => {
+      const zoomIds = Array.from({ length: 650 }, (_, index) => `ZOOM_${index}`)
+      const opts = makeOptions({
+        focusedBlockId: null,
+        zoomedBlockId: 'ZOOM_ROOT',
+        selectAllIds: zoomIds,
+        // `visibleIds` is deliberately capped: it is for range navigation,
+        // never for Ctrl/Cmd+A scope.
+        visibleIds: zoomIds.slice(0, 500),
+      })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+
+      fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+      expect(opts.rawSelectAll).toHaveBeenCalledWith(zoomIds)
+      expect(vi.mocked(opts.rawSelectAll).mock.calls[0]?.[0]).toHaveLength(650)
+    })
+
+    it('does not claim an event already handled by another shortcut owner', () => {
+      const opts = makeOptions({ focusedBlockId: null })
+      renderHook(() => useBlockTreeKeyboardShortcuts(opts))
+      const event = new KeyboardEvent('keydown', {
+        key: 'a',
+        ctrlKey: true,
+        bubbles: true,
+        cancelable: true,
+      })
+      event.preventDefault()
+
+      document.dispatchEvent(event)
+
+      expect(opts.rawSelectAll).not.toHaveBeenCalled()
+    })
+
+    it('only lets the last-interacted tree replace the global selection', () => {
+      const inactiveStore = makePageStore(['INACTIVE'])
+      const activeStore = makePageStore(['ACTIVE'])
+      const inactive = makeOptions({
+        focusedBlockId: 'INACTIVE',
+        pageStore: inactiveStore,
+        selectAllIds: ['INACTIVE'],
+      })
+      const active = makeOptions({
+        focusedBlockId: 'ACTIVE',
+        pageStore: activeStore,
+        selectAllIds: ['ACTIVE'],
+      })
+      const inactiveHook = renderHook(
+        (props: UseBlockTreeKeyboardShortcutsOptions) => useBlockTreeKeyboardShortcuts(props),
+        { initialProps: inactive },
+      )
+      const activeHook = renderHook(
+        (props: UseBlockTreeKeyboardShortcutsOptions) => useBlockTreeKeyboardShortcuts(props),
+        { initialProps: active },
+      )
+      inactiveHook.rerender({ ...inactive, focusedBlockId: null })
+      activeHook.rerender({ ...active, focusedBlockId: null })
+
+      fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+      expect(inactive.rawSelectAll).not.toHaveBeenCalled()
+      expect(active.rawSelectAll).toHaveBeenCalledWith(['ACTIVE'])
     })
 
     it('does not select all when a block is focused', () => {
@@ -179,7 +261,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         focusedBlockId: null,
         pageStore: makePageStore(['B1', 'B2', 'B3']),
         selectedBlockIds: ['B1'],
-        blocks: [{ id: 'B1' }, { id: 'B2' }, { id: 'B3' }],
+        selectAllIds: ['B1', 'B2', 'B3'],
         visibleIds: ['B1', 'B2', 'B3'],
         ...overrides,
       })
@@ -288,7 +370,7 @@ describe('useBlockTreeKeyboardShortcuts', () => {
         focusedBlockId: null,
         pageStore: makePageStore(['B1', 'B2', 'B3']),
         selectedBlockIds: ['B1'],
-        blocks: [{ id: 'B1' }, { id: 'B2' }, { id: 'B3' }],
+        selectAllIds: ['B1', 'B2', 'B3'],
         visibleIds: ['B1', 'B2', 'B3'],
         ...overrides,
       })

@@ -52,6 +52,8 @@ export interface UseBlockCollapseOptions {
 export interface UseBlockCollapseReturn {
   collapsedIds: Set<string>
   toggleCollapse: (blockId: string) => void
+  /** Expand a block if collapsed; leaves already-expanded blocks unchanged. */
+  expandBlock: (blockId: string) => void
   /** Blocks visible after collapse filtering. */
   visibleBlocks: FlatBlock[]
   /** Set of block IDs that have children (next block has greater depth). */
@@ -94,6 +96,7 @@ export function useBlockCollapse(
     (updater: (prev: Set<string>) => Set<string>) => {
       setCollapsedIdsRaw((prev) => {
         const next = updater(prev)
+        if (next === prev) return prev
         if (pageKey) {
           // #752 — prune to ids that still exist on this page so deleted
           // blocks (and ids inherited from the legacy global key) can't
@@ -127,6 +130,24 @@ export function useBlockCollapse(
       })
     },
     [onBeforeCollapse, setCollapsedIds],
+  )
+
+  // ── Explicit expand ────────────────────────────────────────────────
+  // Unlike toggleCollapse, zoom/navigation callers need an idempotent
+  // "make visible" operation: an already-expanded block must not collapse.
+  // Reusing setCollapsedIds keeps the page-scoped persistence and pruning
+  // path identical to manual expansion. The callback stays stable across
+  // collapse changes because it only depends on the stable setter.
+  const expandBlock = useCallback(
+    (blockId: string) => {
+      setCollapsedIds((prev) => {
+        if (!prev.has(blockId)) return prev
+        const next = new Set(prev)
+        next.delete(blockId)
+        return next
+      })
+    },
+    [setCollapsedIds],
   )
 
   // ── hasChildren set ────────────────────────────────────────────────
@@ -164,5 +185,5 @@ export function useBlockCollapse(
     return result
   }, [blocks, collapsedIds])
 
-  return { collapsedIds, toggleCollapse, visibleBlocks, hasChildrenSet }
+  return { collapsedIds, toggleCollapse, expandBlock, visibleBlocks, hasChildrenSet }
 }

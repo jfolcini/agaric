@@ -55,11 +55,10 @@ export const NON_DELETABLE_PROPERTIES = new Set([
  * Properties whose `options` list is locked — users cannot edit them from
  * the Properties tab. Currently only `todo_state`: the task cycle
  * (`none → TODO → DOING → DONE → CANCELLED → none`) is intentionally fixed
- * (reordered by), and the DB-side `options` are kept in
- * sync with the in-code cycle via migrations 0029 and 0031. Editing them
- * from the UI would let the DB drift out of sync with `TASK_CYCLE` in
- * `useBlockProperties.ts`, silently breaking the status filter dimension
- * in AgendaFilterBuilder.
+ * in `task-states.ts`, and the DB-side `options` are kept in sync via
+ * migrations 0029 and 0031. Editing them from the UI would let the DB drift
+ * from the canonical vocabulary, silently breaking the status filter
+ * dimension in AgendaFilterBuilder.
  *
  * `priority` is NOT locked here even though its cycle is also fixed today
  * (`null → 1 → 2 → 3 → null`); unlocking priority is scope.

@@ -15,13 +15,8 @@ export type AgendaFilterDimension =
   | 'property'
 
 /**
- * Fixed TODO states. The cycle is locked to
- * `none -> TODO -> DOING -> DONE -> CANCELLED -> none`; this array
- * exposes the non-null members for filter dimension `choices`.
- */
-/**
- * Backwards-compatible accessor. Historically this read from localStorage;
- * The states are now fixed.
+ * Backwards-compatible accessor for the canonical fixed states. Historically
+ * this read from localStorage; it now returns a fresh copy for filter choices.
  */
 export function getTaskStates(): string[] {
   return [...TASK_STATES]

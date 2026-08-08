@@ -87,6 +87,8 @@ function makeProps(
     blocks: [],
     loading: false,
     rootParentId: 'PAGE_1',
+    isZoomed: false,
+    onExitZoom: noop,
     focusedBlockId: null,
     selectedBlockIds: [] as string[],
     projected: null,

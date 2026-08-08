@@ -42,7 +42,7 @@ export const TASK_MARKER_TO_STATE = {
 
 export type TaskMarker = keyof typeof TASK_MARKER_TO_STATE
 
-const TASK_STATE_SET: ReadonlySet<string> = new Set(TASK_STATES)
+const TASK_STATE_SET: ReadonlySet<unknown> = new Set(TASK_STATES)
 
 // The explicit record is load-bearing: adding or removing a TodoState must fail type-checking
 // until its agenda rank is chosen deliberately.
@@ -54,7 +54,7 @@ const TASK_STATE_RANK = {
 } as const satisfies Record<TodoState, number>
 
 export function isTodoState(value: unknown): value is TodoState {
-  return typeof value === 'string' && TASK_STATE_SET.has(value)
+  return TASK_STATE_SET.has(value)
 }
 
 /** Map a checkbox marker without pretending arbitrary strings are valid keys. */

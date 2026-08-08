@@ -24,15 +24,6 @@ import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
-/**
- * Locked task state cycle: none -> TODO -> DOING -> DONE -> CANCELLED -> none.
- *
- * This cycle is intentionally fixed — users cannot add or remove states.
- * DONE sits immediately after DOING because finishing is the overwhelmingly
- * common terminal state; CANCELLED lives at the end of the cycle as the
- * "abandoned" escape hatch. reverses an earlier ordering that put
- * CANCELLED before DONE.
- */
 /** Display labels for screen reader announcements. */
 const STATE_LABELS = {
   TODO: 'To do',

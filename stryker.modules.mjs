@@ -75,6 +75,10 @@ export const MODULES = {
     src: 'src/lib/agenda-sort.ts',
     tests: ['src/lib/__tests__/agenda-sort.test.ts'],
   },
+  'task-states': {
+    src: 'src/lib/task-states.ts',
+    tests: ['src/lib/__tests__/task-states.test.ts'],
+  },
   'filters-model': {
     src: 'src/lib/filters/model.ts',
     tests: ['src/lib/filters/__tests__/model.test.ts'],

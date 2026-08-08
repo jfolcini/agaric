@@ -36,7 +36,7 @@ import type {
  * `markdown-common`), but removing it would silently narrow the vocab API.
  */
 export { ULID_RE } from '@/editor/markdown-common'
-export { TASK_MARKER_TO_STATE, taskStateFromMarker } from '@/lib/task-states'
+export { taskStateFromMarker } from '@/lib/task-states'
 export const MAX_LINK_SCAN = 10_000
 export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 /**

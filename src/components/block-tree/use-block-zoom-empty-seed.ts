@@ -19,13 +19,12 @@
  * splices the returned row into the flat tree right after the zoom root, at
  * `zoomRoot.depth + 1`, leaving the rest of the page untouched.
  *
- * Idempotent per zoom root (a ref) so it fires exactly once per zoom-into —
- * re-zooming the same now-non-empty block is a no-op, and zooming a different
- * leaf re-arms it.
+ * A per-root in-flight guard prevents duplicate creates while still allowing
+ * the effect to re-arm when a previously-seeded root becomes a leaf again.
  */
 
 import type { TFunction } from 'i18next'
-import { useEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 
 import { unwrap } from '@/lib/app-error'
 import { commands } from '@/lib/bindings'
@@ -43,57 +42,77 @@ export interface UseBlockZoomEmptySeedParams {
   loading: boolean
   /** The currently zoomed-in block id, or null when viewing the page root. */
   zoomedBlockId: string | null
-  /** Page store API — for the seed splice and the post-async same-zoom guard. */
+  /** Primitive projection of whether the current zoom root has descendants. */
+  zoomRootHasChildren: boolean
+  /** Page store API — for the seed splice and post-async root/child guards. */
   pageStore: ReturnType<typeof usePageBlockStoreApi>
   /** i18n translator — used for the failure toast key. */
   t: TFunction
 }
 
 /** Whether `zoomRootId` exists in `blocks` and has at least one descendant. */
-function zoomRootHasChildren(blocks: FlatBlock[], zoomRootId: string): boolean {
+function hasChildrenInState(blocks: FlatBlock[], zoomRootId: string): boolean {
   if (!blocks.some((b) => b.id === zoomRootId)) return false
   return getDragDescendants(blocks, zoomRootId).size > 0
 }
 
 /**
  * Runs the #922 empty-zoom seed effect. No return value; this hook exists
- * purely to encapsulate the effect + its idempotency ref.
+ * purely to encapsulate the effect + its in-flight guard.
  */
 export function useBlockZoomEmptySeed({
   enabled,
   loading,
   zoomedBlockId,
+  zoomRootHasChildren,
   pageStore,
   t,
 }: UseBlockZoomEmptySeedParams): void {
-  const seededForRef = useRef<string | null>(null)
+  const inFlightRootsRef = useRef(new Set<string>())
+  const currentContextRef = useRef<{
+    zoomedBlockId: string | null
+    pageStore: ReturnType<typeof usePageBlockStoreApi>
+  } | null>(null)
+
+  // Promise continuations must not focus a child in a tree the user has
+  // already left (or after this hook unmounts). Publish only committed hook
+  // context, and clear it conditionally so an older cleanup cannot erase a
+  // newer page/zoom context.
+  useLayoutEffect(() => {
+    const context = { zoomedBlockId, pageStore }
+    currentContextRef.current = context
+    return () => {
+      if (currentContextRef.current === context) currentContextRef.current = null
+    }
+  }, [zoomedBlockId, pageStore])
 
   useEffect(() => {
     if (!enabled) return
     if (loading || zoomedBlockId == null) return
-    if (seededForRef.current === zoomedBlockId) return
+    if (zoomRootHasChildren) return
+    if (inFlightRootsRef.current.has(zoomedBlockId)) return
 
     const state = pageStore.getState()
     const zoomRoot = state.blocksById.get(zoomedBlockId)
     // The zoom root must exist and actually be a leaf. A non-leaf zoom already
     // has a usable view, so leave it alone.
     if (!zoomRoot) return
-    if (zoomRootHasChildren(state.blocks, zoomedBlockId)) return
+    if (hasChildrenInState(state.blocks, zoomedBlockId)) return
 
-    seededForRef.current = zoomedBlockId
+    inFlightRootsRef.current.add(zoomedBlockId)
 
     commands
       .createBlock('content', '', zoomedBlockId, null, { kind: 'global' }, null)
       .then(unwrap)
       .then((result) => {
         const current = pageStore.getState()
-        // Bail if the user zoomed elsewhere or the zoom root vanished while the
-        // create IPC was in flight.
+        // Reconcile into the originating store even if the user zoomed
+        // elsewhere, but bail if that store no longer contains the root.
         const root = current.blocksById.get(zoomedBlockId)
         if (!root) return
         // A child landed mid-flight (a sync reload, a racing create) — the view
         // is already usable; don't add a second empty block.
-        if (zoomRootHasChildren(current.blocks, zoomedBlockId)) return
+        if (hasChildrenInState(current.blocks, zoomedBlockId)) return
         // Defensive: a malformed result (missing id) must never reach the
         // store — downstream renderers key by block.id.
         if (!result?.id) {
@@ -114,7 +133,13 @@ export function useBlockZoomEmptySeed({
           blocks.splice(rootIdx + 1, 0, newBlock)
           return { blocks }
         })
-        useBlockStore.setState({ focusedBlockId: result.id })
+        const currentContext = currentContextRef.current
+        if (
+          currentContext?.zoomedBlockId === zoomedBlockId &&
+          currentContext.pageStore === pageStore
+        ) {
+          useBlockStore.setState({ focusedBlockId: result.id })
+        }
       })
       .catch((err: unknown) => {
         logger.error(
@@ -124,18 +149,14 @@ export function useBlockZoomEmptySeed({
           err,
         )
         notify.error(t('blockTree.createFirstBlockFailed'))
-        // #1566 — reset the idempotency ref so the guard no longer short-
-        // circuits and a later re-render retries. Without this the user is
-        // stranded on a permanently blank zoom pane (the create failed, but the
-        // ref still claims this zoom root was seeded, so no child is ever made).
-        // Reset only if the ref still points at THIS zoom root (zooming
-        // elsewhere mid-flight may have re-armed it; clobbering that would let a
-        // stale retry fire there). A bare ref write does not trigger a re-render,
-        // so this cannot spin a hot loop — the retry only runs when React next
-        // re-renders for some other reason.
-        if (seededForRef.current === zoomedBlockId) {
-          seededForRef.current = null
+      })
+      .finally(() => {
+        // Clear only this request's per-root guard. Other roots may still have
+        // creates outstanding. A ref write does not trigger a render, so a
+        // failed request retries only on a later state/prop change.
+        if (inFlightRootsRef.current.has(zoomedBlockId)) {
+          inFlightRootsRef.current.delete(zoomedBlockId)
         }
       })
-  }, [enabled, loading, zoomedBlockId, pageStore, t])
+  }, [enabled, loading, zoomedBlockId, zoomRootHasChildren, pageStore, t])
 }
