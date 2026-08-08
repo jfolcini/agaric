@@ -91,9 +91,21 @@ test.describe('Sync UI', () => {
       await expect(wordInputs).toHaveCount(4)
     })
 
-    test('Pairing dialog close button works', async ({ page }) => {
+    // #3615/#3620: the host's live QR screen is a genuinely armed pairing
+    // window on the backend, symmetric with the joiner's post-confirm wait.
+    // Closing used to go straight to `handleCancel`; now it raises a
+    // "Cancel pairing?" confirmation first (see PairingDialog's
+    // `handleAttemptClose`), so a close attempt no longer closes the dialog
+    // in one step. This test drives that real flow instead of assuming the
+    // old direct-close behaviour.
+    test('Pairing dialog close button raises the cancel-pairing confirmation, and closes only on confirm', async ({
+      page,
+    }) => {
       await page.getByRole('button', { name: /pair new device/i }).click()
       await expect(page.getByText('Pair Device')).toBeVisible()
+      // Host path arms a live pairing window as soon as the QR/passphrase
+      // is on screen (mock `start_pairing` resolves successfully).
+      await expect(page.getByText(/alpha/i)).toBeVisible()
 
       // Close the dialog — scope to the dialog element to avoid matching
       // the overlay button which also has aria-label="Close pairing dialog"
@@ -105,7 +117,33 @@ test.describe('Sync UI', () => {
         await page.keyboard.press('Escape')
       }
 
+      // The guard intercepted the close: the confirmation appears, and the
+      // pairing dialog underneath is still open with its live window intact.
+      await expect(page.getByText('Cancel pairing?')).toBeVisible()
+      await expect(page.getByText('Pair Device')).toBeVisible()
+
+      // Confirming tears down the pairing window and closes the dialog.
+      await page.getByRole('button', { name: /^Cancel pairing$/i }).click()
+      await expect(page.getByText('Cancel pairing?')).not.toBeVisible()
       await expect(page.getByText('Pair Device')).not.toBeVisible()
+    })
+
+    test('Pairing dialog close guard: choosing "Keep pairing" leaves the dialog open', async ({
+      page,
+    }) => {
+      await page.getByRole('button', { name: /pair new device/i }).click()
+      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText(/alpha/i)).toBeVisible()
+
+      await page.keyboard.press('Escape')
+      await expect(page.getByText('Cancel pairing?')).toBeVisible()
+
+      // Dismissing the confirmation must NOT close the pairing dialog, and
+      // must leave the live window's contents (QR/passphrase) intact.
+      await page.getByRole('button', { name: /Keep pairing/i }).click()
+      await expect(page.getByText('Cancel pairing?')).not.toBeVisible()
+      await expect(page.getByText('Pair Device')).toBeVisible()
+      await expect(page.getByText(/alpha/i)).toBeVisible()
     })
 
     test('No paired devices shows empty state', async ({ page }) => {
