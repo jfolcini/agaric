@@ -82,19 +82,24 @@ pub async fn reverse_edit_block(
         .await?
     };
 
-    let prior_text = resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref())?.ok_or_else(
-        // #3645: `NonReversible`, matching the batch kernel byte-for-byte.
-        // This condition means "no inverse can be reconstructed for this op",
-        // which is exactly what `NonReversible` names; `NotFound` claimed a
-        // missing RESOURCE and, more importantly, differed from the answer
-        // `batch::build_reverse_edit_block` gives for the identical input —
-        // so the same op was fatal under Ctrl+Z and skippable under a bulk
-        // restore. The parity oracle compares `Ok` payloads only and could
-        // not see the split.
-        || AppError::NonReversible {
-            op_type: record.op_type.clone(),
-        },
-    )?;
+    let prev_ptr = payload
+        .prev_edit
+        .as_ref()
+        .map(|(device, seq)| (device.as_str(), *seq));
+    let prior_text = resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref(), prev_ptr)?
+        .ok_or_else(
+            // #3645: `NonReversible`, matching the batch kernel byte-for-byte.
+            // This condition means "no inverse can be reconstructed for this op",
+            // which is exactly what `NonReversible` names; `NotFound` claimed a
+            // missing RESOURCE and, more importantly, differed from the answer
+            // `batch::build_reverse_edit_block` gives for the identical input —
+            // so the same op was fatal under Ctrl+Z and skippable under a bulk
+            // restore. The parity oracle compares `Ok` payloads only and could
+            // not see the split.
+            || AppError::NonReversible {
+                op_type: record.op_type.clone(),
+            },
+        )?;
 
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
@@ -134,15 +139,25 @@ pub async fn reverse_edit_block(
 /// divergent kernels — against a module contract asserting they could not.
 /// Returns `Ok(None)` when neither source yields text; the caller decides
 /// whether that is fatal (single-op) or skippable (batch).
+///
+/// `prev_ptr` is the `(device_id, seq)` of the `prev_edit` pointer that
+/// produced `prev_row`, when there was one — it exists purely to give
+/// [`text_of_prior_row`]'s corruption-path error message an identity to
+/// point at; it does not affect which branch is taken.
 pub(crate) fn resolve_prior_text(
     prev_row: Option<&(String, String)>,
     timestamp_prior: Option<&(String, String)>,
+    prev_ptr: Option<(&str, i64)>,
 ) -> Result<Option<String>, AppError> {
     if let Some((op_type, payload)) = prev_row {
-        return Ok(Some(text_of_prior_row(op_type, payload)?));
+        let origin = match prev_ptr {
+            Some((device, seq)) => format!("named by prev_edit ({device}, {seq})"),
+            None => "from the timestamp scan".to_string(),
+        };
+        return Ok(Some(text_of_prior_row(op_type, payload, &origin)?));
     }
     timestamp_prior
-        .map(|(op_type, payload)| text_of_prior_row(op_type, payload))
+        .map(|(op_type, payload)| text_of_prior_row(op_type, payload, "from the timestamp scan"))
         .transpose()
 }
 
@@ -151,7 +166,16 @@ pub(crate) fn resolve_prior_text(
 ///
 /// Shared by both reverse kernels via [`resolve_prior_text`] so the two can
 /// never disagree on how a prior row is decoded.
-pub(crate) fn text_of_prior_row(op_type: &str, payload: &str) -> Result<String, AppError> {
+///
+/// `origin` identifies where `(op_type, payload)` came from — e.g. "named by
+/// prev_edit (<device>, <seq>)" or "from the timestamp scan" — and is folded
+/// into the error message on the (fatal, op-log-corruption) unexpected-op-type
+/// path so the bad row can actually be located.
+pub(crate) fn text_of_prior_row(
+    op_type: &str,
+    payload: &str,
+    origin: &str,
+) -> Result<String, AppError> {
     match op_type {
         "edit_block" => {
             let p: EditBlockPayload = serde_json::from_str(payload)?;
@@ -162,7 +186,7 @@ pub(crate) fn text_of_prior_row(op_type: &str, payload: &str) -> Result<String, 
             Ok(p.content)
         }
         other => Err(AppError::InvalidOperation(format!(
-            "prior-text row is a non-text op '{other}'; expected edit_block/create_block"
+            "prior-text row {origin} is a non-text op '{other}'; expected edit_block/create_block"
         ))),
     }
 }
@@ -276,7 +300,7 @@ pub async fn find_prior_text(
 ) -> Result<Option<String>, AppError> {
     find_prior_text_row(pool, block_id, created_at, seq, device_id)
         .await?
-        .map(|(op_type, payload)| text_of_prior_row(&op_type, &payload))
+        .map(|(op_type, payload)| text_of_prior_row(&op_type, &payload, "from the timestamp scan"))
         .transpose()
 }
 

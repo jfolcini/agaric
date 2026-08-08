@@ -701,19 +701,24 @@ fn build_reverse_edit_block(
     prior: Option<&(String, String)>,
 ) -> Result<OpPayload, AppError> {
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
-    let prior_text = block_ops::resolve_prior_text(prev_row, prior)?.ok_or_else(|| {
-        // #3280: NOT `NotFound`. Neither source could reconstruct a prior
-        // text — the normal case for the first local edit of a
-        // peer-originated block, whose only op_log row is a replicated audit
-        // row. `is_skippable_non_reversible` matches only `NonReversible`, so
-        // a `NotFound` here took `compute_reverse_batch`'s fatal arm and
-        // aborted the ENTIRE restore with no partial progress, even under
-        // `skip_non_reversible = true` — exactly the #2020 failure mode that
-        // predicate was written to prevent.
-        AppError::NonReversible {
-            op_type: record.op_type.clone(),
-        }
-    })?;
+    let prev_ptr = payload
+        .prev_edit
+        .as_ref()
+        .map(|(device, seq)| (device.as_str(), *seq));
+    let prior_text =
+        block_ops::resolve_prior_text(prev_row, prior, prev_ptr)?.ok_or_else(|| {
+            // #3280: NOT `NotFound`. Neither source could reconstruct a prior
+            // text — the normal case for the first local edit of a
+            // peer-originated block, whose only op_log row is a replicated audit
+            // row. `is_skippable_non_reversible` matches only `NonReversible`, so
+            // a `NotFound` here took `compute_reverse_batch`'s fatal arm and
+            // aborted the ENTIRE restore with no partial progress, even under
+            // `skip_non_reversible = true` — exactly the #2020 failure mode that
+            // predicate was written to prevent.
+            AppError::NonReversible {
+                op_type: record.op_type.clone(),
+            }
+        })?;
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
         to_text: prior_text,

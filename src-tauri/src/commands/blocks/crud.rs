@@ -18,8 +18,9 @@ use agaric_engine::block_ops::{
 use agaric_store::space::{SpaceId, SpaceScope};
 
 /// Look up the causal predecessor for the given `block_id` — the most-recent
-/// LOCALLY-AUTHORED `edit_block`/`create_block` op — scoped to the supplied
-/// connection (typically a live transaction). Returns the originating
+/// `edit_block`/`create_block` op for this block REGARDLESS OF PROVENANCE
+/// (local or replicated) — scoped to the supplied connection (typically a
+/// live transaction). Returns the originating
 /// `(device_id, seq)` pair if any, shaped to drop straight into
 /// [`EditBlockPayload::prev_edit`].
 ///
