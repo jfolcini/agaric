@@ -130,8 +130,14 @@ describe('useDialogOrSheet', () => {
       ),
     )
 
-    expect(screen.getByRole('dialog')).toHaveClass('bottom-0', 'inset-x-0')
-    expect(screen.getByRole('dialog')).not.toHaveClass('right-0', 'w-3/4')
+    const content = screen.getByRole('dialog')
+    expect(content).toHaveClass('bottom-0', 'inset-x-0')
+    // One class per expectation: `.not.toHaveClass(a, b)` passes as soon as a
+    // single member is absent, so the grouped form would not actually rule out
+    // the right-drawer anchor.
+    expect(content).not.toHaveClass('right-0')
+    expect(content).not.toHaveClass('w-3/4')
+    expect(content).not.toHaveClass('sm:max-w-sm')
   })
 
   it('keeps the mobile Content component identity stable across rerenders and kinds', () => {

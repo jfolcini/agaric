@@ -148,14 +148,24 @@ describe('PdfViewerDialog', () => {
     })
   })
 
-  it('uses the shared dynamic viewport cap on mobile without the desktop vh override', () => {
+  // The viewer host is `flex-1 min-h-0` over an `absolute inset-0` child, so it
+  // has no intrinsic height: the sheet's `h-auto` + `max-h` cap alone would
+  // resolve it to 0 px. Both paths must therefore set an explicit height, and
+  // the mobile one must state it in `dvh` (docs/UX.md).
+  it('gives the mobile sheet an explicit dvh height, not the auto-height shell', () => {
     mockedUseIsMobile.mockReturnValue(true)
     render(
       <PdfViewerDialog open onOpenChange={vi.fn()} fileUrl="blob:mobile" filename="mobile.pdf" />,
     )
 
     const viewer = screen.getByRole('dialog')
-    expect(viewer).toHaveClass('max-h-[calc(100dvh-2rem)]')
+    // Anchored as a bottom sheet…
+    expect(viewer).toHaveClass('bottom-0')
+    expect(viewer).toHaveClass('inset-x-0')
+    // …with a real height rather than the primitive's `h-auto`.
+    expect(viewer).toHaveClass('h-[90dvh]')
+    expect(viewer).not.toHaveClass('h-auto')
+    // `vh` is forbidden on the mobile path (docs/UX.md).
     expect(viewer).not.toHaveClass('h-[90vh]')
     expect(viewer).not.toHaveClass('max-h-[90vh]')
   })
@@ -168,6 +178,7 @@ describe('PdfViewerDialog', () => {
     const viewer = screen.getByRole('dialog')
     expect(viewer).toHaveClass('max-w-5xl', 'h-[90vh]', 'max-h-[90vh]')
     expect(viewer).not.toHaveClass('bottom-0')
+    expect(viewer).not.toHaveClass('h-[90dvh]')
   })
 
   it('shows loading state while the PDF loads', async () => {
