@@ -174,6 +174,7 @@ export function BlockTree({
   const {
     collapsedIds,
     toggleCollapse,
+    expandBlock,
     visibleBlocks: collapseFilteredVisible,
     hasChildrenSet,
   } = useBlockCollapse(blocks, {
@@ -190,11 +191,22 @@ export function BlockTree({
   // (#3254). See useBlockMountLimit for the envelope numbers.
   const {
     zoomedBlockId,
-    zoomIn: handleZoomIn,
+    zoomIn: rawZoomIn,
     zoomToRoot,
     breadcrumbs: zoomBreadcrumb,
     zoomedVisible: uncappedZoomedVisible,
   } = useBlockZoom(blocks, collapseFilteredVisible)
+
+  // Zoom means "show me inside this block". Expand the target through the
+  // collapse hook's persisted, idempotent path before changing projection so
+  // a previously-collapsed subtree cannot become a blank zoom pane.
+  const handleZoomIn = useCallback(
+    (blockId: string) => {
+      expandBlock(blockId)
+      rawZoomIn(blockId)
+    },
+    [expandBlock, rawZoomIn],
+  )
 
   // Scope expansion to both the page and zoom root so an expanded envelope
   // cannot leak across either kind of navigation.
@@ -244,6 +256,18 @@ export function BlockTree({
   // an invisible block into the selection. Memoized so the document keydown
   // listener (useBlockTreeKeyboardShortcuts) doesn't re-attach every render.
   const visibleIds = useMemo(() => zoomedVisible.map((b) => b.id), [zoomedVisible])
+
+  // Ctrl/Cmd+A intentionally keeps the documented page-wide scope at the
+  // root, but a zoomed tree selects only its complete zoom projection. Use the
+  // uncapped list here: the mount envelope limits React rows, not the semantic
+  // contents of the active zoom.
+  const selectAllIds = useMemo(
+    () =>
+      zoomedBlockId === null
+        ? blocks.map((block) => block.id)
+        : uncappedZoomedVisible.map((block) => block.id),
+    [zoomedBlockId, blocks, uncappedZoomedVisible],
+  )
 
   // #1066 — `visibleIds` is re-derived from `blocks` on every edit, so a
   // `handleSelect` that closed over it would get a new identity per edit and
@@ -466,6 +490,7 @@ export function BlockTree({
     enabled: autoCreateFirstBlock,
     loading,
     zoomedBlockId,
+    zoomRootHasChildren: zoomedBlockId !== null && hasChildrenSet.has(zoomedBlockId),
     pageStore,
     t,
   })
@@ -847,7 +872,7 @@ export function BlockTree({
     pageStore,
     selectedBlockIds,
     hasChildrenSet,
-    blocks,
+    selectAllIds,
     // #922 — Shift+Arrow keyboard range-select steps through the RENDERED list
     // (`zoomedVisible` == `collapsedVisible` at root view), so it matches what
     // the user sees and respects collapsed/zoomed visibility.
@@ -1141,6 +1166,8 @@ export function BlockTree({
                   blocks={blocks}
                   loading={loading}
                   rootParentId={rootParentId}
+                  isZoomed={zoomedBlockId !== null}
+                  onExitZoom={zoomToRoot}
                   focusedBlockId={focusedBlockId}
                   selectedBlockIds={selectedBlockIds}
                   projected={dnd.projected}

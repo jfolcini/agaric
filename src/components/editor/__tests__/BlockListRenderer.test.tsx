@@ -3,7 +3,7 @@
  *
  * Validates:
  *  - Smoke render with blocks
- *  - Renders empty state when blocks array is empty
+ *  - Renders page-root and zoom-projection empty states with safe actions
  *  - Renders SortableBlock for each visible item
  * Semantic tree structure: ul/li with aria attributes
  * Expand animation class applied to children of just-expanded block
@@ -12,6 +12,7 @@
  */
 
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { axe } from 'vitest-axe'
 
@@ -33,15 +34,18 @@ vi.mock('@/components/common/EmptyState', () => ({
     icon: Icon,
     message,
     description,
+    action,
   }: {
     icon?: React.ComponentType<Record<string, unknown>>
     message: string
     description?: string
+    action?: React.ReactNode
   }) => (
     <div data-testid="empty-state">
       {Icon ? <span data-testid="empty-state-icon" /> : null}
       <span data-testid="empty-state-message">{message}</span>
       {description ? <span data-testid="empty-state-description">{description}</span> : null}
+      {action}
     </div>
   ),
 }))
@@ -68,6 +72,8 @@ function makeProps(overrides: Partial<React.ComponentProps<typeof BlockListRende
     blocks: [],
     loading: false,
     rootParentId: 'PAGE_1',
+    isZoomed: false,
+    onExitZoom: noop,
     focusedBlockId: null,
     selectedBlockIds: [] as string[],
     projected: null,
@@ -164,6 +170,73 @@ describe('BlockListRenderer', () => {
     render(<BlockListRenderer {...makeProps({ visibleItems: [], blocks: [], loading: true })} />)
 
     expect(screen.queryByTestId('empty-state')).not.toBeInTheDocument()
+  })
+
+  it('renders a semantic empty zoom state with a safe exit action', async () => {
+    const user = userEvent.setup()
+    const onExitZoom = vi.fn()
+    const blocks = [makeBlock({ id: 'ZOOM_ROOT', content: 'Project' })]
+
+    render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: [], blocks, isZoomed: true, onExitZoom })}
+      />,
+    )
+
+    expect(screen.getByTestId('empty-state-message')).toHaveTextContent(t('blockTree.emptyZoom'))
+    expect(screen.getByTestId('empty-state-description')).toHaveTextContent(
+      t('blockTree.emptyZoomHint'),
+    )
+    expect(screen.queryByText(t('blockTree.noBlocks'))).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: t('blockZoom.exitZoom') }))
+    expect(onExitZoom).toHaveBeenCalledTimes(1)
+  })
+
+  it('keeps the exit action when a lingering zoom has zero page blocks', async () => {
+    const user = userEvent.setup()
+    const onExitZoom = vi.fn()
+
+    render(
+      <BlockListRenderer
+        {...makeProps({
+          visibleItems: [],
+          blocks: [],
+          rootParentId: 'PAGE_1',
+          isZoomed: true,
+          onExitZoom,
+        })}
+      />,
+    )
+
+    expect(screen.getByTestId('empty-state-message')).toHaveTextContent(t('blockTree.emptyZoom'))
+    expect(screen.queryByText(t('blockTree.emptyPage'))).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: t('blockZoom.exitZoom') }))
+    expect(onExitZoom).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not render the empty zoom state while loading', () => {
+    const blocks = [makeBlock({ id: 'ZOOM_ROOT', content: 'Project' })]
+    render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: [], blocks, loading: true, isZoomed: true })}
+      />,
+    )
+
+    expect(screen.queryByText(t('blockTree.emptyZoom'))).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: t('blockZoom.exitZoom') })).not.toBeInTheDocument()
+  })
+
+  it('has no a11y violations in the empty zoom state', async () => {
+    const blocks = [makeBlock({ id: 'ZOOM_ROOT', content: 'Project' })]
+    const { container } = render(
+      <BlockListRenderer
+        {...makeProps({ visibleItems: [], blocks, isZoomed: true, onExitZoom: vi.fn() })}
+      />,
+    )
+
+    const results = await axe(container)
+    expect(results).toHaveNoViolations()
   })
 
   it('renders drag indent guides only during a drag, one per indent boundary (#290 B4)', () => {
