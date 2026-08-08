@@ -2181,17 +2181,30 @@ async fn perf26_draft_recovery_filters_to_target_block_only() {
 /// leash and pass silently; a loaded box can redden it with nothing
 /// regressed at all (already observed: TIMED OUT at 120.048s under load).
 ///
-/// Investigating a "work done, not time" proxy (option 2 in #3560) for
-/// *this test's* actual runtime: instrumentation shows `recover_at_boot`'s
-/// Step 1.5 boot replay of the 10K seeded (unmaterialized) ops through the
-/// full Materializer/Loro apply pipeline dominates — measured 622ms insert
-/// vs 42.3s recovery, i.e. >98% of wall-clock, on a box with concurrent
-/// contention. That cost is proportional, unavoidable production work
-/// (replaying N ops necessarily touches N ops); there is no query-count or
-/// row-scanned counter that would catch a genuine per-op latency
-/// regression there without becoming a wall-clock assertion in disguise.
-/// So no full-coverage non-wall-clock proxy exists for what this test
-/// actually measures, and `_is_fast` is dropped (option 3).
+/// ## #3612 — the runtime that motivated #3560 was a fixture artifact
+///
+/// #3560 concluded the above while measuring 622ms insert vs 42.3s
+/// "recovery", and reasoned that the 42.3s was "proportional, unavoidable
+/// production work". That reasoning was sound but the premise was wrong.
+/// The 42.3s was NOT this test's subject: it was Step 1.5 boot replay
+/// (C-2b, added in 16b12af55 *after* this fixture landed) draining the 10K
+/// ops that the fixture's own seeding left unmaterialized — a shape
+/// production never has, since production materializes ops as it creates
+/// them. The seeding block below now marks those ops materialized, so
+/// replay drains nothing and `recover_elapsed` is draft recovery again.
+/// Measured on the same box: 39.0s -> 19.7ms recovery, 39.76s -> 0.72s
+/// total.
+///
+/// That does NOT resurrect `_is_fast`, and #3612 deliberately did not add a
+/// wall-clock budget in its place. With the replay cost gone, recovery at
+/// 10K ops measures 19.7-28.7ms — and with all three block_id indexes
+/// dropped, so the supersession query degrades to the full-table
+/// `SCAN op_log` this test exists to forbid, it measures 27.2ms. The
+/// regression is INVISIBLE to wall-clock at this scale: a budget loose
+/// enough not to flake would never fire, and one tight enough to fire would
+/// be measuring scheduler noise. The `EXPLAIN QUERY PLAN` assertion below
+/// is the guard with teeth; a timing assertion would only launder noise
+/// into the appearance of one.
 ///
 /// A *narrower* stable proxy does exist and is asserted below, as a bonus
 /// guard rather than a justification for the name: `EXPLAIN QUERY PLAN` on
@@ -2266,6 +2279,57 @@ async fn perf26_draft_recovery_at_10k_ops() {
         }
     }
     tx.commit().await.unwrap();
+
+    // #3612: mark the seeded ops as ALREADY MATERIALIZED.
+    //
+    // `append_local_op_in_tx` writes `op_log` rows without materializing
+    // them, so without this the 10K seeded ops are all "unmaterialized" and
+    // `recover_at_boot`'s Step 1.5 (C-2b op-log replay, added in 16b12af55
+    // *after* this fixture was written) drives every one of them through the
+    // full Materializer/Loro apply pipeline before draft recovery is even
+    // reached. Measured: 551ms to insert vs 39.0s to "recover" — 98.6% of
+    // this test's wall-clock was boot replay, not the block-scoped `op_log`
+    // lookup this test exists to guard. That is a fixture artifact, not a
+    // production shape: production materializes ops as they are created, so
+    // boot replay normally has a near-empty tail to drain.
+    //
+    // Two rows are needed, and BOTH are load-bearing:
+    //
+    //  * the apply cursor at `MAX(op_log.seq)`, so the Step 1.5 walk
+    //    (`WHERE seq > cursor`) selects zero rows; and
+    //  * a `loro_doc_state` snapshot whose `applied_through_seq` covers that
+    //    cursor, so Step 1.4's `heal_orphaned_apply_cursor` does NOT treat
+    //    the cursor as orphaned. With `loro_doc_state` empty, a non-zero
+    //    cursor means "the engine rehydrated to nothing", and the heal
+    //    rewinds the cursor to 0 — replaying all 10K ops again and undoing
+    //    the whole point of this block. (Same shape as
+    //    `replay::tests::apply_cursor_preserved_when_snapshot_current`.)
+    //
+    // The snapshot blob itself is never parsed on this path: `recover_at_boot`
+    // only ever reads `COUNT(*)` and `MIN(applied_through_seq)` from this
+    // table, and the test's `LoroEngineRegistry` is constructed empty rather
+    // than rehydrated from it.
+    // Query text matches an existing `.sqlx` offline entry verbatim (alias
+    // `m!` included) — a fresh spelling would need `cargo sqlx prepare` and
+    // would fail the offline CI build until then.
+    let max_seq: i64 = sqlx::query_scalar!(r#"SELECT MAX(seq) as "m!: i64" FROM op_log"#)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO loro_doc_state \
+         (space_id, snapshot, updated_at, op_count, applied_through_seq) \
+         VALUES ('test-space', X'00', 0, 0, ?)",
+    )
+    .bind(max_seq)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query("UPDATE materializer_apply_cursor SET materialized_through_seq = ? WHERE id = 1")
+        .bind(max_seq)
+        .execute(&pool)
+        .await
+        .unwrap();
     let insert_elapsed = start.elapsed();
 
     // Sanity: op_log has ~10K rows.
@@ -2363,6 +2427,35 @@ async fn perf26_draft_recovery_at_10k_ops() {
         vec![target.as_str().to_owned()],
         "target draft must be recovered correctly at 10K scale"
     );
+
+    // #3612: keep the fixture honest about what `recover_elapsed` measures.
+    //
+    // Both halves are load-bearing and neither implies the other.
+    // `ops_replayed == 0` alone is ALSO what a wholesale replay failure
+    // reports (`recover_at_boot` catches the `Err` and synthesises a report
+    // with `ops_replayed: 0` plus a "replay aborted: …" entry), so pinning it
+    // on its own would accept "replay blew up" as if it were "replay had
+    // nothing to do". `replay_errors` empty alone says nothing about volume.
+    //
+    // Together they assert the state the seeding block above set up actually
+    // survived Step 1.4's heal: if a future change makes the heal rewind this
+    // cursor, or makes the replay walk ignore it, `recover_elapsed` silently
+    // goes back to being ~99% boot replay and this test stops measuring the
+    // block-scoped lookup at all — with no other signal, exactly as happened
+    // between c5b07d5a3 and 16b12af55.
+    assert_eq!(
+        report.ops_replayed, 0,
+        "the seeded ops must already be materialized so boot replay has \
+         nothing to drain — otherwise this test measures the replay pipeline, \
+         not draft recovery's block-scoped op_log lookup (#3612)"
+    );
+    assert!(
+        report.replay_errors.is_empty(),
+        "boot replay must be a clean no-op, not a swallowed failure that also \
+         reports ops_replayed = 0: {:?}",
+        report.replay_errors
+    );
+
     eprintln!(
         "perf26_draft_recovery_at_10k_ops: \
          inserted 10K ops in {insert_elapsed:?}, recovered in {recover_elapsed:?}"

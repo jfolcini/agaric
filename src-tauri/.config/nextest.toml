@@ -72,11 +72,14 @@ setup = "iroh-no-proxy-windows"
 #   * apply_reproject_proptest::{b2,b3,b4} (#1683) — drive dozens of generated
 #     op-chains through the full engine→SQL reprojection pipeline (a Loro engine +
 #     DB pools per case); B4 runs ~30s even alone.
-#   * perf26_draft_recovery_at_10k_ops — seeds 10K op-log rows (~50s of
-#     setup) before exercising indexed draft recovery; sat right under the 60s kill.
-#     (Renamed from `..._is_fast` in #3560 — this leash is contention headroom,
-#     not a perf budget; the test's own body carries a narrower, non-wall-clock
-#     perf guard now. See its doc comment in recovery/tests.rs.)
+#   (#3612 dropped perf26_draft_recovery_at_10k_ops from this list. Its ~50s was
+#   never its own subject: the fixture seeded 10K ops via `append_local_op_in_tx`,
+#   which does not materialize them, so `recover_at_boot`'s Step 1.5 boot replay
+#   drained all 10K through the Materializer/Loro apply pipeline before draft
+#   recovery was reached — 98.6% of the runtime, none of it the block-scoped
+#   op_log lookup the test guards. The fixture now marks those ops materialized;
+#   measured 39.76s -> 0.72s total, ~40× under the 30s SLOW threshold, so it
+#   needs no leash in either profile.)
 #   * replay_streams_all_rows_across_multiple_chunks_1574 — drives 205 full
 #     import_and_project rounds (one per seeded inbox row, spanning 2 replay
 #     chunks); ~50s alone on a dev box, so full-suite CPU contention pushes it
@@ -99,7 +102,7 @@ setup = "iroh-no-proxy-windows"
 #     above were given overrides and this one was not — no reason in its content,
 #     it just never happened to be noticed.
 [[profile.default.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
 slow-timeout = { period = "30s", terminate-after = 4 }
 
 [profile.ci]
@@ -112,11 +115,13 @@ leak-timeout = "30s"
 # Every test flagged SLOW (>30s) in a full-suite sweep is listed here so the
 # llvm-cov `cargo-coverage` build (2-3× slower) can never terminate one on the
 # first attempt and lose its coverage: apply_reproject_proptest,
-# perf26_draft_recovery, replay_streams_all_rows…_1574,
+# replay_streams_all_rows…_1574,
 # issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path, and
 # find_lca_terminates_on_any_graph.
+# (perf26_draft_recovery dropped in #3612 — see the default-profile note above:
+# it runs in ~0.7s now, so even a 3× coverage build stays far under 30s.)
 [[profile.ci.overrides]]
-filter = 'test(/apply_reproject_proptest::/) | test(/perf26_draft_recovery_at_10k_ops/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
+filter = 'test(/apply_reproject_proptest::/) | test(/replay_streams_all_rows_across_multiple_chunks_1574/) | test(/issue611_oversized_loro_snapshot_syncs_via_chunked_wire_path/) | test(/find_lca_terminates_on_any_graph/)'
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 # The SQL-only-fallback / reproject / recompute observability counters
