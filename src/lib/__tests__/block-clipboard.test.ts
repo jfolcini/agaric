@@ -226,6 +226,21 @@ describe('humanizeRefTokens (#1440)', () => {
     expect(humanizeRefTokens(`tagged #[${TAG_ULID}]`, resolve)).toBe('tagged #todo')
   })
 
+  it('renders a whitespace tag #[ULID] as the round-trip-safe #[[name]] form', () => {
+    const resolveWhitespaceTag = (ulid: string) =>
+      ulid === TAG_ULID ? 'Tag With Space' : undefined
+    expect(humanizeRefTokens(`tagged #[${TAG_ULID}]`, resolveWhitespaceTag)).toBe(
+      'tagged #[[Tag With Space]]',
+    )
+  })
+
+  it('uses Rust Unicode whitespace semantics for U+0085 and U+FEFF', () => {
+    expect(humanizeRefTokens(`#[${TAG_ULID}]`, () => `NEL\u0085Inside`)).toBe(
+      '#[[NEL\u0085Inside]]',
+    )
+    expect(humanizeRefTokens(`#[${TAG_ULID}]`, () => `\uFEFFBOM\uFEFF`)).toBe('#\uFEFFBOM\uFEFF')
+  })
+
   it('renders a block ref ((ULID)) as ((Name))', () => {
     expect(humanizeRefTokens(`quote ((${BLOCK_ULID}))`, resolve)).toBe(
       'quote ((a referenced block))',
@@ -358,6 +373,47 @@ describe('internalizeRefTokens (#1484)', () => {
     expect(created.tags).toEqual(['newtag'])
   })
 
+  it('resolves a trimmed #[[multi-word tag]] as a tag, never as a page', async () => {
+    const { resolvers, created } = makeResolvers({ tags: { 'Tag With Space': EXISTING_TAG } })
+    expect(await internalizeRefTokens('a #[[  Tag With Space  ]] here', resolvers)).toBe(
+      `a #[${EXISTING_TAG}] here`,
+    )
+    expect(created.pages).toEqual([])
+    expect(created.tags).toEqual([])
+  })
+
+  it('trims U+0085 but retains U+FEFF at bracketed tag boundaries', async () => {
+    const requested: string[] = []
+    const resolvers: RefInternalizers = {
+      page: async () => null,
+      tag: async (name) => {
+        requested.push(name)
+        return EXISTING_TAG
+      },
+    }
+    expect(await internalizeRefTokens('#[[\u0085NEL\u0085]]', resolvers)).toBe(`#[${EXISTING_TAG}]`)
+    expect(await internalizeRefTokens('#[[\uFEFFBOM\uFEFF]]', resolvers)).toBe(`#[${EXISTING_TAG}]`)
+    expect(requested).toEqual(['NEL', '\uFEFFBOM\uFEFF'])
+  })
+
+  it('leaves ![[embed]] byte-identical without invoking either resolver', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('before ![[file.png]] after', resolvers)).toBe(
+      'before ![[file.png]] after',
+    )
+    expect(created.pages).toEqual([])
+    expect(created.tags).toEqual([])
+  })
+
+  it('shares one tag resolution across bracketed and bare forms', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('#[[Shared]] and #Shared', resolvers)).toBe(
+      `#[${NEW_TAG}] and #[${NEW_TAG}]`,
+    )
+    expect(created.pages).toEqual([])
+    expect(created.tags).toEqual(['Shared'])
+  })
+
   it('resolves a nested #parent/child tag name', async () => {
     const { resolvers, created } = makeResolvers({})
     expect(await internalizeRefTokens('#parent/child', resolvers)).toBe(`#[${NEW_TAG}]`)
@@ -450,5 +506,45 @@ describe('wiki-link round-trip: humanize ⇄ internalize', () => {
       tag: async (n) => (n === 'todo' ? TAG : null),
     }
     expect(await internalizeRefTokens(humanized, resolvers)).toBe(internal)
+  })
+
+  it('round-trips a canonical whitespace tag through #[[name]]', async () => {
+    const internal = `tagged #[${TAG}]`
+    const humanized = humanizeRefTokens(internal, (ulid) =>
+      ulid === TAG ? 'Tag With Space' : undefined,
+    )
+    expect(humanized).toBe('tagged #[[Tag With Space]]')
+
+    const resolvers: RefInternalizers = {
+      page: async () => null,
+      tag: async (name) => (name === 'Tag With Space' ? TAG : null),
+    }
+    expect(await internalizeRefTokens(humanized, resolvers)).toBe(internal)
+  })
+
+  it('round-trips interior U+0085 through Rust-compatible bracketed syntax', async () => {
+    const internal = `tagged #[${TAG}]`
+    const name = 'NEL\u0085Inside'
+    const humanized = humanizeRefTokens(internal, (ulid) => (ulid === TAG ? name : undefined))
+    expect(humanized).toBe(`tagged #[[${name}]]`)
+
+    const resolvers: RefInternalizers = {
+      page: async () => null,
+      tag: async (candidate) => (candidate === name ? TAG : null),
+    }
+    expect(await internalizeRefTokens(humanized, resolvers)).toBe(internal)
+  })
+
+  it('retains U+FEFF on bracketed import but does not export it as whitespace', async () => {
+    const name = '\uFEFFBOM\uFEFF'
+    const resolvers: RefInternalizers = {
+      page: async () => null,
+      tag: async (candidate) => (candidate === name ? TAG : null),
+    }
+    const internal = await internalizeRefTokens(`tagged #[[${name}]]`, resolvers)
+    expect(internal).toBe(`tagged #[${TAG}]`)
+    expect(humanizeRefTokens(internal, (ulid) => (ulid === TAG ? name : undefined))).toBe(
+      `tagged #${name}`,
+    )
   })
 })

@@ -55,6 +55,20 @@ const PAGE_LINK_RE = /\[\[([0-9A-Z]{26})\]\]/g
 const BLOCK_REF_RE = /\(\(([0-9A-Z]{26})\)\)/g
 
 /**
+ * Rust's `char::is_whitespace` / `str::trim` use Unicode's `White_Space`
+ * property. JavaScript's `\s` / `String.trim()` are subtly different: they
+ * omit U+0085 (NEXT LINE) and include U+FEFF (BOM). Keep both export detection
+ * and import edge-trimming on the explicit property so clipboard and Rust
+ * markdown import/export stay byte-for-byte aligned.
+ */
+const UNICODE_WHITE_SPACE_RE = /\p{White_Space}/u
+const UNICODE_WHITE_SPACE_EDGES_RE = /^\p{White_Space}+|\p{White_Space}+$/gu
+
+function trimUnicodeWhiteSpace(value: string): string {
+  return value.replace(UNICODE_WHITE_SPACE_EDGES_RE, '')
+}
+
+/**
  * Resolve an internal-reference ULID to a human-readable name for export.
  *
  * Returns the display name (page title / tag name / block snippet) when the
@@ -68,9 +82,9 @@ export type RefResolver = (ulid: string) => string | undefined
  * Rewrite the opaque-ULID reference tokens in a single block's content into
  * the human-readable forms used by page-export (#1440):
  *
- *   `#[ULID]`   → `#tag`          (tag reference)
- *   `[[ULID]]`  → `[[Page Name]]` (block/page link)
- *   `((ULID))`  → `((Name))`      (block reference)
+ *   `#[ULID]`  → `#tag` / `#[[Tag Name]]` (tag reference)
+ *   `[[ULID]]` → `[[Page Name]]`          (block/page link)
+ *   `((ULID))` → `((Name))`               (block reference)
  *
  * Resolution REUSES the same name source page-export uses (the title/tag
  * resolver) via the injected {@link RefResolver}; this function only renders.
@@ -91,7 +105,8 @@ export function humanizeRefTokens(content: string, resolve: RefResolver): string
   return content
     .replace(TAG_REF_RE, (match, ulid: string) => {
       const name = resolve(ulid)
-      return name === undefined ? match : `#${name}`
+      if (name === undefined) return match
+      return UNICODE_WHITE_SPACE_RE.test(name) ? `#[[${name}]]` : `#${name}`
     })
     .replace(PAGE_LINK_RE, (match, ulid: string) => {
       const name = resolve(ulid)
@@ -126,6 +141,17 @@ const ULID_BODY_RE = /^[0-9A-Z]{26}$/
 // `src-tauri/src/commands/pages/markdown.rs`. The two MUST stay byte-for-byte
 // identical; change both together.
 export const HUMAN_PAGE_LINK_RE = /\[\[([^\]\n]+?)\]\]/g
+
+/**
+ * Human-readable multi-word tag on the way IN: `#[[Tag With Space]]`.
+ * The page-link pass must ignore the nested `[[...]]`; this dedicated pass
+ * resolves the trimmed body as a tag before the bare `#tag` pass runs.
+ *
+ * Mirrored by the canonical Rust `HUMAN_MULTIWORD_TAG_RE` in
+ * `src-tauri/src/commands/pages/markdown.rs`; the shared reference-token
+ * conformance fixture pins both implementations to the same boundaries.
+ */
+export const HUMAN_MULTIWORD_TAG_RE = /#\[\[([^\]\n]+?)\]\]/g
 
 /**
  * Human-readable tag on the way IN: `#tag` / `#nested/tag`. The name is a run of
@@ -163,9 +189,10 @@ export interface RefInternalizers {
  * the internal ULID forms the editor stores/parses (#1484) — the inverse of
  * {@link humanizeRefTokens}:
  *
- *   `[[Page Name]]` → `[[ULID]]`   (resolve title; create the page if missing)
- *   `#tag`          → `#[ULID]`     (resolve tag name; create the tag if missing)
- *   `((Block Name))`→ left as plain text (no by-name block-ref creation path)
+ *   `[[Page Name]]`  → `[[ULID]]`   (resolve title; create the page if missing)
+ *   `#tag`           → `#[ULID]`     (resolve tag name; create the tag if missing)
+ *   `#[[Tag Name]]`  → `#[ULID]`     (multi-word tag; trim Unicode White_Space)
+ *   `((Block Name))` → left as plain text (no by-name block-ref creation path)
  *
  * A token already in canonical form (`[[ULID]]`, `#[ULID]`) is left untouched so
  * an internal duplicate→paste round-trip stays ULID-canonical. A name the
@@ -180,44 +207,69 @@ export async function internalizeRefTokens(
   content: string,
   resolvers: RefInternalizers,
 ): Promise<string> {
-  // Two sequential passes (page links, then tags). Each pass collects the
-  // distinct names, resolves them ONCE (so a name repeated in the line creates
-  // at most one page/tag), then does a synchronous replace with the resolved
-  // map. Page links are resolved before tags purely for readability; the token
-  // shapes are disjoint so ordering is immaterial to correctness.
+  // Page links first, followed by multi-word and then bare tags. Both tag forms
+  // share one cache, so `#[[Shared]] and #Shared` performs one tag resolution.
   const withPages = await replaceRefs(
     content,
     HUMAN_PAGE_LINK_RE,
     resolvers.page,
     (ulid) => `[[${ulid}]]`,
+    { skipCanonicalBody: true, skipPagePrefixes: true },
   )
-  return replaceRefs(withPages, HUMAN_TAG_RE, resolvers.tag, (ulid) => `#[${ulid}]`, true)
+  const tagCache = new Map<string, string | null>()
+  const withMultiwordTags = await replaceRefs(
+    withPages,
+    HUMAN_MULTIWORD_TAG_RE,
+    resolvers.tag,
+    (ulid) => `#[${ulid}]`,
+    { trimName: true, resolved: tagCache },
+  )
+  return replaceRefs(withMultiwordTags, HUMAN_TAG_RE, resolvers.tag, (ulid) => `#[${ulid}]`, {
+    tagBoundary: true,
+    resolved: tagCache,
+  })
+}
+
+interface ReplaceRefOptions {
+  /** Group 1 is a leading boundary and group 2 is the name. */
+  tagBoundary?: boolean
+  /** Ignore `#[[tag]]` and `![[embed]]` candidates in the page-link pass. */
+  skipPagePrefixes?: boolean
+  /** Leave a canonical `[[ULID]]` page link untouched. Tags use token shape. */
+  skipCanonicalBody?: boolean
+  /** Normalize padding inside `#[[ tag ]]` before resolving. */
+  trimName?: boolean
+  /** Cache shared by the multi-word and bare tag passes. */
+  resolved?: Map<string, string | null>
 }
 
 /**
  * Shared engine for {@link internalizeRefTokens}: find every NAME match of
  * `re`, resolve the distinct names once via `resolve`, then rebuild the string
- * with each resolved name rewritten via `render(ulid)`. A name that is a bare
- * ULID (already canonical) or that resolves to `null` keeps its original token.
+ * with each resolved name rewritten via `render(ulid)`. A page name that is a
+ * bare ULID (already canonical) or any name resolving to `null` keeps its token.
+ * Tags determine canonicality from their token shape instead: `#[ULID]` never
+ * matches a human tag regex, while `#ULID` and `#[[ULID]]` are human tag names.
  *
- * `tagBoundary` (tags only) — the tag regex captures a leading boundary char in
- * group 1 and the name in group 2; it must be re-emitted before the rewritten
- * token. Page links have the name in group 1 and no boundary capture.
+ * `options.tagBoundary` (bare tags only) means the regex captures a leading
+ * boundary char in group 1 and the name in group 2; the boundary is re-emitted.
+ * Page links and multi-word tags have the name in group 1.
  */
 async function replaceRefs(
   content: string,
   re: RegExp,
   resolve: RefInternalizer,
   render: (ulid: string) => string,
-  tagBoundary = false,
+  options: ReplaceRefOptions = {},
 ): Promise<string> {
+  const { resolved = new Map<string, string | null>() } = options
   // In tag mode, a `#tag`-looking substring may live inside an UNRESOLVED
   // `[[Page Name]]` token that survived the page pass (e.g. `[[Project #alpha]]`).
   // Rewriting that `#alpha` would corrupt the link into `[[Project #[ULID]]]`,
   // so collect the `[[ ... ]]` spans and skip any tag match that falls inside one.
   // (Resolved links are already `[[ULID]]` and contain no `#`, so they're inert.)
   const bracketSpans: Array<[number, number]> = []
-  if (tagBoundary) {
+  if (options.tagBoundary) {
     for (const b of content.matchAll(HUMAN_PAGE_LINK_RE)) {
       bracketSpans.push([b.index, b.index + b[0].length])
     }
@@ -228,20 +280,39 @@ async function replaceRefs(
     return bracketSpans.some(([start, end]) => hashPos >= start && hashPos < end)
   }
 
+  const matches = [...content.matchAll(re)]
+  const candidate = (match: RegExpMatchArray): { boundary: string; name: string } => {
+    const boundary = options.tagBoundary ? (match[1] ?? '') : ''
+    const capturedName = (options.tagBoundary ? match[2] : match[1]) ?? ''
+    return {
+      boundary,
+      name: options.trimName ? trimUnicodeWhiteSpace(capturedName) : capturedName,
+    }
+  }
+  const shouldSkip = (match: RegExpMatchArray, boundary: string): boolean => {
+    const matchIndex = match.index ?? 0
+    if (options.tagBoundary && tagInsideBracket(matchIndex, boundary.length)) return true
+    if (!options.skipPagePrefixes || matchIndex === 0) return false
+    const prefix = content[matchIndex - 1]
+    return prefix === '#' || prefix === '!'
+  }
+  const isCanonicalBody = (name: string): boolean =>
+    options.skipCanonicalBody === true && ULID_BODY_RE.test(name)
+
   // Pass 1: collect distinct candidate names (skip bare-ULID canonical bodies,
-  // and — for tags — names whose `#` is inside an unresolved `[[ ]]` span).
+  // tag matches inside `[[ ]]`, and page matches owned by tags or embeds).
   const names = new Set<string>()
-  for (const m of content.matchAll(re)) {
-    const name = (tagBoundary ? m[2] : m[1]) ?? ''
-    if (tagBoundary && tagInsideBracket(m.index, (m[1] ?? '').length)) continue
-    if (name.length > 0 && !ULID_BODY_RE.test(name)) names.add(name)
+  for (const match of matches) {
+    const { boundary, name } = candidate(match)
+    if (shouldSkip(match, boundary)) continue
+    if (name.length > 0 && !isCanonicalBody(name)) names.add(name)
   }
   if (names.size === 0) return content
 
   // Pass 2: resolve each distinct name once (create-if-missing), sequentially
   // so concurrent creation of the SAME name can't race into two pages/tags.
-  const resolved = new Map<string, string | null>()
   for (const name of names) {
+    if (resolved.has(name)) continue
     try {
       resolved.set(name, await resolve(name))
     } catch {
@@ -249,16 +320,25 @@ async function replaceRefs(
     }
   }
 
-  // Pass 3: synchronous rebuild. A null/unresolved/ULID name — or a tag inside an
-  // unresolved `[[ ]]` span — keeps its original token.
-  return content.replace(re, (match, g1: string, g2: string | undefined, offset: number) => {
-    const boundary = tagBoundary ? g1 : ''
-    const name = (tagBoundary ? g2 : g1) ?? ''
-    if (tagBoundary && tagInsideBracket(offset, boundary.length)) return match
-    if (ULID_BODY_RE.test(name)) return match
+  // Pass 3: rebuild from the captured offsets. Using the same `shouldSkip`
+  // predicate as collection prevents a resolved `Shared` page from rewriting
+  // the `[[Shared]]` nested inside `#[[Shared]]` or `![[Shared]]`.
+  let output = ''
+  let cursor = 0
+  for (const match of matches) {
+    const matchIndex = match.index ?? 0
+    output += content.slice(cursor, matchIndex)
+    const { boundary, name } = candidate(match)
+    if (shouldSkip(match, boundary) || isCanonicalBody(name)) {
+      output += match[0]
+      cursor = matchIndex + match[0].length
+      continue
+    }
     const ulid = resolved.get(name)
-    return ulid == null ? match : boundary + render(ulid)
-  })
+    output += ulid == null ? match[0] : boundary + render(ulid)
+    cursor = matchIndex + match[0].length
+  }
+  return output + content.slice(cursor)
 }
 
 /**

@@ -1,0 +1,213 @@
+{
+  "pageResolutions": {
+    "Page": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "Shared": "01ARZ3NDEKTSV4RRFFQ69G5FB0"
+  },
+  "tagResolutions": {
+    "Tag With Space": "01BX5ZZKBKACTAV9WEVGEMMVS0",
+    "tag": "01BX5ZZKBKACTAV9WEVGEMMVS1",
+    "Shared": "01BX5ZZKBKACTAV9WEVGEMMVS2",
+    "NEL": "01BX5ZZKBKACTAV9WEVGEMMVS3",
+    "NEL\u0085Inside": "01BX5ZZKBKACTAV9WEVGEMMVS4",
+    "\uFEFFBOM\uFEFF": "01BX5ZZKBKACTAV9WEVGEMMVS5",
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV": "01BX5ZZKBKACTAV9WEVGEMMVS6"
+  },
+  "humanizeCases": [
+    {
+      "name": "U+0085 edge whitespace selects bracketed tag syntax",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVS3",
+      "tagName": "\u0085NEL\u0085",
+      "expected": "#[[\u0085NEL\u0085]]"
+    },
+    {
+      "name": "U+0085 interior whitespace selects bracketed tag syntax",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVS4",
+      "tagName": "NEL\u0085Inside",
+      "expected": "#[[NEL\u0085Inside]]"
+    },
+    {
+      "name": "U+FEFF boundary is not Rust whitespace",
+      "tagUlid": "01BX5ZZKBKACTAV9WEVGEMMVS5",
+      "tagName": "\uFEFFBOM\uFEFF",
+      "expected": "#\uFEFFBOM\uFEFF"
+    }
+  ],
+  "cases": [
+    {
+      "name": "multi-word tag is a tag, with trimmed resolution input",
+      "input": "#[[  Tag With Space  ]]",
+      "expected": {
+        "pageCaptures": ["  Tag With Space  "],
+        "multiwordTagCaptures": ["  Tag With Space  "],
+        "requestedPageNames": [],
+        "requestedTagNames": ["Tag With Space"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS0]"
+      }
+    },
+    {
+      "name": "Obsidian embed remains byte-identical",
+      "input": "![[file.png]]",
+      "expected": {
+        "pageCaptures": ["file.png"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "![[file.png]]"
+      }
+    },
+    {
+      "name": "plain wiki-link resolves as a page",
+      "input": "[[Page]]",
+      "expected": {
+        "pageCaptures": ["Page"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Page"],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]"
+      }
+    },
+    {
+      "name": "bare hashtag resolves as a tag",
+      "input": "#tag",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["tag"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS1]"
+      }
+    },
+    {
+      "name": "canonical page and tag ULIDs bypass both resolvers",
+      "input": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]] #[01BX5ZZKBKACTAV9WEVGEMMVS1]",
+      "expected": {
+        "pageCaptures": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "[[01ARZ3NDEKTSV4RRFFQ69G5FAV]] #[01BX5ZZKBKACTAV9WEVGEMMVS1]"
+      }
+    },
+    {
+      "name": "bare ULID-shaped human tag resolves as a tag name",
+      "input": "#01ARZ3NDEKTSV4RRFFQ69G5FAV",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS6]"
+      }
+    },
+    {
+      "name": "bracketed ULID-shaped human tag resolves as a tag name",
+      "input": "#[[01ARZ3NDEKTSV4RRFFQ69G5FAV]]",
+      "expected": {
+        "pageCaptures": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "multiwordTagCaptures": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["01ARZ3NDEKTSV4RRFFQ69G5FAV"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS6]"
+      }
+    },
+    {
+      "name": "same-name embed is skipped while page resolves once",
+      "input": "![[Shared]] and [[Shared]]",
+      "expected": {
+        "pageCaptures": ["Shared", "Shared"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Shared"],
+        "requestedTagNames": [],
+        "transformed": "![[Shared]] and [[01ARZ3NDEKTSV4RRFFQ69G5FB0]]"
+      }
+    },
+    {
+      "name": "same-name bracketed tag and page use distinct resolvers",
+      "input": "#[[Shared]] and [[Shared]]",
+      "expected": {
+        "pageCaptures": ["Shared", "Shared"],
+        "multiwordTagCaptures": ["Shared"],
+        "requestedPageNames": ["Shared"],
+        "requestedTagNames": ["Shared"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS2] and [[01ARZ3NDEKTSV4RRFFQ69G5FB0]]"
+      }
+    },
+    {
+      "name": "U+0085 is trimmed from multi-word tag edges",
+      "input": "#[[\u0085NEL\u0085]]",
+      "expected": {
+        "pageCaptures": ["\u0085NEL\u0085"],
+        "multiwordTagCaptures": ["\u0085NEL\u0085"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["NEL"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS3]"
+      }
+    },
+    {
+      "name": "U+0085 is retained inside a multi-word tag name",
+      "input": "#[[NEL\u0085Inside]]",
+      "expected": {
+        "pageCaptures": ["NEL\u0085Inside"],
+        "multiwordTagCaptures": ["NEL\u0085Inside"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["NEL\u0085Inside"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS4]"
+      }
+    },
+    {
+      "name": "U+FEFF is retained at multi-word tag boundaries",
+      "input": "#[[\uFEFFBOM\uFEFF]]",
+      "expected": {
+        "pageCaptures": ["\uFEFFBOM\uFEFF"],
+        "multiwordTagCaptures": ["\uFEFFBOM\uFEFF"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["\uFEFFBOM\uFEFF"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS5]"
+      }
+    },
+    {
+      "name": "multiple page links close independently",
+      "input": "[[A]] text [[B]]",
+      "expected": {
+        "pageCaptures": ["A", "B"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["A", "B"],
+        "requestedTagNames": [],
+        "transformed": "[[A]] text [[B]]"
+      }
+    },
+    {
+      "name": "nested opener closes at the first delimiter",
+      "input": "[[a[[b]]",
+      "expected": {
+        "pageCaptures": ["a[[b"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["a[[b"],
+        "requestedTagNames": [],
+        "transformed": "[[a[[b]]"
+      }
+    },
+    {
+      "name": "empty wiki-link body does not match",
+      "input": "[[]]",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "[[]]"
+      }
+    },
+    {
+      "name": "newline inside wiki-link body does not match",
+      "input": "[[A\nB]]",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "[[A\nB]]"
+      }
+    }
+  ]
+}

@@ -1,36 +1,96 @@
+import { readFileSync } from 'node:fs'
+import path from 'node:path'
+
 import { describe, expect, it } from 'vitest'
 
-import { HUMAN_PAGE_LINK_RE } from '@/lib/block-clipboard'
+import {
+  HUMAN_MULTIWORD_TAG_RE,
+  HUMAN_PAGE_LINK_RE,
+  humanizeRefTokens,
+  internalizeRefTokens,
+} from '@/lib/block-clipboard'
+
+interface ReferenceTokenExpected {
+  pageCaptures: string[]
+  multiwordTagCaptures: string[]
+  requestedPageNames: string[]
+  requestedTagNames: string[]
+  transformed: string
+}
+
+interface ReferenceTokenCase {
+  name: string
+  input: string
+  expected: ReferenceTokenExpected
+}
+
+interface HumanizeTagCase {
+  name: string
+  tagUlid: string
+  tagName: string
+  expected: string
+}
+
+interface ReferenceTokenVectors {
+  pageResolutions: Record<string, string>
+  tagResolutions: Record<string, string>
+  humanizeCases: HumanizeTagCase[]
+  cases: ReferenceTokenCase[]
+}
+
+const FIXTURE_PATH = path.resolve(
+  import.meta.dirname,
+  '..',
+  '..',
+  '..',
+  'conformance',
+  'reference-tokens.vectors.json',
+)
+const vectors = JSON.parse(readFileSync(FIXTURE_PATH, 'utf8')) as ReferenceTokenVectors
 
 /**
- * #1920 — cross-language parity for the inbound wiki-link regex.
+ * #1920/#3261 — cross-language parity for inbound reference-token grammar.
  *
- * `HUMAN_PAGE_LINK_RE` here mirrors the CANONICAL Rust source of the same name
- * in `src-tauri/src/commands/pages/markdown.rs` (pattern `\[\[([^\]\n]+?)\]\]`).
- * The matching Rust test is `page_link_re_parity_boundaries_1920`. This fixture
- * is intentionally IDENTICAL to the Rust one — any change to the pattern must be
- * mirrored in both places (and in both tests).
+ * Rust owns the canonical regex/collector/rewriter implementation in
+ * `src-tauri/src/commands/pages/markdown.rs`. This suite and the Rust
+ * `page_link_re_parity_boundaries_1920` test consume the same golden vectors,
+ * including the prefix-sensitive distinction between pages, tags, and embeds.
  */
-describe('HUMAN_PAGE_LINK_RE cross-language parity (#1920)', () => {
-  // `(input, expected inner (group-1) captures in order)` — same fixture as the
-  // Rust `page_link_re_parity_boundaries_1920` test.
-  const cases: ReadonlyArray<readonly [string, readonly string[]]> = [
-    ['[[A]]', ['A']],
-    ['[[A B]]', ['A B']],
-    ['[[A]] text [[B]]', ['A', 'B']],
-    // Non-greedy: the first `]]` closes the match opened at the LAST `[[`.
-    ['[[a[[b]]', ['a[[b']],
-    // Empty `[[]]` does not match (body is one-or-more, `+?`).
-    ['[[]]', []],
-    // A newline inside the brackets prevents a match (body excludes `\n`).
-    ['[[A\nB]]', []],
-  ]
+describe('reference-token cross-language parity (#1920, #3261)', () => {
+  for (const vector of vectors.humanizeCases) {
+    it(vector.name, () => {
+      const transformed = humanizeRefTokens(`#[${vector.tagUlid}]`, (ulid) =>
+        ulid === vector.tagUlid ? vector.tagName : undefined,
+      )
+      expect(transformed).toBe(vector.expected)
+    })
+  }
 
-  for (const [input, expected] of cases) {
-    it(`matches expected boundaries for ${JSON.stringify(input)}`, () => {
-      // matchAll is safe with a /g regex (no shared lastIndex state leak).
-      const got = [...input.matchAll(HUMAN_PAGE_LINK_RE)].map((m) => m[1])
-      expect(got).toEqual([...expected])
+  for (const vector of vectors.cases) {
+    it(vector.name, async () => {
+      expect([...vector.input.matchAll(HUMAN_PAGE_LINK_RE)].map((match) => match[1])).toEqual(
+        vector.expected.pageCaptures,
+      )
+      expect([...vector.input.matchAll(HUMAN_MULTIWORD_TAG_RE)].map((match) => match[1])).toEqual(
+        vector.expected.multiwordTagCaptures,
+      )
+
+      const requestedPageNames: string[] = []
+      const requestedTagNames: string[] = []
+      const transformed = await internalizeRefTokens(vector.input, {
+        page: async (name) => {
+          requestedPageNames.push(name)
+          return vectors.pageResolutions[name] ?? null
+        },
+        tag: async (name) => {
+          requestedTagNames.push(name)
+          return vectors.tagResolutions[name] ?? null
+        },
+      })
+
+      expect(requestedPageNames).toEqual(vector.expected.requestedPageNames)
+      expect(requestedTagNames).toEqual(vector.expected.requestedTagNames)
+      expect(transformed).toBe(vector.expected.transformed)
     })
   }
 })
