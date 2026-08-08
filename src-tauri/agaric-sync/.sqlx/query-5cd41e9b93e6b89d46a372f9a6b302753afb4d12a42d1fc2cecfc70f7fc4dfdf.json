@@ -1,0 +1,38 @@
+{
+  "db_name": "SQLite",
+  "query": "SELECT op_type, payload FROM op_log WHERE device_id = ?1 AND seq = ?2 AND is_replicated = 0",
+  "describe": {
+    "columns": [
+      {
+        "name": "op_type",
+        "ordinal": 0,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "op_type"
+          }
+        }
+      },
+      {
+        "name": "payload",
+        "ordinal": 1,
+        "type_info": "Text",
+        "origin": {
+          "Table": {
+            "table": "op_log",
+            "name": "payload"
+          }
+        }
+      }
+    ],
+    "parameters": {
+      "Right": 2
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "5cd41e9b93e6b89d46a372f9a6b302753afb4d12a42d1fc2cecfc70f7fc4dfdf"
+}
