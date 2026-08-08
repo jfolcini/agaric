@@ -19,12 +19,17 @@ import { BacklinkStateFilterForm } from '@/components/backlink-filter/categories
 import { STATE_FILTER_VALUES } from '@/components/filters/forms/stateVocabulary'
 import { SearchStateFilterForm } from '@/components/search/filter-forms/SearchStateFilterForm'
 import { t } from '@/lib/i18n'
+import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
 function optionValuesOf(select: HTMLElement): string[] {
   return Array.from(select.querySelectorAll('option')).map((o) => (o as HTMLOptionElement).value)
 }
 
 describe('state/status vocabulary is a single shared source', () => {
+  it('aliases the canonical autocomplete tuple instead of copying it', () => {
+    expect(STATE_FILTER_VALUES).toBe(TASK_STATE_AUTOCOMPLETE_VALUES)
+  })
+
   it('search State and backlink Status offer the identical canonical set', () => {
     const search = render(<SearchStateFilterForm onAddFilter={() => {}} onBack={() => {}} />)
     const searchSelect = search.getByLabelText(t('search.filterHelper.stateValueLabel'))

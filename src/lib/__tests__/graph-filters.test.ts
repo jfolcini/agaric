@@ -14,6 +14,7 @@ import {
   getGraphFilterKey,
   nodeMatchesFilter,
 } from '@/lib/graph-filters'
+import { TASK_STATES } from '@/lib/task-states'
 
 // Test fixtures
 const makeNode = (overrides: Partial<GraphFilterableNode> = {}): GraphFilterableNode => ({
@@ -314,6 +315,7 @@ describe('constants', () => {
   })
 
   it('GRAPH_STATUS_VALUES matches the locked task cycle', () => {
+    expect(GRAPH_STATUS_VALUES).toBe(TASK_STATES)
     expect(GRAPH_STATUS_VALUES).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
   })
 

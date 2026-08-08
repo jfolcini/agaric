@@ -78,6 +78,14 @@ describe('TaskParagraph schema attribute (#1481)', () => {
     expect(node.attrs['todoState']).toBeNull()
   })
 
+  it.each(['WAITING', 'todo', 'none'])('rejects invalid DOM todo state %s', (state) => {
+    editor = build()
+    editor.commands.setContent(`<p data-todo-state="${state}">plain</p>`)
+    const json = editor.getJSON() as DocNode
+    expect(firstParagraph(json)?.attrs?.todoState).toBeNull()
+    expect(editor.getHTML()).not.toContain('data-todo-state')
+  })
+
   it('renders data-todo-state only for task paragraphs', () => {
     editor = build()
     editor.commands.setContent({

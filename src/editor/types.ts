@@ -6,6 +6,10 @@
  * can import these same types for consistency.
  */
 
+import type { TodoState } from '@/lib/task-states'
+
+export type { TodoState } from '@/lib/task-states'
+
 // -- Mark types ---------------------------------------------------------------
 
 export interface BoldMark {
@@ -126,8 +130,6 @@ export interface MathBlockNode {
  * `[x]` and `[ ]` stay standard GFM; `[/]` and `[-]` degrade gracefully to
  * an unchecked box in viewers that don't understand them.
  */
-export type TodoState = 'TODO' | 'DOING' | 'DONE' | 'CANCELLED'
-
 export interface ParagraphNode {
   readonly type: 'paragraph'
   readonly content?: readonly InlineNode[]

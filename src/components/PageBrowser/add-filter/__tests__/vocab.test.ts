@@ -30,8 +30,10 @@ import {
   type DateOpKind,
   PROPERTY_OPS,
   type PropertyOpKind,
+  TODO_STATE_VALUES,
   VALUE_BEARING_OPS,
 } from '@/components/PageBrowser/add-filter/vocab'
+import { TASK_STATES } from '@/lib/task-states'
 
 // Compile-time exhaustiveness: must name every DatePredicate variant.
 const ALL_DATE_OPS = {
@@ -79,6 +81,11 @@ const VALUE_BEARING = {
 } satisfies Partial<Record<PropertyOpKind, true>>
 
 describe('add-filter vocab op tables — exhaustiveness', () => {
+  it('uses the canonical task states by identity and in filter order', () => {
+    expect(TODO_STATE_VALUES).toBe(TASK_STATES)
+    expect(TODO_STATE_VALUES).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
+  })
+
   it('DATE_OPS covers every DatePredicate variant exactly once', () => {
     const values = DATE_OPS.map((o) => o.value)
     expect(new Set(values)).toEqual(new Set(Object.keys(ALL_DATE_OPS)))

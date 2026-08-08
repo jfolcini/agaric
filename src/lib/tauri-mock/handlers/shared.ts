@@ -18,6 +18,7 @@
 
 import type { AppError, PageResponse, commands } from '@/lib/bindings'
 import { asciiLowercase, pageGlobFilterMatches } from '@/lib/search-query/glob-validate'
+import { TASK_STATES } from '@/lib/task-states'
 import { applyRevertForOp } from '@/lib/tauri-mock/revert'
 import {
   blocks,
@@ -71,10 +72,10 @@ export function invalidOperationRejection(message: string): Error & AppError {
  * the todo_state fallback), so the mock is knowingly PERMISSIVE for priority:
  * enforcing the fixed fallback would false-fail tests that configure custom
  * levels without seeding a definition row. The mock enforces `todo_state`
- * membership (its `TODO/DOING/DONE` defaults are stable) and non-empty values,
+ * membership (its canonical task-state defaults are stable) and non-empty values,
  * and leaves `priority` values unrestricted.
  */
-const TODO_STATE_DEFAULTS: readonly string[] = ['TODO', 'DOING', 'DONE']
+const TODO_STATE_DEFAULTS: readonly string[] = TASK_STATES
 
 export function assertValidReservedPropertyValue(
   key: string,
@@ -95,7 +96,7 @@ export function assertValidReservedPropertyValue(
     throw validationRejection('set_property.value_text.empty')
   }
   // Validate against the seeded definition's options if present, else the
-  // built-in TODO/DOING/DONE defaults (the `validate_reserved_property_value`
+  // built-in task-state defaults (the `validate_reserved_property_value`
   // fallback the mock's definition-less store always lands on).
   const def = propertyDefs.get('todo_state')
   const rawOptions = def?.['value_type'] === 'select' ? (def['options'] as string | null) : null

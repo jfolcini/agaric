@@ -20,27 +20,17 @@ import { i18n } from '@/lib/i18n'
 import { logger } from '@/lib/logger'
 import { notify } from '@/lib/notify'
 import { getPriorityCycle } from '@/lib/priority-levels'
+import { nextTaskState, type TodoState } from '@/lib/task-states'
 import { usePageBlockStoreApi } from '@/stores/page-blocks'
 import { useUndoStore } from '@/stores/undo'
 
-/**
- * Locked task state cycle: none -> TODO -> DOING -> DONE -> CANCELLED -> none.
- *
- * This cycle is intentionally fixed — users cannot add or remove states.
- * DONE sits immediately after DOING because finishing is the overwhelmingly
- * common terminal state; CANCELLED lives at the end of the cycle as the
- * "abandoned" escape hatch. reverses an earlier ordering that put
- * CANCELLED before DONE.
- */
-const TASK_CYCLE: readonly (string | null)[] = [null, 'TODO', 'DOING', 'DONE', 'CANCELLED']
-
 /** Display labels for screen reader announcements. */
-const STATE_LABELS: Record<string, string> = {
+const STATE_LABELS = {
   TODO: 'To do',
   DOING: 'In progress',
   CANCELLED: 'Cancelled',
   DONE: 'Done',
-}
+} satisfies Record<TodoState, string>
 
 export interface UseBlockPropertiesReturn {
   getTodoState: (blockId: string) => string | null
@@ -126,9 +116,7 @@ export function useBlockProperties(): UseBlockPropertiesReturn {
     (blockId: string) =>
       enqueueTodoToggle(blockId, async () => {
         const current = pageStore.getState().blocksById.get(blockId)?.todo_state ?? null
-        const currentIdx = TASK_CYCLE.indexOf(current)
-        const nextIdx = (currentIdx + 1) % TASK_CYCLE.length
-        const nextState = TASK_CYCLE[nextIdx] ?? null
+        const nextState = nextTaskState(current)
 
         // Optimistic update (before IPC) to prevent race on rapid toggles
         pageStore.setState((s) => ({

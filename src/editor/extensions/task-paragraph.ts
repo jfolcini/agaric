@@ -18,14 +18,7 @@
 
 import Paragraph from '@tiptap/extension-paragraph'
 
-import type { TodoState } from '@/editor/types'
-
-/** Valid GFM task states (mirrors {@link TodoState}). */
-const TODO_STATES = new Set<string>(['TODO', 'DOING', 'DONE', 'CANCELLED'])
-
-function isTodoState(value: unknown): value is TodoState {
-  return typeof value === 'string' && TODO_STATES.has(value)
-}
+import { isTodoState, type TodoState } from '@/lib/task-states'
 
 /**
  * Paragraph extension declaring the `todoState` attribute so parsed GFM task

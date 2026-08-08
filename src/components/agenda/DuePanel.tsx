@@ -2,7 +2,7 @@
  * DuePanel -- shows blocks due on a given date, grouped by todo_state.
  *
  * Renders on JournalPage. Groups blocks by todo_state in order:
- * DOING > TODO > DONE > null (Other). Within each group, sorts by
+ * DOING > TODO > DONE > CANCELLED > null (Other). Within each group, sorts by
  * the configurable priority rank (`priorityRank` from
  * `@/lib/priority-levels`) so the order follows the user's configured
  * levels, with null/unknown sorting last. Uses cursor-based pagination
@@ -43,6 +43,7 @@ import {
 import { useVirtualizedGroupedRows } from '@/hooks/useVirtualizedGroupedRows'
 import type { NavigateToPageFn } from '@/lib/block-events'
 import { priorityRank } from '@/lib/priority-levels'
+import { TASK_STATE_SORT_ORDER } from '@/lib/task-states'
 import type { ProjectedAgendaEntry } from '@/lib/tauri'
 import { cn } from '@/lib/utils'
 import { useResolveStore } from '@/stores/resolve'
@@ -62,9 +63,8 @@ export interface DuePanelProps {
 // no group (hidden from the list) yet still counted in `visibleBlocks`,
 // making the header say "3 due" while the list showed 2. Adding the
 // group keeps the header count and rendered rows in agreement and
-// matches the canonical agenda grouping (`agenda-sort.ts`: DOING > TODO
-// > DONE > CANCELLED > null) and the existing DONE precedent.
-const GROUP_ORDER = ['DOING', 'TODO', 'DONE', 'CANCELLED', null] as const
+// matches the canonical agenda grouping and the existing DONE precedent.
+const GROUP_ORDER = [...TASK_STATE_SORT_ORDER, null] as const
 
 interface ProjectedEntryContentProps {
   content: string
