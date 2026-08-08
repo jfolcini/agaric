@@ -5827,7 +5827,11 @@ describe('BlockTree Enter creates new sibling block', () => {
 describe('BlockTree zoom-in', () => {
   beforeEach(() => {
     mockedInvoke.mockReset()
-    mockedInvoke.mockResolvedValue({})
+    mockedInvoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'load_page_subtree') throw new Error('test: load suppressed')
+      if (cmd === 'list_all_pages_in_space') return []
+      return emptyPage
+    })
   })
 
   it('zoom filters blocks to descendants only', async () => {
@@ -5864,6 +5868,86 @@ describe('BlockTree zoom-in', () => {
       expect(screen.getByTestId('sortable-block-C')).toBeInTheDocument()
       expect(screen.getByTestId('sortable-block-D')).toBeInTheDocument()
     })
+  })
+
+  it('expands and persists a collapsed zoom target before showing its descendants', async () => {
+    const user = userEvent.setup()
+    const tree = [
+      makeBlock({ id: 'A', content: 'Collapsed parent', depth: 0 }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Child B' }),
+      makeBlock({ id: 'SIBLING', content: 'Outside zoom', depth: 0 }),
+    ]
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toHaveAttribute('data-is-collapsed', 'true')
+    })
+    expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+
+    await user.click(screen.getByTestId('zoom-in-A'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-B')).toBeInTheDocument()
+      expect(screen.queryByTestId('sortable-block-A')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('sortable-block-SIBLING')).not.toBeInTheDocument()
+    })
+    expect(JSON.parse(localStorage.getItem('collapsed_ids:PAGE_1') as string)).toEqual([])
+    expect(screen.queryByText(t('blockTree.emptyZoom'))).not.toBeInTheDocument()
+  })
+
+  it('Ctrl+A at the page root keeps the full-page scope, including collapsed descendants', async () => {
+    const tree = [
+      makeBlock({ id: 'A', content: 'Collapsed parent', depth: 0 }),
+      makeBlock({ id: 'B', parent_id: 'A', depth: 1, content: 'Hidden child' }),
+      makeBlock({ id: 'SIBLING', content: 'Visible sibling', depth: 0 }),
+    ]
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-A')).toBeInTheDocument()
+      expect(screen.queryByTestId('sortable-block-B')).not.toBeInTheDocument()
+    })
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(useBlockStore.getState().selectedBlockIds).toEqual(['A', 'B', 'SIBLING'])
+    })
+  })
+
+  it('Ctrl+A selects the complete uncapped zoom scope and excludes page siblings', async () => {
+    const user = userEvent.setup()
+    const childIds = Array.from({ length: 510 }, (_, index) => `CHILD_${index}`)
+    const tree = [
+      makeBlock({ id: 'ZOOM_ROOT', content: 'Large project', depth: 0, position: 0 }),
+      ...childIds.map((id, index) =>
+        makeBlock({ id, parent_id: 'ZOOM_ROOT', depth: 1, position: index }),
+      ),
+      makeBlock({ id: 'OUTSIDE', content: 'Outside zoom', depth: 0, position: 1 }),
+    ]
+    pageStore.setState({ blocks: tree, loading: false })
+
+    renderBlockTree()
+    await user.click(await screen.findByTestId('zoom-in-ZOOM_ROOT'))
+
+    await waitFor(() => {
+      expect(screen.getByTestId('block-tree-mount-boundary')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('sortable-block-CHILD_509')).not.toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(useBlockStore.getState().selectedBlockIds).toHaveLength(510)
+    })
+    expect(useBlockStore.getState().selectedBlockIds).toEqual(childIds)
+    expect(useBlockStore.getState().selectedBlockIds).not.toContain('ZOOM_ROOT')
+    expect(useBlockStore.getState().selectedBlockIds).not.toContain('OUTSIDE')
   })
 
   it('does not render the zoom-in affordance for leaf blocks', async () => {

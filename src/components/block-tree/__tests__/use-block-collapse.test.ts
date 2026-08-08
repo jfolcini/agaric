@@ -110,6 +110,51 @@ describe('useBlockCollapse', () => {
     expect(result.current.toggleCollapse).toBe(initial)
   })
 
+  it('expandBlock expands a collapsed block and persists the expanded state', () => {
+    localStorage.setItem('collapsed_ids:PAGE_1', JSON.stringify(['A']))
+    const { result } = renderHook(() => useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1' }))
+
+    expect(result.current.visibleBlocks.map((block) => block.id)).toEqual(['A', 'E'])
+
+    act(() => {
+      result.current.expandBlock('A')
+    })
+
+    expect(result.current.collapsedIds.has('A')).toBe(false)
+    expect(result.current.visibleBlocks).toEqual(flatBlocks)
+    expect(JSON.parse(localStorage.getItem('collapsed_ids:PAGE_1') as string)).toEqual([])
+  })
+
+  it('keeps expandBlock stable and leaves an already-expanded block unchanged', () => {
+    const setItemSpy = vi.spyOn(Storage.prototype, 'setItem')
+    const onBeforeCollapse = vi.fn()
+    const { result } = renderHook(() =>
+      useBlockCollapse(flatBlocks, { pageKey: 'PAGE_1', onBeforeCollapse }),
+    )
+    const initialExpand = result.current.expandBlock
+
+    act(() => {
+      result.current.expandBlock('A')
+    })
+
+    expect(result.current.collapsedIds.has('A')).toBe(false)
+    expect(result.current.expandBlock).toBe(initialExpand)
+    expect(onBeforeCollapse).not.toHaveBeenCalled()
+    expect(setItemSpy).not.toHaveBeenCalled()
+
+    act(() => {
+      result.current.toggleCollapse('A')
+    })
+    expect(result.current.expandBlock).toBe(initialExpand)
+
+    act(() => {
+      result.current.expandBlock('A')
+    })
+    expect(result.current.collapsedIds.has('A')).toBe(false)
+    expect(result.current.expandBlock).toBe(initialExpand)
+    expect(onBeforeCollapse).toHaveBeenCalledTimes(1)
+  })
+
   it('filters descendants of collapsed blocks from visibleBlocks', () => {
     const { result } = renderHook(() => useBlockCollapse(flatBlocks))
 
