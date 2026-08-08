@@ -53,9 +53,11 @@ pub async fn reverse_edit_block(
     let payload: EditBlockPayload = serde_json::from_str(&record.payload)?;
 
     // Resolve the causal pointer, if the op carries one. `None` covers
-    // "no pointer", "pointer dangles (compaction)" and "pointer names a
-    // replicated audit row" (#3281) — all three mean the same thing to
-    // `resolve_prior_text`: fall back to the timestamp scan.
+    // "no pointer" and "pointer dangles (op-log compaction)" — both mean the
+    // same thing to `resolve_prior_text`: fall back to the timestamp scan.
+    // A pointer naming a REPLICATED audit row resolves normally (#3644): it
+    // is a locally-authored record of what this block held, and for a
+    // peer-originated block it is the only such record there is.
     let prev_row = match &payload.prev_edit {
         Some((prev_device, prev_seq)) => {
             resolve_prev_edit_target(&ReadPool(pool.clone()), prev_device, *prev_seq).await?
@@ -80,13 +82,19 @@ pub async fn reverse_edit_block(
         .await?
     };
 
-    let prior_text =
-        resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref())?.ok_or_else(|| {
-            AppError::NotFound(format!(
-                "no prior text found for block '{}' before ({}, {})",
-                payload.block_id, record.device_id, record.seq
-            ))
-        })?;
+    let prior_text = resolve_prior_text(prev_row.as_ref(), timestamp_prior.as_ref())?.ok_or_else(
+        // #3645: `NonReversible`, matching the batch kernel byte-for-byte.
+        // This condition means "no inverse can be reconstructed for this op",
+        // which is exactly what `NonReversible` names; `NotFound` claimed a
+        // missing RESOURCE and, more importantly, differed from the answer
+        // `batch::build_reverse_edit_block` gives for the identical input —
+        // so the same op was fatal under Ctrl+Z and skippable under a bulk
+        // restore. The parity oracle compares `Ok` payloads only and could
+        // not see the split.
+        || AppError::NonReversible {
+            op_type: record.op_type.clone(),
+        },
+    )?;
 
     Ok(OpPayload::EditBlock(EditBlockPayload {
         block_id: payload.block_id,
@@ -111,8 +119,10 @@ pub async fn reverse_edit_block(
 ///
 /// Fall back to the timestamp-ordered scan only when `prev_row` is `None` —
 /// i.e. `prev_edit` was absent (pre-existing ops, or an edit whose pointer
-/// was never recorded), the pointed-at op is gone (op-log compaction), or it
-/// names a replicated audit row (#3281).
+/// was never recorded) or the pointed-at op is gone (op-log compaction).
+/// A pointer into a replicated audit row RESOLVES; see
+/// [`agaric_store::op_log::resolve_prev_edit_target`] for why the pointer
+/// path and the blind scan take opposite provenance policies (#3644).
 ///
 /// # Why this is shared
 ///

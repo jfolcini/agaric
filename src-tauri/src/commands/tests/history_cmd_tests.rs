@@ -1132,17 +1132,17 @@ async fn undo_page_op_skips_interleaved_undo_op_matching_group_walk() {
     );
 }
 
-/// #3281: the restore PREVIEW must reconstruct historical content from
-/// locally-authored ops only.
+/// #3644: the restore PREVIEW must not hide replicated rows.
 ///
-/// `compute_block_vs_current_diff_inner` sits under a comment claiming it
-/// mirrors `find_prior_text`'s canonical total order, but it carried neither
-/// `is_replicated = 0` (#2549) nor the `device_id` tie-break (#382). A
-/// peer-authored audit row — ingested for provenance and NEVER applied
-/// locally — could therefore win the scan, so the preview showed a diff
-/// against text no restore would ever produce.
+/// `get_block_history` deliberately LISTS replicated foreign ops (#2481), so
+/// the panel offers them as history points. Selecting one — or any point at
+/// or before the first local edit of a synced block — must render that row's
+/// content, not `NotFound`. The preview's contract is to state what a
+/// restore to this point would do, and the restore kernels follow the causal
+/// pointer into replicated rows (#3644), so a provenance filter here would
+/// both break the panel and make the preview lie about the restore.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn compute_block_vs_current_diff_skips_replicated_rows_3281() {
+async fn compute_block_vs_current_diff_previews_replicated_rows_3644() {
     let (pool, _dir) = test_pool().await;
     let mat = Materializer::new(pool.clone());
 
@@ -1163,7 +1163,8 @@ async fn compute_block_vs_current_diff_skips_replicated_rows_3281() {
         .unwrap();
     mat.flush_background().await.unwrap();
 
-    // Peer audit row, later than every local op, never applied here.
+    // Peer audit row, later than every local op — the shape `get_block_history`
+    // surfaces to the panel as a selectable history point.
     let block_id_upper = created.id.as_str().to_string();
     sqlx::query(
         "INSERT INTO op_log \
@@ -1199,9 +1200,89 @@ async fn compute_block_vs_current_diff_skips_replicated_rows_3281() {
         .map(|s| s.value.as_str())
         .collect();
     assert_eq!(
-        historical, "v1 local",
-        "#3281: the preview must reconstruct from the latest LOCAL op, not \
-         from a replicated audit row. spans: {spans:?}"
+        historical, "foreign never applied",
+        "#3644: selecting a replicated row in the history panel must preview \
+         THAT row's content. spans: {spans:?}"
+    );
+}
+
+/// #3644: the preview must not ERROR for a block that arrived via sync.
+///
+/// A peer-originated block's only `op_log` rows are replicated audit rows.
+/// With a `is_replicated = 0` filter on the at-or-before scan, every history
+/// point at or before the user's first local edit answered
+/// `AppError::NotFound` — a visible failure in the History panel for every
+/// synced block, on a read-only path that has no business failing.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn compute_block_vs_current_diff_does_not_error_for_synced_block_3644() {
+    let (pool, _dir) = test_pool().await;
+    let mat = Materializer::new(pool.clone());
+
+    let created = create_block_inner(
+        &pool,
+        DEV,
+        &mat,
+        "content".into(),
+        "peer text".into(),
+        None,
+        Some(1),
+    )
+    .await
+    .unwrap();
+    mat.flush_background().await.unwrap();
+    let block_id_upper = created.id.as_str().to_string();
+
+    // Strip the local create op so the only row naming this block is the
+    // peer's audit row — the state a peer-originated block has on a fresh
+    // install. (Same compaction bypass `snapshot::compact_op_log` uses.)
+    sqlx::query("INSERT INTO _op_log_mutation_allowed (token) VALUES (1)")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM op_log WHERE block_id = ?1")
+        .bind(&block_id_upper)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM _op_log_mutation_allowed")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO op_log \
+         (device_id, seq, parent_seqs, hash, op_type, payload, created_at, block_id, is_replicated) \
+         VALUES (?, ?, NULL, ?, ?, ?, ?, ?, 1)",
+    )
+    .bind("remote-dev")
+    .bind(1_i64)
+    .bind("hash-peer-create")
+    .bind("create_block")
+    .bind(format!(
+        r#"{{"block_id":"{block_id_upper}","block_type":"content","parent_id":null,"position":1,"content":"peer text"}}"#
+    ))
+    .bind(1_000_i64)
+    .bind(&block_id_upper)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let spans =
+        compute_block_vs_current_diff_inner(&pool, block_id_upper.clone().into(), 1_000, 1).await;
+    assert!(
+        spans.is_ok(),
+        "#3644: previewing a synced block's history point must not fail — got {spans:?}"
+    );
+
+    use agaric_core::word_diff::DiffTag;
+    let historical: String = spans
+        .unwrap()
+        .iter()
+        .filter(|s| s.tag != DiffTag::Insert)
+        .map(|s| s.value.as_str())
+        .collect();
+    assert_eq!(
+        historical, "peer text",
+        "#3644: the preview must render the peer's content"
     );
 }
 

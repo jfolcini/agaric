@@ -1,6 +1,6 @@
 {
   "db_name": "SQLite",
-  "query": "SELECT op_type, payload FROM op_log WHERE device_id = ?1 AND seq = ?2 AND is_replicated = 0",
+  "query": "SELECT op_type, payload FROM op_log WHERE device_id = ?1 AND seq = ?2",
   "describe": {
     "columns": [
       {
@@ -34,5 +34,5 @@
       false
     ]
   },
-  "hash": "5cd41e9b93e6b89d46a372f9a6b302753afb4d12a42d1fc2cecfc70f7fc4dfdf"
+  "hash": "2c15be578bfda2c78df05d6ebb16555aafb757d4b5106766fc9baa7ea1b74e9d"
 }

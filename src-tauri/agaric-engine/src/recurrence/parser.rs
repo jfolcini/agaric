@@ -29,6 +29,10 @@ use agaric_store::recurrence_math::{ShiftFailure, shift_date_once, try_shift_dat
 /// - `daily`  — every day
 /// - `weekly` — every 7 days
 /// - `monthly` — every month (same day-of-month, clamped)
+/// - `yearly` — every year (same month/day, clamped on Feb 29 → Feb 28).
+///   #3281: written by the `/repeat-yearly` slash command as the bare
+///   keyword; note the keyword arms match the BARE form only, so `+yearly`
+///   is not accepted (exactly like `+daily` / `+weekly` / `+monthly`).
 /// - `+Nd` / `Nd` — every N days
 /// - `+Nw` / `Nw` — every N weeks
 /// - `+Nm` / `Nm` — every N months
@@ -139,7 +143,20 @@ pub fn shift_date(date: &str, rule: &str) -> Result<Option<String>, AppError> {
                     // `++2weeks` is skipped rather than aborting the enclosing
                     // completion transaction (and being mislabelled
                     // "arithmetic overflow" on the way out).
-                    Err(ShiftFailure::Interval) => return Ok(None),
+                    Err(ShiftFailure::Interval) => {
+                        // The `repeat` property is unvalidated free text, so
+                        // the only trace a typo leaves is a sibling with no
+                        // due date. Leave a diagnostic rather than nothing;
+                        // rejecting the rule at `set_property`, where the
+                        // user could see it, is the real fix (#3281).
+                        tracing::warn!(
+                            original = %original,
+                            interval = %interval,
+                            "recurrence `++` rule has a malformed interval; \
+                             skipping the shift (the sibling will have no date)"
+                        );
+                        return Ok(None);
+                    }
                     // Genuine `NaiveDate` / calendar-rail dead-end: still a
                     // hard error, now named accurately.
                     Err(ShiftFailure::Overflow) => {

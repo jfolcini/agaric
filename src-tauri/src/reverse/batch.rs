@@ -50,15 +50,20 @@
 //! The prior-state SQL predicates below are hand-copied from
 //! [`agaric_store::op_log::latest_block_edit_before`] because batching N
 //! lookups into one statement is this module's entire reason to exist; that
-//! primitive is the source of truth for the `is_replicated = 0` policy
-//! (#2549/#3281) and the canonical `(created_at, seq, device_id)` order
-//! (#382).
+//! primitive is the source of truth for the per-variant provenance policy
+//! (#2549/#3281/#3644) and the canonical `(created_at, seq, device_id)`
+//! order (#382). Note the asymmetry it encodes and do NOT "tidy" it here:
+//! the blind `fetch_prior_text_batch` walk carries `is_replicated = 0`,
+//! while the anchored `fetch_prev_edit_rows_batch` pointer lookup carries
+//! no provenance predicate at all.
 //!
 //! What actually holds the `edit_block` copies to the primitive — stated
 //! precisely, because a vague "the oracle covers it" claim is the sin #3280
 //! was filed about:
-//!   * `is_replicated = 0` on `fetch_prev_edit_rows_batch` —
-//!     `batch_reverse_edit_without_prior_is_skippable_not_fatal_3280`.
+//!   * ABSENCE of an `is_replicated` predicate on
+//!     `fetch_prev_edit_rows_batch` — the parity oracle (B3_PEER's edit
+//!     points at a replicated audit row) and
+//!     `undo_page_op_restores_peer_content_for_synced_block_3644`.
 //!   * `is_replicated = 0` on `fetch_prior_text_batch` — the parity oracle
 //!     (B3_BLK1 carries a replicated audit row that is the timestamp-newest
 //!     candidate) and `revert_ops_restores_local_content_over_replicated_prior_2549`.
@@ -336,11 +341,12 @@ pub async fn compute_reverse_batch(
 /// of every `edit_block` in the batch. #3280.
 ///
 /// Output is aligned with `idxs`. An entry is `None` when the op carried no
-/// pointer at all, when the pointed-at row is gone (op-log compaction), or
-/// when it is a REPLICATED audit row (#3281) — the three cases
-/// `block_ops::resolve_prior_text` treats alike by falling back to the
-/// timestamp scan. Mirrors the single-op `resolve_prev_edit_target`,
-/// including its `is_replicated = 0` predicate.
+/// pointer at all or when the pointed-at row is gone (op-log compaction) —
+/// the two cases `block_ops::resolve_prior_text` treats alike by falling
+/// back to the timestamp scan. Mirrors the single-op
+/// `resolve_prev_edit_target`, INCLUDING its deliberate absence of an
+/// `is_replicated` predicate (#3644 — see that function for why the pointer
+/// path and the blind scan differ).
 ///
 /// Cheaper than the sibling `fetch_prior_*` fetches: a PK lookup returns at
 /// most one row, so no per-op `ORDER BY … LIMIT 1` subquery wrapper is
@@ -384,7 +390,6 @@ async fn fetch_prev_edit_rows_batch(
             qb.push_bind(prev_device.clone());
             qb.push(" AND seq = ");
             qb.push_bind(*prev_seq);
-            qb.push(" AND is_replicated = 0");
         }
         let rows: Vec<(i64, String, String)> = qb.build_query_as().fetch_all(pool).await?;
         for (i, op_type, payload) in rows {

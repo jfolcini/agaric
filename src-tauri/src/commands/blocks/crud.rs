@@ -29,15 +29,22 @@ use agaric_store::space::{SpaceId, SpaceScope};
 /// `&mut **CommandTx` (this file) or `&mut *Transaction` (drafts.rs)
 /// without extra deref gymnastics.
 ///
-/// #3281: this is the STAMPING site for the `prev_edit` pointer that
-/// `reverse::block_ops::reverse_edit_block` later follows, so it must obey
-/// the same locally-authored-ops-only policy as the prior-state scans it
-/// feeds. It previously carried no `is_replicated` predicate, so a peer's
-/// audit row — ingested for provenance and never applied here — could win
-/// the scan and the pointer was born naming content this device never held.
-/// It now shares the single scan primitive with every other reconstruction
-/// site (see [`agaric_store::op_log::latest_block_edit_before`]), which owns
-/// that policy.
+/// #3281/#3644: this is the STAMPING site for the `prev_edit` pointer that
+/// `reverse::block_ops::reverse_edit_block` later follows. It now shares the
+/// single scan primitive with every other reconstruction site (see
+/// [`agaric_store::op_log::latest_block_edit_before`]).
+///
+/// It deliberately does NOT carry the `is_replicated = 0` guard that the
+/// blind `StrictlyBefore` prior-state walk carries — do not "restore the
+/// consistency" here. The question this scan answers is "what is the live
+/// value of the block I am about to overwrite", and a peer's edit that
+/// arrived through Loro IS part of that live value even though its op_log
+/// row is audit-only. Excluding replicated rows stamps the pointer at
+/// already-superseded text, and for a block that originated on a peer it
+/// stamps `None` — leaving the user's first local edit with no
+/// reconstruction source at all, so Ctrl+Z fails outright (#3644). #3281
+/// prescribed the guard here; that prescription was wrong, and its own
+/// Impact paragraph conceded the content did reach this device.
 ///
 /// The `BlockEditScan::LatestCausal` ordering (`seq DESC, device_id DESC`,
 /// deliberately NOT `created_at`) is unchanged: #1526 depends on the pointer

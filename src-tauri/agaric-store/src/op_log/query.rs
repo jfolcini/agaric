@@ -40,15 +40,37 @@ pub struct BlockEditRow {
     pub payload: String,
 }
 
-/// Which candidate row a block-edit scan should return (#3280 / #3281).
+/// Which candidate row a block-edit scan should return (#3280 / #3281 /
+/// #3644).
 ///
-/// The eligibility predicate — `block_id`, `op_type IN ('edit_block',
-/// 'create_block')` and the `is_replicated = 0` policy — is identical for
-/// every variant and lives once, in [`latest_block_edit_before`]. Only the
-/// upper bound and the sort order differ, and each variant documents why.
+/// The eligibility predicate — `block_id` and `op_type IN ('edit_block',
+/// 'create_block')` — is identical for every variant and lives once, in
+/// [`latest_block_edit_before`]. The bound, the sort order and the
+/// PROVENANCE policy differ per variant; each documents why.
+///
+/// # The provenance split
+///
+/// `is_replicated = 0` is NOT a blanket policy. It is scoped to the one
+/// variant that GUESSES which op the caller meant:
+///
+/// * [`StrictlyBefore`](BlockEditScan::StrictlyBefore) is a blind backwards
+///   walk — "whatever row happens to sort just under this bound". Letting it
+///   land on a replicated audit row means reconstructing prior state from a
+///   row nobody named, and that guess can surface content this device never
+///   applied. It keeps the guard (#2549/#2495).
+/// * [`LatestCausal`](BlockEditScan::LatestCausal) and
+///   [`AtOrBefore`](BlockEditScan::AtOrBefore) are ANCHORED. The first
+///   answers "what is the live value of this block right now", at the moment
+///   a local edit is authored — and a peer's edit that arrived through Loro
+///   genuinely IS part of the live value, so excluding it would stamp the
+///   pointer at superseded text. The second snaps to the op the user picked
+///   out of the history list, which `get_block_history` deliberately shows
+///   replicated rows in (#2481). Filtering either one does not prevent a bad
+///   guess; it discards the answer.
 #[derive(Debug, Clone, Copy)]
 pub enum BlockEditScan<'a> {
     /// Unbounded, ordered by the CAUSAL key `(seq, device_id)` DESC.
+    /// Provenance: ALL rows, replicated included — see the type-level note.
     ///
     /// Used to STAMP `EditBlockPayload::prev_edit`. #1526: `seq` is the
     /// per-device causal counter, and the pointer must name the op that was
@@ -58,6 +80,7 @@ pub enum BlockEditScan<'a> {
     LatestCausal,
     /// Strictly before `(created_at, seq, device_id)` in the canonical
     /// `(created_at, seq, device_id)` total order.
+    /// Provenance: LOCALLY-AUTHORED ONLY (`is_replicated = 0`, #2549).
     ///
     /// Used to reconstruct the state IMMEDIATELY BEFORE a given op — the
     /// timestamp-ordered fallback when no causal pointer is available.
@@ -70,24 +93,24 @@ pub enum BlockEditScan<'a> {
         device_id: &'a str,
     },
     /// At or before `(created_at, seq)` in the canonical order.
+    /// Provenance: ALL rows, replicated included — see the type-level note.
     ///
     /// Used to snap to the state PRODUCED by a historical op (rather than
     /// the one before it) — the restore-preview diff.
     AtOrBefore { created_at: i64, seq: i64 },
 }
 
-/// The single block-edit scan primitive (#3280 / #3281).
+/// The single block-edit scan primitive (#3280 / #3281 / #3644).
 ///
 /// Every caller that reconstructs "what this block's text was" goes through
-/// here, so the two policies that must never drift apart are stated once:
+/// here, so the policies that must never drift apart are stated once:
 ///
-/// * **Locally-authored ops only** (`is_replicated = 0`, #2549/#2495).
-///   Replicated rows are audit-only provenance: they land in `op_log` but
-///   are NEVER applied to local state, so reconstructing "prior state" from
-///   one fabricates content this device never held. This guard had been
-///   hand-copied into four `reverse/` scans and MISSED by
-///   `find_prev_edit_in_tx` — which is what STAMPS the causal pointer, so
-///   the pointer itself could be born naming an audit row (#3281).
+/// * **Provenance, scoped per variant** — see the [`BlockEditScan`]
+///   type-level note. `is_replicated = 0` (#2549/#2495) belongs to the blind
+///   [`StrictlyBefore`](BlockEditScan::StrictlyBefore) walk, not to the two
+///   anchored variants. #3281 originally prescribed the guard everywhere;
+///   #3644 narrowed it after a uniform guard broke Ctrl+Z on every block
+///   that arrived via sync.
 /// * **The canonical `(created_at, seq, device_id)` total order** for the
 ///   bounded variants, including the `device_id` tie-break that makes an
 ///   equal-`(created_at, seq)` cross-device collision resolve
@@ -117,7 +140,6 @@ where
                 "SELECT device_id, seq, op_type, payload FROM op_log \
                  WHERE block_id = ?1 \
                    AND op_type IN ('edit_block', 'create_block') \
-                   AND is_replicated = 0 \
                  ORDER BY seq DESC, device_id DESC \
                  LIMIT 1",
                 bid,
@@ -154,7 +176,6 @@ where
                 "SELECT device_id, seq, op_type, payload FROM op_log \
                  WHERE block_id = ?1 \
                    AND op_type IN ('edit_block', 'create_block') \
-                   AND is_replicated = 0 \
                    AND (created_at < ?2 OR (created_at = ?2 AND seq <= ?3)) \
                  ORDER BY created_at DESC, seq DESC, device_id DESC \
                  LIMIT 1",
@@ -170,26 +191,35 @@ where
 }
 
 /// Resolve an `EditBlockPayload::prev_edit` pointer to the pointed-at op's
-/// `(op_type, payload)`, or `None` when the pointer does not name a usable
-/// LOCAL row (#3280 / #3281).
+/// `(op_type, payload)`, or `None` when the row is gone — op-log compaction
+/// being the only way that happens (#3280 / #3281 / #3644).
 ///
-/// `None` deliberately conflates the two ways a pointer can fail to resolve,
-/// because both mean the same thing to the caller — "fall back to the
-/// timestamp scan":
+/// # Why this does NOT filter `is_replicated = 0`
 ///
-/// * the row is gone (op-log compaction), and
-/// * the row is a REPLICATED audit row (#3281). Following one would restore
-///   content this device never applied, which is precisely what the
-///   `is_replicated = 0` guard on the prior-state scans exists to prevent;
-///   a pointer into that space is no more usable than a dangling one.
+/// The sibling prior-state SCANS do, and a future reader will read that as
+/// an inconsistency to tidy up. It is not. The guard is scoped to guessing,
+/// not to provenance per se (see [`BlockEditScan`]):
+///
+/// * `prev_edit` is authored LOCALLY, by this device, at the moment of the
+///   edit, and names ONE specific op. It is a recorded fact, not a scan
+///   result — nothing about it can drift onto the wrong row.
+/// * The op it names, replicated or not, is by construction the value this
+///   block HELD when the edit was authored. For a peer-originated block that
+///   value only ever existed as an audit row plus Loro state
+///   (`insert_replicated_op`), so refusing the pointer does not protect the
+///   user from foreign content — it just leaves the edit with no
+///   reconstruction source at all and turns Ctrl+Z into a hard error (#3644).
+///
+/// The blind `StrictlyBefore` walk keeps its guard precisely because it has
+/// no such anchor: it takes whatever sorts nearest, which really can be a
+/// row nobody's edit ever pointed at.
 pub async fn resolve_prev_edit_target(
     pool: &ReadPool,
     device_id: &str,
     seq: i64,
 ) -> Result<Option<(String, String)>, AppError> {
     let row = sqlx::query!(
-        "SELECT op_type, payload FROM op_log \
-         WHERE device_id = ?1 AND seq = ?2 AND is_replicated = 0",
+        "SELECT op_type, payload FROM op_log WHERE device_id = ?1 AND seq = ?2",
         device_id,
         seq,
     )

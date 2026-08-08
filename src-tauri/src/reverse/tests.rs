@@ -714,8 +714,19 @@ async fn reverse_restore_block_produces_delete_block() {
     let reverse = compute_reverse(&pool, TEST_DEVICE, rec.seq).await.unwrap();
     assert!(matches!(reverse, OpPayload::DeleteBlock(ref p) if p.block_id == "BLK14"));
 }
+/// #3645: an `edit_block` with no reconstructable prior answers
+/// `NonReversible`, NOT `NotFound`.
+///
+/// The condition is "no inverse exists for this op", which is what
+/// `NonReversible` names — and, critically, it is the answer
+/// `batch::build_reverse_edit_block` already gave for the identical input.
+/// While the two kernels disagreed, the same op was FATAL under Ctrl+Z and
+/// SKIPPABLE under a bulk restore; the parity oracle compares `Ok` payloads
+/// only and could not see the split. The sibling `move_block` /
+/// `set_property` / `delete_property` arms keep `NotFound` — those are
+/// genuinely missing prior-context rows, not absent inverses.
 #[tokio::test]
-async fn reverse_edit_block_without_prior_returns_not_found() {
+async fn reverse_edit_block_without_prior_returns_non_reversible_3645() {
     let (pool, _dir) = test_pool().await;
     let rec = append_op(
         &pool,
@@ -727,10 +738,18 @@ async fn reverse_edit_block_without_prior_returns_not_found() {
         FIXED_TS,
     )
     .await;
-    assert!(matches!(
-        compute_reverse(&pool, TEST_DEVICE, rec.seq).await,
-        Err(AppError::NotFound(_))
-    ));
+    let err = compute_reverse(&pool, TEST_DEVICE, rec.seq)
+        .await
+        .expect_err("an edit with no reconstructable prior has no inverse");
+    assert!(
+        matches!(&err, AppError::NonReversible { op_type } if op_type == "edit_block"),
+        "#3645: expected NonReversible {{ op_type: \"edit_block\" }}, got {err:?}"
+    );
+    assert!(
+        crate::reverse::is_skippable_non_reversible(&err),
+        "#3645: the per-op kernel must emit the SAME skippable kind the batch \
+         kernel emits for this input, got {err:?}"
+    );
 }
 #[tokio::test]
 async fn reverse_move_block_without_prior_returns_not_found() {
@@ -2450,7 +2469,49 @@ async fn compute_reverse_batch_matches_per_op_loop() {
         seq: skew_target.seq,
     });
 
-    assert_eq!(op_refs.len(), 21, "test should batch exactly 21 ops");
+    // -- #3644: peer-originated block -------------------------------------
+    //
+    // The block arrived via sync: its only op_log row is a REPLICATED audit
+    // row, its content reached this device through Loro, and the user's
+    // first local edit points at that audit row. Both kernels must RESOLVE
+    // the pointer — the blind scan is barred from replicated rows (#2549)
+    // and would find nothing at all here, so this fixture is what pins the
+    // deliberate ABSENCE of an `is_replicated` predicate on
+    // `fetch_prev_edit_rows_batch` against the single-op
+    // `resolve_prev_edit_target`. Adding the predicate back to either copy
+    // alone breaks parity here.
+    let peer_blk = BlockId::test_id("B3_PEER");
+    let peer_audit = append_replicated_op(
+        &pool,
+        "b3-peer-remote",
+        1,
+        OpPayload::CreateBlock(CreateBlockPayload {
+            block_id: peer_blk.clone(),
+            block_type: "content".into(),
+            parent_id: Some(BlockId::test_id("B3_ROOT")),
+            position: Some(2),
+            index: None,
+            content: "PEER-ORIGIN".into(),
+        }),
+        skew_t + 20,
+    )
+    .await;
+    let peer_target = append_op(
+        &pool,
+        OpPayload::EditBlock(EditBlockPayload {
+            block_id: peer_blk.clone(),
+            to_text: "my local edit".into(),
+            prev_edit: Some((peer_audit.device_id.clone(), peer_audit.seq)),
+        }),
+        skew_t + 25,
+    )
+    .await;
+    op_refs.push(agaric_store::op::OpRef {
+        device_id: peer_target.device_id.clone(),
+        seq: peer_target.seq,
+    });
+
+    assert_eq!(op_refs.len(), 22, "test should batch exactly 22 ops");
 
     // -- legacy oracle: per-op loop ----------------------------------
     let mut legacy: Vec<OpPayload> = Vec::with_capacity(op_refs.len());
@@ -2498,13 +2559,25 @@ async fn compute_reverse_batch_matches_per_op_loop() {
     // #3280: pin the ABSOLUTE answer for the skew op too, not just
     // batch/per-op agreement — a shared regression in both kernels would
     // otherwise still satisfy the parity comparison above.
-    match batched.last().expect("skew reverse present") {
+    match &batched[batched.len() - 2] {
         OpPayload::EditBlock(p) => assert_eq!(
             p.to_text, "CORRECT-causal-prev",
             "#3280/#1526: the BATCH path must follow payload.prev_edit, not the \
              timestamp-nearest intruder"
         ),
         other => panic!("expected EditBlock for the skew op, got {other:?}"),
+    }
+
+    // #3644: same, for the peer-originated block — the blind scan has
+    // nothing to offer here, so this can only pass by resolving the pointer
+    // into the replicated audit row.
+    match batched.last().expect("peer-origin reverse present") {
+        OpPayload::EditBlock(p) => assert_eq!(
+            p.to_text, "PEER-ORIGIN",
+            "#3644: both kernels must resolve a prev_edit that names a \
+             replicated audit row"
+        ),
+        other => panic!("expected EditBlock for the peer-origin op, got {other:?}"),
     }
 }
 
@@ -3066,16 +3139,21 @@ async fn revert_ops_rejects_replicated_target_2549() {
 // kernels, and never sourced from a replicated audit row.
 // ======================================================================
 
-/// #3281: `EditBlockPayload::prev_edit` may name a REPLICATED audit row
-/// (`find_prev_edit_in_tx` had no `is_replicated` predicate, so a
-/// peer-authored audit row with a higher `seq` won the scan). Following such
-/// a pointer restores content this device never applied — exactly what
-/// #2549 hardened the sibling `find_prior_*` scans against.
+/// #3644: `EditBlockPayload::prev_edit` may name a REPLICATED audit row, and
+/// the reverse MUST follow it.
 ///
-/// The pointer must be treated as DANGLING and the reverse must fall back to
-/// the locally-scoped timestamp scan.
+/// The pointer is authored locally and names one specific op — the value
+/// this block held when the edit was written. When a peer's edit arrives
+/// (audit row in `op_log`, content applied through Loro) and the user then
+/// edits the block, that peer edit IS the correct undo target. Refusing it
+/// would silently restore the older `local-1` instead — the exact #1526
+/// superseded-ancestor failure the causal pointer exists to prevent.
+///
+/// Contrast `compute_reverse_edit_skips_replicated_prior_text_2549`, which
+/// pins the opposite policy on the BLIND timestamp scan. The two are not in
+/// tension: the scan guesses, the pointer is a record.
 #[tokio::test]
-async fn compute_reverse_edit_ignores_replicated_prev_edit_target_3281() {
+async fn compute_reverse_edit_follows_replicated_prev_edit_target_3644() {
     let (pool, _dir) = test_pool().await;
     let blk = "BLK_3281_PTR";
 
@@ -3115,7 +3193,8 @@ async fn compute_reverse_edit_ignores_replicated_prev_edit_target_3281() {
         3_000,
     )
     .await;
-    // The corrupt pointer today's `find_prev_edit_in_tx` would stamp.
+    // The pointer `find_prev_edit_in_tx` stamps: the peer's edit was the
+    // live value when this local edit was authored.
     let target = append_op(
         &pool,
         OpPayload::EditBlock(EditBlockPayload {
@@ -3132,21 +3211,28 @@ async fn compute_reverse_edit_ignores_replicated_prev_edit_target_3281() {
         .unwrap();
     match reverse {
         OpPayload::EditBlock(ref p) => assert_eq!(
-            p.to_text, "local-1",
-            "#3281: a prev_edit pointing at a replicated audit row must be \
-             treated as dangling and fall back to the LOCAL timestamp scan, \
-             not restore never-applied foreign content"
+            p.to_text, "foreign",
+            "#3644: a prev_edit naming a replicated audit row must RESOLVE — \
+             that row is the value the block held when the edit was authored. \
+             Falling back to the timestamp scan would restore the superseded \
+             'local-1' instead"
         ),
         other => panic!("expected EditBlock, got {other:?}"),
     }
 }
 
-/// #3281: the STAMPING site. `find_prev_edit_in_tx` picks the causal
-/// predecessor that goes into `EditBlockPayload::prev_edit`; without an
-/// `is_replicated = 0` predicate a peer's audit row with a higher `seq` wins
-/// and the pointer is born corrupt.
+/// #3644: the STAMPING site. `find_prev_edit_in_tx` picks the causal
+/// predecessor that goes into `EditBlockPayload::prev_edit`, and it must be
+/// able to name a REPLICATED audit row.
+///
+/// The scan answers "what is the live value of the block I am about to
+/// overwrite". A peer's edit that arrived through Loro is part of that live
+/// value even though its `op_log` row is audit-only, so an `is_replicated = 0`
+/// predicate here would stamp the pointer at already-superseded text — and
+/// for a block that ORIGINATED on a peer it would stamp `None`, leaving the
+/// first local edit with nothing to reconstruct from at all.
 #[tokio::test]
-async fn find_prev_edit_in_tx_skips_replicated_rows_3281() {
+async fn find_prev_edit_in_tx_stamps_replicated_causal_predecessor_3644() {
     let (pool, _dir) = test_pool().await;
     let blk = "BLK_3281_STAMP";
     let blk_id = BlockId::test_id(blk);
@@ -3164,8 +3250,9 @@ async fn find_prev_edit_in_tx_skips_replicated_rows_3281() {
         1_000,
     )
     .await;
-    // Higher `seq` than any local row, so `ORDER BY seq DESC` prefers it.
-    append_replicated_op(
+    // Higher `seq` than any local row, so `ORDER BY seq DESC` prefers it —
+    // and it genuinely is the newer value, applied here through Loro.
+    let foreign = append_replicated_op(
         &pool,
         "remote-dev",
         99,
@@ -3184,15 +3271,24 @@ async fn find_prev_edit_in_tx_skips_replicated_rows_3281() {
         .unwrap();
     assert_eq!(
         prev,
-        Some((local.device_id.clone(), local.seq)),
-        "#3281: prev_edit must be stamped at the latest LOCAL edit/create, \
-         never at a replicated audit row"
+        Some((foreign.device_id.clone(), foreign.seq)),
+        "#3644: prev_edit must be stamped at the latest edit/create in causal \
+         order, replicated included — that is the value being overwritten. \
+         Got the older local row {local:?} instead",
+        local = (local.device_id.clone(), local.seq)
     );
 }
 
-/// #3280 (Mode B): a block that originated on a peer has only replicated
-/// audit rows in the op log, so the locally-scoped timestamp scan finds no
-/// prior text for the user's first local edit of it.
+/// #3280 (Mode B): an `edit_block` whose prior text NEITHER source can
+/// reconstruct — no causal pointer (a legacy pre-#1526 op) on a block that
+/// originated on a peer, so the locally-scoped timestamp scan finds nothing
+/// either.
+///
+/// #3644 narrowed this: an edit that DOES carry a pointer into the peer's
+/// audit row now reverses fine (see
+/// `compute_reverse_edit_follows_replicated_prev_edit_target_3644`), so the
+/// pointerless shape is what is left of Mode B — and it is still reachable
+/// on any vault carrying ops written before the pointer existed.
 ///
 /// The batch kernel used to answer `AppError::NotFound`, which
 /// `is_skippable_non_reversible` does NOT match, so `compute_reverse_batch`
@@ -3212,7 +3308,7 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
     let local_blk = BlockId::test_id("BLK_3280_LOCAL");
 
     // Peer-originated block: its only op_log row is an audit row.
-    let peer_create = append_replicated_op(
+    let _peer_create = append_replicated_op(
         &pool,
         "remote-dev",
         1,
@@ -3227,13 +3323,15 @@ async fn batch_reverse_edit_without_prior_is_skippable_not_fatal_3280() {
         1_000,
     )
     .await;
-    // First LOCAL edit of that block; the pointer names the peer's audit row.
+    // First LOCAL edit of that block, written BEFORE #1526 introduced the
+    // pointer — so there is no causal anchor, and the blind scan is
+    // correctly barred from the peer's audit row (#2549).
     let peer_edit = append_op(
         &pool,
         OpPayload::EditBlock(EditBlockPayload {
             block_id: peer_blk.clone(),
             to_text: "my edit".into(),
-            prev_edit: Some((peer_create.device_id.clone(), peer_create.seq)),
+            prev_edit: None,
         }),
         2_000,
     )
