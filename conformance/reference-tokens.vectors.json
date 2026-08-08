@@ -12,8 +12,71 @@
     "NEL": "01BX5ZZKBKACTAV9WEVGEMMVS3",
     "NEL\u0085Inside": "01BX5ZZKBKACTAV9WEVGEMMVS4",
     "\uFEFFBOM\uFEFF": "01BX5ZZKBKACTAV9WEVGEMMVS5",
-    "01ARZ3NDEKTSV4RRFFQ69G5FAV": "01BX5ZZKBKACTAV9WEVGEMMVS6"
+    "01ARZ3NDEKTSV4RRFFQ69G5FAV": "01BX5ZZKBKACTAV9WEVGEMMVS6",
+    "real": "01BX5ZZKBKACTAV9WEVGEMMVS7",
+    "alpha": "01BX5ZZKBKACTAV9WEVGEMMVS8",
+    "code": "01BX5ZZKBKACTAV9WEVGEMMVS9",
+    "b": "01BX5ZZKBKACTAV9WEVGEMMVSA",
+    "fenced": "01BX5ZZKBKACTAV9WEVGEMMVSB",
+    "Alpha #b": "01BX5ZZKBKACTAV9WEVGEMMVSC",
+    "hushed": "01BX5ZZKBKACTAV9WEVGEMMVSD",
+    "tail": "01BX5ZZKBKACTAV9WEVGEMMVSE",
+    "inside": "01BX5ZZKBKACTAV9WEVGEMMVSF",
+    "after": "01BX5ZZKBKACTAV9WEVGEMMVSG",
+    "before": "01BX5ZZKBKACTAV9WEVGEMMVSH"
   },
+  "codeFenceCases": [
+    {
+      "name": "a tilde fence is not a fence — neither side protects it",
+      "input": "~~~\n#hushed\n~~~",
+      "requestedTagNames": ["hushed"]
+    },
+    {
+      "name": "a closed backtick fence leaves every tag literal",
+      "input": "```\n#fenced #real\n```",
+      "requestedTagNames": []
+    },
+    {
+      "name": "bullet-marked fence delimiters still open and close a fence",
+      "input": "- ```\n#hushed\n- ```",
+      "requestedTagNames": []
+    },
+    {
+      "name": "an indented fence still opens and closes a fence",
+      "input": " ```\n#hushed\n ```",
+      "requestedTagNames": []
+    },
+    {
+      "name": "an unterminated fence protects the rest of the block",
+      "input": "```\n#hushed",
+      "requestedTagNames": []
+    },
+    {
+      "name": "an unbalanced fence recovers at a sibling bullet line (#2866)",
+      "input": "```\n- interior\n#tail",
+      "requestedTagNames": ["tail"]
+    },
+    {
+      "name": "a bare closing delimiter next keeps the bullet as fence content (#2866)",
+      "input": "```\n- interior\n```\n#tail",
+      "requestedTagNames": []
+    },
+    {
+      "name": "text sharing a block with a fence is literal on both sides",
+      "input": "a `x` b\n``` #inside\nc #after",
+      "requestedTagNames": []
+    },
+    {
+      "name": "is_code is block-level: text before the opener and after the closer is literal too",
+      "input": "a #before\n```\n#inside\n```\n#after",
+      "requestedTagNames": []
+    },
+    {
+      "name": "a double-backtick run pairs as two single-backtick spans on both sides",
+      "input": "``#code`` and #real",
+      "requestedTagNames": ["code", "real"]
+    }
+  ],
   "humanizeCases": [
     {
       "name": "U+0085 edge whitespace selects bracketed tag syntax",
@@ -253,6 +316,84 @@
         "requestedPageNames": [],
         "requestedTagNames": [],
         "transformed": "[[A\nB]]"
+      }
+    },
+    {
+      "name": "#3598 bare tag inside an unresolved wiki link is never resolved or rewritten",
+      "input": "[[Project #alpha]] #real",
+      "expected": {
+        "pageCaptures": ["Project #alpha"],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": ["Project #alpha"],
+        "requestedTagNames": ["real"],
+        "transformed": "[[Project #alpha]] #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
+      }
+    },
+    {
+      "name": "#3598 wiki-link guard survives the offset shift of a multi-word tag rewrite",
+      "input": "#[[Tag With Space]] [[Project #alpha]] #real",
+      "expected": {
+        "pageCaptures": ["Tag With Space", "Project #alpha"],
+        "multiwordTagCaptures": ["Tag With Space"],
+        "requestedPageNames": ["Project #alpha"],
+        "requestedTagNames": ["Tag With Space", "real"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVS0] [[Project #alpha]] #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
+      }
+    },
+    {
+      "name": "#3599 bare tag inside an inline-code span stays literal",
+      "input": "`#code` and #real",
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": ["real"],
+        "transformed": "`#code` and #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
+      }
+    },
+    {
+      "name": "#3599 multi-word tag inside an inline-code span stays literal",
+      "input": "`#[[Tag With Space]]` #real",
+      "expected": {
+        "pageCaptures": ["Tag With Space"],
+        "multiwordTagCaptures": ["Tag With Space"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["real"],
+        "transformed": "`#[[Tag With Space]]` #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
+      }
+    },
+    {
+      "name": "#3599 fenced code block leaves every tag literal",
+      "input": "```\n#fenced #real\n```",
+      "isCode": true,
+      "expected": {
+        "pageCaptures": [],
+        "multiwordTagCaptures": [],
+        "requestedPageNames": [],
+        "requestedTagNames": [],
+        "transformed": "```\n#fenced #real\n```"
+      }
+    },
+    {
+      "name": "#3599 resolved multi-word tag name does not create a stray inner tag",
+      "input": "#[[Alpha #b]]",
+      "expected": {
+        "pageCaptures": ["Alpha #b"],
+        "multiwordTagCaptures": ["Alpha #b"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["Alpha #b"],
+        "transformed": "#[01BX5ZZKBKACTAV9WEVGEMMVSC]"
+      }
+    },
+    {
+      "name": "#3599 unresolved multi-word tag name does not leak its inner bare tag",
+      "input": "#[[Unknown #b]] #real",
+      "expected": {
+        "pageCaptures": ["Unknown #b"],
+        "multiwordTagCaptures": ["Unknown #b"],
+        "requestedPageNames": [],
+        "requestedTagNames": ["Unknown #b", "real"],
+        "transformed": "#[[Unknown #b]] #[01BX5ZZKBKACTAV9WEVGEMMVS7]"
       }
     }
   ]

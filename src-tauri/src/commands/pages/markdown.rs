@@ -346,9 +346,36 @@ fn inline_code_spans(content: &str) -> Vec<(usize, usize)> {
     spans
 }
 
-/// `true` when byte offset `pos` falls inside any inline-code span range.
-fn is_in_code_span(pos: usize, spans: &[(usize, usize)]) -> bool {
+/// `true` when byte offset `pos` falls inside any of the half-open `spans`.
+fn is_in_span(pos: usize, spans: &[(usize, usize)]) -> bool {
     spans.iter().any(|&(s, e)| pos >= s && pos < e)
+}
+
+/// #3598 — byte ranges of `content` covered by a HUMAN wiki-link token
+/// (`[[...]]`, per [`HUMAN_PAGE_LINK_RE`]), delimiters included.
+///
+/// A `#` INSIDE such a token is part of the link, never an inline tag: it is
+/// either an Obsidian heading anchor (`[[#Heading]]`, `[[Page#Heading]]`) or a
+/// literal `#` in a page NAME (`[[Project #alpha]]`). Collecting it would mint a
+/// spurious tag and rewriting it would corrupt the token into
+/// `[[Project #[ULID]]]`. Both tag passes therefore skip any bare-tag match
+/// whose `#` falls in one of these ranges — the exact rule the frontend paste
+/// path applies (`replaceRefs`' `[[ ]]` span guard in
+/// `src/lib/block-clipboard.ts`), which is why the two agreed on
+/// `[[Project #alpha]]` only after #3598.
+///
+/// ORDERING: these offsets are valid ONLY for the string they were computed
+/// from. `rewrite_inbound_tags` MUST recompute them after its multi-word pass,
+/// which changes token lengths and therefore shifts every later offset.
+fn human_page_link_spans(content: &str) -> Vec<(usize, usize)> {
+    // #1921-style fast path: no `[[` means no wiki-link token at all.
+    if !content.contains("[[") {
+        return Vec::new();
+    }
+    HUMAN_PAGE_LINK_RE
+        .find_iter(content)
+        .map(|m| (m.start(), m.end()))
+        .collect()
 }
 
 /// Collect the DISTINCT human-readable inline-tag names referenced across every
@@ -356,9 +383,14 @@ fn is_in_code_span(pos: usize, spans: &[(usize, usize)]) -> bool {
 ///   * bare/nested/hyphenated `#tag` (`HUMAN_TAG_RE`, group 2 is the name), and
 ///   * multi-word `#[[Tag With Space]]` (`HUMAN_MULTIWORD_TAG_RE`, group 1).
 ///
-/// A block flagged `is_code` (born inside a ```` ``` ```` fence) is skipped
-/// entirely — its `#tag`-looking text stays literal. Within a non-code block,
-/// matches falling inside an inline-code span (`` `...` ``) are skipped too.
+/// #3599 — CANONICAL RULE, shared with the frontend paste path: a `#tag` inside
+/// a PROTECTED span is never resolved and never rewritten. The protected spans
+/// are (a) fenced code — a block flagged `is_code` is skipped entirely here,
+/// (b) inline-code spans (`` `...` ``) within a non-code block, and (c) the body
+/// of a `[[...]]` wiki-link token (see [`human_page_link_spans`]). "Never
+/// resolved" is the load-bearing half: skipping in COLLECTION as well as in the
+/// rewrite is what keeps the resolver SIDE EFFECTS (create-if-missing) equal
+/// across the two implementations, not merely the rendered output.
 /// Canonical `#[ULID]` refs never match `HUMAN_TAG_RE` (the char after `#` is
 /// `[`, not a name char), so they are not collected. The multi-word form is
 /// scanned FIRST and its byte ranges are excluded from the bare scan so a
@@ -379,10 +411,11 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
             continue;
         }
         let spans = inline_code_spans(&block.content);
+        let link_spans = human_page_link_spans(&block.content);
         // Multi-word `#[[...]]` first.
         for cap in HUMAN_MULTIWORD_TAG_RE.captures_iter(&block.content) {
             let whole = cap.get(0).expect("group 0 always present");
-            if is_in_code_span(whole.start(), &spans) {
+            if is_in_span(whole.start(), &spans) {
                 continue;
             }
             let name = cap[1].trim();
@@ -396,18 +429,19 @@ fn collect_inbound_tag_names(blocks: &[import::ParsedBlock]) -> Vec<String> {
         // check (its preceding `#` shares the same span membership).
         for cap in HUMAN_TAG_RE.captures_iter(&block.content) {
             let name_m = cap.get(2).expect("name group present");
-            if is_in_code_span(name_m.start(), &spans) {
+            if is_in_span(name_m.start(), &spans) {
                 continue;
             }
-            // #2567 — a `#anchor` whose `#` is immediately preceded by `[[` is a
-            // wikilink HEADING anchor (`[[#Heading]]`), NOT an inline tag. Skip
-            // it so no spurious tag is created and the `[[#Heading]]` token
-            // survives intact for the heading-anchor resolution pass. (The
-            // explicit-base form `[[Page#Heading]]` is already immune: the `#`
-            // there is preceded by a page-name char, which HUMAN_TAG_RE's
-            // boundary class never matches.)
+            // #2567/#3598 — a `#` sitting anywhere INSIDE a `[[...]]` wiki-link
+            // token belongs to the link, not to a tag. This covers both the
+            // heading anchor (`[[#Heading]]`, so the token survives intact for
+            // the heading-anchor resolution pass) and a page NAME that merely
+            // contains a `#` (`[[Project #alpha]]`, which must not mint a tag
+            // `alpha` nor be rewritten into `[[Project #[ULID]]]`). Supersedes
+            // the older `[[`-immediately-before check, which only caught the
+            // anchor-only form and left the frontend guard un-mirrored.
             let hash_pos = name_m.start() - 1;
-            if block.content[..hash_pos].ends_with("[[") {
+            if is_in_span(hash_pos, &link_spans) {
                 continue;
             }
             let name = name_m.as_str();
@@ -435,7 +469,7 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
     let after_multi = HUMAN_MULTIWORD_TAG_RE.replace_all(content, |caps: &regex::Captures<'_>| {
         let m = caps.get(0).expect("group 0 present");
         let whole = m.as_str();
-        if is_in_code_span(m.start(), &spans) {
+        if is_in_span(m.start(), &spans) {
             return whole.to_string();
         }
         let name = caps[1].trim();
@@ -446,25 +480,31 @@ fn rewrite_inbound_tags(content: &str, resolved: &HashMap<String, String>) -> St
     });
 
     // Pass 2: bare `#tag` → `<boundary>#[ULID]`. The boundary char (group 1)
-    // is preserved verbatim so the leading separator is not consumed. The
-    // inline-code spans are recomputed against `after_multi` because pass 1 may
-    // have shifted byte offsets; a `#[[name]]` rewrite changes length, so reuse
-    // of the original `spans` would mis-align. Recompute defensively.
+    // is preserved verbatim so the leading separator is not consumed. BOTH span
+    // sets are recomputed against `after_multi` because pass 1 shifts byte
+    // offsets: a `#[[name]]` → `#[ULID]` rewrite changes the token's length, so
+    // reusing spans computed over `content` would mis-align — and for the
+    // wiki-link spans that mis-alignment is not merely defensive. `#[[a b]]
+    // [[Project #alpha]]` shifts the link 10 bytes right, moving `#alpha`
+    // clean out of the stale span and back into the corrupting rewrite (#3598).
     let spans2 = inline_code_spans(&after_multi);
+    let link_spans2 = human_page_link_spans(&after_multi);
     HUMAN_TAG_RE
         .replace_all(&after_multi, |caps: &regex::Captures<'_>| {
             let boundary = caps.get(1).map_or("", |m| m.as_str());
             let name_m = caps.get(2).expect("name group present");
             let name = name_m.as_str();
-            if is_in_code_span(name_m.start(), &spans2) {
+            if is_in_span(name_m.start(), &spans2) {
                 return format!("{boundary}#{name}");
             }
-            // #2567 — leave a `[[#Heading]]` wikilink heading anchor untouched
-            // (mirrors the identical guard in `collect_inbound_tag_names`): the
-            // `#` is part of a wikilink sub-anchor, not a tag, so the token must
-            // survive verbatim for the heading-anchor resolution pass.
+            // #2567/#3598 — leave any `#` INSIDE a `[[...]]` wiki-link token
+            // untouched (mirrors the identical guard in
+            // `collect_inbound_tag_names`): it is a heading sub-anchor
+            // (`[[#Heading]]`, which must survive verbatim for the
+            // heading-anchor resolution pass) or a literal `#` in an unresolved
+            // page NAME (`[[Project #alpha]]`, which must stay byte-identical).
             let hash_pos = name_m.start() - 1;
-            if after_multi[..hash_pos].ends_with("[[") {
+            if is_in_span(hash_pos, &link_spans2) {
                 return format!("{boundary}#{name}");
             }
             match resolved.get(name) {
@@ -3890,7 +3930,26 @@ mod tests {
         page_resolutions: HashMap<String, String>,
         tag_resolutions: HashMap<String, String>,
         humanize_cases: Vec<HumanizeTagCase>,
+        code_fence_cases: Vec<CodeFenceCase>,
         cases: Vec<ReferenceTokenCase>,
+    }
+
+    /// #3599 — a PARSER-DRIVEN parity vector. `cases` hands each side a block it
+    /// constructs itself (with `is_code` supplied by the fixture), which cannot
+    /// cross-check the two code-protection MECHANISMS: Rust decides `is_code`
+    /// in its line-oriented importer, the frontend decides it from a single
+    /// block's content. These vectors feed the raw text to each side's real
+    /// mechanism — `parse_logseq_markdown` here, `fencedCodeSpans` there — and
+    /// compare the one thing both produce: the SET of tag names the resolver is
+    /// asked to create. Rewrite output is not compared, because the importer's
+    /// parser rewrites block content (stripping bullets and indentation) and the
+    /// paste path does not; the `cases` corpus and the unit tests pin that half.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct CodeFenceCase {
+        name: String,
+        input: String,
+        requested_tag_names: Vec<String>,
     }
 
     #[derive(serde::Deserialize)]
@@ -3903,9 +3962,18 @@ mod tests {
     }
 
     #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
     struct ReferenceTokenCase {
         name: String,
         input: String,
+        /// #3599 — drive the vector through the CODE-BLOCK path. Rust protects
+        /// fenced code at BLOCK granularity (its parser is fence-aware and sets
+        /// `is_code`); the frontend paste parser is line-oriented, so the same
+        /// fence arrives as one multi-line block and is detected from the
+        /// content. Different mechanism, one observable contract — which is
+        /// exactly what a shared vector should pin.
+        #[serde(default)]
+        is_code: bool,
         expected: ReferenceTokenExpected,
     }
 
@@ -3946,7 +4014,62 @@ mod tests {
             );
         }
 
+        // #3599 — the code-fence mechanism vectors, driven through the REAL
+        // importer parser so the fixture never has to be told what is code.
+        for vector in &vectors.code_fence_cases {
+            let parsed = import::parse_logseq_markdown(&vector.input);
+            assert!(
+                !parsed.blocks.is_empty(),
+                "code-fence vector {:?} parsed to no blocks — the assertion below \
+                 would be vacuous",
+                vector.name
+            );
+            let requested = collect_inbound_tag_names(&parsed.blocks);
+            assert_eq!(
+                requested.len(),
+                vector.requested_tag_names.len(),
+                "code-fence requested tag count for {:?}: {requested:?}",
+                vector.name
+            );
+            assert_eq!(
+                requested
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<String>>(),
+                vector
+                    .requested_tag_names
+                    .iter()
+                    .cloned()
+                    .collect::<std::collections::BTreeSet<String>>(),
+                "code-fence requested tag names for {:?}",
+                vector.name
+            );
+        }
+
         for vector in vectors.cases {
+            // #3599 — `isCode` is a routing hint the fixture supplies, so pin it
+            // to what the REAL parser says: an unchecked hint would let a vector
+            // assert each side against its own expectations instead of a shared
+            // truth. (A future vector whose text parses to MIXED flags trips
+            // this and must move to `codeFenceCases`, which needs no hint.)
+            let parsed = import::parse_logseq_markdown(&vector.input);
+            assert!(
+                !parsed.blocks.is_empty(),
+                "vector {:?} parsed to no blocks",
+                vector.name
+            );
+            assert!(
+                parsed.blocks.iter().all(|b| b.is_code == vector.is_code),
+                "fixture isCode={} disagrees with the importer for {:?}: {:?}",
+                vector.is_code,
+                vector.name,
+                parsed
+                    .blocks
+                    .iter()
+                    .map(|b| (b.content.clone(), b.is_code))
+                    .collect::<Vec<_>>()
+            );
+
             let page_captures: Vec<String> = HUMAN_PAGE_LINK_RE
                 .captures_iter(&vector.input)
                 .map(|c| c[1].to_string())
@@ -3971,24 +4094,53 @@ mod tests {
                 content: vector.input.clone(),
                 depth: 0,
                 properties: Vec::new(),
-                is_code: false,
+                is_code: vector.is_code,
                 block_anchor: None,
             }];
+            // #3599 — the contract is the SET of distinct names each side asks
+            // its resolver for, not an encounter order. Rust collects through a
+            // sorted `BTreeSet` and the frontend resolves in first-occurrence
+            // order; asserting the ordered vectors only ever passed because the
+            // two coincided. Compare as sets, plus the count so a duplicate
+            // request (an extra create-if-missing round trip) still fails.
+            let as_set = |names: &[String]| -> std::collections::BTreeSet<String> {
+                names.iter().cloned().collect()
+            };
+            let requested_pages = collect_inbound_page_link_names(&blocks);
             assert_eq!(
-                collect_inbound_page_link_names(&blocks),
-                vector.expected.requested_page_names,
-                "requested page names for {:?}",
+                requested_pages.len(),
+                vector.expected.requested_page_names.len(),
+                "requested page name count for {:?}: {requested_pages:?}",
                 vector.name
             );
             assert_eq!(
-                collect_inbound_tag_names(&blocks),
-                vector.expected.requested_tag_names,
+                as_set(&requested_pages),
+                as_set(&vector.expected.requested_page_names),
+                "requested page names for {:?}",
+                vector.name
+            );
+            let requested_tags = collect_inbound_tag_names(&blocks);
+            assert_eq!(
+                requested_tags.len(),
+                vector.expected.requested_tag_names.len(),
+                "requested tag name count for {:?}: {requested_tags:?}",
+                vector.name
+            );
+            assert_eq!(
+                as_set(&requested_tags),
+                as_set(&vector.expected.requested_tag_names),
                 "requested tag names for {:?}",
                 vector.name
             );
 
             let with_pages = rewrite_inbound_page_links(&vector.input, &vectors.page_resolutions);
-            let transformed = rewrite_inbound_tags(&with_pages, &vectors.tag_resolutions);
+            // Mirror the production caller (`import_markdown`): the tag rewrite
+            // is skipped outright for an `is_code` block.
+            let transformed = if vector.is_code {
+                with_pages
+            } else {
+                rewrite_inbound_tags(&with_pages, &vectors.tag_resolutions)
+            };
             assert_eq!(
                 transformed, vector.expected.transformed,
                 "transformed reference tokens for {:?}",
@@ -4110,6 +4262,113 @@ mod tests {
         assert_eq!(
             out, "See [[#My Heading]] and a #[01TAG00000000000000000TAG0]",
             "the `[[#Heading]]` anchor must be left intact for heading resolution; got {out:?}"
+        );
+    }
+
+    /// #3598 — a bare `#tag` inside an UNRESOLVED human wiki link is part of the
+    /// page NAME, not a tag. It must be skipped by BOTH the collector (no
+    /// spurious tag is created) and the rewriter (the token stays
+    /// byte-identical, instead of being corrupted into `[[Project #[ULID]]]`).
+    /// Falsifies the collector and the rewriter independently: `alpha` is in the
+    /// resolved map, so a leak shows up in the output as well as in the names.
+    #[test]
+    fn tag_pass_skips_bare_tag_inside_unresolved_wiki_link_3598() {
+        let blocks = vec![import::ParsedBlock {
+            content: "[[Project #alpha]] #real".to_string(),
+            depth: 0,
+            properties: Vec::new(),
+            is_code: false,
+            block_anchor: None,
+        }];
+        let names = collect_inbound_tag_names(&blocks);
+        assert_eq!(
+            names,
+            vec!["real".to_string()],
+            "only the tag OUTSIDE the wiki link may be collected; got {names:?}"
+        );
+
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "alpha".to_string(),
+            "01TAG0000000000000000ALFA0".to_string(),
+        );
+        resolved.insert("real".to_string(), "01TAG00000000000000000TAG0".to_string());
+        let out = rewrite_inbound_tags(&blocks[0].content, &resolved);
+        assert_eq!(
+            out, "[[Project #alpha]] #[01TAG00000000000000000TAG0]",
+            "the unresolved wiki link must stay byte-identical; got {out:?}"
+        );
+    }
+
+    /// #3598 — the wiki-link span guard in `rewrite_inbound_tags` pass 2 must be
+    /// computed against the POST-multi-word-rewrite string. `#[[Tag With Space]]`
+    /// (19 bytes) collapses to `#[ULID]` (29 bytes), sliding the following
+    /// `[[Project #alpha]]` ten bytes to the right; spans computed over the
+    /// original content would no longer cover `#alpha`, and the rewrite would
+    /// corrupt the link exactly as it did before the fix.
+    #[test]
+    fn tag_rewrite_recomputes_wiki_link_spans_after_multiword_pass_3598() {
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert(
+            "Tag With Space".to_string(),
+            "01TAG0000000000000000MW000".to_string(),
+        );
+        resolved.insert(
+            "alpha".to_string(),
+            "01TAG0000000000000000ALFA0".to_string(),
+        );
+        resolved.insert("real".to_string(), "01TAG00000000000000000TAG0".to_string());
+        let out = rewrite_inbound_tags("#[[Tag With Space]] [[Project #alpha]] #real", &resolved);
+        assert_eq!(
+            out, "#[01TAG0000000000000000MW000] [[Project #alpha]] #[01TAG00000000000000000TAG0]",
+            "stale spans from before the multi-word rewrite must not expose `#alpha`; got {out:?}"
+        );
+    }
+
+    /// #3599 — a bare `#tag` inside a MULTI-WORD tag name (`#[[Alpha #b]]`) is
+    /// part of that name. Rust used to scan the original content and collect a
+    /// stray `b`, creating a tag the frontend paste path never creates: the
+    /// rendered output matched while the resolver SIDE EFFECTS diverged. Both
+    /// the resolved and the unresolved multi-word name are pinned, because only
+    /// the unresolved one also exercises the rewriter.
+    #[test]
+    fn tag_pass_does_not_leak_bare_tag_inside_multiword_tag_name_3599() {
+        let blocks = vec![
+            import::ParsedBlock {
+                content: "#[[Alpha #b]]".to_string(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: false,
+                block_anchor: None,
+            },
+            import::ParsedBlock {
+                content: "#[[Unknown #b]] #real".to_string(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: false,
+                block_anchor: None,
+            },
+        ];
+        let names = collect_inbound_tag_names(&blocks);
+        assert_eq!(
+            names,
+            vec![
+                "Alpha #b".to_string(),
+                "Unknown #b".to_string(),
+                "real".to_string()
+            ],
+            "the inner `#b` is part of the multi-word tag NAME, never its own tag; got {names:?}"
+        );
+
+        // Unresolved multi-word name: pass 1 leaves the token, so pass 2 sees the
+        // inner `#b` and must still leave it alone even though `b` resolves.
+        let mut resolved: HashMap<String, String> = HashMap::new();
+        resolved.insert("b".to_string(), "01TAG00000000000000000BEE0".to_string());
+        resolved.insert("real".to_string(), "01TAG00000000000000000TAG0".to_string());
+        let out = rewrite_inbound_tags(&blocks[1].content, &resolved);
+        assert_eq!(
+            out, "#[[Unknown #b]] #[01TAG00000000000000000TAG0]",
+            "the unresolved multi-word tag token must stay byte-identical; got {out:?}"
         );
     }
 

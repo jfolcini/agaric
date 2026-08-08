@@ -164,6 +164,172 @@ export const HUMAN_MULTIWORD_TAG_RE = /#\[\[([^\]\n]+?)\]\]/g
  */
 const HUMAN_TAG_RE = /(^|[^\p{L}\p{N}_])#([\p{L}\p{N}_][\p{L}\p{N}_/-]*)/gu
 
+/** A half-open `[start, end)` offset range within a block's content. */
+type Span = [number, number]
+
+/** `true` when offset `pos` falls inside any of `spans`. */
+const inSpans = (pos: number, spans: readonly Span[]): boolean =>
+  spans.some(([start, end]) => pos >= start && pos < end)
+
+/** Leading run of Rust-`White_Space` chars, i.e. Rust's `str::trim_start`. */
+const LEADING_WHITE_SPACE_RE = /^\p{White_Space}+/u
+
+/**
+ * A line that OPENS or CLOSES a fenced code block, as the CANONICAL Rust
+ * importer defines one (`is_fence_delim` in `agaric-engine/src/import.rs`):
+ * the line, left-trimmed and with an optional `- ` bullet marker stripped,
+ * starts with three backticks.
+ *
+ * DELIBERATELY backtick-only. The importer's fence detection is
+ * `fence_probe.starts_with("```")` and nothing else, so a `~~~` fence is plain
+ * text to Rust: it flags no block `is_code` and happily resolves a `#tag`
+ * inside one. Accepting `~~~` here would protect a tag the importer rewrites —
+ * a NEW divergence in the very passes #3599 exists to align. Tilde fences are
+ * unsupported on BOTH sides; change the two together or not at all.
+ */
+const FENCE_DELIM_RE = /^(?:- )?```/
+
+/** `true` when a left-trimmed line is an outline bullet (`-` or `- ...`). */
+const BULLET_LINE_RE = /^-(?: |$)/
+
+/**
+ * #3599 — the ranges of ONE block's content that the CANONICAL Rust importer
+ * would flag `is_code`, so the tag passes can treat them as literal text.
+ *
+ * The paste path can receive a whole code block as a single multi-line block
+ * (the copy path encodes in-block newlines with
+ * {@link OUTLINE_NEWLINE_SENTINEL}), whereas the importer's line-oriented
+ * parser (`parse_logseq_markdown`, `agaric-engine/src/import.rs`) reaches the
+ * same text as lines. Different mechanism, one observable contract — so this
+ * mirrors the importer's own rules, each MEASURED against it rather than
+ * assumed:
+ *
+ *   * `is_code` is a property of the whole BLOCK, not of the fenced lines. The
+ *     importer folds every non-bullet continuation line into the preceding
+ *     block and OR-s the flag across them, so a block that merely CONTAINS a
+ *     fence is literal end to end — text before the opener and after the closer
+ *     included. Protecting only the fenced lines would resolve a `#tag` the
+ *     importer leaves alone.
+ *   * a delimiter line is code itself (`line_is_code = in_fence || is_delim`).
+ *   * a fence opener is `is_fence_delim`: left-trimmed, optional `- ` bullet
+ *     marker stripped, starts with three backticks. Blank lines are skipped
+ *     before any fence bookkeeping.
+ *   * #2866 — an UNTERMINATED fence does not simply swallow the rest. A
+ *     bullet-shaped line at or above the opener's depth force-closes it (and
+ *     starts a fresh, non-code block) UNLESS the next non-blank line is a bare
+ *     ```` ``` ````, which can only ever close an open fence and so marks this
+ *     line as fence CONTENT. That recovery point is the only place a block's
+ *     content splits into a code part and a non-code part.
+ *
+ * KNOWN, BOUNDED DIVERGENCE: the importer's `fence_open_depth` for a bare
+ * opener is the depth of the previously emitted block; inside a single block's
+ * content there is no such block, so the opener line's own indent depth stands
+ * in. The two agree whenever the fence opens at the content's base indent,
+ * which is the shape the copy path produces.
+ *
+ * OUT OF SCOPE: external markdown pasted as raw lines is split by
+ * {@link parseIndentedMarkdown} into one block per line, so a three-line fence
+ * arrives as three separate blocks and no single block's content ever contains
+ * the fence — this helper sees nothing to protect and the importer's `is_code`
+ * has no counterpart. Closing that shape needs fence tracking in the line
+ * splitter itself, not here.
+ */
+function fencedCodeSpans(content: string): Span[] {
+  if (!content.includes('```')) return []
+  const lines = content.split('\n')
+  // Absolute [start, end) of every line; `+ 1` steps over the consumed `\n`.
+  const bounds: Span[] = []
+  let offset = 0
+  for (const line of lines) {
+    bounds.push([offset, offset + line.length])
+    offset += line.length + 1
+  }
+  const leftTrim = (line: string): string => line.replace(LEADING_WHITE_SPACE_RE, '')
+
+  const spans: Span[] = []
+  let inFence = false
+  let openDepth = 0
+  // The importer's block granularity: `runStart`..`runEnd` is the stretch of
+  // content that lands in one block, `runHasCode` its OR-ed `is_code` flag.
+  let runStart = 0
+  let runEnd = 0
+  let runHasCode = false
+  const flushRun = (): void => {
+    if (runHasCode && runEnd > runStart) spans.push([runStart, runEnd])
+  }
+
+  for (let i = 0; i < lines.length; i += 1) {
+    const line = lines[i] ?? ''
+    const trimmed = leftTrim(line)
+    if (trimmed.length === 0) continue
+    const isDelim = FENCE_DELIM_RE.test(trimmed)
+    const depth = Math.floor((line.length - trimmed.length) / 2)
+    const [lineStart, lineEnd] = bounds[i] ?? [content.length, content.length]
+
+    // #2866 recovery, evaluated before the line is classified (as in Rust).
+    if (inFence && !isDelim && BULLET_LINE_RE.test(trimmed) && depth <= openDepth) {
+      let peek = i + 1
+      while (peek < lines.length && leftTrim(lines[peek] ?? '').length === 0) peek += 1
+      // Past the end counts as "not a bare delimiter", matching the importer's
+      // fall-through-to-recovery at EOF.
+      if (!leftTrim(lines[peek] ?? '').startsWith('```')) {
+        inFence = false
+        flushRun()
+        runStart = lineStart
+        runEnd = lineStart
+        runHasCode = false
+      }
+    }
+
+    if (inFence || isDelim) runHasCode = true
+    runEnd = lineEnd
+    if (isDelim) {
+      if (!inFence) openDepth = depth
+      inFence = !inFence
+    }
+  }
+  flushRun()
+  return spans
+}
+
+/**
+ * Inline-code-span ranges (`` `...` ``), an algorithmic mirror of the Rust
+ * `inline_code_spans` helper in `src-tauri/src/commands/pages/markdown.rs`:
+ * a simple left-to-right backtick pairing, with the backticks themselves inside
+ * the range. (The offsets are UTF-16 units here and bytes there; only the
+ * PAIRING must match, and each side's offsets are used solely against its own
+ * string.) Deliberately NOT the full CommonMark run-length rule — the two
+ * implementations must agree, and single-backtick pairing is what the importer
+ * uses, so ` ``#tag`` ` resolves `tag` on BOTH sides. Offsets already covered by
+ * `skip` (a fenced region) are ignored so the fence delimiters cannot pair into
+ * bogus inline spans; Rust needs no such exclusion because its parser never
+ * hands a fenced region to a non-`is_code` block.
+ */
+function inlineCodeSpans(content: string, skip: readonly Span[]): Span[] {
+  const spans: Span[] = []
+  let open: number | null = null
+  for (let i = 0; i < content.length; i += 1) {
+    if (content[i] !== '`' || inSpans(i, skip)) continue
+    if (open === null) open = i
+    else {
+      spans.push([open, i + 1])
+      open = null
+    }
+  }
+  return spans
+}
+
+/**
+ * #3598/#3599 — the PROTECTED ranges of a block's content for the tag passes:
+ * fenced code regions plus inline-code spans. A `#tag` inside one is literal
+ * text and is NEVER resolved (no page/tag is created for it) and NEVER
+ * rewritten, matching the Rust importer's `is_code` + inline-code skips.
+ */
+function protectedCodeSpans(content: string): Span[] {
+  const fenced = fencedCodeSpans(content)
+  return [...fenced, ...inlineCodeSpans(content, fenced)]
+}
+
 /**
  * Resolve a human-readable reference NAME to its internal ULID on import,
  * CREATING the page/tag when it does not exist (#1484). Returns the ULID, or
@@ -222,11 +388,12 @@ export async function internalizeRefTokens(
     HUMAN_MULTIWORD_TAG_RE,
     resolvers.tag,
     (ulid) => `#[${ulid}]`,
-    { trimName: true, resolved: tagCache },
+    { trimName: true, resolved: tagCache, skipCodeSpans: true },
   )
   return replaceRefs(withMultiwordTags, HUMAN_TAG_RE, resolvers.tag, (ulid) => `#[${ulid}]`, {
     tagBoundary: true,
     resolved: tagCache,
+    skipCodeSpans: true,
   })
 }
 
@@ -241,6 +408,13 @@ interface ReplaceRefOptions {
   trimName?: boolean
   /** Cache shared by the multi-word and bare tag passes. */
   resolved?: Map<string, string | null>
+  /**
+   * #3599 — leave matches inside a PROTECTED code range (fenced code block or
+   * inline-code span) alone: not resolved, not rewritten. Set on both tag
+   * passes so they match the Rust importer, which skips `is_code` blocks
+   * wholesale and inline-code spans within a block.
+   */
+  skipCodeSpans?: boolean
 }
 
 /**
@@ -268,17 +442,17 @@ async function replaceRefs(
   // Rewriting that `#alpha` would corrupt the link into `[[Project #[ULID]]]`,
   // so collect the `[[ ... ]]` spans and skip any tag match that falls inside one.
   // (Resolved links are already `[[ULID]]` and contain no `#`, so they're inert.)
-  const bracketSpans: Array<[number, number]> = []
+  // NOTE: the spans below are computed against THIS pass's `content`. Each pass
+  // rewrites tokens of a different length, so offsets move between passes and a
+  // span list may never be carried over from an earlier one.
+  const bracketSpans: Span[] = []
   if (options.tagBoundary) {
     for (const b of content.matchAll(HUMAN_PAGE_LINK_RE)) {
       bracketSpans.push([b.index, b.index + b[0].length])
     }
   }
-  // The `#` of a tag match sits after its captured leading-boundary char.
-  const tagInsideBracket = (matchIndex: number, boundaryLen: number): boolean => {
-    const hashPos = matchIndex + boundaryLen
-    return bracketSpans.some(([start, end]) => hashPos >= start && hashPos < end)
-  }
+  // #3599 — fenced/inline code ranges, in which a `#tag` is literal text.
+  const codeSpans: Span[] = options.skipCodeSpans === true ? protectedCodeSpans(content) : []
 
   const matches = [...content.matchAll(re)]
   const candidate = (
@@ -294,7 +468,11 @@ async function replaceRefs(
   }
   const shouldSkip = (match: RegExpMatchArray, boundary: string): boolean => {
     const matchIndex = match.index ?? 0
-    if (options.tagBoundary && tagInsideBracket(matchIndex, boundary.length)) return true
+    // The `#` of a tag match sits after its captured leading-boundary char
+    // (empty for the multi-word pass, whose match starts at the `#`).
+    const hashPos = matchIndex + boundary.length
+    if (inSpans(hashPos, codeSpans)) return true
+    if (options.tagBoundary && inSpans(hashPos, bracketSpans)) return true
     if (!options.skipPagePrefixes || matchIndex === 0) return false
     const prefix = content[matchIndex - 1]
     return prefix === '#' || prefix === '!'
@@ -303,7 +481,10 @@ async function replaceRefs(
     options.skipCanonicalBody === true && ULID_BODY_RE.test(rawName)
 
   // Pass 1: collect distinct candidate names (skip bare-ULID canonical bodies,
-  // tag matches inside `[[ ]]`, and page matches owned by tags or embeds).
+  // tag matches inside `[[ ]]` or a protected code range, and page matches
+  // owned by tags or embeds). Skipping here — not just in the rebuild below —
+  // is what keeps the RESOLVER SIDE EFFECTS aligned with Rust: a protected
+  // name is never even looked up, so no page/tag is created for it (#3599).
   const names = new Set<string>()
   for (const match of matches) {
     const { boundary, name, rawName } = candidate(match)

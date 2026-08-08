@@ -484,6 +484,87 @@ describe('internalizeRefTokens (#1484)', () => {
     // Only the outside tag was created; the in-bracket `alpha` was skipped.
     expect(created.tags).toEqual(['realtag'])
   })
+
+  // #3599 — canonical rule shared with the Rust importer: a tag inside a
+  // PROTECTED span (inline code, fenced code, or a `[[...]]` link name) is
+  // literal text. It is never rewritten AND never resolved — the resolver is
+  // not even called for it, so no tag is created as a side effect.
+  it('leaves a bare #tag inside an inline-code span literal and uncreated (#3599)', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('`#code` and #real', resolvers)).toBe(
+      `\`#code\` and #[${NEW_TAG}]`,
+    )
+    expect(created.tags).toEqual(['real'])
+  })
+
+  it('leaves a multi-word #[[tag]] inside an inline-code span literal (#3599)', async () => {
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('`#[[Tag With Space]]` #real', resolvers)).toBe(
+      `\`#[[Tag With Space]]\` #[${NEW_TAG}]`,
+    )
+    expect(created.tags).toEqual(['real'])
+    // The page pass must not claim the bracketed body either — `#[[…]]` is a tag.
+    expect(created.pages).toEqual([])
+  })
+
+  it('leaves every #tag inside a fenced code block literal and uncreated (#3599)', async () => {
+    const { resolvers, created } = makeResolvers({})
+    const fenced = '```ts\nconst x = 1 // #fenced\n```'
+    expect(await internalizeRefTokens(fenced, resolvers)).toBe(fenced)
+    expect(created.tags).toEqual([])
+  })
+
+  // #3599 — the code guard must mirror the Rust importer's fence rules, not a
+  // more generous reading of them. Over-protecting here is as much a parity
+  // break as under-protecting: it withholds a tag the importer creates.
+  it('does NOT treat a ~~~ fence as code, because the importer does not (#3599)', async () => {
+    // `is_fence_delim` in agaric-engine/src/import.rs is
+    // `fence_probe.starts_with("```")`, so a tilde fence flags no block
+    // `is_code` and the importer resolves `#hushed` inside one.
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('~~~\n#hushed\n~~~', resolvers)).toBe(
+      `~~~\n#[${NEW_TAG}]\n~~~`,
+    )
+    expect(created.tags).toEqual(['hushed'])
+  })
+
+  it('protects a whole block that merely CONTAINS a fence, as is_code does (#3599)', async () => {
+    // The importer folds non-bullet continuation lines into one block and OR-s
+    // `is_code` across them, so text before the opener and after the closer is
+    // literal too — verified against `parse_logseq_markdown`.
+    const { resolvers, created } = makeResolvers({})
+    const input = 'a #before\n```\n#inside\n```\n#after'
+    expect(await internalizeRefTokens(input, resolvers)).toBe(input)
+    expect(created.tags).toEqual([])
+  })
+
+  it('stops protecting where an unbalanced fence recovers at a bullet (#2866/#3599)', async () => {
+    // `- interior` at the opener's depth force-closes a never-closed fence, so
+    // the importer emits a SECOND, non-code block — `#tail` is resolved there.
+    const { resolvers, created } = makeResolvers({})
+    expect(await internalizeRefTokens('```\n- interior\n#tail', resolvers)).toBe(
+      `\`\`\`\n- interior\n#[${NEW_TAG}]`,
+    )
+    expect(created.tags).toEqual(['tail'])
+    // …but a bare closing delimiter on the next line makes the bullet fence
+    // CONTENT instead, and nothing after it is resolved.
+    const second = makeResolvers({})
+    const closed = '```\n- interior\n```\n#tail'
+    expect(await internalizeRefTokens(closed, second.resolvers)).toBe(closed)
+    expect(second.created.tags).toEqual([])
+  })
+
+  it('does not create a stray tag for a #tag inside a multi-word tag NAME (#3599)', async () => {
+    // `#[[Alpha #b]]` renders identically whether or not `b` is resolved, so the
+    // divergence this pins is purely a resolver SIDE EFFECT: `b` must never be
+    // created. The unresolved twin also exercises the rewrite path.
+    const { resolvers, created } = makeResolvers({ ambiguous: new Set(['Unknown #b']) })
+    expect(await internalizeRefTokens('#[[Alpha #b]]', resolvers)).toBe(`#[${NEW_TAG}]`)
+    expect(await internalizeRefTokens('#[[Unknown #b]] #real', resolvers)).toBe(
+      `#[[Unknown #b]] #[${NEW_TAG}]`,
+    )
+    expect(created.tags).toEqual(['Alpha #b', 'real'])
+  })
 })
 
 // Full human-readable → internal → human-readable round-trip (#1440 + #1484):
