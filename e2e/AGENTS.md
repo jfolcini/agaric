@@ -101,6 +101,16 @@ clearConsoleErrors(page)   // otherwise the global afterEach fails the test
 
 If a genuinely benign error is unavoidable across specs, add it to the ignore-pattern list in `e2e/helpers.ts` rather than clearing it per test. `error-scenarios.spec.ts` is the reference.
 
+## Horizontal-overflow assertion and the `data-overflow-clip` escape hatch
+
+`expectNoHorizontalOverflow(page, target?, label?)` (`e2e/helpers.ts`) asserts a surface — a dialog/sheet locator, or the whole document when `target` is omitted — doesn't bleed content past its right edge at the current viewport. `mobile-overflow.spec.ts` runs it across the app's views at phone widths; reach for it directly when adding a spec for a surface that renders differently on mobile.
+
+For an element `target`, the check walks every descendant and reports any whose `getBoundingClientRect().right` exceeds the target's own right edge — it does not rely solely on `scrollWidth > clientWidth`, because a nested clipping context can keep those equal even while a clipped descendant's box still geometrically overflows.
+
+**`data-overflow-clip="intentional"` marks a container whose hard clip is deliberate** — a fixed-width panel, thumbnail, or similar that intentionally cuts off wider content with `overflow-x: hidden` or `overflow-x: clip`. Descendants of a marked container are excluded from the offender walk, same as `overflow-x: auto`/`scroll` scroll regions. Use it only when the clip is real and load-bearing (the marked container is verifiably `overflow-x: hidden|clip` — the walk checks computed style, not just the attribute) — never to silence a genuine layout bug, and never on the element passed as `target` itself (a marker there cannot opt the whole surface out; see the "marker on the assertion target" case in `horizontal-overflow-helper.spec.ts`).
+
+The walk resolves each descendant's actual **CSS containing-block chain**, not its plain DOM-parent chain (#3603). This matters for `position: absolute` descendants: they're laid out — and clipped — relative to their nearest ancestor that establishes a containing block (`position` other than `static`, or `transform`/`filter`/`perspective`/`will-change`/`contain`), which is frequently *not* their DOM parent. A `data-overflow-clip="intentional"` container that is itself `position: static` does **not** cover an absolutely-positioned descendant nested inside it — the descendant's containing block resolves past it, so the marker does not suppress the offender and a genuine overflow there is still flagged. It only suppresses an absolutely-positioned descendant when the marked container (or an ancestor between the two) actually is that descendant's containing block. `position: fixed`/`sticky` descendants are skipped entirely (never counted as offenders, marked or not) — they don't expand a scroll box the way in-flow content does.
+
 ## Header label selection — don't use the generic `header > getByText` pattern
 
 A page-level `<FeaturePageHeader>` renders an `<h1>` with the same text as the App-shell `<header>`'s `data-testid="header-label"` span. The generic locator hits both, triggering strict-mode violations on slow runners. **Use `page.getByTestId('header-label')`** to target the App-shell header label unambiguously. The `editor-lifecycle.spec.ts` `navigates between sidebar views` test is the reference.
