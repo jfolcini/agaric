@@ -3884,41 +3884,115 @@ mod tests {
         ));
     }
 
-    /// #1920 — cross-language parity fixture for the inbound wiki-link regex.
-    /// `HUMAN_PAGE_LINK_RE` (the CANONICAL Rust source) must match these exact
-    /// boundaries; the TS mirror `HUMAN_PAGE_LINK_RE` in
-    /// `src/lib/block-clipboard.ts` is pinned to the SAME fixture by
-    /// `src/lib/__tests__/page-link-re-parity.test.ts`. Keep the two in sync:
-    /// any change here must be mirrored there (and in both regexes).
-    ///
-    /// Each case is `(input, expected_inner_captures)` — the run of group-1
-    /// (inner-name) matches the regex produces, in order.
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReferenceTokenVectors {
+        page_resolutions: HashMap<String, String>,
+        tag_resolutions: HashMap<String, String>,
+        humanize_cases: Vec<HumanizeTagCase>,
+        cases: Vec<ReferenceTokenCase>,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct HumanizeTagCase {
+        name: String,
+        tag_ulid: String,
+        tag_name: String,
+        expected: String,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ReferenceTokenCase {
+        name: String,
+        input: String,
+        expected: ReferenceTokenExpected,
+    }
+
+    #[derive(serde::Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReferenceTokenExpected {
+        page_captures: Vec<String>,
+        multiword_tag_captures: Vec<String>,
+        requested_page_names: Vec<String>,
+        requested_tag_names: Vec<String>,
+        transformed: String,
+    }
+
+    /// #1920/#3261 — the canonical Rust regexes, collectors, and rewriters must
+    /// match the frontend paste grammar over one shared golden fixture. This
+    /// pins the prefix-sensitive distinction between `[[page]]`, `#[[tag]]`,
+    /// and `![[embed]]`, as well as canonical-ULID exclusion and final output.
     #[test]
     fn page_link_re_parity_boundaries_1920() {
-        let cases: &[(&str, &[&str])] = &[
-            ("[[A]]", &["A"]),
-            ("[[A B]]", &["A B"]),
-            ("[[A]] text [[B]]", &["A", "B"]),
-            // Non-greedy: `[[a[[b]]` → the first `]]` closes the match opened at
-            // the LAST `[[`, so the inner capture is `a[[b`.
-            ("[[a[[b]]", &["a[[b"]),
-            // Empty `[[]]` — the inner is `[^\]\n]+?` (one-or-more), so an empty
-            // body does NOT match.
-            ("[[]]", &[]),
-            // A newline inside the brackets prevents a match (body excludes
-            // `\n`).
-            ("[[A\nB]]", &[]),
-        ];
-        for (input, expected) in cases {
-            let got: Vec<String> = HUMAN_PAGE_LINK_RE
-                .captures_iter(input)
+        let vectors: ReferenceTokenVectors = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../conformance/reference-tokens.vectors.json"
+        )))
+        .expect("reference-token conformance fixture must be valid JSON");
+
+        for vector in &vectors.humanize_cases {
+            let tag_names = HashMap::from([(vector.tag_ulid.clone(), vector.tag_name.clone())]);
+            let transformed = resolve_ulids_for_export(
+                &format!("#[{}]", vector.tag_ulid),
+                &tag_names,
+                &HashMap::new(),
+                &HashMap::new(),
+            );
+            assert_eq!(
+                transformed, vector.expected,
+                "humanized tag for {:?}",
+                vector.name
+            );
+        }
+
+        for vector in vectors.cases {
+            let page_captures: Vec<String> = HUMAN_PAGE_LINK_RE
+                .captures_iter(&vector.input)
                 .map(|c| c[1].to_string())
                 .collect();
-            let got_refs: Vec<&str> = got.iter().map(String::as_str).collect();
             assert_eq!(
-                got_refs.as_slice(),
-                *expected,
-                "wiki-link match boundaries for {input:?} must match the TS mirror"
+                page_captures, vector.expected.page_captures,
+                "page captures for {:?}",
+                vector.name
+            );
+
+            let multiword_tag_captures: Vec<String> = HUMAN_MULTIWORD_TAG_RE
+                .captures_iter(&vector.input)
+                .map(|c| c[1].to_string())
+                .collect();
+            assert_eq!(
+                multiword_tag_captures, vector.expected.multiword_tag_captures,
+                "multi-word tag captures for {:?}",
+                vector.name
+            );
+
+            let blocks = vec![import::ParsedBlock {
+                content: vector.input.clone(),
+                depth: 0,
+                properties: Vec::new(),
+                is_code: false,
+                block_anchor: None,
+            }];
+            assert_eq!(
+                collect_inbound_page_link_names(&blocks),
+                vector.expected.requested_page_names,
+                "requested page names for {:?}",
+                vector.name
+            );
+            assert_eq!(
+                collect_inbound_tag_names(&blocks),
+                vector.expected.requested_tag_names,
+                "requested tag names for {:?}",
+                vector.name
+            );
+
+            let with_pages = rewrite_inbound_page_links(&vector.input, &vectors.page_resolutions);
+            let transformed = rewrite_inbound_tags(&with_pages, &vectors.tag_resolutions);
+            assert_eq!(
+                transformed, vector.expected.transformed,
+                "transformed reference tokens for {:?}",
+                vector.name
             );
         }
     }
