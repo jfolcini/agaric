@@ -195,9 +195,52 @@ export async function expectNoHorizontalOverflow(
     // the explicit `data-overflow-clip="intentional"` contract. The marker is
     // honored only when computed `overflow-x` is `hidden` or `clip`; it MUST
     // NOT be put on a container that can hide content users need to read or
-    // focus. Starting at `node.parentElement` and stopping before `root` keeps
-    // the marked container measurable and prevents a marker on the assertion
-    // target from disabling the whole check (#3540).
+    // focus. Starting at `node`'s clipping ancestor and stopping before `root`
+    // keeps the marked container measurable and prevents a marker on the
+    // assertion target from disabling the whole check (#3540).
+    //
+    // Whether `el` establishes a CSS containing block for a `position:
+    // absolute` descendant (CSS Position spec, "Fixed/Absolute positioning
+    // layout model" — `contain`/`filter`/`perspective`/`transform`/
+    // `will-change` all establish one in addition to `position !== static`).
+    // `position: fixed`'s containing-block rules differ slightly, but fixed
+    // nodes are never evaluated here (skipped as noise below), so that
+    // distinction doesn't matter for this walk.
+    const establishesContainingBlock = (style: CSSStyleDeclaration): boolean => {
+      if (style.position !== 'static') return true
+      if (style.transform !== 'none') return true
+      if (style.filter !== 'none') return true
+      if (style.perspective !== 'none') return true
+      if (
+        style.willChange
+          .split(',')
+          .map((v) => v.trim())
+          .some((v) => v === 'transform' || v === 'filter' || v === 'perspective')
+      )
+        return true
+      if (/\b(layout|paint|strict|content)\b/.test(style.contain)) return true
+      return false
+    }
+
+    // The next ancestor to test when walking `el`'s *clipping* chain — the
+    // CSS containing-block chain, not the DOM-parent chain. A `static`/
+    // `relative` box stays in normal flow, so its DOM parent is also its
+    // clipping ancestor (plain `parentElement` is correct and cheap). A
+    // `position: absolute` box is laid out — and clipped — relative to its
+    // nearest containing-block ancestor, which is frequently NOT
+    // `parentElement`: an unpositioned `data-overflow-clip` wrapper sitting
+    // between the two does not actually clip it, so the walk must skip past
+    // it rather than counting it as covering the node (#3603).
+    const nextClipAncestor = (el: Element): Element | null => {
+      if (getComputedStyle(el).position !== 'absolute') return el.parentElement
+      let p = el.parentElement
+      while (p) {
+        if (establishesContainingBlock(getComputedStyle(p))) return p
+        p = p.parentElement
+      }
+      return null
+    }
+
     const offenders: OverflowOffender[] = []
     for (const node of Array.from(root.querySelectorAll('*'))) {
       const style = getComputedStyle(node)
@@ -205,8 +248,8 @@ export async function expectNoHorizontalOverflow(
       if (style.position === 'fixed' || style.position === 'sticky') continue
       // Skip anything living inside an intentional horizontal scroller.
       let inScroll = false
-      let p: Element | null = node.parentElement
-      while (p && p !== root) {
+      let p: Element | null = nextClipAncestor(node)
+      while (p && p !== root && root.contains(p)) {
         const ox = getComputedStyle(p).overflowX
         const intentionalHardClip =
           p.getAttribute('data-overflow-clip') === 'intentional' &&
@@ -215,7 +258,7 @@ export async function expectNoHorizontalOverflow(
           inScroll = true
           break
         }
-        p = p.parentElement
+        p = nextClipAncestor(p)
       }
       if (inScroll) continue
       const r = node.getBoundingClientRect()

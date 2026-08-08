@@ -99,3 +99,92 @@ test('marked clip container itself remains measurable when it overflows', async 
     /Horizontal overflow on overflowing marked clip/,
   )
 })
+
+// ---------------------------------------------------------------------------
+// Containing-block vs. DOM-ancestor meta-tests (#3603).
+//
+// The suppression walk above must follow the CSS *containing-block* chain
+// for a `position: absolute` node, not its plain DOM-parent chain. Those two
+// chains coincide for the fixtures above (nothing there is itself
+// `position: absolute`), so they can't tell the two implementations apart.
+// These fixtures are built specifically to diverge the two chains.
+// ---------------------------------------------------------------------------
+
+test('marked clip does NOT suppress an abs-positioned descendant whose containing block escapes it', async ({
+  page,
+}) => {
+  // `clip` is `position: static`, so it does not establish a containing
+  // block for `offender` (`position: absolute`) even though it is marked
+  // `data-overflow-clip="intentional"` and hard-clips with `overflow-x:
+  // hidden`. `offender`'s containing block resolves past `clip` and past
+  // `root` (neither is positioned/contains a containing-block-establishing
+  // property) all the way to the initial containing block, so `offender` is
+  // genuinely painted on top of the page — not clipped by anything.
+  await page.setContent(`
+    <main
+      data-testid="overflow-root"
+      style="position:static;width:200px;height:100px;overflow:visible;background:white;margin-left:20px"
+    >
+      <section
+        data-testid="clip"
+        data-overflow-clip="intentional"
+        style="position:static;overflow-x:hidden;width:50px;height:50px"
+      >
+        <div
+          data-testid="offender"
+          style="position:absolute;left:400px;top:0;width:100px;height:20px"
+        >
+          overflow probe
+        </div>
+      </section>
+    </main>
+  `)
+  const root = page.getByTestId('overflow-root')
+  const offender = page.getByTestId('offender')
+
+  // Ground truth: confirm the offender is actually rendered (not clipped) at
+  // its right edge before trusting the assertion result below — otherwise a
+  // failure here would just be testing geometry, not the guard's reasoning.
+  const paintedAtRightEdge = await offender.evaluate((el) => {
+    const rect = el.getBoundingClientRect()
+    return document
+      .elementFromPoint(Math.min(window.innerWidth - 1, rect.right - 2), rect.top + rect.height / 2)
+      ?.getAttribute('data-testid')
+  })
+  expect(paintedAtRightEdge).toBe('offender')
+
+  await expect(expectNoHorizontalOverflow(page, root, 'escaped containing block')).rejects.toThrow(
+    /Horizontal overflow on escaped containing block/,
+  )
+})
+
+test('marked clip still suppresses an abs-positioned descendant that is genuinely its containing block', async ({
+  page,
+}) => {
+  // `clip` is itself `position: absolute`, so it IS `offender`'s containing
+  // block — and it hard-clips with `overflow-x: hidden`, so `offender` is
+  // genuinely invisible past `clip`'s edge. A correct fix must still
+  // suppress this case; flagging it would make the guard trigger-happy.
+  await page.setContent(`
+    <main
+      data-testid="overflow-root"
+      style="position:relative;width:200px;height:100px;overflow:hidden;background:white"
+    >
+      <section
+        data-testid="clip"
+        data-overflow-clip="intentional"
+        style="position:absolute;left:150px;top:0;width:50px;height:50px;overflow-x:hidden"
+      >
+        <div
+          data-testid="offender"
+          style="position:absolute;left:0;top:0;width:100px;height:20px"
+        >
+          overflow probe
+        </div>
+      </section>
+    </main>
+  `)
+  const root = page.getByTestId('overflow-root')
+
+  await expectNoHorizontalOverflow(page, root, 'genuinely contained abs descendant')
+})
