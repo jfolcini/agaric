@@ -2,35 +2,33 @@
 # One-shot post-clone setup. Idempotent: safe to re-run.
 set -euo pipefail
 
+usage() {
+  echo 'Usage: bash scripts/setup.sh [--install-system-deps]'
+  echo '  --install-system-deps  Install Linux build/test packages (remote-session opt-in).'
+}
+
+# `--help` must win regardless of where it sits among the other arguments, so
+# it is scanned for FIRST, before the strict per-arg validation below ever
+# runs. Without this pre-scan, `--bogus --help` and `--help --bogus` disagreed
+# — the first hit the unknown-option error before reaching `--help`, the
+# second didn't — purely because of argument order (#3629 review).
+for arg in "$@"; do
+  case "$arg" in
+    -h|--help) usage; exit 0 ;;
+  esac
+done
+
 install_system_deps=false
 for arg in "$@"; do
   case "$arg" in
     --install-system-deps) install_system_deps=true ;;
-    -h|--help)
-      echo 'Usage: bash scripts/setup.sh [--install-system-deps]'
-      echo '  --install-system-deps  Install Linux build/test packages (remote-session opt-in).'
-      exit 0
-      ;;
+    -h|--help) ;;  # handled by the pre-scan above; exhaustive here for clarity
     *)
       echo "error: unknown setup option: $arg" >&2
       exit 64
       ;;
   esac
 done
-
-# System packages are the sole intentionally-privileged part of bootstrap, so
-# they remain an explicit opt-in (#3556). The remote SessionStart hook passes
-# the flag on a disposable VM; local/manual setup — `npm run setup`,
-# `just setup`, a bare `bash scripts/setup.sh` — never does, and retains the
-# long-standing warn-only contract. Failure here must not strand the
-# Node/.env/dev-DB setup that is still useful, but it is carried into the final
-# Ready-except summary instead of being hidden.
-system_deps_problem=''
-if [ "$install_system_deps" = true ]; then
-  if ! bash scripts/setup-system-deps.sh; then
-    system_deps_problem='Linux build/test system dependencies could not be installed automatically (see the warning earlier in this log) — install them by hand, then re-run scripts/setup.sh; the Rust workspace will not compile or test until they are present. See docs/BUILD.md'
-  fi
-fi
 
 # --- Transient-failure retry ----------------------------------------------
 # Retry a flaky network command with exponential backoff (2s, 4s, 8s, 16s;
@@ -253,6 +251,37 @@ node scripts/prepare-external-bins.mjs --placeholder-only
 # without network for the sqlx-cli install) still completes.
 bash scripts/setup-dev-db.sh || echo "warning: dev DB setup skipped — run scripts/setup-dev-db.sh before pushing Rust changes"
 
+# --- Linux system packages (opt-in, privileged) -----------------------------
+# System packages are the sole intentionally-privileged part of bootstrap, so
+# they remain an explicit opt-in (#3556). The remote SessionStart hook passes
+# the flag on a disposable VM; local/manual setup — `npm run setup`,
+# `just setup`, a bare `bash scripts/setup.sh` — never does, and retains the
+# long-standing warn-only contract. Failure here must not strand the
+# Node/.env/dev-DB setup that is still useful, but it is carried into the final
+# Ready-except summary instead of being hidden.
+#
+# Dispatched HERE — after the fast Node/npm-ci/.env/dev-DB critical path
+# above, not at the top of the script — because nothing in that path touches
+# system packages: the sole consumer is the pkg-config preflight further
+# down. Inside the ~600s SessionStart budget this script operates under (see
+# the hook-toolchain comment below), a slow apt must not hold that
+# previously-reliable path hostage (#3629 review).
+system_deps_problem=''
+system_deps_status=0
+if [ "$install_system_deps" = true ]; then
+  bash scripts/setup-system-deps.sh || system_deps_status=$?
+  if [ "$system_deps_status" -eq 2 ]; then
+    # setup-system-deps.sh's own classification: exit 2 means patchelf — the
+    # bundle-time-only package — is the SOLE thing that failed to install; the
+    # compile/test package set is confirmed present. Don't repeat the "will
+    # not compile or test" claim over a package that only matters to
+    # `cargo tauri build` bundling (#3629 review).
+    system_deps_problem='patchelf (used only when bundling with "cargo tauri build" to rewrite RPATH) could not be installed automatically (see the warning earlier in this log) — install it by hand before bundling, then re-run scripts/setup.sh; the Rust workspace will still compile and test without it. See docs/BUILD.md'
+  elif [ "$system_deps_status" -ne 0 ]; then
+    system_deps_problem='Linux build/test system dependencies could not be installed automatically (see the warning earlier in this log) — install them by hand, then re-run scripts/setup.sh; the Rust workspace will not compile or test until they are present. See docs/BUILD.md'
+  fi
+fi
+
 # --- Rust link-speed: auto-wire a faster linker (Linux, best-effort) --------
 # The link step is the long pole of incremental Rust compiles on this codebase
 # (see docs/BUILD.md → "Speed up Rust builds"), and a faster linker (mold, else
@@ -372,7 +401,14 @@ if command -v cargo >/dev/null 2>&1; then
   fi
 fi
 
-if [ "$(uname -s)" = "Linux" ] && [ -z "$system_deps_problem" ]; then
+# Gate: skip only when the apt attempt genuinely could have left the
+# compile/test set incomplete (status 1, or never ran, or any other nonzero
+# status) — NOT for status 2, where setup-system-deps.sh already confirmed
+# the compile/test set installed and only bundle-time patchelf failed. A
+# blanket "any system_deps_problem -> skip" (the pre-#3629-review behaviour)
+# wrongly suppressed this probe — the only other consumer of the system
+# packages — over a patchelf-only miss that has nothing to do with webkit.
+if [ "$(uname -s)" = "Linux" ] && { [ "$system_deps_status" -eq 0 ] || [ "$system_deps_status" -eq 2 ]; }; then
   # Package name vs. pkg-config module name mismatch: apt ships this as
   # `libwebkit2gtk-4.1-dev` (see docs/BUILD.md), but the .pc file it installs
   # is `webkit2gtk-4.1.pc` — no `lib` prefix. Verified against a box with the

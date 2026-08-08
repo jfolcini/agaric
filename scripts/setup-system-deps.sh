@@ -68,6 +68,34 @@ run_as_root() {
   fi
 }
 
+# True iff patchelf is the ONLY package in BUILD_PACKAGES not currently
+# installed (queried fresh via dpkg, not assumed from a pre-attempt scan —
+# apt can leave partial state behind). patchelf is bundle-time only
+# (linuxdeploy/`cargo tauri build`); the other six are what the Rust
+# workspace needs to compile and test. Every failure path below calls this to
+# decide its exit code, so a patchelf-only miss is never reported with the
+# same severity as a compile/test-set miss (#3629 review).
+only_patchelf_missing() {
+  local -a still=()
+  local package
+  for package in "${BUILD_PACKAGES[@]}"; do
+    package_is_installed "$package" || still+=("$package")
+  done
+  [ "${#still[@]}" -eq 1 ] && [ "${still[0]}" = 'patchelf' ]
+}
+
+# Exit code convention consumed by scripts/setup.sh:
+#   0 = every BUILD_PACKAGES entry installed.
+#   2 = patchelf is the only one still missing — compile/test set intact.
+#   1 = anything else (including "can't tell" cases like a missing dpkg-query).
+fail_status() {
+  if only_patchelf_missing; then
+    warn 'patchelf (bundle-time only, used by "cargo tauri build" to rewrite RPATH) is the only package still missing — the compile/test package set installed fine.'
+    return 2
+  fi
+  return 1
+}
+
 main() {
   if [ "$(uname -s)" != 'Linux' ]; then
     echo 'Linux system dependencies are not needed on this platform — skipping.'
@@ -77,7 +105,15 @@ main() {
   if ! command -v apt-get >/dev/null 2>&1 || ! command -v dpkg-query >/dev/null 2>&1; then
     warn 'automatic system-dependency installation currently supports Debian/Ubuntu only.'
     manual_install_hint >&2
-    return 1
+    # dpkg-query itself may be unavailable here, but only_patchelf_missing
+    # degrades safely (package_is_installed treats an unqueryable package as
+    # not installed), so this still correctly falls through to the broad
+    # exit-1 path rather than misreporting a patchelf-only miss. `|| rc=$?`
+    # (not a bare call) because fail_status always returns nonzero, and a
+    # bare failing command would trip `set -e` before its code was captured.
+    local rc=1
+    fail_status || rc=$?
+    return "$rc"
   fi
 
   local -a missing=()
@@ -100,20 +136,30 @@ main() {
   else
     warn 'cannot install Linux build/test dependencies without root or passwordless sudo.'
     manual_install_hint >&2
-    return 1
+    # Nothing has been attempted yet, so `missing` (just computed above) is
+    # still the true state — same reasoning as fail_status's fresh query.
+    local rc=1
+    fail_status || rc=$?
+    return "$rc"
   fi
 
   echo "Installing ${#missing[@]} missing Linux build/test system package(s)…"
   if ! run_as_root apt-get -o Acquire::Retries=3 update -qq; then
     warn 'apt-get update failed; Rust builds/tests may remain unavailable.'
     manual_install_hint >&2
-    return 1
+    local rc=1
+    fail_status || rc=$?
+    return "$rc"
   fi
   if ! run_as_root env DEBIAN_FRONTEND=noninteractive \
     apt-get -o Acquire::Retries=3 install -y "${missing[@]}"; then
     warn 'apt-get install failed; Rust builds/tests may remain unavailable.'
     manual_install_hint >&2
-    return 1
+    # Query fresh here (not the pre-attempt `missing`) — apt can leave
+    # partial state behind on a failed install.
+    local rc=1
+    fail_status || rc=$?
+    return "$rc"
   fi
 
   local -a still_missing=()
@@ -123,7 +169,9 @@ main() {
   if [ "${#still_missing[@]}" -ne 0 ]; then
     warn "apt reported success but ${#still_missing[@]} build/test package(s) are still missing."
     manual_install_hint >&2
-    return 1
+    local rc=1
+    fail_status || rc=$?
+    return "$rc"
   fi
 
   echo 'Linux build/test system dependencies installed.'

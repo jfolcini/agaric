@@ -203,17 +203,42 @@ if [[ "$output" == *'dependencies installed.'* ]]; then fail 'failure printed su
 echo 'ok - apt failure remains a truthful build/test blocker'
 
 # 6. Package-install failure is independently loud after a successful update.
+# The whole compile/test set is missing here (state was cleared), so this is
+# THE COMPILE-SET ARM of the #3629 review note-2 pair: it must classify as
+# exit 1, not the patchelf-only exit 2 that test 6c below pins.
 : >"$state"
 : >"$log"
 FAKE_UID=0 FAKE_APT_INSTALL_FAIL=1 run_helper
 [ "$helper_status" -ne 0 ] || fail 'failed apt install falsely succeeded'
+[ "$helper_status" -eq 1 ] || fail "compile-set apt install failure did not classify as exit 1 (got $helper_status)"
 assert_contains "$output" 'apt-get install failed; Rust builds/tests may remain unavailable'
 grep -Fq 'apt-get|-o Acquire::Retries=3 update -qq|' "$log" \
   || fail 'install-failure case never completed apt update'
 grep -Fq 'apt-get|-o Acquire::Retries=3 install -y' "$log" \
   || fail 'install-failure case never exercised apt install'
 if [[ "$output" == *'dependencies installed.'* ]]; then fail 'install failure printed success'; fi
-echo 'ok - apt install failure remains a truthful build/test blocker'
+echo 'ok - apt install failure remains a truthful build/test blocker (classified exit 1)'
+
+# 6c. THE PATCHELF-ONLY ARM of the same pair (#3629 review note 2). The
+# compile/test set (all six non-patchelf packages) is already installed;
+# only patchelf is missing, and installing it fails. This must NOT be
+# reported with the same severity as #6: exit 2 (not 1), plus wording that
+# says the compile/test set is intact rather than an undifferentiated
+# "may remain unavailable" that would wrongly implicate the whole workspace.
+# Asserting only this arm (without #6 above) would be a half-covered pair —
+# a helper that always returned exit 2 would pass this block alone.
+: >"$state"
+: >"$log"
+for package in "${expected_packages[@]}"; do
+  [ "$package" = 'patchelf' ] || printf '%s\n' "$package" >>"$state"
+done
+FAKE_UID=0 FAKE_APT_INSTALL_FAIL=1 run_helper
+[ "$helper_status" -ne 0 ] || fail 'patchelf-only apt install failure falsely succeeded'
+[ "$helper_status" -eq 2 ] || fail "patchelf-only apt install failure did not classify as exit 2 (got $helper_status)"
+assert_contains "$output" 'patchelf'
+assert_contains "$output" 'is the only package still missing — the compile/test package set installed fine'
+if [[ "$output" == *'dependencies installed.'* ]]; then fail 'patchelf-only failure printed success'; fi
+echo 'ok - a patchelf-only install failure is classified separately (exit 2) from a compile-set failure (exit 1)'
 
 # 6b. The other half of #6: apt exits 0 yet the packages are still absent. The
 # exit code alone is not evidence of a working build, so the helper re-queries
@@ -476,6 +501,85 @@ if [[ "$outer_output" == *'Ready. Run: cargo tauri dev'* ]]; then
   fail 'outer setup hid helper failure behind a false all-ready summary'
 fi
 echo 'ok - opt-in helper failure reaches the final Ready-except summary'
+
+# 9d/9e. #3629 review note 2, at the setup.sh level: a patchelf-only failure
+# (helper exit 2) must get an accurate message (never the compile/test-set
+# claim) AND must not suppress the pkg-config webkit probe — the only other
+# consumer of the system packages. Two arms, same status=2, opposite webkit
+# state, so passing one arm without the other cannot make this block green.
+: >"$outer_log"
+: >"$outer_priv_log"
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=0 FAKE_OUTER_HELPER_STATUS=2 \
+  run_outer_setup --install-system-deps
+[ "$outer_status" -eq 0 ] || fail 'patchelf-only outer setup (webkit missing) failed'
+assert_no_privileged_calls
+assert_contains "$outer_output" 'Ready except:'
+assert_contains "$outer_output" 'patchelf (used only when bundling with "cargo tauri build"'
+assert_contains "$outer_output" 'the Rust workspace will still compile and test without it'
+if [[ "$outer_output" == *'the Rust workspace will not compile or test until they are present'* ]]; then
+  fail 'patchelf-only failure (exit 2) was reported with the compile/test-set message'
+fi
+# The probe must have actually run: with headers genuinely absent it reports
+# them absent. If the old blanket "any system_deps_problem -> skip the probe"
+# gate regressed, this line would be silently missing instead.
+assert_contains "$outer_output" 'libwebkit2gtk-4.1 (system webkit) not found via pkg-config'
+echo 'ok - patchelf-only failure gets accurate wording and the webkit probe still runs (headers absent)'
+
+: >"$outer_log"
+: >"$outer_priv_log"
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=1 FAKE_OUTER_HELPER_STATUS=2 \
+  run_outer_setup --install-system-deps
+[ "$outer_status" -eq 0 ] || fail 'patchelf-only outer setup (webkit present) failed'
+assert_no_privileged_calls
+assert_contains "$outer_output" 'patchelf (used only when bundling with "cargo tauri build"'
+if [[ "$outer_output" == *'the Rust workspace will not compile or test until they are present'* ]]; then
+  fail 'patchelf-only failure (exit 2) was reported with the compile/test-set message'
+fi
+# The probe ran and correctly found webkit present: no false "not found" line
+# should ride along with the (real, separate) patchelf note.
+if [[ "$outer_output" == *'libwebkit2gtk-4.1 (system webkit) not found via pkg-config'* ]]; then
+  fail 'webkit probe falsely reported missing headers when FAKE_OUTER_WEBKIT=1'
+fi
+echo 'ok - patchelf-only failure leaves the (satisfied) webkit probe result untouched'
+
+# 9f. #3629 review note 1: the opt-in apt dispatch must run AFTER
+# setup-dev-db.sh, not ahead of the fast Node/npm-ci/.env/dev-DB critical
+# path. The outer stubs append to $outer_log in the order they actually run,
+# so their relative line numbers are direct proof of dispatch order — not an
+# assumption about the source layout.
+: >"$outer_log"
+FAKE_OUTER_UNAME=Linux FAKE_OUTER_WEBKIT=1 FAKE_OUTER_HELPER_STATUS=0 \
+  run_outer_setup --install-system-deps
+[ "$outer_status" -eq 0 ] || fail 'ordering-check outer setup failed'
+dev_db_line="$(grep -n '^dev-db$' "$outer_log" | head -1 | cut -d: -f1)"
+system_deps_line="$(grep -n '^system-deps|' "$outer_log" | head -1 | cut -d: -f1)"
+[ -n "${dev_db_line:-}" ] || fail 'setup-dev-db.sh stub never ran'
+[ -n "${system_deps_line:-}" ] || fail 'setup-system-deps.sh stub never ran'
+[ "$dev_db_line" -lt "$system_deps_line" ] || fail \
+  "apt dispatch ran ahead of setup-dev-db.sh (dev-db@${dev_db_line} system-deps@${system_deps_line}) — holding the fast critical path hostage to apt again"
+echo 'ok - the opt-in apt dispatch runs after setup-dev-db.sh, not ahead of the fast critical path'
+
+# 9g/9h. #3629 review note 3: --help must win regardless of position,
+# including next to an otherwise-unknown flag. Same two flags, order flipped,
+# same result — proves the pre-scan is genuinely position-independent rather
+# than merely working for the one ordering a reviewer happened to try.
+: >"$outer_log"
+: >"$outer_priv_log"
+run_outer_setup --bogus --help
+[ "$outer_status" -eq 0 ] || fail "--bogus --help did not exit 0 (got $outer_status)"
+assert_contains "$outer_output" 'Usage: bash scripts/setup.sh'
+[ ! -s "$outer_log" ] || fail '--bogus --help unexpectedly dispatched a setup step'
+assert_no_privileged_calls
+echo 'ok - --bogus --help shows usage and exits 0 (help wins even after an unknown flag)'
+
+: >"$outer_log"
+: >"$outer_priv_log"
+run_outer_setup --help --bogus
+[ "$outer_status" -eq 0 ] || fail "--help --bogus did not exit 0 (got $outer_status)"
+assert_contains "$outer_output" 'Usage: bash scripts/setup.sh'
+[ ! -s "$outer_log" ] || fail '--help --bogus unexpectedly dispatched a setup step'
+assert_no_privileged_calls
+echo 'ok - --help --bogus shows usage and exits 0 (order does not change the result)'
 
 # 10. The session hook gates setup and passes the explicit opt-in only remotely.
 hook_project="$tmp/hook-project"
