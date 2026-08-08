@@ -168,6 +168,63 @@ async function selectJoinerRole(user: ReturnType<typeof userEvent.setup>) {
   )
 }
 
+// Deliberately does NOT use `vi.runAllTimersAsync()` for these flushes
+// (unlike the single initial flush in e.g. the host countdown test): by the
+// second/third flush a repeating `setInterval` (the host countdown, then the
+// joiner's poll + wait countdown) is already active and never clears itself
+// within the flush, so `runAllTimersAsync` — which exhausts the timer queue
+// until it's empty — spins until Vitest's "10000 timers" infinite-loop guard
+// aborts it. `flushMicrotasks` only drains the native Promise microtask queue
+// (invoke() calls are plain resolved Promises, not fake-timer-driven), which
+// is all that's needed to let confirmPairing/listPeerRefs settle without
+// touching any interval.
+async function flushMicrotasks() {
+  for (let i = 0; i < 5; i++) {
+    await act(async () => {
+      await Promise.resolve()
+    })
+  }
+}
+
+// Reaches the joiner's waiting state via `fireEvent` under FAKE timers, for
+// tests that go on to advance the poll/countdown intervals. This is NOT
+// interchangeable with `enterWaitingState` below: `setInterval` handles
+// created while real timers are active stay bound to the real clock even
+// after a later `vi.useFakeTimers()` call — advancing fake time then does
+// nothing to them. The interval must be created while fake timers are
+// already active, which means the interactions that create it (role switch,
+// word entry, Pair click) must also happen under fake timers — hence
+// `fireEvent` (synchronous) instead of `userEvent` (which deadlocks against
+// `waitFor`/`findBy` under fake timers, per the house rule above the
+// paste-focus-unmount test) and `flushMicrotasks()` in place of the
+// `findBy*` queries `enterWaitingState` uses.
+async function enterWaitingStateFake() {
+  // Flush the host-mount init promises (start_pairing + list_peer_refs)
+  // fired by the dialog-open effect.
+  await flushMicrotasks()
+
+  fireEvent.click(screen.getByRole('button', { name: /Have a code from the other device\?/i }))
+  // Flush the joiner-switch's cancelPairing + listPeerRefs refresh.
+  await flushMicrotasks()
+
+  const inputs = screen.getAllByRole('textbox')
+  fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'echo' } })
+  fireEvent.change(inputs[1] as HTMLElement, { target: { value: 'foxtrot' } })
+  fireEvent.change(inputs[2] as HTMLElement, { target: { value: 'golf' } })
+  fireEvent.change(inputs[3] as HTMLElement, { target: { value: 'hotel' } })
+
+  fireEvent.click(screen.getByRole('button', { name: /^Pair$/i }))
+  // Flush confirmPairing + the poll's immediate enable-triggered fetch.
+  await flushMicrotasks()
+
+  expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
+}
+
+/** How many times `invoke` was called with a given Tauri command name. */
+function countInvokes(cmd: string): number {
+  return mockedInvoke.mock.calls.filter(([c]) => c === cmd).length
+}
+
 beforeEach(() => {
   vi.clearAllMocks()
   // Default to the desktop path so existing test bodies keep their semantics.
@@ -1106,61 +1163,6 @@ describe('PairingDialog', () => {
       expect(await screen.findByTestId('pairing-waiting-state')).toBeInTheDocument()
     }
 
-    // Reaches the waiting state via `fireEvent` under FAKE timers, for
-    // tests that go on to advance the poll/countdown intervals. This is
-    // NOT interchangeable with `enterWaitingState` above: `setInterval`
-    // handles created while real timers are active stay bound to the real
-    // clock even after a later `vi.useFakeTimers()` call — advancing fake
-    // time then does nothing to them. The interval must be created while
-    // fake timers are already active, which means the interactions that
-    // create it (role switch, word entry, Pair click) must also happen
-    // under fake timers — hence `fireEvent` (synchronous) instead of
-    // `userEvent` (which deadlocks against `waitFor`/`findBy` under fake
-    // timers, per the house rule above the paste-focus-unmount test) and
-    // `flushMicrotasks()` in place of the `findBy*` queries
-    // `enterWaitingState` uses.
-    //
-    // Deliberately does NOT use `vi.runAllTimersAsync()` for these
-    // flushes (unlike the single initial flush in e.g. the host countdown
-    // test): by the second/third flush a repeating `setInterval` (the
-    // host countdown, then the joiner's poll + wait countdown) is already
-    // active and never clears itself within the flush, so
-    // `runAllTimersAsync` — which exhausts the timer queue until it's
-    // empty — spins until Vitest's "10000 timers" infinite-loop guard
-    // aborts it. `flushMicrotasks` only drains the native Promise
-    // microtask queue (invoke() calls are plain resolved Promises, not
-    // fake-timer-driven), which is all that's needed to let
-    // confirmPairing/listPeerRefs settle without touching any interval.
-    async function flushMicrotasks() {
-      for (let i = 0; i < 5; i++) {
-        await act(async () => {
-          await Promise.resolve()
-        })
-      }
-    }
-
-    async function enterWaitingStateFake() {
-      // Flush the host-mount init promises (start_pairing + list_peer_refs)
-      // fired by the dialog-open effect.
-      await flushMicrotasks()
-
-      fireEvent.click(screen.getByRole('button', { name: /Have a code from the other device\?/i }))
-      // Flush the joiner-switch's cancelPairing + listPeerRefs refresh.
-      await flushMicrotasks()
-
-      const inputs = screen.getAllByRole('textbox')
-      fireEvent.change(inputs[0] as HTMLElement, { target: { value: 'echo' } })
-      fireEvent.change(inputs[1] as HTMLElement, { target: { value: 'foxtrot' } })
-      fireEvent.change(inputs[2] as HTMLElement, { target: { value: 'golf' } })
-      fireEvent.change(inputs[3] as HTMLElement, { target: { value: 'hotel' } })
-
-      fireEvent.click(screen.getByRole('button', { name: /^Pair$/i }))
-      // Flush confirmPairing + the poll's immediate enable-triggered fetch.
-      await flushMicrotasks()
-
-      expect(screen.getByTestId('pairing-waiting-state')).toBeInTheDocument()
-    }
-
     it('renders the waiting state with countdown, announces it, and has no a11y violations', async () => {
       const user = userEvent.setup()
       mockInvokeByCommand({ list_peer_refs: [], confirm_pairing: undefined })
@@ -1751,6 +1753,310 @@ describe('PairingDialog', () => {
       } finally {
         vi.useRealTimers()
       }
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // #3615 / #3620 — one invariant, four gaps: cancel only what you armed,
+  // and only when you know the clear succeeded.
+  //
+  // `backendArmedRef` means "this device holds backend-side pairing state a
+  // `cancel_pairing` would tear down". Every gap below is that ref
+  // disagreeing with reality: armed after the pair completed (#3615), a
+  // close that disarms a live window with no confirmation (#3620.1), a
+  // re-arm racing an in-flight clear (#3620.2), and a clear recorded as
+  // done before it landed (#3620.3).
+  // -----------------------------------------------------------------------
+  describe('#3615/#3620 cancel only what you armed', () => {
+    const newPeer = {
+      peer_id: 'peer-new-999',
+      last_hash: null,
+      last_sent_hash: null,
+      synced_at: null,
+      reset_count: 0,
+      last_reset_at: null,
+      cert_hash: null,
+      device_name: null,
+    }
+
+    // -------------------------------------------------------------------
+    // #3615 — a SYMMETRIC pair. The joiner arm has held since #3610 (its
+    // poll-success effect disarms the ref); the host arm is the gap: the
+    // host had no success detection at all, so a completed pair left the
+    // ref armed and closing the dialog fired a `cancel_pairing` that owned
+    // nothing — racing whatever arms the marker next. Fixing only one arm
+    // of a symmetric pair is what created this bug; both are asserted.
+    // -------------------------------------------------------------------
+    it('joiner: a completed pair disarms the marker, so closing afterwards fires no cancel_pairing (#3615)', async () => {
+      const onOpenChange = vi.fn()
+      let peerRows: (typeof newPeer)[] = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return peerRows
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+        await enterWaitingStateFake()
+
+        // The pair completes: the peer this device was waiting for is
+        // pinned and shows up in `list_peer_refs`.
+        peerRows = [newPeer]
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+
+        // One cancel so far: the host session torn down by the role switch.
+        const cancelsAfterPair = countInvokes('cancel_pairing')
+        expect(cancelsAfterPair).toBe(1)
+
+        rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+
+        // The marker did its job and is no longer this device's to tear
+        // down — the close must not fire a cancel that owns nothing.
+        expect(countInvokes('cancel_pairing')).toBe(cancelsAfterPair)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('host: a completed pair disarms the marker, so closing afterwards fires no cancel_pairing (#3615)', async () => {
+      const onOpenChange = vi.fn()
+      let peerRows: (typeof newPeer)[] = []
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return peerRows
+        return undefined
+      })
+
+      vi.useFakeTimers()
+      try {
+        const { rerender } = render(<PairingDialog open onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+        expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+        expect(countInvokes('cancel_pairing')).toBe(0)
+
+        // The pair completes: the joiner's proof matched, this device
+        // pinned the peer, and it shows up in `list_peer_refs` — the same
+        // and only observable evidence the joiner resolves its wait on.
+        peerRows = [newPeer]
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(2000)
+        })
+        expect(toast.success).toHaveBeenCalledWith('Device paired successfully')
+        expect(vi.mocked(announce)).toHaveBeenCalledWith('Device paired successfully')
+        expect(onOpenChange).toHaveBeenCalledWith(false)
+
+        rerender(<PairingDialog open={false} onOpenChange={onOpenChange} />)
+        await flushMicrotasks()
+
+        expect(countInvokes('cancel_pairing')).toBe(0)
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    // -------------------------------------------------------------------
+    // #3620.1 — the host's QR screen is a live pairing window, exactly as
+    // the joiner's wait is. Since #3610 an Esc/backdrop close genuinely
+    // disarms it, and the joiner then fails the responder's proof check
+    // with nothing on the host to say why. Guard it symmetrically.
+    // -------------------------------------------------------------------
+    it("Esc on the host's live QR screen shows the close guard instead of silently disarming the window (#3620)", async () => {
+      const user = userEvent.setup()
+      const onOpenChange = vi.fn()
+      mockInvokeByCommand({
+        start_pairing: mockPairingInfo,
+        list_peer_refs: [],
+        cancel_pairing: undefined,
+      })
+
+      render(<PairingDialog open onOpenChange={onOpenChange} />)
+      await screen.findByText('alpha bravo charlie delta')
+
+      await user.keyboard('{Escape}')
+
+      await waitFor(() => {
+        expect(screen.getByText('Cancel pairing?')).toBeInTheDocument()
+      })
+      // The guard intercepted: nothing closed, and — the point of the fix
+      // — the live pairing window is still armed on the backend.
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+      expect(countInvokes('cancel_pairing')).toBe(0)
+
+      const results = await axe(document.body)
+      expect(results).toHaveNoViolations()
+
+      // Keeping the pairing leaves the QR (and its window) intact.
+      await user.click(screen.getByRole('button', { name: /Keep pairing/i }))
+      await waitFor(() => {
+        expect(screen.queryByText('Cancel pairing?')).not.toBeInTheDocument()
+      })
+      expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+      expect(countInvokes('cancel_pairing')).toBe(0)
+
+      // ...and confirming still reaches the real teardown, so the guard is
+      // an extra step, not a dead end.
+      await user.keyboard('{Escape}')
+      await waitFor(() => {
+        expect(screen.getByText('Cancel pairing?')).toBeInTheDocument()
+      })
+      await user.click(screen.getByRole('button', { name: /^Cancel pairing$/i }))
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+      expect(onOpenChange).toHaveBeenCalledWith(false)
+    })
+
+    // -------------------------------------------------------------------
+    // #3620.2 — the close/unmount cleanup fires its clear UN-AWAITED (a
+    // React cleanup function cannot be async). On a fast reopen the DELETE
+    // can land AFTER the new `start_pairing` upsert, leaving the user
+    // looking at a QR + ticking countdown for a window that has already
+    // been deleted. This asserts the ORDERING, not a duration: the reopen
+    // must not re-arm until the in-flight clear has resolved.
+    // -------------------------------------------------------------------
+    it('reopening waits for the in-flight close cleanup before arming a new pairing window (#3620)', async () => {
+      let resolveCancel: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'cancel_pairing') {
+          return new Promise((resolve) => {
+            resolveCancel = () => resolve(undefined)
+          })
+        }
+        return undefined
+      })
+
+      const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      // Close: the cleanup effect fires `cancel_pairing`, which hangs.
+      rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(1)
+      })
+
+      // Reopen while that DELETE is still in flight.
+      rerender(<PairingDialog open onOpenChange={vi.fn()} />)
+      await flushMicrotasks()
+      expect(countInvokes('start_pairing')).toBe(1)
+
+      // Only once the clear has actually landed may a new window be armed.
+      resolveCancel()
+      await waitFor(() => {
+        expect(countInvokes('start_pairing')).toBe(2)
+      })
+      expect(await screen.findByText('alpha bravo charlie delta')).toBeInTheDocument()
+    })
+
+    // -------------------------------------------------------------------
+    // #3620.3 — `handleSwitchToJoiner` cleared `backendArmedRef` BEFORE
+    // awaiting its cancel, contradicting the invariant
+    // `executeCancelPairingExplicit` documents: the ref means "something is
+    // armed on the backend", so a clear that never landed must leave it
+    // armed. Mirrors the #3610 test for the waiting-screen Cancel: the
+    // proof that the ref survived is that the close/unmount cleanup still
+    // attempts its own retry.
+    // -------------------------------------------------------------------
+    it('a failed cancel while switching to the joiner path leaves the marker armed for the close/unmount retry (#3620)', async () => {
+      const user = userEvent.setup()
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') return []
+        if (cmd === 'cancel_pairing') throw new Error('db write failed')
+        return undefined
+      })
+
+      const { rerender } = render(<PairingDialog open onOpenChange={vi.fn()} />)
+      await screen.findByText('alpha bravo charlie delta')
+
+      // Switching to the joiner path cancels the host's own session — and
+      // that cancel fails (e.g. a DB write error).
+      await selectJoinerRole(user)
+      await screen.findByLabelText('Passphrase word 1')
+
+      await waitFor(() => {
+        expect(toast.error).toHaveBeenCalledWith('Failed to cancel pairing')
+      })
+      expect(countInvokes('cancel_pairing')).toBe(1)
+
+      // Let the retry succeed so its own outcome doesn't confound the
+      // assertion, then close the dialog for real.
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'list_peer_refs') return []
+        return undefined
+      })
+      rerender(<PairingDialog open={false} onOpenChange={vi.fn()} />)
+
+      // The host's window is still armed — the marker the failed switch
+      // never actually tore down gets its one retry on close.
+      await waitFor(() => {
+        expect(countInvokes('cancel_pairing')).toBe(2)
+      })
+    })
+
+    // -------------------------------------------------------------------
+    // #3615 (review) — the host's arm and the host's baseline do NOT land
+    // together: `start_pairing` and the peer read race inside `initHost`'s
+    // `Promise.all`, and it is `start_pairing` resolving that sets
+    // `pairingInfo` and so arms the poll. If the poll may arm inside that
+    // window it runs with the PREVIOUS attempt's baseline (or, on first
+    // open, the initial empty set) under a wait id that still matches, and
+    // its very first result — the device's existing peers — reads as a
+    // brand-new pin. That is #3469's false success arriving on the host
+    // path, and it also disarms `backendArmedRef`, orphaning the real
+    // pairing window it was still holding.
+    //
+    // Both guards are asserted separately, because either one alone hides
+    // the other's absence: `!loading` stops the poll arming at all (the
+    // invoke-count assertion), and clearing the baseline to UNKNOWN makes
+    // any poll that does slip through fail closed (the toast assertion).
+    // -------------------------------------------------------------------
+    it('host: a slow init peer read cannot make an already-paired peer look like a fresh pair (#3615)', async () => {
+      const onOpenChange = vi.fn()
+      const existing = { ...newPeer, peer_id: 'peer-already-paired-000' }
+      let listCalls = 0
+      let resolveInitList: () => void = () => {}
+      mockedInvoke.mockImplementation(async (cmd: string) => {
+        if (cmd === 'start_pairing') return mockPairingInfo
+        if (cmd === 'list_peer_refs') {
+          listCalls += 1
+          if (listCalls === 1) {
+            // The read that establishes the host's baseline hangs while
+            // `start_pairing` — its `Promise.all` partner — resolves at once.
+            return new Promise((resolve) => {
+              resolveInitList = () => resolve([existing])
+            })
+          }
+          return [existing]
+        }
+        return undefined
+      })
+
+      render(<PairingDialog open onOpenChange={onOpenChange} />)
+      await flushMicrotasks()
+
+      // The window is armed and `pairingInfo` is set, but the baseline is
+      // still in flight — the poll must not have armed against it.
+      expect(countInvokes('list_peer_refs')).toBe(1)
+      // ...and nothing has paired, so the dialog must not claim otherwise.
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
+
+      // Once the baseline lands the poll arms normally, and the peer that
+      // was in that baseline is still not a fresh pair.
+      resolveInitList()
+      await flushMicrotasks()
+      expect(screen.getByText('alpha bravo charlie delta')).toBeInTheDocument()
+      expect(toast.success).not.toHaveBeenCalled()
+      expect(onOpenChange).not.toHaveBeenCalledWith(false)
     })
   })
 
