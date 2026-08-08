@@ -32,6 +32,7 @@ import type { StoreApi } from 'zustand'
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockActionOrchestration } from '@/components/block-tree/use-block-action-orchestration'
 import { useBlockFlush } from '@/components/block-tree/use-block-flush'
+import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import type { RovingEditorHandle } from '@/editor/use-roving-editor'
 import { createPageBlockStore, type PageBlockState } from '@/stores/page-blocks'
 
@@ -112,7 +113,10 @@ describe('#2914 — Enter on multi-block content does not race splitBlock vs cre
       })
       return useBlockActionOrchestration({
         focusedBlockId: 'A',
-        collapsedVisible: store.getState().blocks,
+        // #3344 — `collapsedVisible` is brand-gated so no command path can be
+        // handed the un-zoomed page list. This test is not zoomed, where the
+        // real derivation returns the page list verbatim; stand in for it.
+        collapsedVisible: store.getState().blocks as ZoomedBlocks,
         blocks: store.getState().blocks,
         rovingEditor: handle,
         setFocused,

@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { UseBlockTreeKeyboardShortcutsOptions } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
+import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
 import { t } from '@/lib/i18n'
 import { __resetLastInteractedTreeForTests } from '@/lib/last-interacted-tree'
 import { useBlockStore } from '@/stores/blocks'
@@ -59,16 +60,41 @@ function makePageStore(
   return Object.assign(store, { __remove: remove, __pasteBlocks: pasteBlocks })
 }
 
-function makeOptions(
-  overrides: Partial<UseBlockTreeKeyboardShortcutsOptions> = {},
-): UseBlockTreeKeyboardShortcutsOptions {
+/**
+ * #3344 — `visibleIds` is brand-gated (`ZoomedIds`) and `selectAllIds` carries
+ * the separate `SelectAllScopeIds` kind, so this hook cannot feed the selection
+ * anything but the list derived for that specific contract. These tests supply
+ * plain fixtures rather than running the real `useBlockZoom` derivation, so
+ * they stand in for it here.
+ *
+ * Deliberately file-local helpers: the brand's whole point is that production
+ * code has no reachable way to mint one, so these must not become shared,
+ * importable exports.
+ */
+const zoomScoped = (ids: string[]): ZoomedIds => ids as ZoomedIds
+const selectAllScoped = (ids: string[]): SelectAllScopeIds => ids as SelectAllScopeIds
+
+/**
+ * Overrides accept plain `string[]` for the brand-gated id lists — a test
+ * fixture is standing in for the derivation, so the brand is applied once,
+ * here, rather than at every call site.
+ */
+type OptionOverrides = Partial<
+  Omit<UseBlockTreeKeyboardShortcutsOptions, 'selectAllIds' | 'visibleIds'>
+> & {
+  selectAllIds?: string[]
+  visibleIds?: string[]
+}
+
+function makeOptions(overrides: OptionOverrides = {}): UseBlockTreeKeyboardShortcutsOptions {
+  const { selectAllIds, visibleIds, ...rest } = overrides
   return {
     focusedBlockId: 'BLOCK_1',
     pageStore: makePageStore(['BLOCK_1', 'BLOCK_2']),
     selectedBlockIds: [],
     hasChildrenSet: new Set(['BLOCK_1']),
-    selectAllIds: ['BLOCK_1', 'BLOCK_2'],
-    visibleIds: ['BLOCK_1', 'BLOCK_2'],
+    selectAllIds: selectAllScoped(selectAllIds ?? ['BLOCK_1', 'BLOCK_2']),
+    visibleIds: zoomScoped(visibleIds ?? ['BLOCK_1', 'BLOCK_2']),
     toggleCollapse: vi.fn(),
     rawSelectAll: vi.fn(),
     extendSelection: vi.fn(),
@@ -85,7 +111,7 @@ function makeOptions(
     zoomedBlockId: null,
     zoomToRoot: vi.fn(),
     zoomIn: vi.fn(),
-    ...overrides,
+    ...rest,
   }
 }
 
