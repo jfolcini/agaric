@@ -32,14 +32,30 @@ One window remains and is now documented rather than implied: the responder read
 
 ## Three issues that were already fixed
 
-**#3564** (pinned zizmor unbuildable under pinned rustc) described two mutually unsatisfiable pins and a local provisioning path that compiled from source while CI downloaded a prebuilt binary. The root cause was already gone: `cargo_get` now tries `cargo binstall` first, which is option (3) from the issue's own Options list. Verified rather than assumed —
+**#3564** (pinned zizmor unbuildable under pinned rustc) described two mutually unsatisfiable pins and a local provisioning path that compiled from source while CI downloaded a prebuilt binary. The root cause is gone: provisioning now reaches `cargo binstall` before `cargo install`, which is option (3) from the issue's own Options list, so the MSRV of zizmor's dependency tree is never consulted.
+
+**This section is also where the session's own discipline failed, and the failure is left in rather than tidied away.** The first evidence recorded for that closure was:
 
 ```
 $ cargo binstall --dry-run --no-confirm zizmor
  WARN The package zizmor v1.29.0 (x86_64-unknown-linux-gnu) has been downloaded from github.com
 ```
 
-No compilation, so `tree-sitter-iter`'s `rust-version = "1.97.0"` is never consulted. `ZIZMOR_PINNED_VERSION` no longer exists anywhere in the tree.
+That tests **unpinned latest**. The version the issue turns on is the *pinned* `1.28.0`, and an unpinned resolution says nothing about whether a prebuilt exists for the pinned one — the check was applied to something adjacent to the thing under test rather than to the thing the claim protects, which is the exact failure this log names two sections later. Review of this very file caught it.
+
+Re-run against the version actually requested, forced past the already-installed short-circuit that made a first retry inconclusive:
+
+```
+$ cargo binstall --dry-run --force --no-confirm zizmor@1.28.0
+ INFO resolve: Resolving package: 'zizmor@=1.28.0'
+ WARN The package zizmor v1.28.0 (x86_64-unknown-linux-gnu) has been downloaded from github.com
+ INFO This will install the following binaries:
+ INFO   - zizmor => /home/javier/.cargo/bin/zizmor
+```
+
+A prebuilt does exist for the pinned version, so the closure stands. But it stands on evidence gathered *after* the fact: the conclusion was right and the check that produced it was not, which is indistinguishable from luck.
+
+Also corrected: an earlier draft of this log asserted that `ZIZMOR_PINNED_VERSION` no longer exists anywhere in the tree. **It does** — `scripts/zizmor-hook.sh:67`, and it is actively consumed (`setup-hooks.sh` seds it back out and passes it to `cargo_get_pinned`; `prek.toml` treats that file as the single source of truth). The pin is alive; what is gone is the compile-from-source path that made it unsatisfiable.
 
 **#3601** was filed *by this session* from a reviewer's non-blocking notes on #3597, and was entirely stale — the reviewer had written against an earlier commit of that PR and the follow-ups landed before merge. The Stryker module was already registered; running it gave 12 mutants generated, 12 killed, over the one file in its mutate scope. All four "stale JSDoc" sites already matched their code, and one of the four paths did not exist.
 
@@ -115,6 +131,7 @@ Every item above failed the same way: a claim that was true when written, or tru
 - Green tests bound what was measured, not what matters. #3493's tests were non-vacuous and proved the wrong half.
 - A session log is a claim too. #3560's `<10s` budget was contradicted by the very commit that allegedly introduced it, and the contradiction sat unexamined across at least three later issues.
 - **A falsification demonstration is a claim.** #3560's guard shipped with verbatim RED output and was still vacuous, because the break was applied to the test's own copy rather than to the thing the guard protects.
+- **This log did it too**, in the section arguing for exactly this discipline: #3564's closure was evidenced with a dry-run of *unpinned latest* when the issue turns on the *pinned* version, and asserted a constant no longer existed when it does. Review of the log caught both. Writing the principle down is not the same as applying it, and the section where you feel most certain is where it is least likely to be checked.
 
 Two of the fixes were also *unreachable or wrong in a way their own green tests could not show*: #3493's backend fix could not be invoked from the path the issue described, and #3598/#3599 introduced two new divergences while removing two. Both were caught only because a second agent was told to attack the strongest claim rather than re-run the tests.
 
