@@ -1,7 +1,7 @@
 # Session 1277 — claims that did not survive checking
 
 **Date:** 2026-08-08
-**Issues:** #3493, #3509, #3560, #3598, #3599, #3602, #3603 (done); #3564, #3601, #3608 (closed — already fixed, or the claim did not hold); #3600, #3602, #3605, #3606, #3609, #3612 (filed)
+**Issues:** #3493, #3509, #3560, #3598, #3599, #3603 (done); #3564, #3601, #3608 (closed — already fixed, or the claim did not hold); #3600, #3602, #3605, #3606, #3609, #3612, #3615, #3617, #3618 (filed); #3602 (fix open at time of writing)
 **PRs:** #3595, #3596, #3597, #3604, #3607 (merged); #3610, #3611, #3613, #3614 (opened)
 
 A backlog session that spent an unusual share of its time on a single question: *is this true?* Five separate work items turned out to rest on a claim that was stale, wrong, or narrower than stated. Two of them would have produced actively harmful commits. The pattern is worth recording because none of the claims looked doubtful — they came from reviewers, from issue bodies, and from this session's own earlier reasoning.
@@ -59,6 +59,8 @@ Also corrected: an earlier draft of this log asserted that `ZIZMOR_PINNED_VERSIO
 
 **#3601** was filed *by this session* from a reviewer's non-blocking notes on #3597, and was entirely stale — the reviewer had written against an earlier commit of that PR and the follow-ups landed before merge. The Stryker module was already registered; running it gave 12 mutants generated, 12 killed, over the one file in its mutate scope. All four "stale JSDoc" sites already matched their code, and one of the four paths did not exist.
 
+**#3608** was filed *during* this session, by the agent investigating #3560, and closed within the hour by the reviewer checking it. It reported that draft recovery's supersession query used the `op_log` PK autoindex rather than `idx_op_log_block_id`, defeating migration 0030 for legacy `draft_anchor_seq = 0` drafts. The observation reproduced; the diagnosis was wrong. `EXPLAIN QUERY PLAN` never sees bound values, so the plan cannot depend on `draft_anchor_seq` at all — the cause was missing `sqlite_stat1` on a fresh pool. On a production-shape database the intended index is chosen, so migration 0030 holds in production. Closed as not-planned with the evidence table. Filed and refuted inside one session is the cheap case; the expensive ones are the three below that sat for weeks.
+
 **#3509** (dead `PersistedCert` managed state) had its code half done by #3544, which deleted `sync_cert.rs` wholesale — precisely the incidental removal the issue predicted the port would perform.
 
 The instructive part is what was left. `AGENTS.md` still described `sync_cert.rs` and a "TLS WebSocket server", so the bootstrap document pointed readers at a module that no longer existed and described the wire protocol as something it no longer was. Worse than the overstatement the issue reported. The subagent's own first attempt at the doc fix *also* cited the deleted file. Replaced both bullets with `transport/` (QUIC over iroh) and `transport/identity.rs`, and recorded the two constraints a reader most needs and cannot infer: that `endpoint::lan_only` exists because iroh's defaults publish device addresses to n0's services and `presets::N0DisableRelay` — whose name reads like the requirement — disables only the relay; and that the identity key must persist because `peer_refs.endpoint_id` is the pinned column the responder resolves against.
@@ -112,6 +114,27 @@ The history did surface something worse. The test ran in **0.68s** at `5504ec99b
 The test has silently stopped measuring draft recovery. The property PERF-26 was built to protect is now under 2% of what the test observes. Nobody asked why a test got 78× slower; `d5bdb75bb` (#2621) instead normalised ~50s into the nextest slow-test overrides, and both #3532 and #3560 subsequently treated ~51s as *the baseline*. Filed as #3612.
 
 This is the session's theme with the sign flipped: not a claim that failed checking, but a number nobody thought to check, absorbed step by step into infrastructure until it read as normal.
+
+## The fix that added what it removed
+
+#3598 and #3599 were two TS/Rust divergences in reference-token handling, both invisible in rendered output and visible only as resolver side effects — the vault gains tags nobody asked for. The importer rewrote a bare `#tag` inside an unresolved `[[Project #alpha]]` into the corrupted `[[Project #[ULID]]]`; and for `#[[A #b]]` Rust could mint a stray tag `b` that TypeScript never requested.
+
+Two things are worth recording beyond the fix.
+
+**The guard had to go in the collectors, not the rewriters.** `#[[A #b]]` renders identically either way; only the side effect diverges. A rewrite-only fix looks green while still minting tags — keeping the rewrite guard and disabling the collector-side skip reddens 20 tests.
+
+**The change introduced two new divergences while removing two.** The two sides detect code by different mechanisms, because their inputs differ, and the fix asserted those were deliberately equivalent. Review treated that as the load-bearing claim and constructed the cases:
+
+| input | Rust | TS as authored |
+| --- | --- | --- |
+| `~~~\n#hushed\n~~~` | `[hushed]` | `[]` |
+| `a #before\n```\n#inside\n```\n#after` | `[]` | `[before, inside, after]` |
+
+`FENCE_DELIM_RE` accepted `~~~` where the importer's `is_fence_delim` takes backticks only; and `is_code` was modelled as line ranges when it is a sticky block-level flag the importer OR-s across a folded run. **Before the fix, TypeScript protected nothing, so the two sides trivially agreed** — every divergence here was created by the change that existed to remove divergences.
+
+The corpus could not have caught it: its `isCode` flag was a routing hint nothing checked, so flipping it to `false` passed silently and each side was being graded against its own expectations. It now asserts against what `parse_logseq_markdown` actually produces, and a new `codeFenceCases` set feeds raw text to each side's real mechanism.
+
+A third divergence in the same function survived into merge and is filed as #3617: only the #2866 recovery branch ends a block-run, so an ordinary bullet outside a fence does not, and a fence retroactively marks siblings as code. The corpus still has no bullet-outside-fence vector, which is why it passed again.
 
 ## Two gaps found sideways
 
