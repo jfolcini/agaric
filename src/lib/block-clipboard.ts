@@ -218,8 +218,11 @@ const BULLET_LINE_RE = /^-(?: |$)/
  *     bullet-shaped line at or above the opener's depth force-closes it (and
  *     starts a fresh, non-code block) UNLESS the next non-blank line is a bare
  *     ```` ``` ````, which can only ever close an open fence and so marks this
- *     line as fence CONTENT. That recovery point is the only place a block's
- *     content splits into a code part and a non-code part.
+ *     line as fence CONTENT.
+ *   * #3617 — ANY bullet outside an open fence ends the block run, mirroring
+ *     the importer pushing a new block for every bullet line regardless of
+ *     fence state. The #2866 recovery point is the special case where the
+ *     bullet also force-closes a dangling fence, not a separate mechanism.
  *
  * KNOWN, BOUNDED DIVERGENCE: the importer's `fence_open_depth` for a bare
  * opener is the depth of the previously emitted block; inside a single block's
