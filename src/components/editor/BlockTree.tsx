@@ -52,7 +52,8 @@ import { useBlockSlashCommands } from '@/components/block-tree/use-block-slash-c
 import { useBlockTreeContextBags } from '@/components/block-tree/use-block-tree-context-bags'
 import { useBlockTreeEventListeners } from '@/components/block-tree/use-block-tree-event-listeners'
 import { useBlockTreeKeyboardShortcuts } from '@/components/block-tree/use-block-tree-keyboard-shortcuts'
-import { useBlockZoom } from '@/components/block-tree/use-block-zoom'
+import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
+import { useBlockZoom, zoomScopedIds } from '@/components/block-tree/use-block-zoom'
 import { useBlockZoomEmptySeed } from '@/components/block-tree/use-block-zoom-empty-seed'
 import { BlockListRenderer } from '@/components/editor/BlockListRenderer'
 import { BlockTreeDialogs } from '@/components/editor/BlockTreeDialogs'
@@ -153,11 +154,23 @@ export function BlockTree({
   } = pageStore.getState()
   // Global focus/selection actions
   const { setFocused, toggleSelected, clearSelected } = useBlockStore.getState()
-  const {
-    rangeSelect: rawRangeSelect,
-    selectAll: rawSelectAll,
-    extendSelection,
-  } = useBlockStore.getState()
+  // #3344 — the three selection entry points are generic store primitives
+  // typed `string[]`; their `visibleIds` parameter name states the contract
+  // ("the tree's rendered order, collapse/zoom visibility already applied")
+  // that #3252 violated. Adapt them into THIS component under the
+  // `ZoomedIds` brand, so every id that can reach the batch delete / batch
+  // TODO handlers had to come out of the active projection. Narrowing here
+  // rather than in the store keeps the store layer free of a component-layer
+  // type while still closing the command path — the brand is contravariant in
+  // parameter position, so the wider store signatures assign cleanly.
+  const { rangeSelect, selectAll, extendSelection: rawExtendSelection } = useBlockStore.getState()
+  const rawRangeSelect: (blockId: string, visibleIds: ZoomedIds) => void = rangeSelect
+  // Ctrl/Cmd+A's scope is its own brand kind — at the page root it includes
+  // collapse-hidden rows, so it must not be substitutable for the rendered
+  // `ZoomedIds` the two range-select entry points above take.
+  const rawSelectAll: (visibleIds: SelectAllScopeIds) => void = selectAll
+  const extendSelection: (direction: 'up' | 'down', visibleIds: ZoomedIds) => void =
+    rawExtendSelection
 
   // ── Editor-event dispatch (#1019) ──────────────────────────────────
   // Owns the late-bound handler refs for the editor events whose handlers are
@@ -195,6 +208,12 @@ export function BlockTree({
     zoomToRoot,
     breadcrumbs: zoomBreadcrumb,
     zoomedVisible: uncappedZoomedVisible,
+    // Ctrl/Cmd+A's scope. Derived inside `useBlockZoom` (#3344) because that
+    // is the module allowed to brand a list as zoom-scoped: the page-wide
+    // arm is only reachable there, on the `zoomedBlockId === null` branch.
+    // Uncapped on purpose — the mount envelope limits React rows, not the
+    // semantic contents of the active zoom.
+    selectAllIds,
   } = useBlockZoom(blocks, collapseFilteredVisible)
 
   // Zoom means "show me inside this block". Expand the target through the
@@ -255,19 +274,10 @@ export function BlockTree({
   // Shift+Arrow keyboard range-select slice against this so neither ever pulls
   // an invisible block into the selection. Memoized so the document keydown
   // listener (useBlockTreeKeyboardShortcuts) doesn't re-attach every render.
-  const visibleIds = useMemo(() => zoomedVisible.map((b) => b.id), [zoomedVisible])
-
-  // Ctrl/Cmd+A intentionally keeps the documented page-wide scope at the
-  // root, but a zoomed tree selects only its complete zoom projection. Use the
-  // uncapped list here: the mount envelope limits React rows, not the semantic
-  // contents of the active zoom.
-  const selectAllIds = useMemo(
-    () =>
-      zoomedBlockId === null
-        ? blocks.map((block) => block.id)
-        : uncappedZoomedVisible.map((block) => block.id),
-    [zoomedBlockId, blocks, uncappedZoomedVisible],
-  )
+  // #3344 — `zoomScopedIds` carries the zoom-scope brand across the
+  // `FlatBlock[]` → `string[]` projection, so the selection entry points below
+  // cannot be handed the page-wide list instead.
+  const visibleIds = useMemo(() => zoomScopedIds(zoomedVisible), [zoomedVisible])
 
   // #1066 — `visibleIds` is re-derived from `blocks` on every edit, so a
   // `handleSelect` that closed over it would get a new identity per edit and

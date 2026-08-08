@@ -17,6 +17,7 @@ import { useEffect } from 'react'
 import type { StoreApi } from 'zustand'
 
 import type { DatePickerMode } from '@/components/block-tree/use-block-date-picker'
+import type { SelectAllScopeIds, ZoomedIds } from '@/components/block-tree/use-block-zoom'
 import { serializeBlockSubtree } from '@/lib/block-clipboard'
 import { readText, writeText } from '@/lib/clipboard'
 import { t } from '@/lib/i18n'
@@ -52,18 +53,37 @@ export interface UseBlockTreeKeyboardShortcutsOptions {
    * zoomed it is the complete (uncapped) zoom projection. This is separate
    * from `visibleIds`, whose rendered-list contract intentionally respects
    * the mount cap for range navigation.
+   *
+   * #3344 — brand-gated (`SelectAllScopeIds`). #3252 was this shortcut calling
+   * `rawSelectAll(blocks.map(b => b.id))` with the page-wide list while
+   * zoomed; the resulting selection then drove batch delete / batch TODO over
+   * rows the pane never rendered. Only `useBlockZoom` derives this type.
+   *
+   * A DIFFERENT brand kind from `visibleIds`: at the page root this list
+   * legitimately contains collapse-hidden rows, so the two are not
+   * interchangeable and the compiler now says so.
    */
-  selectAllIds: string[]
+  selectAllIds: SelectAllScopeIds
   /**
    * Visible block ids in rendered order (collapsed/zoomed filtering already
    * applied — `collapsedVisible`, or the zoomed slice). Keyboard range-select
    * (#922) steps through THIS list so Shift+Arrow matches what the user sees.
+   *
+   * #3344 — brand-gated for the same reason as `selectAllIds`: Shift+Arrow is
+   * the other way ids enter the selection that batch actions consume.
    */
-  visibleIds: string[]
+  visibleIds: ZoomedIds
   toggleCollapse: (id: string) => void
-  rawSelectAll: (ids: string[]) => void
+  /**
+   * Replace the global selection. Narrowed to `SelectAllScopeIds` so this hook
+   * has no way to pass anything but Ctrl/Cmd+A's derived scope — the selection
+   * is what the batch delete / batch TODO handlers act on. Note this is NOT
+   * `ZoomedIds`: handing it the mount-capped rendered list would silently make
+   * Ctrl+A stop at the mount envelope.
+   */
+  rawSelectAll: (ids: SelectAllScopeIds) => void
   /** Extend the block selection by one visible block (#922 — Shift+Arrow). */
-  extendSelection: (direction: 'up' | 'down', visibleIds: string[]) => void
+  extendSelection: (direction: 'up' | 'down', visibleIds: ZoomedIds) => void
   /** Toggle a single block in/out of the selection (#1733 — keyboard toggle). */
   toggleSelected: (blockId: string) => void
   clearSelected: () => void

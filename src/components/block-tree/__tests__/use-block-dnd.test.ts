@@ -101,10 +101,11 @@ vi.mock('@/lib/logger', () => ({
 
 import { makeBlock } from '@/__tests__/fixtures'
 import { useBlockDnD } from '@/components/block-tree/use-block-dnd'
+import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import { useIsTouch } from '@/hooks/useIsTouch'
 import { logger } from '@/lib/logger'
 import { capturePreDragFocus, consumePreDragFocus } from '@/lib/pre-drag-focus'
-import type { Projection } from '@/lib/tree-utils'
+import type { FlatBlock, Projection } from '@/lib/tree-utils'
 import {
   computeDropIndex,
   computeSelectionRoots,
@@ -121,18 +122,37 @@ const mockedLoggerWarn = vi.mocked(logger.warn)
 
 // ── Helpers ──────────────────────────────────────────────────────────────
 
-function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDnD>[0]>) {
+type DnDParams = Parameters<typeof useBlockDnD>[0]
+
+/**
+ * #3344 — the hook's `collapsedVisible` is brand-gated (`ZoomedBlocks`), so a
+ * caller cannot hand the drag projection the un-zoomed page list. These tests
+ * build plain fixtures rather than running the real `useBlockZoom` derivation,
+ * so they stand in for it here.
+ *
+ * Deliberately a file-local helper: the brand's whole point is that production
+ * code has no reachable way to mint one, so this must not become a shared,
+ * importable export.
+ */
+const zoomScoped = (blocks: FlatBlock[]): ZoomedBlocks => blocks as ZoomedBlocks
+
+function makeDefaultParams(
+  overrides?: Partial<Omit<DnDParams, 'collapsedVisible'>> & { collapsedVisible?: FlatBlock[] },
+) {
+  const { collapsedVisible: collapsedVisibleOverride, ...rest } = overrides ?? {}
   return {
     blocks: [
       makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
       makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
       makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
     ],
-    collapsedVisible: [
-      makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
-      makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
-      makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
-    ],
+    collapsedVisible: zoomScoped(
+      collapsedVisibleOverride ?? [
+        makeBlock({ id: 'A', depth: 0, parent_id: null, position: 0, content: 'Block A' }),
+        makeBlock({ id: 'B', depth: 0, parent_id: null, position: 1, content: 'Block B' }),
+        makeBlock({ id: 'C', depth: 0, parent_id: null, position: 2, content: 'Block C' }),
+      ],
+    ),
     rootParentId: null,
     rovingEditor: { activeBlockId: null },
     handleFlush: vi.fn(() => null),
@@ -140,7 +160,7 @@ function makeDefaultParams(overrides?: Partial<Parameters<typeof useBlockDnD>[0]
     reorder: vi.fn(async () => {}),
     moveToParent: vi.fn(async () => {}),
     moveBlocks: vi.fn(async () => {}),
-    ...overrides,
+    ...rest,
   }
 }
 

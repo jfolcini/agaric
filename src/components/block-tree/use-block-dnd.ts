@@ -21,6 +21,7 @@ import {
 import { sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { type RefObject, useCallback, useMemo, useRef, useState } from 'react'
 
+import type { ZoomedBlocks } from '@/components/block-tree/use-block-zoom'
 import { INDENT_WIDTH } from '@/components/editor/SortableBlock'
 import { useAutoScrollOnDrag } from '@/hooks/useAutoScrollOnDrag'
 import { useIsTouch } from '@/hooks/useIsTouch'
@@ -39,7 +40,14 @@ import {
 
 interface UseBlockDnDParams {
   blocks: FlatBlock[]
-  collapsedVisible: FlatBlock[]
+  /**
+   * The ACTIVE view projection — the rows the drag can actually target, and
+   * the list the depth projection is computed against.
+   *
+   * #3344 — brand-gated (`ZoomedBlocks`) alongside the other command paths:
+   * this one has been correct since #712, and the type now holds it that way.
+   */
+  collapsedVisible: ZoomedBlocks
   /**
    * Parent that depth-0 drops in `collapsedVisible` resolve to. This is the
    * page root normally, but the ZOOMED block id when a zoom is active (#712):
