@@ -1734,6 +1734,25 @@ pass_filenames = false
 files = "^scripts/(zizmor-hook|setup-hooks)\\.sh$"
 stages = ["pre-commit"]
 
+# setup-hooks-selftest (#3602): cargo_get used to try a crate's latest
+# version FIRST and only retry a pinned version if that failed, so a crate
+# CI pins to an exact version (sqruff, `sqruff@0.38.0` in the `tool:` lists
+# of _validate.yml / scheduled-deep-checks.yml) could still resolve to a
+# newer local install whenever binstall could fetch it — the pin was never
+# reached. Drives the real `cargo_get`/`pinned_version_for`/
+# `msrv_fallback_version_for` functions against a stubbed `cargo`/
+# `cargo-binstall` that logs install requests in order, so the assertion is
+# on ACTUAL PRECEDENCE (which version gets requested first), not just on the
+# pin table's contents — no network, no real installs.
+[[repos.hooks]]
+id = "setup-hooks-selftest"
+name = "setup-hooks.sh self-test (pin-vs-latest precedence)"
+entry = "bash scripts/setup-hooks.sh --self-test"
+language = "system"
+pass_filenames = false
+files = '^scripts/setup-hooks\.sh$'
+stages = ["pre-commit"]
+
 # taplo: TOML lint + format. The `check-toml` builtin only validates
 # parseability; taplo enforces consistent formatting across
 # prek.toml, src-tauri/Cargo.toml, src-tauri/deny.toml, lychee.toml,
