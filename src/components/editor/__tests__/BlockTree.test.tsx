@@ -7611,3 +7611,138 @@ describe('BlockTree zoom × keyboard focus navigation (#3251)', () => {
     expect(mockedInvoke).not.toHaveBeenCalledWith('delete_block', expect.anything())
   })
 })
+
+// =========================================================================
+// #3344 — the zoomed selection is what batch actions act on
+// =========================================================================
+//
+// The structural half of this issue is the `ZoomedIds` brand (see
+// `use-block-zoom.ts`), which makes "hand a command path the un-zoomed page
+// list" a compile error. This suite is the behavioural half: it drives the
+// WHOLE chain a user drives — real `useBlockZoom`, real Ctrl+A through
+// `useBlockTreeKeyboardShortcuts`, real batch toolbar, real
+// `useBlockMultiSelect` — and pins the IPC payload that finally leaves the
+// app. Nothing here seeds `selectedBlockIds`: the selection under assertion
+// is the one the shortcut actually produced.
+//
+// Both batch arms are covered. They consume the same selection, but delete
+// and set-TODO are separate handlers (`handleBatchDelete` /
+// `handleBatchSetTodo`) with separate IPCs, and only delete is behind a
+// confirmation dialog — a scope leak into the un-dialogued one is the worse
+// of the two, so neither arm is left untested.
+describe('BlockTree zoom × Ctrl+A × batch actions (#3344)', () => {
+  beforeEach(() => {
+    mockedInvoke.mockReset()
+    mockedInvoke.mockResolvedValue(null)
+  })
+
+  /**
+   * Z holds C1/C2; S and its child S1 sit outside the zoom. S1 matters: it
+   * makes the page list strictly larger than the zoom projection at BOTH
+   * depths, so a leak cannot hide behind "the page happens to equal the
+   * subtree".
+   */
+  function zoomFixture() {
+    return [
+      makeBlock({ id: 'Z', content: 'Zoom root Z', depth: 0, position: 0 }),
+      makeBlock({ id: 'C1', parent_id: 'Z', depth: 1, position: 0, content: 'Child C1' }),
+      makeBlock({ id: 'C2', parent_id: 'Z', depth: 1, position: 1, content: 'Child C2' }),
+      makeBlock({ id: 'S', content: 'Sibling S', depth: 0, position: 1 }),
+      makeBlock({ id: 'S1', parent_id: 'S', depth: 1, position: 0, content: 'Sibling child S1' }),
+    ]
+  }
+
+  /** Zoom into Z via the production affordance and wait for the pane to settle. */
+  async function zoomIntoZ(user: ReturnType<typeof userEvent.setup>) {
+    pageStore.setState({ blocks: zoomFixture(), loading: false })
+    renderBlockTree()
+
+    await user.click(await screen.findByTestId('zoom-in-Z'))
+    await waitFor(() => {
+      expect(screen.getByTestId('sortable-block-C1')).toBeInTheDocument()
+      expect(screen.getByTestId('sortable-block-C2')).toBeInTheDocument()
+    })
+    // The rows outside the zoom are genuinely unrendered — otherwise the
+    // assertions below would hold for a reason other than scoping.
+    expect(screen.queryByTestId('sortable-block-Z')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sortable-block-S')).not.toBeInTheDocument()
+    expect(screen.queryByTestId('sortable-block-S1')).not.toBeInTheDocument()
+  }
+
+  it('Ctrl+A then batch delete removes only the zoomed blocks', async () => {
+    const user = userEvent.setup()
+    await zoomIntoZ(user)
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(await screen.findByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_blocks_by_ids'),
+      ).toHaveLength(1)
+    })
+
+    // Pre-#3252 the shortcut selected the whole page, so this payload carried
+    // Z, S and S1 — three rows the zoomed pane never rendered, one of them the
+    // zoom root itself (whose delete cascades over C1/C2 too).
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', { blockIds: ['C1', 'C2'] })
+  })
+
+  it('Ctrl+A then batch set-TODO marks only the zoomed blocks', async () => {
+    const user = userEvent.setup()
+    await zoomIntoZ(user)
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'TODO' })).toBeInTheDocument()
+    })
+    // No confirmation dialog on this arm — the IPC fires on the first click.
+    await user.click(screen.getByRole('button', { name: 'TODO' }))
+
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'set_todo_state_batch'),
+      ).toHaveLength(1)
+    })
+
+    expect(mockedInvoke).toHaveBeenCalledWith('set_todo_state_batch', {
+      blockIds: ['C1', 'C2'],
+      state: 'TODO',
+    })
+  })
+
+  it('the same page, NOT zoomed, batch deletes every row — the scoping is the zoom', async () => {
+    const user = userEvent.setup()
+    pageStore.setState({ blocks: zoomFixture(), loading: false })
+    renderBlockTree()
+    await screen.findByTestId('sortable-block-Z')
+
+    fireEvent.keyDown(document, { key: 'a', ctrlKey: true })
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Delete/i })).toBeInTheDocument()
+    })
+    await user.click(screen.getByRole('button', { name: /Delete/i }))
+    await user.click(await screen.findByRole('button', { name: /Yes, delete/i }))
+
+    await waitFor(() => {
+      expect(
+        mockedInvoke.mock.calls.filter(([cmd]) => cmd === 'delete_blocks_by_ids'),
+      ).toHaveLength(1)
+    })
+
+    // The control arm. Ctrl+A at the page root is DOCUMENTED to take the whole
+    // page, so a fix that simply narrowed select-all everywhere would pass the
+    // two tests above while silently breaking this. Together the three pin the
+    // real contract: the selection tracks the ACTIVE projection, whatever it is.
+    expect(mockedInvoke).toHaveBeenCalledWith('delete_blocks_by_ids', {
+      blockIds: ['Z', 'C1', 'C2', 'S', 'S1'],
+    })
+  })
+})

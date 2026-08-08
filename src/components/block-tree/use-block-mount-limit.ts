@@ -65,9 +65,9 @@ export const INITIAL_MOUNT_LIMIT = 500
 /** Rows revealed per `expandMountLimit()` call once the ceiling is hit. */
 export const MOUNT_LIMIT_STEP = 500
 
-export interface UseBlockMountLimitReturn {
+export interface UseBlockMountLimitReturn<L extends FlatBlock[] = FlatBlock[]> {
   /** `visibleBlocks`, truncated to the current mount limit. */
-  mounted: FlatBlock[]
+  mounted: L
   /** Count of `visibleBlocks` rows beyond the current mount limit. */
   hiddenCount: number
   /** Reveal (mount) the next batch of rows. */
@@ -89,10 +89,18 @@ export interface UseBlockMountLimitOptions {
   pageKey?: string | null
 }
 
-export function useBlockMountLimit(
-  visibleBlocks: FlatBlock[],
+/**
+ * #3344 — generic in the ARRAY type, not just the element type, so the
+ * zoom-scope brand (`ZoomedBlocks`, see `use-block-zoom.ts`) survives the cap:
+ * BlockTree feeds this the zoom projection and needs the capped result to stay
+ * a legal argument for the command-path hooks. `L` is inferred from the
+ * argument, so this propagates a brand it is given and can never mint one —
+ * passing an un-scoped list still yields an un-scoped list.
+ */
+export function useBlockMountLimit<L extends FlatBlock[]>(
+  visibleBlocks: L,
   options: UseBlockMountLimitOptions = {},
-): UseBlockMountLimitReturn {
+): UseBlockMountLimitReturn<L> {
   const { initialLimit = INITIAL_MOUNT_LIMIT, step = MOUNT_LIMIT_STEP, pageKey = null } = options
 
   const [mountScope, setMountScope] = useState(() => ({ pageKey, limit: initialLimit }))
@@ -118,7 +126,9 @@ export function useBlockMountLimit(
   // Reference-stable when nothing is hidden — keeps identity churn out of
   // the mount-cap-free (common) case, same discipline as
   // `useBlockCollapse.visibleBlocks` returning `blocks` as-is.
-  const mounted = hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks
+  // The truncation is a NARROWING of `visibleBlocks` — every element came from
+  // it — so re-asserting `L` preserves whatever contract the input carried.
+  const mounted = (hiddenCount > 0 ? visibleBlocks.slice(0, mountLimit) : visibleBlocks) as L
 
   return { mounted, hiddenCount, expandMountLimit }
 }
