@@ -152,6 +152,12 @@ export function PairingDialog({
   // able to admit an unpaired device. The ref now tracks "is anything armed
   // on the backend", which is the question the gate is really asking.
   const backendArmedRef = useRef(false)
+  // #3620 — the clear the close/unmount cleanup left in flight, if any. A
+  // reopen awaits it before arming a new window, so the DELETE can never
+  // land after the next `start_pairing` upsert and silently delete the
+  // window the user is being shown. Held as a ref (not state) because it is
+  // read across a close/reopen cycle and must never trigger a render.
+  const pendingClearRef = useRef<Promise<void | undefined> | null>(null)
   // #3469 — snapshot of known peer ids taken the instant waiting begins, so
   // the poll below can detect a genuinely NEW peer (the TOFU-pin signal)
   // rather than false-triggering on peers that were already paired before
@@ -251,7 +257,30 @@ export function PairingDialog({
     setRole('host')
     setLoading(true)
     setError(null)
-    await Promise.all([executeStartPairing(), executeLoadPeers()])
+    // #3615 (review) — drop the previous window's baseline BEFORE the arm.
+    // `start_pairing` and the peer read race each other inside the
+    // `Promise.all` below, so `pairingInfo` (and with it the poll's arming
+    // condition) can land while the new baseline is still in flight. Leaving
+    // the old attempt's snapshot in place across that window lets the first
+    // poll judge a fresh window against a baseline that predates it and
+    // report an ALREADY-paired peer as a fresh pair. `null` = UNKNOWN, so
+    // any poll that slips through fails closed and adopts a baseline instead
+    // (see the ref's comment). `loading` gates the poll for the same window
+    // — this is the belt to that braces, for the case where two `initHost`
+    // runs overlap and the first one's `setLoading(false)` reopens it.
+    knownPeerIdsRef.current = null
+    const [, peerList] = await Promise.all([executeStartPairing(), executeLoadPeers()])
+    // #3615 — the host's baseline for its own success detection, taken from
+    // the same authoritative read that fills the paired-devices list. Same
+    // semantics as the joiner's confirm-time snapshot: `undefined` (the
+    // read failed) becomes an explicitly UNKNOWN baseline rather than an
+    // empty one, so the success effect fails closed instead of reporting
+    // every already-paired device as a fresh pair.
+    knownPeerIdsRef.current = peerList ? new Set(peerList.map((p) => p.peer_id)) : null
+    // Open the wait id only once the baseline is in place — a poll that
+    // started before this point is stamped with the previous id and is
+    // discarded rather than judged against a baseline it predates.
+    waitSessionRef.current += 1
     setLoading(false)
   }, [executeStartPairing, executeLoadPeers])
 
@@ -318,7 +347,22 @@ export function PairingDialog({
     setJoinerPhase('entry')
     setWaitCountdown(null)
     backendArmedRef.current = false
-    void initHost()
+    // #3620 — a reopen must not race the clear the previous close left in
+    // flight. `cancel_pairing`'s DELETE and `start_pairing`'s upsert touch
+    // the same single pending-pairing row, so an un-awaited clear landing
+    // after the new arm deletes the window the user is looking at: QR on
+    // screen, countdown ticking, nothing armed on the backend. Ordering the
+    // arm behind the clear is the whole fix — see `pendingClearRef`.
+    let superseded = false
+    void (async () => {
+      const pendingClear = pendingClearRef.current
+      if (pendingClear) await pendingClear
+      if (superseded) return
+      await initHost()
+    })()
+    return () => {
+      superseded = true
+    }
   }, [open, initHost])
 
   // Cancel the pairing session on the backend when the dialog closes or
@@ -330,13 +374,21 @@ export function PairingDialog({
     return () => {
       if (backendArmedRef.current) {
         backendArmedRef.current = false
-        void executeCancelPairingCleanup()
+        // #3620 — a React cleanup function cannot be async, so this clear
+        // is necessarily fire-and-forget. Publish it so a reopen can wait
+        // for it instead of racing it (see the open effect above).
+        const clear = executeCancelPairingCleanup()
+        pendingClearRef.current = clear
+        void clear.finally(() => {
+          if (pendingClearRef.current === clear) pendingClearRef.current = null
+        })
       }
     }
   }, [open, executeCancelPairingCleanup])
 
   // Countdown timer (#294) — only re-run effect when active/inactive changes.
   const countdownActive = countdown !== null && countdown > 0
+  const isExpired = countdown !== null && countdown <= 0
   useEffect(() => {
     if (!countdownActive) return
 
@@ -368,7 +420,32 @@ export function PairingDialog({
     }
   }, [countdown, t])
 
-  // #3469 — while the joiner is 'waiting', poll `list_peer_refs` for the
+  // #3615 — the two shapes of "this device is holding a pairing window open
+  // and does not yet know whether it completed": the host's un-expired QR,
+  // and the joiner's post-confirm wait. They are the same situation seen
+  // from the two ends of one handshake, and completion is observable to
+  // both in exactly one way — a new row in `list_peer_refs`, written when a
+  // device TOFU-pins its counterpart. One flag drives both the poll and the
+  // success effect below, so the two roles cannot drift apart again: the
+  // host previously had no success detection at all, so a completed pair
+  // left its marker armed and closing the dialog fired a `cancel_pairing`
+  // that owned nothing.
+  //
+  // `!loading && Boolean(pairingInfo)` is the render gate on the QR block
+  // below, verbatim — the host's window is live for exactly as long as its
+  // code is on screen. `!loading` is load-bearing, not decorative: `initHost`
+  // holds `loading` from before it calls `start_pairing` until after the
+  // baseline snapshot and the wait-id bump are both in place, so without it
+  // the poll arms the instant `start_pairing` resolves — while the baseline
+  // is still the PREVIOUS attempt's (or the initial empty set) and the wait
+  // id still matches it. The first poll then finds every already-paired peer
+  // "new" and announces "Device paired successfully" for a pair that never
+  // happened, disarming `backendArmedRef` and orphaning the real window.
+  // That is #3469's false success reaching the host through #3615's poll.
+  const hostWindowShowing = role === 'host' && !loading && Boolean(pairingInfo) && !isExpired
+  const awaitingPairResult = open && (joinerPhase === 'waiting' || hostWindowShowing)
+
+  // #3469 — while a pairing window is open, poll `list_peer_refs` for the
   // TOFU-pin that is the ONLY observable evidence the passphrase matched.
   // `usePollingQuery` is the existing reusable polling hook (used elsewhere
   // for the same fixed-interval-while-mounted shape); it pauses while the
@@ -389,16 +466,22 @@ export function PairingDialog({
     // this the poll keeps firing `list_peer_refs` every 2s on a closed
     // dialog. `usePollingQuery` itself cleans up correctly on a genuine
     // unmount; the bug is that a parent-driven close isn't one.
-    enabled: open && joinerPhase === 'waiting',
+    // (`awaitingPairResult` folds `open` in — see its comment.)
+    enabled: awaitingPairResult,
   })
 
   // Success: a peer id appears that was not present in the snapshot taken
-  // when waiting began. This is the ONLY path allowed to claim the pairing
-  // succeeded — it is the first moment this device actually knows the
-  // passphrase matched (the responder pins the peer only after its own
-  // proof comparison passes).
+  // when the window was armed. This is the ONLY path allowed to claim the
+  // pairing succeeded — it is the first moment this device actually knows
+  // the passphrase matched (a device pins its counterpart only after its
+  // own proof comparison passes).
+  //
+  // #3615 — runs for BOTH roles (see `awaitingPairResult`). The joiner
+  // snapshots its baseline when `confirm_pairing` resolves; the host
+  // snapshots it in `initHost`, the instant `start_pairing` arms its
+  // window.
   useEffect(() => {
-    if (joinerPhase !== 'waiting' || !polled) return
+    if (!awaitingPairResult || !polled) return
     // Left over from a previous wait (or from before this one's first fetch
     // resolved) — carries no information about this attempt. Discarding it
     // also keeps it out of the baseline-adoption path below.
@@ -429,10 +512,17 @@ export function PairingDialog({
     setJoinerPhase('entry')
     setWaitCountdown(null)
     setWords(['', '', '', ''])
+    // #3615 — the host's QR and its countdown describe a window that has
+    // now been consumed; clearing them is the host-side equivalent of the
+    // joiner's wait teardown above, and it stops a spent code (and a
+    // ticking timer) from being shown for the moment before the parent
+    // honours `onOpenChange(false)`.
+    setPairingInfo(null)
+    setCountdown(null)
     announce(t('announce.pairingSucceeded'))
     notify.success(t('pairing.pairSuccessMessage'))
     onOpenChange(false)
-  }, [polled, joinerPhase, t, onOpenChange])
+  }, [polled, awaitingPairResult, t, onOpenChange])
 
   // Failure: the responder's wire-level proof rejection reaches this device
   // as a generic `sync:error` → `useSyncStore` error string (see `syncError`
@@ -735,9 +825,15 @@ export function PairingDialog({
   // device could simultaneously be offering its own code (host) and
   // entering another's (joiner) — the #3463 shape wearing a different hat.
   const handleSwitchToJoiner = useCallback(async () => {
+    // #3620 — goes through the explicit executor, which clears
+    // `backendArmedRef` in its `onSuccess` and nowhere else. Clearing it
+    // here, before the await, recorded a teardown that had not happened
+    // (and might still fail): the ref means "something is armed on the
+    // backend", and if the DELETE never landed it still is. Leaving it
+    // armed on failure hands the retry to the close/unmount cleanup, and
+    // the clear is an idempotent DELETE so two attempts cannot disagree.
     if (backendArmedRef.current) {
-      backendArmedRef.current = false
-      await executeCancelPairingCleanup()
+      await executeCancelPairingExplicit()
     }
     setPairingInfo(null)
     setCountdown(null)
@@ -747,7 +843,7 @@ export function PairingDialog({
     setJoinerPhase('entry')
     setWaitCountdown(null)
     await initJoiner()
-  }, [executeCancelPairingCleanup, initJoiner])
+  }, [executeCancelPairingExplicit, initJoiner])
 
   // Reversible: switching back to the host path re-initialises a fresh
   // host session (this device had none while it was a joiner).
@@ -794,8 +890,8 @@ export function PairingDialog({
     [executeUnpair],
   )
 
-  // #294: Format countdown for display
-  const isExpired = countdown !== null && countdown <= 0
+  // #294: Format countdown for display (`isExpired` is derived up with the
+  // countdown timer above — the live-pairing-window flag needs it there).
   const countdownDisplay =
     countdown !== null && countdown > 0
       ? `${Math.floor(countdown / 60)}:${String(countdown % 60).padStart(2, '0')}`
@@ -825,12 +921,22 @@ export function PairingDialog({
     // backend's point of view (a pending pairing marker is armed) even
     // though `pairLoading` itself has already settled back to false — guard
     // it the same way so Esc/backdrop-click doesn't silently abandon it.
-    if (pairLoading || joinerPhase === 'waiting') {
+    // #3620: the host's live QR is the same situation seen from the other
+    // end — a pairing window armed on the backend that a joiner may be
+    // mid-attempt against. Since #3610 closing it genuinely disarms that
+    // window, and the joiner then fails the responder's proof check with
+    // nothing on this device to say why. Guarded symmetrically with the
+    // joiner's wait rather than warned about afterwards: the confirmation
+    // is the non-destructive choice, and the whole point of this family of
+    // fixes is that the two roles behave identically. An expired window has
+    // nothing left to lose, so it closes without ceremony.
+    const hostWindowLive = role === 'host' && backendArmedRef.current && !isExpired
+    if (pairLoading || joinerPhase === 'waiting' || hostWindowLive) {
       setConfirmCloseOpen(true)
       return
     }
     handleCancel()
-  }, [pairLoading, joinerPhase, handleCancel])
+  }, [pairLoading, joinerPhase, role, isExpired, handleCancel])
 
   const parts = useDialogOrSheet('dialog')
   const { Root, Content, Header, Title } = parts
