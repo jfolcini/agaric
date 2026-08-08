@@ -41,6 +41,7 @@ import type {
   TableNode,
   TextNode,
 } from '@/editor/types'
+import { TASK_STATE_TO_MARKER } from '@/lib/task-states'
 
 // -- Serialize (PM doc → Markdown) --------------------------------------------
 
@@ -617,15 +618,10 @@ function endsWithEscapedBang(result: string): boolean {
  * markers (`[/]`/`[-]`) so the full TODO→DOING→DONE→CANCELLED cycle survives
  * a markdown round-trip without polluting the task text with keywords.
  */
-const TASK_MARKER: Record<NonNullable<ParagraphNode['attrs']>['todoState'], string> = {
-  TODO: '- [ ] ',
-  DOING: '- [/] ',
-  DONE: '- [x] ',
-  CANCELLED: '- [-] ',
-}
-
 function serializeParagraph(node: ParagraphNode, onUnknownNode?: (type: string) => void): string {
-  const taskPrefix = node.attrs?.todoState ? TASK_MARKER[node.attrs.todoState] : ''
+  const taskPrefix = node.attrs?.todoState
+    ? `- [${TASK_STATE_TO_MARKER[node.attrs.todoState]}] `
+    : ''
 
   if (!node.content || node.content.length === 0) {
     // An empty task block still emits its checkbox marker so the state

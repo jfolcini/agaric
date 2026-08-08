@@ -173,7 +173,7 @@ export const GRAPH_FILTER_TYPES = [
 export type GraphFilterType = (typeof GRAPH_FILTER_TYPES)[number]
 
 /** Allowed todo-state values (matches the locked cycle in useBlockProperties). */
-export const GRAPH_STATUS_VALUES = ['TODO', 'DOING', 'DONE', 'CANCELLED'] as const
+export { TASK_STATES as GRAPH_STATUS_VALUES } from '@/lib/task-states'
 
 /**
  * Default allowed priority values — kept for back-compat with tests and

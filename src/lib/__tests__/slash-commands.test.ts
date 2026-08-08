@@ -82,6 +82,14 @@ describe('searchPropertyKeys', () => {
 })
 
 describe('SLASH_COMMANDS catalog', () => {
+  it('keeps the explicit task command order instead of the task cycle order', () => {
+    expect(
+      SLASH_COMMANDS.filter((command) => command.category === 'slashCommand.categories.tasks').map(
+        (command) => command.id,
+      ),
+    ).toEqual(['todo', 'doing', 'cancelled', 'done'])
+  })
+
   it('registers the block-ref command in the references group (#213 PR 4)', () => {
     const blockRef = SLASH_COMMANDS.find((c) => c.id === 'block-ref')
     expect(blockRef).toBeDefined()

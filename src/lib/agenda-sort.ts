@@ -1,5 +1,11 @@
 import type { BlockRow } from '@/lib/bindings'
 import { getPriorityLevels, priorityRank } from '@/lib/priority-levels'
+import {
+  isTodoState,
+  TASK_STATE_SORT_ORDER,
+  taskStateRank,
+  type TodoState,
+} from '@/lib/task-states'
 
 export type AgendaSortBy = 'date' | 'priority' | 'state' | 'page'
 export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'
@@ -10,15 +16,6 @@ export type AgendaGroupBy = 'date' | 'priority' | 'state' | 'page' | 'none'
  */
 function effectiveDate(block: BlockRow): string {
   return block.due_date ?? block.scheduled_date ?? '9999-12-31'
-}
-
-/** State sort rank: DOING=0, TODO=1, DONE=2, CANCELLED=3, null/other=4. */
-function stateRank(state: string | null): number {
-  if (state === 'DOING') return 0
-  if (state === 'TODO') return 1
-  if (state === 'DONE') return 2
-  if (state === 'CANCELLED') return 3
-  return 4
 }
 
 /**
@@ -33,8 +30,8 @@ export function sortAgendaBlocks(blocks: BlockRow[]): BlockRow[] {
     if (dateA !== dateB) return dateA < dateB ? -1 : 1
 
     // 2. State: DOING > TODO > DONE > CANCELLED > null
-    const stateA = stateRank(a.todo_state)
-    const stateB = stateRank(b.todo_state)
+    const stateA = taskStateRank(a.todo_state)
+    const stateB = taskStateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
 
     // 3. Priority: 1 > 2 > 3 > null
@@ -159,7 +156,7 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
     const dateB = effectiveDate(b)
     if (dateA !== dateB) return dateA < dateB ? -1 : 1
     // state
-    return stateRank(a.todo_state) - stateRank(b.todo_state)
+    return taskStateRank(a.todo_state) - taskStateRank(b.todo_state)
   }
 
   const INDEX_CLASS = [
@@ -193,25 +190,14 @@ export function groupByPriority(blocks: BlockRow[]): AgendaGroup[] {
  * Within each group, blocks are sorted by date ASC then priority.
  */
 export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
-  const buckets = new Map<string, BlockRow[]>([
-    ['DOING', []],
-    ['TODO', []],
-    ['DONE', []],
-    ['CANCELLED', []],
-    ['No state', []],
-  ])
+  const NO_STATE = 'No state'
+  const buckets = new Map<string, BlockRow[]>(
+    TASK_STATE_SORT_ORDER.map((state) => [state, []] as const),
+  )
+  buckets.set(NO_STATE, [])
 
   for (const block of blocks) {
-    const key =
-      block.todo_state === 'DOING'
-        ? 'DOING'
-        : block.todo_state === 'TODO'
-          ? 'TODO'
-          : block.todo_state === 'DONE'
-            ? 'DONE'
-            : block.todo_state === 'CANCELLED'
-              ? 'CANCELLED'
-              : 'No state'
+    const key = isTodoState(block.todo_state) ? block.todo_state : NO_STATE
     buckets.get(key)?.push(block)
   }
 
@@ -224,13 +210,13 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
     return priorityRank(a.priority) - priorityRank(b.priority)
   }
 
-  const CLASS_MAP: Record<string, string> = {
+  const CLASS_MAP = {
     DOING: 'text-status-pending-foreground',
     TODO: 'text-status-active-foreground',
     DONE: 'text-status-done-foreground',
     CANCELLED: 'text-task-cancelled',
-    'No state': 'text-muted-foreground',
-  }
+    [NO_STATE]: 'text-muted-foreground',
+  } satisfies Record<TodoState | typeof NO_STATE, string>
 
   const result: AgendaGroup[] = []
   for (const [label, group] of buckets) {
@@ -238,7 +224,7 @@ export function groupByState(blocks: BlockRow[]): AgendaGroup[] {
     result.push({
       label,
       blocks: [...group].toSorted(sortWithin),
-      className: CLASS_MAP[label],
+      className: CLASS_MAP[label as TodoState | typeof NO_STATE],
     })
   }
   return result
@@ -261,8 +247,8 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
     if (dateA !== dateB) return dateA < dateB ? -1 : 1
 
     // 3. State: DOING > TODO > DONE > CANCELLED > null
-    const stateA = stateRank(a.todo_state)
-    const stateB = stateRank(b.todo_state)
+    const stateA = taskStateRank(a.todo_state)
+    const stateB = taskStateRank(b.todo_state)
     return stateA - stateB
   })
 }
@@ -274,8 +260,8 @@ export function sortByPriority(blocks: BlockRow[]): BlockRow[] {
 export function sortByState(blocks: BlockRow[]): BlockRow[] {
   return [...blocks].toSorted((a, b) => {
     // 1. State: DOING > TODO > DONE > CANCELLED > null
-    const stateA = stateRank(a.todo_state)
-    const stateB = stateRank(b.todo_state)
+    const stateA = taskStateRank(a.todo_state)
+    const stateB = taskStateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
 
     // 2. Date ascending
@@ -308,8 +294,8 @@ export function groupByPage(blocks: BlockRow[], pageTitles: Map<string, string>)
 
   const sortWithin = (a: BlockRow, b: BlockRow): number => {
     // state
-    const stateA = stateRank(a.todo_state)
-    const stateB = stateRank(b.todo_state)
+    const stateA = taskStateRank(a.todo_state)
+    const stateB = taskStateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
     // priority
     const prioA = priorityRank(a.priority)
@@ -375,8 +361,8 @@ export function sortByPage(blocks: BlockRow[], pageTitles: Map<string, string>):
     }
 
     // Same page (or both null): sort by state, then priority, then date
-    const stateA = stateRank(a.todo_state)
-    const stateB = stateRank(b.todo_state)
+    const stateA = taskStateRank(a.todo_state)
+    const stateB = taskStateRank(b.todo_state)
     if (stateA !== stateB) return stateA - stateB
 
     const prioA = priorityRank(a.priority)

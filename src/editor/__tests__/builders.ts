@@ -29,6 +29,7 @@ import type {
   TableRowNode,
   TagRefNode,
   TextNode,
+  TodoState,
 } from '@/editor/types'
 
 export function text(t: string, marks?: readonly PMMark[]): TextNode {
@@ -93,10 +94,7 @@ export function paragraph(...nodes: InlineNode[]): ParagraphNode {
 }
 
 /** A task paragraph carrying a GFM checkbox `todoState` (#1435). */
-export function task(
-  todoState: 'TODO' | 'DOING' | 'DONE' | 'CANCELLED',
-  ...nodes: InlineNode[]
-): ParagraphNode {
+export function task(todoState: TodoState, ...nodes: InlineNode[]): ParagraphNode {
   if (nodes.length === 0) return { type: 'paragraph', attrs: { todoState } }
   return { type: 'paragraph', attrs: { todoState }, content: nodes }
 }

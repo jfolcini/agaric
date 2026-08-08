@@ -23,7 +23,6 @@ import type {
   PMMark,
   TagRefNode,
   TextNode,
-  TodoState,
 } from '@/editor/types'
 
 // -- Constants ----------------------------------------------------------------
@@ -37,6 +36,7 @@ import type {
  * `markdown-common`), but removing it would silently narrow the vocab API.
  */
 export { ULID_RE } from '@/editor/markdown-common'
+export { TASK_MARKER_TO_STATE, taskStateFromMarker } from '@/lib/task-states'
 export const MAX_LINK_SCAN = 10_000
 export const CALLOUT_RE = /^\[!(\w+)\]\s?(.*)/i
 /**
@@ -63,13 +63,6 @@ export const MAX_PARSE_DEPTH = 10
 // which is how the serializer emits an empty task block) still parses back to
 // a task and round-trips. With content, a separating space is required.
 export const TASK_ITEM_RE = /^[-*] \[([ xX/-])\](?: (.*))?$/
-export const TASK_MARKER_TO_STATE: Record<string, TodoState> = {
-  ' ': 'TODO',
-  '/': 'DOING',
-  x: 'DONE',
-  X: 'DONE',
-  '-': 'CANCELLED',
-}
 
 /**
  * Bullet (unordered) list: consecutive `- item` / `* item` lines.

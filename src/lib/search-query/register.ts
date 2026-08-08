@@ -11,13 +11,13 @@
  * (`to-search-filter.ts`) extend in lock-step.
  */
 
-import { TASK_STATES } from '@/lib/filter-dimension-metadata'
 import { getPriorityLevels } from '@/lib/priority-levels'
 import { validateGlob } from '@/lib/search-query/glob-validate'
 import { isIsoDate } from '@/lib/search-query/is-iso-date'
 import { registerTokenPrefix, type ValueParser } from '@/lib/search-query/registry'
 import type { DateOp, FilterToken, NamedDateRange } from '@/lib/search-query/types'
 import { prefixed, ValidationCode } from '@/lib/search-query/validation-codes'
+import { isTodoState } from '@/lib/task-states'
 
 let registered = false
 
@@ -30,13 +30,13 @@ let registered = false
  * case-insensitively for parity with the `due:` parser (and the backend, which
  * treats the `none` sentinel case-insensitively).
  *
- * Todo states are a fixed vocabulary (`TASK_STATES`); priority levels are
+ * Todo states are a fixed vocabulary (`isTodoState`); priority levels are
  * user-configurable, so we read the live levels at parse time via
  * `getPriorityLevels()`.
  */
 function isKnownState(value: string): boolean {
   if (value.toLowerCase() === 'none') return true
-  return TASK_STATES.includes(value)
+  return isTodoState(value)
 }
 
 function isKnownPriority(value: string): boolean {

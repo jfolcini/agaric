@@ -4,6 +4,8 @@
  * Extracted from BlockTree.tsx to keep the orchestrator lean.
  */
 
+import { taskStateFromMarker, type TodoState } from '@/lib/task-states'
+
 /**
  * Property keys that are tracked internally by the materializer but never
  * shown in the per-block UI display. Filter sites should import this set
@@ -39,22 +41,15 @@ export const INTERNAL_PROPERTY_KEYS: ReadonlySet<string> = new Set([
 // empty `- [ ]` form is handled by the markdown layer on full-doc parse, not
 // here (a bare marker with no text never reaches `edit`).
 const LEADING_TASK_MARKER_RE = /^[-*] \[([ xX/-])\] /
-const MARKER_TO_STATE: Record<string, string> = {
-  ' ': 'TODO',
-  '/': 'DOING',
-  x: 'DONE',
-  X: 'DONE',
-  '-': 'CANCELLED',
-}
 export function processCheckboxSyntax(content: string): {
   cleanContent: string
-  todoState: string | null
+  todoState: TodoState | null
 } {
   const match = LEADING_TASK_MARKER_RE.exec(content)
   if (match) {
     return {
       cleanContent: content.slice(match[0].length),
-      todoState: MARKER_TO_STATE[match[1] as string] as string,
+      todoState: taskStateFromMarker(match[1] as string),
     }
   }
   return { cleanContent: content, todoState: null }

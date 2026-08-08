@@ -33,10 +33,10 @@ export const VALUE_BEARING_OPS: ReadonlySet<PropertyOpKind> = new Set<PropertyOp
 /**
  * #1280 D2 — the todo-state values offered by the State editor. Mirrors the
  * canonical states the agenda/backlink surfaces emit (TODO/DOING/DONE/CANCELLED;
- * see `agenda-sort.ts`'s `stateRank`). These match `b.todo_state` byte-for-byte
+ * see `task-states.ts`'s `taskStateRank`). These match `b.todo_state` byte-for-byte
  * so the projection's `IN (...)` membership test resolves.
  */
-export const TODO_STATE_VALUES: ReadonlyArray<string> = ['TODO', 'DOING', 'DONE', 'CANCELLED']
+export { TASK_STATES as TODO_STATE_VALUES } from '@/lib/task-states'
 
 /**
  * #1280 D2 — the block-type values offered by the Block type editor. Mirrors the

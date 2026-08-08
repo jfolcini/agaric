@@ -345,6 +345,16 @@ describe('groupByState', () => {
     expect(groups[4]?.blocks[0]?.id).toBe('none')
   })
 
+  it('groups an unrecognised todo state under No state', () => {
+    const groups = groupByState([
+      makeBlock({ id: 'unknown', todo_state: 'WAITING' }),
+      makeBlock({ id: 'none', todo_state: null }),
+    ])
+    expect(groups).toHaveLength(1)
+    expect(groups[0]?.label).toBe('No state')
+    expect(groups[0]?.blocks.map((block) => block.id)).toEqual(['unknown', 'none'])
+  })
+
   it('sorts within groups by date then priority', () => {
     const blocks = [
       makeBlock({ id: 'late-p1', todo_state: 'TODO', due_date: '2025-06-20', priority: '1' }),

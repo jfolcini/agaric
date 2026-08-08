@@ -36,9 +36,10 @@ import {
 } from '@/lib/property-values-cache'
 import { queryClient } from '@/lib/query-client'
 import type { AutocompleteAnchor } from '@/lib/search-query/autocomplete'
+import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 import { getPropertyDef, listTagsByPrefix, paginationLimit } from '@/lib/tauri'
 
-export const STATE_VALUES = ['TODO', 'DOING', 'DONE', 'CANCELLED', 'none'] as const
+export const STATE_VALUES = TASK_STATE_AUTOCOMPLETE_VALUES
 export const DATE_BUCKET_VALUES = [
   'today',
   'yesterday',

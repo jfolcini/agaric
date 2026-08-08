@@ -10,6 +10,7 @@ import {
   TASK_STATES,
 } from '@/lib/filter-dimension-metadata'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
+import { TASK_STATES as CANONICAL_TASK_STATES } from '@/lib/task-states'
 
 beforeEach(() => {
   __resetPriorityLevelsForTests()
@@ -24,6 +25,10 @@ describe('filter-dimension-metadata', () => {
   // TASK_STATES / getTaskStates (fixed cycle, localStorage removed)
   // -----------------------------------------------------------------------
   describe('getTaskStates', () => {
+    it('re-exports the canonical task-state tuple by identity', () => {
+      expect(TASK_STATES).toBe(CANONICAL_TASK_STATES)
+    })
+
     it('returns the locked fixed cycle TODO/DOING/DONE/CANCELLED', () => {
       expect(getTaskStates()).toEqual(['TODO', 'DOING', 'DONE', 'CANCELLED'])
     })

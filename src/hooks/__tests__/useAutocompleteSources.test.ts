@@ -67,10 +67,11 @@ vi.mock('@/lib/logger', () => ({
   },
 }))
 
-import { useAutocompleteSources } from '@/hooks/useAutocompleteSources'
+import { STATE_VALUES, useAutocompleteSources } from '@/hooks/useAutocompleteSources'
 import { _resetPropertyKeysCacheForTest } from '@/hooks/usePropertyKeysCache'
 import { __resetPriorityLevelsForTests, setPriorityLevels } from '@/lib/priority-levels'
 import { _resetPropertyValuesCacheForTest } from '@/lib/property-values-cache'
+import { TASK_STATE_AUTOCOMPLETE_VALUES } from '@/lib/task-states'
 
 const mockedListTagsByPrefix = vi.mocked(listTagsByPrefix)
 const mockedListPropertyKeys = vi.mocked(listPropertyKeys)
@@ -109,6 +110,19 @@ afterEach(() => {
 })
 
 describe('useAutocompleteSources', () => {
+  it('offers the exact task-state vocabulary plus the none sentinel', () => {
+    expect(STATE_VALUES).toBe(TASK_STATE_AUTOCOMPLETE_VALUES)
+    const anchor: AutocompleteAnchor = { active: 'state', query: '', anchor: 0 }
+    const { result } = renderHook(() => useAutocompleteSources({ anchor, spaceId: 'S1' }))
+    expect(result.current.items.map((item) => item.value)).toEqual([
+      'TODO',
+      'DOING',
+      'DONE',
+      'CANCELLED',
+      'none',
+    ])
+  })
+
   it('null anchor returns empty items and not loading', () => {
     const { result } = renderHook(() => useAutocompleteSources({ anchor: null, spaceId: 'S1' }))
     expect(result.current).toEqual({ items: [], loading: false })

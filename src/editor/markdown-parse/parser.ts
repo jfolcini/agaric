@@ -35,7 +35,7 @@ import {
   scanBalancedClose,
   type Scanner,
   TASK_ITEM_RE,
-  TASK_MARKER_TO_STATE,
+  taskStateFromMarker,
   trailingBackslashRun,
   tryConsumeToken,
   type BlockParseResult,
@@ -554,7 +554,8 @@ export function parseTask(
 ): BlockParseResult | null {
   const match = (lines[i] as string).match(TASK_ITEM_RE)
   if (!match) return null
-  const todoState = TASK_MARKER_TO_STATE[match[1] as string] as TodoState
+  const todoState = taskStateFromMarker(match[1] as string)
+  if (!todoState) return null
   // A hardBreak inside the task's paragraph serializes as an odd trailing
   // backslash run (#710-5). Consume the continuation lines — mirroring
   // parseParagraph — so Shift+Enter inside a task neither splits the block nor
@@ -614,7 +615,7 @@ function buildListItem(itemTextLines: string[], nested: string[], depth: number)
     ? [(taskMatch[2] ?? '') as string, ...itemTextLines.slice(1)]
     : itemTextLines
   const todoState = taskMatch
-    ? (TASK_MARKER_TO_STATE[taskMatch[1] as string] as TodoState)
+    ? (taskStateFromMarker(taskMatch[1] as string) ?? undefined)
     : undefined
   const inlineContent = parseHardBreakLines(textLines, depth)
   const paragraph = buildTaskParagraph(inlineContent, todoState)

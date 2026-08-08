@@ -61,6 +61,7 @@ import type { PickerItem } from '@/editor/SuggestionList'
 import { matchesSearchFolded } from '@/lib/fold-for-search'
 import { getPropertyKeys } from '@/lib/property-keys-cache'
 import { getRecentCommands, RECENT_SLASH_PREFIX } from '@/lib/recent-commands'
+import type { TodoState } from '@/lib/task-states'
 
 /**
  * #1105 — synthetic category for the "Recent" band the slash menu prepends
@@ -87,31 +88,50 @@ function recentSlashCommands(): PickerItem[] {
     .map((c) => Object.assign({}, c, { category: RECENT_SLASH_CATEGORY }))
 }
 
-export const SLASH_COMMANDS: PickerItem[] = [
-  {
-    id: 'todo',
+interface TaskSlashCommandMetadata {
+  order: number
+  label: string
+  icon: NonNullable<PickerItem['icon']>
+}
+
+/**
+ * Exhaustive task-command metadata. `order` preserves the established menu order, which
+ * intentionally differs from the click cycle's DONE/CANCELLED tail.
+ */
+const TASK_SLASH_COMMAND_METADATA = {
+  TODO: {
+    order: 0,
     label: 'TODO — Mark as to-do',
-    category: 'slashCommand.categories.tasks',
     icon: CheckCircle2,
   },
-  {
-    id: 'doing',
+  DOING: {
+    order: 1,
     label: 'DOING — Mark as in progress',
-    category: 'slashCommand.categories.tasks',
     icon: CircleDot,
   },
-  {
-    id: 'cancelled',
-    label: 'CANCELLED — Mark as cancelled',
-    category: 'slashCommand.categories.tasks',
-    icon: XCircle,
-  },
-  {
-    id: 'done',
+  DONE: {
+    order: 3,
     label: 'DONE — Mark as complete',
-    category: 'slashCommand.categories.tasks',
     icon: CheckCheck,
   },
+  CANCELLED: {
+    order: 2,
+    label: 'CANCELLED — Mark as cancelled',
+    icon: XCircle,
+  },
+} satisfies Record<TodoState, TaskSlashCommandMetadata>
+
+const TASK_SLASH_COMMANDS: PickerItem[] = Object.entries(TASK_SLASH_COMMAND_METADATA)
+  .toSorted(([, a], [, b]) => a.order - b.order)
+  .map(([state, metadata]) => ({
+    id: state.toLowerCase(),
+    label: metadata.label,
+    category: 'slashCommand.categories.tasks',
+    icon: metadata.icon,
+  }))
+
+export const SLASH_COMMANDS: PickerItem[] = [
+  ...TASK_SLASH_COMMANDS,
   {
     id: 'date',
     label: 'DATE — Link to a date page',
